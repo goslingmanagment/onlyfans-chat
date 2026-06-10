@@ -18,12 +18,12 @@
     "@types/node": "^25.9.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "^5.2.0",
     "bsqlite3-mc-node": "npm:better-sqlite3-multiple-ciphers@12.9.0",
     "electron": "^41.7.2",
     "electron-vite": "^5.0.0",
     "tailwindcss": "^4.3.0",
-    "vite": "^8.0.16",
+    "vite": "^7.3.5",
     "vitest": "^4.1.8"
   },
   "dependencies": {

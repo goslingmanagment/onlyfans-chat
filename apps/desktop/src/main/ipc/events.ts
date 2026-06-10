@@ -1,0 +1,70 @@
+// Main → renderer event forwarding (SPEC §4): sync events, db change batches,
+// AI operation frames, credit-balance status frames.
+
+import type { BrowserWindow } from 'electron';
+import type { OperationEvent, SyncEvent } from '@chatgoose/shared/protocol/index';
+import type { CreditBalanceEvent } from '../../preload/contract';
+import type { DbChangeBus } from '../db/change-bus';
+import type { CreditMeter } from '../ofapi/credit-meter';
+import type { SyncProvider } from '../sync/provider';
+
+export interface EventForwarderDeps {
+  window: () => BrowserWindow | null;
+  bus: DbChangeBus;
+  sync: SyncProvider | null;
+  creditMeter: CreditMeter | null;
+  coordinator: { subscribe(listener: (event: OperationEvent) => void): () => void } | null;
+  onSyncEvent?: (event: SyncEvent) => void;
+}
+
+export function attachEventForwarding(deps: EventForwarderDeps): () => void {
+  const disposers: Array<() => void> = [];
+
+  function send(channel: 'sync:event' | 'ai:event' | 'db:changed', payload: unknown): void {
+    const win = deps.window();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(channel, payload);
+    }
+  }
+
+  disposers.push(
+    deps.bus.subscribe((events) => {
+      for (const event of events) {
+        send('db:changed', event);
+      }
+    }),
+  );
+
+  if (deps.sync) {
+    disposers.push(
+      deps.sync.subscribe((event) => {
+        send('sync:event', event);
+        deps.onSyncEvent?.(event);
+      }),
+    );
+  }
+
+  if (deps.creditMeter) {
+    disposers.push(
+      deps.creditMeter.subscribe((snapshot) => {
+        const frame: CreditBalanceEvent = {
+          type: 'creditBalance',
+          balance: snapshot.balance,
+          usedToday: snapshot.usedToday,
+          rpmRemaining: snapshot.rpmRemaining,
+        };
+        send('sync:event', frame);
+      }),
+    );
+  }
+
+  if (deps.coordinator) {
+    disposers.push(deps.coordinator.subscribe((event) => send('ai:event', event)));
+  }
+
+  return () => {
+    for (const dispose of disposers) {
+      dispose();
+    }
+  };
+}

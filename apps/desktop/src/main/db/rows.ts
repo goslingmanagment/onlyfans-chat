@@ -30,6 +30,8 @@ export interface AccountRow {
   id: string;
   username: string;
   displayName: string;
+  /** media:// URL (pre-mapped by sync). */
+  avatar: string | null;
   authState: AccountAuthState;
   updatedAt: string;
 }
@@ -42,6 +44,7 @@ const accountSqlSchema = z.object({
   id: z.string(),
   username: z.string(),
   display_name: z.string(),
+  avatar: z.string().nullable(),
   auth_state: z.enum(['authenticated', 'session_expired', 'unauthenticated']),
   updated_at: z.string(),
 });
@@ -52,6 +55,7 @@ export function decodeAccountRow(value: unknown): AccountRow {
     id: row.id,
     username: row.username,
     displayName: row.display_name,
+    avatar: row.avatar,
     authState: row.auth_state,
     updatedAt: row.updated_at,
   };
@@ -63,6 +67,8 @@ export interface ChatRow {
   accountId: string;
   chatId: string;
   fanName: string;
+  /** media:// URL (pre-mapped by sync). */
+  avatar: string | null;
   unreadCount: number;
   hasUnreadTips: boolean;
   lastMessageAt: string | null;
@@ -83,6 +89,7 @@ const chatSqlSchema = z.object({
   account_id: z.string(),
   chat_id: z.string(),
   fan_name: z.string(),
+  avatar: z.string().nullable(),
   unread_count: z.number().int(),
   has_unread_tips: sqlBool,
   last_message_at: z.string().nullable(),
@@ -101,6 +108,7 @@ export function decodeChatRow(value: unknown): ChatRow {
     accountId: row.account_id,
     chatId: row.chat_id,
     fanName: row.fan_name,
+    avatar: row.avatar,
     unreadCount: row.unread_count,
     hasUnreadTips: row.has_unread_tips,
     lastMessageAt: row.last_message_at,
@@ -235,6 +243,8 @@ export interface FanRow {
   username: string;
   name: string;
   customName: string | null;
+  /** media:// URL (pre-mapped by sync). */
+  avatar: string | null;
   about: string | null;
   lastSeen: string | null;
   spending: FanSpending | null;
@@ -250,6 +260,7 @@ const fanSqlSchema = z.object({
   username: z.string(),
   name: z.string(),
   custom_name: z.string().nullable(),
+  avatar: z.string().nullable(),
   about: z.string().nullable(),
   last_seen: z.string().nullable(),
   spending: z.string().nullable(),
@@ -278,6 +289,7 @@ export function decodeFanRow(value: unknown): FanRow {
     username: row.username,
     name: row.name,
     customName: row.custom_name,
+    avatar: row.avatar,
     about: row.about,
     lastSeen: row.last_seen,
     spending: parseJsonOrNull(row.spending, spendingSchema),

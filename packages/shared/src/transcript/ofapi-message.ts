@@ -35,8 +35,9 @@ export const ofapiChatMessageSchema = z.looseObject({
   }),
   changedAt: z.string().nullish(),
   /**
-   * Not present in current OFAPI shapes (verified against openapi.json + live probe).
-   * Step 1 of the SPEC §8.2 tip-amount ladder if OFAPI ever adds it. Dollars.
+   * Present on tip messages (live-verified 2026-06-10, tmp/probe-tip-message.json:
+   * `tipAmount: 5` alongside `tipText`); absent from the openapi.json example.
+   * Step 1 of the SPEC §8.2 tip-amount ladder. Dollars.
    */
   tipAmount: z.number().nullish(),
   replyToMessage: z.unknown().optional(),

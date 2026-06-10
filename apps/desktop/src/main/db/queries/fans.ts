@@ -4,18 +4,19 @@ import { decodeFanRow, toJson } from '../rows';
 import type { FanRow, FanUpsert } from '../rows';
 
 const COLUMNS =
-  'account_id, fan_id, username, name, custom_name, about, last_seen, spending, subscription, fetched_at';
+  'account_id, fan_id, username, name, custom_name, avatar, about, last_seen, spending, subscription, fetched_at';
 
 const UPSERT_SQL = `
 INSERT INTO fans (
-  account_id, fan_id, username, name, custom_name, about, last_seen, spending, subscription, fetched_at
+  account_id, fan_id, username, name, custom_name, avatar, about, last_seen, spending, subscription, fetched_at
 ) VALUES (
-  @account_id, @fan_id, @username, @name, @custom_name, @about, @last_seen, @spending, @subscription, @fetched_at
+  @account_id, @fan_id, @username, @name, @custom_name, @avatar, @about, @last_seen, @spending, @subscription, @fetched_at
 )
 ON CONFLICT (account_id, fan_id) DO UPDATE SET
   username = excluded.username,
   name = excluded.name,
   custom_name = excluded.custom_name,
+  avatar = excluded.avatar,
   about = excluded.about,
   last_seen = excluded.last_seen,
   spending = excluded.spending,
@@ -36,6 +37,7 @@ export function createFansQueries(db: ChatGooseDb, bus: DbChangeBus): FansQuerie
         username: fan.username,
         name: fan.name,
         custom_name: fan.customName,
+        avatar: fan.avatar,
         about: fan.about,
         last_seen: fan.lastSeen,
         spending: fan.spending === null ? null : toJson(fan.spending),

@@ -4,14 +4,15 @@ import type { DbChangeBus } from '../change-bus';
 import { decodeAccountRow, toJson } from '../rows';
 import type { AccountAuthState, AccountRow, AccountUpsert } from '../rows';
 
-const COLUMNS = 'id, username, display_name, auth_state, updated_at';
+const COLUMNS = 'id, username, display_name, avatar, auth_state, updated_at';
 
 const UPSERT_SQL = `
-INSERT INTO accounts (id, username, display_name, auth_state, raw, updated_at)
-VALUES (@id, @username, @display_name, @auth_state, @raw, @updated_at)
+INSERT INTO accounts (id, username, display_name, avatar, auth_state, raw, updated_at)
+VALUES (@id, @username, @display_name, @avatar, @auth_state, @raw, @updated_at)
 ON CONFLICT (id) DO UPDATE SET
   username = excluded.username,
   display_name = excluded.display_name,
+  avatar = excluded.avatar,
   auth_state = excluded.auth_state,
   raw = excluded.raw,
   updated_at = excluded.updated_at`;
@@ -37,6 +38,7 @@ export function createAccountsQueries(db: ChatGooseDb, bus: DbChangeBus): Accoun
       id: account.id,
       username: account.username,
       display_name: account.displayName,
+      avatar: account.avatar,
       auth_state: account.authState,
       raw: toJson(account.raw),
       updated_at: new Date().toISOString(),

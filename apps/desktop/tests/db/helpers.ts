@@ -38,6 +38,7 @@ export function sampleChat(overrides: Partial<ChatUpsert> = {}): ChatUpsert {
     accountId: 'acct_1',
     chatId: '101',
     fanName: 'Fan One',
+    avatar: null,
     unreadCount: 0,
     hasUnreadTips: false,
     lastMessageAt: '2026-06-01T10:00:00.000Z',

@@ -15,13 +15,14 @@ afterEach(() => {
 describe('accounts queries', () => {
   it('upserts by id and lists with summed unread counts', () => {
     layer.accounts.upsertMany([
-      { id: 'acct_1', username: 'modelone', displayName: 'Model One', authState: 'authenticated', raw: {} },
-      { id: 'acct_2', username: 'another', displayName: 'Another', authState: 'authenticated', raw: {} },
+      { id: 'acct_1', username: 'modelone', displayName: 'Model One', avatar: null, authState: 'authenticated', raw: {} },
+      { id: 'acct_2', username: 'another', displayName: 'Another', avatar: null, authState: 'authenticated', raw: {} },
     ]);
     layer.accounts.upsert({
       id: 'acct_1',
       username: 'modelone',
       displayName: 'Model One Renamed',
+      avatar: null,
       authState: 'authenticated',
       raw: { fresh: true },
     });
@@ -47,6 +48,7 @@ describe('accounts queries', () => {
       id: 'acct_1',
       username: 'modelone',
       displayName: 'Model One',
+      avatar: null,
       authState: 'authenticated',
       raw: {},
     });
@@ -67,6 +69,7 @@ const fan: FanUpsert = {
   username: 'fan_user',
   name: 'Fan One',
   customName: 'Big Spender',
+  avatar: null,
   about: 'hi, I am a fan',
   lastSeen: '2026-06-01T09:00:00.000Z',
   spending: { total: 250.5, subscriptions: 50, tips: 120.5, messages: 60, posts: 20, streams: 0 },

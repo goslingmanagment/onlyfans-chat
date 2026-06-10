@@ -13,6 +13,7 @@ CREATE TABLE accounts (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL,
   display_name TEXT NOT NULL DEFAULT '',
+  avatar TEXT,
   auth_state TEXT NOT NULL,
   raw TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -22,6 +23,7 @@ CREATE TABLE chats (
   account_id TEXT NOT NULL,
   chat_id TEXT NOT NULL,
   fan_name TEXT NOT NULL DEFAULT '',
+  avatar TEXT,
   unread_count INTEGER NOT NULL DEFAULT 0,
   has_unread_tips INTEGER NOT NULL DEFAULT 0,
   last_message_at TEXT,
@@ -65,6 +67,7 @@ CREATE TABLE fans (
   username TEXT NOT NULL DEFAULT '',
   name TEXT NOT NULL DEFAULT '',
   custom_name TEXT,
+  avatar TEXT,
   about TEXT,
   last_seen TEXT,
   spending TEXT,
