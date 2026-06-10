@@ -36,7 +36,7 @@ OFAPI gives us full programmatic access to connected OnlyFans accounts (read cha
 | Goal | Metric (measure in pilot) |
 |---|---|
 | Chatter can run a full text-chat shift in the app | % of shift time spent in app vs OnlyMonster; messages sent via app / total |
-| AI assist is used and useful | AI actions per hour; suggestion acceptance rate (inserted or sent / generated); regenerate rate |
+| AI assist is used and useful | AI actions per hour; suggestion acceptance rate = copied-or-inserted / generated (a regenerate counts as rejection of the prior output); regenerate rate |
 | Faster fan handling | Median time from incoming message → reply, vs OnlyMonster baseline |
 | Revenue-positive behavior | PPV sends per shift; tips/PPV revenue per shift (directional, vs baseline) |
 | Cost under control | OFAPI credits per chatter-shift; LLM $ per chatter-shift (targets: §10) |
@@ -66,15 +66,15 @@ Features marked **[P1]**–**[P7]** map to plan phases. Legacy behavioral detail
 
 ### F1. Accounts & onboarding [P1]
 - App configured with an OFAPI key (per-chatter **scoped** key in direct mode) and, from P4, an Agency Hub (core) chatter API key. Keys stored in OS keychain, never in plaintext config.
-- App lists connected OF accounts (`GET /api/accounts`), shows auth state (`is_authenticated`), and surfaces session-expiry/re-auth needs (later via `accounts.*` webhook events; in P1 via API errors).
+- App lists connected OF accounts (`GET /api/accounts`), shows auth state (`is_authenticated`), and surfaces re-auth needs (later via `accounts.authentication_failed` / `is_authenticated=false`; a lone `accounts.session_expired` is informational — OFAPI auto-recovers it; in P1 via API errors).
 - Account connection itself happens in the OFAPI console by the admin (out of app scope for v1; revisit embedded connect widget later).
 - **Personality mapping:** every account must be mapped to a personality before AI features activate (same rule as legacy; unmapped → AI buttons disabled with clear prompt). Personalities: name + free-form content, CRUD in settings, bundled "Lora" starter ported from legacy.
 
 ### F2. Inbox / chat list [P1]
-- Per-account chat list via `GET /{account}/chats`: fan name/avatar, last message preview, time, unread count, tip indicator (`hasUnreadTips`), pinned/priority.
+- Per-account chat list via `GET /{account}/chats`: fan name/avatar, last message preview, time, unread count, tip indicator (`hasUnreadTips`). Pinned/priority exist as **server-side filters**; the live chat object carries no per-chat pinned/priority flag (verified 2026-06-10) — badges only if Phase 0 finds a flag source (e.g. `fan.listsStates`).
 - Filters: All / Unread / With tips / Priority. Search by fan name (`query`).
 - Account switcher (chatter may handle several accounts per shift); per-account unread badges; aggregate badge on app icon.
-- Sorting by recency. The OFAPI-enriched `lastReplyAt` is displayed to spot "fan waiting" chats.
+- Sorting by recency. "Fan waiting" indicator derived from `lastMessage` (`isSentByMe=false` + `unreadMessagesCount>0`); the OFAPI-enriched `lastReplyAt` is used **if available** — live check 2026-06-10 found it absent on a freshly connected account (Phase 0 re-checks after data accumulates; vendor question pending). P7 ping-queue has the same dependency.
 - New-message arrival: list updates via sync engine (P1 polling; SSE push from ~P3 via the parallel core track); toast + optional sound for incoming messages on any handled account.
 
 ### F3. Conversation view [P1]
@@ -123,7 +123,7 @@ Model support: per-feature model selection + reasoning effort (off/low/medium/hi
 - Clear PPV compose summary before send (N items, price, previews) — misprice prevention.
 
 ### F8. Real-time via Agency Hub (core) [parallel core track, target P3; AI gateway P6]
-- Core gains an OFAPI webhook receiver (`messages.received/sent`, `messages.ppv.unlocked`, `tips.received`, `subscriptions.*`, `users.typing/online/offline`, `accounts.*`): HMAC verify, `event_id` dedupe, journal, fan-out to desktop clients over **SSE** (core decision #25: REST + SSE, no websockets).
+- Core gains an OFAPI webhook receiver (`messages.received/sent/deleted`, `messages.ppv.unlocked`, `tips.received`, `transactions.new` (lags ≤3 min), `subscriptions.*`, `users.typing/online/offline`, `accounts.*`): HMAC verify, `event_id` dedupe, journal, fan-out to desktop clients over **SSE** (core decision #25: REST + SSE, no websockets). `messages.deleted` is load-bearing for SPEC §6.3 tombstones.
 - Desktop drops its polling loops in favor of push (polling stays as degraded fallback); read-state (`isNew`) still polled on-demand for the open conversation.
 - Desktop authenticates to core with the existing per-chatter API keys (page-scoped, revocable — the central kill-switch already works today).
 - Central storage is live from P4 (fan summaries, AI usage); P6 adds per-chatter LLM token limits via core's hub-owned AI gateway (its roadmap Phase 7) — LLM calls proxy through core (central provider keys, caching, limits); desktop-direct mode remains for solo/dev use.
@@ -133,8 +133,8 @@ Model support: per-feature model selection + reasoning effort (off/low/medium/hi
 Ported legacy schema where applicable: provider API keys; per-feature model + reasoning; message-count knobs (quick 100 / improve 25 / deep 1500, same ranges); personalities CRUD; account→personality mappings; debug mode (+ pipeline profiling view); prompt-caching toggle; sound/notification prefs; mark-as-read policy; Agency Hub (core) URL + chatter API key (from P4).
 
 ### F10. Operational UX (cross-cutting)
-- **Status bar:** OFAPI credit balance + credits used today (from `_meta._credits` on every response), per-op LLM cost after each AI action (legacy spend summary), sync freshness ("updated 12 s ago"), connection state.
-- Account session health banner (expired → "re-auth needed, ping admin" with deep link to OFAPI console).
+- **Status bar:** OFAPI credit balance + credits used today (from `_meta._credits` / `x-ofapi-credits-*` headers where present — the envelope isn't universal), per-op LLM cost after each AI action (legacy spend summary), sync freshness ("updated 12 s ago"), connection state.
+- Account session health banner (authentication failed → "re-auth needed, ping admin" with deep link to OFAPI console; `session_expired` events are info-only, no banner).
 - Every error maps to a coded, actionable message (legacy `CG-*` taxonomy extended with OFAPI codes); raw payloads in debug mode.
 - Offline/API-down: cached data remains browsable, composer disabled with reason, auto-recovery on reconnect.
 
@@ -167,9 +167,9 @@ OnlyMonster, Infloww, Supercreator et al. offer CRM + AI features. We are not co
 
 ## 10. Unit economics (rough, validate in pilot — week-1 task in PLAN)
 
-**OFAPI credits** (1 credit ≈ $0.0015–0.003 depending on plan/top-up):
+**OFAPI credits** (1 credit ≈ $0.0008–0.0035 across plan/top-up tiers; mid-range ≈ $0.0015–0.002):
 - Polling mode (P1–P5), one active account/shift: chat-list poll @20–30 s ≈ 1,000–1,400/8 h; open-conversation read-state sweep @30 s ≈ 800–960; delta-triggered refreshes + sends/reads/fan fetches ≈ 500–1,200. **≈ 2.5–4 k credits per chatter-shift** → 55–90 k/mo per full-time seat. Pro plan (100 k/mo incl. 5 accounts, $299) covers a small pilot; polling at scale needs top-ups → hub phase pays for itself.
-- Webhook mode (from ~P3, parallel core track): events ≈ 1 credit/100 → **≈ 0.5–1 k credits per chatter-shift** (sends + on-demand fetches dominate). ~5–10× cheaper.
+- Webhook mode (from ~P3, parallel core track): events ≈ 1 credit/100 → **≈ 0.5–1 k credits per chatter-shift** (sends, conditional read-state sweeps and on-demand fetches dominate). ~3–5× cheaper than polling mode.
 - Media: 3 credits/MB upload/first-download; thumbnails cached on their CDN (free after first fetch).
 
 **LLM** (legacy registry prices): fast replies ≈ $0.01–0.03/op (Sonnet-class + prompt caching), deep summary ≈ $0.3–0.8/op (Opus-class, 1500 msgs). Typical shift ≈ **$1.5–4/chatter**. Per-feature model knobs + hub limits keep this governed.
@@ -182,9 +182,9 @@ OnlyMonster, Infloww, Supercreator et al. offer CRM + AI features. We are not co
 | 2 | **OFAPI latency** for live passthrough endpoints unknown (every call proxies to OF) | Week-1 spike: measure p50/p95 for list-chats / list-messages / send; if p95 > ~2.5 s, increase cache/prefetch investment |
 | 3 | **OFAPI reliability/business risk** (unofficial API, OF could break it; vendor could die) | Local SQLite cache keeps history readable; OnlyMonster remains operational fallback; data-provider abstraction isolates vendor |
 | 4 | **Account safety** (third-party session, proxy geo US/UK) | Same risk class the agency already accepts with OnlyMonster; use matching proxy geo; pilot on lower-value account first |
-| 5 | **Pricing/credit discrepancy** (docs 25k/75k vs pricing page 20k/100k) | Confirm with vendor before plan purchase |
+| 5 | Pricing/credit allocation discrepancy (docs vs pricing page) | Low priority since the dev key shows 99k credits / 5k RPM; confirm terms with vendor before scaling to many accounts |
 | 6 | ✅ Resolved 2026-06-10: accounts are connected by the admin via the OFAPI dashboard (automated login); the app uses console-issued API keys. `raw_data` cookie import is a fallback; v2 Face-Auth accounts require the Auth+ iPhone app | — |
-| 7 | **Sending from a second session** — fan sees replies "from nowhere" in OnlyMonster UI (OM chat log may confuse other chatters during transition) | Transition protocol: one account works from exactly one surface per shift |
+| 7 | **Concurrent work on one page** — two surfaces (OM + app) or two app instances racing: double replies, mark-as-read races (single-flight/outbox are per-instance; multi-chatter presence only arrives in P7) | Transition protocol: one page is worked from exactly one surface AND by exactly one chatter per shift |
 | 8 | ✅ Resolved 2026-06-10: English UI; AI fan summaries stay Russian (legacy convention) | — |
 | 9 | ✅ Resolved 2026-06-10: auto mark-as-read on conversation open, with settings toggle (default on). Phase-0 coexistence test still validates the OnlyMonster interplay | — |
 | 10 | Legacy unresolved: AI-slop quality drift | Port prompts verbatim first; build regression harness (PLAN P4) before iterating on prompt content |

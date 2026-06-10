@@ -93,7 +93,7 @@ scripts/                 # codegen (openapi → types), fixture capture
 - **Base:** `https://app.onlyfansapi.com/api`, `Authorization: Bearer <key>`. Account ids `acct_*`; fan/chat/message ids are raw OF numeric ids (`chat_id === fan.id`). Never concatenate paths by hand outside this module.
 - **Generated types** from vendored `openapi.json`; hand-written `OfApiClient` exposes typed methods per subsystem (chats, messages, fans, users, transactions, vault, accounts, webhooks). **The `{data, _meta, _pagination}` envelope is NOT universal** (verified live 2026-06-10: `GET /api/accounts` returns a bare top-level array, `GET /api/whoami` a bare object, while account-scoped endpoints return the envelope) — unwrapping is per-operation, driven by the OpenAPI schema. Credits/rate-limit meta (`_meta._credits.balance`, `x-rate-limit-remaining-minute`, `x-ofapi-credits-*` headers) is published to a `CreditMeter` (status bar + persisted daily counters) whenever present.
 - **Rate limiting:** client-side token bucket well under plan RPM (config; default 300 RPM, burst 20), per-account concurrency cap 4, global 12. 429 → honor `retry-after`, exponential backoff 1/2/4/8 s. 5xx → retry ≤3 (idempotent GETs only). **POST send-message is never auto-retried** (§7).
-- **Pagination adapters** (four upstream styles — research doc §6): `nextPageUrl`, `limitOffset`, `marker`, `firstLastId`. One `paginate()` helper per style; callers request "N items" or "until predicate" with a hard page cap + inter-page delay (legacy: 300 ms between pages, deep fetch caps).
+- **Pagination adapters** (four upstream styles — research doc §6): `nextPageUrl`, `limitOffset`, `marker`, `firstLastId`. One `paginate()` helper per style; callers request "N items" or "until predicate" with a hard page cap + inter-page delay (legacy: 300 ms between pages, deep fetch caps). Always pass `skip_users` explicitly — live default behavior differs from the documented default.
 - **Error mapping** into the `CG-*` registry (§11): 401→`OFAPI-AUTH`, 404 acct-prefix hint, 422 validation detail, 400 restricted-words (carry `textHighLight`), session-expired detection from account state.
 - **Fixture capture mode:** debug flag records sanitized request/response pairs into `tests/fixtures/ofapi/` for contract tests (no sandbox upstream — recorded fixtures are our regression net).
 - **Key scoping per phase** (configured in the OFAPI console; exact scope granularity to verify in Phase 0): P1–P2 chatter keys = read-only (chats/messages/fans/users/transactions GET); P3 adds send-message, mark-read, typing, notes/custom-name writes; P5 adds media upload + vault; webhook CRUD and account connect/disconnect stay on the admin/core key only. Never put the unscoped master key on a chatter machine.
@@ -112,14 +112,14 @@ interface SyncProvider {
 ```
 
 ### 6.1 PollingSync (P1) — designed as a cost feature
-- **Chat-list poll** is the primary detector: `GET /{account}/chats?limit=50&order=recent` (1 credit) every **20 s** for the focused account, **60 s** for other handled accounts, **paused when window hidden >2 min** (resume burst on focus).
-- **Delta rule:** message fetches happen only when the list shows change (`lastMessage.id` / `unreadMessagesCount` / `lastReadMessageId` differ from cache) → fetch just that chat's new tail (`first_id` pagination from last cached id). The open conversation is refreshed on its list-delta and immediately after each own send; on top of that, a **read-state sweep every 30 s** (configurable) catches `isNew` flips for seen-ticks. No flat fast poll of the open conversation — list-delta stays the primary trigger.
+- **Chat-list poll** is the primary detector: `GET /{account}/chats?limit=50&order=recent` (1 credit) every **20 s** for the focused account, **60 s** for other handled accounts. When the window is hidden, polling **slows ×4 but keeps running** — in the P1–P2 companion phase the app lives in the background and toasts/sounds must still fire (PRD F2); a full pause happens only when notifications are disabled or after explicit long idle. Resume burst on focus.
+- **Delta rule:** message fetches happen only when the list shows change (`lastMessage.id` / `unreadMessagesCount` / `lastReadMessageId` differ from cache) → fetch just that chat's new tail: **`last_id=<last cached id>&order=asc`** (verified live 2026-06-10: `last_id+asc` returns the boundary id and newer messages in ascending order; `first_id` pages *backwards* into history and must only be used for scrollback — and boundary inclusion differs between the two, so always dedupe by id). The open conversation is refreshed on its list-delta and immediately after each own send; on top of that, a **conditional read-state sweep** catches `isNew` flips for seen-ticks: every 30 s (configurable), only while the window is focused **and** there are own messages with `isNew=true` younger than 24 h, auto-stopping after 10 min without change. No flat fast poll of the open conversation — list-delta stays the primary trigger.
 - Fan-detail and transactions fetched on conversation open (and cached with TTL 5 min, matching legacy in-memory caches) — not in the poll loop.
 - Budget guard: per-shift credit budget setting; on 80% an unobtrusive warning, on 100% polling slows 4× (never silently stops).
 
 ### 6.2 HubSync (parallel core track — target P3)
 - SSE stream from core (`GET /api/v1/events/stream`, bearer chatter API key; SSE per core decision #25 — no websockets there), zod-validated `SyncEvent` frames (same union — renderer code unchanged). `Last-Event-ID` resume against core's event journal; on disconnect, exponential reconnect + a reconciliation sweep (one chat-list fetch per account) to close the gap; PollingSync (slowed) is the degraded fallback.
-- Read-state remains on-demand polling of the open conversation (no upstream webhook exists).
+- Read-state remains polling of the open conversation (no upstream webhook exists), under the **same conditional sweep policy as §6.1** — left unconditional it would dominate hub-mode credit burn and erase most of the webhook savings.
 
 ### 6.3 Cache reconciliation rules
 - Messages are upserted by `(account, chat_id, message_id)`; webhook/push payloads are trusted for inserts but a periodic tail check heals divergence (edits via `changedAt`, deletions via `messages.deleted` or tail-fetch diff → tombstone, render "deleted").
@@ -162,6 +162,8 @@ Prompt templates (all 7 + compare), safety preambles (reply/analysis modes), pro
 
 **Invariant:** block text formats stay byte-compatible with legacy where data allows — the prompts were tuned against those exact shapes.
 
+**Transcript timezone (decided 2026-06-10):** `[HH:MM]` timestamps are rendered in **UTC for everyone**. Legacy used the machine-local timezone — unacceptable now that summaries and caches are shared across chatters in different timezones: byte-stable context blocks (and cache keys derived from them) require a single timezone.
+
 ### 8.3 Operation coordinator
 Ports legacy lifecycle: one operation per conversation context (`CG-FLOW-04` on concurrent start), synchronous reservation, `operationId` UUID correlation, discard on conversation switch, staged timeouts (`quick-total` 60 s; deep: prep 180 s, TTFB 45 s, idle 45 s, max-stream 300 s), auto-retry on LLM 429 (`Retry-After` ≤60 s) and 503 (+5 s), profiling stages in debug mode. Transport changes from extension Port to IPC events — protocol types live in `packages/shared/protocol`.
 
@@ -175,7 +177,7 @@ SQLite `summaries` table replacing browser.storage: key `(account, fan_id)`, fie
 ```ts
 interface AiGateway { stream(req: LlmRequest, cb: StreamCallbacks): CancelFn }
 ```
-`DirectGateway` (P2): provider SSE clients with local keys. `HubGateway` (P6): same contract over core's hub-owned AI gateway (its roadmap Phase 7; SSE streaming per core decision #25) — core holds provider keys, enforces per-chatter token limits, records usage. Until the gateway exists, the desktop reports usage itself to core's live `POST /api/v1/ai-usage/batch` (legacy batching: 1 s debounce, 100/batch, retry 5 s/15 s, drop after 3 attempts; upstream dedupes by `clientEventId`). Feature names must match core's **closed** `aiUsageFeatures` enum (`core: packages/shared/src/types.ts`) — adding a feature requires a core-side enum change first.
+`DirectGateway` (P2): provider SSE clients with local keys. `HubGateway` (P6): same contract over core's hub-owned AI gateway (its roadmap Phase 7; SSE streaming per core decision #25) — core holds provider keys, enforces per-chatter token limits, records usage. Until the gateway exists, the desktop reports usage itself to core's live `POST /api/v1/ai-usage/batch` (legacy batching: 1 s debounce, 100/batch, retry 5 s/15 s, drop after 3 attempts; upstream dedupes by `clientEventId`). Feature names must match core's **closed** `aiUsageFeatures` enum (`core: packages/shared/src/types.ts`) — adding a feature requires a core-side enum change first; note Compare has no name there (an unexplained `scan` exists instead) — before P4, either add `compare` to core's enum or decide to report per-card as `fast-reply`. **Clock-skew guard:** `completedAt` is clamped to server time (offset derived from the `Date` header of core responses) — core rejects events >5 min in the future and one bad event **fails the whole batch** with 400 (`core: services/ai-usage.ts:20–33`, verified), and the ported reporter would silently drop the batch after 3 retries; therefore on HTTP 400 the reporter must not blind-retry — log, surface `CG-HUB-02`, and quarantine the offending events. (Core-side per-event skip is queued as a pre-P4 core task.) The same server-time offset drives the 24 h unsend countdown (§7) instead of trusting the local clock.
 
 ## 9. Agency Hub ("core") integration
 
@@ -205,7 +207,7 @@ Settings hold core base URL + chatter API key (keychain). HubSync (§6.2) and Hu
 
 Tables (all with `account_id` scoping; ids TEXT):
 - `accounts(id, username, display_name, auth_state, raw JSON, updated_at)`
-- `chats(account_id, chat_id, fan_name, unread_count, has_unread_tips, last_message_at, last_message_preview, last_read_message_id, pinned, can_send_message, raw JSON, updated_at)` — index `(account_id, last_message_at DESC)`
+- `chats(account_id, chat_id, fan_name, unread_count, has_unread_tips, last_message_at, last_message_preview, last_read_message_id, pinned, can_send_message, can_not_send_reason, raw JSON, updated_at)` — index `(account_id, last_message_at DESC)`
 - `messages(account_id, chat_id, message_id, created_at, is_sent_by_me, text_html, text_plain, price, is_opened, is_new, is_tip, media JSON, deleted, raw JSON)` — PK `(account_id, chat_id, message_id)`, index `(account_id, chat_id, created_at DESC)`
 - `fans(account_id, fan_id, username, name, custom_name, last_seen, spending JSON, subscription JSON, notes_cached, fetched_at)`
 - `summaries(…)` per §8.5; `outbox(…)` per §7; `media_cache(url_hash, path, bytes, fetched_at)` (LRU, cap 2 GB)
@@ -218,7 +220,7 @@ Tables (all with `account_id` scoping; ids TEXT):
 
 Extend legacy `CG-*` registry (every error: code, user-facing message, recovery action; raw detail in debug):
 - Ported: `CG-AUTH-01` (LLM key missing), `CG-FLOW-01..09` (no personality / unmapped / min-messages / busy / ping-active / compare-min / hi-locked), `CG-API-06` (unusable output), `CG-NET-02` (timeout).
-- New: `CG-OF-01` OFAPI key invalid · `CG-OF-02` account session expired (re-auth CTA) · `CG-OF-03` rate-limited (auto-backoff notice) · `CG-OF-04` credits exhausted · `CG-OF-05` restricted words (`textHighLight`) · `CG-OF-06` send unconfirmed (verifier UI) · `CG-OF-07` unsend window passed · `CG-OF-08` media processing/unavailable · `CG-HUB-01..` hub auth/connection.
+- New: `CG-OF-01` OFAPI key invalid · `CG-OF-02` account authentication failed (re-auth CTA; a lone `accounts.session_expired` event is informational — OFAPI auto-recovers it) · `CG-OF-03` rate-limited (auto-backoff notice) · `CG-OF-04` credits exhausted · `CG-OF-05` restricted words (`textHighLight`) · `CG-OF-06` send unconfirmed (verifier UI) · `CG-OF-07` unsend window passed · `CG-OF-08` media processing/unavailable · `CG-HUB-01..` hub auth/connection.
 
 ## 12. Observability
 

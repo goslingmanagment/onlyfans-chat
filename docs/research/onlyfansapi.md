@@ -14,7 +14,7 @@ How it works:
 
 **Three endpoint data-source classes** (page `/introduction/essentials/endpoint-data-sources`):
 - **Live passthrough** (default): straight OnlyFans response. Uncached, costs credits.
-- **Hybrid**: live OF call + enrichment from their DB. Relevant: `GET /{account}/chats` adds `lastReplyAt` per chat; `GET /{account}/chats/{chat_id}/messages` adds `lastReplyAt` per participant; `GET /{account}/fans/*` adds `lastReplyAt` per fan; `GET /{account}/transactions` adds computed `type`.
+- **Hybrid**: live OF call + enrichment from their DB. Relevant: `GET /{account}/chats` adds `lastReplyAt` per chat; `GET /{account}/chats/{chat_id}/messages` adds `lastReplyAt` per participant; `GET /{account}/fans/*` adds `lastReplyAt` per fan; `GET /{account}/transactions` adds computed `type`. **Live caveat (2026-06-10):** `lastReplyAt` was absent from a real List Chats response on a freshly connected account — enrichment may need vendor-side data accumulation; verify before relying on it.
 - **Computed**: built entirely from their DB, never calls OF (webhooks CRUD, data-exports, smart links, auth/account rows).
 
 **Latency/consistency notes for a chat UI:** chat lists return immediately, but **fan detail is scraped in the background (2–3 s, sometimes up to ~10 s)** — you can get empty/partial fan data and must either call Get User Details or retry after ~10 s. Media in messages can arrive with `isReady: false` / null URLs while OnlyFans transcodes; poll until `isReady: true`.
