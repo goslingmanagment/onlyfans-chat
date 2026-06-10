@@ -1,0 +1,46 @@
+{
+  "_meta": {
+    "capturedAt": "2026-06-10T21:00:23.844Z",
+    "anonymized": true,
+    "source": "live capture, Phase-0 webhook spike (loravie team), 2026-06-10",
+    "signatureHeader": "signature",
+    "idempotencyKeyHeader": "x-ofapi-idempotency-key",
+    "idempotencyKeySample": "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "event": "transactions.new",
+  "account_id": "acct_02000000000000000000000000000000",
+  "payload": {
+    "id": "e940b5fb905ba0815d5842a7bde1118c",
+    "created_at": "2026-06-10 20:59:47",
+    "type": "message",
+    "tips_source": null,
+    "amount": 17,
+    "vat_amount": 2.21,
+    "tax_amount": 0,
+    "net_amount": 13.6,
+    "fee_amount": 3.4,
+    "currency": "USD",
+    "description": "Payment for message from <a href=\"https://onlyfans.com/anonymized\">Fan</a>",
+    "status": "loading",
+    "fan": {
+      "id": "1000003",
+      "username": "fan002",
+      "name": "Fan 1",
+      "display_name": "Fan 3",
+      "avatar": "https://public.onlyfans.com/anonymized/sample.jpg"
+    },
+    "fanData": {
+      "available": true,
+      "last_updated_at": "2026-06-10T21:00:23.000000Z",
+      "spending": {
+        "total": 28.8,
+        "messages": 28.8,
+        "subscribes": 0,
+        "posts": 0,
+        "tips": 0,
+        "streams": 0
+      },
+      "previous_reply_at": "2026-06-10T20:55:18.000000Z"
+    }
+  }
+}

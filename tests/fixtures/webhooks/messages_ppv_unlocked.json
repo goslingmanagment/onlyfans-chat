@@ -1,0 +1,88 @@
+{
+  "_meta": {
+    "capturedAt": "2026-06-10T20:49:42.805Z",
+    "anonymized": true,
+    "source": "live capture, Phase-0 webhook spike (loravie team), 2026-06-10",
+    "signatureHeader": "signature",
+    "idempotencyKeyHeader": "x-ofapi-idempotency-key",
+    "idempotencyKeySample": "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "event": "messages.ppv.unlocked",
+  "account_id": "acct_02000000000000000000000000000000",
+  "payload": {
+    "id": "1000002",
+    "type": "paided_message",
+    "createdAt": "2026-06-10T20:49:00+00:00",
+    "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+    "replacePairs": {
+      "{NAME}": "Sample fan message text used in anonymized fixtures.",
+      "{MESSAGE_LINK}": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "{AMOUNT}": "$12.00"
+    },
+    "subType": "subscriber_pay_for_chat_message",
+    "user_id": "514788334",
+    "isRead": false,
+    "canGoToProfile": true,
+    "user": {
+      "avatar": "https://public.onlyfans.com/anonymized/sample.jpg",
+      "avatarThumbs": {
+        "c50": "https://thumbs.onlyfans.com/public/files/thumbs/c50/4/44/44630ea7c11495ab54311e769ae5afb3/489357143/avatar.jpg",
+        "c144": "https://thumbs.onlyfans.com/public/files/thumbs/c144/4/44/44630ea7c11495ab54311e769ae5afb3/489357143/avatar.jpg"
+      },
+      "header": "https://public.onlyfans.com/files/v/v9/v9b/v9btsqhbvibkszzmfpu9knoqgdb3oxns1766634363/489357143/header_image.jpg",
+      "headerSize": {
+        "width": 770,
+        "height": 517
+      },
+      "headerThumbs": {
+        "w480": "https://thumbs.onlyfans.com/public/files/thumbs/w480/v/v9/v9b/v9btsqhbvibkszzmfpu9knoqgdb3oxns1766634363/489357143/header_image.jpg",
+        "w760": "https://thumbs.onlyfans.com/public/files/thumbs/w760/v/v9/v9b/v9btsqhbvibkszzmfpu9knoqgdb3oxns1766634363/489357143/header_image.jpg"
+      },
+      "id": 1000003,
+      "name": "Fan 1",
+      "username": "fan002",
+      "canLookStory": false,
+      "canCommentStory": false,
+      "hasNotViewedStory": false,
+      "isVerified": false,
+      "canPayInternal": false,
+      "hasScheduledStream": false,
+      "hasStream": false,
+      "hasStories": false,
+      "tipsEnabled": false,
+      "tipsTextEnabled": true,
+      "tipsMin": 5,
+      "tipsMinInternal": 1,
+      "tipsMax": 200,
+      "canEarn": false,
+      "canAddSubscriber": true,
+      "subscribePrice": 0,
+      "displayName": "Fan 3",
+      "subscribedBy": false,
+      "subscribedOn": false,
+      "canReceiveChatMessage": false,
+      "hideChat": false,
+      "lastSeen": null,
+      "isPerformer": false,
+      "isRealPerformer": false,
+      "view": "mn",
+      "canReport": false,
+      "subscribedByData": null,
+      "subscribedOnData": null,
+      "isBlocked": false
+    },
+    "fanData": {
+      "available": true,
+      "last_updated_at": "2026-06-10T20:49:42.000000Z",
+      "spending": {
+        "total": 15.2,
+        "messages": 15.2,
+        "subscribes": 0,
+        "posts": 0,
+        "tips": 0,
+        "streams": 0
+      },
+      "previous_reply_at": "2026-06-10T20:43:13.000000Z"
+    }
+  }
+}

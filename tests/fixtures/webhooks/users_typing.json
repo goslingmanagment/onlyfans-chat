@@ -10,6 +10,6 @@
   "event": "users.typing",
   "account_id": "acct_01000000000000000000000000000000",
   "payload": {
-    "id": 1000017
+    "id": 1000034
   }
 }
