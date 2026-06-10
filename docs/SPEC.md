@@ -209,7 +209,7 @@ Tables (all with `account_id` scoping; ids TEXT):
 - `accounts(id, username, display_name, auth_state, raw JSON, updated_at)`
 - `chats(account_id, chat_id, fan_name, unread_count, has_unread_tips, last_message_at, last_message_preview, last_read_message_id, pinned, can_send_message, can_not_send_reason, raw JSON, updated_at)` — index `(account_id, last_message_at DESC)`
 - `messages(account_id, chat_id, message_id, created_at, is_sent_by_me, text_html, text_plain, price, is_opened, is_new, is_tip, media JSON, deleted, raw JSON)` — PK `(account_id, chat_id, message_id)`, index `(account_id, chat_id, created_at DESC)`
-- `fans(account_id, fan_id, username, name, custom_name, last_seen, spending JSON, subscription JSON, core_notes_cached, fetched_at)` — notes are core-stored (PRD F5), cached here for instant panel paint
+- `fans(account_id, fan_id, username, name, custom_name, last_seen, spending JSON, subscription JSON, fetched_at)` — no notes store: human notes cut from v1 (PRD F5)
 - `summaries(…)` per §8.5; `outbox(…)` per §7; `media_cache(url_hash, path, bytes, fetched_at)` (LRU, cap 2 GB)
 - `settings(key, value JSON)` with `schema_version` + sequential migrations (legacy pattern); `usage_events` (pending hub flush); `credit_log(day, used)`
 - Retention: messages pruned per chat beyond 5,000 (configurable); summaries/outbox kept.
