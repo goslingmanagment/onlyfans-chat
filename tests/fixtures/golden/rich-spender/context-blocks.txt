@@ -1,0 +1,119 @@
+════ TRANSCRIPT ════
+[13:20] Fan: Anonymized message 100.
+[16:58] Model: Anonymized message 99.
+[16:14] Model: Anonymized message 98.
+[16:17] Fan: Anonymized message 97.
+[16:17] Fan: Anonymized message 96.
+[16:18] Fan: Anonymized message 95.
+[16:18] Fan: Anonymized message 94.
+[16:21] Model: Anonymized message 92.
+[16:24] Fan: Anonymized message 93.
+[16:25] Fan: Anonymized message 91.
+[16:33] Model: Anonymized message 90.
+[16:34] Fan: Anonymized message 89.
+[16:35] Fan: Anonymized message 88.
+[16:51] Model: Anonymized message 87.
+[16:59] Fan: Anonymized message 86.
+[17:00] Fan: Anonymized message 56.
+[17:01] Model: Anonymized message 85.
+[17:01] Fan: Anonymized message 84.
+[17:04] Fan: Anonymized message 83.
+[17:07] Fan: Anonymized message 82.
+[17:11] Model: Anonymized message 78.
+[17:12] Fan: Anonymized message 81.
+[17:13] Fan: Anonymized message 80.
+[17:14] Fan: Anonymized message 79.
+[17:15] Fan: Anonymized message 77.
+[17:15] Fan: Anonymized message 76.
+[17:16] Fan: Anonymized message 75.
+[17:23] Model: Anonymized message 74. This one is a longer message for layout and token-count realism, repeated to preserve the rough size of the original message in the fixture.
+[17:33] Fan: Anonymized message 73. This one is a longer message for layout and token-count realism, repeated to preserve the rough size of the original message in the fixture.
+[17:35] Fan: Anonymized message 72. This one is a longer message for layout and token-count realism, repeated to preserve the rough size of the original message in the fixture.
+[17:36] Fan: Anonymized message 71.
+[17:39] Fan: Anonymized message 70. This one is a longer message for layout and token-count realism, repeated to preserve the rough size of the original message in the fixture.
+[17:41] Fan: Anonymized message 69.
+[17:43] Model: Anonymized message 68. This one is a longer message for layout and token-count realism, repeated to preserve the rough size of the original message in the fixture.
+[17:44] Fan: Anonymized message 67.
+[17:51] Model: Anonymized message 66.
+[17:55] Fan: Anonymized message 65.
+[18:12] Model: Anonymized message 64.
+[18:14] Fan: Anonymized message 63.
+[18:16] Fan: Anonymized message 62.
+[18:21] Model: Anonymized message 61.
+[18:23] Fan: Anonymized message 60.
+[18:26] Model: Anonymized message 59.
+[18:27] Fan: Anonymized message 58.
+[18:29] Model: Anonymized message 57.
+[18:35] Fan: Anonymized message 55.
+[18:39] Model: Anonymized message 54.
+[18:41] Fan: Anonymized message 53.
+[18:47] Model: Anonymized message 51.
+[19:25] Fan: Anonymized message 50.
+[19:26] Fan: Anonymized message 49.
+[19:27] Fan: Anonymized message 48.
+[19:33] Model: Anonymized message 47.
+[19:53] Fan: Anonymized message 46.
+[19:54] Fan: Anonymized message 45.
+[19:54] Fan: Anonymized message 44.
+[19:55] Fan: Anonymized message 43.
+[20:00] Model: Anonymized message 42.
+[20:01] Fan: Anonymized message 41.
+[20:02] Fan: Anonymized message 39.
+[20:18] Model: Anonymized message 40.
+[20:18] Model: Anonymized message 37.
+[20:33] Fan: Anonymized message 38.
+[20:34] Fan: Anonymized message 36.
+[20:36] Model: [Photo] Anonymized message 35.
+[20:36] Fan: Anonymized message 34.
+[20:37] Fan: Anonymized message 33.
+[20:38] Fan: Anonymized message 32.
+[20:44] Fan: Anonymized message 31.
+[20:44] Fan: Anonymized message 30.
+[20:50] Model: Anonymized message 29.
+[20:50] Fan: Anonymized message 28.
+[21:00] Model: Anonymized message 27.
+[21:01] Fan: Anonymized message 26.
+[21:01] Fan: [Photo]
+[21:01] Model: Anonymized message 25.
+[21:02] Fan: Anonymized message 24.
+[21:03] Fan: Anonymized message 23.
+[21:22] Fan: Anonymized message 22.
+[21:23] Model: Anonymized message 21.
+[21:24] Fan: Anonymized message 20.
+[21:24] Fan: Anonymized message 19.
+[21:26] Model: Anonymized message 18.
+[21:26] Fan: Anonymized message 17.
+[21:26] Model: Anonymized message 16.
+[21:27] Fan: Anonymized message 15.
+[21:31] Model: Anonymized message 14.
+[21:32] Fan: Anonymized message 13.
+[21:32] Model: Anonymized message 12.
+[21:33] Fan: Anonymized message 11.
+[22:00] Fan: Anonymized message 10.
+[22:01] Fan: Anonymized message 9.
+[22:03] Model: Anonymized message 8.
+[10:34] Fan: Anonymized message 7.
+[15:27] Model: Anonymized message 6.
+[14:14] Fan: Anonymized message 5.
+[14:27] Model: Anonymized message 4.
+[14:31] Fan: Anonymized message 3.
+[14:38] Fan: Anonymized message 2.
+[15:10] Model: Anonymized message 1.
+════ FAN SPENDING DATA BLOCK ════
+FAN SPENDING DATA:
+Fan ID: 1000005
+Total gross (all-time): $582.40
+Type breakdown (all-time):
+- Paid messages: $413.60
+- Tips: $98.40
+- Paid posts: $70.40
+════ FAN SUBSCRIPTION DATA BLOCK ════
+FAN SUBSCRIPTION DATA:
+Price: Free
+Status: Active
+Subscribed since: Nov 8, 2025 (213 days ago)
+Subscribed for: 7 months
+Current period ends: Nov 8, 2035 (in 3438 days)
+Auto-renew: On
+Next renewal: Nov 8, 2035
+Has active paid subscriptions: No

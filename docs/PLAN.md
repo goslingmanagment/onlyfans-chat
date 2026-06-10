@@ -22,6 +22,36 @@ Engineering bootstrap:
 
 **Exit:** spike report appended to this file (latency table, credit burn, coexistence verdict, chosen auth method); CI green; core modules ported with passing tests.
 
+### Phase-0 spike report (2026-06-10)
+
+**Latency spike (read-only, ~203 calls, 18:36–18:50 UTC ≈ 14:36 ET — US afternoon):**
+
+| Endpoint | calls | ok | p50 | p95 | min | max | mean |
+|---|---|---|---|---|---|---|---|
+| `GET /{acct}/chats?limit=50` | 70 | 67 | 2,234 ms | 7,485 ms | 936 | 15,674 | 3,100 |
+| `GET /{acct}/chats/{id}/messages?limit=100` | 70 | 69 | 4,681 ms | 14,881 ms | 913 | 19,820 | 5,414 |
+| `GET /{acct}/users/{username}` | 60 | 60 | 1,658 ms | 6,269 ms | 644 | 11,072 | 2,394 |
+
+- **Error rate ≈ 2%** (4×500 across 200 calls) — transient, succeed on retry. Client retries ≤3 on idempotent GETs (SPEC §5).
+- **PRD risk #2 trigger hit:** p95 ≫ 2.5 s on every endpoint → cache-first rendering is mandatory, which is already the architecture (SPEC §6.3: everything renders from SQLite; network only reconciles). Consequence applied in sync design: poll-overlap protection (a 20 s cadence with 7.5 s p95 must never stack concurrent polls of one account).
+- **Credit burn: 196 credits for 203 calls** — confirms 1 credit/account-call exactly; PRD §10 arithmetic stands.
+
+**Live shape findings (all applied to docs in the same commits):**
+- `lastReplyAt`: **absent on every chat** even after ~12 h connected + active traffic (70 samples). v1 ships on the `lastMessage.isSentByMe` fallback; vendor question stays open.
+- **No pinned/priority flag source** on chat objects (`countPinnedMessages` counts pinned *messages*; `fan.listsStates` = Tagged/Recent/Muted user-lists). v1 ships without pinned badges; pinned/priority remain API-level filters only.
+- **Tip messages carry `tipAmount` (dollars, number) + `tipText` (fan's note, OF HTML)**; the message `text` is platform boilerplate in the fan's UI language. SPEC §8.2 ladder resolved at step ① — transcript renders `[Tip: $X.XX]` + stripped tipText.
+- **Media hosts not IP-locked:** `thumbs.onlyfans.com`, `public.onlyfans.com`, and a fresh `cdn2.onlyfans.com` avatar URL all fetch directly (200, image bytes) from a non-proxy IP. `media://` handler fetches the signed URL directly first (0 credits), OFAPI download endpoint only as 403/expiry fallback.
+- Live message objects use `isMediaReady` (docs/research said `isReady`) and `cancelSeconds`; field truth now captured in committed fixtures and the codegen types.
+
+**Webhook smoke test (item 4):** registered `wh_3388f54a…` for **all 28 events**, `account_scope: global`, via API, with signing secret, against a cloudflared quick tunnel (token path + HMAC = access protection). Contract live-verified and corrected vs research: **dedupe key is the `x-ofapi-idempotency-key` header** (`evt_<40 hex>`) — the body has NO event-id field; **signature arrives in the `signature` header** (hex HMAC-SHA256 of the raw body). Captured 162+ deliveries during the session: `messages.received`, `messages.sent`, `users.typing` (≈3 s cadence confirmed), `users.online/offline`, `subscriptions.new` — i.e. every event class the P3 UI depends on fired naturally and is committed (anonymized) in `tests/fixtures/webhooks/`; events that didn't fire (`messages.ppv.unlocked`, `tips.received`, `transactions.new`, `messages.deleted`, `subscriptions.renewed`) are included from documented examples marked `verified:false`. Webhook deleted via API at session end. *(→ webhook count/final inventory refreshed at session close below.)*
+- **Surprise: a second authenticated account (`loravievip`) exists on the team** — events from both accounts flowed in; `account_scope: global` covers the team, and fixtures span both (ids anonymized).
+
+**Coexistence (item 2, read-only half):** during the whole session loravie + loravievip stayed `is_authenticated: true` (checks at 18:29 / 18:36 / 19:02+ UTC) **while OnlyMonster was actively used in parallel** (live `messages.sent` webhook events = chatters replying from OM during our API/webhook activity). Zero `accounts.session_expired` / `accounts.authentication_failed` events captured. No read/typing interference is observable read-only; the multi-day half continues as owner-ops; the send half stays in item 8.
+
+**Chosen auth method (confirmed):** console-issued API keys + dashboard-connected accounts (automated login). `raw_data` cookie import remains the fallback; v2 Face-Auth accounts would need the Auth+ iPhone app.
+
+**Engineering bootstrap (items 5–7):** pnpm monorepo scaffold (electron-vite, React 19, Tailwind 4, TS strict) with `pnpm check` green; Electron pinned to 41 (42's V8 breaks `better-sqlite3-multiple-ciphers` ≤12.10); OpenAPI→TS codegen committed (51,871 lines of generated types); `packages/shared` built fresh — 8 module clusters, **561 unit tests**, three adversarial verifications clean (prompt byte-fidelity 35 artifacts; legacy test-case coverage 220 cases, none dropped; constants audit 130 values). Model registry refreshed per PRD F6: `anthropic:claude-opus-4-8` added (with sampling-params-removed capability handling); legacy-tuned defaults unchanged.
+
 ## Phase 1 — Read-only chat client (~week 1–3)
 
 Build: OFAPI client layer (rate limiter, pagination adapters, credit meter, error mapping, fixture capture) · SQLite layer + migrations · PollingSync with delta rule · accounts rail + chat list (filters, search, badges) · conversation view (history, media via `media://` cache, PPV badges, tips, read-state, scrollback virtualization) · fan context panel (spending, subscription, notes read, lastSeen) · settings shell + keychain · status bar (credits, freshness) · notifications/toasts.
