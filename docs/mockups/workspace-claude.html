@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatGoose — workspace mockup (Claude-style)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg0:#efece4; --bg1:#faf9f5; --bg2:#f2f0e9; --bg3:#e8e5da;
+    --line:#e2dfd3; --line-strong:#cfcaba;
+    --t-hi:#1f1e1d; --t-mid:#5d5a52; --t-low:#97928a;
+    --clay:#d97757; --clay-deep:#c2603f; --clay-bg:#f7e8e1; --clay-line:#e8c3b3;
+    --green:#3a7d44; --green-bg:#e9f1e5; --green-line:#c9dcc2;
+    --amber:#96691c; --amber-bg:#f6efdc; --amber-line:#e4d4a8;
+    --seen:#4a72b8; --warn:#b45309; --bad:#bb4430; --online:#3f9e54;
+    --sans:"Hanken Grotesk",-apple-system,sans-serif;
+    --serif:"Source Serif 4",Georgia,serif;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+    --r:9px; --rs:7px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--bg0); color:var(--t-hi); font-family:var(--sans);
+    font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased;
+    overflow:hidden; min-width:1280px;
+  }
+  .num{font-family:var(--mono); font-variant-numeric:tabular-nums}
+  kbd{
+    font-family:var(--mono); font-size:10px; color:var(--t-mid);
+    border:1px solid var(--line-strong); border-bottom-width:2px; border-radius:5px;
+    padding:1px 4px 0; background:var(--bg1); white-space:nowrap;
+  }
+  .cap{font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--t-low); font-weight:600}
+
+  .app{display:flex; flex-direction:column; height:100vh}
+
+  /* ───────── titlebar ───────── */
+  .titlebar{
+    height:46px; flex:0 0 auto; display:flex; align-items:center; gap:14px;
+    padding:0 16px; border-bottom:1px solid var(--line); background:var(--bg1);
+  }
+  .traffic{display:flex; gap:7px; margin-right:4px}
+  .traffic i{width:11px;height:11px;border-radius:50%;background:#ddd9cc;display:block}
+  .wordmark{font-family:var(--serif); font-weight:600; font-size:17px; letter-spacing:-.01em}
+  .wordmark i{font-style:normal; color:var(--clay)}
+  .searchpill{
+    flex:0 0 400px; margin-left:18px; display:flex; align-items:center; gap:8px;
+    height:30px; padding:0 12px; border:1px solid var(--line-strong); border-radius:999px;
+    color:var(--t-low); background:var(--bg1); font-size:13px;
+  }
+  .searchpill .grow{flex:1}
+  .tb-right{margin-left:auto; display:flex; align-items:center; gap:12px}
+  .envbadge{font-family:var(--mono); font-size:10px; letter-spacing:.1em; color:var(--t-mid);
+    border:1px solid var(--line-strong); padding:3px 10px; border-radius:999px; background:var(--bg1)}
+
+  /* ───────── main grid ───────── */
+  .main{flex:1; display:grid; grid-template-columns:60px 336px 1fr 328px; min-height:0}
+
+  /* rail */
+  .rail{border-right:1px solid var(--line); background:var(--bg1);
+    display:flex; flex-direction:column; align-items:center; padding:12px 0; gap:10px}
+  .acct{position:relative; width:36px; height:36px; border-radius:10px; display:flex;
+    align-items:center; justify-content:center; font-weight:700; font-size:12.5px;
+    color:var(--t-mid); background:var(--bg3); cursor:pointer}
+  .acct.active{color:#fff; background:var(--clay)}
+  .acct.active::before{content:""; position:absolute; left:-12px; top:8px; bottom:8px;
+    width:3px; border-radius:3px; background:var(--clay)}
+  .acct .ubadge{position:absolute; top:-5px; right:-6px; min-width:16px; height:16px;
+    border-radius:8px; background:var(--t-hi); color:var(--bg1); font-family:var(--mono);
+    font-size:9.5px; font-weight:600; display:flex; align-items:center; justify-content:center;
+    padding:0 4px; border:2px solid var(--bg1)}
+  .acct.add{background:transparent; border:1.5px dashed var(--line-strong); color:var(--t-low); font-size:16px}
+  .rail .spacer{flex:1}
+  .gearslot{color:var(--t-low); font-size:16px; padding:6px; cursor:pointer}
+
+  /* ───────── chat list ───────── */
+  .chats{border-right:1px solid var(--line); background:var(--bg1); display:flex; flex-direction:column; min-height:0}
+  .chats-head{padding:14px 14px 10px; border-bottom:1px solid var(--line)}
+  .chats-title{display:flex; align-items:baseline; gap:9px; margin-bottom:10px}
+  .chats-title h1{font-family:var(--serif); font-size:17px; font-weight:600}
+  .chats-title .num{font-size:10.5px; color:var(--t-low)}
+  .filters{display:flex; gap:5px}
+  .fchip{font-size:12.5px; font-weight:500; padding:4px 12px; border-radius:999px;
+    border:1px solid transparent; color:var(--t-mid); cursor:pointer}
+  .fchip.on{background:var(--t-hi); color:var(--bg1)}
+  .fchip .num{font-size:10.5px; opacity:.7; margin-left:3px}
+  .rows{flex:1; overflow-y:auto}
+  .row{display:grid; grid-template-columns:40px 1fr auto; gap:11px; padding:12px 14px;
+    cursor:pointer; position:relative; background:var(--bg1); border-bottom:1px solid var(--line)}
+  .row:hover{background:var(--bg2)}
+  .row.sel{background:var(--bg2)}
+  .row.sel::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--clay)}
+  .ava{width:40px; height:40px; border-radius:11px; background:var(--bg3); display:flex;
+    align-items:center; justify-content:center; font-weight:700; font-size:13px; color:var(--t-mid);
+    position:relative; flex:0 0 auto}
+  .ava.online::after{content:""; position:absolute; right:-3px; bottom:-3px; width:10px; height:10px;
+    border-radius:50%; background:var(--online); border:2.5px solid var(--bg1)}
+  .rmain{min-width:0}
+  .rtop{display:flex; align-items:center; gap:6px}
+  .rname{font-weight:600; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .wait{width:7px; height:7px; border-radius:50%; background:var(--clay); flex:0 0 auto}
+  .rprev{color:var(--t-mid); font-size:13px; white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis; margin-top:2px}
+  .rprev .me{color:var(--t-low)}
+  .rside{display:flex; flex-direction:column; align-items:flex-end; gap:5px}
+  .rtime{font-family:var(--mono); font-size:10px; color:var(--t-low)}
+  .pill-unread{min-width:18px; height:17px; border-radius:9px; background:var(--clay); color:#fff;
+    font-family:var(--mono); font-size:10px; font-weight:600; display:flex; align-items:center;
+    justify-content:center; padding:0 5px}
+  .pill-tip{font-family:var(--mono); font-size:10px; font-weight:600; color:var(--green);
+    border:1px solid var(--green-line); background:var(--green-bg); border-radius:999px; padding:1px 7px}
+  .chats-foot{padding:8px 14px; border-top:1px solid var(--line); display:flex; gap:8px;
+    align-items:center; color:var(--t-low); font-size:11px; background:var(--bg1)}
+
+  /* ───────── conversation ───────── */
+  .convo{display:flex; flex-direction:column; min-width:0; min-height:0; background:var(--bg0)}
+  .convo-head{height:60px; flex:0 0 auto; display:flex; align-items:center; gap:12px;
+    padding:0 18px; border-bottom:1px solid var(--line); background:var(--bg1)}
+  .ch-name{font-family:var(--serif); font-weight:600; font-size:17px}
+  .ch-sub{font-size:12px; color:var(--green); display:flex; align-items:center; gap:5px}
+  .ch-sub::before{content:""; width:7px; height:7px; border-radius:50%; background:var(--online)}
+  .vchips{display:flex; gap:7px; margin-left:14px}
+  .vchip{display:flex; align-items:baseline; gap:6px; border:1px solid var(--line);
+    border-radius:999px; padding:4px 12px; background:var(--bg1)}
+  .vchip .cap{font-size:9.5px}
+  .vchip .num{font-size:13px; font-weight:600}
+  .vchip.money{border-color:var(--green-line); background:var(--green-bg)}
+  .vchip.money .num{color:var(--green)}
+  .ch-actions{margin-left:auto; display:flex; align-items:center; gap:8px; color:var(--t-low)}
+
+  .thread{flex:1; overflow-y:auto; padding:20px 24px 8px; display:flex; flex-direction:column; gap:2px}
+  .day{display:flex; align-items:center; gap:12px; margin:8px 0 16px}
+  .day::before,.day::after{content:""; flex:1; height:1px; background:var(--line-strong)}
+  .day span{font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; color:var(--t-low)}
+
+  .msg{display:flex; margin:4px 0; max-width:68%}
+  .msg .bubble{padding:10px 14px; border-radius:14px; font-size:14.5px}
+  .msg .meta{display:flex; gap:8px; align-items:baseline; margin-top:4px;
+    font-family:var(--mono); font-size:9px; letter-spacing:.07em; color:var(--t-low)}
+  .msg.fan{align-self:flex-start}
+  .msg.fan .bubble{background:var(--bg1); border:1px solid var(--line); border-bottom-left-radius:5px}
+  .msg.me{align-self:flex-end; flex-direction:column; align-items:flex-end}
+  .msg.me .bubble{background:#e9e2d4; border:1px solid #ded5c2; border-bottom-right-radius:5px}
+  .st-seen{color:var(--seen)} .st-sent{color:var(--t-low)} .st-unconf{color:var(--warn)}
+
+  .ledger{align-self:center; display:flex; align-items:center; gap:10px; margin:10px 0;
+    border:1px solid var(--green-line); background:var(--green-bg); border-radius:999px;
+    padding:5px 14px}
+  .ledger .amt{font-family:var(--mono); font-weight:600; color:var(--green); font-size:13px}
+  .ledger .lbl{font-size:12px; color:var(--t-mid)}
+  .ledger .at{font-family:var(--mono); font-size:9px; color:var(--t-low)}
+
+  .ppv .bubble{padding:0; overflow:hidden; width:312px}
+  .ppv-media{height:124px; position:relative; display:flex; align-items:center; justify-content:center;
+    background:repeating-linear-gradient(135deg,#eae4d6 0 12px,#e3dccb 12px 24px);
+    border-bottom:1px solid var(--line)}
+  .ppv-media .lock{font-size:17px; opacity:.5}
+  .ppv-media .count{position:absolute; right:9px; bottom:8px; font-family:var(--mono);
+    font-size:9px; color:var(--t-mid); background:rgba(250,249,245,.9); border:1px solid var(--line);
+    border-radius:5px; padding:2px 7px}
+  .ppv-body{padding:10px 14px; font-size:14.5px}
+  .ppv-row{display:flex; align-items:center; gap:9px; margin-top:8px}
+  .ppv-price{font-family:var(--mono); font-weight:600; font-size:11px; border-radius:999px; padding:2px 9px}
+  .ppv-price.unopened{color:var(--amber); border:1px solid var(--amber-line); background:var(--amber-bg)}
+  .ppv-price.opened{color:#fff; background:var(--green); border:1px solid var(--green)}
+  .ppv-state{font-family:var(--mono); font-size:9px; letter-spacing:.08em; color:var(--t-low)}
+  .ppv-state.paid{color:var(--green)}
+
+  .typing{align-self:flex-start; display:flex; align-items:center; gap:8px; margin:6px 0 2px;
+    color:var(--t-low); font-size:12px}
+  .typing .dots{display:inline-flex; gap:3px}
+  .typing .dots i{width:4px; height:4px; border-radius:50%; background:var(--t-low); animation:blink 1.2s infinite}
+  .typing .dots i:nth-child(2){animation-delay:.2s}
+  .typing .dots i:nth-child(3){animation-delay:.4s}
+  @keyframes blink{0%,60%,100%{opacity:.25} 30%{opacity:1}}
+
+  /* ───────── AI dock — AI text is SERIF, like Claude ───────── */
+  .dock{flex:0 0 auto; margin:8px 18px 0; border:1px solid var(--line-strong); border-radius:var(--r);
+    background:var(--bg1); overflow:hidden; box-shadow:0 2px 6px rgba(31,30,29,.05)}
+  .dock-head{display:flex; align-items:center; gap:10px; padding:8px 14px;
+    border-bottom:1px solid var(--line)}
+  .dock-spark{color:var(--clay); font-size:13px}
+  .dock-title{font-family:var(--mono); font-size:9.5px; letter-spacing:.15em; color:var(--t-mid); font-weight:600}
+  .dock-title b{color:var(--t-hi)}
+  .tones{display:flex; gap:4px; margin-left:8px}
+  .tone{font-size:12px; font-weight:500; padding:3px 11px; border-radius:999px;
+    border:1px solid transparent; color:var(--t-mid); cursor:pointer}
+  .tone.on{color:var(--clay-deep); background:var(--clay-bg); border-color:var(--clay-line)}
+  .dock-head .right{margin-left:auto; display:flex; align-items:center; gap:10px;
+    font-family:var(--mono); font-size:9px; color:var(--t-low)}
+  .dock-body{padding:10px 14px 11px; display:flex; flex-direction:column; gap:8px}
+  .part{display:flex; gap:10px; align-items:flex-start}
+  .part .ptxt{flex:1; font-family:var(--serif); font-size:15px; color:var(--t-hi);
+    background:var(--bg2); border:1px solid var(--line); border-radius:var(--rs); padding:8px 12px}
+  .caret{display:inline-block; width:7px; height:14px; background:var(--clay);
+    vertical-align:-2px; margin-left:2px; animation:caret 1s steps(2) infinite}
+  @keyframes caret{50%{opacity:0}}
+  .pbtn{flex:0 0 auto; display:flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600;
+    color:var(--t-hi); border:1px solid var(--line-strong); background:var(--bg1);
+    border-radius:var(--rs); padding:6px 12px; cursor:pointer}
+  .pbtn:hover{border-color:var(--clay); color:var(--clay-deep)}
+  .dock-foot{display:flex; gap:8px; align-items:center; padding:0 14px 11px}
+  .dbtn{font-size:12px; font-weight:500; color:var(--t-mid); border:1px solid var(--line);
+    border-radius:var(--rs); padding:5px 11px; cursor:pointer; display:flex; gap:6px; align-items:center;
+    background:var(--bg1)}
+  .dock-foot .hint{margin-left:auto; font-size:11px; color:var(--t-low)}
+
+  /* ───────── composer ───────── */
+  .composer{flex:0 0 auto; margin:9px 18px 14px; border:1px solid var(--line-strong); border-radius:var(--r);
+    background:var(--bg1); padding:12px 14px 10px; box-shadow:0 2px 6px rgba(31,30,29,.05)}
+  .composer textarea{width:100%; min-height:44px; resize:none; background:transparent; border:0;
+    outline:0; color:var(--t-hi); font-family:var(--sans); font-size:14.5px; line-height:1.5}
+  .composer textarea::placeholder{color:var(--t-low)}
+  .c-row{display:flex; align-items:center; gap:11px; margin-top:7px}
+  .cicon{color:var(--t-low); font-size:15px; cursor:pointer}
+  .cicon.off{opacity:.4; cursor:default}
+  .c-note{font-family:var(--mono); font-size:9px; color:var(--t-low); letter-spacing:.06em}
+  .send{margin-left:auto; display:flex; align-items:center; gap:8px; background:var(--clay);
+    color:#fff; font-weight:700; font-size:13.5px; border:1px solid var(--clay); border-radius:var(--rs);
+    padding:8px 16px; cursor:pointer}
+  .send:hover{background:var(--clay-deep)}
+  .send kbd{border-color:rgba(255,255,255,.4); color:#fff; background:transparent}
+
+  /* ───────── fan panel ───────── */
+  .fanel{border-left:1px solid var(--line); background:var(--bg1); display:flex;
+    flex-direction:column; min-height:0; overflow-y:auto}
+  .tabs{display:flex; border-bottom:1px solid var(--line); padding:0 6px}
+  .tab{flex:1; text-align:center; font-size:12.5px; font-weight:600; color:var(--t-low);
+    padding:12px 0 10px; cursor:pointer; border-bottom:2px solid transparent}
+  .tab.on{color:var(--t-hi); border-bottom-color:var(--clay)}
+  .fp{padding:16px}
+  .fp-id{display:flex; gap:12px; align-items:center}
+  .fp-ava{width:48px; height:48px; border-radius:13px; background:var(--bg3); display:flex;
+    align-items:center; justify-content:center; font-weight:700; color:var(--t-mid);
+    position:relative; font-size:14px}
+  .fp-ava::after{content:""; position:absolute; right:-3px; bottom:-3px; width:11px; height:11px;
+    border-radius:50%; background:var(--online); border:2.5px solid var(--bg1)}
+  .fp-name{font-family:var(--serif); font-weight:600; font-size:17px}
+  .fp-handle{font-family:var(--mono); font-size:10px; color:var(--t-low)}
+  .fp-custom{font-size:11.5px; color:var(--t-mid); margin-top:2px}
+  .fp-custom u{text-decoration:none; border-bottom:1px dashed var(--line-strong); cursor:pointer}
+  .grid4{display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:14px 0 0}
+  .stat{border:1px solid var(--line); border-radius:var(--rs); padding:9px 11px; background:var(--bg2)}
+  .stat .num{display:block; font-size:16px; font-weight:600; margin-top:2px}
+  .stat.money{border-color:var(--green-line); background:var(--green-bg)}
+  .stat.money .num{color:var(--green)}
+  .card{border:1px solid var(--line); border-radius:var(--rs); background:var(--bg1); padding:11px 12px; margin-top:11px}
+  .card .titlerow{display:flex; align-items:center; gap:8px; margin-bottom:8px}
+  .kv{display:flex; justify-content:space-between; font-size:12.5px; padding:3px 0; color:var(--t-mid)}
+  .kv b{color:var(--t-hi); font-weight:600}
+  .ok-text{color:var(--green)} .risk-text{color:var(--bad)}
+  .lists{display:flex; gap:6px; flex-wrap:wrap; margin-top:11px}
+  .lchip{font-size:11px; font-weight:500; color:var(--t-mid); border:1px solid var(--line);
+    border-radius:999px; padding:3px 9px; background:var(--bg2)}
+  .lchip.money{color:var(--green); border-color:var(--green-line); background:var(--green-bg)}
+  .sumcard p{font-family:var(--serif); font-size:13.5px; color:var(--t-mid); margin-top:6px; line-height:1.6}
+  .sum-age{font-family:var(--mono); font-size:9px; color:var(--t-low)}
+  .refresh{margin-left:auto; font-size:11.5px; font-weight:500; color:var(--clay-deep); cursor:pointer}
+
+  /* ───────── status bar ───────── */
+  .statusbar{height:30px; flex:0 0 auto; border-top:1px solid var(--line); background:var(--bg1);
+    display:flex; align-items:center; gap:18px; padding:0 16px;
+    font-family:var(--mono); font-size:9.5px; color:var(--t-low); letter-spacing:.05em}
+  .sb-live{display:flex; align-items:center; gap:6px; color:var(--green)}
+  .sb-live::before{content:""; width:6px; height:6px; border-radius:50%; background:var(--online)}
+  .statusbar .money{color:var(--green)}
+  .statusbar .right{margin-left:auto; display:flex; gap:14px; align-items:center}
+
+  ::-webkit-scrollbar{width:10px}
+  ::-webkit-scrollbar-thumb{background:var(--line-strong); border-radius:6px; border:2.5px solid var(--bg1)}
+  ::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- titlebar -->
+  <header class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <div class="wordmark">Chat<i>Goose</i></div>
+    <div class="searchpill">⌕ <span class="grow">Jump to chat, fan or action…</span> <kbd>⌘K</kbd></div>
+    <div class="tb-right">
+      <span class="envbadge">LORA VIE · FREE</span>
+      <span class="cap">companion mode</span>
+    </div>
+  </header>
+
+  <div class="main">
+
+    <!-- account rail -->
+    <nav class="rail">
+      <div class="acct active">LV<span class="ubadge">7</span></div>
+      <div class="acct">LX<span class="ubadge">2</span></div>
+      <div class="acct">MK</div>
+      <div class="acct add">+</div>
+      <div class="spacer"></div>
+      <div class="gearslot">⚙</div>
+    </nav>
+
+    <!-- chat list -->
+    <section class="chats">
+      <div class="chats-head">
+        <div class="chats-title"><h1>Chats</h1><span class="num">synced 6s ago</span></div>
+        <div class="filters">
+          <span class="fchip on">All</span>
+          <span class="fchip">Unread<span class="num">7</span></span>
+          <span class="fchip">Tips<span class="num">2</span></span>
+          <span class="fchip">Priority</span>
+        </div>
+      </div>
+      <div class="rows">
+        <div class="row sel">
+          <div class="ava online">MK</div>
+          <div class="rmain">
+            <div class="rtop"><span class="rname">Marcus K.</span><span class="wait"></span></div>
+            <div class="rprev">maybe later babe, work is killing me…</div>
+          </div>
+          <div class="rside"><span class="rtime">19:04</span><span class="pill-unread">2</span></div>
+        </div>
+        <div class="row">
+          <div class="ava">DJ</div>
+          <div class="rmain">
+            <div class="rtop"><span class="rname">Daniel</span><span class="wait"></span></div>
+            <div class="rprev">so when do I get to see the new set 👀</div>
+          </div>
+          <div class="rside"><span class="rtime">18:51</span><span class="pill-tip">+$50</span></div>
+        </div>
+        <div class="row">
+          <div class="ava online">J7</div>
+          <div class="rmain">
+            <div class="rtop"><span class="rname">jake_777</span></div>
+            <div class="rprev"><span class="me">you:</span> [PPV $45] something for your evening</div>
+          </div>
+          <div class="rside"><span class="rtime">18:32</span><span class="pill-unread">1</span></div>
+        </div>
+        <div class="row">
+          <div class="ava">TH</div>
+          <div class="rmain">
+            <div class="rtop"><span class="rname">Tom H.</span></div>
+            <div class="rprev"><span class="me">you:</span> sleep well, talk tomorrow 😘</div>
+          </div>
+          <div class="rside"><span class="rtime">17:58</span></div>
+        </div>
+        <div class="row">
+          <div class="ava">RB</div>
+          <div class="rmain">
+            <div class="rtop"><span class="rname">Robbie</span></div>
+            <div class="rprev">that gym video was insane ngl</div>
+          </div>
+          <div class="rside"><span class="rtime">17:20</span><span class="pill-tip">+$25</span></div>
+        </div>
+        <div class="row">
+          <div class="ava">SM</div>
+          <div class="rmain">
+            <div class="rtop"><span class="rname">Sam</span></div>
+            <div class="rprev"><span class="me">you:</span> haha you wish 😏</div>
+          </div>
+          <div class="rside"><span class="rtime">16:44</span></div>
+        </div>
+        <div class="row">
+          <div class="ava">AL</div>
+          <div class="rmain">
+            <div class="rtop"><span class="rname">Alex P.</span></div>
+            <div class="rprev">just renewed, missed you</div>
+          </div>
+          <div class="rside"><span class="rtime">15:09</span><span class="pill-unread">4</span></div>
+        </div>
+        <div class="row">
+          <div class="ava">VN</div>
+          <div class="rmain">
+            <div class="rtop"><span class="rname">Vincent</span></div>
+            <div class="rprev"><span class="me">you:</span> good morning you 🖤</div>
+          </div>
+          <div class="rside"><span class="rtime">11:30</span></div>
+        </div>
+      </div>
+      <div class="chats-foot"><kbd>J</kbd><kbd>K</kbd> navigate · <kbd>⌘U</kbd> next unread</div>
+    </section>
+
+    <!-- conversation -->
+    <section class="convo">
+      <header class="convo-head">
+        <div style="display:flex;align-items:center;gap:11px;min-width:0">
+          <div class="ava online" style="width:38px;height:38px;border-radius:11px">MK</div>
+          <div>
+            <div class="ch-name">Marcus K.</div>
+            <div class="ch-sub">online now</div>
+          </div>
+        </div>
+        <div class="vchips">
+          <div class="vchip money"><span class="cap">lifetime</span><span class="num">$1,284</span></div>
+          <div class="vchip"><span class="cap">sub</span><span class="num">renews 12d</span></div>
+          <div class="vchip"><span class="cap">fan for</span><span class="num">7 mo</span></div>
+        </div>
+        <div class="ch-actions"><kbd>]</kbd></div>
+      </header>
+
+      <div class="thread">
+        <div class="day"><span>TODAY · UTC</span></div>
+
+        <div class="msg fan">
+          <div>
+            <div class="bubble">long day… gym after work nearly finished me. how was yours?</div>
+            <div class="meta"><span>18:38</span></div>
+          </div>
+        </div>
+
+        <div class="msg me">
+          <div>
+            <div class="bubble">aww poor thing 🥺 mine was leg day, I can barely walk lol. proud of you for still going tho</div>
+            <div class="meta"><span>18:41</span><span class="st-seen">SEEN 18:42</span></div>
+          </div>
+        </div>
+
+        <div class="ledger">
+          <span class="amt">+$25.00</span>
+          <span class="lbl">tip from Marcus</span><span class="at">18:47</span>
+        </div>
+
+        <div class="msg me ppv">
+          <div>
+            <div class="bubble">
+              <div class="ppv-media"><span class="lock">🔒</span><span class="count">3 photos · 1 video</span></div>
+              <div class="ppv-body">
+                little something from today's set… you earned it 🖤
+                <div class="ppv-row">
+                  <span class="ppv-price unopened">PPV $45</span>
+                  <span class="ppv-state">NOT OPENED</span>
+                </div>
+              </div>
+            </div>
+            <div class="meta"><span>18:52</span><span class="st-seen">SEEN 18:55</span></div>
+          </div>
+        </div>
+
+        <div class="msg me ppv">
+          <div>
+            <div class="bubble">
+              <div class="ppv-media" style="height:60px"><span class="lock">🔓</span><span class="count">1 photo</span></div>
+              <div class="ppv-body">
+                <div class="ppv-row" style="margin-top:2px">
+                  <span class="ppv-price opened">PPV $6</span>
+                  <span class="ppv-state paid">PURCHASED 14:02</span>
+                </div>
+              </div>
+            </div>
+            <div class="meta"><span>13:58</span><span class="st-seen">SEEN 14:01</span></div>
+          </div>
+        </div>
+
+        <div class="msg fan">
+          <div>
+            <div class="bubble">maybe later babe, work is killing me… don't tempt me before payday 😅</div>
+            <div class="meta"><span>19:04</span></div>
+          </div>
+        </div>
+
+        <div class="typing">Marcus is typing <span class="dots"><i></i><i></i><i></i></span></div>
+      </div>
+
+      <!-- AI dock -->
+      <div class="dock">
+        <div class="dock-head">
+          <span class="dock-spark">✳</span>
+          <span class="dock-title"><b>FAST REPLY</b> · STREAMING</span>
+          <div class="tones">
+            <span class="tone">casual</span>
+            <span class="tone on">flirty</span>
+            <span class="tone">upsell</span>
+            <span class="tone">spicy</span>
+          </div>
+          <div class="right"><span>sonnet-4.6</span><span>TTFT 0.9s</span><span>$0.014</span></div>
+        </div>
+        <div class="dock-body">
+          <div class="part">
+            <div class="ptxt">payday huh… now you've got me counting days too 😏</div>
+            <button class="pbtn">Insert <kbd>⌘1</kbd></button>
+          </div>
+          <div class="part">
+            <div class="ptxt">no pressure baby, it'll be waiting for you. just don't make me wait too long<span class="caret"></span></div>
+            <button class="pbtn" style="opacity:.35">Insert <kbd>⌘2</kbd></button>
+          </div>
+        </div>
+        <div class="dock-foot">
+          <span class="dbtn">↻ Regenerate <kbd>⌘R</kbd></span>
+          <span class="dbtn">Insert all</span>
+          <span class="dbtn">✕ Cancel <kbd>⌘.</kbd></span>
+          <span class="hint">2 parts · sent 2–5s apart, cancel anytime</span>
+        </div>
+      </div>
+
+      <!-- composer -->
+      <div class="composer">
+        <textarea placeholder="Reply as Lora… (⌘R fast reply · ⌘I improve draft · ⌘H help me)">payday huh… now you've got me counting days too 😏</textarea>
+        <div class="c-row">
+          <span class="cicon">☺</span>
+          <span class="cicon off" title="Vault — P5">▣</span>
+          <span class="c-note">TYPING SHOWN TO FAN</span>
+          <button class="send">Send <kbd>⌘↵</kbd></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- fan panel -->
+    <aside class="fanel">
+      <div class="tabs">
+        <div class="tab on">Info</div>
+        <div class="tab">Summary</div>
+        <div class="tab">Notes</div>
+      </div>
+      <div class="fp">
+        <div class="fp-id">
+          <div class="fp-ava">MK</div>
+          <div>
+            <div class="fp-name">Marcus K.</div>
+            <div class="fp-handle">@marcusk_88 · fan since Nov '25</div>
+            <div class="fp-custom">custom name: <u>Marcus 🏋️</u></div>
+          </div>
+        </div>
+
+        <div class="grid4">
+          <div class="stat money"><span class="cap">lifetime</span><span class="num">$1,284</span></div>
+          <div class="stat"><span class="cap">tips</span><span class="num">$310</span></div>
+          <div class="stat"><span class="cap">messages·ppv</span><span class="num">$890</span></div>
+          <div class="stat"><span class="cap">subs</span><span class="num">$84</span></div>
+        </div>
+
+        <div class="card">
+          <div class="titlerow"><span class="cap">Subscription</span></div>
+          <div class="kv"><span>Status</span><b class="ok-text">Active · $9.99/mo</b></div>
+          <div class="kv"><span>Renews</span><b>Jun 22 · in 12d</b></div>
+          <div class="kv"><span>Auto-renew</span><b class="ok-text">ON</b></div>
+          <div class="kv"><span>Duration</span><b>7 months</b></div>
+        </div>
+
+        <div class="lists">
+          <span class="lchip money">Big Spender</span>
+          <span class="lchip">VIP list</span>
+          <span class="lchip">rebill_on</span>
+        </div>
+
+        <div class="card sumcard">
+          <div class="titlerow"><span class="cap">AI Summary</span><span class="sum-age" style="margin-left:6px">2d ago</span><span class="refresh">↻ refresh</span></div>
+          <p>Стабильный платящий фан, тёплый и лояльный. Триггеры покупок — личные «только для тебя» кадры после спортзала; чувствителен к давлению, лучше мягкие офферы…</p>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- status bar -->
+  <footer class="statusbar">
+    <span class="sb-live">LIVE · POLLING 20S</span>
+    <span>CREDITS TODAY <span class="money">1,243</span> · BAL 97,981</span>
+    <span>LLM TODAY <span class="money">$2.31</span></span>
+    <span>RPM 12/300</span>
+    <div class="right">
+      <span>OFAPI ✓ · CORE ✓</span>
+      <span><kbd>?</kbd> SHORTCUTS</span>
+    </div>
+  </footer>
+</div>
+</body>
+</html>

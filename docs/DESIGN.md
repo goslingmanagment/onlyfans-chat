@@ -63,7 +63,9 @@ This section is review-blocking for renderer PRs, same weight as SPEC §15 invar
 9. **Electron config:** single BrowserWindow; `backgroundThrottling` disabled for the timer that drives slowed hidden-window polling (SPEC §6.1 — notifications must fire in companion mode); preload kept minimal.
 10. **Perf smoke test in CI (from P1):** scripted scroll over a 10k-message fixture asserting frame budget, plus startup-time measurement; budgets from SPEC §13 are the thresholds.
 
-## 4. Visual direction — "strict professional console" (decided 2026-06-10, owner-reviewed)
+## 4. Visual direction — light professional; final style pick pending between two candidates (§5)
+
+**Owner feedback 2026-06-10:** light theme confirmed; first cut felt **too small** → **type scale minimum: 14 px base, 14.5 px message text, 10 px floor for micro-labels**. Two candidate styles are mocked up (§5); the structure/semantics below apply to both. Candidate A ("strict console") specifics:
 
 - **Light theme, only theme at v1** (owner decision 2026-06-10; dark mode revisit later). White panels on a cool `#f2f3f5` window, hairline borders (`#e6e8ec`/`#d3d7dd`), minimal shadows, 4–6 px radii, ink-black (`#16181d`) for primary actions/selection (Send button, unread pills, active account, selected-row bar).
 - **Money = financial green** (`#0e7b43` on `#ecf6f0`): lifetime/value chips, tip ledger rows, purchased-PPV badges, credit/LLM figures in the status bar. **Pending money = amber-bronze** (unopened PPV badge). Other semantics: seen `#2563eb`, unconfirmed/warn `#b45309`, failed/churn `#c0392b`, online `#16a34a`.
@@ -73,9 +75,16 @@ This section is review-blocking for renderer PRs, same weight as SPEC §15 invar
 - Custom design system in `src/renderer/design/` (tokens + primitives: Button, Chip, Badge, ListRow, Skeleton, Toast, Dock). **No heavy component library**; no generic "AI-generated SaaS" look (gradient heroes, glassmorphism, decorative blur) — restraint, craft, speed.
 - Anti-goals: no modal dialogs inside the shift loop; no dark theme v1; no avatar noise in dense lists beyond the chat row.
 
+**Candidate B — "Claude-style warm"** (`mockups/workspace-claude.html`): Anthropic-like palette — cream surfaces (`#efece4`/`#faf9f5`), warm hairlines, **terracotta `#d97757`** for primary actions/selection/unread, money stays financial green, pending PPV amber. Typography: Hanken Grotesk (UI) + **Source Serif 4 for headings and — signature detail — for all AI-authored text** (dock outputs, AI summary), IBM Plex Mono for numerals/states. Pill-shaped chips, 9–14 px radii, soft shadows, asymmetric bubble corners.
+
 ## 5. Visual reference mockup
 
-A static, owner-reviewed mockup of the default workspace state lives at **[`mockups/workspace.html`](mockups/workspace.html)** (preview: `mockups/workspace-preview.png`). It is the **binding visual reference** for P1: zones, density, light professional palette per §4 (white panels, ink primaries, green money), IBM Plex typography, ledger-style tip rows, PPV purchase badges, terminal-style send-state labels (`SEEN 18:42`), AI dock with per-part Insert, status bar with credits/LLM spend. Deviations require updating the mockup + this brief in the same PR. Iterate on the mockup (cheap) before iterating in React (expensive).
+Two owner-reviewable candidates of the default workspace state (same structure/content, different style):
+
+- **A — strict console:** [`mockups/workspace.html`](mockups/workspace.html) (preview `workspace-preview.png`) — white/cool-grey, ink primaries, IBM Plex.
+- **B — Claude-style warm:** [`mockups/workspace-claude.html`](mockups/workspace-claude.html) (preview `workspace-claude-preview.png`) — cream, terracotta primaries, serif headings + serif AI text.
+
+**The owner picks one; the chosen file becomes the binding visual reference** for P1 (the loser is deleted). Shared in both: ledger-style tip rows, PPV purchase badges, terminal-style send-state labels (`SEEN 18:42`), AI dock with per-part Insert, credits/LLM status bar, ≥14 px base type. Deviations require updating the mockup + this brief in the same PR. Iterate on the mockup (cheap) before iterating in React (expensive).
 
 ## 6. Process
 
