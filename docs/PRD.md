@@ -56,7 +56,7 @@ OFAPI gives us full programmatic access to connected OnlyFans accounts (read cha
 Two components, introduced in stages (details in [PLAN.md](PLAN.md)):
 
 1. **Desktop app** (this repo, `apps/desktop`) — the chatter's workspace. In early phases it talks to OFAPI directly (polling) and to LLM providers directly, with scoped API keys.
-2. **Hub relay service** (`apps/hub`, later phase) — small always-on backend that owns the OFAPI key, receives OFAPI webhooks, pushes events to desktop clients over WebSocket, stores shared fan summaries/notes centrally, tracks AI usage, and enforces per-chatter limits. Replaces polling; centralizes secrets. Aligns with the agency "core" vision (central summary storage, per-chatter token limits — see `~/code/мысли и хотелки, транскрипт.md`).
+2. **Agency Hub ("core", `~/code/core`) integration** — the agency's existing production backend (Fastify + Postgres + worker, Docker on a VPS) takes the hub role; we do **not** build a separate relay. Core already serves the legacy ChatGoose API (it calls the product "ChatMuse"): central fan-profile storage with append-only versions, AI-usage ingestion, per-chatter revocable API keys with page scoping — the desktop integrates these from P4. In P6 core gains the OnlyFans real-time pieces: an OFAPI webhook receiver + SSE event push to desktop clients, and its planned hub-owned AI gateway (core roadmap Phase 7) with per-chatter limits.
 
 Rollout: internal pilot on 1 creator account + 1–2 trusted chatters in read+AI mode (sends still via OnlyMonster) → enable sending in-app → expand accounts/chatters → hub phase.
 
@@ -65,7 +65,7 @@ Rollout: internal pilot on 1 creator account + 1–2 trusted chatters in read+AI
 Features marked **[P1]**–**[P7]** map to plan phases. Legacy behavioral details (exact prompts, thresholds, timeouts) are normative where referenced — see [research/legacy-chatgoose.md](research/legacy-chatgoose.md).
 
 ### F1. Accounts & onboarding [P1]
-- App configured with an OFAPI key (per-chatter **scoped** key in direct mode; hub-issued token later). Keys stored in OS keychain, never in plaintext config.
+- App configured with an OFAPI key (per-chatter **scoped** key in direct mode) and, from P4, an Agency Hub (core) chatter API key. Keys stored in OS keychain, never in plaintext config.
 - App lists connected OF accounts (`GET /api/accounts`), shows auth state (`is_authenticated`), and surfaces session-expiry/re-auth needs (later via `accounts.*` webhook events; in P1 via API errors).
 - Account connection itself happens in the OFAPI console by the admin (out of app scope for v1; revisit embedded connect widget later).
 - **Personality mapping:** every account must be mapped to a personality before AI features activate (same rule as legacy; unmapped → AI buttons disabled with clear prompt). Personalities: name + free-form content, CRUD in settings, bundled "Lora" starter ported from legacy.
@@ -98,7 +98,7 @@ Features marked **[P1]**–**[P7]** map to plan phases. Legacy behavioral detail
 - **Spending:** total + breakdown (subscriptions / tips / messages / posts / streams) from `subscribedOnData` `*Summ` fields; rendered both for the chatter and as AI context.
 - **Subscription:** status, price, subscribed-since, renew date, **auto-renew off ⇒ churn-risk badge**, duration, subscription history on demand.
 - **Notes:** OF-native fan notes (`GET/PUT …/notes`) — readable/writable; visible to other tools (incl. OnlyMonster) since they live on OnlyFans itself.
-- **AI Fan Summary card:** latest summary with generated-at timestamp + refresh (F6.4); stored locally in P-early, centrally via hub later [P6].
+- **AI Fan Summary card:** latest summary with generated-at timestamp + refresh (F6.4); cached locally, synced centrally to Agency Hub (core) from P4.
 
 ### F6. AI assist suite [P2 quick, P4 deep] — ported from legacy, behavior-compatible
 All features stream token-by-token into an AI panel docked above the composer; results offer **Insert** (into composer) / **Insert part N** / copy. During the P2 companion phase (before in-app sending exists) Copy is the primary action — the chatter pastes into OnlyMonster. Same staged-timeout discipline, cancellation, error taxonomy, reply sanitizer, prompt-injection escaping, and safety preambles as legacy (see research doc §2, §8, §9). Prompt templates are ported with Fansly→OnlyFans adaptations; transcript/spending/subscription context blocks keep their proven text formats but are built from OFAPI data (mapping table in [SPEC.md](SPEC.md) §8).
@@ -106,7 +106,7 @@ All features stream token-by-token into an AI panel docked above the composer; r
 1. **Fast Reply** [P2] — in-voice reply from last ~100 messages + spending/subscription context. Tones: casual / flirty / upsell / spicy. Split mode (`[NEXT]`). Regenerate.
 2. **Improve Draft** [P2] — rewrite the chatter's draft in-character, preserving intent/facts/prices; draft may be written in Russian, output in fan's language. Single message out.
 3. **Help Me** [P2] — coaching: situational read + Engaging and Flirty ready-to-send suggestions (XML-parsed).
-4. **Fan Summary** [P4] — deep profile (~1500 msgs): dossier, psychology, stage/trajectory, communication, financial profile, open loops, strategy. **Output in Russian.** Cached per conversation with legacy invalidation rules (personality/model/data-verified); refresh on demand; hub prefetch/sync when hub exists.
+4. **Fan Summary** [P4] — deep profile (~1500 msgs): dossier, psychology, stage/trajectory, communication, financial profile, open loops, strategy. **Output in Russian.** Cached per conversation with legacy invalidation rules (personality/model/data-verified); refresh on demand; central prefetch/sync via Agency Hub (core) from P4 — its fan-profile store already exists, so one chatter's summary is visible to all.
 5. **Chat Review** [P4] — chatter performance rating 1–10 + evaluation + recommendations (XML-parsed), deep context, never cached.
 6. **Ping** [P4] — reactivation message; legacy segmentation ported verbatim: blocked if fan texted within 5 days ("still active — use Reply"); Segment A (≥3 fan texts, silent >5 d) references past topics; Segment B (thin history) warm low-pressure opener.
 7. **Hi Greeting** [P4] — 3 opener variants (`[VARIANT]`) for fresh conversations (≤10 total messages), username-aware.
@@ -122,15 +122,15 @@ Model support: per-feature model selection + reasoning effort (off/low/medium/hi
 - Upload new media from disk (3 credits/MB — show size/cost preflight; route through vault for reusability; `ofapi_media_` direct-upload IDs are single-use).
 - Clear PPV compose summary before send (N items, price, previews) — misprice prevention.
 
-### F8. Real-time & hub relay [P6]
-- Hub service receives OFAPI webhooks (`messages.received/sent`, `messages.ppv.unlocked`, `tips.received`, `subscriptions.*`, `users.typing/online/offline`, `accounts.*`), verifies HMAC, dedupes `event_id`, fans out to desktop clients over WebSocket.
+### F8. Real-time via Agency Hub (core) [P6]
+- Core gains an OFAPI webhook receiver (`messages.received/sent`, `messages.ppv.unlocked`, `tips.received`, `subscriptions.*`, `users.typing/online/offline`, `accounts.*`): HMAC verify, `event_id` dedupe, journal, fan-out to desktop clients over **SSE** (core decision #25: REST + SSE, no websockets).
 - Desktop drops its polling loops in favor of push (polling stays as degraded fallback); read-state (`isNew`) still polled on-demand for the open conversation.
-- Hub owns the OFAPI key; desktop authenticates to hub with per-chatter tokens → per-chatter account ACLs, central kill-switch.
-- Central storage: fan summaries + AI usage events (port legacy Agency Hub client; one summary visible to all chatters of that account), per-chatter LLM token limits.
-- LLM calls proxy through hub (central provider keys, caching, limits) — desktop-direct mode remains for solo/dev use.
+- Desktop authenticates to core with the existing per-chatter API keys (page-scoped, revocable — the central kill-switch already works today).
+- Central storage is live from P4 (fan summaries, AI usage); P6 adds per-chatter LLM token limits via core's hub-owned AI gateway (its roadmap Phase 7) — LLM calls proxy through core (central provider keys, caching, limits); desktop-direct mode remains for solo/dev use.
+- OFAPI key custody (desktop holds no OFAPI key, OF calls proxied via core) is a P6 stretch decision; interim mitigation remains per-chatter scoped OFAPI keys.
 
 ### F9. Settings [P1–P2, grows with features]
-Ported legacy schema where applicable: provider API keys; per-feature model + reasoning; message-count knobs (quick 100 / improve 25 / deep 1500, same ranges); personalities CRUD; account→personality mappings; debug mode (+ pipeline profiling view); prompt-caching toggle; sound/notification prefs; mark-as-read policy; hub URL/token (later).
+Ported legacy schema where applicable: provider API keys; per-feature model + reasoning; message-count knobs (quick 100 / improve 25 / deep 1500, same ranges); personalities CRUD; account→personality mappings; debug mode (+ pipeline profiling view); prompt-caching toggle; sound/notification prefs; mark-as-read policy; Agency Hub (core) URL + chatter API key (from P4).
 
 ### F10. Operational UX (cross-cutting)
 - **Status bar:** OFAPI credit balance + credits used today (from `_meta._credits` on every response), per-op LLM cost after each AI action (legacy spend summary), sync freshness ("updated 12 s ago"), connection state.
@@ -193,6 +193,6 @@ OnlyMonster, Infloww, Supercreator et al. offer CRM + AI features. We are not co
 - **P1 gate:** chatter monitors a real account read-only for a full shift without opening OnlyMonster for *reading*; data correct vs OM spot-checks (messages, PPV states, spending).
 - **P2 gate (AI quick, companion mode):** Fast Reply / Improve / Help Me used in real shifts with copy-to-OnlyMonster; acceptance rate ≥ legacy Fansly baseline; per-op cost shown.
 - **P3 gate (sending):** full text shift in-app; zero lost/duplicated sends across ≥500 messages; restricted-words and error paths exercised; AI Insert replaces copy.
-- **P4 gate:** Summary/Review/Ping/Hi at behavior parity with legacy (side-by-side prompt-output review); summary caching correct.
+- **P4 gate:** Summary/Review/Ping/Hi at behavior parity with legacy (side-by-side prompt-output review); summary caching correct; summaries sync to Agency Hub (core) and are visible to other chatters and in core's dashboard.
 - **P5 gate:** PPV send with vault media + previews + price executes correctly end-to-end (verified in OM/OF).
-- **P6 gate:** webhook→UI latency ≤2 s p95 for incoming messages; desktop holds no OFAPI key; central summaries shared across chatters; credit burn per shift drops ≥5×.
+- **P6 gate:** webhook→UI latency ≤2 s p95 for incoming messages via core SSE; per-chatter LLM limits enforced by core's AI gateway; credit burn per shift drops ≥5×; kill-switch (revoke chatter API key in core admin) demonstrated.

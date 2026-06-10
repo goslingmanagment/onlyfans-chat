@@ -15,7 +15,7 @@ Ops/validation (needs admin + one throwaway/low-value OF account):
 Engineering bootstrap:
 5. pnpm monorepo scaffold (electron-vite app boots, blank window, CI `pnpm check` green).
 6. OpenAPI → TS codegen script wired to vendored `openapi.json`.
-7. Port `packages/core` skeleton from legacy: errors, split, xml, reply-output, prompt-injection, model registry + their tests (pure-TS modules port nearly verbatim — fastest possible win, locks the safety net in place).
+7. Port `packages/shared` skeleton from legacy: errors, split, xml, reply-output, prompt-injection, model registry + their tests (pure-TS modules port nearly verbatim — fastest possible win, locks the safety net in place).
 
 **Exit:** spike report appended to this file (latency table, credit burn, coexistence verdict, chosen auth method); CI green; core modules ported with passing tests.
 
@@ -41,9 +41,9 @@ Build: composer (absorbs the P2 draft field; drafts per chat, formatting subset,
 
 ## Phase 4 — AI deep features & quality harness (~week 6–8)
 
-Build: **Fan Summary** (deep fetch w/ progress, SQLite cache + legacy staleness rules, refresh) · **Chat Review** · **Ping** (segment analysis port, active-block) · **Hi Greeting** (3 variants, ≤10-msg gate) · **Compare** (if time allows — lowest priority) · **prompt regression harness**: golden transcript fixtures → outputs reviewed against the AI-slop taxonomy; only then iterate prompt content (legacy lesson: examples beat rules; banned-word lists don't work).
+Build: **Fan Summary** (deep fetch w/ progress, SQLite cache + legacy staleness rules, refresh) · **Chat Review** · **Ping** (segment analysis port, active-block) · **Hi Greeting** (3 variants, ≤10-msg gate) · **Compare** (if time allows — lowest priority) · **Agency Hub (core) integration** — port the legacy agency-hub client against core's live endpoints: profile prefetch/push (`GET/PUT /api/v1/pages/{label}/fans/{fanId}/profile`), AI-usage batches (`POST /api/v1/ai-usage/batch`), chatter API key + core URL in settings, account→page-label mapping (no core-side work needed — all three endpoints exist) · **prompt regression harness**: golden transcript fixtures → outputs reviewed against the AI-slop taxonomy; only then iterate prompt content (legacy lesson: examples beat rules; banned-word lists don't work).
 
-**Exit (PRD P4 gate):** behavior parity sign-off vs legacy on side-by-side outputs; summary cache invalidation tests green; ping segmentation ms-exact tests green.
+**Exit (PRD P4 gate):** behavior parity sign-off vs legacy on side-by-side outputs; summary cache invalidation tests green; ping segmentation ms-exact tests green; a summary generated in the app shows up in core's dashboard (FanProfilePage) and prefetches for another chatter.
 
 ## Phase 5 — Vault & PPV sending (~week 8–10)
 
@@ -51,19 +51,21 @@ Build: vault browser (grid, albums, search, multi-select) · attach + price ($3�
 
 **Exit (PRD P5 gate):** end-to-end PPV send (vault media + previews + price) verified on OnlyFans; mispricing guard demonstrated; purchased state appears on the sent message after a test unlock.
 
-## Phase 6 — Hub relay & real-time (~week 10–13)
+## Phase 6 — Real-time via Agency Hub core (~week 10–13)
 
-> **Scope/location decision pending (2026-06-10):** build hub here (`apps/hub`) vs as part of the separate agency "core" project — to be discussed before this phase starts. The desktop is hub-ready either way (SyncProvider/AiGateway seams), so this does not block earlier phases.
+> **Resolved 2026-06-10:** no separate relay — the existing Agency Hub ("core", `~/code/core`, production Fastify + Postgres + worker) is the hub. Its ChatGoose/"ChatMuse" API (fan profiles, AI-usage, per-chatter revocable API keys) is live and already consumed from P4. Core knows nothing about onlyfansapi.com today (its OnlyFans path is OnlyMonster, transactions-only), so the OFAPI pieces below are new work **in the core repo**, aligned with core's own Phase 7 "ChatMuse Backend" + "Hub-Owned AI Gateway" decisions.
 
-Build: `apps/hub` (Fastify): webhook receiver (HMAC verify, `event_id` dedupe, journal, <1 s ack) · WS fanout with per-chatter tokens + account ACLs + missed-event replay · HubSync provider in desktop (push events; polling demoted to fallback) · OFAPI key custody moves to hub; desktop keeps only hub token · central summaries/notes prefetch+push (ported Agency Hub client) · AI usage event collection + per-chatter token limits · HubGateway LLM proxy · presence/typing UI from `users.*` events · Docker deploy + runbook.
+Work in **core repo**: OFAPI webhook receiver (HMAC verify, `event_id` dedupe, event journal, <1 s ack, pg-boss processing) · SSE event fanout (`GET /api/v1/events/stream`: chatter-key auth, page ACLs, `Last-Event-ID` replay; SSE per core decision #25) · admin flow to register the OFAPI webhook · AI gateway (SSE streaming proxy, central provider keys, per-chatter quotas, cost ledger, prompt cache) · (stretch) OFAPI key custody/proxying.
 
-**Exit (PRD P6 gate):** incoming message → UI ≤2 s p95; desktop binary holds no OFAPI/LLM keys; summary written by chatter A visible to chatter B; per-shift credit burn drops ≥5× vs polling; kill-switch (revoke chatter token) demonstrated.
+Work in **this repo**: HubSync provider (SSE client; polling demoted to fallback) · HubGateway (AI via core's gateway) · presence/typing UI from `users.*` events · settings: core AI-gateway mode replaces local LLM keys.
+
+**Exit (PRD P6 gate):** incoming message → UI ≤2 s p95 via core SSE; per-chatter LLM limits enforced by core's gateway; per-shift credit burn drops ≥5× vs polling; kill-switch (revoke chatter API key in core's admin UI) demonstrated.
 
 ## Phase 7 — Scale & leverage (backlog, prioritize after P6)
 
 - **Ping queue:** fan list ranked by `lastReplyAt` (OFAPI hybrid enrichment) → guided reactivation workflow (legacy "Follower Queue" idea, finally feasible).
 - **Greet queue:** `subscriptions.new` events → new-subscriber greeting workflow with Hi Greeting prefill.
-- Scheduled sends (mass-messaging single-fan trick) · saved replies/snippets · Windows packaging, code signing, auto-update channel · multi-chatter presence ("who's working this account") · hub Postgres migration if volume demands · Fansly provider exploration (shared `packages/core` was built for it).
+- Scheduled sends (mass-messaging single-fan trick) · saved replies/snippets · Windows packaging, code signing, auto-update channel · multi-chatter presence ("who's working this account") · feeding OFAPI webhook data into core's OnlyFans analytics (today OnlyMonster-only, transactions-only) · Fansly provider exploration (shared `packages/shared` was built for it).
 
 ## Standing risks while executing
 
@@ -73,7 +75,7 @@ Build: `apps/hub` (Fastify): webhook receiver (HMAC verify, `event_id` dedupe, j
 | Credit burn surprises | Credit meter from day 1; budget guard; weekly burn review during pilot |
 | Prompt quality regression while porting | No prompt-content edits until P4 harness exists; port verbatim first |
 | Double-send incidents | Outbox audits in P3 exit; verifier never auto-retries |
-| Scope creep toward agency dashboard | PRD non-goals; hub stores only chat-product data (summaries/usage), analytics stays in the separate core project |
+| Scope creep toward agency dashboard | PRD non-goals; core stores chat-product data (summaries/usage) and keeps analytics dashboards as its own scope |
 
 ## Immediate next actions
 

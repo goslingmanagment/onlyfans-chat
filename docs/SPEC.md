@@ -8,17 +8,18 @@ Status: Draft v1 — 2026-06-10. Companion to [PRD.md](PRD.md) (what/why) and [P
 PHASES 1–5 (direct mode)                      PHASE 6+ (hub mode)
 ┌─────────────────────────────┐               ┌─────────────────────────────┐
 │  Desktop app (Electron)     │               │  Desktop app                │
-│ ┌─────────┐   ┌───────────┐ │               │  (no OFAPI/LLM keys)        │
+│ ┌─────────┐   ┌───────────┐ │               │  (scoped OFAPI key or none) │
 │ │Renderer │◄─►│   Main    │ │   REST        └───────┬─────────▲───────────┘
-│ │React UI │IPC│ ofapi cli ├─┼──────► OFAPI          │REST+WS  │push
+│ │React UI │IPC│ ofapi cli ├─┼──────► OFAPI          │REST     │SSE push
 │ │         │   │ llm cli   ├─┼──────► Anthropic/     ▼         │
 │ │         │   │ sqlite    │ │  SSE   OpenRouter  ┌────────────┴──────────┐
-│ └─────────┘   └───────────┘ │               │  Hub relay (Node)          │
-└─────────────────────────────┘               │  ofapi key custody          │
-        ▲ polling (list-delta)                │  webhook receiver (HMAC)    │
-        └─────────────────────                │  WS fanout, event journal   │
-                                              │  summaries/notes/usage DB   │
-                                              │  LLM proxy + chatter limits │
+│ └─────────┘   └───────────┘ │               │  Agency Hub "core"          │
+└─────────────────────────────┘               │  (EXISTING: ~/code/core,    │
+        ▲ polling (list-delta)                │  Fastify+Postgres+worker)   │
+        └─────────────────────                │  has: fan profiles, ai-usage│
+   From P4 (still direct mode):               │  chatter API keys, dashboard│
+   summaries + ai-usage sync → core           │  P6 adds: OFAPI webhook rcvr│
+                                              │  SSE fanout, AI gateway     │
                                               └──────┬──────────▲───────────┘
                                                      │ REST     │ webhooks
                                                      ▼          │
@@ -41,8 +42,8 @@ The desktop app is built **hub-ready from day 1** via two seams:
 | LLM | Hand-rolled SSE clients ported from legacy (`anthropic-client`, `openrouter-client`) | Proven, dependency-free, supports adaptive thinking + prompt caching exactly as tuned. |
 | Validation | **zod** at all trust boundaries (IPC, OFAPI responses, webhook payloads, storage migration) | Legacy lesson 1.4.1: type guards at boundaries, not `as` casts. |
 | Tests | **Vitest** (unit), **Playwright** (e2e, later) | Port legacy test patterns (research doc §12). |
-| Monorepo | **pnpm workspaces** | `apps/desktop`, `apps/hub` (P6), `packages/core` shared. |
-| Hub (P6) | **Node 22 + Fastify + better-sqlite3→Postgres-ready**, Docker deploy | Smallest thing that can verify HMAC, journal events, fan out WS, serve REST. |
+| Monorepo | **pnpm workspaces** | `apps/desktop`, `packages/shared`. No `apps/hub` — server-side hub work lands in the core repo. |
+| Hub (P6) | **Extend the existing Agency Hub "core"** (`~/code/core`: Fastify 5 + Postgres 16 + Drizzle + pg-boss + React dashboard, Docker on VPS) | Decided 2026-06-10: no separate relay. Core already serves the ChatGoose/"ChatMuse" API (fan profiles, ai-usage, per-chatter keys); P6 adds OFAPI webhook receiver + SSE fanout + AI gateway there (§9). |
 
 ## 3. Repository layout (target)
 
@@ -60,21 +61,20 @@ apps/
       features/          # inbox, conversation, composer, fan-panel, ai-dock, settings, vault (P5)
       design/            # design system primitives (tokens, components)
     src/preload/         # contextBridge — typed IPC surface only
-  hub/                   # P6: Fastify service (webhooks, ws, profiles, usage, llm proxy)
 packages/
-  core/                  # platform-agnostic, ported from legacy + OF adaptations:
+  shared/                # platform-agnostic, ported from legacy + OF adaptations:
     prompts/             # *.md templates (OF wording) + builder + caching blocks
     transcript/          # OF message → transcript lines, PPV labels, ping segments
     context/             # spending/subscription block formatters
     llm/                 # model registry, capabilities, cost, SSE parsing
     output/              # [NEXT]/[VARIANT] split, XML extract, reply sanitizer
-    protocol/            # operation lifecycle types + zod schemas (IPC & hub-WS reuse)
+    protocol/            # operation lifecycle types + zod schemas (IPC & hub-SSE reuse)
     errors/              # CG-* error registry
 docs/                    # PRD, SPEC, PLAN, research/, vendor/
 scripts/                 # codegen (openapi → types), fixture capture
 ```
 
-`packages/core` must stay free of Electron/Node-API imports (pure TS + fetch/Web streams) so hub and desktop share it and unit tests run anywhere. This mirrors the legacy `src/shared/` discipline that made 783 tests cheap.
+`packages/shared` must stay free of Electron/Node-API imports (pure TS + fetch/Web streams) so unit tests run anywhere and modules remain reusable outside Electron (e.g. by core's future AI gateway). This mirrors the legacy `src/shared/` discipline that made 783 tests cheap. (Named `shared`, not `core`, to avoid collision with the Agency Hub "core" repo.)
 
 ## 4. Process & security model (Electron)
 
@@ -117,7 +117,7 @@ interface SyncProvider {
 - Budget guard: per-shift credit budget setting; on 80% an unobtrusive warning, on 100% polling slows 4× (never silently stops).
 
 ### 6.2 HubSync (P6)
-- WebSocket to hub (`wss://hub/ws?token=…`), zod-validated `SyncEvent` frames (same union — renderer code unchanged). Heartbeat 30 s; on disconnect, exponential reconnect + a reconciliation sweep (one chat-list fetch per account) to close the gap; PollingSync (slowed) is the degraded fallback.
+- SSE stream from core (`GET /api/v1/events/stream`, bearer chatter API key; SSE per core decision #25 — no websockets there), zod-validated `SyncEvent` frames (same union — renderer code unchanged). `Last-Event-ID` resume against core's event journal; on disconnect, exponential reconnect + a reconciliation sweep (one chat-list fetch per account) to close the gap; PollingSync (slowed) is the degraded fallback.
 - Read-state remains on-demand polling of the open conversation (no upstream webhook exists).
 
 ### 6.3 Cache reconciliation rules
@@ -139,7 +139,7 @@ interface SyncProvider {
 
 ## 8. AI layer (port of legacy, adapted to OFAPI data)
 
-### 8.1 What ports verbatim (from `packages/core`)
+### 8.1 What ports verbatim (into `packages/shared`)
 Prompt templates (all 7 + compare), safety preambles (reply/analysis modes), prompt-cache block segmentation (1h system/personality, 5m transcript, uncached task), `escapeForPrompt` (& < > ordering), reply sanitizer (think-blocks, meta-leak lines, prefixes, quotes, bracket garbage), `[NEXT]`/`[VARIANT]` splitting, XML extraction (helpMe, chatReview), tone instructions, ping segment instructions, model registry/capabilities/cost modules, staged timeout values, temperatures and max_tokens per feature, summary cache validity rules. Constants table in research doc §1/§4/§5 is normative. Fansly wording in templates → OnlyFans.
 
 ### 8.2 Context builder mapping (legacy → OFAPI)
@@ -167,22 +167,37 @@ Ports legacy lifecycle: one operation per conversation context (`CG-FLOW-04` on 
 Same registry pattern (`features.ts`): surface (`ai-dock` inline vs panel-tab read-only), result kind (reply parts / single reply / XML doc), context recipe (message counts: quick 100 / improve 25 / deep 1500 / hi-greeting 25 cap 10-msg-convo / ping 100), includesEarnings flags, min-messages gate (deep ≥30 → `CG-FLOW-03`), model-selection delegation (improve+hi → fast-reply's model).
 
 ### 8.5 Summary cache
-SQLite `summaries` table replacing browser.storage: key `(account, fan_id)`, fields per legacy entry (`body, model_id, personality_id, personality_updated_at, generated_at, spending_verified, subscription_verified, hub_sync_state`). Same staleness rules; refresh = delete + regenerate. Hub prefetch (5 s timeout) before generation and fire-and-forget push (10 s timeout) after — ported Agency Hub client, pointed at hub (P6); disabled when hub unconfigured.
+SQLite `summaries` table replacing browser.storage: key `(account, fan_id)`, fields per legacy entry (`body, model_id, personality_id, personality_updated_at, generated_at, spending_verified, subscription_verified, hub_sync_state`). Same staleness rules; refresh = delete + regenerate. Hub prefetch (5 s timeout) before generation and fire-and-forget push (10 s timeout) after — ported Agency Hub client pointed at core, **live from P4**: `GET/PUT /api/v1/pages/{pageLabel}/fans/{platformUserId}/profile` (both already exist in core; profile versions are append-only, 50 KB cap). Disabled when core is unconfigured. OFAPI account → core page-label mapping: match `platform === 'onlyfans'` + normalized username (legacy rule: lowercase, strip `@`), with manual override in settings.
 
 ### 8.6 AiGateway seam
 ```ts
 interface AiGateway { stream(req: LlmRequest, cb: StreamCallbacks): CancelFn }
 ```
-`DirectGateway` (P3): provider SSE clients with local keys. `HubGateway` (P6): same contract over hub (`POST /ai/stream` SSE or WS); hub holds provider keys, enforces per-chatter token limits, records usage events (legacy batching: 1 s debounce, 100/batch, retry 5 s/15 s, drop after 3).
+`DirectGateway` (P2): provider SSE clients with local keys. `HubGateway` (P6): same contract over core's hub-owned AI gateway (its roadmap Phase 7; SSE streaming per core decision #25) — core holds provider keys, enforces per-chatter token limits, records usage. Until the gateway exists, the desktop reports usage itself to core's live `POST /api/v1/ai-usage/batch` (legacy batching: 1 s debounce, 100/batch, retry 5 s/15 s, drop after 3 attempts; upstream dedupes by `clientEventId`). Feature names must match core's **closed** `aiUsageFeatures` enum (`core: packages/shared/src/types.ts`) — adding a feature requires a core-side enum change first.
 
-## 9. Hub relay service (P6) — `apps/hub`
+## 9. Agency Hub ("core") integration
 
-- **Inbound:** `POST /webhooks/ofapi` — verify `HMAC-SHA256(rawBody, signing_secret)`, dedupe by `event_id` (unique index), journal to `events` table, fan out. Respond 200 < 1 s (process async) to stay under OFAPI's 15 s timeout / 5-retry policy.
-- **WS fanout:** `/ws` with per-chatter token auth; subscription = the chatter's permitted `account_ids`. Frames = `SyncEvent` union from `packages/core`. Missed-event replay: client sends last `event_id` seen → journal replay (journal retention 7 days).
-- **REST:** `GET/PUT /profiles/{account}/{fan_id}` (summaries; ports legacy Agency Hub shape: 50 KB cap), `POST /ai-usage/batch`, `GET /accounts` (proxied, ACL-filtered), `POST /ai/stream` (LLM proxy with limits), `POST /admin/webhook-setup` (registers OFAPI webhook: events list per PRD F8, `account_scope: global`).
-- **Auth:** per-chatter bearer tokens (admin-issued, revocable), account ACL per token. Admin role for keys/limits.
-- **Storage:** SQLite (WAL) first; schema kept Postgres-compatible. Docker single-container deploy + volume; config via env (`OFAPI_KEY`, `WEBHOOK_SECRET`, `ANTHROPIC_KEY`, `OPENROUTER_KEY`).
-- Desktop in hub mode stores only the hub URL + chatter token.
+The hub is the **existing** Agency Hub project (`~/code/core` — Fastify 5 + Postgres 16/Drizzle + pg-boss worker + React dashboard, deployed via Docker behind TLS). It already implements the legacy ChatGoose ("ChatMuse") server contract. Decided 2026-06-10: all server-side hub work happens **in the core repo**; this repo only consumes its REST/SSE contract. Core's OpenAPI: `GET /api/v1/openapi.json` (owner session) or the snapshot at `core: reference/agency-hub.openapi.json`.
+
+### 9.1 Already live in core — consumed from P4 (direct mode)
+| Capability | Endpoint (core) | Auth |
+|---|---|---|
+| List pages visible to the chatter | `GET /api/v1/pages` | chatter API key (Bearer `agency_hub_core_…`) |
+| Read latest fan profile (summary) | `GET /api/v1/pages/{pageLabel}/fans/{platformUserId}/profile` | chatter API key |
+| Append fan profile version | `PUT /api/v1/pages/{pageLabel}/fans/{platformUserId}/profile` `{body ≤50k}` — append-only versions, stamped `source:"chatmuse"` | chatter API key only |
+| Report AI usage | `POST /api/v1/ai-usage/batch` `{events[1..100]}` — dedupe by `(userId, clientEventId)` | chatter API key only |
+| Fan detail / notes / flags | `GET …/fans/{platformUserId}`, `POST …/notes`, `PATCH /api/v1/fans/{platform}/{platformUserId}/flags` | chatter API key |
+
+Notes that bind us: chatter API keys are **one-active-per-chatter, page-scoped, revocable** (kill-switch exists today, managed in core's Settings → Users). Fan identity in core is `(platform, platform_user_id)` — matches OFAPI's `chat_id === fan.id` directly. The `feature` field of usage events is a **closed enum** in core (`fast-reply | improve-draft | help-me | fan-summary | chat-review | scan | ping | hi-greeting`); core stores tokens, not dollars (cost derived at report time). Core's own OnlyFans data today is OnlyMonster-based and thin (transactions only; DM polling disabled) — none of our flows depend on it.
+
+### 9.2 New work in core for P6 (tracked in core's repo; aligns with its Phase 7 "ChatMuse Backend" + "Hub-Owned AI Gateway" decisions)
+- **OFAPI webhook receiver** — verify `HMAC-SHA256(rawBody, signing_secret)`, dedupe by `event_id` (unique index), journal to an events table, ack 200 < 1 s (async processing via pg-boss) to stay inside OFAPI's 15 s timeout / 5-retry policy. Admin flow to register the webhook at OFAPI (`account_scope: global`, events per PRD F8).
+- **SSE event fanout** — `GET /api/v1/events/stream`: chatter-key auth, events filtered to the chatter's assigned pages, `Last-Event-ID` replay from the journal (retention ~7 days). Frames = `SyncEvent` union (schema shared conceptually with `packages/shared/protocol`; core owns its copy in `contracts`).
+- **AI gateway** — SSE streaming proxy to Anthropic/OpenRouter with central keys, per-chatter quotas, cost ledger, prompt caching (this is core's planned Phase 7 scope verbatim).
+- **(Stretch)** OFAPI key custody + proxying of OF calls, so desktops hold no OFAPI key at all. Until then: per-chatter scoped OFAPI keys.
+
+### 9.3 Desktop side
+Settings hold core base URL + chatter API key (keychain). HubSync (§6.2) and HubGateway (§8.6) consume the new endpoints; profile sync and usage reporting (§8.5, §8.6) already point at 9.1 from P4. Mapping OFAPI accounts to core page labels per §8.5.
 
 ## 10. Data layer (SQLite, desktop)
 
@@ -221,7 +236,7 @@ Extend legacy `CG-*` registry (every error: code, user-facing message, recovery 
 
 ## 14. Testing strategy
 
-- **Unit (Vitest), bulk of coverage** — `packages/core` pure functions: transcript/PPV labeling, ping segmentation (ms-exact), spending/subscription formatting, splitters, XML, sanitizer (Gemini leak regressions), prompt block caching structure, cost calc, error mapping, migrations. Port legacy test suites as the spec-by-example.
+- **Unit (Vitest), bulk of coverage** — `packages/shared` pure functions: transcript/PPV labeling, ping segmentation (ms-exact), spending/subscription formatting, splitters, XML, sanitizer (Gemini leak regressions), prompt block caching structure, cost calc, error mapping, migrations. Port legacy test suites as the spec-by-example.
 - **Contract tests** — OfApiClient against recorded fixtures (capture mode §5): pagination styles, envelope parsing, error mapping, restricted-words shape.
 - **Integration** — sync delta logic, outbox/send-verifier state machine (timeout/5xx/restart paths), summary cache staleness — against in-memory SQLite + mocked client.
 - **E2E (Playwright, from P2)** — happy-path shift flows against a stub OFAPI server (recorded fixtures); golden-screenshot the three-zone layout.
@@ -231,7 +246,7 @@ Extend legacy `CG-*` registry (every error: code, user-facing message, recovery 
 ## 15. Key invariants (enforced in review)
 
 1. Renderer never touches network or secrets; all OFAPI/LLM traffic in main (or hub).
-2. `packages/core` stays platform-pure (no Electron/Node imports).
+2. `packages/shared` stays platform-pure (no Electron/Node imports).
 3. Every IPC/webhook/storage boundary validates with zod — no `as` casts across trust boundaries.
 4. All fan-derived text passes `escapeForPrompt` before prompt inclusion; safety preamble on every LLM call; sanitizer on every insertable output.
 5. Send-message is never auto-retried on indeterminate failure (§7.5).
