@@ -90,6 +90,10 @@ Work in **this repo**: HubGateway (AI via core's gateway) · settings: gateway m
 | Double-send incidents | Outbox audits in P3 exit; verifier never auto-retries |
 | Scope creep toward agency dashboard | PRD non-goals; core stores chat-product data (summaries/usage) and keeps analytics dashboards as its own scope |
 
+## Open questions for the owner
+
+1. **LLM provider API key (needed for P2 live evidence):** no `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` found in this repo's `.env`. The P2 gate evidence ("AI features producing output", golden reference outputs) needs at least one. Add `ANTHROPIC_API_KEY=` (preferred — prompt caching + adaptive thinking) and/or `OPENROUTER_API_KEY=` to `.env`; the app itself stores keys in the OS keychain via settings, `.env` is only for dev/golden-set tooling.
+
 ## Immediate next actions (updated 2026-06-10)
 
 1. Engineering session (this repo): Phase-0 items 5–7 — scaffold, OpenAPI codegen, port `packages/shared` from legacy with tests. No external dependencies.

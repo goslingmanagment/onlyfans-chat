@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "@chatgoose/shared": ["../../packages/shared/src"],
+      "@chatgoose/shared/*": ["../../packages/shared/src/*"],
+      "@main/*": ["./src/main/*"]
+    }
+  },
+  "include": [
+    "electron.vite.config.ts",
+    "src/main",
+    "src/preload",
+    "tests",
+    "vitest.config.ts",
+    "../../packages/shared/src"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@chatgoose/shared",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Platform-agnostic ChatGoose core: prompts, transcript, context, llm, output, protocol, errors",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "echo 'shared is consumed from source'"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}
