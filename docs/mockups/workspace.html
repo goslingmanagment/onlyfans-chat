@@ -117,7 +117,7 @@
     align-items:center; color:var(--t-low); font-size:11px; background:var(--bg1)}
 
   /* ───────── conversation ───────── */
-  .convo{display:flex; flex-direction:column; min-width:0; min-height:0; background:var(--bg0)}
+  .convo{display:flex; flex-direction:column; min-width:0; min-height:0; background:var(--bg0); position:relative}
   .convo-head{height:60px; flex:0 0 auto; display:flex; align-items:center; gap:12px;
     padding:0 18px; border-bottom:1px solid var(--line); background:var(--bg1)}
   .ch-name{font-family:var(--serif); font-weight:600; font-size:17px}
@@ -130,7 +130,21 @@
   .vchip .num{font-size:13px; font-weight:600}
   .vchip.money{border-color:var(--green-line); background:var(--green-bg)}
   .vchip.money .num{color:var(--green)}
-  .ch-actions{margin-left:auto; display:flex; align-items:center; gap:8px; color:var(--t-low)}
+  .ch-actions{margin-left:auto; display:flex; align-items:center; gap:10px; color:var(--t-low)}
+  .ai-menu-btn{display:flex; gap:7px; align-items:center; font-size:12.5px; font-weight:600;
+    color:var(--clay-deep); border:1px solid var(--clay-line); background:var(--clay-bg);
+    border-radius:999px; padding:4px 13px; cursor:pointer}
+  .ai-menu{position:absolute; top:54px; right:46px; width:264px; background:var(--bg1);
+    border:1px solid var(--line-strong); border-radius:11px; padding:6px;
+    box-shadow:0 10px 28px rgba(31,30,29,.14); z-index:50}
+  .ai-item{display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:7px; cursor:pointer}
+  .ai-item:hover{background:var(--bg2)}
+  .ai-item .gl{width:16px; text-align:center; color:var(--clay); font-size:12px; flex:0 0 auto}
+  .ai-item .tt{font-size:13px; font-weight:600; color:var(--t-hi)}
+  .ai-item .sub{display:block; font-size:10.5px; color:var(--t-low); font-weight:400; margin-top:1px}
+  .ai-item kbd{margin-left:auto}
+  .ai-item.dim{opacity:.45}
+  .ai-sep{height:1px; background:var(--line); margin:5px 6px}
 
   .thread{flex:1; overflow-y:auto; padding:20px 24px 8px; display:flex; flex-direction:column; gap:2px}
   .day{display:flex; align-items:center; gap:12px; margin:8px 0 16px}
@@ -178,36 +192,35 @@
   .typing .dots i:nth-child(3){animation-delay:.4s}
   @keyframes blink{0%,60%,100%{opacity:.25} 30%{opacity:1}}
 
-  /* ───────── AI dock — AI text is SERIF, like Claude ───────── */
+  /* ───────── AI dock — suggestions are DRAFT MESSAGES (serif, click = insert) ───────── */
   .dock{flex:0 0 auto; margin:8px 18px 0; border:1px solid var(--line-strong); border-radius:var(--r);
     background:var(--bg1); overflow:hidden; box-shadow:0 2px 6px rgba(31,30,29,.05)}
-  .dock-head{display:flex; align-items:center; gap:10px; padding:8px 14px;
-    border-bottom:1px solid var(--line)}
-  .dock-spark{color:var(--clay); font-size:13px}
-  .dock-title{font-family:var(--mono); font-size:9.5px; letter-spacing:.15em; color:var(--t-mid); font-weight:600}
-  .dock-title b{color:var(--t-hi)}
-  .tones{display:flex; gap:4px; margin-left:8px}
-  .tone{font-size:12px; font-weight:500; padding:3px 11px; border-radius:999px;
-    border:1px solid transparent; color:var(--t-mid); cursor:pointer}
-  .tone.on{color:var(--clay-deep); background:var(--clay-bg); border-color:var(--clay-line)}
-  .dock-head .right{margin-left:auto; display:flex; align-items:center; gap:10px;
-    font-family:var(--mono); font-size:9px; color:var(--t-low)}
-  .dock-body{padding:10px 14px 11px; display:flex; flex-direction:column; gap:8px}
-  .part{display:flex; gap:10px; align-items:flex-start}
-  .part .ptxt{flex:1; font-family:var(--serif); font-size:15px; color:var(--t-hi);
-    background:var(--bg2); border:1px solid var(--line); border-radius:var(--rs); padding:8px 12px}
+  .dock-top{display:flex; align-items:center; gap:10px; padding:9px 14px 0}
+  .dock-label{font-size:12.5px; font-weight:600; color:var(--t-mid)}
+  .dock-label i{font-style:normal; color:var(--clay); margin-right:5px}
+  .dock-cost{margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--t-low)}
+  .dock-x{color:var(--t-low); cursor:pointer; font-size:12px; padding:0 2px}
+  .dock-drafts{display:flex; flex-direction:column; gap:7px; padding:9px 14px 4px}
+  .draft{position:relative; font-family:var(--serif); font-size:15px; line-height:1.5; color:var(--t-hi);
+    background:#f7f1e8; border:1px dashed var(--clay-line); border-radius:12px;
+    padding:10px 110px 10px 14px; cursor:pointer; transition:border-color .12s, background .12s}
+  .draft:hover{border-style:solid; border-color:var(--clay); background:#f9f3ea}
+  .draft .kchip{position:absolute; right:10px; top:50%; transform:translateY(-50%);
+    font-family:var(--mono); font-size:9px; letter-spacing:.08em; color:var(--clay-deep);
+    border:1px solid var(--clay-line); border-radius:999px; padding:2px 9px; background:var(--bg1)}
+  .draft .kchip.dim{opacity:.45}
   .caret{display:inline-block; width:7px; height:14px; background:var(--clay);
     vertical-align:-2px; margin-left:2px; animation:caret 1s steps(2) infinite}
   @keyframes caret{50%{opacity:0}}
-  .pbtn{flex:0 0 auto; display:flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600;
-    color:var(--t-hi); border:1px solid var(--line-strong); background:var(--bg1);
-    border-radius:var(--rs); padding:6px 12px; cursor:pointer}
-  .pbtn:hover{border-color:var(--clay); color:var(--clay-deep)}
-  .dock-foot{display:flex; gap:8px; align-items:center; padding:0 14px 11px}
-  .dbtn{font-size:12px; font-weight:500; color:var(--t-mid); border:1px solid var(--line);
-    border-radius:var(--rs); padding:5px 11px; cursor:pointer; display:flex; gap:6px; align-items:center;
-    background:var(--bg1)}
-  .dock-foot .hint{margin-left:auto; font-size:11px; color:var(--t-low)}
+  .dock-bar{display:flex; gap:5px; align-items:center; padding:7px 14px 11px}
+  .tone{font-size:12px; font-weight:500; padding:3px 11px; border-radius:999px;
+    border:1px solid transparent; color:var(--t-low); cursor:pointer}
+  .tone.on{color:var(--clay-deep); background:var(--clay-bg); border-color:var(--clay-line)}
+  .regen{margin-left:12px; font-size:12px; font-weight:500; color:var(--t-mid); cursor:pointer;
+    display:flex; gap:6px; align-items:center}
+  .dock-bar .grow{flex:1}
+  .insertall{font-size:12.5px; font-weight:600; color:var(--clay-deep); cursor:pointer;
+    display:flex; gap:6px; align-items:center}
 
   /* ───────── composer ───────── */
   .composer{flex:0 0 auto; margin:9px 18px 14px; border:1px solid var(--line-strong); border-radius:var(--r);
@@ -218,7 +231,13 @@
   .c-row{display:flex; align-items:center; gap:11px; margin-top:7px}
   .cicon{color:var(--t-low); font-size:15px; cursor:pointer}
   .cicon.off{opacity:.4; cursor:default}
-  .c-note{font-family:var(--mono); font-size:9px; color:var(--t-low); letter-spacing:.06em}
+  .aigroup{display:flex; gap:6px; align-items:center; margin-left:4px}
+  .aibtn{display:flex; gap:7px; align-items:center; font-size:12.5px; font-weight:600;
+    color:var(--t-mid); border:1px solid var(--line); background:var(--bg2);
+    border-radius:999px; padding:4px 13px; cursor:pointer}
+  .aibtn:hover{color:var(--clay-deep); border-color:var(--clay-line); background:var(--clay-bg)}
+  .aibtn.primary{color:var(--clay-deep); border-color:var(--clay-line); background:var(--clay-bg)}
+  .aibtn i{font-style:normal}
   .send{margin-left:auto; display:flex; align-items:center; gap:8px; background:var(--clay);
     color:#fff; font-weight:700; font-size:13.5px; border:1px solid var(--clay); border-radius:var(--rs);
     padding:8px 16px; cursor:pointer}
@@ -394,8 +413,20 @@
           <div class="vchip"><span class="cap">sub</span><span class="num">renews 12d</span></div>
           <div class="vchip"><span class="cap">fan for</span><span class="num">7 mo</span></div>
         </div>
-        <div class="ch-actions"><kbd>]</kbd></div>
+        <div class="ch-actions"><span class="ai-menu-btn">✳ AI ▾</span><kbd>]</kbd></div>
       </header>
+
+      <!-- AI features menu (shown open for the mockup) -->
+      <div class="ai-menu">
+        <div class="ai-item"><span class="gl">▤</span><span><span class="tt">Chat review</span><span class="sub">score this conversation 1–10, find mistakes</span></span><kbd>⌘E</kbd></div>
+        <div class="ai-item"><span class="gl">☷</span><span><span class="tt">Fan summary</span><span class="sub">deep profile → panel · Summary tab</span></span><kbd>⌘S</kbd></div>
+        <div class="ai-sep"></div>
+        <div class="ai-item dim"><span class="gl">◷</span><span><span class="tt">Ping</span><span class="sub">re-engage a silent fan — unavailable: fan is active</span></span><kbd>⌘P</kbd></div>
+        <div class="ai-item dim"><span class="gl">✦</span><span><span class="tt">Hi greeting</span><span class="sub">3 openers — needs a fresh chat (≤10 msgs)</span></span><kbd>⌘G</kbd></div>
+        <div class="ai-sep"></div>
+        <div class="ai-item"><span class="gl">⇄</span><span><span class="tt">Compare</span><span class="sub">one reply, several personas side-by-side</span></span></div>
+        <div class="ai-item dim"><span class="gl">◎</span><span><span class="tt">Scan</span><span class="sub">scope TBD</span></span></div>
+      </div>
 
       <div class="thread">
         <div class="day"><span>TODAY · UTC</span></div>
@@ -460,34 +491,25 @@
         <div class="typing">Marcus is typing <span class="dots"><i></i><i></i><i></i></span></div>
       </div>
 
-      <!-- AI dock -->
+      <!-- AI dock: suggestions as clickable draft messages -->
       <div class="dock">
-        <div class="dock-head">
-          <span class="dock-spark">✳</span>
-          <span class="dock-title"><b>FAST REPLY</b> · STREAMING</span>
-          <div class="tones">
-            <span class="tone">casual</span>
-            <span class="tone on">flirty</span>
-            <span class="tone">upsell</span>
-            <span class="tone">spicy</span>
-          </div>
-          <div class="right"><span>sonnet-4.6</span><span>TTFT 0.9s</span><span>$0.014</span></div>
+        <div class="dock-top">
+          <span class="dock-label"><i>✳</i> Fast Reply</span>
+          <span class="dock-cost">$0.014</span>
+          <span class="dock-x">✕</span>
         </div>
-        <div class="dock-body">
-          <div class="part">
-            <div class="ptxt">payday huh… now you've got me counting days too 😏</div>
-            <button class="pbtn">Insert <kbd>⌘1</kbd></button>
-          </div>
-          <div class="part">
-            <div class="ptxt">no pressure baby, it'll be waiting for you. just don't make me wait too long<span class="caret"></span></div>
-            <button class="pbtn" style="opacity:.35">Insert <kbd>⌘2</kbd></button>
-          </div>
+        <div class="dock-drafts">
+          <div class="draft">payday huh… now you've got me counting days too 😏<span class="kchip">INSERT ⌘1</span></div>
+          <div class="draft">no pressure baby, it'll be waiting for you. just don't make me wait too long<span class="caret"></span><span class="kchip dim">INSERT ⌘2</span></div>
         </div>
-        <div class="dock-foot">
-          <span class="dbtn">↻ Regenerate <kbd>⌘R</kbd></span>
-          <span class="dbtn">Insert all</span>
-          <span class="dbtn">✕ Cancel <kbd>⌘.</kbd></span>
-          <span class="hint">2 parts · sent 2–5s apart, cancel anytime</span>
+        <div class="dock-bar">
+          <span class="tone">casual</span>
+          <span class="tone on">flirty</span>
+          <span class="tone">upsell</span>
+          <span class="tone">spicy</span>
+          <span class="regen">↻ Regenerate <kbd>⌘R</kbd></span>
+          <span class="grow"></span>
+          <span class="insertall">Insert all <kbd>⌘0</kbd></span>
         </div>
       </div>
 
@@ -497,7 +519,11 @@
         <div class="c-row">
           <span class="cicon">☺</span>
           <span class="cicon off" title="Vault — P5">▣</span>
-          <span class="c-note">TYPING SHOWN TO FAN</span>
+          <div class="aigroup">
+            <span class="aibtn primary"><i>✳</i> Reply <kbd>⌘R</kbd></span>
+            <span class="aibtn">Improve <kbd>⌘I</kbd></span>
+            <span class="aibtn">Help <kbd>⌘H</kbd></span>
+          </div>
           <button class="send">Send <kbd>⌘↵</kbd></button>
         </div>
       </div>

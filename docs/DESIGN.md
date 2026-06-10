@@ -25,7 +25,7 @@ Status: Draft v1 — 2026-06-10. Binding companion to [PRD.md](PRD.md) §7 (prin
 - **Account rail (A):** avatars with unread badges; switch <500 ms (budget). Aggregate badge on app icon.
 - **Chat list:** ~340 px, rows ~64 px, virtualized. Minimal chrome (owner): no list title, no per-list sync label (freshness lives in the status bar only); a single quiet filter row — All / Unread / With tips; search/jump only via the ⌘K palette. "Fan waiting" indicator per PRD F2.
 - **Conversation:** virtualized list; PPV state badges unmissable (purchased = filled, not purchased = outline); tips highlighted; send-state glyphs (sending → sent → seen / failed / unconfirmed). Reply-to context inline.
-- **AI dock:** docked above composer, never a modal — chatter can keep reading/scrolling while it streams; tone selector; per-part Insert/Copy buttons; per-op cost shown after completion; cancel always visible.
+- **AI surface (redesigned 2026-06-10 after owner feedback).** Three tiers of access: **(1) composer pill row** for in-the-moment actions — `✳ Reply ⌘R · Improve ⌘I · Help ⌘H`, plus **contextual chips that appear only when relevant**: `Ping ⌘P` when the fan has been silent >5 days, `Hi ⌘G` on fresh chats (≤10 msgs); **(2) the `✳ AI` menu in the conversation header** — the full feature catalog with one-line descriptions and disabled-state reasons (Review ⌘E, Summary ⌘S → panel tab, Ping, Hi, Compare, Scan), so everything is discoverable without hotkeys; **(3) the ⌘K palette** (every action by name). Analysis outputs (Review, Help coaching) render in the dock as read-only serif cards — only true reply drafts get the insert affordance. Active state = dock above the composer, never a modal: suggestions render as **draft message bubbles** (serif text, dashed terracotta border) — **clicking the bubble inserts it** (the whole card is the target; a quiet `INSERT ⌘1` chip sits inside), `⌘0` inserts all parts; footer = tone pills (Fast Reply only) + Regenerate; cost appears top-right after completion; streaming = caret in the text; dismiss = ✕ / Esc. **No model/TTFT telemetry in the UI** — that lives in debug mode only.
 - **Fan panel:** collapsible (`]`), three tabs; money chips (total / tips / messages / subs), auto-renew-off ⇒ churn-risk badge.
 - Every surface has skeleton + empty + error states and a data-age indicator ("updated 12 s ago") — honesty over spinners (PRD §7.3).
 
@@ -40,7 +40,8 @@ Goal: **a full shift without touching the mouse.** Core triage loop: `⌘U` (nex
 | `Enter` / `Esc` | Focus composer / blur·dismiss dock |
 | `⌘↵` | Send |
 | `⌘R` / `⌘I` / `⌘H` | Fast Reply / Improve Draft / Help Me |
-| `⌘1..9` | Insert part N (companion phase: copy part N) |
+| `⌘P` / `⌘G` / `⌘E` / `⌘S` | Ping / Hi greeting / Chat review / Fan summary (when applicable) |
+| `⌘1..9` / `⌘0` | Insert part N / insert all parts (companion phase: copy) — or click the draft bubble itself |
 | `⌘.` | Cancel running AI operation |
 | `⌘T` | Cycle tone (casual/flirty/upsell/spicy) |
 | `]` / `[` | Toggle fan panel / chat list |
