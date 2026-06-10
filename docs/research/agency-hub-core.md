@@ -43,7 +43,7 @@ Also useful: `GET …/fans/{platformUserId}` (fan detail w/ spend), `GET …/fan
 
 ## Implications for this repo
 
-1. **P4 (deep AI):** integrate immediately against the live endpoints — profile prefetch/push + ai-usage batches + chatter API key in settings. Map OFAPI account → core page label by `platform === 'onlyfans'` + normalized username, manual override in settings.
+1. **P4 (deep AI):** integrate immediately against the live endpoints — profile prefetch/push + ai-usage batches + chatter API key in settings. Map OFAPI account → core page label by `platform === 'onlyfans'` + normalized username, manual override in settings. **Open verification item:** whether `PUT …/fans/{platformUserId}/profile` auto-creates the fan row when core's (thin, transactions-only) OnlyFans sync has never seen that fan — chatters will summarize non-spenders. If it 404s, core needs a small auto-create patch. Also: every target OF page must be onboarded as a core page (ops).
 2. **P6 (real-time + AI gateway):** new work lands **in core's repo** — OFAPI webhook receiver (HMAC, `event_id` dedupe, journal, pg-boss), SSE fanout (`Last-Event-ID` replay, page ACLs), AI gateway per Phase 7. See SPEC §9.2.
 3. Don't duplicate: notes/flags/spend views exist in core; our fan panel may deep-link to core's FanProfilePage for managers.
 4. Future synergy (P7 idea): OFAPI webhook stream could enrich core's thin OnlyFans analytics (subscribers/DM data that OnlyMonster doesn't provide).
