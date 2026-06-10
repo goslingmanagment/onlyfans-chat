@@ -77,7 +77,7 @@ This section is review-blocking for renderer PRs, same weight as SPEC §15 invar
 
 ## 5. Visual reference mockup
 
-The owner-chosen mockup of the default workspace state lives at **[`mockups/workspace.html`](mockups/workspace.html)** (preview: `mockups/workspace-preview.png`) — Claude-style warm per §4, picked 2026-06-10 over a strict-console alternative. It is the **binding visual reference** for P1: zones, density, cream/terracotta palette, serif AI text, ledger-style tip rows, PPV purchase badges, terminal-style send states, AI dock with per-part Insert, credits/LLM status bar, ≥14 px base type. Deviations require updating the mockup + this brief in the same PR. Iterate on the mockup (cheap) before iterating in React (expensive).
+The owner-**approved** mockup (sign-off 2026-06-10 after 4 iterations: light→bigger type→Claude-style→AI-surface redesign) lives at **[`mockups/workspace.html`](mockups/workspace.html)** (preview: `mockups/workspace-preview.png`) — Claude-style warm per §4, picked over a strict-console alternative. It is the **binding visual reference** for P1: zones, density, cream/terracotta palette, serif AI text, ledger-style tip rows, PPV purchase badges, terminal-style send states, AI dock with per-part Insert, credits/LLM status bar, ≥14 px base type. Deviations require updating the mockup + this brief in the same PR. Iterate on the mockup (cheap) before iterating in React (expensive).
 
 ## 6. Process
 
