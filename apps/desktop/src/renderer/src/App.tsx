@@ -1,7 +1,32 @@
+import { useEffect, useState } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AppShell } from './app/AppShell';
+import { KeymapProvider } from './app/KeymapProvider';
+import { attachBridgeEvents } from './bridge/events';
+
+// event-driven invalidation only — no refetch loops (DESIGN §3)
+function makeQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: Infinity,
+        refetchOnWindowFocus: false,
+        retry: 1,
+      },
+    },
+  });
+}
+
 export function App(): React.JSX.Element {
+  const [queryClient] = useState(makeQueryClient);
+
+  useEffect(() => attachBridgeEvents(queryClient), [queryClient]);
+
   return (
-    <div className="flex h-screen items-center justify-center bg-[#efece4] text-[#3d3a33]">
-      <p className="text-sm">ChatGoose Desktop — bootstrap</p>
-    </div>
+    <QueryClientProvider client={queryClient}>
+      <KeymapProvider>
+        <AppShell />
+      </KeymapProvider>
+    </QueryClientProvider>
   );
 }

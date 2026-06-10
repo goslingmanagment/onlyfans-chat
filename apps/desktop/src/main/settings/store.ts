@@ -1,0 +1,253 @@
+// SettingsStore (PRD F9, SPEC §10 `settings(key, value JSON)`): non-secret
+// settings persist one row per field; API keys route to the OS keychain and
+// never appear in the DB or in any returned view model.
+
+import { z } from 'zod';
+import {
+  DEEP_MAX_MESSAGE_COUNT,
+  DEEP_MIN_MESSAGE_COUNT,
+  DEFAULT_SETTINGS,
+  IMPROVE_MAX_MESSAGE_COUNT,
+  IMPROVE_MIN_MESSAGE_COUNT,
+  PING_MAX_MESSAGE_COUNT,
+  PING_MIN_MESSAGE_COUNT,
+  QUICK_MAX_MESSAGE_COUNT,
+  QUICK_MIN_MESSAGE_COUNT,
+} from '@chatgoose/shared';
+import type {
+  ModelSelectableFeature,
+  ReasoningEffort,
+  ReplyTone,
+} from '@chatgoose/shared/types';
+import type { SettingsVM } from '../../preload/contract';
+import type { SecretName } from '../secrets/keychain';
+
+// ─── Enums mirrored from shared types (satisfies ties them to the source) ──
+
+const MODEL_SELECTABLE_FEATURES = [
+  'fast-reply',
+  'help-me',
+  'fan-summary',
+  'chat-review',
+  'ping',
+] as const satisfies readonly ModelSelectableFeature[];
+
+const REASONING_EFFORT_VALUES = [
+  'off',
+  'low',
+  'medium',
+  'high',
+  'max',
+] as const satisfies readonly ReasoningEffort[];
+
+const REPLY_TONE_VALUES = [
+  'none',
+  'casual',
+  'flirty',
+  'upsell',
+  'spicy',
+] as const satisfies readonly ReplyTone[];
+
+// ─── Persisted state ────────────────────────────────────────────────────
+
+export type PersistedSettings = Omit<
+  SettingsVM,
+  'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey'
+>;
+
+export const PERSISTED_SETTINGS_KEYS = [
+  'featureModels',
+  'featureReasoning',
+  'quickMessageCount',
+  'pingMessageCount',
+  'improveMessageCount',
+  'deepMessageCount',
+  'promptCachingEnabled',
+  'debugMode',
+  'notificationsEnabled',
+  'soundEnabled',
+  'markAsReadOnOpen',
+  'defaultReplyTone',
+  'creditBudgetPerShift',
+  'accountMappings',
+] as const satisfies readonly (keyof PersistedSettings)[];
+
+const persistedFieldSchemas = {
+  featureModels: z.record(z.enum(MODEL_SELECTABLE_FEATURES), z.string().min(1)),
+  featureReasoning: z.record(z.enum(MODEL_SELECTABLE_FEATURES), z.enum(REASONING_EFFORT_VALUES)),
+  quickMessageCount: z.number().int().min(QUICK_MIN_MESSAGE_COUNT).max(QUICK_MAX_MESSAGE_COUNT),
+  pingMessageCount: z.number().int().min(PING_MIN_MESSAGE_COUNT).max(PING_MAX_MESSAGE_COUNT),
+  improveMessageCount: z
+    .number()
+    .int()
+    .min(IMPROVE_MIN_MESSAGE_COUNT)
+    .max(IMPROVE_MAX_MESSAGE_COUNT),
+  deepMessageCount: z.number().int().min(DEEP_MIN_MESSAGE_COUNT).max(DEEP_MAX_MESSAGE_COUNT),
+  promptCachingEnabled: z.boolean(),
+  debugMode: z.boolean(),
+  notificationsEnabled: z.boolean(),
+  soundEnabled: z.boolean(),
+  markAsReadOnOpen: z.boolean(),
+  defaultReplyTone: z.enum(REPLY_TONE_VALUES),
+  creditBudgetPerShift: z.number().positive().nullable(),
+  accountMappings: z.record(z.string(), z.string()),
+};
+
+interface FieldValidator<T> {
+  safeParse(data: unknown): { success: true; data: T } | { success: false; data?: undefined };
+}
+
+// Compile-time proof every field schema parses to its SettingsVM field type.
+const fieldValidators: {
+  [K in keyof PersistedSettings]: FieldValidator<PersistedSettings[K]>;
+} = persistedFieldSchemas;
+
+export const PERSISTED_DEFAULTS: PersistedSettings = {
+  featureModels: { ...DEFAULT_SETTINGS.featureModels },
+  featureReasoning: { ...DEFAULT_SETTINGS.featureReasoning },
+  quickMessageCount: DEFAULT_SETTINGS.quickMessageCount,
+  pingMessageCount: DEFAULT_SETTINGS.pingMessageCount,
+  improveMessageCount: DEFAULT_SETTINGS.improveMessageCount,
+  deepMessageCount: DEFAULT_SETTINGS.deepMessageCount,
+  promptCachingEnabled: DEFAULT_SETTINGS.promptCachingEnabled,
+  debugMode: DEFAULT_SETTINGS.debugMode,
+  notificationsEnabled: true,
+  soundEnabled: true,
+  // P3 is strictly read-only toward OFAPI — mark-as-read stays off by default.
+  markAsReadOnOpen: false,
+  defaultReplyTone: DEFAULT_SETTINGS.defaultReplyTone,
+  creditBudgetPerShift: null,
+  accountMappings: {},
+};
+
+// ─── Patch schema (IPC trust boundary for cmd:settings.update) ──────────
+
+export const settingsPatchSchema = z.strictObject({
+  featureModels: persistedFieldSchemas.featureModels.optional(),
+  featureReasoning: persistedFieldSchemas.featureReasoning.optional(),
+  quickMessageCount: persistedFieldSchemas.quickMessageCount.optional(),
+  pingMessageCount: persistedFieldSchemas.pingMessageCount.optional(),
+  improveMessageCount: persistedFieldSchemas.improveMessageCount.optional(),
+  deepMessageCount: persistedFieldSchemas.deepMessageCount.optional(),
+  promptCachingEnabled: persistedFieldSchemas.promptCachingEnabled.optional(),
+  debugMode: persistedFieldSchemas.debugMode.optional(),
+  notificationsEnabled: persistedFieldSchemas.notificationsEnabled.optional(),
+  soundEnabled: persistedFieldSchemas.soundEnabled.optional(),
+  markAsReadOnOpen: persistedFieldSchemas.markAsReadOnOpen.optional(),
+  defaultReplyTone: persistedFieldSchemas.defaultReplyTone.optional(),
+  creditBudgetPerShift: persistedFieldSchemas.creditBudgetPerShift.optional(),
+  accountMappings: persistedFieldSchemas.accountMappings.optional(),
+  // Secret material: routed to the keychain, never stored in the settings table.
+  ofapiKey: z.string().optional(),
+  anthropicKey: z.string().optional(),
+  openRouterKey: z.string().optional(),
+});
+
+export type ValidatedSettingsPatch = z.infer<typeof settingsPatchSchema>;
+
+// ─── Storage + keychain seams ────────────────────────────────────────────
+
+/**
+ * Minimal settings-table access; matches the shape of the db module's
+ * SettingsQueries (src/main/db/queries/settings.ts) so it can be passed in
+ * directly. Coordinate shape: settings(key TEXT PK, value JSON).
+ */
+export interface SettingsQueries {
+  /** Parsed JSON value, or undefined when unset. May throw on corrupt rows. */
+  get(key: string): unknown;
+  set(key: string, value: unknown): void;
+}
+
+/** Narrow keychain view the settings store depends on (Keychain satisfies it). */
+export interface SecretStoreLike {
+  hasSecret(name: SecretName): Promise<boolean>;
+  setSecret(name: SecretName, value: string): Promise<void>;
+  deleteSecret(name: SecretName): Promise<void>;
+}
+
+export interface SettingsStore {
+  get(): Promise<SettingsVM>;
+  /** zod-validates the patch (throws on invalid), persists, returns the full VM. */
+  update(patch: unknown): Promise<SettingsVM>;
+}
+
+export interface SettingsStoreOptions {
+  queries: SettingsQueries;
+  secrets: SecretStoreLike;
+}
+
+export function createSettingsStore(options: SettingsStoreOptions): SettingsStore {
+  const { queries, secrets } = options;
+
+  function readField<K extends keyof PersistedSettings>(key: K): PersistedSettings[K] {
+    let json: unknown;
+    try {
+      json = queries.get(key);
+    } catch {
+      return structuredClone(PERSISTED_DEFAULTS[key]);
+    }
+    if (json === undefined) return structuredClone(PERSISTED_DEFAULTS[key]);
+    const result = fieldValidators[key].safeParse(json);
+    // Corrupt/legacy rows fall back to defaults rather than wedging startup.
+    return result.success ? result.data : structuredClone(PERSISTED_DEFAULTS[key]);
+  }
+
+  function readPersisted(): PersistedSettings {
+    return {
+      featureModels: readField('featureModels'),
+      featureReasoning: readField('featureReasoning'),
+      quickMessageCount: readField('quickMessageCount'),
+      pingMessageCount: readField('pingMessageCount'),
+      improveMessageCount: readField('improveMessageCount'),
+      deepMessageCount: readField('deepMessageCount'),
+      promptCachingEnabled: readField('promptCachingEnabled'),
+      debugMode: readField('debugMode'),
+      notificationsEnabled: readField('notificationsEnabled'),
+      soundEnabled: readField('soundEnabled'),
+      markAsReadOnOpen: readField('markAsReadOnOpen'),
+      defaultReplyTone: readField('defaultReplyTone'),
+      creditBudgetPerShift: readField('creditBudgetPerShift'),
+      accountMappings: readField('accountMappings'),
+    };
+  }
+
+  async function buildVm(): Promise<SettingsVM> {
+    const [hasOfapiKey, hasAnthropicKey, hasOpenRouterKey] = await Promise.all([
+      secrets.hasSecret('ofapiKey'),
+      secrets.hasSecret('anthropicKey'),
+      secrets.hasSecret('openRouterKey'),
+    ]);
+    return { hasOfapiKey, hasAnthropicKey, hasOpenRouterKey, ...readPersisted() };
+  }
+
+  async function applySecret(name: SecretName, rawValue: string): Promise<void> {
+    const value = rawValue.trim();
+    if (value.length === 0) {
+      await secrets.deleteSecret(name);
+    } else {
+      await secrets.setSecret(name, value);
+    }
+  }
+
+  return {
+    get: buildVm,
+
+    async update(patch: unknown): Promise<SettingsVM> {
+      const parsed = settingsPatchSchema.parse(patch);
+
+      if (parsed.ofapiKey !== undefined) await applySecret('ofapiKey', parsed.ofapiKey);
+      if (parsed.anthropicKey !== undefined) await applySecret('anthropicKey', parsed.anthropicKey);
+      if (parsed.openRouterKey !== undefined) {
+        await applySecret('openRouterKey', parsed.openRouterKey);
+      }
+
+      for (const key of PERSISTED_SETTINGS_KEYS) {
+        const value = parsed[key];
+        if (value === undefined) continue;
+        queries.set(key, value);
+      }
+
+      return buildVm();
+    },
+  };
+}

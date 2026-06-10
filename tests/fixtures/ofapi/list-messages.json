@@ -1,0 +1,667 @@
+{
+  "_fixture": {
+    "source": "GET /{account}/chats/{chat_id}/messages?limit=100&order=desc — live probe 2026-06-10, envelope {data,_meta,_pagination}",
+    "anonymized": true
+  },
+  "data": [
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 0,
+      "media": [],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000041,
+      "isMarkdownDisabled": true,
+      "releaseForms": [],
+      "fromUser": {
+        "id": 1000004,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000037,
+      "isOpened": false,
+      "isNew": true,
+      "createdAt": "2026-06-10T14:56:16+00:00",
+      "changedAt": "2026-06-10T14:56:16+00:00",
+      "cancelSeconds": 72553,
+      "isLiked": false,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": false,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": true
+    },
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 0,
+      "media": [],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000042,
+      "isMarkdownDisabled": true,
+      "fromUser": {
+        "id": 1000039,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000038,
+      "isOpened": false,
+      "isNew": false,
+      "createdAt": "2026-06-10T14:24:14+00:00",
+      "changedAt": "2026-06-10T14:24:14+00:00",
+      "cancelSeconds": 0,
+      "isLiked": false,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": true,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": false
+    },
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 0,
+      "media": [],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000043,
+      "isMarkdownDisabled": true,
+      "releaseForms": [],
+      "fromUser": {
+        "id": 1000004,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000044,
+      "isOpened": false,
+      "isNew": false,
+      "createdAt": "2026-06-08T21:42:49+00:00",
+      "changedAt": "2026-06-08T21:42:49+00:00",
+      "cancelSeconds": 0,
+      "isLiked": true,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": false,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": true
+    },
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 0,
+      "media": [],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000045,
+      "isMarkdownDisabled": true,
+      "fromUser": {
+        "id": 1000039,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000046,
+      "isOpened": false,
+      "isNew": false,
+      "createdAt": "2026-06-06T22:32:28+00:00",
+      "changedAt": "2026-06-06T22:32:28+00:00",
+      "cancelSeconds": 0,
+      "isLiked": false,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": true,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": false
+    },
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 0,
+      "media": [],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000047,
+      "isMarkdownDisabled": true,
+      "releaseForms": [],
+      "fromUser": {
+        "id": 1000004,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000048,
+      "isOpened": false,
+      "isNew": false,
+      "createdAt": "2026-06-06T16:25:13+00:00",
+      "changedAt": "2026-06-06T16:25:13+00:00",
+      "cancelSeconds": 0,
+      "isLiked": false,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": false,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": true
+    },
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 0,
+      "media": [],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000049,
+      "isMarkdownDisabled": true,
+      "fromUser": {
+        "id": 1000039,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000050,
+      "isOpened": false,
+      "isNew": false,
+      "createdAt": "2026-06-06T10:19:10+00:00",
+      "changedAt": "2026-06-06T10:19:10+00:00",
+      "cancelSeconds": 0,
+      "isLiked": false,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": true,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": false
+    },
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 0,
+      "media": [],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000051,
+      "isMarkdownDisabled": true,
+      "releaseForms": [],
+      "fromUser": {
+        "id": 1000004,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000052,
+      "isOpened": false,
+      "isNew": false,
+      "createdAt": "2026-06-05T22:53:56+00:00",
+      "changedAt": "2026-06-05T22:53:56+00:00",
+      "cancelSeconds": 0,
+      "isLiked": false,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": false,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": true
+    },
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 0,
+      "media": [],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000053,
+      "isMarkdownDisabled": true,
+      "fromUser": {
+        "id": 1000039,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000054,
+      "isOpened": false,
+      "isNew": false,
+      "createdAt": "2026-06-05T22:46:41+00:00",
+      "changedAt": "2026-06-05T22:46:41+00:00",
+      "cancelSeconds": 0,
+      "isLiked": false,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": true,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": false
+    },
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 0,
+      "media": [],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000055,
+      "isMarkdownDisabled": true,
+      "releaseForms": [],
+      "fromUser": {
+        "id": 1000004,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000056,
+      "isOpened": false,
+      "isNew": false,
+      "createdAt": "2026-06-05T22:43:41+00:00",
+      "changedAt": "2026-06-05T22:43:41+00:00",
+      "cancelSeconds": 0,
+      "isLiked": false,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": false,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": true
+    },
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 0,
+      "media": [],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000057,
+      "isMarkdownDisabled": true,
+      "fromUser": {
+        "id": 1000039,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000058,
+      "isOpened": false,
+      "isNew": false,
+      "createdAt": "2026-06-05T22:20:05+00:00",
+      "changedAt": "2026-06-05T22:20:05+00:00",
+      "cancelSeconds": 0,
+      "isLiked": false,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": true,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": false
+    },
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 0,
+      "media": [],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000059,
+      "isMarkdownDisabled": true,
+      "releaseForms": [],
+      "fromUser": {
+        "id": 1000004,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000060,
+      "isOpened": false,
+      "isNew": false,
+      "createdAt": "2026-06-05T18:24:14+00:00",
+      "changedAt": "2026-06-05T18:24:14+00:00",
+      "cancelSeconds": 0,
+      "isLiked": false,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": false,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": true
+    },
+    {
+      "responseType": "message",
+      "text": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "giphyId": null,
+      "lockedText": false,
+      "isFree": true,
+      "price": 0,
+      "isMediaReady": true,
+      "mediaCount": 5,
+      "media": [
+        {
+          "id": 1000061,
+          "type": "photo",
+          "convertedToVideo": false,
+          "canView": true,
+          "hasError": false,
+          "createdAt": "2025-08-30T19:57:03+00:00",
+          "isReady": true,
+          "files": {
+            "full": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 1955,
+              "height": 3476,
+              "size": 0,
+              "sources": []
+            },
+            "thumb": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 300,
+              "height": 300,
+              "size": 0
+            },
+            "preview": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 960,
+              "height": 1707,
+              "size": 0
+            },
+            "squarePreview": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 960,
+              "height": 960,
+              "size": 0
+            }
+          },
+          "duration": 0,
+          "hasCustomPreview": false,
+          "videoSources": {
+            "240": null,
+            "720": null
+          }
+        },
+        {
+          "id": 1000062,
+          "type": "photo",
+          "convertedToVideo": false,
+          "canView": true,
+          "hasError": false,
+          "createdAt": "2025-09-01T17:59:15+00:00",
+          "isReady": true,
+          "files": {
+            "full": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 2268,
+              "height": 4032,
+              "size": 0,
+              "sources": []
+            },
+            "thumb": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 300,
+              "height": 300,
+              "size": 0
+            },
+            "preview": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 960,
+              "height": 1707,
+              "size": 0
+            },
+            "squarePreview": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 960,
+              "height": 960,
+              "size": 0
+            }
+          },
+          "duration": 0,
+          "hasCustomPreview": false,
+          "videoSources": {
+            "240": null,
+            "720": null
+          }
+        },
+        {
+          "id": 1000063,
+          "type": "photo",
+          "convertedToVideo": false,
+          "canView": true,
+          "hasError": false,
+          "createdAt": "2025-11-20T23:45:21+00:00",
+          "isReady": true,
+          "files": {
+            "full": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 554,
+              "height": 900,
+              "size": 0,
+              "sources": []
+            },
+            "thumb": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 300,
+              "height": 300,
+              "size": 0
+            },
+            "preview": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 554,
+              "height": 900,
+              "size": 0
+            },
+            "squarePreview": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 960,
+              "height": 960,
+              "size": 0
+            }
+          },
+          "duration": 0,
+          "hasCustomPreview": false,
+          "videoSources": {
+            "240": null,
+            "720": null
+          }
+        },
+        {
+          "id": 1000064,
+          "type": "photo",
+          "convertedToVideo": false,
+          "canView": true,
+          "hasError": false,
+          "createdAt": "2025-09-01T17:01:19+00:00",
+          "isReady": true,
+          "files": {
+            "full": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 1826,
+              "height": 3247,
+              "size": 0,
+              "sources": []
+            },
+            "thumb": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 300,
+              "height": 300,
+              "size": 0
+            },
+            "preview": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 960,
+              "height": 1708,
+              "size": 0
+            },
+            "squarePreview": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 960,
+              "height": 960,
+              "size": 0
+            }
+          },
+          "duration": 0,
+          "hasCustomPreview": false,
+          "videoSources": {
+            "240": null,
+            "720": null
+          }
+        },
+        {
+          "id": 1000065,
+          "type": "photo",
+          "convertedToVideo": false,
+          "canView": true,
+          "hasError": false,
+          "createdAt": "2025-11-20T23:45:21+00:00",
+          "isReady": true,
+          "files": {
+            "full": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 1860,
+              "height": 2532,
+              "size": 0,
+              "sources": []
+            },
+            "thumb": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 300,
+              "height": 300,
+              "size": 0
+            },
+            "preview": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 960,
+              "height": 1307,
+              "size": 0
+            },
+            "squarePreview": {
+              "url": "https://cdn2.onlyfans.com/anonymized/sample.jpg",
+              "width": 960,
+              "height": 960,
+              "size": 0
+            }
+          },
+          "duration": 0,
+          "hasCustomPreview": false,
+          "videoSources": {
+            "240": null,
+            "720": null
+          }
+        }
+      ],
+      "previews": [],
+      "isTip": false,
+      "isReportedByMe": false,
+      "isCouplePeopleMedia": false,
+      "queueId": 1000066,
+      "isMarkdownDisabled": true,
+      "releaseForms": [],
+      "fromUser": {
+        "id": 1000004,
+        "_view": "s"
+      },
+      "isFromQueue": false,
+      "id": 1000067,
+      "isOpened": false,
+      "isNew": false,
+      "createdAt": "2026-06-05T14:29:58+00:00",
+      "changedAt": "2026-06-05T14:29:58+00:00",
+      "cancelSeconds": 0,
+      "isLiked": false,
+      "canPurchase": false,
+      "canPurchaseReason": "free",
+      "canReport": false,
+      "canBePinned": true,
+      "isPinned": false,
+      "isSentByMe": true
+    }
+  ],
+  "_pagination": {
+    "next_page": "https://app.onlyfansapi.com/api/acct_01000000000000000000000000000000/chats/1000039/messages?limit=100&order=desc&first_id=1000067"
+  },
+  "_meta": {
+    "_credits": {
+      "used": 1,
+      "balance": 99057,
+      "note": "Always"
+    },
+    "_cache": {
+      "is_cached": false,
+      "note": "Cache disabled for this endpoint"
+    },
+    "_rate_limits": {
+      "limit_minute": 5000,
+      "limit_day": null,
+      "remaining_minute": 4996,
+      "remaining_day": null,
+      "notice": "We have decided to remove our daily rate limits. Please remove any references to these in your integrations."
+    }
+  }
+}

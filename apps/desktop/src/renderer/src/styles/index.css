@@ -1,1 +1,133 @@
 @import 'tailwindcss';
+
+/* Design tokens extracted from docs/mockups/workspace.html (binding) + DESIGN §4.
+   Micro-label floor is 10px (DESIGN §4 type floor) — mockup's 9/9.5px values round up. */
+@theme {
+  /* surfaces */
+  --color-bg0: #efece4;
+  --color-bg1: #faf9f5;
+  --color-bg2: #f2f0e9;
+  --color-bg3: #e8e5da;
+  --color-line: #e2dfd3;
+  --color-line-strong: #cfcaba;
+
+  /* text */
+  --color-ink: #1f1e1d;
+  --color-ink-mid: #5d5a52;
+  --color-ink-low: #97928a;
+
+  /* terracotta — primary / attention */
+  --color-clay: #d97757;
+  --color-clay-deep: #c2603f;
+  --color-clay-bg: #f7e8e1;
+  --color-clay-line: #e8c3b3;
+
+  /* money — financial green */
+  --color-green: #3a7d44;
+  --color-green-bg: #e9f1e5;
+  --color-green-line: #c9dcc2;
+
+  /* pending money — amber */
+  --color-amber: #96691c;
+  --color-amber-bg: #f6efdc;
+  --color-amber-line: #e4d4a8;
+
+  /* semantics */
+  --color-seen: #4a72b8;
+  --color-warn: #b45309;
+  --color-bad: #bb4430;
+  --color-online: #3f9e54;
+
+  /* bubbles */
+  --color-bubble-me: #e9e2d4;
+  --color-bubble-me-line: #ded5c2;
+  --color-draft-bg: #f7f1e8;
+
+  /* typography */
+  --font-sans: 'Hanken Grotesk Variable', -apple-system, 'Segoe UI', sans-serif;
+  --font-serif: 'Source Serif 4 Variable', Georgia, serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+  --text-base: 14px;
+  --text-base--line-height: 1.5;
+  --text-msg: 14.5px;
+  --text-msg--line-height: 1.5;
+  --text-micro: 10px;
+  --text-micro--line-height: 1.3;
+
+  /* radii (mockup: --r 9px, --rs 7px, bubbles 14px, flat corner 5px, menus 11px) */
+  --radius-card: 9px;
+  --radius-chip: 7px;
+  --radius-bubble: 14px;
+  --radius-flat: 5px;
+  --radius-menu: 11px;
+  --radius-ava: 11px;
+
+  /* shadows */
+  --shadow-soft: 0 2px 6px rgba(31, 30, 29, 0.05);
+  --shadow-pop: 0 10px 28px rgba(31, 30, 29, 0.14);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--color-bg0);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  kbd {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-ink-mid);
+    border: 1px solid var(--color-line-strong);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 1px 4px 0;
+    background: var(--color-bg1);
+    white-space: nowrap;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 6px;
+    border: 2.5px solid var(--color-bg1);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  select,
+  input,
+  textarea,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+/* mono micro-caps label (mockup .cap) — pair with a text color utility */
+@utility cap {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+/* tabular numerals for money/time (mockup .num) */
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}

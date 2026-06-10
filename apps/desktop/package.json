@@ -19,6 +19,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
+    "bsqlite3-mc-node": "npm:better-sqlite3-multiple-ciphers@12.9.0",
     "electron": "^41.7.2",
     "electron-vite": "^5.0.0",
     "tailwindcss": "^4.3.0",
@@ -26,8 +27,15 @@
     "vitest": "^4.1.8"
   },
   "dependencies": {
+    "@fontsource-variable/hanken-grotesk": "^5.2.8",
+    "@fontsource-variable/source-serif-4": "^5.2.9",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@tanstack/react-query": "^5.101.0",
+    "@tanstack/react-virtual": "^3.14.2",
     "better-sqlite3-multiple-ciphers": "^12.10.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
   }
 }

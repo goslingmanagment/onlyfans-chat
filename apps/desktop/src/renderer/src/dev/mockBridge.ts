@@ -1,0 +1,622 @@
+// Dev-only ChatGooseBridge: realistic fixtures + periodic sync events so the
+// live UI behaviors (freshness ticks, toasts, typing, unread churn) are
+// exercised without Electron. Used when window.chatgoose is undefined.
+// Media thumbs are inline SVG data-URIs (real app uses media:// — no network here).
+
+import type {
+  AccountVM,
+  ChatGooseBridge,
+  ChatListItemVM,
+  EventChannelName,
+  EventChannels,
+  FanPanelVM,
+  InvokeChannelName,
+  InvokeChannels,
+  MessageMediaVM,
+  MessageVM,
+  SettingsVM,
+  SyncStatusVM,
+} from '../../../preload/contract';
+import type { Personality } from '@chatgoose/shared/types';
+import { applyChatFilter, sortChatsByRecency } from '../lib/filters';
+import { fuzzyFilter } from '../lib/fuzzy';
+
+// ─── deterministic RNG ───────────────────────────────────────────────────
+
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const rng = mulberry32(20260610);
+const pick = <T>(arr: readonly T[]): T => {
+  const item = arr[Math.floor(rng() * arr.length)];
+  if (item === undefined) throw new Error('pick from empty array');
+  return item;
+};
+const chance = (p: number): boolean => rng() < p;
+
+// ─── media thumbs (inline SVG, warm tones) ───────────────────────────────
+
+const THUMB_TONES = ['#e8e0cf', '#e3d8c4', '#ddd2bd', '#e6dccb', '#dfd5c0'] as const;
+
+function svgThumb(w: number, h: number, tone: string, tone2: string): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">` +
+    `<rect width="${w}" height="${h}" fill="${tone}"/>` +
+    `<circle cx="${w * 0.7}" cy="${h * 0.3}" r="${h * 0.22}" fill="${tone2}"/>` +
+    `<path d="M0 ${h} L${w * 0.4} ${h * 0.45} L${w * 0.65} ${h * 0.75} L${w * 0.82} ${h * 0.55} L${w} ${h} Z" fill="${tone2}"/>` +
+    `</svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+let mediaSeq = 0;
+function makeMedia(kind: 'photo' | 'video', opts: { locked?: boolean; ready?: boolean }): MessageMediaVM {
+  mediaSeq += 1;
+  const tone = pick(THUMB_TONES);
+  const tone2 = pick(THUMB_TONES);
+  const ready = opts.ready ?? true;
+  const locked = opts.locked ?? false;
+  return {
+    id: `media_${mediaSeq}`,
+    type: kind,
+    thumbUrl: ready && !locked ? svgThumb(280, 180, tone, tone2) : null,
+    fullUrl: ready && !locked ? svgThumb(900, 600, tone, tone2) : null,
+    isReady: ready,
+    locked,
+    durationSeconds: kind === 'video' ? 10 + Math.floor(rng() * 110) : null,
+  };
+}
+
+// ─── fixture corpus ──────────────────────────────────────────────────────
+
+const FAN_NAMES = [
+  'Marcus K.', 'Daniel', 'jake_777', 'Tom H.', 'Robbie', 'Sam', 'Alex P.', 'Vincent',
+  'Chris B.', 'mike_zero', 'Eddie', 'Juan R.', 'Pete', 'big_ben88', 'Oliver',
+  'Nate', 'Stefan', 'ryan_dx', 'Hugo', 'Wes M.', 'Felix', 'arman_77', 'Leo K.',
+  'Dustin', 'Gary P.', 'noah_vt', 'Iggy', 'Mateo', 'Brad S.', 'kev_in', 'Tony Q.', 'Walt',
+] as const;
+
+const FAN_LINES = [
+  'long day… gym after work nearly finished me. how was yours?',
+  'maybe later babe, work is killing me… don’t tempt me before payday 😅',
+  'so when do I get to see the new set 👀',
+  'that gym video was insane ngl',
+  'just renewed, missed you',
+  'haha ok ok you win',
+  'good morning ☀️ thinking about you',
+  'what are you up to this weekend?',
+  'you always know what to say',
+  'can’t stop thinking about friday',
+  'ok that pic… wow',
+  'rough week. you’re the best part of it honestly',
+  'lol stop, I’m at work 😂',
+  'did you get my tip? 🙈',
+  'tell me more about the shoot',
+] as const;
+
+const ME_LINES = [
+  'aww poor thing 🥺 mine was leg day, I can barely walk lol. proud of you for still going tho',
+  'sleep well, talk tomorrow 😘',
+  'haha you wish 😏',
+  'good morning you 🖤',
+  'I was just thinking about you actually…',
+  'you’re sweet. don’t go anywhere, I have something for you later',
+  'ok but promise me you’ll rest this weekend',
+  'just finished a shoot, you’d have loved this one',
+  'tell me everything, I have time tonight',
+  'you always make my day with these messages',
+] as const;
+
+const PPV_CAPTIONS = [
+  'little something from today’s set… you earned it 🖤',
+  'this one’s just for you, don’t share 😏',
+  'the full version of what I teased earlier…',
+  'shot this an hour ago. still warm 🔥',
+] as const;
+
+const TIP_NOTES = [
+  'for the gym video 🔥',
+  'buy yourself a coffee',
+  'because you’re amazing',
+  'friday fund 😏',
+  null,
+  null,
+] as const;
+
+const ABOUTS = [
+  'Construction manager, two dogs, lifts at 6am. Quiet weeks, loud weekends.',
+  'Night-shift nurse. Online late. Soft spot for voice notes.',
+  'Crypto guy, generous when the chart is green.',
+  null,
+  null,
+] as const;
+
+// ─── store ───────────────────────────────────────────────────────────────
+
+interface MockStore {
+  accounts: AccountVM[];
+  chats: Map<string, ChatListItemVM[]>; // accountId → chats
+  messages: Map<string, MessageVM[]>; // `${accountId}/${chatId}` → asc messages
+  fans: Map<string, FanPanelVM>; // `${accountId}/${fanId}`
+  personalities: Personality[];
+  settings: SettingsVM;
+  sync: SyncStatusVM;
+  creditsToday: number;
+}
+
+let messageSeq = 1000;
+
+function buildMessages(chatId: string, count: number, endMs: number): MessageVM[] {
+  const out: MessageVM[] = [];
+  // spread messages across ~14 days ending at endMs
+  let t = endMs - count * 35 * 60_000 - Math.floor(rng() * 86_400_000);
+  let lastFanText = '';
+  for (let i = 0; i < count; i++) {
+    t += (8 + Math.floor(rng() * 110)) * 60_000;
+    if (chance(0.06)) t += 86_400_000 / 2; // occasional half-day gap → day separators
+    messageSeq += 1;
+    const id = String(messageSeq);
+    const isMe = chance(0.52);
+    const createdAt = new Date(Math.min(t, endMs)).toISOString();
+    const base: MessageVM = {
+      id,
+      chatId,
+      createdAt,
+      isSentByMe: isMe,
+      text: isMe ? pick(ME_LINES) : pick(FAN_LINES),
+      media: [],
+      price: 0,
+      ppvState: null,
+      isTip: false,
+      tipAmount: null,
+      tipText: null,
+      isNew: false,
+      replyTo: null,
+      deleted: false,
+    };
+    if (!isMe) {
+      lastFanText = base.text;
+      if (chance(0.07)) {
+        // tip from fan
+        const amount = pick([5, 10, 15, 20, 25, 50, 100]);
+        out.push({
+          ...base,
+          text: '',
+          isTip: true,
+          tipAmount: amount,
+          tipText: pick(TIP_NOTES),
+        });
+        continue;
+      }
+      if (chance(0.08)) base.media = [makeMedia('photo', { ready: chance(0.8) })];
+    } else {
+      if (chance(0.12)) {
+        // PPV from us
+        const price = pick([6, 12, 20, 30, 45, 60]);
+        const state = pick(['purchased', 'not_purchased', 'unknown'] as const);
+        const mediaCount = 1 + Math.floor(rng() * 3);
+        const media: MessageMediaVM[] = [];
+        for (let m = 0; m < mediaCount; m++) {
+          media.push(
+            makeMedia(chance(0.7) ? 'photo' : 'video', {
+              locked: state !== 'purchased',
+              ready: true,
+            }),
+          );
+        }
+        out.push({
+          ...base,
+          text: pick(PPV_CAPTIONS),
+          media,
+          price,
+          ppvState: state,
+          isNew: chance(0.3),
+        });
+        continue;
+      }
+      if (chance(0.1) && lastFanText !== '') {
+        base.replyTo = { sender: 'fan', textPreview: lastFanText.slice(0, 80) };
+      }
+      if (chance(0.04)) {
+        base.deleted = true;
+        base.text = '';
+      }
+      // last few of our messages stay unseen (SENT)
+      base.isNew = i > count - 4 ? chance(0.7) : chance(0.06);
+    }
+    out.push(base);
+  }
+  return out;
+}
+
+function buildFan(accountId: string, fanId: string, name: string, lastMessageAt: string): FanPanelVM {
+  const username = name.toLowerCase().replace(/[^a-z0-9]+/g, '') + '_' + Math.floor(rng() * 99);
+  const hasSpending = chance(0.85);
+  const tips = hasSpending ? Math.floor(rng() * 400) : 0;
+  const msgs = hasSpending ? Math.floor(rng() * 900) : 0;
+  const subs = hasSpending ? Math.floor(rng() * 120) : 0;
+  const subStatus = pick(['active', 'active', 'active', 'expired', 'none'] as const);
+  const autoRenewOff = subStatus === 'active' && chance(0.3);
+  const subscribedAt = new Date(Date.now() - (30 + Math.floor(rng() * 400)) * 86_400_000);
+  return {
+    fanId,
+    name,
+    customName: chance(0.4) ? `${name.split(' ')[0] ?? name} 🏋️` : null,
+    username,
+    avatarUrl: null,
+    lastSeen: chance(0.3)
+      ? new Date(Date.now() - Math.floor(rng() * 3) * 60_000).toISOString()
+      : new Date(Date.parse(lastMessageAt) + 5 * 60_000).toISOString(),
+    about: pick(ABOUTS),
+    spending: hasSpending
+      ? {
+          total: tips + msgs + subs,
+          subscriptions: subs,
+          tips,
+          messages: msgs,
+          posts: 0,
+          streams: 0,
+        }
+      : null,
+    subscription:
+      subStatus === 'none'
+        ? null
+        : {
+            status: subStatus,
+            priceUsd: pick([0, 5, 9.99, 14.99]),
+            subscribedAt: subscribedAt.toISOString(),
+            renewsAt:
+              subStatus === 'active'
+                ? new Date(Date.now() + Math.floor(rng() * 28 + 1) * 86_400_000).toISOString()
+                : null,
+            autoRenewOff,
+            durationLabel: `${Math.max(1, Math.floor((Date.now() - subscribedAt.getTime()) / (30 * 86_400_000)))} months`,
+          },
+    summary:
+      fanId === '90001'
+        ? {
+            body: 'Стабильный платящий фан, тёплый и лояльный. Триггеры покупок — личные «только для тебя» кадры после спортзала; чувствителен к давлению, лучше мягкие офферы. Открытые темы: проект на работе, поездка в горы в июле. Стадия: устойчивый постоянник, аккуратно поднимать средний чек.',
+            generatedAt: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+            modelLabel: 'Claude Sonnet 4.6',
+          }
+        : null,
+  };
+}
+
+function buildStore(): MockStore {
+  const accounts: AccountVM[] = [
+    {
+      id: 'acct_lora',
+      username: 'loravie',
+      displayName: 'Lora Vie',
+      avatarUrl: null,
+      isAuthenticated: true,
+      unreadCount: 0,
+      personalityId: 'builtin:lora',
+    },
+    {
+      id: 'acct_lexi',
+      username: 'lexinoir',
+      displayName: 'Lexi Noir',
+      avatarUrl: null,
+      isAuthenticated: chance(0.5),
+      unreadCount: 0,
+      personalityId: null,
+    },
+  ];
+
+  const chats = new Map<string, ChatListItemVM[]>();
+  const messages = new Map<string, MessageVM[]>();
+  const fans = new Map<string, FanPanelVM>();
+
+  let fanSeq = 90000;
+  const counts: Record<string, number> = { acct_lora: 18, acct_lexi: 12 };
+  let nameIdx = 0;
+  for (const account of accounts) {
+    const list: ChatListItemVM[] = [];
+    const n = counts[account.id] ?? 10;
+    for (let i = 0; i < n; i++) {
+      fanSeq += 1;
+      const fanId = String(fanSeq);
+      const name = FAN_NAMES[nameIdx % FAN_NAMES.length] ?? `Fan ${fanSeq}`;
+      nameIdx += 1;
+      const msgCount = i === 0 ? 220 : 18 + Math.floor(rng() * 45);
+      const endMs = Date.now() - Math.floor(rng() * (i === 0 ? 1 : 36)) * 3_600_000;
+      const msgs = buildMessages(fanId, msgCount, endMs);
+      messages.set(`${account.id}/${fanId}`, msgs);
+      const last = msgs[msgs.length - 1];
+      const unread = last !== undefined && !last.isSentByMe && chance(0.5) ? 1 + Math.floor(rng() * 4) : 0;
+      const lastIsTip = last?.isTip === true;
+      const item: ChatListItemVM = {
+        chatId: fanId,
+        fanId,
+        fanName: name,
+        avatarUrl: null,
+        lastMessageAt: last?.createdAt ?? null,
+        lastMessagePreview: last === undefined
+          ? ''
+          : last.isTip
+            ? `[Tip $${last.tipAmount ?? 0}] ${last.tipText ?? ''}`.trim()
+            : last.deleted
+              ? 'message deleted'
+              : last.price > 0
+                ? `[PPV $${last.price}] ${last.text}`
+                : last.text,
+        lastMessageIsSentByMe: last?.isSentByMe ?? false,
+        unreadCount: unread,
+        hasUnreadTips: lastIsTip || chance(0.1),
+        fanWaiting: last !== undefined && !last.isSentByMe && unread > 0,
+        canSendMessage: true,
+      };
+      list.push(item);
+      fans.set(`${account.id}/${fanId}`, buildFan(account.id, fanId, name, item.lastMessageAt ?? new Date().toISOString()));
+    }
+    chats.set(account.id, sortChatsByRecency(list));
+    account.unreadCount = list.reduce((sum, c) => sum + c.unreadCount, 0);
+  }
+
+  const personalities: Personality[] = [
+    {
+      id: 'builtin:lora',
+      name: 'Lora',
+      content:
+        '[dev fixture] Warm, playful, a little teasing. Short messages, lowercase, emoji sparingly. Never pushy about money; soft offers only.',
+      updatedAt: Date.now() - 14 * 86_400_000,
+      builtin: true,
+      builtinVersion: 2,
+    },
+    {
+      id: 'pers_velvet',
+      name: 'Velvet',
+      content: '[dev fixture] Slow-burn, mysterious, longer sentences. High-end girlfriend-experience tone.',
+      updatedAt: Date.now() - 3 * 86_400_000,
+    },
+  ];
+
+  const settings: SettingsVM = {
+    hasOfapiKey: true,
+    hasAnthropicKey: true,
+    hasOpenRouterKey: false,
+    featureModels: {
+      'fast-reply': 'anthropic:claude-sonnet-4-6',
+      'help-me': 'anthropic:claude-sonnet-4-6',
+      'fan-summary': 'anthropic:claude-opus-4-6',
+      'chat-review': 'anthropic:claude-sonnet-4-6',
+      ping: 'anthropic:claude-sonnet-4-6',
+    },
+    featureReasoning: {
+      'fast-reply': 'off',
+      'help-me': 'low',
+      'fan-summary': 'medium',
+      'chat-review': 'medium',
+      ping: 'off',
+    },
+    quickMessageCount: 100,
+    pingMessageCount: 100,
+    improveMessageCount: 25,
+    deepMessageCount: 1500,
+    promptCachingEnabled: true,
+    debugMode: false,
+    notificationsEnabled: true,
+    soundEnabled: true,
+    markAsReadOnOpen: true,
+    defaultReplyTone: 'casual',
+    creditBudgetPerShift: null,
+    accountMappings: { acct_lora: 'builtin:lora' },
+  };
+
+  const freshness: Record<string, string> = {};
+  for (const account of accounts) freshness[account.id] = new Date().toISOString();
+
+  return {
+    accounts,
+    chats,
+    messages,
+    fans,
+    personalities,
+    settings,
+    sync: {
+      creditsBalance: 97_981,
+      creditsUsedToday: 1_243,
+      rpmRemaining: 288,
+      freshness,
+      state: 'live',
+    },
+    creditsToday: 1_243,
+  };
+}
+
+// ─── bridge ──────────────────────────────────────────────────────────────
+
+type Listeners = { [C in EventChannelName]: Set<(payload: EventChannels[C]) => void> };
+
+type InvokeHandlers = {
+  [C in InvokeChannelName]: (
+    args: InvokeChannels[C]['args'],
+  ) => InvokeChannels[C]['result'] | Promise<InvokeChannels[C]['result']>;
+};
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+export function createMockBridge(): ChatGooseBridge {
+  const store = buildStore();
+  const listeners: Listeners = {
+    'sync:event': new Set(),
+    'ai:event': new Set(),
+    'db:changed': new Set(),
+  };
+
+  function emit<C extends EventChannelName>(channel: C, payload: EventChannels[C]): void {
+    for (const listener of listeners[channel]) listener(payload);
+  }
+
+  function pollTick(): void {
+    const now = new Date().toISOString();
+    for (const account of store.accounts) {
+      store.sync.freshness[account.id] = now;
+    }
+    store.creditsToday += store.accounts.length;
+    store.sync.creditsUsedToday = store.creditsToday;
+    if (store.sync.creditsBalance !== null) store.sync.creditsBalance -= store.accounts.length;
+    store.sync.rpmRemaining = 280 + Math.floor(rng() * 18);
+    for (const account of store.accounts) {
+      emit('sync:event', { type: 'chatListUpdated', accountId: account.id });
+    }
+  }
+
+  function syntheticIncoming(): void {
+    const account = pick(store.accounts);
+    const chats = store.chats.get(account.id) ?? [];
+    const chat = chats[Math.floor(rng() * Math.min(6, chats.length))];
+    if (chat === undefined) return;
+    const key = `${account.id}/${chat.chatId}`;
+    const msgs = store.messages.get(key) ?? [];
+    messageSeq += 1;
+    const incoming: MessageVM = {
+      id: String(messageSeq),
+      chatId: chat.chatId,
+      createdAt: new Date().toISOString(),
+      isSentByMe: false,
+      text: pick(FAN_LINES),
+      media: [],
+      price: 0,
+      ppvState: null,
+      isTip: false,
+      tipAmount: null,
+      tipText: null,
+      isNew: true,
+      replyTo: null,
+      deleted: false,
+    };
+    msgs.push(incoming);
+    store.messages.set(key, msgs);
+    chat.lastMessageAt = incoming.createdAt;
+    chat.lastMessagePreview = incoming.text;
+    chat.lastMessageIsSentByMe = false;
+    chat.unreadCount += 1;
+    chat.fanWaiting = true;
+    store.chats.set(account.id, sortChatsByRecency(chats));
+    account.unreadCount = chats.reduce((sum, c) => sum + c.unreadCount, 0);
+
+    emit('sync:event', {
+      type: 'messageReceived',
+      accountId: account.id,
+      chatId: chat.chatId,
+      messageId: incoming.id,
+    });
+    emit('db:changed', { scope: 'messages', accountId: account.id, chatId: chat.chatId });
+    emit('db:changed', { scope: 'chats', accountId: account.id });
+    emit('db:changed', { scope: 'accounts' });
+  }
+
+  // periodic liveness: freshness ticks + a fake incoming message every ~30s,
+  // preceded by a typing event for realism
+  setInterval(pollTick, 8_000);
+  setInterval(() => {
+    const account = pick(store.accounts);
+    const chats = store.chats.get(account.id) ?? [];
+    const chat = chats[0];
+    if (chat !== undefined) {
+      emit('sync:event', { type: 'typing', accountId: account.id, chatId: chat.chatId });
+    }
+    setTimeout(syntheticIncoming, 2_500);
+  }, 30_000);
+
+  const handlers: InvokeHandlers = {
+    'query:accounts.list': () => store.accounts.map((a) => ({ ...a })),
+    'query:chats.list': ({ accountId, filter, limit, offset }) => {
+      const all = store.chats.get(accountId) ?? [];
+      const filtered = applyChatFilter(all, filter);
+      const start = offset ?? 0;
+      const end = start + (limit ?? 200);
+      return { items: filtered.slice(start, end).map((c) => ({ ...c })), hasMore: end < filtered.length };
+    },
+    'query:chats.search': ({ accountId, query }) => {
+      const all = store.chats.get(accountId) ?? [];
+      return fuzzyFilter(all, query, (c) => `${c.fanName} ${c.lastMessagePreview}`, 12).map((c) => ({ ...c }));
+    },
+    'query:messages.page': ({ accountId, chatId, beforeId, limit }) => {
+      const all = store.messages.get(`${accountId}/${chatId}`) ?? [];
+      let end = all.length;
+      if (beforeId !== undefined) {
+        const idx = all.findIndex((m) => m.id === beforeId);
+        if (idx >= 0) end = idx;
+      }
+      const pageSize = limit ?? 100;
+      const start = Math.max(0, end - pageSize);
+      return { items: all.slice(start, end).map((m) => ({ ...m })), hasMore: start > 0 };
+    },
+    'query:fan.get': ({ accountId, fanId }) => {
+      const fan = store.fans.get(`${accountId}/${fanId}`);
+      return fan === undefined ? null : { ...fan };
+    },
+    'query:settings.get': () => ({ ...store.settings }),
+    'query:personalities.list': () => store.personalities.map((p) => ({ ...p })),
+    'query:sync.status': () => ({ ...store.sync, freshness: { ...store.sync.freshness } }),
+    'query:ai.pingGate': () => ({ segment: 'active', blocked: true }),
+    'cmd:conversation.open': () => undefined,
+    'cmd:conversation.close': () => undefined,
+    'cmd:sync.forceRefresh': () => {
+      pollTick();
+    },
+    'cmd:settings.update': (patch) => {
+      const { ofapiKey, anthropicKey, openRouterKey, ...rest } = patch;
+      store.settings = { ...store.settings, ...rest };
+      if (ofapiKey !== undefined) store.settings.hasOfapiKey = ofapiKey.length > 0;
+      if (anthropicKey !== undefined) store.settings.hasAnthropicKey = anthropicKey.length > 0;
+      if (openRouterKey !== undefined) store.settings.hasOpenRouterKey = openRouterKey.length > 0;
+      emit('db:changed', { scope: 'settings' });
+      return { ...store.settings };
+    },
+    'cmd:personalities.save': (personality) => {
+      const idx = store.personalities.findIndex((p) => p.id === personality.id);
+      if (idx >= 0) store.personalities[idx] = personality;
+      else store.personalities.push(personality);
+      emit('db:changed', { scope: 'settings' });
+      return store.personalities.map((p) => ({ ...p }));
+    },
+    'cmd:personalities.delete': ({ id }) => {
+      store.personalities = store.personalities.filter((p) => p.id !== id);
+      emit('db:changed', { scope: 'settings' });
+      return store.personalities.map((p) => ({ ...p }));
+    },
+    'cmd:mappings.set': ({ accountId, personalityId }) => {
+      const account = store.accounts.find((a) => a.id === accountId);
+      if (account !== undefined) account.personalityId = personalityId;
+      const mappings = { ...store.settings.accountMappings };
+      if (personalityId === null) delete mappings[accountId];
+      else mappings[accountId] = personalityId;
+      store.settings = { ...store.settings, accountMappings: mappings };
+      emit('db:changed', { scope: 'settings' });
+      emit('db:changed', { scope: 'accounts' });
+    },
+    'cmd:data.purge': () => {
+      emit('db:changed', { scope: 'chats' });
+      emit('db:changed', { scope: 'messages' });
+      emit('db:changed', { scope: 'fans' });
+    },
+    'ai:start': () => undefined, // AI arrives in P2 — no-op in the P1 mock
+    'ai:cancel': () => undefined,
+  };
+
+  return {
+    async invoke(channel, args) {
+      await sleep(30 + Math.floor(rng() * 70)); // exercise skeletons
+      const handler: InvokeHandlers[typeof channel] = handlers[channel];
+      return handler(args);
+    },
+    on(channel, listener) {
+      listeners[channel].add(listener);
+      return () => {
+        listeners[channel].delete(listener);
+      };
+    },
+  };
+}
