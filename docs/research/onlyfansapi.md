@@ -148,7 +148,7 @@ Full coverage exists (Posts, Post Comments, Post Labels, Stories, Story Highligh
 ### Webhooks (their recommended real-time path)
 - Configured per **team**, not per API key. CRUD: `POST/GET/PUT/DELETE /api/webhooks`, `GET /api/webhooks/events`.
 - Create body: `endpoint_url`*, `signing_secret`, `events[]`*, `account_scope`* (`global` | `inclusive` | `exclusive`), `account_ids[]` (required unless global).
-- **Delivery:** HTTP POST, **at-least-once**, 15 s response timeout, retried up to **5×** with exponential backoff. **Dedupe by `event_id`.** Signature = `HMAC-SHA256(rawJsonBody, signing_secret)` (hex). Envelope: `{event, account_id, payload}` (data-export & fan-summary events are team-level with `account_ids[]`).
+- **Delivery:** HTTP POST, **at-least-once**, 15 s response timeout, retried up to **5×** with exponential backoff. Signature = `HMAC-SHA256(rawJsonBody, signing_secret)` (hex). Envelope: `{event, account_id, payload}` (data-export & fan-summary events are team-level with `account_ids[]`). **Live-verified 2026-06-10 (Phase-0 capture):** the event id is NOT in the body — dedupe by the **`x-ofapi-idempotency-key` header** (`evt_<40 hex>`); the signature arrives in the **`signature` header** (hex); user-agent `OnlyFansAPI.com/Webhook-Client`.
 - **Cost: 1 credit per 100 webhook events.**
 
 **Full webhook event list** (docs page `/webhooks/available-events` is authoritative):

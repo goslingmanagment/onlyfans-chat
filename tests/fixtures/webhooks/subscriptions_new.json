@@ -1,0 +1,80 @@
+{
+  "_meta": {
+    "capturedAt": "2026-06-10T18:40:52.700Z",
+    "anonymized": true,
+    "source": "live capture, Phase-0 webhook spike (loravie team), 2026-06-10",
+    "signatureHeader": "signature",
+    "idempotencyKeyHeader": "x-ofapi-idempotency-key",
+    "idempotencyKeySample": "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "event": "subscriptions.new",
+  "account_id": "acct_01000000000000000000000000000000",
+  "payload": {
+    "id": "1000014",
+    "type": "subscribed",
+    "createdAt": "2026-06-10T18:40:00+00:00",
+    "text": "Sample fan message text used in anonymized fixtures.",
+    "replacePairs": {
+      "{SUBSCRIBER_LINK}": "<p>Sample fan message text used in anonymized fixtures.</p>",
+      "{PRICE}": "Sample fan message text used in anonymized fixtures."
+    },
+    "subType": "new_subscriber",
+    "user_id": "518588958",
+    "isRead": false,
+    "canGoToProfile": true,
+    "user": {
+      "avatar": "https://public.onlyfans.com/anonymized/sample.jpg",
+      "avatarThumbs": {
+        "c50": "https://thumbs.onlyfans.com/public/files/thumbs/c50/d/dl/dla/dlaubg2khjgrwvdqrs5dobqb8mkxcnig1614479247/photo.jpg",
+        "c144": "https://thumbs.onlyfans.com/public/files/thumbs/c144/d/dl/dla/dlaubg2khjgrwvdqrs5dobqb8mkxcnig1614479247/photo.jpg"
+      },
+      "header": null,
+      "headerSize": null,
+      "headerThumbs": null,
+      "id": 1000013,
+      "name": "Fan 12",
+      "username": "fan013",
+      "canLookStory": false,
+      "canCommentStory": false,
+      "hasNotViewedStory": false,
+      "isVerified": false,
+      "canPayInternal": false,
+      "hasScheduledStream": false,
+      "hasStream": false,
+      "hasStories": false,
+      "tipsEnabled": false,
+      "tipsTextEnabled": true,
+      "tipsMin": 5,
+      "tipsMinInternal": 1,
+      "tipsMax": 200,
+      "canEarn": false,
+      "canAddSubscriber": true,
+      "subscribePrice": 0,
+      "subscribedBy": false,
+      "subscribedOn": false,
+      "canReceiveChatMessage": false,
+      "hideChat": false,
+      "lastSeen": "2026-06-10T18:40:23+00:00",
+      "isPerformer": false,
+      "isRealPerformer": false,
+      "view": "mn",
+      "canReport": false,
+      "subscribedByData": null,
+      "subscribedOnData": null,
+      "isBlocked": false
+    },
+    "fanData": {
+      "available": true,
+      "last_updated_at": "2026-06-10T18:40:52.000000Z",
+      "spending": {
+        "total": 0,
+        "messages": 0,
+        "subscribes": 0,
+        "posts": 0,
+        "tips": 0,
+        "streams": 0
+      },
+      "previous_reply_at": null
+    }
+  }
+}

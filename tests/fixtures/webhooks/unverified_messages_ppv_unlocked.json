@@ -1,0 +1,76 @@
+{
+  "_meta": {
+    "anonymized": false,
+    "verified": false,
+    "source": "documented example payload from docs.onlyfansapi.com (webhooks/available-events) — NOT live-captured; event did not fire during the Phase-0 capture window. Structure unverified against production.",
+    "signatureHeader": "signature",
+    "idempotencyKeyHeader": "x-ofapi-idempotency-key"
+  },
+  "event": "messages.ppv.unlocked",
+  "account_id": "acct_123",
+  "payload": {
+    "id": "123",
+    "type": "paided_message",
+    "createdAt": "2025-05-05T22:18:00+00:00",
+    "text": "has purchased your <a href='https://onlyfans.com/my/chats/chat/123?firstId=123'>message</a> for $5.00!",
+    "replacePairs": {
+      "{NAME}": "Name",
+      "{MESSAGE_LINK}": "<a href='https://onlyfans.com/my/chats/chat/123?firstId=123'>message</a>",
+      "{AMOUNT}": "$5.00"
+    },
+    "subType": "subscriber_pay_for_chat_message",
+    "user_id": "123",
+    "isRead": false,
+    "canGoToProfile": true,
+    "fanData": {
+      "available": true,
+      "last_updated_at": "2026-01-02 17:12:00",
+      "spending": {
+        "total": 6.6,
+        "messages": 4,
+        "subscribes": 2.6,
+        "posts": 0,
+        "tips": 4,
+        "streams": 0
+      }
+    },
+    "user": {
+      "avatar": null,
+      "avatarThumbs": null,
+      "header": null,
+      "headerSize": null,
+      "headerThumbs": null,
+      "id": 123,
+      "name": "Name",
+      "username": "username",
+      "canLookStory": false,
+      "canCommentStory": false,
+      "hasNotViewedStory": false,
+      "isVerified": false,
+      "canPayInternal": false,
+      "hasScheduledStream": false,
+      "hasStream": false,
+      "hasStories": false,
+      "tipsEnabled": false,
+      "tipsTextEnabled": true,
+      "tipsMin": 5,
+      "tipsMinInternal": 1,
+      "tipsMax": 200,
+      "canEarn": false,
+      "canAddSubscriber": false,
+      "subscribePrice": 0,
+      "subscribedBy": false,
+      "subscribedOn": false,
+      "canReceiveChatMessage": false,
+      "hideChat": false,
+      "lastSeen": "2025-05-05T22:17:29+00:00",
+      "isPerformer": false,
+      "isRealPerformer": false,
+      "view": "mn",
+      "canReport": true,
+      "subscribedByData": null,
+      "subscribedOnData": null,
+      "isBlocked": false
+    }
+  }
+}

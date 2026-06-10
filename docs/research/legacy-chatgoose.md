@@ -65,7 +65,7 @@ This report is the single source of truth for the predecessor product. All secti
 
 **Timeout:** 60 seconds (quick bucket, though the spec says quick; `timeoutBucket: 'quick'` in `FEATURE_POLICIES`).
 
-**Regenerate:** No Regenerate button. Chatter must close and re-trigger.
+**Regenerate:** Corrected 2026-06-10: legacy code (`src/content/index.ts:1494–1527`) exposes a rerun affordance for ALL features including Help Me (this doc previously said "no Regenerate button"; code wins). Fan Summary / Chat Review rerun as `refresh` (forceRegenerate).
 
 **No-history behavior:** Works — generates suggestions from personality alone.
 
@@ -552,7 +552,7 @@ Fan Summary is the only feature with a different default model.
 - `fan-summary`: 24000
 - `ping`, `hi-greeting`: 8000
 
-**OpenRouter Gemini thinking:** Supported on `google/gemini-*` models for short-form features only (`fast-reply`, `improve-draft`, `hi-greeting`, `ping`). Sends `thinking: { type: "adaptive", display: "omitted" }`. Cap: 1600 tokens. Not supported for `help-me`, `fan-summary`, `chat-review` (no Gemini thinking cap defined for them).
+**OpenRouter Gemini thinking:** Supported on `google/gemini-*` models for short-form features (`fast-reply`, `improve-draft`, `hi-greeting`, `ping` — cap 1600 tokens) **and `help-me` (cap 2000)** — corrected 2026-06-10 against legacy source `model-capabilities.ts:28` (this doc previously claimed help-me unsupported; code wins). The "cap" is used as the request `max_tokens` (`openrouter-client.ts resolveMaxTokens`), not a thinking budget. Sends `thinking: { type: "adaptive", display: "omitted" }`. Not supported for `fan-summary`, `chat-review` (no cap defined).
 
 **No reasoning config sent** for non-supporting models (Haiku, Grok) — prevents API validation errors.
 

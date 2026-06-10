@@ -1,0 +1,88 @@
+{
+  "_meta": {
+    "anonymized": false,
+    "verified": false,
+    "source": "documented example payload from docs.onlyfansapi.com (webhooks/available-events) — NOT live-captured; event did not fire during the Phase-0 capture window. Structure unverified against production.",
+    "signatureHeader": "signature",
+    "idempotencyKeyHeader": "x-ofapi-idempotency-key"
+  },
+  "event": "tips.received",
+  "account_id": "acct_123",
+  "payload": {
+    "amountGross": 5,
+    "amountNet": 4,
+    "fanData": {
+      "available": true,
+      "last_updated_at": "2026-01-02 17:12:00",
+      "spending": {
+        "total": 6.6,
+        "messages": 0,
+        "subscribes": 2.6,
+        "posts": 0,
+        "tips": 4,
+        "streams": 0
+      }
+    },
+    "id": "123123123123",
+    "type": "tip",
+    "createdAt": "2026-01-02T17:12:00+00:00",
+    "text": "paid you a tip of $5.00",
+    "replacePairs": {
+      "{SUBSCRIBER_LINK}": "<a href='https://onlyfans.com/xxxxxxxx'>John Doe</a>",
+      "{AMOUNT}": "$5.00",
+      "{POST_BLOCK}": "",
+      "{POST_DATA}": ""
+    },
+    "subType": "new_tips",
+    "user_id": "9999999999",
+    "isRead": false,
+    "canGoToProfile": true,
+    "user": {
+      "avatar": "https://public.onlyfans.com/files/u/uf/ufs/ufsXXXXXXXXXXXXX/111111111/avatar.jpg",
+      "avatarThumbs": {
+        "c50": "https://thumbs.onlyfans.com/public/files/thumbs/c50/u/uf/ufs/ufsXXXXXXXXXXXXX/111111111/avatar.jpg",
+        "c144": "https://thumbs.onlyfans.com/public/files/thumbs/c144/u/uf/ufs/ufsXXXXXXXXXXXXX/111111111/avatar.jpg"
+      },
+      "header": "https://public.onlyfans.com/files/g/g2/g2e/g2eXXXXXXXXXXXXXXX/111111111/header_image.jpg",
+      "headerSize": {
+        "width": 3362,
+        "height": 1780
+      },
+      "headerThumbs": {
+        "w480": "https://thumbs.onlyfans.com/public/files/thumbs/w480/g/g2/g2e/g2eXXXXXXXXXXXXXXX/111111111/header_image.jpg",
+        "w760": "https://thumbs.onlyfans.com/public/files/thumbs/w760/g/g2/g2e/g2eXXXXXXXXXXXXXXX/111111111/header_image.jpg"
+      },
+      "id": 111111111,
+      "name": "John Doe",
+      "username": "johndoe",
+      "canLookStory": false,
+      "canCommentStory": false,
+      "hasNotViewedStory": false,
+      "isVerified": false,
+      "canPayInternal": false,
+      "hasScheduledStream": false,
+      "hasStream": false,
+      "hasStories": false,
+      "tipsEnabled": false,
+      "tipsTextEnabled": true,
+      "tipsMin": 5,
+      "tipsMinInternal": 1,
+      "tipsMax": 200,
+      "canEarn": false,
+      "canAddSubscriber": false,
+      "subscribePrice": 0,
+      "subscribedBy": false,
+      "subscribedOn": false,
+      "canReceiveChatMessage": false,
+      "hideChat": false,
+      "lastSeen": "2026-01-02T17:09:46+00:00",
+      "isPerformer": false,
+      "isRealPerformer": false,
+      "view": "mn",
+      "canReport": true,
+      "subscribedByData": null,
+      "subscribedOnData": null,
+      "isBlocked": false
+    }
+  }
+}

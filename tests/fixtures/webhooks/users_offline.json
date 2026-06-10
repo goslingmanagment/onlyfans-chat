@@ -1,0 +1,31 @@
+{
+  "_meta": {
+    "capturedAt": "2026-06-10T19:25:10.164Z",
+    "anonymized": true,
+    "source": "live capture, Phase-0 webhook spike (loravie team), 2026-06-10",
+    "signatureHeader": "signature",
+    "idempotencyKeyHeader": "x-ofapi-idempotency-key",
+    "idempotencyKeySample": "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "event": "users.offline",
+  "account_id": "acct_02000000000000000000000000000000",
+  "payload": {
+    "fan": {
+      "id": "1000015",
+      "username": "fan020",
+      "name": "Fan 21",
+      "display_name": "Fan 22",
+      "spending": {
+        "messages": 28,
+        "subscribes": 0,
+        "posts": 0,
+        "tips": 0,
+        "streams": 0,
+        "total": 28
+      }
+    },
+    "observed_at": "2026-06-10T19:25:04.000000Z",
+    "status_changed_at": "2026-06-10T19:25:04.000000Z",
+    "last_seen_online_at": "2026-06-10T18:50:41.000000Z"
+  }
+}

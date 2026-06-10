@@ -1,0 +1,84 @@
+{
+  "_meta": {
+    "anonymized": false,
+    "verified": false,
+    "source": "documented example payload from docs.onlyfansapi.com (webhooks/available-events) — NOT live-captured; event did not fire during the Phase-0 capture window. Structure unverified against production.",
+    "signatureHeader": "signature",
+    "idempotencyKeyHeader": "x-ofapi-idempotency-key"
+  },
+  "event": "subscriptions.renewed",
+  "account_id": "acct_123",
+  "payload": {
+    "id": "123",
+    "type": "subscribed",
+    "createdAt": "2025-05-05T21:27:00+00:00",
+    "text": "Good news! <a href='https://onlyfans.com/u34547118'>u34547118</a> has Just restarted their monthly subscription to your OnlyFans profile!",
+    "replacePairs": {
+      "{SUBSCRIBER_LINK}": "<a href='https://onlyfans.com/u34547118'>u34547118</a>",
+      "{PRICE}": "$4.00"
+    },
+    "subType": "returning_subscriber",
+    "user_id": "34547118",
+    "isRead": false,
+    "canGoToProfile": true,
+    "fanData": {
+      "available": true,
+      "last_updated_at": "2026-01-02 17:12:00",
+      "spending": {
+        "total": 6.6,
+        "messages": 0,
+        "subscribes": 2.6,
+        "posts": 0,
+        "tips": 4,
+        "streams": 0
+      }
+    },
+    "user": {
+      "avatar": "https://example.com",
+      "avatarThumbs": {
+        "c50": "https://example.com",
+        "c144": "https://example.com"
+      },
+      "header": "https://example.com",
+      "headerSize": {
+        "width": 767,
+        "height": 1152
+      },
+      "headerThumbs": {
+        "w480": "https://example.com",
+        "w760": "https://example.com"
+      },
+      "id": 34547118,
+      "name": "Name",
+      "username": "username",
+      "canLookStory": false,
+      "canCommentStory": false,
+      "hasNotViewedStory": false,
+      "isVerified": true,
+      "canPayInternal": false,
+      "hasScheduledStream": false,
+      "hasStream": false,
+      "hasStories": false,
+      "tipsEnabled": true,
+      "tipsTextEnabled": true,
+      "tipsMin": 5,
+      "tipsMinInternal": 1,
+      "tipsMax": 200,
+      "canEarn": true,
+      "canAddSubscriber": false,
+      "subscribePrice": 0,
+      "subscribedBy": false,
+      "subscribedOn": false,
+      "canReceiveChatMessage": false,
+      "hideChat": false,
+      "lastSeen": "2025-05-05T21:26:04+00:00",
+      "isPerformer": true,
+      "isRealPerformer": true,
+      "view": "mn",
+      "canReport": true,
+      "subscribedByData": null,
+      "subscribedOnData": null,
+      "isBlocked": false
+    }
+  }
+}

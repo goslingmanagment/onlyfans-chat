@@ -1,0 +1,15 @@
+{
+  "_meta": {
+    "capturedAt": "2026-06-10T18:46:50.947Z",
+    "anonymized": true,
+    "source": "live capture, Phase-0 webhook spike (loravie team), 2026-06-10",
+    "signatureHeader": "signature",
+    "idempotencyKeyHeader": "x-ofapi-idempotency-key",
+    "idempotencyKeySample": "evt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "event": "users.typing",
+  "account_id": "acct_01000000000000000000000000000000",
+  "payload": {
+    "id": 1000017
+  }
+}
