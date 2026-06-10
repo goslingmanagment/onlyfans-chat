@@ -1,50 +1,37 @@
-# Session runbook — какие сессии, в каких репо, с какими промптами
+# Session runbook — 4 промпта
 
-Правило: **одна сессия = один репозиторий** (CLAUDE.md). Между фазами — приёмка владельцем по Exit-критериям из [PLAN.md](PLAN.md). Промпты ниже — готовые к вставке; сессии сами дочитают контекст из CLAUDE.md/PLAN.
+Принципы: **одна сессия = один репозиторий**; **каждый промпт перезапускаем** — если сессия закончилась на середине, открой новую с тем же промптом, она прочитает PLAN + код и продолжит с места остановки. Фазы и Exit-гейты из [PLAN.md](PLAN.md) остаются внутренними чекпоинтами для сессий — тебе управлять ими не нужно.
 
-## Очередь сессий
+## Порядок
 
-| # | Когда | Репо | Что делает | Зависит от |
-|---|---|---|---|---|
-| A | сейчас | `chatgoose_desktop_fable` | Phase 0: скаффолд, codegen, порт `packages/shared` | — |
-| B | сейчас (после A) | `chatgoose_desktop_fable` | Phase 0: read-only спайки (latency, вебхук-фикстуры, coexistence) | ключ в `.env` ✓ |
-| M | твои руки, параллельно | OFAPI console / OnlyMonster | скоупы ключей в консоли; держать `loravie` активным в OM; (позже, до P3) ручной send-чеклист — PLAN Phase 0 item 8, лучше при работающем слушателе сессии B | — |
-| C | до P4, можно рано | `~/code/core` | мини-патч: auto-create фана при PUT profile + per-event skip в ai-usage | — |
-| 1 | после A+B | `chatgoose_desktop_fable` | Phase 1 — читающий клиент | A, B |
-| 2 | после 1 | `chatgoose_desktop_fable` | Phase 2 — быстрые AI-фичи (companion, copy-режим) | 1 |
-| D | параллельно с 1–2, до P3 | `~/code/core` | параллельный трек: приёмник вебхуков OFAPI + SSE fanout | фикстуры из B |
-| 3 | после 2 + твоего send-чеклиста (M) | `chatgoose_desktop_fable` | Phase 3 — отправка + HubSync (SSE-клиент) | 2, M, D |
-| 4 | после 3 и C | `chatgoose_desktop_fable` | Phase 4 — deep AI + центральные саммари через core | 3, C |
-| 5 | после 4 | `chatgoose_desktop_fable` | Phase 5 — vault и PPV | 4 |
-| E | до P6 | `~/code/core` | AI gateway (Phase 7 роадмапа core) | — |
-| 6 | после 5 и E | `chatgoose_desktop_fable` | Phase 6 — HubGateway, центральные LLM-ключи и лимиты | 5, E |
-| R | в любой момент (рекомендуется после A+B и перед 3) | `chatgoose_desktop_fable` | независимое ревью | — |
+| № | Репо | Что | Когда |
+|---|---|---|---|
+| 1 | `chatgoose_desktop_fable` | **Подготовка** — Phase 0 целиком (скаффолд + codegen + порт shared + read-only спайки) | сейчас |
+| 2 | `~/code/core` | **Серверная часть разом** — 2 патча + вебхук-приёмник + SSE | после №1 (нужны фикстуры) |
+| 3 | `chatgoose_desktop_fable` | **Companion-продукт** — Phases 1–2 до гейта «чаттеры пользуются AI в сменах» | после №1, параллельно с №2 |
+| 4 | `chatgoose_desktop_fable` | **Полный клиент** — Phases 3–5 (отправка → deep AI → PPV) | после №2, №3 и твоего ручного send-чеклиста |
+
+Потом, отдельным заходом (не сейчас): P6 — AI gateway в core + gateway-режим в десктопе.
+Опционально между этапами — ревью: `Прочитай docs/reviews/review-prompt.md и выполни его`.
 
 ## Промпты
 
-**A — Phase 0 engineering** (репо: этот):
-> Read CLAUDE.md and docs/PLAN.md. Execute Phase 0 items 5–7: pnpm monorepo scaffold per SPEC §2–§3 (electron-vite boots a blank window; `pnpm check` = typecheck + lint + unit + build, green), OpenAPI→TS codegen script from `docs/vendor/onlyfansapi/openapi.json`, and port `packages/shared` from the legacy repo (`~/code/chatgoose`) with its tests (errors, split, xml, reply-output, prompt-injection, model registry). Commit when green.
+**№1 — Подготовка** (репо: этот):
+> Read CLAUDE.md and docs/PLAN.md. Execute Phase 0 end to end. First items 5–7: pnpm monorepo scaffold per SPEC §2–§3 (electron-vite boots, `pnpm check` green), OpenAPI→TS codegen from `docs/vendor/onlyfansapi/openapi.json`, port `packages/shared` from `~/code/chatgoose` with its tests. Then items 2–4, STRICTLY READ-ONLY (real production account; no sends, no mutations, temporary webhook via API only): latency spike with the `lastReplyAt`/avatar/pinned checks, webhook capture of all 28 events via an access-protected tunnel with the PII rules (raw → `tmp/`, anonymized fixtures → `tests/fixtures/webhooks/`), historical tip-message shape, coexistence observations. Append the spike report to docs/PLAN.md and commit in coherent increments. If a previous session already started this, continue from the current state.
 
-**B — Phase 0 spikes** (репо: этот):
-> Read CLAUDE.md and docs/PLAN.md. Execute Phase 0 items 2–4. STRICTLY READ-ONLY: a real production account is connected — no sends, no mutations, no manual webhook setup in the dashboard (register/delete the temporary webhook via API only). Do: the latency spike with the `lastReplyAt` / avatar-IP-lock / pinned-flag checks; webhook capture via an access-protected tunnel subscribed to all 28 events, with the PII rules (raw payloads under `tmp/` only, anonymized fixtures into `tests/fixtures/webhooks/`); the historical tip-message shape check; coexistence read-only observations. Append the spike report to docs/PLAN.md Phase 0 and commit.
+**№2 — Серверная часть** (репо: `~/code/core`):
+> Read the briefs from the desktop repo first: `~/code/chatgoose_desktop_fable/docs/SPEC.md` §9, `docs/research/agency-hub-core.md` ("Confirmed blocker"), `docs/research/onlyfansapi.md` §4, and fixtures in `tests/fixtures/webhooks/`. In THIS repo, following its conventions, with tests: (1) `PUT /api/v1/pages/{pageLabel}/fans/{platformUserId}/profile` auto-creates the fan + page membership for `platform=onlyfans` instead of 404 (`apps/runtime/src/services/fan-profiles.ts:88`); (2) `ingestAiUsageBatch` skips invalid events per-event with counters instead of failing the whole batch on one bad `completedAt` (`apps/runtime/src/services/ai-usage.ts:20–33`); (3) OFAPI webhook receiver — HMAC-SHA256 raw-body verify, `event_id` dedupe, event journal, ack <1 s, async processing via pg-boss; (4) SSE fanout `GET /api/v1/events/stream` — chatter API-key auth, events filtered to assigned pages, `Last-Event-ID` replay, ~7-day retention; (5) admin flow to register the OFAPI webhook (`account_scope: global`, signing secret). If a previous session already started this, continue from the current state.
 
-**C — core мини-патч** (репо: `~/code/core`):
-> Read the brief from the desktop repo first: `~/code/chatgoose_desktop_fable/docs/research/agency-hub-core.md` ("Confirmed blocker") and `docs/SPEC.md` §9. Two changes in THIS repo, following its conventions and with tests: (1) `PUT /api/v1/pages/{pageLabel}/fans/{platformUserId}/profile` must auto-create the fan + page membership for `platform=onlyfans` instead of 404 (`apps/runtime/src/services/fan-profiles.ts:88`); (2) `ingestAiUsageBatch` must skip invalid events per-event (counting them in the response) instead of failing the whole batch with 400 on one bad `completedAt` (`apps/runtime/src/services/ai-usage.ts:20–33`).
+**№3 — Companion-продукт** (репо: этот):
+> Read CLAUDE.md and docs/PLAN.md. Build Phase 1 and then Phase 2, up to the P2 exit gate. Verify OFAPI shapes against the vendored OpenAPI / fresh `.mdx` pages as you go; keep PRD/SPEC/PLAN updated with decisions; commit in coherent increments. If a previous session already started this, continue from the current state.
 
-**D — core параллельный трек** (репо: `~/code/core`):
-> Read the brief from the desktop repo first: `~/code/chatgoose_desktop_fable/docs/SPEC.md` §9.2, `docs/research/onlyfansapi.md` §4, and the captured fixtures in `tests/fixtures/webhooks/`. Build in THIS repo, following its conventions: an OFAPI webhook receiver (HMAC-SHA256 raw-body verify, `event_id` dedupe, event journal, ack <1 s, async processing via pg-boss), an SSE fanout endpoint `GET /api/v1/events/stream` (chatter API-key auth, events filtered to the chatter's assigned pages, `Last-Event-ID` replay from the journal, ~7-day retention), and an admin flow to register the OFAPI webhook (`account_scope: global`, signing secret).
+**№4 — Полный клиент** (репо: этот):
+> Precondition: the owner's manual send checklist (docs/PLAN.md Phase 0 item 8) is done — confirm in PLAN before starting. Read CLAUDE.md and docs/PLAN.md. Build Phases 3 → 4 → 5 sequentially to their exit gates (sending + HubSync SSE client; deep AI + core profile sync; vault/PPV). Same rules: verify shapes against primary sources, keep docs current, commit in increments, continue from current state if already started.
 
-**1–6 — фазы** (репо: этот; меняй номер фазы):
-> Read CLAUDE.md and docs/PLAN.md. Build Phase N to its exit gate. Verify OFAPI shapes against the vendored OpenAPI / fresh .mdx pages as you go; keep PRD/SPEC/PLAN updated with any decisions made along the way; commit in coherent increments.
+## Твоё (вне сессий)
 
-**R — ревью**:
-> Прочитай docs/reviews/review-prompt.md и выполни его.
-
-**E — AI gateway** (репо: `~/code/core`): бриф — SPEC §9.2 (AI gateway) + roadmap core Phase 7; промпт собрать на месте, когда дойдём (контракт `AiGateway` будет уже зафиксирован кодом desktop).
-
-## Твоя роль между сессиями
-
-- Приёмка по Exit-критериям фазы (PLAN) → «едем дальше».
-- Доступы по запросу сессий; ключи чаттерам — скоупированные (SPEC §5).
-- Ручной send-чеклист (PLAN Phase 0 item 8) до старта Phase 3.
-- Вопросы вендору (не срочно): `lastReplyAt` появляется ли со временем; условия кредитов при масштабировании.
+1. Держать `loravie` активным в OnlyMonster как обычно (coexistence-наблюдение, уже идёт).
+2. В консоли OFAPI: проверить гранулярность scoped-ключей, нарезать ключи по фазовой матрице (SPEC §5) перед пилотом с чаттерами.
+3. **Ручной send-чеклист** (PLAN Phase 0 item 8) — до запуска №4; лучше во время работающего вебхук-слушателя сессии №1.
+4. Приёмка: после №3 (чаттеры реально пользуются, метрики пишутся) и после №4 (≥500 отправок без потерь/дублей, PPV end-to-end).
+5. Несрочные вопросы вендору: появляется ли `lastReplyAt` со временем; условия кредитов при масштабировании.
