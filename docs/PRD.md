@@ -93,11 +93,11 @@ Features marked **[P1]**–**[P7]** map to plan phases. Legacy behavioral detail
 - Multi-part replies: AI `[NEXT]` parts can be sent as a queued sequence with natural randomized delays (e.g. 2–5 s), cancelable mid-sequence; or inserted one-by-one (chatter choice).
 - Unsend (≤24 h window) with countdown awareness; reply-to; like/unlike fan messages.
 
-### F5. Fan context panel [P1 read, P3 write]
+### F5. Fan context panel [P1 read, P3 write, notes P4]
 - Identity: avatar, name, custom name (editable → `PUT …/custom-name`), username, lastSeen, lists/labels membership.
 - **Spending:** total + breakdown (subscriptions / tips / messages / posts / streams) from `subscribedOnData` `*Summ` fields; rendered both for the chatter and as AI context.
 - **Subscription:** status, price, subscribed-since, renew date, **auto-renew off ⇒ churn-risk badge**, duration, subscription history on demand.
-- **Notes:** OF-native fan notes (`GET/PUT …/notes`) — readable/writable; visible to other tools (incl. OnlyMonster) since they live on OnlyFans itself.
+- **Notes [P4]:** the team keeps fan notes in **OnlyMonster's own notes**, not OF-native ones (owner, 2026-06-10) — and OnlyMonster's public API exposes no notes endpoints (verified against core's OM spec snapshot: 7 paths, none for notes), so they cannot be synced programmatically. In-app notes are therefore **core-stored** (core's `fan_notes` table + endpoint are already live; shared across our chatters, visible in core's dashboard), arriving with the P4 core integration. Until P3, notes stay in OM (open anyway in companion mode); when a page transitions to this app as primary surface, valuable notes are carried over manually (one-time). OFAPI's OF-native notes endpoints remain an optional later bridge, not the team's store.
 - **AI Fan Summary card:** latest summary with generated-at timestamp + refresh (F6.4); cached locally, synced centrally to Agency Hub (core) from P4.
 
 ### F6. AI assist suite [P2 quick, P4 deep] — ported from legacy, behavior-compatible
