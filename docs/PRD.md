@@ -140,7 +140,7 @@ Ported legacy schema where applicable: provider API keys; per-feature model + re
 
 ## 7. UX design principles (UI is designed from scratch — explicit requirement)
 
-Detailed design happens at implementation with the frontend-design skill; these principles are binding:
+Concrete layout anatomy, hotkey map, performance-engineering checklist and visual direction live in [DESIGN.md](DESIGN.md) (binding). Detailed visual design happens at implementation with the frontend-design skill; these principles are binding:
 
 1. **Three-zone workspace:** left = account rail (avatars w/ badges) + chat list; center = conversation + composer; right = fan context panel (collapsible). AI output appears in a **dock above the composer** (streams in place, Insert buttons land text exactly where the eyes already are) — proven by legacy inline-panel pattern.
 2. **Keyboard-first.** Every high-frequency action has a hotkey: send, next/prev unread chat (J/K-style), AI features (e.g. ⌘R fast reply, ⌘I improve draft, ⌘1..9 insert part N), tone cycling, search. Hotkey cheatsheet overlay (?).

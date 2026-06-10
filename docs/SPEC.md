@@ -35,7 +35,7 @@ The desktop app is built **hub-ready from day 1** via two seams:
 | Layer | Choice | Rationale |
 |---|---|---|
 | Shell | **Electron** (latest LTS) + electron-vite + electron-builder | Single-language TS across main/renderer/hub/shared maximizes AI-dev velocity and reuse of the legacy TS codebase (prompts, parsers, LLM streaming). Tauri (Rust core) was considered and rejected: second toolchain, fewer training-data patterns, no payoff for an internal tool where bundle size is irrelevant. |
-| UI | **React 18 + TypeScript (strict) + Tailwind CSS** | Custom design system from scratch per PRD §7; Tailwind keeps it consistent without a heavy component dep. Virtualized lists via `@tanstack/react-virtual` (chat list + message history are the two perf-critical lists). |
+| UI | **React 18 + TypeScript (strict) + Tailwind CSS** | Custom design system from scratch per PRD §7 + `docs/DESIGN.md` (layout, hotkeys, perf checklist — review-blocking); Tailwind keeps it consistent without a heavy component dep. Virtualized lists via `@tanstack/react-virtual` (chat list + message history are the two perf-critical lists). |
 | State | **Zustand** (UI state) + **TanStack Query** (server-state cache over IPC) | Small API surface, easy for agents to keep correct; Query gives staleness/refetch semantics that match the sync model. |
 | Local DB | **better-sqlite3** (main process only) + WAL | Message/fan cache, summaries, outbox, settings. Synchronous API is fine in main; no ORM — typed query modules. |
 | OFAPI types | **openapi-typescript** codegen from `docs/vendor/onlyfansapi/openapi.json` | Generated types + thin hand-written client (§5); regen script in repo. |

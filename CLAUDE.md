@@ -11,6 +11,7 @@ Desktop chat client for OnlyFans agency chatters with built-in AI assistance (re
 | `docs/PRD.md` | What we're building, for whom, feature requirements, UX principles, risks |
 | `docs/SPEC.md` | Architecture, stack, security model, sync/send/AI design, invariants (§15) |
 | `docs/PLAN.md` | Phase order, exit criteria, current next actions |
+| `docs/DESIGN.md` | UI/UX brief: workspace anatomy, hotkeys, **performance-engineering checklist (review-blocking for renderer PRs)**, visual direction |
 | `docs/research/legacy-chatgoose.md` | Complete behavioral inventory of the predecessor (features, prompts, exact constants/timeouts, lessons). Normative for ported behavior |
 | `docs/research/onlyfansapi.md` | OFAPI capability map, real-time strategy, credits/pricing, gotchas, key docs URLs |
 | `docs/research/agency-hub-core.md` | Capability map of the Agency Hub "core" backend (`~/code/core`) — the live ChatMuse contract, auth model, what P6 adds there |
@@ -33,6 +34,6 @@ Desktop chat client for OnlyFans agency chatters with built-in AI assistance (re
 - pnpm monorepo: `apps/desktop` (Electron + React + TS strict + Tailwind), `packages/shared` (pure TS; named to avoid collision with the "core" repo). No `apps/hub` here. Layout: SPEC §3.
 - `pnpm check` = typecheck + lint + unit tests + build — must pass before any commit (legacy discipline: 783 tests on the predecessor).
 - Tests: Vitest; pure functions in `packages/shared` get the densest coverage; OFAPI client tested against recorded fixtures in `tests/fixtures/`.
-- UI is designed from scratch (PRD §7 principles); use the frontend-design skill for new surfaces; dark theme default, keyboard-first.
+- UI is designed from scratch against `docs/DESIGN.md` (PRD §7 principles + DESIGN §3 perf checklist are review-blocking); use the frontend-design skill for new surfaces; dark theme default, keyboard-first.
 - All amounts: OFAPI returns dollars; legacy Fansly used mills — don't port mills→USD conversions into OFAPI code paths.
 - Two ID namespaces: OFAPI `acct_…` vs raw OnlyFans numeric ids (`chat_id === fan.id`). Never mix.
