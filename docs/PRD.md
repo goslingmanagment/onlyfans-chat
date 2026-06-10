@@ -83,7 +83,7 @@ Features marked **[P1]**–**[P7]** map to plan phases. Legacy behavioral detail
 - **PPV state is first-class:** sent PPV messages show price + purchased/not-purchased badge directly from `price`/`isOpened`. (This fixes legacy's #1 incident class — AI pitching already-purchased content — at the data-model level.)
 - Fan read receipts: `isNew` flag → "seen" indicator on our sent messages (refreshed on conversation poll; no webhook exists — UI must not promise instant ticks).
 - Presence: fan `lastSeen` ("online Xm ago"); live online/typing indicators once the parallel core track delivers `users.online/offline/typing` events [~P3].
-- Mark-as-read: automatic on conversation open+focus (debounced), with a setting to disable (interplay with OnlyMonster workflows, see Open Questions).
+- Mark-as-read: automatic on conversation open+focus (debounced 1.5 s), settings toggle default on (decided 2026-06-10) — **[P3]**: P1–P2 chatter keys are read-only (SPEC §5 scope matrix), so until P3 unread state is display-only and chats are actually marked read in OnlyMonster.
 
 ### F4. Composer & sending [P3]
 - Text composer with per-chat persistent drafts, emoji picker, OF text formatting subset (bold/italic; sizes/colors optional later).
@@ -168,7 +168,7 @@ OnlyMonster, Infloww, Supercreator et al. offer CRM + AI features. We are not co
 ## 10. Unit economics (rough, validate in pilot — week-1 task in PLAN)
 
 **OFAPI credits** (1 credit ≈ $0.0015–0.003 depending on plan/top-up):
-- Polling mode (P1–P5), one active account/shift: chat-list poll @20–30 s ≈ 1,000–1,400/8 h; open-conversation refreshes (conditional on list delta) ≈ 500–1,500; sends/reads/fan fetches ≈ 300–800. **≈ 2–4 k credits per chatter-shift** → 45–90 k/mo per full-time seat. Pro plan (100 k/mo incl. 5 accounts, $299) covers a small pilot; polling at scale needs top-ups → hub phase pays for itself.
+- Polling mode (P1–P5), one active account/shift: chat-list poll @20–30 s ≈ 1,000–1,400/8 h; open-conversation read-state sweep @30 s ≈ 800–960; delta-triggered refreshes + sends/reads/fan fetches ≈ 500–1,200. **≈ 2.5–4 k credits per chatter-shift** → 55–90 k/mo per full-time seat. Pro plan (100 k/mo incl. 5 accounts, $299) covers a small pilot; polling at scale needs top-ups → hub phase pays for itself.
 - Webhook mode (from ~P3, parallel core track): events ≈ 1 credit/100 → **≈ 0.5–1 k credits per chatter-shift** (sends + on-demand fetches dominate). ~5–10× cheaper.
 - Media: 3 credits/MB upload/first-download; thumbnails cached on their CDN (free after first fetch).
 
@@ -192,7 +192,7 @@ OnlyMonster, Infloww, Supercreator et al. offer CRM + AI features. We are not co
 ## 12. Acceptance (per release gate)
 
 - **P1 gate:** chatter monitors a real account read-only for a full shift without opening OnlyMonster for *reading*; data correct vs OM spot-checks (messages, PPV states, spending).
-- **P2 gate (AI quick, companion mode):** Fast Reply / Improve / Help Me used in real shifts with copy-to-OnlyMonster; acceptance rate ≥ legacy Fansly baseline; per-op cost shown.
+- **P2 gate (AI quick, companion mode):** Fast Reply / Improve / Help Me used in real shifts with copy-to-OnlyMonster; acceptance rate instrumented from day 1 — pilot week 1 establishes the baseline (no legacy number exists; the Fansly extension never tracked acceptance), gate = week-2 trend stable/improving + chatter sign-off; per-op cost shown.
 - **P3 gate (sending):** full text shift in-app; zero lost/duplicated sends across ≥500 messages; restricted-words and error paths exercised; AI Insert replaces copy. Real-time target: the parallel core track is live — incoming message → UI ≤2 s p95 via SSE, polling demoted to fallback, credit burn per shift drops ≥5×. (If the track slips, P3 may ship on tightened polling, but the app is not declared the primary surface until SSE lands.)
 - **P4 gate:** Summary/Review/Ping/Hi at behavior parity with legacy (side-by-side prompt-output review); summary caching correct; summaries sync to Agency Hub (core) and are visible to other chatters and in core's dashboard.
 - **P5 gate:** PPV send with vault media + previews + price executes correctly end-to-end (verified in OM/OF).

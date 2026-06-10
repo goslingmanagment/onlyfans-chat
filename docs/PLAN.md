@@ -9,7 +9,7 @@ Status: Draft v1 — 2026-06-10. Phases gate on the acceptance criteria in [PRD.
 > **Status 2026-06-10:** OFAPI dev/test API key obtained and saved in `.env` (`ONLYFANSAPI_API_KEY`, gitignored); key verified via `/api/whoami` (team `goslingmanagment`). A **real, authenticated** account is already connected: `loravie` ("LoraVie FREE", `acct_fbaf2216a7c84147a599f349e0a6fb87`) — so all spikes must be read-only (no sends, no state mutations beyond what a test explicitly requires). Observed on the key (2026-06-10): **credit balance 99,255; 5,000 RPM** (Pro-tier) — plenty for all spikes and early phases, vendor credits question now low-priority. Webhook CRUD verified working via API (`GET /api/webhooks` → `[]`; events catalog returns all 28 events). Webhook registration: do NOT configure manually in the dashboard — the Phase-0 spike registers a temporary tunnel webhook via API (with a signing secret), captures fixtures, then deletes it.
 
 Ops/validation (needs admin + the connected account):
-1. Buy OFAPI plan (start Basic $69 for the spike; confirm credit allocations with vendor — docs/pricing discrepancy, PRD risk #5). Connect the test account (note which auth method worked; check for v2 Face-Auth).
+1. ~~Buy OFAPI plan / connect account~~ **Done 2026-06-10** (dev key in `.env`, 99k credits, 5,000 RPM; `loravie` connected via dashboard login). Remaining from this item: confirm credit allocation terms with the vendor (low priority) and verify what scope granularity the console offers for per-phase chatter keys (SPEC §5 matrix).
 2. **Coexistence test (PRD risk #1):** account active in OnlyMonster + OFAPI simultaneously for several days. Verify: no logouts; sends from API appear correctly in OM; read/typing race behavior; document the mark-as-read policy decision.
 3. **Latency spike (PRD risk #2):** scripted p50/p95 for list-chats, list-messages(100), send-message, user-details over ~200 calls at realistic hours. Record credit burn vs estimates (PRD §10).
 4. **Webhook smoke test:** temporary endpoint via `cloudflared`/`ngrok` tunnel; subscribe to **every event** from `GET /api/webhooks/events` (28 events; cost is 1 credit/100 events); capture real payloads into `tests/fixtures/webhooks/` for everything that fires during the window — at minimum `messages.received/sent` and `users.typing/online/offline`, which the P3 UI depends on. Events that don't fire naturally in the window (`subscriptions.*`, `messages.ppv.unlocked`, `transactions.new`) fall back to documented example payloads, marked unverified. Also fetch one historical **tip message** via list-messages on a chat known to contain tips and record its exact JSON (does it carry an amount field?) — resolves the transcript tip-label ladder (SPEC §8.2).
@@ -33,7 +33,7 @@ Build: OFAPI client layer (rate limiter, pagination adapters, credit meter, erro
 
 Build: operation coordinator (lifecycle, staged timeouts, operationId discard) over IPC · transcript builder from OF messages (HTML→plain, media labels, **PPV labels from `price`/`isOpened`**) · spending/subscription context builders (legacy text formats) · DirectGateway (Anthropic + OpenRouter SSE, prompt caching, reasoning effort) · AI dock UI (streaming card, **Copy / Copy-part** as primary actions, regenerate, cancel, per-op cost) · draft input field in the AI dock (feeds Improve Draft; becomes the composer in P3) · **Fast Reply** (tones, split mode) · **Improve Draft** · **Help Me** (XML) · personalities CRUD + account mapping gate · per-feature model/reasoning settings · debug prompt inspector · **minimal golden set** for the three quick features (a few recorded transcript fixtures + reviewed reference outputs) before pilot use — the full regression harness still lands in P4.
 
-**Exit (PRD P2 gate):** chatters use the three quick features in real shifts (copy mode); acceptance rate measured and ≥ Fansly baseline; prompt inspector confirms context blocks byte-match the legacy shapes on golden fixtures; minimal golden output set reviewed and checked in.
+**Exit (PRD P2 gate):** chatters use the three quick features in real shifts (copy mode); acceptance rate instrumented from day 1, baselined in pilot week 1, week-2 trend stable/improving + chatter sign-off (no legacy baseline exists); prompt inspector confirms context blocks byte-match the legacy shapes on golden fixtures; minimal golden output set reviewed and checked in.
 
 ## Parallel track — real-time events via core (runs alongside P1–P3, lands in the core repo)
 
@@ -49,7 +49,7 @@ Work in **this repo** (during P3): HubSync provider (SSE client; polling demoted
 
 Build: composer (absorbs the P2 draft field; drafts per chat, formatting subset, emoji) · outbox state machine + send verifier (SPEC §7 — the no-idempotency design, including restart reconciliation) · optimistic UI states (sending/sent/seen/failed/unconfirmed) · restricted-words UX (`textHighLight`) · typing indicator · mark-as-read auto-on-open + settings toggle (decided; Phase-0 test still validates OnlyMonster interplay) · reply-to, like, unsend-with-countdown · notes write, custom-name write · AI dock switches Copy → **Insert / Insert-part** · multi-part send sequences from `[NEXT]` parts.
 
-**Exit (PRD P3 gate):** full text shift in-app; ≥500 real sends with zero lost/duplicated messages (outbox journal audited); error paths demonstrated (restricted words, network drop mid-send, app restart with in-flight send); AI Insert replaces copy in real use.
+**Exit (PRD P3 gate):** full text shift in-app; ≥500 real sends with zero lost/duplicated messages (outbox journal audited); error paths demonstrated (restricted words, network drop mid-send, app restart with in-flight send); AI Insert replaces copy in real use. **External dependency:** the real-time gate inside PRD P3 requires the parallel core track (work in the core repo) — if it slips, P3 ships on tightened polling and the "primary surface" declaration waits for SSE.
 
 ## Phase 4 — AI deep features & quality harness (~week 6–8)
 
@@ -89,8 +89,9 @@ Work in **this repo**: HubGateway (AI via core's gateway) · settings: gateway m
 | Double-send incidents | Outbox audits in P3 exit; verifier never auto-retries |
 | Scope creep toward agency dashboard | PRD non-goals; core stores chat-product data (summaries/usage) and keeps analytics dashboards as its own scope |
 
-## Immediate next actions
+## Immediate next actions (updated 2026-06-10)
 
-1. Admin: purchase OFAPI plan, connect throwaway account, create scoped key → run Phase-0 items 1–4 (engineering pairs on scripts).
-2. Engineering: Phase-0 items 5–7 (scaffold, codegen, core port) — can start immediately, no external dependencies.
-3. Product: confirm open questions PRD §11 #6–9 with the pilot chatters (UI language, read-marking policy, transition protocol).
+1. Engineering session (this repo): Phase-0 items 5–7 — scaffold, OpenAPI codegen, port `packages/shared` from legacy with tests. No external dependencies.
+2. Engineering session (this repo): Phase-0 items 2–4 with the connected `loravie` account — OnlyMonster coexistence observation, read-only latency spike, webhook fixture capture via tunnel (all 28 events, read-only otherwise).
+3. Admin: verify OFAPI console scope granularity and cut per-phase scoped chatter keys (SPEC §5); ask vendor about credit allocation terms (low priority).
+4. Product: confirm the remaining open question PRD §11 #7 (one-surface-per-account-per-shift transition protocol) with the pilot chatters.

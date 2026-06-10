@@ -74,7 +74,7 @@ docs/                    # PRD, SPEC, PLAN, research/, vendor/
 scripts/                 # codegen (openapi → types), fixture capture
 ```
 
-`packages/shared` must stay free of Electron/Node-API imports (pure TS + fetch/Web streams) so unit tests run anywhere and modules remain reusable outside Electron (e.g. by core's future AI gateway). This mirrors the legacy `src/shared/` discipline that made 783 tests cheap. (Named `shared`, not `core`, to avoid collision with the Agency Hub "core" repo.)
+`packages/shared` must stay free of Electron/Node-API imports (pure TS + fetch/Web streams) so unit tests run anywhere and modules remain reusable outside Electron (e.g. by core's future AI gateway). This mirrors the legacy `src/shared/` discipline that made 783 tests cheap. (Named `shared`, not `core`, to avoid collision with the Agency Hub "core" repo.) Network-capable modules inside `shared` (the LLM SSE clients, the ported agency-hub client) are **instantiated only in the main process** (or hub contexts); the renderer may import types and pure functions only — enforced with a lint rule (`no-restricted-imports` per entry point), upholding invariant §15.1.
 
 ## 4. Process & security model (Electron)
 
@@ -113,7 +113,7 @@ interface SyncProvider {
 
 ### 6.1 PollingSync (P1) — designed as a cost feature
 - **Chat-list poll** is the primary detector: `GET /{account}/chats?limit=50&order=recent` (1 credit) every **20 s** for the focused account, **60 s** for other handled accounts, **paused when window hidden >2 min** (resume burst on focus).
-- **Delta rule:** message fetches happen only when the list shows change (`lastMessage.id` / `unreadMessagesCount` / `lastReadMessageId` differ from cache) → fetch just that chat's new tail (`first_id` pagination from last cached id). The open conversation additionally refreshes every **10 s** (read-state `isNew` flips ride on this).
+- **Delta rule:** message fetches happen only when the list shows change (`lastMessage.id` / `unreadMessagesCount` / `lastReadMessageId` differ from cache) → fetch just that chat's new tail (`first_id` pagination from last cached id). The open conversation is refreshed on its list-delta and immediately after each own send; on top of that, a **read-state sweep every 30 s** (configurable) catches `isNew` flips for seen-ticks. No flat fast poll of the open conversation — list-delta stays the primary trigger.
 - Fan-detail and transactions fetched on conversation open (and cached with TTL 5 min, matching legacy in-memory caches) — not in the poll loop.
 - Budget guard: per-shift credit budget setting; on 80% an unobtrusive warning, on 100% polling slows 4× (never silently stops).
 
@@ -128,6 +128,7 @@ interface SyncProvider {
 
 ## 7. Send pipeline (correctness-critical: no upstream idempotency)
 
+0. Composer is enabled only when the chat's `canSendMessage` is true; otherwise it is disabled with the platform-provided reason shown, and AI **Insert** degrades to **Copy**.
 1. Compose → `outbox` row `{local_id: uuid, account, chat_id, payload, state: 'sending', created_at}` persisted **before** the POST; optimistic bubble keyed by `local_id`.
 2. Single-flight per chat (queue further sends behind the in-flight one).
 3. POST succeeds → row `state:'sent'`, store returned `message_id`, reconcile bubble.
@@ -168,7 +169,7 @@ Ports legacy lifecycle: one operation per conversation context (`CG-FLOW-04` on 
 Same registry pattern (`features.ts`): surface (`ai-dock` inline vs panel-tab read-only), result kind (reply parts / single reply / XML doc), context recipe (message counts: quick 100 / improve 25 / deep 1500 / hi-greeting 25 cap 10-msg-convo / ping 100), includesEarnings flags, min-messages gate (deep ≥30 → `CG-FLOW-03`), model-selection delegation (improve+hi → fast-reply's model).
 
 ### 8.5 Summary cache
-SQLite `summaries` table replacing browser.storage: key `(account, fan_id)`, fields per legacy entry (`body, model_id, personality_id, personality_updated_at, generated_at, spending_verified, subscription_verified, hub_sync_state`). Same staleness rules; refresh = delete + regenerate. Hub prefetch (5 s timeout) before generation and fire-and-forget push (10 s timeout) after — ported Agency Hub client pointed at core, **live from P4**: `GET/PUT /api/v1/pages/{pageLabel}/fans/{platformUserId}/profile` (both already exist in core; profile versions are append-only, 50 KB cap). Disabled when core is unconfigured. OFAPI account → core page-label mapping: match `platform === 'onlyfans'` + normalized username (legacy rule: lowercase, strip `@`), with manual override in settings.
+SQLite `summaries` table replacing browser.storage: key `(account, fan_id)`, fields per legacy entry (`body, model_id, personality_id, personality_updated_at, generated_at, spending_verified, subscription_verified, hub_sync_state`). Same staleness rules; refresh = delete + regenerate. Hub prefetch (5 s timeout) before generation and fire-and-forget push (10 s timeout) after — ported Agency Hub client pointed at core, **live from P4**: `GET/PUT /api/v1/pages/{pageLabel}/fans/{platformUserId}/profile` (both already exist in core; profile versions are append-only, 50 KB cap; **404 on fans unknown to core until the pre-P4 core patch lands — see §9.1 caveat and PLAN P4**). Disabled when core is unconfigured. OFAPI account → core page-label mapping: match `platform === 'onlyfans'` + normalized username (legacy rule: lowercase, strip `@`), with manual override in settings.
 
 ### 8.6 AiGateway seam
 ```ts
@@ -189,7 +190,7 @@ The hub is the **existing** Agency Hub project (`~/code/core` — Fastify 5 + Po
 | Report AI usage | `POST /api/v1/ai-usage/batch` `{events[1..100]}` — dedupe by `(userId, clientEventId)` | chatter API key only |
 | Fan detail / notes / flags | `GET …/fans/{platformUserId}`, `POST …/notes`, `PATCH /api/v1/fans/{platform}/{platformUserId}/flags` | chatter API key |
 
-Notes that bind us: chatter API keys are **one-active-per-chatter, page-scoped, revocable** (kill-switch exists today, managed in core's Settings → Users). Fan identity in core is `(platform, platform_user_id)` — matches OFAPI's `chat_id === fan.id` directly. The `feature` field of usage events is a **closed enum** in core (`fast-reply | improve-draft | help-me | fan-summary | chat-review | scan | ping | hi-greeting`); core stores tokens, not dollars (cost derived at report time). Core's own OnlyFans data today is OnlyMonster-based and thin (transactions only; DM polling disabled) — none of our flows depend on it.
+Notes that bind us: chatter API keys are **one-active-per-chatter, page-scoped, revocable** (kill-switch exists today, managed in core's Settings → Users). Fan identity in core is `(platform, platform_user_id)` — matches OFAPI's `chat_id === fan.id` directly. The `feature` field of usage events is a **closed enum** in core (`fast-reply | improve-draft | help-me | fan-summary | chat-review | scan | ping | hi-greeting`); core stores tokens, not dollars (cost derived at report time). Core's own OnlyFans data today is OnlyMonster-based and thin (transactions only; DM polling disabled) — none of our flows depend on it. **Caveat (verified in core source 2026-06-10):** the profile GET/PUT routes 404 for fans core's sync has never seen (`resolvePageFan` → `findFanOnPage` → `NotFoundError`, `core: apps/runtime/src/services/fan-profiles.ts:88`) — the pre-P4 core patch (PLAN P4) is a hard prerequisite before relying on them for OnlyFans non-spenders.
 
 ### 9.2 New work in core (tracked in core's repo; aligns with its Phase 7 "ChatMuse Backend" + "Hub-Owned AI Gateway" decisions). Timing: webhook receiver + SSE fanout = parallel track targeting desktop P3; AI gateway = P6; custody = stretch
 - **OFAPI webhook receiver** — verify `HMAC-SHA256(rawBody, signing_secret)`, dedupe by `event_id` (unique index), journal to an events table, ack 200 < 1 s (async processing via pg-boss) to stay inside OFAPI's 15 s timeout / 5-retry policy. Admin flow to register the webhook at OFAPI (`account_scope: global`, events per PRD F8).
@@ -204,7 +205,7 @@ Settings hold core base URL + chatter API key (keychain). HubSync (§6.2) and Hu
 
 Tables (all with `account_id` scoping; ids TEXT):
 - `accounts(id, username, display_name, auth_state, raw JSON, updated_at)`
-- `chats(account_id, chat_id, fan_name, unread_count, has_unread_tips, last_message_at, last_message_preview, last_read_message_id, pinned, raw JSON, updated_at)` — index `(account_id, last_message_at DESC)`
+- `chats(account_id, chat_id, fan_name, unread_count, has_unread_tips, last_message_at, last_message_preview, last_read_message_id, pinned, can_send_message, raw JSON, updated_at)` — index `(account_id, last_message_at DESC)`
 - `messages(account_id, chat_id, message_id, created_at, is_sent_by_me, text_html, text_plain, price, is_opened, is_new, is_tip, media JSON, deleted, raw JSON)` — PK `(account_id, chat_id, message_id)`, index `(account_id, chat_id, created_at DESC)`
 - `fans(account_id, fan_id, username, name, custom_name, last_seen, spending JSON, subscription JSON, notes_cached, fetched_at)`
 - `summaries(…)` per §8.5; `outbox(…)` per §7; `media_cache(url_hash, path, bytes, fetched_at)` (LRU, cap 2 GB)

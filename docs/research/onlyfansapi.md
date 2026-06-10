@@ -165,6 +165,8 @@ Full coverage exists (Posts, Post Comments, Post Labels, Stories, Story Highligh
 **`messages.received` payload is rich** — full message (text, media, price, isFree, isTip, queueId), full `fromUser` (incl. `lastSeen`, `listsStates`, subscription flags), `fanData.spending`, and `replyToMessage`. An incoming message can be rendered directly from the webhook without an extra fetch (except media still processing — poll until `isReady`).
 
 ### The desktop-app problem (no public HTTP endpoint)
+
+> **Superseded 2026-06-10:** the architecture decision landed differently than option 1 below suggests — no standalone relay is built; the existing Agency Hub "core" repo (`~/code/core`) plays the relay role, fanning events out over **SSE**, not WebSocket (core decision #25). See SPEC §9 and `research/agency-hub-core.md`. The analysis below is kept as the original research snapshot.
 1. **Thin relay backend (recommended).** Small always-on service that owns the OFAPI key, registers the webhook, verifies HMAC, dedupes by `event_id`, persists events, and fans out to desktop clients over our own WebSocket. Standard architecture; also keeps the all-accounts API key off chatter machines.
 2. **Polling fallback / hybrid.** For things webhooks don't cover — chiefly **read receipts** (`isNew` flips) — poll `GET /{account}/chats/{chat_id}/messages`. Poll `GET /{account}/chats` for the inbox. Each uncached account call = 1 credit; budget carefully.
 3. **MCP server** (`https://app.onlyfansapi.com/mcp/onlyfans-mcp`, OAuth, 200+ tools, 120 RPM/key) — useful for AI-agent experiments, **not** a real-time transport.
