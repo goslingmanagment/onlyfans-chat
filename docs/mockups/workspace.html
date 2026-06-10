@@ -237,6 +237,8 @@
     border-radius:999px; padding:4px 13px; cursor:pointer}
   .aibtn:hover{color:var(--clay-deep); border-color:var(--clay-line); background:var(--clay-bg)}
   .aibtn.primary{color:var(--clay-deep); border-color:var(--clay-line); background:var(--clay-bg)}
+  .aibtn.dim{opacity:.45; cursor:default}
+  .aibtn.dim:hover{color:var(--t-mid); border-color:var(--line); background:var(--bg2)}
   .aibtn i{font-style:normal}
   .send{margin-left:auto; display:flex; align-items:center; gap:8px; background:var(--clay);
     color:#fff; font-weight:700; font-size:13.5px; border:1px solid var(--clay); border-radius:var(--rs);
@@ -416,16 +418,12 @@
         <div class="ch-actions"><span class="ai-menu-btn">✳ AI ▾</span><kbd>]</kbd></div>
       </header>
 
-      <!-- AI features menu (shown open for the mockup) -->
+      <!-- AI menu: rare/deep actions only (shown open for the mockup) -->
       <div class="ai-menu">
+        <div class="ai-item"><span class="gl">◎</span><span><span class="tt">Scan</span><span class="sub">deep fan profile → panel · Scan tab</span></span><kbd>⌘S</kbd></div>
         <div class="ai-item"><span class="gl">▤</span><span><span class="tt">Chat review</span><span class="sub">score this conversation 1–10, find mistakes</span></span><kbd>⌘E</kbd></div>
-        <div class="ai-item"><span class="gl">☷</span><span><span class="tt">Fan summary</span><span class="sub">deep profile → panel · Summary tab</span></span><kbd>⌘S</kbd></div>
-        <div class="ai-sep"></div>
-        <div class="ai-item dim"><span class="gl">◷</span><span><span class="tt">Ping</span><span class="sub">re-engage a silent fan — unavailable: fan is active</span></span><kbd>⌘P</kbd></div>
-        <div class="ai-item dim"><span class="gl">✦</span><span><span class="tt">Hi greeting</span><span class="sub">3 openers — needs a fresh chat (≤10 msgs)</span></span><kbd>⌘G</kbd></div>
         <div class="ai-sep"></div>
         <div class="ai-item"><span class="gl">⇄</span><span><span class="tt">Compare</span><span class="sub">one reply, several personas side-by-side</span></span></div>
-        <div class="ai-item dim"><span class="gl">◎</span><span><span class="tt">Scan</span><span class="sub">scope TBD</span></span></div>
       </div>
 
       <div class="thread">
@@ -523,6 +521,8 @@
             <span class="aibtn primary"><i>✳</i> Reply <kbd>⌘R</kbd></span>
             <span class="aibtn">Improve <kbd>⌘I</kbd></span>
             <span class="aibtn">Help <kbd>⌘H</kbd></span>
+            <span class="aibtn dim" title="Fan is active right now">Ping <kbd>⌘P</kbd></span>
+            <span class="aibtn dim" title="Needs a fresh chat (≤10 msgs)">Hi <kbd>⌘G</kbd></span>
           </div>
           <button class="send">Send <kbd>⌘↵</kbd></button>
         </div>
@@ -533,7 +533,7 @@
     <aside class="fanel">
       <div class="tabs">
         <div class="tab on">Info</div>
-        <div class="tab">Summary</div>
+        <div class="tab">Scan</div>
       </div>
       <div class="fp">
         <div class="fp-id">
@@ -567,7 +567,7 @@
         </div>
 
         <div class="card sumcard">
-          <div class="titlerow"><span class="cap">AI Summary</span><span class="sum-age" style="margin-left:6px">2d ago</span><span class="refresh">↻ refresh</span></div>
+          <div class="titlerow"><span class="cap">Scan</span><span class="sum-age" style="margin-left:6px">2d ago</span><span class="refresh">↻ refresh</span></div>
           <p>Стабильный платящий фан, тёплый и лояльный. Триггеры покупок — личные «только для тебя» кадры после спортзала; чувствителен к давлению, лучше мягкие офферы…</p>
         </div>
       </div>
