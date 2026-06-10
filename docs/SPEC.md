@@ -62,7 +62,7 @@ apps/
       design/            # design system primitives (tokens, components)
     src/preload/         # contextBridge — typed IPC surface only
 packages/
-  shared/                # platform-agnostic, ported from legacy + OF adaptations:
+  shared/                # platform-agnostic; fresh code to the legacy behavioral spec (§8.1):
     prompts/             # *.md templates (OF wording) + builder + caching blocks
     transcript/          # OF message → transcript lines, PPV labels, ping segments
     context/             # spending/subscription block formatters
