@@ -6,7 +6,9 @@ Status: Draft v1 — 2026-06-10. Phases gate on the acceptance criteria in [PRD.
 
 **Goal: kill the riskiest unknowns with real accounts before writing product code.**
 
-Ops/validation (needs admin + one throwaway/low-value OF account):
+> **Status 2026-06-10:** OFAPI dev/test API key obtained and saved in `.env` (`ONLYFANSAPI_API_KEY`, gitignored); key verified via `/api/whoami` (team `goslingmanagment`). A **real, authenticated** account is already connected: `loravie` ("LoraVie FREE", `acct_fbaf2216a7c84147a599f349e0a6fb87`) — so all spikes must be read-only (no sends, no state mutations beyond what a test explicitly requires). Plan/credit-allocation confirmation with the vendor still pending. Webhook registration: do NOT configure manually in the dashboard — the Phase-0 spike registers a temporary tunnel webhook via API (with a signing secret), captures fixtures, then deletes it.
+
+Ops/validation (needs admin + the connected account):
 1. Buy OFAPI plan (start Basic $69 for the spike; confirm credit allocations with vendor — docs/pricing discrepancy, PRD risk #5). Connect the test account (note which auth method worked; check for v2 Face-Auth).
 2. **Coexistence test (PRD risk #1):** account active in OnlyMonster + OFAPI simultaneously for several days. Verify: no logouts; sends from API appear correctly in OM; read/typing race behavior; document the mark-as-read policy decision.
 3. **Latency spike (PRD risk #2):** scripted p50/p95 for list-chats, list-messages(100), send-message, user-details over ~200 calls at realistic hours. Record credit burn vs estimates (PRD §10).
