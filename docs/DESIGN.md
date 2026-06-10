@@ -23,7 +23,7 @@ Status: Draft v1 — 2026-06-10. Binding companion to [PRD.md](PRD.md) §7 (prin
 ```
 
 - **Account rail (A):** avatars with unread badges; switch <500 ms (budget). Aggregate badge on app icon.
-- **Chat list:** ~340 px, rows ~64 px, virtualized. Filter chips (All / Unread / With tips; Priority/Pinned only as server-side filters until a flag source is confirmed — PRD F2). Search. "Fan waiting" indicator per PRD F2.
+- **Chat list:** ~340 px, rows ~64 px, virtualized. Minimal chrome (owner): no list title, no per-list sync label (freshness lives in the status bar only); a single quiet filter row — All / Unread / With tips; search/jump only via the ⌘K palette. "Fan waiting" indicator per PRD F2.
 - **Conversation:** virtualized list; PPV state badges unmissable (purchased = filled, not purchased = outline); tips highlighted; send-state glyphs (sending → sent → seen / failed / unconfirmed). Reply-to context inline.
 - **AI dock:** docked above composer, never a modal — chatter can keep reading/scrolling while it streams; tone selector; per-part Insert/Copy buttons; per-op cost shown after completion; cancel always visible.
 - **Fan panel:** collapsible (`]`), three tabs; money chips (total / tips / messages / subs), auto-renew-off ⇒ churn-risk badge.

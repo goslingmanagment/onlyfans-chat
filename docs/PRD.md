@@ -72,7 +72,7 @@ Features marked **[P1]**–**[P7]** map to plan phases. Legacy behavioral detail
 
 ### F2. Inbox / chat list [P1]
 - Per-account chat list via `GET /{account}/chats`: fan name/avatar, last message preview, time, unread count, tip indicator (`hasUnreadTips`). Pinned/priority exist as **server-side filters**; the live chat object carries no per-chat pinned/priority flag (verified 2026-06-10) — badges only if Phase 0 finds a flag source (e.g. `fan.listsStates`).
-- Filters: All / Unread / With tips / Priority. Search by fan name (`query`).
+- Filters: one quiet row — All / Unread / With tips (owner 2026-06-10: minimal list chrome; no list title, no per-list sync label — freshness lives in the status bar; Priority/Pinned stay API-level only). Search/jump via the ⌘K palette, no dedicated search box in the list.
 - Account switcher (chatter may handle several accounts per shift); per-account unread badges; aggregate badge on app icon.
 - Sorting by recency. "Fan waiting" indicator derived from `lastMessage` (`isSentByMe=false` + `unreadMessagesCount>0`); the OFAPI-enriched `lastReplyAt` is used **if available** — live check 2026-06-10 found it absent on a freshly connected account (Phase 0 re-checks after data accumulates; vendor question pending). P7 ping-queue has the same dependency.
 - New-message arrival: list updates via sync engine (P1 polling; SSE push from ~P3 via the parallel core track); toast + optional sound for incoming messages on any handled account.
