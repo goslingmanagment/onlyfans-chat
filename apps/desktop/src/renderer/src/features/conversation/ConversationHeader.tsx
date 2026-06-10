@@ -1,6 +1,7 @@
 import type { ChatListItemVM, FanPanelVM } from '../../../../preload/contract';
 import { Avatar } from '../../design/Avatar';
 import { Kbd } from '../../design/Kbd';
+import { AiHeaderMenu } from '../ai/AiHeaderMenu';
 import { formatDollars } from '../../lib/money';
 import { formatLastSeen, isOnline } from '../../lib/time';
 import { cx } from '../../lib/cx';
@@ -76,6 +77,7 @@ export function ConversationHeader({
         )}
       </div>
       <div className="ml-auto flex items-center gap-2.5 text-ink-low">
+        <AiHeaderMenu />
         <Kbd>]</Kbd>
       </div>
     </header>

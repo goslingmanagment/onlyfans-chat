@@ -19,14 +19,9 @@ import { createOfApiClient, type OfApiClient } from './ofapi/client';
 import { createPollingSync, syncAccounts } from './sync/polling-sync';
 import { createBudgetGuard } from './sync/budget-guard';
 import type { SyncProvider } from './sync/provider';
-import { registerIpcHandlers, type AiCoordinatorLike } from './ipc/handlers';
+import { registerIpcHandlers } from './ipc/handlers';
+import { createAiCoordinator, type AiCoordinator } from './ai/index';
 import { attachEventForwarding } from './ipc/events';
-import type { OperationEvent } from '@chatgoose/shared/protocol/index';
-
-interface AiCoordinatorModule extends AiCoordinatorLike {
-  subscribe(listener: (event: OperationEvent) => void): () => void;
-  dispose(): void;
-}
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 
@@ -34,7 +29,7 @@ let mainWindow: BrowserWindow | null = null;
 let data: DataLayer | null = null;
 let sync: (SyncProvider & { pollAccount(accountId: string): Promise<void> }) | null = null;
 let client: OfApiClient | null = null;
-let coordinator: AiCoordinatorModule | null = null;
+let coordinator: AiCoordinator | null = null;
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -182,23 +177,8 @@ async function boot(): Promise<void> {
 
   await initOfapi(keychain, data, settingsStore);
 
-  // AI coordinator (P2) — module lands from the parallel build; tolerate absence.
-  try {
-    // dynamic specifier keeps the bundle resolvable while the module is absent
-    const aiPath = './ai/index';
-    const aiModule = (await import(/* @vite-ignore */ aiPath)) as {
-      createAiCoordinator?: (deps: unknown) => AiCoordinatorModule;
-    };
-    if (aiModule.createAiCoordinator && client) {
-      coordinator = aiModule.createAiCoordinator({
-        data,
-        client,
-        settingsStore,
-        keychain,
-      });
-    }
-  } catch {
-    coordinator = null; // P2 module not built yet — AI channels reject gracefully
+  if (client) {
+    coordinator = createAiCoordinator({ data, client, settingsStore, keychain });
   }
 
   registerIpcHandlers({

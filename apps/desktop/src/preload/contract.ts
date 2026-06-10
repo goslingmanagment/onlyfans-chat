@@ -154,6 +154,16 @@ export interface AiStartRequest {
   };
 }
 
+/**
+ * P2 acceptance instrumentation (PRD §3): every copy of an AI draft.
+ * `partIndex` 0 = all parts, 1..N = part N.
+ */
+export interface AiFeedbackRequest {
+  operationId: string;
+  action: 'copied';
+  partIndex: number;
+}
+
 export interface DbChangedEvent {
   scope: 'accounts' | 'chats' | 'messages' | 'fans' | 'summaries' | 'settings';
   accountId?: string;
@@ -202,6 +212,7 @@ export interface InvokeChannels {
   'cmd:data.purge': { args: void; result: void };
   'ai:start': { args: AiStartRequest; result: void };
   'ai:cancel': { args: { operationId: string }; result: void };
+  'cmd:ai.feedback': { args: AiFeedbackRequest; result: void };
 }
 
 /**

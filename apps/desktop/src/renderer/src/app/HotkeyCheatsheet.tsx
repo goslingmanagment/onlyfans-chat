@@ -1,5 +1,5 @@
 import { useUiStore } from '../state/uiStore';
-import { KEY_BINDINGS, UPCOMING_BINDINGS } from './keymapBindings';
+import { CHEATSHEET_EXTRAS, KEY_BINDINGS, UPCOMING_BINDINGS } from './keymapBindings';
 import { Kbd } from '../design/Kbd';
 
 export function HotkeyCheatsheet(): React.JSX.Element | null {
@@ -23,8 +23,14 @@ export function HotkeyCheatsheet(): React.JSX.Element | null {
           </span>
         </div>
         <div className="space-y-1.5">
-          {KEY_BINDINGS.map((b) => (
+          {KEY_BINDINGS.filter((b) => b.hideFromCheatsheet !== true).map((b) => (
             <div key={b.action} className="flex items-center justify-between py-[3px] text-[12.5px]">
+              <span className="text-ink-mid">{b.description}</span>
+              <Kbd>{b.label}</Kbd>
+            </div>
+          ))}
+          {CHEATSHEET_EXTRAS.map((b) => (
+            <div key={b.label} className="flex items-center justify-between py-[3px] text-[12.5px]">
               <span className="text-ink-mid">{b.description}</span>
               <Kbd>{b.label}</Kbd>
             </div>

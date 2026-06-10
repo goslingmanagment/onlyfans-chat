@@ -21,6 +21,8 @@ export interface KeyBinding<A extends string = string> {
   description: string;
   /** Fire even while typing in an input (mod-combos and Escape always do). */
   allowInEditable?: boolean;
+  /** Registered but not listed (e.g. ⌘1..⌘9 — shown as one cheatsheet row). */
+  hideFromCheatsheet?: boolean;
 }
 
 interface ParsedCombo {

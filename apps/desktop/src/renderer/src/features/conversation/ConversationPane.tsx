@@ -6,8 +6,10 @@ import { EmptyState } from '../../design/EmptyState';
 import { Kbd } from '../../design/Kbd';
 import { ConversationHeader } from './ConversationHeader';
 import { MessageList } from './MessageList';
-import { AiDockSlot } from './AiDockSlot';
 import { ComposerBar } from './ComposerBar';
+import { AiDockMount } from '../ai/AiDock';
+import { AiPillRow } from '../ai/AiPillRow';
+import { handleConversationChange } from '../ai/aiStore';
 
 export function ConversationPane(): React.JSX.Element {
   const accountId = useUiStore((s) => s.selectedAccountId);
@@ -31,6 +33,12 @@ export function ConversationPane(): React.JSX.Element {
   const accounts = useAccounts();
   const chats = useChats(accountId, 'all');
   const fan = useFan(accountId, chatId);
+
+  // conversation switch dismisses the AI dock (the discarded frame confirms)
+  // and resets the per-conversation composer draft
+  useEffect(() => {
+    handleConversationChange(accountId, chatId);
+  }, [accountId, chatId]);
 
   // tell main which conversation to poll aggressively
   useEffect(() => {
@@ -91,7 +99,8 @@ export function ConversationPane(): React.JSX.Element {
           </span>
         </div>
       )}
-      <AiDockSlot />
+      <AiDockMount />
+      <AiPillRow accountId={accountId} chatId={chatId} />
       <ComposerBar personaName={account?.displayName ?? 'model'} />
     </section>
   );

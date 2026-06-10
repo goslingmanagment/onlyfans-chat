@@ -11,6 +11,7 @@ import { qk } from './queries';
 import { useUiStore } from '../state/uiStore';
 import { useSettingsCache } from '../state/settingsCache';
 import { playNotificationBlip } from '../lib/sound';
+import { handleAiOperationEvent } from '../features/ai/aiStore';
 
 const dbChangedSchema = z.object({
   scope: z.enum(['accounts', 'chats', 'messages', 'fans', 'summaries', 'settings']),
@@ -146,6 +147,8 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
   const offAi = bridge.on('ai:event', (payload) => {
     const event = parseOperationEvent(payload);
     if (event === null) return;
+    // dock first (frame correlation lives there), then the status-bar cost slot
+    handleAiOperationEvent(event);
     if (event.type === 'operation:complete' && event.llmSpend !== undefined) {
       useUiStore.getState().setLastLlmCost(event.llmSpend.totalUsd);
     }

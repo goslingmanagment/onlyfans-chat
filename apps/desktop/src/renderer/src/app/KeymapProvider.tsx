@@ -9,7 +9,17 @@ import { nextChatId, nextUnreadChatId } from '../lib/filters';
 import { KEY_BINDINGS } from './keymapBindings';
 import { useUiStore } from '../state/uiStore';
 import { qk } from '../bridge/queries';
-import type { ChatListItemVM } from '../../../preload/contract';
+import type { AccountVM, ChatListItemVM, SettingsVM } from '../../../preload/contract';
+import {
+  useAiStore,
+  startAiFeature,
+  cancelActiveOperation,
+  copyDockPart,
+  cycleDockTone,
+  dismissDock,
+  type LiveAiFeature,
+} from '../features/ai/aiStore';
+import { evaluateAiGate } from '../features/ai/dockLogic';
 
 export const COMPOSER_TEXTAREA_ID = 'composer-draft';
 
@@ -41,6 +51,27 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
       return data?.items ?? [];
     }
 
+    // Same gate as the pill row (mapped personality + an LLM key).
+    function startAiFromKeys(feature: LiveAiFeature): void {
+      const ui = useUiStore.getState();
+      if (ui.view !== 'workspace' || ui.selectedAccountId === null || ui.selectedChatId === null) return;
+      const settings = queryClient.getQueryData<SettingsVM>(qk.settings);
+      const account = queryClient
+        .getQueryData<AccountVM[]>(qk.accounts)
+        ?.find((a) => a.id === ui.selectedAccountId);
+      if (settings === undefined || account === undefined) return;
+      const gate = evaluateAiGate({
+        mapped: account.personalityId !== null,
+        hasLlmKey: settings.hasAnthropicKey || settings.hasOpenRouterKey,
+      });
+      if (!gate.ok) return;
+      startAiFeature(feature, {
+        accountId: ui.selectedAccountId,
+        chatId: ui.selectedChatId,
+        defaultTone: settings.defaultReplyTone,
+      });
+    }
+
     function onKeyDown(e: KeyboardEvent): void {
       const action = keymap.resolve(toEventLike(e));
       if (action === null) return;
@@ -63,12 +94,21 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
         case 'dismiss': {
           if (ui.paletteOpen) ui.setPaletteOpen(false);
           else if (ui.cheatsheetOpen) ui.setCheatsheetOpen(false);
+          else if (useAiStore.getState().op !== null) dismissDock();
           else if (ui.view === 'settings') ui.setView('workspace');
           else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
           return;
         }
         default:
           break;
+      }
+
+      // ⌘1..9 / ⌘0 — copy AI draft part N / all parts (companion-mode primary action)
+      if (action.startsWith('ai-copy-')) {
+        if (useAiStore.getState().op === null) return; // let the default through
+        e.preventDefault();
+        copyDockPart(Number(action.slice('ai-copy-'.length)));
+        return;
       }
 
       if (ui.view !== 'workspace' || ui.selectedAccountId === null) return;
@@ -111,6 +151,28 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
           }
           return;
         }
+        case 'ai-reply':
+          e.preventDefault();
+          startAiFromKeys('fast-reply');
+          return;
+        case 'ai-improve':
+          e.preventDefault();
+          startAiFromKeys('improve-draft');
+          return;
+        case 'ai-help':
+          e.preventDefault();
+          startAiFromKeys('help-me');
+          return;
+        case 'ai-tone': {
+          e.preventDefault();
+          const settings = queryClient.getQueryData<SettingsVM>(qk.settings);
+          cycleDockTone(settings?.defaultReplyTone ?? 'casual');
+          return;
+        }
+        case 'ai-cancel':
+          e.preventDefault();
+          cancelActiveOperation();
+          return;
         default:
           return;
       }

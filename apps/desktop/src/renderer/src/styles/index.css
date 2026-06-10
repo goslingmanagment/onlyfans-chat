@@ -131,3 +131,20 @@
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
+
+/* AI dock streaming caret (mockup .caret) — rides the live draft bubble */
+@utility ai-caret {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--color-clay);
+  animation: ai-caret-blink 1s steps(2) infinite;
+}
+
+@keyframes ai-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
