@@ -63,18 +63,19 @@ This section is review-blocking for renderer PRs, same weight as SPEC §15 invar
 9. **Electron config:** single BrowserWindow; `backgroundThrottling` disabled for the timer that drives slowed hidden-window polling (SPEC §6.1 — notifications must fire in companion mode); preload kept minimal.
 10. **Perf smoke test in CI (from P1):** scripted scroll over a 10k-message fixture asserting frame budget, plus startup-time measurement; budgets from SPEC §13 are the thresholds.
 
-## 4. Visual direction
+## 4. Visual direction — "strict professional console" (decided 2026-06-10, owner-reviewed)
 
-- **Dark-first** (only theme at v1). Near-black neutral surfaces, 3 elevation steps, generous contrast for 8-hour shifts.
-- One **warm accent reserved for money** (tips, PPV, value chips) + semantic states: success/sent, seen, failed, unconfirmed (amber), churn-risk (red), online (green dot).
-- Typography: Inter (or SF on macOS), 13–14 px base, **tabular numerals for money and time**.
-- Density over decoration: flat scannable message rows, not bubble-with-tail chat cuteness; information-dense but calm (PRD §7.6).
+- **Light theme, only theme at v1** (owner decision 2026-06-10; dark mode revisit later). White panels on a cool `#f2f3f5` window, hairline borders (`#e6e8ec`/`#d3d7dd`), minimal shadows, 4–6 px radii, ink-black (`#16181d`) for primary actions/selection (Send button, unread pills, active account, selected-row bar).
+- **Money = financial green** (`#0e7b43` on `#ecf6f0`): lifetime/value chips, tip ledger rows, purchased-PPV badges, credit/LLM figures in the status bar. **Pending money = amber-bronze** (unopened PPV badge). Other semantics: seen `#2563eb`, unconfirmed/warn `#b45309`, failed/churn `#c0392b`, online `#16a34a`.
+- Typography: **IBM Plex Sans** (UI) + **IBM Plex Mono** (all numerals, timestamps, send-state labels, micro-caps) — sober, corporate, characterful; 13 px base; **tabular numerals for money and time**; uppercase letterspaced micro-labels for section captions.
+- Send states as terminal-style mono micro-labels: `SEEN 18:42` / `SENT` / `UNCONF` / `FAILED`.
+- Density over decoration: flat scannable message rows (fan = white, model = light grey tint), not bubble-with-tail chat cuteness; information-dense but calm (PRD §7.6).
 - Custom design system in `src/renderer/design/` (tokens + primitives: Button, Chip, Badge, ListRow, Skeleton, Toast, Dock). **No heavy component library**; no generic "AI-generated SaaS" look (gradient heroes, glassmorphism, decorative blur) — restraint, craft, speed.
-- Anti-goals: no modal dialogs inside the shift loop; no light theme v1; no avatar noise in dense lists beyond the chat row.
+- Anti-goals: no modal dialogs inside the shift loop; no dark theme v1; no avatar noise in dense lists beyond the chat row.
 
 ## 5. Visual reference mockup
 
-A static, owner-reviewed mockup of the default workspace state lives at **[`mockups/workspace.html`](mockups/workspace.html)** (preview: `mockups/workspace-preview.png`). It is the **binding visual reference** for P1: zones, density, palette (graphite surfaces, amber strictly for money), typography (Schibsted Grotesk UI / Spline Sans Mono numerals), ledger-style tip rows, PPV purchase badges, terminal-style send-state labels (`SEEN 18:42`), AI dock with per-part Insert, status bar with credits/LLM spend. Deviations require updating the mockup + this brief in the same PR. Iterate on the mockup (cheap) before iterating in React (expensive).
+A static, owner-reviewed mockup of the default workspace state lives at **[`mockups/workspace.html`](mockups/workspace.html)** (preview: `mockups/workspace-preview.png`). It is the **binding visual reference** for P1: zones, density, light professional palette per §4 (white panels, ink primaries, green money), IBM Plex typography, ledger-style tip rows, PPV purchase badges, terminal-style send-state labels (`SEEN 18:42`), AI dock with per-part Insert, status bar with credits/LLM spend. Deviations require updating the mockup + this brief in the same PR. Iterate on the mockup (cheap) before iterating in React (expensive).
 
 ## 6. Process
 

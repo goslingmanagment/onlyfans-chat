@@ -147,7 +147,7 @@ Concrete layout anatomy, hotkey map, performance-engineering checklist and visua
 3. **Latency is masked, never hidden.** Optimistic sends with explicit state glyphs (sending → sent → seen); skeletons over spinners; cached conversation paints instantly, refresh reconciles; every async surface shows data age. Honest about what's not real-time (read receipts, presence in polling mode).
 4. **Streaming everywhere.** AI output renders token-by-token with cancel always available; no modal blocks the conversation — chatter can keep reading/scrolling while AI generates.
 5. **Money is visible.** Fan value (total spent, churn-risk) visible without clicks; PPV purchase states unmissable in history; tips highlighted. The chatter's next monetization move should be obvious from the screen.
-6. **Dense but calm.** Information-dense layout for power users; restrained palette (dark theme default), no decorative chrome; visual emphasis reserved for money events, unread state, and errors.
+6. **Dense but calm.** Information-dense layout for power users; restrained light professional palette (DESIGN.md §4 — owner decision 2026-06-10), no decorative chrome; visual emphasis reserved for money events, unread state, and errors.
 7. **Trust through transparency.** Per-operation cost, what context the AI saw (debug inspector), and explicit "AI never sends by itself" affordances.
 8. **Fast.** Cold start <3 s to usable inbox; cached chat open <300 ms; account switch <500 ms (budgets in SPEC §13).
 
