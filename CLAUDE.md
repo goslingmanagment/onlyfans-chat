@@ -24,7 +24,7 @@ Desktop chat client for OnlyFans agency chatters with built-in AI assistance (re
 - The central backend is the **existing Agency Hub "core"** repo (`~/code/core`, in production: Fastify + Postgres + React dashboard). It already exposes the fan-profile / ai-usage / chatter-API-key endpoints this app consumes (there the product is called **"ChatMuse"**). Server-side hub work (OFAPI webhooks, SSE fanout, AI gateway) happens in that repo, not here — this repo only consumes the contract in SPEC §9. Core's OpenAPI snapshot: `~/code/core/reference/agency-hub.openapi.json`.
 - **One session = one repo.** Sessions in this repo may READ `~/code/core` (contracts, OpenAPI) but must NEVER edit it. If desktop work surfaces a needed core-side change, record it as a task in `docs/PLAN.md` (parallel track / P6 sections) for a separate session in the core repo — which in turn reads this repo's SPEC §9.2, `docs/research/onlyfansapi.md` §4, and the Phase-0 webhook fixtures as its brief.
 - The legacy repo `~/code/chatgoose` is a **read-only reference and the porting ground truth**. When porting any behavior, read the actual legacy source and its tests — `docs/research/legacy-chatgoose.md` is the map (start from its "Essential Files Reference" table), the code is the truth. Never copy Fansly-specific parts (DOM injection, session capture, Fansly endpoints) — the split is documented in that doc's §10.
-- SPEC §15 invariants are review-blocking: secrets/network only in Electron main; `packages/core` stays platform-pure; zod at every trust boundary; `escapeForPrompt` + safety preamble + output sanitizer on every LLM path; never auto-retry an indeterminate send; AI never sends without explicit human action.
+- SPEC §15 invariants are review-blocking: secrets/network only in Electron main; `packages/shared` stays platform-pure; zod at every trust boundary; `escapeForPrompt` + safety preamble + output sanitizer on every LLM path; never auto-retry an indeterminate send; AI never sends without explicit human action; local DB/media cache encrypted at rest.
 - Prompt templates port verbatim (Fansly→OnlyFans wording only) until the prompt regression harness exists (PLAN P4). The anti-AI-slop work is the most valuable asset — don't "improve" prompts casually.
 - Keep PRD/SPEC/PLAN current: when a decision changes during implementation, update the doc in the same change.
 
@@ -32,7 +32,7 @@ Desktop chat client for OnlyFans agency chatters with built-in AI assistance (re
 
 - pnpm monorepo: `apps/desktop` (Electron + React + TS strict + Tailwind), `packages/shared` (pure TS; named to avoid collision with the "core" repo). No `apps/hub` here. Layout: SPEC §3.
 - `pnpm check` = typecheck + lint + unit tests + build — must pass before any commit (legacy discipline: 783 tests on the predecessor).
-- Tests: Vitest; pure functions in `packages/core` get the densest coverage; OFAPI client tested against recorded fixtures in `tests/fixtures/`.
+- Tests: Vitest; pure functions in `packages/shared` get the densest coverage; OFAPI client tested against recorded fixtures in `tests/fixtures/`.
 - UI is designed from scratch (PRD §7 principles); use the frontend-design skill for new surfaces; dark theme default, keyboard-first.
 - All amounts: OFAPI returns dollars; legacy Fansly used mills — don't port mills→USD conversions into OFAPI code paths.
 - Two ID namespaces: OFAPI `acct_…` vs raw OnlyFans numeric ids (`chat_id === fan.id`). Never mix.

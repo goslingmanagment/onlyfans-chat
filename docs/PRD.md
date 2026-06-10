@@ -56,7 +56,7 @@ OFAPI gives us full programmatic access to connected OnlyFans accounts (read cha
 Two components, introduced in stages (details in [PLAN.md](PLAN.md)):
 
 1. **Desktop app** (this repo, `apps/desktop`) — the chatter's workspace. In early phases it talks to OFAPI directly (polling) and to LLM providers directly, with scoped API keys.
-2. **Agency Hub ("core", `~/code/core`) integration** — the agency's existing production backend (Fastify + Postgres + worker, Docker on a VPS) takes the hub role; we do **not** build a separate relay. Core already serves the legacy ChatGoose API (it calls the product "ChatMuse"): central fan-profile storage with append-only versions, AI-usage ingestion, per-chatter revocable API keys with page scoping — the desktop integrates these from P4. In P6 core gains the OnlyFans real-time pieces: an OFAPI webhook receiver + SSE event push to desktop clients, and its planned hub-owned AI gateway (core roadmap Phase 7) with per-chatter limits.
+2. **Agency Hub ("core", `~/code/core`) integration** — the agency's existing production backend (Fastify + Postgres + worker, Docker on a VPS) takes the hub role; we do **not** build a separate relay. Core already serves the legacy ChatGoose API (it calls the product "ChatMuse"): central fan-profile storage with append-only versions, AI-usage ingestion, per-chatter revocable API keys with page scoping — the desktop integrates these from P4. Core then gains the OnlyFans real-time pieces — an OFAPI webhook receiver + SSE event push to desktop clients — on a parallel track targeting desktop P3, and in P6 its planned hub-owned AI gateway (core roadmap Phase 7) with per-chatter limits.
 
 Rollout: internal pilot on 1 creator account + 1–2 trusted chatters in read+AI mode (sends still via OnlyMonster) → enable sending in-app → expand accounts/chatters → hub phase.
 
@@ -75,14 +75,14 @@ Features marked **[P1]**–**[P7]** map to plan phases. Legacy behavioral detail
 - Filters: All / Unread / With tips / Priority. Search by fan name (`query`).
 - Account switcher (chatter may handle several accounts per shift); per-account unread badges; aggregate badge on app icon.
 - Sorting by recency. The OFAPI-enriched `lastReplyAt` is displayed to spot "fan waiting" chats.
-- New-message arrival: list updates via sync engine (P1 polling, P6 push); toast + optional sound for incoming messages on any handled account.
+- New-message arrival: list updates via sync engine (P1 polling; SSE push from ~P3 via the parallel core track); toast + optional sound for incoming messages on any handled account.
 
 ### F3. Conversation view [P1]
 - Full message history with infinite scrollback (paginated fetch, local cache for instant re-open).
 - Message rendering: text (OF HTML → safe rich text), media (photos/videos/audio/gif with thumbnails, blurred-locked state, `isReady` polling for processing media), tips (`isTip` with amount), GIFs, replied-to context, deleted state.
 - **PPV state is first-class:** sent PPV messages show price + purchased/not-purchased badge directly from `price`/`isOpened`. (This fixes legacy's #1 incident class — AI pitching already-purchased content — at the data-model level.)
 - Fan read receipts: `isNew` flag → "seen" indicator on our sent messages (refreshed on conversation poll; no webhook exists — UI must not promise instant ticks).
-- Presence: fan `lastSeen` ("online Xm ago"); live online/typing indicators when hub phase delivers `users.online/offline/typing` events [P6].
+- Presence: fan `lastSeen` ("online Xm ago"); live online/typing indicators once the parallel core track delivers `users.online/offline/typing` events [~P3].
 - Mark-as-read: automatic on conversation open+focus (debounced), with a setting to disable (interplay with OnlyMonster workflows, see Open Questions).
 
 ### F4. Composer & sending [P3]
@@ -158,6 +158,7 @@ Detailed design happens at implementation with the frontend-design skill; these 
 - **No send idempotency upstream** → client-side dedup is a correctness requirement, not polish.
 - **Account-scoped calls cost 1 credit each, never cached** → sync design is a cost feature (SPEC §6).
 - **OF restricted-words** and 24 h unsend window are platform rules surfaced in UX.
+- Chatter machines hold sensitive data (fan PII, adult DM history) → local store is **encrypted at rest** with purge controls (SPEC §10); per-chatter scoped OFAPI keys per the phase matrix (SPEC §5).
 - AI provider usage policies: agency-operated assistant for adult-platform chat; same posture as the legacy product (human-in-the-loop, no platform ToS evasion features beyond what the agency already accepts by using OnlyMonster/OFAPI).
 
 ## 9. Competitive/context note
@@ -168,7 +169,7 @@ OnlyMonster, Infloww, Supercreator et al. offer CRM + AI features. We are not co
 
 **OFAPI credits** (1 credit ≈ $0.0015–0.003 depending on plan/top-up):
 - Polling mode (P1–P5), one active account/shift: chat-list poll @20–30 s ≈ 1,000–1,400/8 h; open-conversation refreshes (conditional on list delta) ≈ 500–1,500; sends/reads/fan fetches ≈ 300–800. **≈ 2–4 k credits per chatter-shift** → 45–90 k/mo per full-time seat. Pro plan (100 k/mo incl. 5 accounts, $299) covers a small pilot; polling at scale needs top-ups → hub phase pays for itself.
-- Hub/webhook mode (P6+): events ≈ 1 credit/100 → **≈ 0.5–1 k credits per chatter-shift** (sends + on-demand fetches dominate). ~5–10× cheaper.
+- Webhook mode (from ~P3, parallel core track): events ≈ 1 credit/100 → **≈ 0.5–1 k credits per chatter-shift** (sends + on-demand fetches dominate). ~5–10× cheaper.
 - Media: 3 credits/MB upload/first-download; thumbnails cached on their CDN (free after first fetch).
 
 **LLM** (legacy registry prices): fast replies ≈ $0.01–0.03/op (Sonnet-class + prompt caching), deep summary ≈ $0.3–0.8/op (Opus-class, 1500 msgs). Typical shift ≈ **$1.5–4/chatter**. Per-feature model knobs + hub limits keep this governed.

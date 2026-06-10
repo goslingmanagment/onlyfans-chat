@@ -18,8 +18,8 @@ DIRECT MODE (P1+, polling)                    HUB MODE (real-time from ~P3, AI g
         ▲ polling (list-delta)                │  Fastify+Postgres+worker)   │
         └─────────────────────                │  has: fan profiles, ai-usage│
    From P4 (still direct mode):               │  chatter API keys, dashboard│
-   summaries + ai-usage sync → core           │  P6 adds: OFAPI webhook rcvr│
-                                              │  SSE fanout, AI gateway     │
+   summaries + ai-usage sync → core           │  adds: webhooks+SSE (→P3),  │
+                                              │  AI gateway (P6)            │
                                               └──────┬──────────▲───────────┘
                                                      │ REST     │ webhooks
                                                      ▼          │
@@ -43,7 +43,7 @@ The desktop app is built **hub-ready from day 1** via two seams:
 | Validation | **zod** at all trust boundaries (IPC, OFAPI responses, webhook payloads, storage migration) | Legacy lesson 1.4.1: type guards at boundaries, not `as` casts. |
 | Tests | **Vitest** (unit), **Playwright** (e2e, later) | Port legacy test patterns (research doc §12). |
 | Monorepo | **pnpm workspaces** | `apps/desktop`, `packages/shared`. No `apps/hub` — server-side hub work lands in the core repo. |
-| Hub (P6) | **Extend the existing Agency Hub "core"** (`~/code/core`: Fastify 5 + Postgres 16 + Drizzle + pg-boss + React dashboard, Docker on VPS) | Decided 2026-06-10: no separate relay. Core already serves the ChatGoose/"ChatMuse" API (fan profiles, ai-usage, per-chatter keys); P6 adds OFAPI webhook receiver + SSE fanout + AI gateway there (§9). |
+| Hub (P6) | **Extend the existing Agency Hub "core"** (`~/code/core`: Fastify 5 + Postgres 16 + Drizzle + pg-boss + React dashboard, Docker on VPS) | Decided 2026-06-10: no separate relay. Core already serves the ChatGoose/"ChatMuse" API (fan profiles, ai-usage, per-chatter keys); webhooks + SSE fanout land there via the parallel track (target P3), the AI gateway in P6 (§9). |
 
 ## 3. Repository layout (target)
 
@@ -91,11 +91,12 @@ scripts/                 # codegen (openapi → types), fixture capture
 ## 5. OFAPI client layer (`apps/desktop/src/main/ofapi`)
 
 - **Base:** `https://app.onlyfansapi.com/api`, `Authorization: Bearer <key>`. Account ids `acct_*`; fan/chat/message ids are raw OF numeric ids (`chat_id === fan.id`). Never concatenate paths by hand outside this module.
-- **Generated types** from vendored `openapi.json`; hand-written `OfApiClient` exposes typed methods per subsystem (chats, messages, fans, users, transactions, vault, accounts, webhooks). Response envelope `{data, _meta, _pagination}` unwrapped here; `_meta._credits.balance` and `x-rate-limit-remaining-minute` published to a `CreditMeter` (status bar + persisted daily counters).
+- **Generated types** from vendored `openapi.json`; hand-written `OfApiClient` exposes typed methods per subsystem (chats, messages, fans, users, transactions, vault, accounts, webhooks). **The `{data, _meta, _pagination}` envelope is NOT universal** (verified live 2026-06-10: `GET /api/accounts` returns a bare top-level array, `GET /api/whoami` a bare object, while account-scoped endpoints return the envelope) — unwrapping is per-operation, driven by the OpenAPI schema. Credits/rate-limit meta (`_meta._credits.balance`, `x-rate-limit-remaining-minute`, `x-ofapi-credits-*` headers) is published to a `CreditMeter` (status bar + persisted daily counters) whenever present.
 - **Rate limiting:** client-side token bucket well under plan RPM (config; default 300 RPM, burst 20), per-account concurrency cap 4, global 12. 429 → honor `retry-after`, exponential backoff 1/2/4/8 s. 5xx → retry ≤3 (idempotent GETs only). **POST send-message is never auto-retried** (§7).
 - **Pagination adapters** (four upstream styles — research doc §6): `nextPageUrl`, `limitOffset`, `marker`, `firstLastId`. One `paginate()` helper per style; callers request "N items" or "until predicate" with a hard page cap + inter-page delay (legacy: 300 ms between pages, deep fetch caps).
 - **Error mapping** into the `CG-*` registry (§11): 401→`OFAPI-AUTH`, 404 acct-prefix hint, 422 validation detail, 400 restricted-words (carry `textHighLight`), session-expired detection from account state.
 - **Fixture capture mode:** debug flag records sanitized request/response pairs into `tests/fixtures/ofapi/` for contract tests (no sandbox upstream — recorded fixtures are our regression net).
+- **Key scoping per phase** (configured in the OFAPI console; exact scope granularity to verify in Phase 0): P1–P2 chatter keys = read-only (chats/messages/fans/users/transactions GET); P3 adds send-message, mark-read, typing, notes/custom-name writes; P5 adds media upload + vault; webhook CRUD and account connect/disconnect stay on the admin/core key only. Never put the unscoped master key on a chatter machine.
 
 ## 6. Sync engine
 
@@ -130,8 +131,8 @@ interface SyncProvider {
 1. Compose → `outbox` row `{local_id: uuid, account, chat_id, payload, state: 'sending', created_at}` persisted **before** the POST; optimistic bubble keyed by `local_id`.
 2. Single-flight per chat (queue further sends behind the in-flight one).
 3. POST succeeds → row `state:'sent'`, store returned `message_id`, reconcile bubble.
-4. POST fails **with definite non-delivery** (network refused before request wrote, 4xx validation, restricted words) → `state:'failed'`, inline retry/edit UI. Restricted words: show `textHighLight` terms, keep text in composer.
-5. POST **indeterminate** (timeout, 5xx, connection dropped mid-flight) → `state:'unconfirmed'`. **Never auto-retry.** Background verifier fetches the chat tail and matches by text+timestamp window (and later `messages.sent` events) → promotes to `sent` or offers manual retry with a diff view.
+4. POST fails **with definite non-delivery** → `state:'failed'`, inline retry/edit UI. Definite means strictly: the error occurred before any request bytes were sent (DNS resolution failure, connect refused/unreachable, TLS handshake error) **or** the server returned a definitive 4xx application response (validation; restricted words → show `textHighLight` terms, keep text in composer). When in doubt, it is NOT definite.
+5. Everything else is **indeterminate** (timeout, connection reset after the request started, any 5xx including gateway errors) → `state:'unconfirmed'`. **Never auto-retry.** Background verifier fetches the chat tail and matches by text+timestamp window (and later `messages.sent` events) → promotes to `sent` or offers manual retry with a diff view.
 6. App restart with `sending/unconfirmed` rows → same verifier path before any UI offers resend.
 7. Multi-part (`[NEXT]`) sequences: each part is its own outbox row; sequence aborts on first failure; inter-part delay 2–5 s randomized; cancel between parts.
 8. Typing indicator: while composer has activity, call typing endpoint every 3 s (free); stop on idle 4 s.
@@ -151,7 +152,7 @@ Prompt templates (all 7 + compare), safety preambles (reply/analysis modes), pro
 | Message text | plain `content` | `text` is OF HTML → strip to plain text (entity decode, `<br>`→newline, drop styling spans) before `[HH:MM] Sender: …` formatting |
 | Media labels | attachment contentType map | `media[]`/`mediaCount` types → `[Photo]`, `[Video]`, `[Audio]`, `[Media Bundle: …]`; GIFs via `giphyId` → `[GIF]` |
 | **PPV state** | orderhistory verification pipeline (10-item cap, 3s timeouts, `unknown` fallback) | **Directly on message:** `price>0` ⇒ PPV; sent + `isOpened===true` ⇒ `purchased`; sent + `isOpened===false` ⇒ `not purchased`. `unknown` label retained in format but should be rare. `messages.ppv.unlocked` event (P6) updates live |
-| Tips | `totalTipAmount` mills | `isTip` messages → `[Tip: $X.XX]` (amount per openapi field; verify exact name at impl) |
+| Tips | `totalTipAmount` mills | `isTip` messages → `[Tip: $X.XX]`. Amount-source ladder (resolve with a real tip-message fixture in Phase 0 — the OpenAPI list-messages example shows no amount field next to `isTip`): ① amount field on the message if it exists → ② join `/transactions` (`type=tips`, `tipsSource=chat`) by fan + timestamp → ③ render `[Tip]` without amount (degraded, never fabricate). Live `tips.received` webhooks carry `amountGross/Net` and enrich tips going forward |
 | Fan display name | group users + DOM fallback | chat `fan.name` / custom name |
 | Spending block | wallets/earnings stats + monthly breakdowns | `subscribedOnData` `*Summ` totals (totalSumm, subscribesSumm, tipsSumm, messagesSumm, postsSumm, streamsSumm); monthly breakdown from `GET /{account}/transactions` filtered by fan id, `marker`-paginated, page cap 5, on-demand + 5 min cache. Keep legacy text block format |
 | Subscription block | messaging groups / subscribers walk | `subscribedOnData`: subscribeAt, expiredAt, renewedAt, duration, discountPercent, hasActivePaidSubscriptions, unsubscribeReason; renew-off ⇒ "churn risk" line. Keep legacy text block format |
@@ -161,7 +162,7 @@ Prompt templates (all 7 + compare), safety preambles (reply/analysis modes), pro
 **Invariant:** block text formats stay byte-compatible with legacy where data allows — the prompts were tuned against those exact shapes.
 
 ### 8.3 Operation coordinator
-Ports legacy lifecycle: one operation per conversation context (`CG-FLOW-04` on concurrent start), synchronous reservation, `operationId` UUID correlation, discard on conversation switch, staged timeouts (`quick-total` 60 s; deep: prep 180 s, TTFB 45 s, idle 45 s, max-stream 300 s), auto-retry on LLM 429 (`Retry-After` ≤60 s) and 503 (+5 s), profiling stages in debug mode. Transport changes from extension Port to IPC events — protocol types live in `packages/core/protocol`.
+Ports legacy lifecycle: one operation per conversation context (`CG-FLOW-04` on concurrent start), synchronous reservation, `operationId` UUID correlation, discard on conversation switch, staged timeouts (`quick-total` 60 s; deep: prep 180 s, TTFB 45 s, idle 45 s, max-stream 300 s), auto-retry on LLM 429 (`Retry-After` ≤60 s) and 503 (+5 s), profiling stages in debug mode. Transport changes from extension Port to IPC events — protocol types live in `packages/shared/protocol`.
 
 ### 8.4 Feature policies
 Same registry pattern (`features.ts`): surface (`ai-dock` inline vs panel-tab read-only), result kind (reply parts / single reply / XML doc), context recipe (message counts: quick 100 / improve 25 / deep 1500 / hi-greeting 25 cap 10-msg-convo / ping 100), includesEarnings flags, min-messages gate (deep ≥30 → `CG-FLOW-03`), model-selection delegation (improve+hi → fast-reply's model).
@@ -210,6 +211,8 @@ Tables (all with `account_id` scoping; ids TEXT):
 - `settings(key, value JSON)` with `schema_version` + sequential migrations (legacy pattern); `usage_events` (pending hub flush); `credit_log(day, used)`
 - Retention: messages pruned per chat beyond 5,000 (configurable); summaries/outbox kept.
 
+**Encryption at rest (decided 2026-06-10):** chatter machines hold fan PII and adult-content DM history, and OS full-disk encryption can't be assumed. The SQLite DB uses a SQLCipher-compatible build (e.g. `better-sqlite3-multiple-ciphers`) with a per-install random key held in the OS keychain (`safeStorage`); the media cache stores encrypted blobs, decrypted on the fly by the `media://` protocol handler. Settings include a "Purge local data" action (drops DB + media cache). Idle app-lock is a later-phase option.
+
 ## 11. Error taxonomy
 
 Extend legacy `CG-*` registry (every error: code, user-facing message, recovery action; raw detail in debug):
@@ -240,7 +243,7 @@ Extend legacy `CG-*` registry (every error: code, user-facing message, recovery 
 - **Contract tests** — OfApiClient against recorded fixtures (capture mode §5): pagination styles, envelope parsing, error mapping, restricted-words shape.
 - **Integration** — sync delta logic, outbox/send-verifier state machine (timeout/5xx/restart paths), summary cache staleness — against in-memory SQLite + mocked client.
 - **E2E (Playwright, from P2)** — happy-path shift flows against a stub OFAPI server (recorded fixtures); golden-screenshot the three-zone layout.
-- **Prompt regression harness (P4)** — golden transcripts → generated outputs diffed/reviewed vs legacy outputs; AI-slop taxonomy checklist (legacy TODO) as review rubric.
+- **Prompt regression harness (minimal golden set in P2, full harness in P4)** — golden transcripts → generated outputs diffed/reviewed vs legacy outputs; AI-slop taxonomy checklist (legacy TODO) as review rubric. The P2 minimal set (a few reviewed reference outputs for Fast Reply / Improve / Help Me) must exist before pilot use.
 - CI: `pnpm check` = typecheck + lint + unit + build (mirrors legacy `npm run check` gate).
 
 ## 15. Key invariants (enforced in review)
@@ -253,3 +256,4 @@ Extend legacy `CG-*` registry (every error: code, user-facing message, recovery 
 6. Context block text formats stay legacy-compatible (§8.2) unless the prompt regression harness approves a change.
 7. Credits: every OFAPI call goes through the metered client; no ad-hoc fetches.
 8. AI never sends without explicit human action (PRD non-goal #1).
+9. Local DB and media cache are encrypted at rest; the key lives only in the OS keychain (§10).

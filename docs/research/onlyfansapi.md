@@ -211,7 +211,7 @@ Full coverage exists (Posts, Post Comments, Post Labels, Stories, Story Highligh
 
 ## 6. Error handling, pagination, SDKs
 
-**Response envelope:** `{ data, _meta { _credits, _cache, _rate_limits }, _pagination? }`.
+**Response envelope:** `{ data, _meta { _credits, _cache, _rate_limits }, _pagination? }`. **Not universal** (verified live 2026-06-10): team-level endpoints can return bare shapes — `GET /api/accounts` = top-level array, `GET /api/whoami` = bare object. Treat unwrapping as per-operation, per the OpenAPI schema.
 
 **Errors:** `400` often OnlyFans-origin (e.g. restricted words, with `textHighLight`); `401` bad key; `403` expired/foreign CDN URL on media download; `404` usually missing `acct_` prefix; `405` wrong method; `422` validation `{ error:"VALIDATION_ERROR", message, description, errors:{field:[…]} }`; `429` rate limit. Auth widget errors: `{message, code, details}` (e.g. `AUTH_CANCELLED`).
 
