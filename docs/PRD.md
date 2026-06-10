@@ -122,7 +122,7 @@ Model support: per-feature model selection + reasoning effort (off/low/medium/hi
 - Upload new media from disk (3 credits/MB — show size/cost preflight; route through vault for reusability; `ofapi_media_` direct-upload IDs are single-use).
 - Clear PPV compose summary before send (N items, price, previews) — misprice prevention.
 
-### F8. Real-time via Agency Hub (core) [P6]
+### F8. Real-time via Agency Hub (core) [parallel core track, target P3; AI gateway P6]
 - Core gains an OFAPI webhook receiver (`messages.received/sent`, `messages.ppv.unlocked`, `tips.received`, `subscriptions.*`, `users.typing/online/offline`, `accounts.*`): HMAC verify, `event_id` dedupe, journal, fan-out to desktop clients over **SSE** (core decision #25: REST + SSE, no websockets).
 - Desktop drops its polling loops in favor of push (polling stays as degraded fallback); read-state (`isNew`) still polled on-demand for the open conversation.
 - Desktop authenticates to core with the existing per-chatter API keys (page-scoped, revocable — the central kill-switch already works today).
@@ -192,7 +192,7 @@ OnlyMonster, Infloww, Supercreator et al. offer CRM + AI features. We are not co
 
 - **P1 gate:** chatter monitors a real account read-only for a full shift without opening OnlyMonster for *reading*; data correct vs OM spot-checks (messages, PPV states, spending).
 - **P2 gate (AI quick, companion mode):** Fast Reply / Improve / Help Me used in real shifts with copy-to-OnlyMonster; acceptance rate ≥ legacy Fansly baseline; per-op cost shown.
-- **P3 gate (sending):** full text shift in-app; zero lost/duplicated sends across ≥500 messages; restricted-words and error paths exercised; AI Insert replaces copy.
+- **P3 gate (sending):** full text shift in-app; zero lost/duplicated sends across ≥500 messages; restricted-words and error paths exercised; AI Insert replaces copy. Real-time target: the parallel core track is live — incoming message → UI ≤2 s p95 via SSE, polling demoted to fallback, credit burn per shift drops ≥5×. (If the track slips, P3 may ship on tightened polling, but the app is not declared the primary surface until SSE lands.)
 - **P4 gate:** Summary/Review/Ping/Hi at behavior parity with legacy (side-by-side prompt-output review); summary caching correct; summaries sync to Agency Hub (core) and are visible to other chatters and in core's dashboard.
 - **P5 gate:** PPV send with vault media + previews + price executes correctly end-to-end (verified in OM/OF).
-- **P6 gate:** webhook→UI latency ≤2 s p95 for incoming messages via core SSE; per-chatter LLM limits enforced by core's AI gateway; credit burn per shift drops ≥5×; kill-switch (revoke chatter API key in core admin) demonstrated.
+- **P6 gate:** per-chatter LLM limits enforced by core's AI gateway; desktop runs without local LLM provider keys in gateway mode; kill-switch (revoke chatter API key in core admin) demonstrated.

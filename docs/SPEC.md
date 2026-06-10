@@ -5,7 +5,7 @@ Status: Draft v1 — 2026-06-10. Companion to [PRD.md](PRD.md) (what/why) and [P
 ## 1. Architecture overview
 
 ```
-PHASES 1–5 (direct mode)                      PHASE 6+ (hub mode)
+DIRECT MODE (P1+, polling)                    HUB MODE (real-time from ~P3, AI gateway P6)
 ┌─────────────────────────────┐               ┌─────────────────────────────┐
 │  Desktop app (Electron)     │               │  Desktop app                │
 │ ┌─────────┐   ┌───────────┐ │               │  (scoped OFAPI key or none) │
@@ -116,7 +116,7 @@ interface SyncProvider {
 - Fan-detail and transactions fetched on conversation open (and cached with TTL 5 min, matching legacy in-memory caches) — not in the poll loop.
 - Budget guard: per-shift credit budget setting; on 80% an unobtrusive warning, on 100% polling slows 4× (never silently stops).
 
-### 6.2 HubSync (P6)
+### 6.2 HubSync (parallel core track — target P3)
 - SSE stream from core (`GET /api/v1/events/stream`, bearer chatter API key; SSE per core decision #25 — no websockets there), zod-validated `SyncEvent` frames (same union — renderer code unchanged). `Last-Event-ID` resume against core's event journal; on disconnect, exponential reconnect + a reconciliation sweep (one chat-list fetch per account) to close the gap; PollingSync (slowed) is the degraded fallback.
 - Read-state remains on-demand polling of the open conversation (no upstream webhook exists).
 
@@ -190,7 +190,7 @@ The hub is the **existing** Agency Hub project (`~/code/core` — Fastify 5 + Po
 
 Notes that bind us: chatter API keys are **one-active-per-chatter, page-scoped, revocable** (kill-switch exists today, managed in core's Settings → Users). Fan identity in core is `(platform, platform_user_id)` — matches OFAPI's `chat_id === fan.id` directly. The `feature` field of usage events is a **closed enum** in core (`fast-reply | improve-draft | help-me | fan-summary | chat-review | scan | ping | hi-greeting`); core stores tokens, not dollars (cost derived at report time). Core's own OnlyFans data today is OnlyMonster-based and thin (transactions only; DM polling disabled) — none of our flows depend on it.
 
-### 9.2 New work in core for P6 (tracked in core's repo; aligns with its Phase 7 "ChatMuse Backend" + "Hub-Owned AI Gateway" decisions)
+### 9.2 New work in core (tracked in core's repo; aligns with its Phase 7 "ChatMuse Backend" + "Hub-Owned AI Gateway" decisions). Timing: webhook receiver + SSE fanout = parallel track targeting desktop P3; AI gateway = P6; custody = stretch
 - **OFAPI webhook receiver** — verify `HMAC-SHA256(rawBody, signing_secret)`, dedupe by `event_id` (unique index), journal to an events table, ack 200 < 1 s (async processing via pg-boss) to stay inside OFAPI's 15 s timeout / 5-retry policy. Admin flow to register the webhook at OFAPI (`account_scope: global`, events per PRD F8).
 - **SSE event fanout** — `GET /api/v1/events/stream`: chatter-key auth, events filtered to the chatter's assigned pages, `Last-Event-ID` replay from the journal (retention ~7 days). Frames = `SyncEvent` union (schema shared conceptually with `packages/shared/protocol`; core owns its copy in `contracts`).
 - **AI gateway** — SSE streaming proxy to Anthropic/OpenRouter with central keys, per-chatter quotas, cost ledger, prompt caching (this is core's planned Phase 7 scope verbatim).
