@@ -72,8 +72,12 @@ This section is review-blocking for renderer PRs, same weight as SPEC §15 invar
 - Custom design system in `src/renderer/design/` (tokens + primitives: Button, Chip, Badge, ListRow, Skeleton, Toast, Dock). **No heavy component library**; no generic "AI-generated SaaS" look (gradient heroes, glassmorphism, decorative blur) — restraint, craft, speed.
 - Anti-goals: no modal dialogs inside the shift loop; no light theme v1; no avatar noise in dense lists beyond the chat row.
 
-## 5. Process
+## 5. Visual reference mockup
 
-- P1: build the design system + the three-zone shell with the **frontend-design skill**, against this brief; show 1–2 chatters real data early and iterate on the triage loop before polishing anything else.
+A static, owner-reviewed mockup of the default workspace state lives at **[`mockups/workspace.html`](mockups/workspace.html)** (preview: `mockups/workspace-preview.png`). It is the **binding visual reference** for P1: zones, density, palette (graphite surfaces, amber strictly for money), typography (Schibsted Grotesk UI / Spline Sans Mono numerals), ledger-style tip rows, PPV purchase badges, terminal-style send-state labels (`SEEN 18:42`), AI dock with per-part Insert, status bar with credits/LLM spend. Deviations require updating the mockup + this brief in the same PR. Iterate on the mockup (cheap) before iterating in React (expensive).
+
+## 6. Process
+
+- P1: build the design system + the three-zone shell with the **frontend-design skill**, against this brief and the §5 mockup; show 1–2 chatters real data early and iterate on the triage loop before polishing anything else.
 - The hotkey map and §3 checklist are acceptance items of the P1/P2 gates.
 - Changes to this brief are doc-updates in the same PR that implements them (CLAUDE.md discipline).
