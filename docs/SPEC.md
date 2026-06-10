@@ -39,9 +39,9 @@ The desktop app is built **hub-ready from day 1** via two seams:
 | State | **Zustand** (UI state) + **TanStack Query** (server-state cache over IPC) | Small API surface, easy for agents to keep correct; Query gives staleness/refetch semantics that match the sync model. |
 | Local DB | **better-sqlite3** (main process only) + WAL | Message/fan cache, summaries, outbox, settings. Synchronous API is fine in main; no ORM — typed query modules. |
 | OFAPI types | **openapi-typescript** codegen from `docs/vendor/onlyfansapi/openapi.json` | Generated types + thin hand-written client (§5); regen script in repo. |
-| LLM | Hand-rolled SSE clients ported from legacy (`anthropic-client`, `openrouter-client`) | Proven, dependency-free, supports adaptive thinking + prompt caching exactly as tuned. |
+| LLM | Hand-rolled SSE clients, written fresh (legacy clients as behavioral reference) | Proven approach: no SDK, dependency-free, supports adaptive thinking + prompt caching exactly as tuned in legacy. |
 | Validation | **zod** at all trust boundaries (IPC, OFAPI responses, webhook payloads, storage migration) | Legacy lesson 1.4.1: type guards at boundaries, not `as` casts. |
-| Tests | **Vitest** (unit), **Playwright** (e2e, later) | Port legacy test patterns (research doc §12). |
+| Tests | **Vitest** (unit), **Playwright** (e2e, later) | Re-express the legacy test cases as the spec-by-example — fresh test code, same cases (research doc §12). |
 | Monorepo | **pnpm workspaces** | `apps/desktop`, `packages/shared`. No `apps/hub` — server-side hub work lands in the core repo. |
 | Hub (P6) | **Extend the existing Agency Hub "core"** (`~/code/core`: Fastify 5 + Postgres 16 + Drizzle + pg-boss + React dashboard, Docker on VPS) | Decided 2026-06-10: no separate relay. Core already serves the ChatGoose/"ChatMuse" API (fan profiles, ai-usage, per-chatter keys); webhooks + SSE fanout land there via the parallel track (target P3), the AI gateway in P6 (§9). |
 
@@ -141,8 +141,13 @@ interface SyncProvider {
 
 ## 8. AI layer (port of legacy, adapted to OFAPI data)
 
-### 8.1 What ports verbatim (into `packages/shared`)
-Prompt templates (all 7 + compare), safety preambles (reply/analysis modes), prompt-cache block segmentation (1h system/personality, 5m transcript, uncached task), `escapeForPrompt` (& < > ordering), reply sanitizer (think-blocks, meta-leak lines, prefixes, quotes, bracket garbage), `[NEXT]`/`[VARIANT]` splitting, XML extraction (helpMe, chatReview), tone instructions, ping segment instructions, model registry/capabilities/cost modules, staged timeout values, temperatures and max_tokens per feature, summary cache validity rules. Constants table in research doc §1/§4/§5 is normative. Fansly wording in templates → OnlyFans.
+### 8.1 Behavior carried over from legacy (into `packages/shared`) — fresh code, locked behavior
+All implementations are written **from scratch** (owner decision 2026-06-10: legacy code is reference reading, not copy material). Three things carry over literally:
+1. **Prompt artifacts, byte-for-byte:** all templates (7 + compare), safety preambles (reply/analysis modes), tone instructions, ping segment instructions, prompt-cache block segmentation (1h system/personality, 5m transcript, uncached task). Only Fansly→OnlyFans wording changes.
+2. **Product constants/data:** staged timeouts (60 s quick; 180/45/45/300 s deep), temperatures and max_tokens per feature, message counts, ping thresholds (5 d / 3 msgs), min-deep 30, summary-cache validity rules, model registry entries, `CG-*` error taxonomy. The constants tables in research doc §1/§4/§5 are normative.
+3. **Test cases as behavior facts:** re-express the legacy suites' cases in fresh test code without dropping cases — `escapeForPrompt` ordering (& first), `[NEXT]`/`[VARIANT]` edge cases, XML extraction, reply-sanitizer regressions (think-blocks, meta-leak lines, Gemini bracket garbage, wrapping quotes), cache-staleness matrix. Dropping a case = dropping production knowledge.
+
+Everything else — module boundaries, types, structure, style — is the implementer's own design; when the exact behavior is unclear, the legacy source is the truth to learn from, not to copy.
 
 ### 8.2 Context builder mapping (legacy → OFAPI)
 

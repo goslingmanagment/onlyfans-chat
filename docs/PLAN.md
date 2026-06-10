@@ -17,7 +17,7 @@ Ops/validation (needs admin + the connected account):
 Engineering bootstrap:
 5. pnpm monorepo scaffold (electron-vite app boots, blank window, CI `pnpm check` green).
 6. OpenAPI → TS codegen script wired to vendored `openapi.json`.
-7. Port `packages/shared` skeleton from legacy: errors, split, xml, reply-output, prompt-injection, model registry + their tests (pure-TS modules port nearly verbatim — fastest possible win, locks the safety net in place).
+7. Build the `packages/shared` core **fresh from the behavioral spec** (CLAUDE.md rule: legacy is reference, not copy material): errors, split, xml, reply-output, prompt-injection, model registry — adopting the legacy test cases as the acceptance suite (re-expressed, none dropped). Locks the behavioral safety net in place first.
 8. **Pre-P3 send validation — owner-manual (decided 2026-06-10: no automated send scripts; the owner personally performs a handful of test sends on `loravie`).** Checklist to cover by hand, ideally while the item-4 webhook listener is running so responses/events get captured: sends appear correctly in OnlyMonster (send half of the coexistence test); does the `messages.sent` webhook fire for our own API sends (the §7.5 send-verifier leans on it); one deliberate send with a restricted word to capture the 400 + `textHighLight` shape; informal latency feel (no p50/p95 needed). **P3 does not start until this checklist is done** — Phase 0 items 1–7 are read-only and runnable now.
 
 **Exit:** spike report appended to this file (latency table, credit burn, coexistence verdict, chosen auth method); CI green; core modules ported with passing tests.
