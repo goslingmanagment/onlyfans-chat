@@ -25,17 +25,19 @@ Build: OFAPI client layer (rate limiter, pagination adapters, credit meter, erro
 
 **Exit (PRD P1 gate):** a chatter monitors a real account for a full shift reading only in the app; spot-checks vs OnlyMonster show correct messages, PPV purchase states, spending; credit burn within 2× of §10 estimate.
 
-## Phase 2 — Sending (~week 3–4)
+## Phase 2 — AI core: quick features, companion mode (~week 3–5)
 
-Build: composer (drafts, formatting subset, emoji) · outbox state machine + send verifier (SPEC §7 — the no-idempotency design, including restart reconciliation) · optimistic UI states (sending/sent/seen/failed/unconfirmed) · restricted-words UX (`textHighLight`) · typing indicator · mark-as-read policy (per Phase-0 verdict) · reply-to, like, unsend-with-countdown · notes write, custom-name write.
+> Decision 2026-06-10: AI ships **before** in-app sending. During this phase the chatter reads in the app and copies AI output into OnlyMonster by hand (matches PRD §5 rollout). Main value (AI assistance, which OF chatters currently have zero of) arrives ~2 weeks earlier, and the correctness-critical send pipeline isn't rushed.
 
-**Exit (PRD P2 gate):** full text shift in-app; ≥500 real sends with zero lost/duplicated messages (outbox journal audited); error paths demonstrated (restricted words, network drop mid-send, app restart with in-flight send).
+Build: operation coordinator (lifecycle, staged timeouts, operationId discard) over IPC · transcript builder from OF messages (HTML→plain, media labels, **PPV labels from `price`/`isOpened`**) · spending/subscription context builders (legacy text formats) · DirectGateway (Anthropic + OpenRouter SSE, prompt caching, reasoning effort) · AI dock UI (streaming card, **Copy / Copy-part** as primary actions, regenerate, cancel, per-op cost) · draft input field in the AI dock (feeds Improve Draft; becomes the composer in P3) · **Fast Reply** (tones, split mode) · **Improve Draft** · **Help Me** (XML) · personalities CRUD + account mapping gate · per-feature model/reasoning settings · debug prompt inspector.
 
-## Phase 3 — AI core: quick features (~week 4–6)
+**Exit (PRD P2 gate):** chatters use the three quick features in real shifts (copy mode); acceptance rate measured and ≥ Fansly baseline; prompt inspector confirms context blocks byte-match the legacy shapes on golden fixtures.
 
-Build: operation coordinator (lifecycle, staged timeouts, operationId discard) over IPC · transcript builder from OF messages (HTML→plain, media labels, **PPV labels from `price`/`isOpened`**) · spending/subscription context builders (legacy text formats) · DirectGateway (Anthropic + OpenRouter SSE, prompt caching, reasoning effort) · AI dock UI (streaming card, Insert / Insert-part, regenerate, cancel, per-op cost) · **Fast Reply** (tones, split mode) · **Improve Draft** · **Help Me** (XML) · personalities CRUD + account mapping gate · multi-part send sequences from `[NEXT]` parts · per-feature model/reasoning settings · debug prompt inspector.
+## Phase 3 — Sending (~week 5–6)
 
-**Exit (PRD P3 gate):** chatters use the three quick features in real shifts; acceptance rate measured and ≥ Fansly baseline; prompt inspector confirms context blocks byte-match the legacy shapes on golden fixtures.
+Build: composer (absorbs the P2 draft field; drafts per chat, formatting subset, emoji) · outbox state machine + send verifier (SPEC §7 — the no-idempotency design, including restart reconciliation) · optimistic UI states (sending/sent/seen/failed/unconfirmed) · restricted-words UX (`textHighLight`) · typing indicator · mark-as-read auto-on-open + settings toggle (decided; Phase-0 test still validates OnlyMonster interplay) · reply-to, like, unsend-with-countdown · notes write, custom-name write · AI dock switches Copy → **Insert / Insert-part** · multi-part send sequences from `[NEXT]` parts.
+
+**Exit (PRD P3 gate):** full text shift in-app; ≥500 real sends with zero lost/duplicated messages (outbox journal audited); error paths demonstrated (restricted words, network drop mid-send, app restart with in-flight send); AI Insert replaces copy in real use.
 
 ## Phase 4 — AI deep features & quality harness (~week 6–8)
 
@@ -50,6 +52,8 @@ Build: vault browser (grid, albums, search, multi-select) · attach + price ($3�
 **Exit (PRD P5 gate):** end-to-end PPV send (vault media + previews + price) verified on OnlyFans; mispricing guard demonstrated; purchased state appears on the sent message after a test unlock.
 
 ## Phase 6 — Hub relay & real-time (~week 10–13)
+
+> **Scope/location decision pending (2026-06-10):** build hub here (`apps/hub`) vs as part of the separate agency "core" project — to be discussed before this phase starts. The desktop is hub-ready either way (SyncProvider/AiGateway seams), so this does not block earlier phases.
 
 Build: `apps/hub` (Fastify): webhook receiver (HMAC verify, `event_id` dedupe, journal, <1 s ack) · WS fanout with per-chatter tokens + account ACLs + missed-event replay · HubSync provider in desktop (push events; polling demoted to fallback) · OFAPI key custody moves to hub; desktop keeps only hub token · central summaries/notes prefetch+push (ported Agency Hub client) · AI usage event collection + per-chatter token limits · HubGateway LLM proxy · presence/typing UI from `users.*` events · Docker deploy + runbook.
 
@@ -68,7 +72,7 @@ Build: `apps/hub` (Fastify): webhook receiver (HMAC verify, `event_id` dedupe, j
 | OFAPI latency/outage degrades shifts | Cache-first rendering; status surface; OnlyMonster fallback protocol (one surface per account per shift) |
 | Credit burn surprises | Credit meter from day 1; budget guard; weekly burn review during pilot |
 | Prompt quality regression while porting | No prompt-content edits until P4 harness exists; port verbatim first |
-| Double-send incidents | Outbox audits in P2 exit; verifier never auto-retries |
+| Double-send incidents | Outbox audits in P3 exit; verifier never auto-retries |
 | Scope creep toward agency dashboard | PRD non-goals; hub stores only chat-product data (summaries/usage), analytics stays in the separate core project |
 
 ## Immediate next actions

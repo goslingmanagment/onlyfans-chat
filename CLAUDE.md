@@ -18,8 +18,9 @@ Desktop chat client for OnlyFans agency chatters with built-in AI assistance (re
 ## Hard rules
 
 - **Verify OFAPI shapes against `docs/vendor/onlyfansapi/openapi.json` or fresh `.mdx` pages — never from memory.** Per-page docs: append `.mdx` to any `docs.onlyfansapi.com` URL.
+- **Before implementing any OFAPI subsystem, read its primary docs** — grep `docs/vendor/onlyfansapi/llms-full.txt` and/or fetch the curated `.mdx` URLs listed in `docs/research/onlyfansapi.md` §8. The research summary is for planning; it is not sufficient detail for implementation.
 - **Do NOT look at `~/code/chatgoose_desktop`** — abandoned incorrect implementation, explicitly excluded by the owner.
-- The legacy repo `~/code/chatgoose` is a **read-only reference** (prompts, `src/shared/` logic, tests). Port deliberately; never copy Fansly-specific parts (DOM injection, session capture, Fansly endpoints) — the split is documented in `docs/research/legacy-chatgoose.md` §10.
+- The legacy repo `~/code/chatgoose` is a **read-only reference and the porting ground truth**. When porting any behavior, read the actual legacy source and its tests — `docs/research/legacy-chatgoose.md` is the map (start from its "Essential Files Reference" table), the code is the truth. Never copy Fansly-specific parts (DOM injection, session capture, Fansly endpoints) — the split is documented in that doc's §10.
 - SPEC §15 invariants are review-blocking: secrets/network only in Electron main; `packages/core` stays platform-pure; zod at every trust boundary; `escapeForPrompt` + safety preamble + output sanitizer on every LLM path; never auto-retry an indeterminate send; AI never sends without explicit human action.
 - Prompt templates port verbatim (Fansly→OnlyFans wording only) until the prompt regression harness exists (PLAN P4). The anti-AI-slop work is the most valuable asset — don't "improve" prompts casually.
 - Keep PRD/SPEC/PLAN current: when a decision changes during implementation, update the doc in the same change.

@@ -135,7 +135,7 @@ interface SyncProvider {
 6. App restart with `sending/unconfirmed` rows → same verifier path before any UI offers resend.
 7. Multi-part (`[NEXT]`) sequences: each part is its own outbox row; sequence aborts on first failure; inter-part delay 2–5 s randomized; cancel between parts.
 8. Typing indicator: while composer has activity, call typing endpoint every 3 s (free); stop on idle 4 s.
-9. Mark-as-read: on conversation open + window focused, debounced 1.5 s, behind setting (PRD open question #9).
+9. Mark-as-read: on conversation open + window focused, debounced 1.5 s; settings toggle, default ON (decided 2026-06-10).
 
 ## 8. AI layer (port of legacy, adapted to OFAPI data)
 

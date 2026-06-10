@@ -85,7 +85,7 @@ Features marked **[P1]**–**[P7]** map to plan phases. Legacy behavioral detail
 - Presence: fan `lastSeen` ("online Xm ago"); live online/typing indicators when hub phase delivers `users.online/offline/typing` events [P6].
 - Mark-as-read: automatic on conversation open+focus (debounced), with a setting to disable (interplay with OnlyMonster workflows, see Open Questions).
 
-### F4. Composer & sending [P2]
+### F4. Composer & sending [P3]
 - Text composer with per-chat persistent drafts, emoji picker, OF text formatting subset (bold/italic; sizes/colors optional later).
 - Send via `POST /{account}/chats/{chat_id}/messages`. Optimistic append → confirmed/failed states. **Send-dedup is mandatory** (no idempotency keys upstream): single-flight per chat, outbox journal, unconfirmed-on-restart surfaced for manual reconcile, never silent auto-retry of a possibly-sent message.
 - Restricted-words rejection (OF 400 + `textHighLight`) → inline highlight of offending words, message preserved for editing.
@@ -93,19 +93,19 @@ Features marked **[P1]**–**[P7]** map to plan phases. Legacy behavioral detail
 - Multi-part replies: AI `[NEXT]` parts can be sent as a queued sequence with natural randomized delays (e.g. 2–5 s), cancelable mid-sequence; or inserted one-by-one (chatter choice).
 - Unsend (≤24 h window) with countdown awareness; reply-to; like/unlike fan messages.
 
-### F5. Fan context panel [P1 read, P2 write]
+### F5. Fan context panel [P1 read, P3 write]
 - Identity: avatar, name, custom name (editable → `PUT …/custom-name`), username, lastSeen, lists/labels membership.
 - **Spending:** total + breakdown (subscriptions / tips / messages / posts / streams) from `subscribedOnData` `*Summ` fields; rendered both for the chatter and as AI context.
 - **Subscription:** status, price, subscribed-since, renew date, **auto-renew off ⇒ churn-risk badge**, duration, subscription history on demand.
 - **Notes:** OF-native fan notes (`GET/PUT …/notes`) — readable/writable; visible to other tools (incl. OnlyMonster) since they live on OnlyFans itself.
 - **AI Fan Summary card:** latest summary with generated-at timestamp + refresh (F6.4); stored locally in P-early, centrally via hub later [P6].
 
-### F6. AI assist suite [P3–P4] — ported from legacy, behavior-compatible
-All features stream token-by-token into an AI panel docked above the composer; results offer **Insert** (into composer) / **Insert part N** / copy. Same staged-timeout discipline, cancellation, error taxonomy, reply sanitizer, prompt-injection escaping, and safety preambles as legacy (see research doc §2, §8, §9). Prompt templates are ported with Fansly→OnlyFans adaptations; transcript/spending/subscription context blocks keep their proven text formats but are built from OFAPI data (mapping table in [SPEC.md](SPEC.md) §8).
+### F6. AI assist suite [P2 quick, P4 deep] — ported from legacy, behavior-compatible
+All features stream token-by-token into an AI panel docked above the composer; results offer **Insert** (into composer) / **Insert part N** / copy. During the P2 companion phase (before in-app sending exists) Copy is the primary action — the chatter pastes into OnlyMonster. Same staged-timeout discipline, cancellation, error taxonomy, reply sanitizer, prompt-injection escaping, and safety preambles as legacy (see research doc §2, §8, §9). Prompt templates are ported with Fansly→OnlyFans adaptations; transcript/spending/subscription context blocks keep their proven text formats but are built from OFAPI data (mapping table in [SPEC.md](SPEC.md) §8).
 
-1. **Fast Reply** [P3] — in-voice reply from last ~100 messages + spending/subscription context. Tones: casual / flirty / upsell / spicy. Split mode (`[NEXT]`). Regenerate.
-2. **Improve Draft** [P3] — rewrite the chatter's draft in-character, preserving intent/facts/prices; draft may be written in Russian, output in fan's language. Single message out.
-3. **Help Me** [P3] — coaching: situational read + Engaging and Flirty ready-to-send suggestions (XML-parsed).
+1. **Fast Reply** [P2] — in-voice reply from last ~100 messages + spending/subscription context. Tones: casual / flirty / upsell / spicy. Split mode (`[NEXT]`). Regenerate.
+2. **Improve Draft** [P2] — rewrite the chatter's draft in-character, preserving intent/facts/prices; draft may be written in Russian, output in fan's language. Single message out.
+3. **Help Me** [P2] — coaching: situational read + Engaging and Flirty ready-to-send suggestions (XML-parsed).
 4. **Fan Summary** [P4] — deep profile (~1500 msgs): dossier, psychology, stage/trajectory, communication, financial profile, open loops, strategy. **Output in Russian.** Cached per conversation with legacy invalidation rules (personality/model/data-verified); refresh on demand; hub prefetch/sync when hub exists.
 5. **Chat Review** [P4] — chatter performance rating 1–10 + evaluation + recommendations (XML-parsed), deep context, never cached.
 6. **Ping** [P4] — reactivation message; legacy segmentation ported verbatim: blocked if fan texted within 5 days ("still active — use Reply"); Segment A (≥3 fan texts, silent >5 d) references past topics; Segment B (thin history) warm low-pressure opener.
@@ -129,7 +129,7 @@ Model support: per-feature model selection + reasoning effort (off/low/medium/hi
 - Central storage: fan summaries + AI usage events (port legacy Agency Hub client; one summary visible to all chatters of that account), per-chatter LLM token limits.
 - LLM calls proxy through hub (central provider keys, caching, limits) — desktop-direct mode remains for solo/dev use.
 
-### F9. Settings [P1–P3, grows with features]
+### F9. Settings [P1–P2, grows with features]
 Ported legacy schema where applicable: provider API keys; per-feature model + reasoning; message-count knobs (quick 100 / improve 25 / deep 1500, same ranges); personalities CRUD; account→personality mappings; debug mode (+ pipeline profiling view); prompt-caching toggle; sound/notification prefs; mark-as-read policy; hub URL/token (later).
 
 ### F10. Operational UX (cross-cutting)
@@ -182,17 +182,17 @@ OnlyMonster, Infloww, Supercreator et al. offer CRM + AI features. We are not co
 | 3 | **OFAPI reliability/business risk** (unofficial API, OF could break it; vendor could die) | Local SQLite cache keeps history readable; OnlyMonster remains operational fallback; data-provider abstraction isolates vendor |
 | 4 | **Account safety** (third-party session, proxy geo US/UK) | Same risk class the agency already accepts with OnlyMonster; use matching proxy geo; pilot on lower-value account first |
 | 5 | **Pricing/credit discrepancy** (docs 25k/75k vs pricing page 20k/100k) | Confirm with vendor before plan purchase |
-| 6 | **Connection method**: fresh OFAPI login vs `raw_data` cookie import; v2 Face-Auth accounts need Auth+ iPhone app | Ops decision during pilot onboarding; document per-account |
+| 6 | ✅ Resolved 2026-06-10: accounts are connected by the admin via the OFAPI dashboard (automated login); the app uses console-issued API keys. `raw_data` cookie import is a fallback; v2 Face-Auth accounts require the Auth+ iPhone app | — |
 | 7 | **Sending from a second session** — fan sees replies "from nowhere" in OnlyMonster UI (OM chat log may confuse other chatters during transition) | Transition protocol: one account works from exactly one surface per shift |
-| 8 | UI language (assumed English UI, Russian AI summaries — legacy convention) | Confirm with chatters in pilot |
-| 9 | Read-marking policy (auto-read on open may fight OnlyMonster triage habits) | Setting + pilot feedback (tied to #1) |
+| 8 | ✅ Resolved 2026-06-10: English UI; AI fan summaries stay Russian (legacy convention) | — |
+| 9 | ✅ Resolved 2026-06-10: auto mark-as-read on conversation open, with settings toggle (default on). Phase-0 coexistence test still validates the OnlyMonster interplay | — |
 | 10 | Legacy unresolved: AI-slop quality drift | Port prompts verbatim first; build regression harness (PLAN P4) before iterating on prompt content |
 
 ## 12. Acceptance (per release gate)
 
 - **P1 gate:** chatter monitors a real account read-only for a full shift without opening OnlyMonster for *reading*; data correct vs OM spot-checks (messages, PPV states, spending).
-- **P2 gate:** full text shift in-app; zero lost/duplicated sends across ≥500 messages; restricted-words and error paths exercised.
-- **P3 gate:** Fast Reply / Improve / Help Me used in real shifts; acceptance rate ≥ legacy Fansly baseline; per-op cost shown.
+- **P2 gate (AI quick, companion mode):** Fast Reply / Improve / Help Me used in real shifts with copy-to-OnlyMonster; acceptance rate ≥ legacy Fansly baseline; per-op cost shown.
+- **P3 gate (sending):** full text shift in-app; zero lost/duplicated sends across ≥500 messages; restricted-words and error paths exercised; AI Insert replaces copy.
 - **P4 gate:** Summary/Review/Ping/Hi at behavior parity with legacy (side-by-side prompt-output review); summary caching correct.
 - **P5 gate:** PPV send with vault media + previews + price executes correctly end-to-end (verified in OM/OF).
 - **P6 gate:** webhook→UI latency ≤2 s p95 for incoming messages; desktop holds no OFAPI key; central summaries shared across chatters; credit burn per shift drops ≥5×.
