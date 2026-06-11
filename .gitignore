@@ -27,3 +27,6 @@ coverage/
 
 # playwright artifacts
 .playwright-mcp/
+
+# design scratch (binding mockup is docs/mockups/workspace.html; experiments stay local)
+docs/mockups/experiments/

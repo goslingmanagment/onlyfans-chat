@@ -76,6 +76,7 @@ describe('settings store', () => {
     expect(vm.creditBudgetPerShift).toBeNull();
     expect(vm.accountMappings).toEqual({});
     expect(vm.accountPageLabels).toEqual({});
+    expect(vm.spendStyle).toBe('figure');
     expect(vm.hasOfapiKey).toBe(false);
     expect(vm.hasAnthropicKey).toBe(false);
     expect(vm.hasOpenRouterKey).toBe(false);
@@ -89,12 +90,14 @@ describe('settings store', () => {
       defaultReplyTone: 'flirty',
       accountMappings: { acct_1: 'personality-a' },
       creditBudgetPerShift: 1500,
+      spendStyle: 'chip',
     });
     expect(vm.quickMessageCount).toBe(50);
     expect(vm.debugMode).toBe(true);
     expect(vm.defaultReplyTone).toBe('flirty');
     expect(vm.accountMappings).toEqual({ acct_1: 'personality-a' });
     expect(vm.creditBudgetPerShift).toBe(1500);
+    expect(vm.spendStyle).toBe('chip');
     // untouched fields keep defaults
     expect(vm.deepMessageCount).toBe(DEFAULT_SETTINGS.deepMessageCount);
 
@@ -110,6 +113,7 @@ describe('settings store', () => {
     await expect(store.update({ quickMessageCount: 50.5 })).rejects.toThrow();
     await expect(store.update({ defaultReplyTone: 'angry' })).rejects.toThrow();
     await expect(store.update({ debugMode: 'yes' })).rejects.toThrow();
+    await expect(store.update({ spendStyle: 'badge' })).rejects.toThrow();
     await expect(store.update({ nonsense: 1 })).rejects.toThrow(); // unknown key
     await expect(store.update('not-an-object')).rejects.toThrow();
     // partial feature record is rejected (enum-keyed records are exhaustive)

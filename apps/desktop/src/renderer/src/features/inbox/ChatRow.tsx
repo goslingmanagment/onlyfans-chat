@@ -1,21 +1,36 @@
 import { memo } from 'react';
-import type { ChatListItemVM } from '../../../../preload/contract';
+import type { ChatListItemVM, SettingsVM } from '../../../../preload/contract';
 import { Avatar } from '../../design/Avatar';
 import { cx } from '../../lib/cx';
+import { formatWholeDollars } from '../../lib/money';
 import { formatListTime } from '../../lib/time';
 
-/** Memoized 64px chat row per mockup .row — virtualized parent positions it. */
+/** Memoized 64px chat row per mockup .row — virtualized parent positions it.
+ *  Fan value per DESIGN §1: lifetime beside the name (figure or chip per the
+ *  spendStyle setting), 30-day inflow bottom-right in green — the row's single
+ *  colour accent. $0/unknown renders nothing; the unread badge is always clay
+ *  (no tip pill — tips read via the Tips filter and the preview line). */
 export const ChatRow = memo(function ChatRow({
   chat,
   selected,
   online,
+  spendStyle,
   onSelect,
 }: {
   chat: ChatListItemVM;
   selected: boolean;
   online: boolean;
+  spendStyle: SettingsVM['spendStyle'];
   onSelect: (chatId: string) => void;
 }): React.JSX.Element {
+  const lifetime =
+    chat.lifetimeSpend !== null && Math.round(chat.lifetimeSpend) > 0
+      ? formatWholeDollars(chat.lifetimeSpend)
+      : null;
+  const flow30d =
+    chat.spend30d !== null && Math.round(chat.spend30d) > 0
+      ? `+${formatWholeDollars(chat.spend30d)}`
+      : null;
   return (
     <button
       type="button"
@@ -28,10 +43,25 @@ export const ChatRow = memo(function ChatRow({
       {selected && <span className="absolute top-0 bottom-0 left-0 w-[3px] bg-clay" />}
       <Avatar name={chat.fanName} url={chat.avatarUrl} online={online} />
       <div className="min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate font-serif text-[14px] font-semibold">{chat.fanName}</span>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="min-w-0 truncate font-serif text-[14px] font-semibold">
+            {chat.fanName}
+          </span>
           {chat.fanWaiting && (
             <span title="Fan waiting" className="h-[7px] w-[7px] flex-none rounded-full bg-clay" />
+          )}
+          {lifetime !== null && (
+            <span
+              title="Lifetime spend"
+              className={cx(
+                'num flex-none text-ink-mid',
+                spendStyle === 'chip'
+                  ? 'rounded-full border border-line-strong bg-bg2 px-[7px] text-[9.5px] leading-[15px]'
+                  : 'text-[10.5px]',
+              )}
+            >
+              {lifetime}
+            </span>
           )}
         </div>
         <div className="mt-[2px] truncate text-[13px] text-ink-mid">
@@ -43,10 +73,10 @@ export const ChatRow = memo(function ChatRow({
         <span className="num text-micro text-ink-low">
           {chat.lastMessageAt === null ? '' : formatListTime(new Date(chat.lastMessageAt), new Date())}
         </span>
-        <span className="flex items-center gap-1">
-          {chat.hasUnreadTips && (
-            <span className="num rounded-full border border-green-line bg-green-bg px-[7px] py-px text-micro font-semibold text-green">
-              tip
+        <span className="flex items-center gap-1.5">
+          {flow30d !== null && (
+            <span title="Spent in the last 30 days" className="num text-[10px] font-semibold text-green">
+              {flow30d}
             </span>
           )}
           {chat.unreadCount > 0 && (

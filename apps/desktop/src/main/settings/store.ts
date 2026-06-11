@@ -72,6 +72,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'accountMappings',
   'hubBaseUrl',
   'accountPageLabels',
+  'spendStyle',
 ] as const satisfies readonly (keyof PersistedSettings)[];
 
 const persistedFieldSchemas = {
@@ -97,6 +98,8 @@ const persistedFieldSchemas = {
   hubBaseUrl: z.string().min(1).nullable(),
   // Manual OFAPI accountId → core page-label overrides (SPEC §8.5).
   accountPageLabels: z.record(z.string(), z.string()),
+  // Chat-list lifetime-spend style (DESIGN §1): bare figure (default) or chip.
+  spendStyle: z.enum(['figure', 'chip']),
 };
 
 interface FieldValidator<T> {
@@ -126,6 +129,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   accountMappings: {},
   hubBaseUrl: null,
   accountPageLabels: {},
+  spendStyle: 'figure',
 };
 
 // ─── Patch schema (IPC trust boundary for cmd:settings.update) ──────────
@@ -147,6 +151,7 @@ export const settingsPatchSchema = z.strictObject({
   accountMappings: persistedFieldSchemas.accountMappings.optional(),
   hubBaseUrl: persistedFieldSchemas.hubBaseUrl.optional(),
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
+  spendStyle: persistedFieldSchemas.spendStyle.optional(),
   // Secret material: routed to the keychain, never stored in the settings table.
   ofapiKey: z.string().optional(),
   anthropicKey: z.string().optional(),
@@ -221,6 +226,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       accountMappings: readField('accountMappings'),
       hubBaseUrl: readField('hubBaseUrl'),
       accountPageLabels: readField('accountPageLabels'),
+      spendStyle: readField('spendStyle'),
     };
   }
 

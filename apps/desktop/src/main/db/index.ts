@@ -14,6 +14,8 @@ import { createMessagesQueries } from './queries/messages';
 import type { MessagesQueries } from './queries/messages';
 import { createFansQueries } from './queries/fans';
 import type { FansQueries } from './queries/fans';
+import { createFanTransactionsQueries } from './queries/fan-transactions';
+import type { FanTransactionsQueries } from './queries/fan-transactions';
 import { createSummariesQueries } from './queries/summaries';
 import type { SummariesQueries } from './queries/summaries';
 import { createSettingsQueries } from './queries/settings';
@@ -32,6 +34,7 @@ export interface DataLayer {
   chats: ChatsQueries;
   messages: MessagesQueries;
   fans: FansQueries;
+  fanTransactions: FanTransactionsQueries;
   summaries: SummariesQueries;
   settings: SettingsQueries;
   outbox: OutboxQueries;
@@ -50,6 +53,7 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     chats: createChatsQueries(db, bus),
     messages: createMessagesQueries(db, bus),
     fans: createFansQueries(db, bus),
+    fanTransactions: createFanTransactionsQueries(db, bus),
     summaries: createSummariesQueries(db, bus),
     settings: createSettingsQueries(db, bus),
     outbox: createOutboxQueries(db, bus),
@@ -78,10 +82,13 @@ export type {
   AccountUpsert,
   ChatRow,
   ChatUpsert,
+  ChatListRow,
   FanRow,
   FanUpsert,
   FanSpending,
   FanSubscription,
+  FanTransactionRow,
+  FanTransactionUpsert,
   MessageRow,
   MessageUpsert,
   MessageMediaItem,
@@ -95,6 +102,8 @@ export { createMessagesQueries, MESSAGE_RETENTION_DEFAULT } from './queries/mess
 export type { MessagesQueries, MessagePage } from './queries/messages';
 export { createFansQueries } from './queries/fans';
 export type { FansQueries } from './queries/fans';
+export { createFanTransactionsQueries } from './queries/fan-transactions';
+export type { FanTransactionsQueries } from './queries/fan-transactions';
 export { createSummariesQueries } from './queries/summaries';
 export type { SummariesQueries } from './queries/summaries';
 export { createSettingsQueries } from './queries/settings';

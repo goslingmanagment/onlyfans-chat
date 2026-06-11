@@ -4,7 +4,7 @@
 import { useCallback, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ChatFilter } from '../../../../preload/contract';
-import { useChats } from '../../bridge/queries';
+import { useChats, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { chatFilterCounts } from '../../lib/filters';
 import { Chip } from '../../design/Chip';
@@ -29,6 +29,7 @@ export function ChatListPane(): React.JSX.Element {
   const chats = useChats(accountId, chatFilter);
   const allChats = useChats(accountId, 'all'); // counts for the filter chips
   const counts = chatFilterCounts(allChats.data?.items ?? []);
+  const spendStyle = useSettings().data?.spendStyle ?? 'figure';
 
   const items = chats.data?.items ?? [];
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -87,6 +88,7 @@ export function ChatListPane(): React.JSX.Element {
                     chat={chat}
                     selected={chat.chatId === selectedChatId}
                     online={false}
+                    spendStyle={spendStyle}
                     onSelect={onSelect}
                   />
                 </div>

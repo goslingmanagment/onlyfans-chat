@@ -14,7 +14,7 @@ import type {
   MessageVM,
   PpvStateVM,
 } from '../../preload/contract';
-import type { AccountListRow, ChatRow, FanRow, MessageRow } from '../db/index';
+import type { AccountListRow, ChatListRow, ChatRow, FanRow, MessageRow } from '../db/index';
 import { parseMediaToken } from '../media/protocol';
 
 // ─── media:// mapping ─────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ export function deriveFanWaiting(row: ChatRow): boolean {
   return row.unreadCount > 0 && !row.lastMessageIsSentByMe && row.lastMessageAt !== null;
 }
 
-export function chatToVM(row: ChatRow, avatarUrl: string | null): ChatListItemVM {
+export function chatToVM(row: ChatListRow, avatarUrl: string | null): ChatListItemVM {
   return {
     chatId: row.chatId,
     fanId: row.chatId, // OF invariant: chat_id === fan.id
@@ -98,6 +98,8 @@ export function chatToVM(row: ChatRow, avatarUrl: string | null): ChatListItemVM
     fanWaiting: deriveFanWaiting(row),
     canSendMessage: row.canSendMessage,
     canNotSendReason: row.canNotSendReason,
+    lifetimeSpend: row.lifetimeSpend,
+    spend30d: row.spend30d,
   };
 }
 

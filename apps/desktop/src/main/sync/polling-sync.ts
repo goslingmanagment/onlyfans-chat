@@ -11,10 +11,18 @@ import { z } from 'zod';
 import { OFAPI_INTER_PAGE_DELAY_MS } from '@chatgoose/shared';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { OfApiClient } from '../ofapi/client';
-import type { DataLayer } from '../db/index';
-import type { OfApiChat } from '../ofapi/schemas';
+import type { DataLayer, FanTransactionUpsert } from '../db/index';
+import type { OfApiChat, OfApiTransaction } from '../ofapi/schemas';
+import { paginateMarker } from '../ofapi/pagination';
 import type { SleepFn } from '../ofapi/rate-limiter';
-import { mapAccount, mapChat, mapFan, mapMessage, type ToMediaUrl } from './mappers';
+import {
+  mapAccount,
+  mapChat,
+  mapFan,
+  mapFanTransaction,
+  mapMessage,
+  type ToMediaUrl,
+} from './mappers';
 import type { SyncListener, SyncProvider, SyncStatusSnapshot } from './provider';
 
 const FOCUSED_POLL_MS = 20_000;
@@ -50,6 +58,18 @@ const MEDIA_READY_POLL_MS = 15_000;
 const MEDIA_READY_POLL_CAP_MS = 10 * 60_000;
 const FAN_DETAIL_TTL_MS = 5 * 60_000;
 const OFFLINE_AFTER_FAILURES = 3;
+// Fan-spend sweep (DESIGN §1 30-day figure): the first walk pulls the full
+// -30days transactions window once; every later sweep starts at the newest
+// cached row minus an overlap, so steady state is ~1 page per sweep. Page
+// limit 10 = the documented recommendation (vendored openapi.json); larger
+// values are unverified upstream. Runs only after hydration completes — the
+// initial walk must not compete with the chat-list hydration for credits.
+const SPEND_SWEEP_INTERVAL_MS = 10 * 60_000;
+const SPEND_TX_PAGE_LIMIT = 10;
+const SPEND_SWEEP_MAX_PAGES = 100;
+const SPEND_SWEEP_OVERLAP_MS = 60 * 60_000;
+/** Retention horizon: window (30d) + 1d slack; the cutoff is read-time. */
+const SPEND_RETENTION_MS = 31 * 24 * 60 * 60_000;
 
 export interface PollingSyncOptions {
   client: OfApiClient;
@@ -69,6 +89,7 @@ interface AccountLoop {
   inFlight: boolean;
   lastSuccessAt: number | null;
   lastDeepSweepAt: number | null;
+  lastSpendSweepAt: number | null;
   consecutiveFailures: number;
 }
 
@@ -380,6 +401,25 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         emit({ type: 'chatListUpdated', accountId }); // progressive inbox paint
       }
 
+      // Fan-spend sweep (DESIGN §1): incremental transactions walk on its own
+      // cadence, gated on hydration so the one-time -30days window walk never
+      // competes with the chat-list hydration for credits. Failure-isolated —
+      // a transactions hiccup must not degrade the chat poll's status.
+      if (
+        hydration.done &&
+        (loop.lastSpendSweepAt === null ||
+          now() - loop.lastSpendSweepAt >= SPEND_SWEEP_INTERVAL_MS)
+      ) {
+        try {
+          await sweepFanSpend(accountId);
+        } catch {
+          // transient; the stamp below still advances so a broken transactions
+          // endpoint retries at sweep cadence, not on every poll tick
+        } finally {
+          loop.lastSpendSweepAt = now();
+        }
+      }
+
       loop.lastSuccessAt = now();
       if (deepDue) {
         loop.lastDeepSweepAt = now();
@@ -453,6 +493,53 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }
   }
 
+  /** OFAPI startDate format ("2025-01-01 00:00:00", per vendored openapi.json
+   *  example). Emitted in UTC; upstream TZ semantics are unverified — the
+   *  1-hour overlap plus (account_id, tx_id) idempotency absorb any drift. */
+  function ofapiStartDate(ms: number): string {
+    return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+  }
+
+  /** Incremental transactions walk → fan_transactions. First run covers the
+   *  full -30days window; later runs resume from the newest cached row minus
+   *  the overlap, so steady state is ~1 page (≈1 credit) per sweep. */
+  async function sweepFanSpend(accountId: string): Promise<void> {
+    const latest = data.fanTransactions.latestCreatedAt(accountId);
+    const sinceMs = latest === null ? null : Date.parse(latest) - SPEND_SWEEP_OVERLAP_MS;
+    // Newest-first ordering: stop as soon as a page reaches past the lower bound.
+    const lowerBoundMs = sinceMs ?? now() - SPEND_RETENTION_MS;
+    const outcome = await paginateMarker<OfApiTransaction>({
+      want: {
+        kind: 'until',
+        predicate: (tx) => tx.createdAt != null && Date.parse(tx.createdAt) < lowerBoundMs,
+      },
+      maxPages: SPEND_SWEEP_MAX_PAGES,
+      sleep,
+      idOf: (tx) => String(tx.id),
+      fetchPage: async (marker) => {
+        const page = await client.listTransactions({
+          accountId,
+          limit: SPEND_TX_PAGE_LIMIT,
+          startDate: sinceMs === null ? '-30days' : ofapiStartDate(sinceMs),
+          ...(marker !== null ? { marker } : {}),
+        });
+        return {
+          items: page.transactions,
+          nextMarker: page.nextMarker,
+          hasMore: page.hasMore,
+        };
+      },
+    });
+    const rows = outcome.items
+      .map((tx) => mapFanTransaction(accountId, tx))
+      .filter((row): row is FanTransactionUpsert => row !== null);
+    data.fanTransactions.upsertMany(rows);
+    data.fanTransactions.pruneOlderThan(
+      accountId,
+      new Date(now() - SPEND_RETENTION_MS).toISOString(),
+    );
+  }
+
   async function refreshFanDetail(accountId: string, chatId: string): Promise<void> {
     const cached = data.fans.get(accountId, chatId);
     if (cached && now() - Date.parse(cached.fetchedAt) < FAN_DETAIL_TTL_MS) {
@@ -481,6 +568,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
             inFlight: false,
             lastSuccessAt: null,
             lastDeepSweepAt: null,
+            lastSpendSweepAt: null,
             consecutiveFailures: 0,
           });
         }

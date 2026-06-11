@@ -32,7 +32,8 @@ describe('migration runner', () => {
         .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
-      expect(SCHEMA_VERSION).toBe(5);
+      expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
+      expect(SCHEMA_VERSION).toBe(6);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       expect(names).toContain('media_urls');
       const chatCols = layer.db

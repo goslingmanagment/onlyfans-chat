@@ -126,6 +126,44 @@ export function decodeChatRow(value: unknown): ChatRow {
   };
 }
 
+/** Chat-list read model: ChatRow + fan-value figures joined at read time
+ *  (DESIGN §1 — lifetime from fans.spending, rolling 30-day sum from
+ *  fan_transactions). List/search only; the chats table never stores these. */
+export interface ChatListRow extends ChatRow {
+  lifetimeSpend: number | null;
+  spend30d: number | null;
+}
+
+const chatListExtraSchema = z.object({
+  lifetime_spend: z.number().nullable(),
+  spend_30d: z.number().nullable(),
+});
+
+export function decodeChatListRow(value: unknown): ChatListRow {
+  const extra = chatListExtraSchema.parse(value);
+  return {
+    ...decodeChatRow(value),
+    lifetimeSpend: extra.lifetime_spend,
+    spend30d: extra.spend_30d,
+  };
+}
+
+// ─── Fan transactions (rolling 30-day spend window) ──────────────────────
+
+export interface FanTransactionRow {
+  accountId: string;
+  txId: string;
+  fanId: string;
+  /** Gross fan payment in dollars (OFAPI is USD-denominated; never mills). */
+  amount: number;
+  /** OFAPI computed type: subs / tips / post / chat_messages / stream. */
+  type: string | null;
+  /** Normalized ISO-UTC on write so lexicographic comparisons are sound. */
+  createdAt: string;
+}
+
+export type FanTransactionUpsert = FanTransactionRow;
+
 // ─── Messages ─────────────────────────────────────────────────────────────
 
 export type MessageMediaItem = MessageMediaVM;

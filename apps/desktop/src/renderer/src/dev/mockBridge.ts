@@ -370,6 +370,9 @@ function buildStore(): MockStore {
         // one chat per account exercises the blocked composer + Insert→Copy degrade (SPEC §7.0)
         canSendMessage: i !== 3,
         canNotSendReason: i !== 3 ? null : 'You cannot message this user — they unsubscribed.',
+        // fan-value spread (DESIGN §1): whales, mid, small, and the silent $0 case
+        lifetimeSpend: chance(0.2) ? null : Math.floor(rng() * 6000),
+        spend30d: chance(0.4) ? null : Math.floor(rng() * 600),
       };
       list.push(item);
       fans.set(`${account.id}/${fanId}`, buildFan(account.id, fanId, name, item.lastMessageAt ?? new Date().toISOString()));
@@ -402,6 +405,7 @@ function buildStore(): MockStore {
     hasOpenRouterKey: false,
     hasHubKey: false,
     hubBaseUrl: null,
+    spendStyle: 'figure',
     featureModels: {
       'fast-reply': 'anthropic:claude-sonnet-4-6',
       'help-me': 'anthropic:claude-sonnet-4-6',

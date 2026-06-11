@@ -22,6 +22,8 @@ function chat(overrides: Partial<ChatListItemVM> & { chatId: string }): ChatList
     fanWaiting: false,
     canSendMessage: true,
     canNotSendReason: null,
+    lifetimeSpend: null,
+    spend30d: null,
     ...overrides,
   };
 }

@@ -9,7 +9,7 @@ import {
   ppvChip,
   sendState,
 } from '../../src/renderer/src/lib/messages';
-import { formatDollars, formatLedgerAmount } from '../../src/renderer/src/lib/money';
+import { formatDollars, formatLedgerAmount, formatWholeDollars } from '../../src/renderer/src/lib/money';
 
 const NOW = new Date(2026, 5, 10, 19, 30);
 
@@ -210,5 +210,12 @@ describe('money formatting', () => {
 
   it('formats ledger amounts with sign and cents', () => {
     expect(formatLedgerAmount(25)).toBe('+$25.00');
+  });
+
+  it('fan-value figures are exact whole dollars, never K-compacted (DESIGN §1)', () => {
+    expect(formatWholeDollars(1284.4)).toBe('$1,284');
+    expect(formatWholeDollars(12480)).toBe('$12,480');
+    expect(formatWholeDollars(86)).toBe('$86');
+    expect(formatWholeDollars(0.4)).toBe('$0');
   });
 });

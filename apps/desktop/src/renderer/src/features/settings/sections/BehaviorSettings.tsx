@@ -1,5 +1,6 @@
 import type { SettingsVM } from '../../../../../preload/contract';
 import { cx } from '../../../lib/cx';
+import { Chip } from '../../../design/Chip';
 import { Section, type PatchFn } from '../SettingsSurface';
 
 function Toggle({
@@ -80,6 +81,25 @@ export function BehaviorSettings({
           on={settings.debugMode}
           onChange={(v) => patch({ debugMode: v })}
         />
+      </div>
+      <div className="flex items-center gap-3 py-2">
+        <span className="min-w-0">
+          <span className="block text-[13px] font-semibold">Fan spend style</span>
+          <span className="block text-[11.5px] text-ink-low">
+            Lifetime figure beside the name in the chat list
+          </span>
+        </span>
+        <span className="ml-auto flex gap-[5px]">
+          {(['figure', 'chip'] as const).map((style) => (
+            <Chip
+              key={style}
+              selected={settings.spendStyle === style}
+              onClick={() => patch({ spendStyle: style })}
+            >
+              {style === 'figure' ? '$1,284' : 'chip'}
+            </Chip>
+          ))}
+        </span>
       </div>
     </Section>
   );

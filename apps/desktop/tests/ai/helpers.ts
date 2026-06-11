@@ -40,6 +40,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hasOpenRouterKey: false,
     hasHubKey: false,
     hubBaseUrl: null,
+    spendStyle: 'figure',
     featureModels: { ...DEFAULT_FEATURE_MODELS },
     featureReasoning: { ...DEFAULT_FEATURE_REASONING },
     quickMessageCount: 5,

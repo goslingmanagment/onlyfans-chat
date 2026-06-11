@@ -100,19 +100,25 @@
   .ava.online::after{content:""; position:absolute; right:-3px; bottom:-3px; width:10px; height:10px;
     border-radius:50%; background:var(--online); border:2.5px solid var(--bg1)}
   .rmain{min-width:0}
-  .rtop{display:flex; align-items:center; gap:6px}
-  .rname{font-weight:600; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .rtop{display:flex; align-items:center; gap:6px; min-width:0}
+  .rname{font-weight:600; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    flex:0 1 auto; min-width:0}
   .wait{width:7px; height:7px; border-radius:50%; background:var(--clay); flex:0 0 auto}
   .rprev{color:var(--t-mid); font-size:13px; white-space:nowrap; overflow:hidden;
     text-overflow:ellipsis; margin-top:2px}
   .rprev .me{color:var(--t-low)}
   .rside{display:flex; flex-direction:column; align-items:flex-end; gap:5px}
   .rtime{font-family:var(--mono); font-size:10px; color:var(--t-low)}
+  .rside .l2{display:flex; align-items:center; gap:6px; min-height:17px}
+  /* fan value: lifetime beside the name (bare figure default; bordered chip via per-chatter
+     setting), 30-day inflow bottom-right in green — the row's single colour accent */
+  .nspend{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:10.5px;
+    color:var(--t-mid); flex:0 0 auto}
+  .rflow{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:10px;
+    color:var(--green); font-weight:600}
   .pill-unread{min-width:18px; height:17px; border-radius:9px; background:var(--clay); color:#fff;
     font-family:var(--mono); font-size:10px; font-weight:600; display:flex; align-items:center;
     justify-content:center; padding:0 5px}
-  .pill-tip{font-family:var(--mono); font-size:10px; font-weight:600; color:var(--green);
-    border:1px solid var(--green-line); background:var(--green-bg); border-radius:999px; padding:1px 7px}
   .chats-foot{padding:8px 14px; border-top:1px solid var(--line); display:flex; gap:8px;
     align-items:center; color:var(--t-low); font-size:11px; background:var(--bg1)}
 
@@ -335,31 +341,31 @@
         <div class="row sel">
           <div class="ava online">MK</div>
           <div class="rmain">
-            <div class="rtop"><span class="rname">Marcus K.</span><span class="wait"></span></div>
+            <div class="rtop"><span class="rname">Marcus K.</span><span class="wait"></span><span class="nspend" title="Lifetime spend">$1,284</span></div>
             <div class="rprev">maybe later babe, work is killing me…</div>
           </div>
-          <div class="rside"><span class="rtime">19:04</span><span class="pill-unread">2</span></div>
+          <div class="rside"><span class="rtime">19:04</span><span class="l2"><span class="rflow" title="Spent in the last 30 days">+$120</span><span class="pill-unread">2</span></span></div>
         </div>
         <div class="row">
           <div class="ava">DJ</div>
           <div class="rmain">
-            <div class="rtop"><span class="rname">Daniel</span><span class="wait"></span></div>
+            <div class="rtop"><span class="rname">Daniel</span><span class="wait"></span><span class="nspend" title="Lifetime spend">$740</span></div>
             <div class="rprev">so when do I get to see the new set 👀</div>
           </div>
-          <div class="rside"><span class="rtime">18:51</span><span class="pill-tip">+$50</span></div>
+          <div class="rside"><span class="rtime">18:51</span><span class="l2"><span class="rflow" title="Spent in the last 30 days">+$95</span><span class="pill-unread">1</span></span></div>
         </div>
         <div class="row">
           <div class="ava online">J7</div>
           <div class="rmain">
-            <div class="rtop"><span class="rname">jake_777</span></div>
+            <div class="rtop"><span class="rname">jake_777</span><span class="nspend" title="Lifetime spend">$2,115</span></div>
             <div class="rprev"><span class="me">you:</span> [PPV $45] something for your evening</div>
           </div>
-          <div class="rside"><span class="rtime">18:32</span><span class="pill-unread">1</span></div>
+          <div class="rside"><span class="rtime">18:32</span><span class="l2"><span class="rflow" title="Spent in the last 30 days">+$310</span><span class="pill-unread">1</span></span></div>
         </div>
         <div class="row">
           <div class="ava">TH</div>
           <div class="rmain">
-            <div class="rtop"><span class="rname">Tom H.</span></div>
+            <div class="rtop"><span class="rname">Tom H.</span><span class="nspend" title="Lifetime spend">$86</span></div>
             <div class="rprev"><span class="me">you:</span> sleep well, talk tomorrow 😘</div>
           </div>
           <div class="rside"><span class="rtime">17:58</span></div>
@@ -367,10 +373,10 @@
         <div class="row">
           <div class="ava">RB</div>
           <div class="rmain">
-            <div class="rtop"><span class="rname">Robbie</span></div>
+            <div class="rtop"><span class="rname">Robbie</span><span class="nspend" title="Lifetime spend">$310</span></div>
             <div class="rprev">that gym video was insane ngl</div>
           </div>
-          <div class="rside"><span class="rtime">17:20</span><span class="pill-tip">+$25</span></div>
+          <div class="rside"><span class="rtime">17:20</span><span class="l2"><span class="rflow" title="Spent in the last 30 days">+$25</span><span class="pill-unread">1</span></span></div>
         </div>
         <div class="row">
           <div class="ava">SM</div>
@@ -378,20 +384,20 @@
             <div class="rtop"><span class="rname">Sam</span></div>
             <div class="rprev"><span class="me">you:</span> haha you wish 😏</div>
           </div>
-          <div class="rside"><span class="rtime">16:44</span></div>
+          <div class="rside"><span class="rtime">16:44</span></div><!-- $0 lifetime → spend slot stays empty: silence is the signal -->
         </div>
         <div class="row">
           <div class="ava">AL</div>
           <div class="rmain">
-            <div class="rtop"><span class="rname">Alex P.</span></div>
+            <div class="rtop"><span class="rname">Alex P.</span><span class="nspend" title="Lifetime spend">$5,420</span></div>
             <div class="rprev">just renewed, missed you</div>
           </div>
-          <div class="rside"><span class="rtime">15:09</span><span class="pill-unread">4</span></div>
+          <div class="rside"><span class="rtime">15:09</span><span class="l2"><span class="rflow" title="Spent in the last 30 days">+$580</span><span class="pill-unread">4</span></span></div>
         </div>
         <div class="row">
           <div class="ava">VN</div>
           <div class="rmain">
-            <div class="rtop"><span class="rname">Vincent</span></div>
+            <div class="rtop"><span class="rname">Vincent</span><span class="nspend" title="Lifetime spend">$52</span></div>
             <div class="rprev"><span class="me">you:</span> good morning you 🖤</div>
           </div>
           <div class="rside"><span class="rtime">11:30</span></div>

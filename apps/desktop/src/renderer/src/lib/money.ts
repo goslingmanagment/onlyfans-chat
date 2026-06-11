@@ -11,6 +11,17 @@ export function formatDollars(amount: number): string {
   });
 }
 
+/** Chat-list fan-value figure (DESIGN §1): whole dollars with thousands
+ *  separators — '$1,284'. Exact notation, never K-compacted; cents round. */
+export function formatWholeDollars(amount: number): string {
+  return Math.round(amount).toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+}
+
 /** Ledger amount: always two decimals, leading sign: '+$25.00'. */
 export function formatLedgerAmount(amount: number): string {
   const abs = Math.abs(amount).toLocaleString('en-US', {

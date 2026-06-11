@@ -8,11 +8,18 @@ import { htmlToPlainText } from '@chatgoose/shared/transcript/index';
 import type {
   AccountUpsert,
   ChatUpsert,
+  FanTransactionUpsert,
   FanUpsert,
   MessageMediaItem,
   MessageUpsert,
 } from '../db/rows';
-import type { OfApiAccount, OfApiChat, OfApiMessage, OfApiUser } from '../ofapi/schemas';
+import type {
+  OfApiAccount,
+  OfApiChat,
+  OfApiMessage,
+  OfApiTransaction,
+  OfApiUser,
+} from '../ofapi/schemas';
 
 /** Mints an opaque media:// token; null when the remote URL is not an
  *  allowlisted OF media URL (such URLs must never reach the renderer). */
@@ -239,4 +246,30 @@ export function mapFan(
 export function avatarMediaUrl(user: OfApiUser, toMediaUrl: ToMediaUrl): string | null {
   const remote = user.avatarThumbs?.c144 ?? user.avatarThumbs?.c50 ?? user.avatar ?? null;
   return remote ? toMediaUrl(remote) : null;
+}
+
+/** Transaction → fan_transactions row (DESIGN §1 30-day spend). Null when the
+ *  row can't feed the per-fan aggregate: no fan id (payout fees etc.), no
+ *  parseable date, or a non-positive amount. created_at normalizes to ISO-UTC
+ *  so string comparisons against cutoffs are sound (OFAPI mixes offsets). */
+export function mapFanTransaction(
+  accountId: string,
+  tx: OfApiTransaction,
+): FanTransactionUpsert | null {
+  const fanId = tx.user?.id;
+  if (fanId == null || typeof tx.amount !== 'number' || tx.amount <= 0 || tx.createdAt == null) {
+    return null;
+  }
+  const createdMs = Date.parse(tx.createdAt);
+  if (Number.isNaN(createdMs)) {
+    return null;
+  }
+  return {
+    accountId,
+    txId: String(tx.id),
+    fanId: String(fanId),
+    amount: tx.amount,
+    type: tx.type ?? null,
+    createdAt: new Date(createdMs).toISOString(),
+  };
 }

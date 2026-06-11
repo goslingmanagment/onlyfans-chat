@@ -1,17 +1,43 @@
 // Chat-list read models: filters all/unread/with_tips + fan-name search, shaped
 // to feed ChatListItemVM (preload contract). Ordering matches the chat-list
-// index: pinned first, then last_message_at DESC (NULLs last).
+// index: pinned first, then last_message_at DESC (NULLs last). list/search
+// join the fan-value figures (DESIGN §1): lifetime from fans.spending JSON,
+// 30-day sum from fan_transactions with a read-time rolling cutoff.
 
 import type { ChatFilter } from '../../../preload/contract';
 import type { ChatGooseDb } from '../database';
 import type { DbChangeBus } from '../change-bus';
-import { decodeChatRow, toJson, toSqlBool } from '../rows';
-import type { ChatRow, ChatUpsert } from '../rows';
+import { decodeChatListRow, decodeChatRow, toJson, toSqlBool } from '../rows';
+import type { ChatListRow, ChatRow, ChatUpsert } from '../rows';
+
+const SPEND_WINDOW_MS = 30 * 24 * 60 * 60_000;
 
 const COLUMNS =
   'account_id, chat_id, fan_name, avatar, unread_count, has_unread_tips, last_message_at, ' +
   'last_message_preview, last_message_is_sent_by_me, last_message_id, last_read_message_id, pinned, ' +
   'can_send_message, can_not_send_reason, updated_at';
+
+const LIST_COLUMNS =
+  COLUMNS.split(', ')
+    .map((column) => `c.${column}`)
+    .join(', ') +
+  // json_valid guard: json_extract THROWS on malformed JSON (corrupt rows must
+  // degrade to null, matching decodeFanRow's legacy tolerance). CAST: extract
+  // yields INTEGER for whole-dollar totals, REAL otherwise — normalize so the
+  // decoded type is plainly number|null.
+  `, CASE WHEN f.spending IS NOT NULL AND json_valid(f.spending)
+       THEN CAST(json_extract(f.spending, '$.total') AS REAL) END AS lifetime_spend,
+     tx.spend_30d AS spend_30d`;
+
+const LIST_JOINS = `
+FROM chats c
+LEFT JOIN fans f ON f.account_id = c.account_id AND f.fan_id = c.chat_id
+LEFT JOIN (
+  SELECT account_id, fan_id, SUM(amount) AS spend_30d
+  FROM fan_transactions
+  WHERE created_at >= @spend_cutoff
+  GROUP BY account_id, fan_id
+) tx ON tx.account_id = c.account_id AND tx.fan_id = c.chat_id`;
 
 const UPSERT_SQL = `
 INSERT INTO chats (
@@ -39,20 +65,24 @@ ON CONFLICT (account_id, chat_id) DO UPDATE SET
   raw = excluded.raw,
   updated_at = excluded.updated_at`;
 
-const ORDER = 'ORDER BY pinned DESC, last_message_at DESC';
+const ORDER = 'ORDER BY c.pinned DESC, c.last_message_at DESC';
 
 const FILTER_WHERE: Record<ChatFilter, string> = {
   all: '',
-  unread: 'AND unread_count > 0',
-  with_tips: 'AND has_unread_tips = 1',
+  unread: 'AND c.unread_count > 0',
+  with_tips: 'AND c.has_unread_tips = 1',
 };
+
+function spendCutoffIso(): string {
+  return new Date(Date.now() - SPEND_WINDOW_MS).toISOString();
+}
 
 function escapeLike(query: string): string {
   return query.replaceAll(/[\\%_]/g, (match) => `\\${match}`);
 }
 
 export interface ChatListPage {
-  items: ChatRow[];
+  items: ChatListRow[];
   hasMore: boolean;
 }
 
@@ -62,7 +92,7 @@ export interface ChatsQueries {
   get(accountId: string, chatId: string): ChatRow | null;
   list(args: { accountId: string; filter: ChatFilter; limit?: number; offset?: number }): ChatListPage;
   /** Case-insensitive (ASCII) substring match on fan_name. */
-  search(args: { accountId: string; query: string; limit?: number }): ChatRow[];
+  search(args: { accountId: string; query: string; limit?: number }): ChatListRow[];
 }
 
 export function createChatsQueries(db: ChatGooseDb, bus: DbChangeBus): ChatsQueries {
@@ -121,14 +151,14 @@ export function createChatsQueries(db: ChatGooseDb, bus: DbChangeBus): ChatsQuer
     list({ accountId, filter, limit = 50, offset = 0 }) {
       const rows = db
         .prepare(
-          `SELECT ${COLUMNS} FROM chats
-           WHERE account_id = @account_id ${FILTER_WHERE[filter]}
+          `SELECT ${LIST_COLUMNS} ${LIST_JOINS}
+           WHERE c.account_id = @account_id ${FILTER_WHERE[filter]}
            ${ORDER} LIMIT @limit OFFSET @offset`,
         )
-        .all({ account_id: accountId, limit: limit + 1, offset });
+        .all({ account_id: accountId, limit: limit + 1, offset, spend_cutoff: spendCutoffIso() });
       const hasMore = rows.length > limit;
       return {
-        items: rows.slice(0, limit).map(decodeChatRow),
+        items: rows.slice(0, limit).map(decodeChatListRow),
         hasMore,
       };
     },
@@ -137,12 +167,12 @@ export function createChatsQueries(db: ChatGooseDb, bus: DbChangeBus): ChatsQuer
       const pattern = `%${escapeLike(query)}%`;
       const rows = db
         .prepare(
-          `SELECT ${COLUMNS} FROM chats
-           WHERE account_id = @account_id AND fan_name LIKE @pattern ESCAPE '\\'
+          `SELECT ${LIST_COLUMNS} ${LIST_JOINS}
+           WHERE c.account_id = @account_id AND c.fan_name LIKE @pattern ESCAPE '\\'
            ${ORDER} LIMIT @limit`,
         )
-        .all({ account_id: accountId, pattern, limit });
-      return rows.map(decodeChatRow);
+        .all({ account_id: accountId, pattern, limit, spend_cutoff: spendCutoffIso() });
+      return rows.map(decodeChatListRow);
     },
   };
 }

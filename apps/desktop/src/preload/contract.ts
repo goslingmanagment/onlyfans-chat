@@ -43,6 +43,10 @@ export interface ChatListItemVM {
   canSendMessage: boolean;
   /** Platform-provided reason when canSendMessage=false (SPEC §7.0 composer state). */
   canNotSendReason: string | null;
+  /** DESIGN §1 fan value: lifetime spend in dollars; null/0 renders nothing. */
+  lifetimeSpend: number | null;
+  /** Rolling 30-day spend in dollars (local transactions aggregate). */
+  spend30d: number | null;
 }
 
 export interface MessageMediaVM {
@@ -143,6 +147,8 @@ export interface SettingsVM {
    * not listed here auto-match by normalized username in main.
    */
   accountPageLabels: Record<string, string>;
+  /** Chat-list lifetime-spend style (DESIGN §1): bare figure or bordered chip. */
+  spendStyle: 'figure' | 'chip';
 }
 
 export type SettingsPatch = Partial<

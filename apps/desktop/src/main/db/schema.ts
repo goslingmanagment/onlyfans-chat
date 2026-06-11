@@ -181,6 +181,26 @@ ALTER TABLE outbox ADD COLUMN media_files TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE outbox ADD COLUMN previews TEXT NOT NULL DEFAULT '[]';
 `;
 
+// v6 — per-fan spend window (DESIGN §1 "Fan value in the row"). Rolling raw
+// store of account transactions: the sweep fetches the -30days window once,
+// then only increments from the newest cached row; the 30-day aggregate is
+// computed at read time (chats list JOIN), so the window rolls without
+// re-fetching. created_at is normalized ISO-UTC on write (lexicographic
+// comparisons). amount is the gross fan payment in dollars (never mills).
+export const SCHEMA_V6 = `
+CREATE TABLE fan_transactions (
+  account_id TEXT NOT NULL,
+  tx_id TEXT NOT NULL,
+  fan_id TEXT NOT NULL,
+  amount REAL NOT NULL,
+  type TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (account_id, tx_id)
+);
+CREATE INDEX idx_fan_tx_fan ON fan_transactions (account_id, fan_id, created_at);
+CREATE INDEX idx_fan_tx_created ON fan_transactions (account_id, created_at);
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',
@@ -193,4 +213,5 @@ export const ALL_TABLES = [
   'media_urls',
   'usage_events',
   'credit_log',
+  'fan_transactions',
 ] as const;
