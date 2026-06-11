@@ -826,4 +826,97 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(polling.demotions).toEqual([true, false]);
     provider.stop();
   });
+
+  // ── hubActivity (Activity panel liveness, PLAN item 9) ──────────────────
+
+  function buildWithClock(): {
+    provider: ReturnType<typeof createHubAwareSync>;
+    callbacks: () => HubFactoryCallbacks;
+    tick: (ms: number) => void;
+  } {
+    let nowMs = Date.parse('2026-06-11T12:00:00Z');
+    const polling = makeFakePolling();
+    let captured: HubFactoryCallbacks | null = null;
+    const provider = createHubAwareSync({
+      polling,
+      data,
+      now: () => nowMs,
+      createHub: (callbacks) => {
+        captured = callbacks;
+        return Promise.resolve(makeFakeHub());
+      },
+    });
+    return {
+      provider,
+      tick: (ms) => {
+        nowMs += ms;
+      },
+      callbacks: () => {
+        if (!captured) throw new Error('hub not created yet');
+        return captured;
+      },
+    };
+  }
+
+  it('hubActivity counts events, tracks the last event, and persists across rebuilds', async () => {
+    const { provider, callbacks, tick } = buildWithClock();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(provider.hubActivity()).toMatchObject({ eventsToday: 0, lastEventAt: null });
+
+    await callbacks().onEvent({ type: 'typing', accountId: ACCT, chatId: '7' });
+    tick(3_000);
+    await callbacks().onEvent({ type: 'chatListUpdated', accountId: ACCT });
+
+    const activity = provider.hubActivity();
+    expect(activity.eventsToday).toBe(2);
+    expect(activity.lastEventType).toBe('chatListUpdated');
+    expect(activity.lastEventAt).toBe(Date.parse('2026-06-11T12:00:03Z'));
+    provider.stop();
+
+    // The counter survives a provider rebuild (persisted in the settings KV).
+    const { provider: rebuilt } = buildWithClock();
+    expect(rebuilt.hubActivity().eventsToday).toBe(2);
+  });
+
+  it('hubActivity resets the daily counter on UTC day flip', async () => {
+    const { provider, callbacks, tick } = buildWithClock();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await callbacks().onEvent({ type: 'typing', accountId: ACCT, chatId: '7' });
+    expect(provider.hubActivity().eventsToday).toBe(1);
+
+    tick(24 * 60 * 60_000);
+    expect(provider.hubActivity().eventsToday).toBe(0);
+    await callbacks().onEvent({ type: 'typing', accountId: ACCT, chatId: '7' });
+    expect(provider.hubActivity().eventsToday).toBe(1);
+    provider.stop();
+  });
+
+  it('hubActivity tracks liveSince and the last status transition', async () => {
+    const { provider, callbacks, tick } = buildWithClock();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(provider.hubActivity().liveSinceMs).toBeNull();
+    callbacks().onStatusChange('live');
+    const liveAt = provider.hubActivity().liveSinceMs;
+    expect(liveAt).toBe(Date.parse('2026-06-11T12:00:00Z'));
+
+    tick(60_000);
+    callbacks().onStatusChange('live'); // staying live must not reset the clock
+    expect(provider.hubActivity().liveSinceMs).toBe(liveAt);
+
+    tick(60_000);
+    callbacks().onStatusChange('degraded');
+    const after = provider.hubActivity();
+    expect(after.liveSinceMs).toBeNull();
+    expect(after.statusChangedAtMs).toBe(Date.parse('2026-06-11T12:02:00Z'));
+    provider.stop();
+  });
 });

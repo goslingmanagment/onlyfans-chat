@@ -43,10 +43,17 @@ let hub: HubModule | null = null;
 let recheckHubConfig: (() => void) | null = null;
 
 function loadWindowContent(win: BrowserWindow): void {
+  // Dev convenience: CHATGOOSE_OPEN_VIEW=settings boots straight into Settings
+  // (e.g. watching the Activity panel during a live run). No effect packaged.
+  const openView = !app.isPackaged ? process.env['CHATGOOSE_OPEN_VIEW'] : undefined;
+  const search = openView === 'settings' ? 'view=settings' : null;
   if (process.env['ELECTRON_RENDERER_URL']) {
-    void win.loadURL(process.env['ELECTRON_RENDERER_URL']);
+    const url = process.env['ELECTRON_RENDERER_URL'];
+    void win.loadURL(search !== null ? `${url}?${search}` : url);
   } else {
-    void win.loadFile(join(import.meta.dirname, '../renderer/index.html'));
+    void win.loadFile(join(import.meta.dirname, '../renderer/index.html'), {
+      ...(search !== null ? { search } : {}),
+    });
   }
 }
 
@@ -94,7 +101,15 @@ async function initOfapi(
   }
   client = createOfApiClient({ apiKey });
   const utcDay = new Date().toISOString().slice(0, 10);
-  client.creditMeter.hydrate({ utcDay, usedToday: dataLayer.creditLog.usedOn(utcDay) });
+  client.creditMeter.hydrate({
+    utcDay,
+    usedToday: dataLayer.creditLog.usedOn(utcDay),
+    usedTodayByPurpose: Object.fromEntries(
+      dataLayer.creditLog
+        .byPurposeOn(utcDay)
+        .map((row) => [row.purpose, { requests: row.requests, credits: row.credits }]),
+    ),
+  });
 
   const budgetGuard = createBudgetGuard({
     getBudget: () => settingsCache?.creditBudgetPerShift ?? null,
@@ -108,14 +123,33 @@ async function initOfapi(
       }
     },
   });
-  let persistedToday = dataLayer.creditLog.usedOn(utcDay);
+  // Per-purpose delta flush: the meter holds the day's running tallies; only
+  // the increment since the last write hits credit_log (same pattern as the
+  // pre-v7 single counter, now keyed by purpose).
+  let persistedDay = utcDay;
+  const persistedByPurpose = new Map(
+    dataLayer.creditLog
+      .byPurposeOn(utcDay)
+      .map((row) => [row.purpose, { requests: row.requests, credits: row.credits }]),
+  );
   client.creditMeter.subscribe((snapshot) => {
-    const delta = snapshot.usedToday - persistedToday;
-    if (delta > 0 && snapshot.utcDay === utcDay) {
-      dataLayer.creditLog.add(snapshot.utcDay, delta);
-      persistedToday = snapshot.usedToday;
-    } else if (snapshot.utcDay !== utcDay) {
-      persistedToday = 0;
+    if (snapshot.utcDay !== persistedDay) {
+      persistedDay = snapshot.utcDay;
+      persistedByPurpose.clear();
+    }
+    for (const [purpose, tally] of Object.entries(snapshot.usedTodayByPurpose)) {
+      const prev = persistedByPurpose.get(purpose) ?? { requests: 0, credits: 0 };
+      const creditsDelta = tally.credits - prev.credits;
+      const requestsDelta = tally.requests - prev.requests;
+      if (creditsDelta > 0 || requestsDelta > 0) {
+        dataLayer.creditLog.add(
+          snapshot.utcDay,
+          purpose,
+          Math.max(0, creditsDelta),
+          Math.max(0, requestsDelta),
+        );
+        persistedByPurpose.set(purpose, { requests: tally.requests, credits: tally.credits });
+      }
     }
     budgetGuard.check();
   });

@@ -12,6 +12,7 @@ import {
 import { useMemo } from 'react';
 import type {
   AccountVM,
+  ActivityVM,
   ChatFilter,
   ChatListItemVM,
   FanPanelVM,
@@ -37,6 +38,7 @@ export const qk = {
   settings: ['settings'] as const,
   personalities: ['personalities'] as const,
   syncStatus: ['sync-status'] as const,
+  activity: ['activity'] as const,
   vault: (accountId: string, albumId: string | null, query: string) =>
     ['vault', accountId, albumId ?? 'all', query] as const,
   vaultAlbums: (accountId: string) => ['vault-albums', accountId] as const,
@@ -173,6 +175,15 @@ export function useSyncStatus() {
   return useQuery<SyncStatusVM>({
     queryKey: qk.syncStatus,
     queryFn: () => getBridge().invoke('query:sync.status', undefined),
+  });
+}
+
+/** Settings → Activity panel; refreshed by sync/AI/outbox events, never polled. */
+export function useActivitySummary(enabled: boolean) {
+  return useQuery<ActivityVM>({
+    queryKey: qk.activity,
+    queryFn: () => getBridge().invoke('query:activity.summary', undefined),
+    enabled,
   });
 }
 

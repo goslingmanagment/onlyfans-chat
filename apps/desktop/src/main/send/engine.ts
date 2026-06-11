@@ -198,6 +198,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         accountId: row.accountId,
         chatId: row.chatId,
         text: row.text,
+        purpose: 'send',
         ...(isMediaSend
           ? {
               price: row.price,
@@ -327,6 +328,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       chatId,
       order: 'desc',
       limit: VERIFY_TAIL_LIMIT,
+      purpose: 'send',
     });
     data.messages.upsertMany(
       messages.map((message) => mapMessage(accountId, chatId, message, toMediaUrl)),
@@ -530,7 +532,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       }
       typingLastAt.set(key, now());
       // 0 credits, purely cosmetic: losing one is harmless (client contract).
-      void client.startTyping({ accountId, chatId }).catch(() => undefined);
+      void client.startTyping({ accountId, chatId, purpose: 'send' }).catch(() => undefined);
     },
 
     async markRead(accountId, chatId) {
@@ -548,7 +550,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         setTimeout(() => {
           markReadTimers.delete(key);
           void client
-            .markChatRead({ accountId, chatId })
+            .markChatRead({ accountId, chatId, purpose: 'send' })
             .then(({ success }) => {
               if (!success) {
                 return;
@@ -568,7 +570,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
 
     async unsend(accountId, chatId, messageId) {
       // Window errors (CG-OF-07 / upstream 4xx) propagate to the caller.
-      const { success } = await client.deleteMessage({ accountId, chatId, messageId });
+      const { success } = await client.deleteMessage({ accountId, chatId, messageId, purpose: 'send' });
       if (success) {
         data.messages.markDeleted(accountId, chatId, [messageId]); // tombstone
       }

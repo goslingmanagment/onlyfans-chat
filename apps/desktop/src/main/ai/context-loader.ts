@@ -32,6 +32,7 @@ import type {
   SubscribedOnData,
   SubscribeHistoryEntry,
 } from '@chatgoose/shared/context/subscription';
+import type { OfApiPurpose } from '@chatgoose/shared/activity/index';
 import type { DataLayer, FanRow, MessageRow } from '../db/index';
 import type { OfApiClient } from '../ofapi/client';
 import type { OfApiSubscribedOnData, OfApiUser } from '../ofapi/schemas';
@@ -65,6 +66,8 @@ export interface LoadTranscriptArgs {
 export interface FanContextArgs {
   accountId: string;
   chatId: string;
+  /** Deep features bill their context fetches to 'scan-deep-fetch'. */
+  deep?: boolean;
   signal?: AbortSignal;
 }
 
@@ -292,6 +295,7 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
     accountId: string,
     chatId: string,
     signal: AbortSignal | undefined,
+    purpose: OfApiPurpose,
   ): Promise<OfApiUser | null> {
     const key = cacheKey(accountId, chatId);
     const cached = fresh(userCache.get(key));
@@ -300,7 +304,7 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
     }
     try {
       signal?.throwIfAborted();
-      const users = await client.getUsersByIds({ accountId, ids: [chatId] });
+      const users = await client.getUsersByIds({ accountId, ids: [chatId], purpose });
       const user = users[chatId];
       if (user === undefined) {
         return null;
@@ -320,6 +324,7 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
     accountId: string,
     chatId: string,
     signal: AbortSignal | undefined,
+    purpose: OfApiPurpose,
   ): Promise<{ rows: FanTransactionRow[]; partial: boolean } | null> {
     const key = cacheKey(accountId, chatId);
     const cached = fresh(transactionsCache.get(key));
@@ -336,6 +341,7 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
         signal?.throwIfAborted();
         const result = await client.listTransactions({
           accountId,
+          purpose,
           ...(marker !== undefined ? { marker } : {}),
         });
         fetchedAnyPage = true;
@@ -397,6 +403,7 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
               chatId,
               limit: MESSAGES_PAGE_LIMIT,
               order: 'desc',
+              purpose: deep === true ? 'scan-deep-fetch' : 'message-tail',
               ...(cursor !== undefined ? { firstId: cursor } : {}),
             });
           } catch (error) {
@@ -458,8 +465,11 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
       return chatId;
     },
 
-    async loadSpendingBlock({ accountId, chatId, signal }) {
-      const user = await getUser(accountId, chatId, signal);
+    async loadSpendingBlock({ accountId, chatId, deep, signal }) {
+      // Quick features refresh fan details (hydration cost); deep Scans bill
+      // their context fetches to the scan-deep-fetch ledger row.
+      const purpose: OfApiPurpose = deep === true ? 'scan-deep-fetch' : 'hydration';
+      const user = await getUser(accountId, chatId, signal, purpose);
       const dbFan = data.fans.get(accountId, chatId);
       const liveSums = user !== null ? userToSpendingSums(user) : null;
       // Legacy spendingDataVerified semantics: the live lookup produced data
@@ -470,7 +480,7 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
         return { block: '', verified };
       }
 
-      const transactions = await getFanTransactions(accountId, chatId, signal);
+      const transactions = await getFanTransactions(accountId, chatId, signal, purpose);
       const monthlyTotals = transactions !== null ? deriveMonthlyTotals(transactions.rows) : [];
       const monthlyBreakdowns =
         transactions !== null ? deriveMonthlyBreakdowns(transactions.rows) : [];
@@ -484,8 +494,8 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
       return { block, verified };
     },
 
-    async loadSubscriptionBlock({ accountId, chatId, signal }) {
-      const user = await getUser(accountId, chatId, signal);
+    async loadSubscriptionBlock({ accountId, chatId, deep, signal }) {
+      const user = await getUser(accountId, chatId, signal, deep === true ? 'scan-deep-fetch' : 'hydration');
       if (user !== null) {
         // Legacy subscriptionLookupVerified: the lookup COMPLETED in full —
         // verified even when the fan has no subscription data.
@@ -504,7 +514,7 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
       if (username !== '') {
         try {
           signal?.throwIfAborted();
-          const user = await client.getUserByUsername({ accountId, username });
+          const user = await client.getUserByUsername({ accountId, username, purpose: 'hydration' });
           // A successful live answer is authoritative — an empty live bio
           // means the bio was removed, so the synced copy must not resurrect it.
           const about = user.about?.trim();

@@ -30,7 +30,7 @@ describe('listChats (recorded fixture)', () => {
   it('unwraps the {data,_meta,_pagination} envelope', async () => {
     const fixture = loadFixture('list-chats.json');
     const { client } = makeClient([() => jsonResponse(fixture)]);
-    const result = await client.listChats({ accountId: ACCOUNT_ID });
+    const result = await client.listChats({ purpose: 'hot-poll', accountId: ACCOUNT_ID });
     expect(result.chats).toHaveLength(10);
     expect(result.nextPageUrl).toContain('/chats?limit=50&order=recent&offset=10');
     const first = result.chats[0];
@@ -45,7 +45,7 @@ describe('listChats (recorded fixture)', () => {
   it('always passes skip_users explicitly plus order/limit defaults', async () => {
     const fixture = loadFixture('list-chats.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    await client.listChats({ accountId: ACCOUNT_ID });
+    await client.listChats({ purpose: 'hot-poll', accountId: ACCOUNT_ID });
     const url = new URL(requests[0]?.url ?? '');
     expect(url.pathname).toBe(`/api/${ACCOUNT_ID}/chats`);
     expect(url.searchParams.get('skip_users')).toBe('none');
@@ -56,7 +56,7 @@ describe('listChats (recorded fixture)', () => {
   it('passes filter/query/offset and authorization header', async () => {
     const fixture = loadFixture('list-chats.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    await client.listChats({
+    await client.listChats({ purpose: 'hot-poll',
       accountId: ACCOUNT_ID,
       filter: 'with_tips',
       query: 'sam',
@@ -80,7 +80,7 @@ describe('listMessages (recorded fixture)', () => {
   it('unwraps messages and the backward first_id cursor', async () => {
     const fixture = loadFixture('list-messages.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    const result = await client.listMessages({ accountId: ACCOUNT_ID, chatId: '1000039' });
+    const result = await client.listMessages({ purpose: 'message-tail', accountId: ACCOUNT_ID, chatId: '1000039' });
     expect(result.messages).toHaveLength(12);
     expect(result.nextPageUrl).toContain('first_id=');
     const first = result.messages[0];
@@ -99,19 +99,19 @@ describe('listMessages (recorded fixture)', () => {
   it('lastId implies order=asc; explicit mismatches throw', async () => {
     const fixture = loadFixture('list-messages.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    await client.listMessages({ accountId: ACCOUNT_ID, chatId: '1000039', lastId: '1000037' });
+    await client.listMessages({ purpose: 'message-tail', accountId: ACCOUNT_ID, chatId: '1000039', lastId: '1000037' });
     const url = new URL(requests[0]?.url ?? '');
     expect(url.searchParams.get('last_id')).toBe('1000037');
     expect(url.searchParams.get('order')).toBe('asc');
 
     await expect(
-      client.listMessages({ accountId: ACCOUNT_ID, chatId: '1', firstId: '2', lastId: '3' }),
+      client.listMessages({ purpose: 'message-tail', accountId: ACCOUNT_ID, chatId: '1', firstId: '2', lastId: '3' }),
     ).rejects.toMatchObject({ code: 'CG-APP-01' });
     await expect(
-      client.listMessages({ accountId: ACCOUNT_ID, chatId: '1', firstId: '2', order: 'asc' }),
+      client.listMessages({ purpose: 'message-tail', accountId: ACCOUNT_ID, chatId: '1', firstId: '2', order: 'asc' }),
     ).rejects.toMatchObject({ code: 'CG-APP-01' });
     await expect(
-      client.listMessages({ accountId: ACCOUNT_ID, chatId: '1', lastId: '2', order: 'desc' }),
+      client.listMessages({ purpose: 'message-tail', accountId: ACCOUNT_ID, chatId: '1', lastId: '2', order: 'desc' }),
     ).rejects.toMatchObject({ code: 'CG-APP-01' });
     expect(requests).toHaveLength(1);
   });
@@ -121,7 +121,7 @@ describe('getUserByUsername (recorded fixture)', () => {
   it('unwraps an envelope without _pagination', async () => {
     const fixture = loadFixture('user-details.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    const user = await client.getUserByUsername({ accountId: ACCOUNT_ID, username: 'fan032' });
+    const user = await client.getUserByUsername({ purpose: 'hydration', accountId: ACCOUNT_ID, username: 'fan032' });
     expect(user.id).toBeTypeOf('number');
     expect(user.username).toBe('fan032');
     expect(user.lastSeen).toBe('2026-06-10T14:31:13+00:00');
@@ -175,7 +175,7 @@ describe('getUsersByIds', () => {
           _meta: {},
         }),
     ]);
-    const users = await client.getUsersByIds({ accountId: ACCOUNT_ID, ids: [11, 12] });
+    const users = await client.getUsersByIds({ purpose: 'scan-deep-fetch', accountId: ACCOUNT_ID, ids: [11, 12] });
     expect(users['11']?.username).toBe('fan011');
     const url = new URL(requests[0]?.url ?? '');
     expect(url.pathname).toBe(`/api/${ACCOUNT_ID}/users/list`);
@@ -185,9 +185,9 @@ describe('getUsersByIds', () => {
   it('throws before fetching on >10 ids or empty ids', async () => {
     const { client, requests } = makeClient([() => jsonResponse({ data: {} })]);
     await expect(
-      client.getUsersByIds({ accountId: ACCOUNT_ID, ids: Array.from({ length: 11 }, (_, i) => i) }),
+      client.getUsersByIds({ purpose: 'scan-deep-fetch', accountId: ACCOUNT_ID, ids: Array.from({ length: 11 }, (_, i) => i) }),
     ).rejects.toMatchObject({ code: 'CG-APP-01' });
-    await expect(client.getUsersByIds({ accountId: ACCOUNT_ID, ids: [] })).rejects.toMatchObject({
+    await expect(client.getUsersByIds({ purpose: 'scan-deep-fetch', accountId: ACCOUNT_ID, ids: [] })).rejects.toMatchObject({
       code: 'CG-APP-01',
     });
     expect(requests).toHaveLength(0);
@@ -209,7 +209,7 @@ describe('listTransactions', () => {
           _pagination: { next_page: 'https://app.onlyfansapi.com/api/x/transactions?marker=1739155047' },
         }),
     ]);
-    const result = await client.listTransactions({
+    const result = await client.listTransactions({ purpose: 'spend-sweep',
       accountId: ACCOUNT_ID,
       type: 'tips',
       marker: 1739156703,
@@ -231,10 +231,10 @@ describe('listFansAll / listFansActive', () => {
 
   it('hits the right endpoints and unwraps {list,hasMore}', async () => {
     const { client, requests } = makeClient([() => jsonResponse(fansBody)]);
-    const all = await client.listFansAll({ accountId: ACCOUNT_ID, limit: 20 });
+    const all = await client.listFansAll({ purpose: 'hydration', accountId: ACCOUNT_ID, limit: 20 });
     expect(all.fans[0]?.id).toBe(21);
     expect(all.hasMore).toBe(false);
-    const active = await client.listFansActive({ accountId: ACCOUNT_ID });
+    const active = await client.listFansActive({ purpose: 'hydration', accountId: ACCOUNT_ID });
     expect(active.fans).toHaveLength(1);
     expect(new URL(requests[0]?.url ?? '').pathname).toBe(`/api/${ACCOUNT_ID}/fans/all`);
     expect(new URL(requests[1]?.url ?? '').pathname).toBe(`/api/${ACCOUNT_ID}/fans/active`);
@@ -242,7 +242,7 @@ describe('listFansAll / listFansActive', () => {
 
   it('rejects limit > 20 (upstream max) before fetching', async () => {
     const { client, requests } = makeClient([() => jsonResponse(fansBody)]);
-    await expect(client.listFansAll({ accountId: ACCOUNT_ID, limit: 21 })).rejects.toMatchObject({
+    await expect(client.listFansAll({ purpose: 'hydration', accountId: ACCOUNT_ID, limit: 21 })).rejects.toMatchObject({
       code: 'CG-APP-01',
     });
     expect(requests).toHaveLength(0);
@@ -256,7 +256,7 @@ describe('credit telemetry wiring', () => {
     const { client } = makeClient([() => jsonResponse(fixture)], {
       onMeta: (snapshot) => events.push(snapshot),
     });
-    await client.listChats({ accountId: ACCOUNT_ID });
+    await client.listChats({ purpose: 'hot-poll', accountId: ACCOUNT_ID });
     expect(events).toHaveLength(1);
     expect(events[0]?.balance).toBe(99193);
     expect(events[0]?.usedToday).toBe(1);
@@ -282,7 +282,7 @@ describe('error mapping through the request path', () => {
     const { client, requests } = makeClient([
       () => jsonResponse({ message: 'Unauthenticated.' }, { status: 401 }),
     ]);
-    await expect(client.listChats({ accountId: ACCOUNT_ID })).rejects.toMatchObject({
+    await expect(client.listChats({ purpose: 'hot-poll', accountId: ACCOUNT_ID })).rejects.toMatchObject({
       code: 'CG-OF-01',
     });
     expect(requests).toHaveLength(1);
@@ -292,7 +292,7 @@ describe('error mapping through the request path', () => {
     const { client, requests } = makeClient([
       () => jsonResponse({ message: 'Too Many Attempts.' }, { status: 429, headers: { 'retry-after': '1' } }),
     ]);
-    await expect(client.listChats({ accountId: ACCOUNT_ID })).rejects.toMatchObject({
+    await expect(client.listChats({ purpose: 'hot-poll', accountId: ACCOUNT_ID })).rejects.toMatchObject({
       code: 'CG-OF-03',
     });
     // initial + 4 backoff retries (1/2/4/8 s policy)
@@ -316,25 +316,25 @@ describe('write methods never auto-retry (SPEC §7 / §15.5)', () => {
   }> = [
     {
       name: 'sendMessage',
-      invoke: (c) => c.sendMessage({ accountId: ACCOUNT_ID, chatId: '1000039', text: 'hi' }),
+      invoke: (c) => c.sendMessage({ accountId: ACCOUNT_ID, chatId: '1000039', text: 'hi', purpose: 'send' }),
     },
     {
       name: 'deleteMessage',
       invoke: (c) =>
-        c.deleteMessage({ accountId: ACCOUNT_ID, chatId: '1000039', messageId: '9000000001' }),
+        c.deleteMessage({ accountId: ACCOUNT_ID, chatId: '1000039', messageId: '9000000001', purpose: 'send' }),
     },
     {
       name: 'likeMessage',
       invoke: (c) =>
-        c.likeMessage({ accountId: ACCOUNT_ID, chatId: '1000039', messageId: '9000000001' }),
+        c.likeMessage({ accountId: ACCOUNT_ID, chatId: '1000039', messageId: '9000000001', purpose: 'send' }),
     },
     {
       name: 'unlikeMessage',
       invoke: (c) =>
-        c.unlikeMessage({ accountId: ACCOUNT_ID, chatId: '1000039', messageId: '9000000001' }),
+        c.unlikeMessage({ accountId: ACCOUNT_ID, chatId: '1000039', messageId: '9000000001', purpose: 'send' }),
     },
-    { name: 'startTyping', invoke: (c) => c.startTyping({ accountId: ACCOUNT_ID, chatId: '1000039' }) },
-    { name: 'markChatRead', invoke: (c) => c.markChatRead({ accountId: ACCOUNT_ID, chatId: '1000039' }) },
+    { name: 'startTyping', invoke: (c) => c.startTyping({ accountId: ACCOUNT_ID, chatId: '1000039', purpose: 'send' }) },
+    { name: 'markChatRead', invoke: (c) => c.markChatRead({ accountId: ACCOUNT_ID, chatId: '1000039', purpose: 'send' }) },
   ];
 
   it('every write method makes exactly ONE attempt on 500 (no sleep, no retry)', async () => {
@@ -369,7 +369,7 @@ describe('write methods never auto-retry (SPEC §7 / §15.5)', () => {
   it('reads keep issuing GETs only; writes use the verified upstream methods', async () => {
     const fixture = loadFixture('list-chats.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    await client.listChats({ accountId: ACCOUNT_ID });
+    await client.listChats({ purpose: 'hot-poll', accountId: ACCOUNT_ID });
     expect(requests.every((request) => request.method === 'GET')).toBe(true);
   });
 });

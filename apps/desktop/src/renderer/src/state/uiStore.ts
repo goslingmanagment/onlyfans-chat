@@ -43,11 +43,12 @@ interface UiState {
   typing: { accountId: string; chatId: string; expiresAt: number } | null;
   /** keyed by presenceKey(accountId, chatId); TTL'd like typing. */
   presence: Record<string, PresenceEntry>;
-  lastLlmCostUsd: number | null;
   toasts: ToastItem[];
 
   setView: (view: AppView) => void;
   selectAccount: (accountId: string) => void;
+  /** Boot-time default selection: never navigates (unlike selectAccount). */
+  setDefaultAccount: (accountId: string) => void;
   selectChat: (accountId: string, chatId: string) => void;
   setChatFilter: (filter: ChatFilter) => void;
   toggleList: () => void;
@@ -58,15 +59,24 @@ interface UiState {
   setConversationTab: (tab: 'thread' | 'gallery') => void;
   setTyping: (typing: UiState['typing']) => void;
   setPresence: (accountId: string, chatId: string, entry: PresenceEntry) => void;
-  setLastLlmCost: (usd: number) => void;
   pushToast: (toast: Omit<ToastItem, 'id'>) => void;
   dismissToast: (id: number) => void;
 }
 
 let toastSeq = 0;
 
+/** Boot view: ?view=settings (main's CHATGOOSE_OPEN_VIEW dev hook). */
+function initialView(): AppView {
+  if (typeof window !== 'undefined' && typeof window.location !== 'undefined') {
+    if (new URLSearchParams(window.location.search).get('view') === 'settings') {
+      return 'settings';
+    }
+  }
+  return 'workspace';
+}
+
 export const useUiStore = create<UiState>((set) => ({
-  view: 'workspace',
+  view: initialView(),
   selectedAccountId: null,
   selectedChatId: null,
   chatFilter: 'all',
@@ -78,7 +88,6 @@ export const useUiStore = create<UiState>((set) => ({
   conversationTab: 'thread',
   typing: null,
   presence: {},
-  lastLlmCostUsd: null,
   toasts: [],
 
   setView: (view) => set({ view }),
@@ -88,6 +97,8 @@ export const useUiStore = create<UiState>((set) => ({
         ? s
         : { selectedAccountId: accountId, selectedChatId: null, view: 'workspace' },
     ),
+  setDefaultAccount: (accountId) =>
+    set((s) => (s.selectedAccountId === null ? { selectedAccountId: accountId } : s)),
   selectChat: (accountId, chatId) =>
     set({
       selectedAccountId: accountId,
@@ -115,7 +126,6 @@ export const useUiStore = create<UiState>((set) => ({
       presence[presenceKey(accountId, chatId)] = entry;
       return { presence };
     }),
-  setLastLlmCost: (usd) => set({ lastLlmCostUsd: usd }),
   pushToast: (toast) =>
     set((s) => {
       toastSeq += 1;

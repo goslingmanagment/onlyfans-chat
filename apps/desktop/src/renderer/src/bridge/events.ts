@@ -74,6 +74,9 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
         } else {
           queueInvalidate(['outbox']);
         }
+        // status-bar SENDS + the Activity panel's sends row
+        queueInvalidate(qk.syncStatus);
+        queueInvalidate(qk.activity);
         break;
       case 'fans':
       case 'summaries':
@@ -95,7 +98,16 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     if (parsed.success) handleDbChanged(parsed.data);
   });
 
+  const creditBalanceSchema = z.object({ type: z.literal('creditBalance') });
+
   const offSync = bridge.on('sync:event', (payload) => {
+    // Additive status frame (contract.ts CreditBalanceEvent): not part of the
+    // shared SyncEvent union — refresh the credit figures and move on.
+    if (creditBalanceSchema.safeParse(payload).success) {
+      queueInvalidate(qk.syncStatus);
+      queueInvalidate(qk.activity);
+      return;
+    }
     const event = parseSyncEvent(payload);
     if (event === null) return;
     const ui = useUiStore.getState();
@@ -104,6 +116,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
         invalidateChats(event.accountId);
         queueInvalidate(qk.accounts);
         queueInvalidate(qk.syncStatus);
+        queueInvalidate(qk.activity);
         break;
       case 'messageReceived': {
         queueInvalidate(qk.messages(event.accountId, event.chatId));
@@ -176,8 +189,10 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     if (event === null) return;
     // dock first (frame correlation lives there), then the status-bar cost slot
     handleAiOperationEvent(event);
-    if (event.type === 'operation:complete' && event.llmSpend !== undefined) {
-      useUiStore.getState().setLastLlmCost(event.llmSpend.totalUsd);
+    if (event.type === 'operation:complete') {
+      // AI TODAY (status bar) + the Activity panel's AI ledger
+      queueInvalidate(qk.syncStatus);
+      queueInvalidate(qk.activity);
     }
   });
 

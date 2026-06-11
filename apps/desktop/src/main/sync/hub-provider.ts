@@ -6,6 +6,7 @@
 // of truth. Both providers' events flow through ONE listener set: the send
 // engine's messageSent subscription works identically in either mode.
 
+import { z } from 'zod';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { DataLayer } from '../db/index';
 import type { HubSync, HubSyncStatus } from './hub-sync';
@@ -26,17 +27,44 @@ export interface HubAwareSyncOptions {
   data: DataLayer;
   /** Resolves null when hub settings (base URL + chatter key) are absent. */
   createHub: (callbacks: HubFactoryCallbacks) => Promise<HubSync | null>;
+  now?: () => number;
 }
+
+/** Stream liveness for the Activity panel (PLAN item 9). */
+export interface HubActivitySnapshot {
+  /** Epoch ms of the last parsed hub frame; null = none yet (or restart-stale day). */
+  lastEventAt: number | null;
+  lastEventType: string | null;
+  /** Frames handled today (UTC) — persisted, survives restarts. */
+  eventsToday: number;
+  /** Epoch ms the stream went live; null while not live. */
+  liveSinceMs: number | null;
+  /** Epoch ms of the last status transition (e.g. "unreachable since 19:42"). */
+  statusChangedAtMs: number | null;
+  droppedFrames: number;
+}
+
+const HUB_EVENT_STATS_KEY = 'hubSync.eventStats';
+
+const eventStatsSchema = z.object({
+  day: z.string(),
+  count: z.number().int().nonnegative(),
+  lastEventAt: z.number().nullable(),
+  lastEventType: z.string().nullable(),
+});
+type EventStats = z.infer<typeof eventStatsSchema>;
 
 export interface HubAwareSync extends SyncProvider {
   pollAccount(accountId: string): Promise<void>;
   /** Recreates the hub connection from current settings (key/URL changes). */
   reconfigureHub(): Promise<void>;
   hubStatus(): HubSyncStatus | null;
+  hubActivity(): HubActivitySnapshot;
 }
 
 export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   const { polling, data, createHub } = options;
+  const now = options.now ?? Date.now;
 
   const listeners = new Set<SyncListener>();
   let hub: HubSync | null = null;
@@ -44,6 +72,36 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   let running = false;
   /** Invalidates in-flight async hub creation on stop/reconfigure (no leaks). */
   let hubGeneration = 0;
+  let liveSinceMs: number | null = null;
+  let statusChangedAtMs: number | null = null;
+
+  function utcDayOf(epochMs: number): string {
+    return new Date(epochMs).toISOString().slice(0, 10);
+  }
+
+  // Daily event counter persists in the settings KV (same home as
+  // hubSync.lastEventId) so a mid-shift restart keeps the day's count.
+  let eventStats: EventStats = data.settings.getParsed(HUB_EVENT_STATS_KEY, eventStatsSchema) ?? {
+    day: utcDayOf(now()),
+    count: 0,
+    lastEventAt: null,
+    lastEventType: null,
+  };
+
+  function recordHubEvent(event: SyncEvent): void {
+    const day = utcDayOf(now());
+    eventStats = {
+      day,
+      count: eventStats.day === day ? eventStats.count + 1 : 1,
+      lastEventAt: now(),
+      lastEventType: event.type,
+    };
+    try {
+      data.settings.set(HUB_EVENT_STATS_KEY, eventStats);
+    } catch {
+      // Liveness bookkeeping must never break event handling.
+    }
+  }
 
   function emit(event: SyncEvent): void {
     for (const listener of listeners) {
@@ -75,6 +133,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   }
 
   async function handleHubEvent(event: SyncEvent): Promise<void> {
+    recordHubEvent(event);
     switch (event.type) {
       case 'messageReceived':
       case 'messageSent':
@@ -107,6 +166,8 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
 
   function handleHubStatus(status: HubSyncStatus): void {
     const isLive = status === 'live';
+    statusChangedAtMs = now();
+    liveSinceMs = isLive ? (liveSinceMs ?? now()) : null;
     if (isLive && !hubLive) {
       polling.setHubDemoted(true);
     } else if (!isLive && hubLive) {
@@ -171,5 +232,17 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       await startHub();
     },
     hubStatus: () => hub?.status() ?? null,
+    hubActivity: (): HubActivitySnapshot => {
+      const day = utcDayOf(now());
+      const sameDay = eventStats.day === day;
+      return {
+        lastEventAt: sameDay ? eventStats.lastEventAt : null,
+        lastEventType: sameDay ? eventStats.lastEventType : null,
+        eventsToday: sameDay ? eventStats.count : 0,
+        liveSinceMs,
+        statusChangedAtMs,
+        droppedFrames: hub?.droppedFrameCount() ?? 0,
+      };
+    },
   };
 }

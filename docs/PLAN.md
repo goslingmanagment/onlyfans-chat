@@ -15,7 +15,7 @@ Status: Updated 2026-06-11 — **all build phases code-complete.** Phases gate o
 | **P5** vault / PPV | ✅ built; purchased-state flip fixture-tested | one live PPV round-trip on the test fan |
 
 **Owner checklist to close the gates:** see item 8 below (consolidated steps, in order).
-**Open tracks (not blocking the gates):** runbook №4 — OFAPI gateway proxy in core (key custody; required before scaling past the supervised pilot, since OFAPI keys can't be scoped — SPEC §5); two vendor tickets to file (chats `limit` override; whether scoped keys exist). After the gates: P6 AI gateway.
+**Open tracks (not blocking the gates):** runbook №4 — OFAPI gateway proxy in core (key custody; required before scaling past the supervised pilot, since OFAPI keys can't be scoped — SPEC §5); two vendor tickets to file (chats `limit` override; whether scoped keys exist). P6 AI gateway: **deferred — owner decision 2026-06-11** (not scheduled; the pilot runs on local LLM keys per the P2 design; revisit before scaling beyond the supervised pilot).
 
 ## Phase 0 — Validation spikes & bootstrap (~week 0–1)
 
@@ -123,6 +123,8 @@ Build: vault browser (grid, albums, search, multi-select) · attach + price ($3�
 
 ## Phase 6 — AI gateway & central LLM governance (~week 10–13)
 
+> **Status 2026-06-11: DEFERRED (owner decision).** Not scheduled for now. Consequence accepted: during the pilot, chatter machines keep local LLM provider keys (DirectGateway, the P2 design) and there are no central per-chatter quotas / kill-switch. Revisit before scaling beyond the supervised pilot — P6 plus runbook №4 (OFAPI key custody) remain the governance prerequisites for scale.
+
 > **Resolved 2026-06-10:** no separate relay — the existing Agency Hub ("core", `~/code/core`, production Fastify + Postgres + worker) is the hub; core knows nothing about onlyfansapi.com today, so all OFAPI-facing pieces are new work in the core repo. Real-time (webhooks + SSE) was pulled forward into the parallel track above; P6 is the remaining centralization: core's own Phase 7 "ChatMuse Backend" / "Hub-Owned AI Gateway".
 
 Work in **core repo**: AI gateway (SSE streaming proxy, central provider keys, per-chatter quotas, cost ledger, prompt cache) · (stretch) OFAPI key custody/proxying.
@@ -161,7 +163,7 @@ Work in **this repo**: HubGateway (AI via core's gateway) · settings: gateway m
 4. Admin: ~~scoped keys~~ **resolved 2026-06-11 — OFAPI has no key scopes** (every key is full-access). Instead: issue one *named* key per pilot chatter machine (instant individual revocation; SPEC §5 custody), file a vendor feature request for scoped keys, and treat P6 gateway custody as **required before scaling beyond the supervised pilot**. Credit-terms question stays low priority.
 5. Product: confirm the remaining open question PRD §11 #7 (one-surface-per-account-per-shift transition protocol) with the pilot chatters.
 6. P1/P2 pilot (owner-ops): chatter monitors a shift in the app (read-only), spot-checks vs OnlyMonster; P2 acceptance-rate metrics are instrumented from day 1 (`cmd:ai.feedback` → usage_events).
-7. Cosmetic follow-ups noted during live runs: free-subscription far-future expiry renders as "renews 3462d" in the header chip; status-bar RPM mixes plan-remaining with the client's configured limit ("4996/300").
+7. Cosmetic follow-ups noted during live runs: free-subscription far-future expiry renders as "renews 3462d" in the header chip; ~~status-bar RPM mixes plan-remaining with the client's configured limit ("4996/300")~~ **fixed 2026-06-12 by the item-9 redesign** (RPM left the bar; headroom now renders alone in the Activity panel's credits-ledger footer).
 
 8. **P3–P5 built 2026-06-11 (runbook №3). Owner checklist to close the gates, in order:**
    - **P3:** run the one-command live send check (`cd apps/desktop && P3_LIVE_SEND=1 npx vitest run tests/live --testTimeout=120000` — one benign message to the test fan through the production engine, auto-unsent). Then pilot: chatters run real shifts; the ≥500-send audit is `auditOutbox` (debug surface / `apps/desktop/src/main/send/audit.ts`). Before chatters rely on SSE: move core off the laptop tunnel to a stable host and re-register the webhook URL.
@@ -169,3 +171,5 @@ Work in **this repo**: HubGateway (AI via core's gateway) · settings: gateway m
    - **P5:** one live PPV round-trip on the test fan only (attach vault media + preview + min price in the app → confirm → unlock from the fan account → watch the purchased badge flip → unsend).
    - Fixture wishlist while testing: a ≤10-message fresh-sub conversation and a <3-fan-texts thin conversation (anonymized) unlock hi-greeting and ping-B golden coverage (executable N/A tests flag them).
    - Deferred (P4-stretch, recorded): Compare feature; reply-to/like/custom-name write; hub connection-status toast on auth-failure (status chip + settings hint exist).
+
+9. ~~**Settings → Activity panel (owner request 2026-06-11): visual "how is it running / what did it cost" view.**~~ **Built 2026-06-12 (runbook №5), per the owner-approved mockup `docs/mockups/experiments/activity-panel.html` (binding for this surface).** Shipped: per-purpose tagging on every OFAPI call (compiler-enforced `purpose` param; per-purpose request+credit tallies in the meter; migration v7 reshapes `credit_log` to `(day, purpose, used, requests)` with pre-v7 rows preserved as `untagged`); **a durable `ai_spend_log` daily per-feature ledger** (needed because `usage_events` is the hub upload queue and DRAINS once core is live — discovered during the build); hub-sync liveness (daily event counter persisted in the settings KV, last event, live-since, dropped frames) + pending-upload counts; read-only `query:activity.summary` + `query:outbox.audit` IPC; Activity as the first Settings section (both POLLING/HUB LIVE states; hub-live covered by `tests/ipc/activity.test.ts` fixtures); status bar redesigned — mode word matches the panel badge, `AI TODAY` aggregate replaced `LLM LAST`, `SENDS · UNCONF` added, every segment clickable with **Russian tooltips byte-for-byte from the mockup tiplist** (guarded by `tests/renderer/status-bar.test.ts`, which reads the mockup). Also fixed en route: `cmd:ai.feedback` rejected `action:'inserted'` (P2-era `z.literal('copied')`) — the acceptance rate was silently lost on the insert path. Workspace mockup + DESIGN §1/§5 updated in the same change.

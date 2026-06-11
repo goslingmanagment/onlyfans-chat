@@ -231,7 +231,11 @@ describe('upload', () => {
     const result = await service.upload({ accountId: ACCT, fileToken: picked?.token ?? '', useAsync: true });
     expect(result).toEqual({ vaultId: '3866999002', isReady: false, creditsUsed: 38 });
     expect(stub.client.getUploadStatus).toHaveBeenCalledTimes(2);
-    expect(stub.client.getUploadStatus).toHaveBeenCalledWith({ accountId: ACCT, uploadId: 'ofapi_media_x' });
+    expect(stub.client.getUploadStatus).toHaveBeenCalledWith({
+      accountId: ACCT,
+      uploadId: 'ofapi_media_x',
+      purpose: 'vault',
+    });
   });
 
   it('async path: failed status surfaces as CG-OF-08 with the upstream error', async () => {

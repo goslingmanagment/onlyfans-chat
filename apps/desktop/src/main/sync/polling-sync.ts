@@ -8,7 +8,7 @@
 // STRICTLY READ-ONLY toward OFAPI.
 
 import { z } from 'zod';
-import { OFAPI_INTER_PAGE_DELAY_MS } from '@chatgoose/shared';
+import { OFAPI_INTER_PAGE_DELAY_MS, type OfApiPurpose } from '@chatgoose/shared';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { OfApiClient } from '../ofapi/client';
 import type { DataLayer, FanTransactionUpsert } from '../db/index';
@@ -166,8 +166,15 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     const cachedPage = data.messages.page({ accountId, chatId, limit: 1 });
     const newestCached = cachedPage.items.at(-1)?.messageId;
     const { messages } = newestCached
-      ? await client.listMessages({ accountId, chatId, lastId: newestCached, order: 'asc', limit: 100 })
-      : await client.listMessages({ accountId, chatId, order: 'desc', limit: 100 });
+      ? await client.listMessages({
+          accountId,
+          chatId,
+          lastId: newestCached,
+          order: 'asc',
+          limit: 100,
+          purpose: 'message-tail',
+        })
+      : await client.listMessages({ accountId, chatId, order: 'desc', limit: 100, purpose: 'message-tail' });
 
     const fresh = messages.filter(
       (message) => data.messages.get(accountId, chatId, String(message.id)) === null,
@@ -202,7 +209,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           return;
         }
         void client
-          .getMessage({ accountId, chatId, messageId: message.messageId })
+          .getMessage({ accountId, chatId, messageId: message.messageId, purpose: 'media' })
           .then((fresh) => {
             const upsert = mapMessage(accountId, chatId, fresh, toMediaUrl);
             data.messages.upsertMany([upsert]);
@@ -248,6 +255,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     accountId: string,
     startOffset: number,
     maxPages: number,
+    purpose: OfApiPurpose,
   ): Promise<{ chats: OfApiChat[]; nextOffset: number; pages: number; exhausted: boolean }> {
     const collected: OfApiChat[] = [];
     const seenFanIds = new Set<string>();
@@ -264,6 +272,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         offset,
         order: 'recent',
         skipUsers: 'none',
+        purpose,
       });
       pages += 1;
       for (const chat of chats) {
@@ -321,7 +330,12 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           now() - loop.lastDeepSweepAt >= DEEP_SWEEP_INTERVAL_MS);
       // Head walk: the delta detector. Page 1 suffices on hot ticks (recency
       // invariant, see CHATS_PAGE_LIMIT); deep sweeps cover read-state drift.
-      const head = await walkChatPages(accountId, 0, deepDue ? DEEP_SWEEP_PAGES : 1);
+      const head = await walkChatPages(
+        accountId,
+        0,
+        deepDue ? DEEP_SWEEP_PAGES : 1,
+        deepDue ? 'deep-sweep' : 'hot-poll',
+      );
 
       const deltas: { chatId: string; wasCached: boolean }[] = [];
       for (const chat of head.chats) {
@@ -390,6 +404,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           accountId,
           Math.max(hydration.nextOffset, head.nextOffset),
           HYDRATION_PAGES_PER_TICK,
+          'hydration',
         );
         upsertChatRows(accountId, chunk.chats);
         const pagesWalked = hydration.pagesWalked + chunk.pages;
@@ -473,6 +488,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         chatId,
         order: 'desc',
         limit: 50,
+        purpose: 'message-tail',
       });
       let flipped = false;
       for (const message of messages) {
@@ -520,6 +536,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         const page = await client.listTransactions({
           accountId,
           limit: SPEND_TX_PAGE_LIMIT,
+          purpose: 'spend-sweep',
           startDate: sinceMs === null ? '-30days' : ofapiStartDate(sinceMs),
           ...(marker !== null ? { marker } : {}),
         });
@@ -550,7 +567,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       return;
     }
     try {
-      const user = await client.getUserByUsername({ accountId, username });
+      const user = await client.getUserByUsername({ accountId, username, purpose: 'hydration' });
       data.fans.upsert(mapFan(accountId, user, toMediaUrl, new Date(now()).toISOString()));
     } catch {
       // fail-open (legacy behavior): user-details 404s for deactivated fans —
@@ -653,11 +670,13 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     },
     status(): SyncStatusSnapshot {
       const freshness: Record<string, string> = {};
+      const pollIntervalsMs: Record<string, number> = {};
       let worstFailures = 0;
       for (const [accountId, loop] of loops) {
         if (loop.lastSuccessAt != null) {
           freshness[accountId] = new Date(loop.lastSuccessAt).toISOString();
         }
+        pollIntervalsMs[accountId] = intervalFor(accountId);
         worstFailures = Math.max(worstFailures, loop.consecutiveFailures);
       }
       const state =
@@ -666,7 +685,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           : worstFailures > 0
             ? 'degraded'
             : 'live';
-      return { freshness, state };
+      return { freshness, state, pollIntervalsMs, deepSweepEveryMs: DEEP_SWEEP_INTERVAL_MS };
     },
     pollAccount,
   };
@@ -678,7 +697,7 @@ export async function syncAccounts(
   data: DataLayer,
   toMediaUrl?: ToMediaUrl,
 ): Promise<string[]> {
-  const accounts = await client.listAccounts();
+  const accounts = await client.listAccounts({ purpose: 'hydration' });
   data.accounts.upsertMany(accounts.map((account) => mapAccount(account, toMediaUrl)));
   for (const account of accounts) {
     if (account.is_authenticated === false) {

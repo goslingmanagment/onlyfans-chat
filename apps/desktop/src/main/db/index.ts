@@ -24,6 +24,8 @@ import { createOutboxQueries } from './queries/outbox';
 import type { OutboxQueries } from './queries/outbox';
 import { createCreditLogQueries } from './queries/credit-log';
 import type { CreditLogQueries } from './queries/credit-log';
+import { createAiSpendLogQueries } from './queries/ai-spend';
+import type { AiSpendLogQueries } from './queries/ai-spend';
 import { createMediaUrlsQueries } from './queries/media-urls';
 import type { MediaUrlsQueries } from './queries/media-urls';
 
@@ -39,6 +41,7 @@ export interface DataLayer {
   settings: SettingsQueries;
   outbox: OutboxQueries;
   creditLog: CreditLogQueries;
+  aiSpendLog: AiSpendLogQueries;
   mediaUrls: MediaUrlsQueries;
   close(): void;
 }
@@ -58,6 +61,7 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     settings: createSettingsQueries(db, bus),
     outbox: createOutboxQueries(db, bus),
     creditLog: createCreditLogQueries(db),
+    aiSpendLog: createAiSpendLogQueries(db),
     mediaUrls: createMediaUrlsQueries(db),
     close() {
       bus.flushNow();
@@ -119,5 +123,7 @@ export type {
 } from './queries/outbox';
 export { createCreditLogQueries } from './queries/credit-log';
 export type { CreditLogQueries } from './queries/credit-log';
+export { createAiSpendLogQueries } from './queries/ai-spend';
+export type { AiSpendLogQueries, AiSpendRunArgs } from './queries/ai-spend';
 export { createMediaUrlsQueries } from './queries/media-urls';
 export type { MediaUrlsQueries } from './queries/media-urls';

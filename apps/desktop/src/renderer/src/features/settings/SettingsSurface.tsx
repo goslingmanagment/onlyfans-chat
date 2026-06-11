@@ -20,6 +20,7 @@ import { useSettings, useUpdateSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { Skeleton } from '../../design/Skeleton';
 import { Kbd } from '../../design/Kbd';
+import { ActivitySettings } from './sections/ActivitySettings';
 import { KeySettings } from './sections/KeySettings';
 import { HubSettings } from './sections/HubSettings';
 import { ModelSettings } from './sections/ModelSettings';
@@ -110,6 +111,7 @@ function SettingsBody({ settings }: { settings: SettingsVM }): React.JSX.Element
       <div className="num h-4 text-right text-micro tracking-[0.08em] text-green">
         {savedFlash ? 'SAVED' : ''}
       </div>
+      <ActivitySettings />
       <KeySettings settings={settings} patch={patch} />
       <HubSettings settings={settings} patch={patch} />
       <ModelSettings settings={settings} patch={patch} />

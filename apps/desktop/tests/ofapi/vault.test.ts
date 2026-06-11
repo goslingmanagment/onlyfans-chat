@@ -33,7 +33,7 @@ describe('listVaultMedia (synthetic openapi fixture)', () => {
   it('unwraps {data:{list,hasMore}} and surfaces isReady/files', async () => {
     const fixture = loadFixture('vault-list-media.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    const result = await client.listVaultMedia({ accountId: ACCOUNT_ID });
+    const result = await client.listVaultMedia({ purpose: 'vault', accountId: ACCOUNT_ID });
     expect(result.items).toHaveLength(3);
     expect(result.hasMore).toBe(true);
     expect(result.items[0]).toMatchObject({ id: 3866342509, type: 'photo', isReady: true });
@@ -50,7 +50,7 @@ describe('listVaultMedia (synthetic openapi fixture)', () => {
   it('maps query/field/type/list/sort/limit/offset query params', async () => {
     const fixture = loadFixture('vault-list-media.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    await client.listVaultMedia({
+    await client.listVaultMedia({ purpose: 'vault',
       accountId: ACCOUNT_ID,
       query: 'gym',
       field: 'highest-tips',
@@ -73,7 +73,7 @@ describe('listVaultMedia (synthetic openapi fixture)', () => {
   it('rejects limits above the documented 100 cap without a request', async () => {
     const { client, requests } = makeClient([() => jsonResponse({})]);
     await expect(
-      client.listVaultMedia({ accountId: ACCOUNT_ID, limit: VAULT_LIST_MAX_LIMIT + 1 }),
+      client.listVaultMedia({ purpose: 'vault', accountId: ACCOUNT_ID, limit: VAULT_LIST_MAX_LIMIT + 1 }),
     ).rejects.toMatchObject({ code: 'CG-APP-01' });
     expect(requests).toHaveLength(0);
   });
@@ -84,7 +84,7 @@ describe('listVaultMedia (synthetic openapi fixture)', () => {
       () => jsonResponse({ message: 'upstream hiccup' }, { status: 502 }),
       () => jsonResponse(fixture),
     ]);
-    const result = await client.listVaultMedia({ accountId: ACCOUNT_ID });
+    const result = await client.listVaultMedia({ purpose: 'vault', accountId: ACCOUNT_ID });
     expect(result.items).toHaveLength(3);
     expect(requests).toHaveLength(2);
   });
@@ -94,7 +94,7 @@ describe('listVaultLists (synthetic openapi fixture)', () => {
   it('returns albums incl. the custom/system distinction', async () => {
     const fixture = loadFixture('vault-lists.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    const result = await client.listVaultLists({ accountId: ACCOUNT_ID, limit: 100 });
+    const result = await client.listVaultLists({ purpose: 'vault', accountId: ACCOUNT_ID, limit: 100 });
     expect(result.lists).toHaveLength(3);
     expect(result.hasMore).toBe(false);
     expect(result.lists[2]).toMatchObject({ id: 703, type: 'custom', name: 'Gym set' });
@@ -108,7 +108,7 @@ describe('listChatMedia / gallery (synthetic openapi fixture)', () => {
   it('unwraps message objects with media, price, isOpened, nextLastId', async () => {
     const fixture = loadFixture('chat-media-gallery.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    const result = await client.listChatMedia({ accountId: ACCOUNT_ID, chatId: '1000039' });
+    const result = await client.listChatMedia({ purpose: 'media', accountId: ACCOUNT_ID, chatId: '1000039' });
     expect(result.messages).toHaveLength(2);
     expect(result.hasMore).toBe(false);
     expect(result.nextLastId).toBe('9100000002');
@@ -126,7 +126,7 @@ describe('getUploadStatus (bare object, free)', () => {
   it('parses the processing branch and hits the documented path', async () => {
     const fixture = loadFixture('upload-status-processing.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    const status = await client.getUploadStatus({
+    const status = await client.getUploadStatus({ purpose: 'vault',
       accountId: ACCOUNT_ID,
       uploadId: 'ofapi_media_fixture0123456789abcdef01234567',
     });
@@ -140,7 +140,7 @@ describe('getUploadStatus (bare object, free)', () => {
   it('parses the completed branch with the reusable vault media id', async () => {
     const fixture = loadFixture('upload-status-completed.json');
     const { client } = makeClient([() => jsonResponse(fixture)]);
-    const status = await client.getUploadStatus({ accountId: ACCOUNT_ID, uploadId: 'x' });
+    const status = await client.getUploadStatus({ purpose: 'vault', accountId: ACCOUNT_ID, uploadId: 'x' });
     expect(status.status).toBe('completed');
     expect(status.media?.id).toBe(3866999002);
     expect(status.credits_used).toBe(38);
@@ -153,7 +153,7 @@ describe('uploadVaultMedia', () => {
   it('sync 200: multipart file field, envelope unwrap to the vault item', async () => {
     const fixture = loadFixture('vault-upload-sync-200.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    const outcome = await client.uploadVaultMedia({
+    const outcome = await client.uploadVaultMedia({ purpose: 'vault',
       accountId: ACCOUNT_ID,
       fileName: 'shoot.jpg',
       data: bytes,
@@ -175,7 +175,7 @@ describe('uploadVaultMedia', () => {
   it('async=true 202: bare {status,prefixed_id,polling_url} → started outcome', async () => {
     const fixture = loadFixture('vault-upload-async-202.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture, { status: 202 })]);
-    const outcome = await client.uploadVaultMedia({
+    const outcome = await client.uploadVaultMedia({ purpose: 'vault',
       accountId: ACCOUNT_ID,
       fileName: 'big.mp4',
       data: bytes,
@@ -195,7 +195,7 @@ describe('uploadVaultMedia', () => {
       () => jsonResponse(loadFixture('vault-upload-sync-200.json')),
     ]);
     await expect(
-      client.uploadVaultMedia({ accountId: ACCOUNT_ID, fileName: 'a.jpg', data: bytes }),
+      client.uploadVaultMedia({ purpose: 'vault', accountId: ACCOUNT_ID, fileName: 'a.jpg', data: bytes }),
     ).rejects.toMatchObject({ code: 'CG-NET-01' });
     expect(requests).toHaveLength(1); // a retried upload double-bills credits
   });
@@ -203,12 +203,12 @@ describe('uploadVaultMedia', () => {
   it('preflights size and emptiness before any request', async () => {
     const { client, requests } = makeClient([() => jsonResponse({})]);
     await expect(
-      client.uploadVaultMedia({ accountId: ACCOUNT_ID, fileName: 'a.jpg', data: new Uint8Array(0) }),
+      client.uploadVaultMedia({ purpose: 'vault', accountId: ACCOUNT_ID, fileName: 'a.jpg', data: new Uint8Array(0) }),
     ).rejects.toMatchObject({ code: 'CG-APP-01' });
     const tooBig = new Uint8Array(1);
     Object.defineProperty(tooBig, 'byteLength', { value: VAULT_UPLOAD_MAX_BYTES + 1 });
     await expect(
-      client.uploadVaultMedia({ accountId: ACCOUNT_ID, fileName: 'a.jpg', data: tooBig }),
+      client.uploadVaultMedia({ purpose: 'vault', accountId: ACCOUNT_ID, fileName: 'a.jpg', data: tooBig }),
     ).rejects.toMatchObject({ code: 'CG-APP-01' });
     expect(requests).toHaveLength(0);
   });

@@ -452,7 +452,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     }
 
     const spend = op.usage !== null ? trySpendSummary(op.modelId, op.usage) : undefined;
-    recordUsageEvent(op, spend?.totalTokens);
+    recordUsageEvent(op, spend);
 
     const profiling = op.profiler.snapshot();
     emit({
@@ -517,7 +517,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     if (!beginSettle(op)) {
       return;
     }
-    recordUsageEvent(op, 0, { isCacheHit: true });
+    recordUsageEvent(op, undefined, { isCacheHit: true });
     const profiling = op.profiler.snapshot();
     emit({
       type: 'operation:complete',
@@ -576,10 +576,14 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     }
   }
 
-  /** usage_events row, pending the P4 hub flush (dedupe key = clientEventId = operationId). */
+  /**
+   * usage_events row, pending the P4 hub flush (dedupe key = clientEventId =
+   * operationId) — PLUS the durable ai_spend_log daily counters the Activity
+   * panel aggregates (usage_events drains once the hub is configured).
+   */
   function recordUsageEvent(
     op: OperationState,
-    totalTokens: number | undefined,
+    spend: { totalTokens: number; totalUsd: number } | undefined,
     flags: { isCacheHit?: boolean } = {},
   ): void {
     const usage = op.usage;
@@ -592,7 +596,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       cacheCreationInputTokens: usage?.cache_creation_input_tokens ?? 0,
       cacheReadInputTokens: usage?.cache_read_input_tokens ?? 0,
       outputTokens: usage?.output_tokens ?? 0,
-      totalTokens: totalTokens ?? 0,
+      totalTokens: spend?.totalTokens ?? 0,
       chatId: op.chatId,
       durationMs: Math.max(0, Date.now() - op.startedAtMs),
       isCacheHit: flags.isCacheHit === true,
@@ -613,6 +617,21 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         });
     } catch {
       // Usage bookkeeping must never fail a completed operation.
+    }
+    try {
+      deps.data.aiSpendLog.recordRun({
+        day: payload.completedAt.slice(0, 10),
+        feature: payload.feature,
+        isCacheHit: payload.isCacheHit,
+        inputTokens: payload.inputTokens,
+        cacheWriteTokens: payload.cacheCreationInputTokens,
+        cacheReadTokens: payload.cacheReadInputTokens,
+        outputTokens: payload.outputTokens,
+        costMicroUsd: Math.round((spend?.totalUsd ?? 0) * 1_000_000),
+        chatId: payload.chatId,
+      });
+    } catch {
+      // Ledger bookkeeping must never fail a completed operation.
     }
     try {
       deps.onUsageEvent?.(payload);
@@ -821,6 +840,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       const spending = await loader.loadSpendingBlock({
         accountId: op.accountId,
         chatId: op.chatId,
+        deep,
         signal: op.abort.signal,
       });
       if (op.settled) {
@@ -832,6 +852,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       const subscription = await loader.loadSubscriptionBlock({
         accountId: op.accountId,
         chatId: op.chatId,
+        deep,
         signal: op.abort.signal,
       });
       if (op.settled) {

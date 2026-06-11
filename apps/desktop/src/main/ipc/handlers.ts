@@ -9,12 +9,12 @@ import { analyzePingSegment } from '@chatgoose/shared/transcript/index';
 import { reconcileBundledPersonalities } from '@chatgoose/shared/prompts/personalities';
 import type { DataLayer, OutboxRow } from '../db/index';
 import type { SettingsStore } from '../settings/store';
-import type { SyncProvider } from '../sync/provider';
-import type { HubSyncStatus } from '../sync/hub-sync';
 import type { CreditMeter } from '../ofapi/credit-meter';
 import type { SendEngine } from '../send/engine';
+import { auditOutbox } from '../send/audit';
 import type { VaultService } from '../media/vault';
 import type { AiStartRequest, OutboxItemVM, SyncStatusVM } from '../../preload/contract';
+import { aiTodayUsd, buildActivitySummary, sendsToday, utcDayOf, type ActivitySync } from './activity';
 import {
   accountToVM,
   chatToVM,
@@ -75,10 +75,24 @@ const aiStartSchema = z.object({
   }),
 });
 const aiCancelSchema = z.object({ operationId: z.uuid() });
+// 'inserted' is the P3+ primary action (contract.ts AiFeedbackRequest); the
+// P2-era literal('copied') silently rejected it and lost the acceptance rate.
 const aiFeedbackSchema = z.object({
   operationId: z.uuid(),
-  action: z.literal('copied'),
+  action: z.enum(['copied', 'inserted']),
   partIndex: z.number().int().min(0).optional(),
+  feature: z
+    .enum([
+      'fast-reply',
+      'improve-draft',
+      'help-me',
+      'fan-summary',
+      'chat-review',
+      'ping',
+      'hi-greeting',
+      'compare',
+    ])
+    .optional(),
 });
 
 // ── Send pipeline (SPEC §7) ──
@@ -163,8 +177,8 @@ export interface AiCoordinatorLike {
 export interface IpcDeps {
   data: DataLayer;
   settingsStore: SettingsStore;
-  /** hubStatus is the HubAwareSync extension; plain providers report hub 'off'. */
-  sync: (SyncProvider & { hubStatus?: () => HubSyncStatus | null }) | null;
+  /** hubStatus/hubActivity are HubAwareSync extensions; plain providers report hub 'off'. */
+  sync: ActivitySync | null;
   creditMeter: CreditMeter | null;
   coordinator: AiCoordinatorLike | null;
   /** Null until an OFAPI key exists (same lifecycle as sync). */
@@ -207,6 +221,9 @@ export function loadPersonalities(data: DataLayer): Personality[] {
 
 export function registerIpcHandlers(deps: IpcDeps): void {
   const { data, settingsStore } = deps;
+  /** Ops already counted into ai_spend_log.inserted — one accept per run,
+   *  however many parts the chatter inserts/copies. */
+  const acceptedOps = new Set<string>();
 
   ipcMain.handle('query:accounts.list', async () => {
     const settings = await settingsStore.get();
@@ -259,6 +276,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('query:sync.status', (): SyncStatusVM => {
     const snapshot = deps.creditMeter?.snapshot() ?? null;
     const syncStatus = deps.sync?.status() ?? { freshness: {}, state: 'offline' as const };
+    const today = utcDayOf(Date.now());
     return {
       creditsBalance: snapshot?.balance ?? null,
       creditsUsedToday: snapshot?.usedToday ?? 0,
@@ -266,7 +284,28 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       freshness: syncStatus.freshness,
       state: syncStatus.state,
       hub: deps.sync?.hubStatus?.() ?? 'off',
+      aiTodayUsd: aiTodayUsd(data, today),
+      sendsToday: sendsToday(data, today),
     };
+  });
+
+  // ── Settings → Activity panel (PLAN item 9; read-only) ──
+  ipcMain.handle('query:activity.summary', async () => {
+    const settings = await settingsStore.get();
+    return buildActivitySummary({
+      data,
+      sync: deps.sync,
+      creditMeter: deps.creditMeter,
+      aiKeys: {
+        hasAnthropicKey: settings.hasAnthropicKey,
+        hasOpenRouterKey: settings.hasOpenRouterKey,
+      },
+    });
+  });
+
+  ipcMain.handle('query:outbox.audit', (_event, rawArgs: unknown) => {
+    const args = z.object({ accountId: idSchema.optional() }).parse(rawArgs ?? {});
+    return auditOutbox(data, args.accountId !== undefined ? { accountId: args.accountId } : {});
   });
 
   ipcMain.handle('query:ai.pingGate', (_event, rawArgs: unknown) => {
@@ -382,8 +421,9 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     deps.coordinator?.cancel(operationId);
   });
 
-  // Acceptance-rate instrumentation (PRD §3): copy actions recorded next to the
-  // operation's usage event for the P2 pilot metrics.
+  // Acceptance-rate instrumentation (PRD §3): copy/insert actions recorded
+  // next to the operation's usage event (pilot metrics) AND in the durable
+  // ai_spend_log inserted counter (Activity panel "inserted" column).
   ipcMain.handle('cmd:ai.feedback', (_event, rawArgs: unknown) => {
     const args = aiFeedbackSchema.parse(rawArgs);
     // payload is the pending hub event JSON; acceptance rides alongside it
@@ -394,6 +434,31 @@ export function registerIpcHandlers(deps: IpcDeps): void {
          WHERE client_event_id = @id`,
       )
       .run({ part: args.partIndex ?? null, id: args.operationId });
+    // The queue row is authoritative for (feature, day) but drains once the
+    // hub is configured — fall back to the renderer-reported feature + today.
+    const row: unknown = data.db
+      .prepare('SELECT payload FROM usage_events WHERE client_event_id = @id')
+      .get({ id: args.operationId });
+    const payload = z
+      .object({ payload: z.string() })
+      .transform((value) => {
+        try {
+          return JSON.parse(value.payload) as unknown;
+        } catch {
+          return null;
+        }
+      })
+      .pipe(z.object({ feature: z.string(), completedAt: z.string() }).nullable().catch(null))
+      .safeParse(row);
+    const feature = payload.success && payload.data !== null ? payload.data.feature : args.feature;
+    const day =
+      payload.success && payload.data !== null
+        ? payload.data.completedAt.slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+    if (feature !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(day) && !acceptedOps.has(args.operationId)) {
+      acceptedOps.add(args.operationId);
+      data.aiSpendLog.markInserted(day, feature);
+    }
   });
 
   // ── Send pipeline (SPEC §7) ──

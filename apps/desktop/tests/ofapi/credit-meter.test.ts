@@ -26,6 +26,7 @@ describe('createCreditMeter', () => {
       usedToday: 1,
       rpmRemaining: 4999,
       utcDay: '2026-06-10',
+      usedTodayByPurpose: {},
     });
   });
 
@@ -109,5 +110,57 @@ describe('createCreditMeter', () => {
     const meter2 = createCreditMeter({ now: () => T0 });
     meter2.hydrate({ utcDay: '2026-06-09', usedToday: 999 });
     expect(meter2.snapshot().usedToday).toBe(0);
+  });
+
+  // ── per-purpose tallies (PLAN item 9 Activity ledger) ──────────────────
+
+  it('tallies requests and credits per purpose', () => {
+    const meter = createCreditMeter({ now: () => T0 });
+    meter.record({ meta: { _credits: { used: 1, balance: 10 } }, purpose: 'hot-poll' });
+    meter.record({ meta: { _credits: { used: 1, balance: 9 } }, purpose: 'hot-poll' });
+    meter.record({ meta: { _credits: { used: 5, balance: 4 } }, purpose: 'deep-sweep' });
+    expect(meter.snapshot().usedTodayByPurpose).toEqual({
+      'hot-poll': { requests: 2, credits: 2 },
+      'deep-sweep': { requests: 1, credits: 5 },
+    });
+    expect(meter.snapshot().usedToday).toBe(7);
+  });
+
+  it('counts a tagged request even when the response carries no telemetry (free endpoints)', () => {
+    const meter = createCreditMeter({ now: () => T0 });
+    meter.record({ meta: { something: 'else' }, purpose: 'send' });
+    expect(meter.snapshot().usedTodayByPurpose).toEqual({ send: { requests: 1, credits: 0 } });
+    expect(meter.snapshot().usedToday).toBe(0);
+  });
+
+  it('resets per-purpose tallies on UTC day flip', () => {
+    let nowMs = Date.parse('2026-06-10T23:59:30Z');
+    const meter = createCreditMeter({ now: () => nowMs });
+    meter.record({ meta: { _credits: { used: 5, balance: 100 } }, purpose: 'hot-poll' });
+    nowMs = Date.parse('2026-06-11T00:00:30Z');
+    expect(meter.snapshot().usedTodayByPurpose).toEqual({});
+  });
+
+  it('hydrate restores same-day per-purpose tallies', () => {
+    const meter = createCreditMeter({ now: () => T0 });
+    meter.hydrate({
+      utcDay: '2026-06-10',
+      usedToday: 12,
+      usedTodayByPurpose: { 'hot-poll': { requests: 10, credits: 10 }, media: { requests: 2, credits: 2 } },
+    });
+    meter.record({ meta: { _credits: { used: 1, balance: 10 } }, purpose: 'hot-poll' });
+    expect(meter.snapshot().usedTodayByPurpose).toEqual({
+      'hot-poll': { requests: 11, credits: 11 },
+      media: { requests: 2, credits: 2 },
+    });
+    expect(meter.snapshot().usedToday).toBe(13);
+  });
+
+  it('snapshot copies do not leak internal tally state', () => {
+    const meter = createCreditMeter({ now: () => T0 });
+    meter.record({ meta: { _credits: { used: 1, balance: 10 } }, purpose: 'media' });
+    const snap = meter.snapshot();
+    snap.usedTodayByPurpose['media']!.credits = 999;
+    expect(meter.snapshot().usedTodayByPurpose['media']).toEqual({ requests: 1, credits: 1 });
   });
 });

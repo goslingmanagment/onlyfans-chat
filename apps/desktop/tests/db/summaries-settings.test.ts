@@ -111,19 +111,127 @@ describe('settings(key, value JSON)', () => {
   });
 });
 
-describe('credit_log(day, used)', () => {
-  it('accumulates usage per day', () => {
-    layer.creditLog.add('2026-06-10', 3);
-    layer.creditLog.add('2026-06-10', 2);
-    layer.creditLog.add('2026-06-11', 1);
-    expect(layer.creditLog.usedOn('2026-06-10')).toBe(5);
+describe('credit_log(day, purpose, used, requests)', () => {
+  it('accumulates usage per day across purposes', () => {
+    layer.creditLog.add('2026-06-10', 'hot-poll', 3, 3);
+    layer.creditLog.add('2026-06-10', 'hot-poll', 2, 2);
+    layer.creditLog.add('2026-06-10', 'media', 4, 1);
+    layer.creditLog.add('2026-06-11', 'hot-poll', 1, 1);
+    expect(layer.creditLog.usedOn('2026-06-10')).toBe(9);
     expect(layer.creditLog.usedOn('2026-06-11')).toBe(1);
     expect(layer.creditLog.usedOn('2026-06-12')).toBe(0);
   });
 
-  it('rejects malformed day keys and negative credits', () => {
-    expect(() => layer.creditLog.add('06/10/2026', 1)).toThrow(/YYYY-MM-DD/);
-    expect(() => layer.creditLog.add('2026-06-10', -1)).toThrow(/non-negative/);
-    expect(() => layer.creditLog.add('2026-06-10', Number.NaN)).toThrow(/non-negative/);
+  it('returns per-purpose ledger rows for one day', () => {
+    layer.creditLog.add('2026-06-10', 'hot-poll', 5, 5);
+    layer.creditLog.add('2026-06-10', 'send', 0, 2);
+    layer.creditLog.add('2026-06-11', 'hot-poll', 1, 1);
+    expect(layer.creditLog.byPurposeOn('2026-06-10').sort((a, b) => a.purpose.localeCompare(b.purpose))).toEqual([
+      { purpose: 'hot-poll', requests: 5, credits: 5 },
+      { purpose: 'send', requests: 2, credits: 0 },
+    ]);
+    expect(layer.creditLog.byPurposeOn('2026-06-12')).toEqual([]);
+  });
+
+  it('returns daily totals since a day (pace window)', () => {
+    layer.creditLog.add('2026-06-08', 'hot-poll', 100, 100);
+    layer.creditLog.add('2026-06-10', 'hot-poll', 5, 5);
+    layer.creditLog.add('2026-06-10', 'media', 4, 1);
+    layer.creditLog.add('2026-06-11', 'hot-poll', 1, 1);
+    expect(layer.creditLog.totalsSince('2026-06-10')).toEqual([
+      { day: '2026-06-10', used: 9 },
+      { day: '2026-06-11', used: 1 },
+    ]);
+  });
+
+  it('rejects malformed day keys, empty purposes and negative counters', () => {
+    expect(() => layer.creditLog.add('06/10/2026', 'hot-poll', 1, 1)).toThrow(/YYYY-MM-DD/);
+    expect(() => layer.creditLog.add('2026-06-10', '', 1, 1)).toThrow(/purpose/);
+    expect(() => layer.creditLog.add('2026-06-10', 'hot-poll', -1, 0)).toThrow(/non-negative/);
+    expect(() => layer.creditLog.add('2026-06-10', 'hot-poll', Number.NaN, 0)).toThrow(/non-negative/);
+    expect(() => layer.creditLog.add('2026-06-10', 'hot-poll', 1, -1)).toThrow(/non-negative/);
+  });
+});
+
+describe('ai_spend_log(day, feature)', () => {
+  it('folds runs into per-day per-feature counters', () => {
+    layer.aiSpendLog.recordRun({
+      day: '2026-06-11',
+      feature: 'fast-reply',
+      isCacheHit: false,
+      inputTokens: 100,
+      cacheWriteTokens: 200,
+      cacheReadTokens: 300,
+      outputTokens: 50,
+      costMicroUsd: 12_000,
+      chatId: '101',
+    });
+    layer.aiSpendLog.recordRun({
+      day: '2026-06-11',
+      feature: 'fast-reply',
+      isCacheHit: true,
+      inputTokens: 0,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 0,
+      costMicroUsd: 0,
+      chatId: '102',
+    });
+    const rows = layer.aiSpendLog.rowsSince('2026-06-11');
+    expect(rows).toEqual([
+      {
+        day: '2026-06-11',
+        feature: 'fast-reply',
+        runs: 2,
+        cacheHitRuns: 1,
+        inserted: 0,
+        inputTokens: 100,
+        cacheWriteTokens: 200,
+        cacheReadTokens: 300,
+        outputTokens: 50,
+        costMicroUsd: 12_000,
+        topRunMicroUsd: 12_000,
+        topRunChatId: '101',
+      },
+    ]);
+  });
+
+  it('tracks the most expensive run with its chat', () => {
+    const base = {
+      day: '2026-06-11',
+      feature: 'fan-summary',
+      isCacheHit: false,
+      inputTokens: 0,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 0,
+    };
+    layer.aiSpendLog.recordRun({ ...base, costMicroUsd: 50_000, chatId: 'a' });
+    layer.aiSpendLog.recordRun({ ...base, costMicroUsd: 110_000, chatId: 'b' });
+    layer.aiSpendLog.recordRun({ ...base, costMicroUsd: 70_000, chatId: 'c' });
+    const row = layer.aiSpendLog.rowsSince('2026-06-11')[0];
+    expect(row?.topRunMicroUsd).toBe(110_000);
+    expect(row?.topRunChatId).toBe('b');
+    expect(row?.costMicroUsd).toBe(230_000);
+  });
+
+  it('markInserted increments, creating the row when missing (day-flip race)', () => {
+    layer.aiSpendLog.markInserted('2026-06-11', 'ping');
+    layer.aiSpendLog.markInserted('2026-06-11', 'ping');
+    const row = layer.aiSpendLog.rowsSince('2026-06-11')[0];
+    expect(row?.inserted).toBe(2);
+    expect(row?.runs).toBe(0);
+  });
+
+  it('rowsSince filters by day', () => {
+    layer.aiSpendLog.markInserted('2026-06-04', 'ping');
+    layer.aiSpendLog.markInserted('2026-06-11', 'ping');
+    expect(layer.aiSpendLog.rowsSince('2026-06-05')).toHaveLength(1);
+    expect(layer.aiSpendLog.rowsSince('2026-06-01')).toHaveLength(2);
+  });
+
+  it('rejects malformed day keys', () => {
+    expect(() => layer.aiSpendLog.markInserted('nope', 'ping')).toThrow(/YYYY-MM-DD/);
+    expect(() => layer.aiSpendLog.rowsSince('06/2026')).toThrow(/YYYY-MM-DD/);
   });
 });

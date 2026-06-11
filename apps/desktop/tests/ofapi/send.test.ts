@@ -33,7 +33,7 @@ describe('sendMessage (recorded fixture)', () => {
   it('POSTs JSON to …/chats/{chat_id}/messages and parses the created message byte-for-byte', async () => {
     const fixture = loadFixture('send-message-success.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    const message = await client.sendMessage({ accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'hey! just checking in 💬 (sample-marker-0001)' });
+    const message = await client.sendMessage({ purpose: 'send', accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'hey! just checking in 💬 (sample-marker-0001)' });
 
     const request = requests[0];
     expect(request?.method).toBe('POST');
@@ -56,7 +56,7 @@ describe('sendMessage (recorded fixture)', () => {
   it('includes only the provided optional fields in the JSON body', async () => {
     const fixture = loadFixture('send-message-success.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    await client.sendMessage({
+    await client.sendMessage({ purpose: 'send',
       accountId: ACCOUNT_ID,
       chatId: CHAT_ID,
       text: 'ppv for you',
@@ -79,7 +79,7 @@ describe('sendMessage (recorded fixture)', () => {
   it('records credit telemetry from the success _meta', async () => {
     const fixture = loadFixture('send-message-success.json');
     const { client } = makeClient([() => jsonResponse(fixture)]);
-    await client.sendMessage({ accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'hi' });
+    await client.sendMessage({ purpose: 'send', accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'hi' });
     expect(client.creditMeter.snapshot()).toMatchObject({ usedToday: 1, balance: 90000 });
   });
 
@@ -87,7 +87,7 @@ describe('sendMessage (recorded fixture)', () => {
     const fixture = loadFixture('send-message-restricted-400.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture, { status: 400 })]);
     const failure = await client
-      .sendMessage({ accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'haha no I do not even have a cashapp' })
+      .sendMessage({ accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'haha no I do not even have a cashapp', purpose: 'send' })
       .then(
         () => null,
         (error: unknown) => error,
@@ -115,7 +115,7 @@ describe('sendMessage (recorded fixture)', () => {
       sleep: instantSleep,
     });
     await expect(
-      client.sendMessage({ accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'hi' }),
+      client.sendMessage({ purpose: 'send', accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'hi' }),
     ).rejects.toMatchObject({ code: 'CG-NET-02' });
     expect(calls).toBe(1);
   });
@@ -132,7 +132,7 @@ describe('sendMessage (recorded fixture)', () => {
       },
     );
     await expect(
-      client.sendMessage({ accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'hi' }),
+      client.sendMessage({ purpose: 'send', accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'hi' }),
     ).rejects.toMatchObject({ code: 'CG-NET-01' });
     expect(requests).toHaveLength(1);
     expect(sleeps).toEqual([]);
@@ -143,7 +143,7 @@ describe('deleteMessage (recorded fixture)', () => {
   it('DELETEs …/messages/{id} and unwraps {success:true}', async () => {
     const fixture = loadFixture('delete-message-success.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    const result = await client.deleteMessage({
+    const result = await client.deleteMessage({ purpose: 'send',
       accountId: ACCOUNT_ID,
       chatId: CHAT_ID,
       messageId: MESSAGE_ID,
@@ -165,7 +165,7 @@ describe('likeMessage / unlikeMessage (openapi.json shape)', () => {
 
   it('likeMessage POSTs …/like and parses {success,isLiked}', async () => {
     const { client, requests } = makeClient([() => jsonResponse(likeBody)]);
-    const result = await client.likeMessage({
+    const result = await client.likeMessage({ purpose: 'send',
       accountId: ACCOUNT_ID,
       chatId: CHAT_ID,
       messageId: MESSAGE_ID,
@@ -179,7 +179,7 @@ describe('likeMessage / unlikeMessage (openapi.json shape)', () => {
 
   it('unlikeMessage DELETEs …/unlike (openapi-verified method)', async () => {
     const { client, requests } = makeClient([() => jsonResponse(unlikeBody)]);
-    const result = await client.unlikeMessage({
+    const result = await client.unlikeMessage({ purpose: 'send',
       accountId: ACCOUNT_ID,
       chatId: CHAT_ID,
       messageId: MESSAGE_ID,
@@ -198,7 +198,7 @@ describe('startTyping / markChatRead', () => {
   it('startTyping POSTs …/typing with no body and resolves void', async () => {
     const { client, requests } = makeClient([() => jsonResponse(successBody)]);
     await expect(
-      client.startTyping({ accountId: ACCOUNT_ID, chatId: CHAT_ID }),
+      client.startTyping({ purpose: 'send', accountId: ACCOUNT_ID, chatId: CHAT_ID }),
     ).resolves.toBeUndefined();
     const request = requests[0];
     expect(request?.method).toBe('POST');
@@ -210,7 +210,7 @@ describe('startTyping / markChatRead', () => {
     const { client, requests } = makeClient([
       () => jsonResponse({ data: { success: true }, _meta: {} }),
     ]);
-    const result = await client.markChatRead({ accountId: ACCOUNT_ID, chatId: CHAT_ID });
+    const result = await client.markChatRead({ purpose: 'send', accountId: ACCOUNT_ID, chatId: CHAT_ID });
     expect(result).toEqual({ success: true });
     expect(requests[0]?.method).toBe('POST');
     expect(new URL(requests[0]?.url ?? '').pathname).toBe(
@@ -229,7 +229,7 @@ describe('non-JSON error bodies (live: 405 returns an HTML page)', () => {
         }),
     ]);
     await expect(
-      client.sendMessage({ accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'hi' }),
+      client.sendMessage({ purpose: 'send', accountId: ACCOUNT_ID, chatId: CHAT_ID, text: 'hi' }),
     ).rejects.toMatchObject({ code: 'CG-APP-01' });
     expect(requests).toHaveLength(1);
   });

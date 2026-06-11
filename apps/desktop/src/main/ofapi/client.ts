@@ -11,7 +11,7 @@
 // /api/whoami a bare object (verified live 2026-06-10).
 
 import { z } from 'zod';
-import { OFAPI_REQUEST_TIMEOUT_MS } from '@chatgoose/shared';
+import { OFAPI_REQUEST_TIMEOUT_MS, type OfApiPurpose } from '@chatgoose/shared';
 import type { operations } from './ofapi.gen';
 import { createCreditMeter } from './credit-meter';
 import type { CreditMeter, CreditMeterListener } from './credit-meter';
@@ -100,7 +100,16 @@ export interface OfApiClientOptions {
   fixtureCapture?: FixtureCapture;
 }
 
-export interface ListChatsParams {
+/**
+ * Every call site declares WHY the request happens (PLAN item 9 credit
+ * ledger) — required so the compiler keeps the tagging exhaustive; the meter
+ * tallies per-purpose request/credit counters off it.
+ */
+export interface PurposeTagged {
+  purpose: OfApiPurpose;
+}
+
+export interface ListChatsParams extends PurposeTagged {
   accountId: string;
   limit?: number;
   offset?: number;
@@ -110,7 +119,7 @@ export interface ListChatsParams {
   skipUsers?: SkipUsers;
 }
 
-export interface ListMessagesParams {
+export interface ListMessagesParams extends PurposeTagged {
   accountId: string;
   chatId: string;
   limit?: number;
@@ -122,7 +131,7 @@ export interface ListMessagesParams {
   skipUsers?: SkipUsers;
 }
 
-export interface ListTransactionsParams {
+export interface ListTransactionsParams extends PurposeTagged {
   accountId: string;
   type?: TransactionType;
   marker?: number;
@@ -130,7 +139,7 @@ export interface ListTransactionsParams {
   limit?: number;
 }
 
-export interface ListFansParams {
+export interface ListFansParams extends PurposeTagged {
   accountId: string;
   /** Upstream max 20. */
   limit?: number;
@@ -138,7 +147,7 @@ export interface ListFansParams {
   query?: string;
 }
 
-export interface SendMessageParams {
+export interface SendMessageParams extends PurposeTagged {
   accountId: string;
   chatId: string;
   text: string;
@@ -153,13 +162,13 @@ export interface SendMessageParams {
   previews?: ReadonlyArray<string | number>;
 }
 
-export interface MessageRefParams {
+export interface MessageRefParams extends PurposeTagged {
   accountId: string;
   chatId: string;
   messageId: string;
 }
 
-export interface ChatRefParams {
+export interface ChatRefParams extends PurposeTagged {
   accountId: string;
   chatId: string;
 }
@@ -169,7 +178,7 @@ export interface ChatRefParams {
 export type VaultSortField = 'recent' | 'most-liked' | 'highest-tips';
 export type VaultMediaType = 'photo' | 'gif' | 'video' | 'audio';
 
-export interface ListVaultMediaParams {
+export interface ListVaultMediaParams extends PurposeTagged {
   accountId: string;
   /** Free-text search. */
   query?: string;
@@ -183,14 +192,14 @@ export interface ListVaultMediaParams {
   offset?: number;
 }
 
-export interface ListVaultListsParams {
+export interface ListVaultListsParams extends PurposeTagged {
   accountId: string;
   query?: string;
   limit?: number;
   offset?: number;
 }
 
-export interface ListChatMediaParams {
+export interface ListChatMediaParams extends PurposeTagged {
   accountId: string;
   chatId: string;
   type?: VaultMediaType;
@@ -198,7 +207,7 @@ export interface ListChatMediaParams {
   offset?: number;
 }
 
-export interface UploadVaultMediaParams {
+export interface UploadVaultMediaParams extends PurposeTagged {
   accountId: string;
   /** Original file name (multipart filename hint). */
   fileName: string;
@@ -214,16 +223,16 @@ export type VaultUploadOutcome =
 
 export interface OfApiClient {
   readonly creditMeter: CreditMeter;
-  listAccounts(): Promise<OfApiAccount[]>;
-  whoami(): Promise<OfApiWhoami>;
+  listAccounts(params?: Partial<PurposeTagged>): Promise<OfApiAccount[]>;
+  whoami(params?: Partial<PurposeTagged>): Promise<OfApiWhoami>;
   listChats(params: ListChatsParams): Promise<{ chats: OfApiChat[]; nextPageUrl: string | null }>;
   listMessages(
     params: ListMessagesParams,
   ): Promise<{ messages: OfApiMessage[]; nextPageUrl: string | null }>;
-  getMessage(params: { accountId: string; chatId: string; messageId: string }): Promise<OfApiMessage>;
-  getUserByUsername(params: { accountId: string; username: string }): Promise<OfApiUser>;
+  getMessage(params: PurposeTagged & { accountId: string; chatId: string; messageId: string }): Promise<OfApiMessage>;
+  getUserByUsername(params: PurposeTagged & { accountId: string; username: string }): Promise<OfApiUser>;
   /** Mass-list, credit saver: up to 10 ids per call. */
-  getUsersByIds(params: {
+  getUsersByIds(params: PurposeTagged & {
     accountId: string;
     ids: ReadonlyArray<string | number>;
   }): Promise<Record<string, OfApiUser>>;
@@ -239,7 +248,7 @@ export interface OfApiClient {
   listVaultMedia(params: ListVaultMediaParams): Promise<{ items: OfApiVaultMedia[]; hasMore: boolean }>;
   /** Vault lists = albums. Listing a list's media uses listVaultMedia({listId}). */
   listVaultLists(params: ListVaultListsParams): Promise<{ lists: OfApiVaultList[]; hasMore: boolean }>;
-  getVaultMedia(params: { accountId: string; mediaId: string | number }): Promise<OfApiVaultMedia>;
+  getVaultMedia(params: PurposeTagged & { accountId: string; mediaId: string | number }): Promise<OfApiVaultMedia>;
   /** Chat media gallery: message objects carrying their media. */
   listChatMedia(params: ListChatMediaParams): Promise<{
     messages: OfApiChatMediaMessage[];
@@ -247,7 +256,7 @@ export interface OfApiClient {
     nextLastId: string | null;
   }>;
   /** Free polling endpoint for async uploads (no credits). */
-  getUploadStatus(params: { accountId: string; uploadId: string }): Promise<OfApiUploadStatus>;
+  getUploadStatus(params: PurposeTagged & { accountId: string; uploadId: string }): Promise<OfApiUploadStatus>;
   /**
    * Multipart vault upload (3 credits/MB — run estimateUploadCredits first).
    * Write path: retry 'none' (a retried upload double-bills credits).
@@ -313,6 +322,8 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     /** Longer deadline for large multipart bodies. */
     timeoutMs?: number;
     retry: RetryPolicy;
+    /** Call-site purpose — drives the per-purpose credit/request tallies. */
+    purpose: OfApiPurpose;
   }
 
   async function requestJson(spec: RequestSpec): Promise<unknown> {
@@ -357,6 +368,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     creditMeter.record({
       headers: response.headers,
       meta: metaCarrier.success ? metaCarrier.data._meta : undefined,
+      purpose: spec.purpose,
     });
 
     if (options.fixtureCapture?.enabled) {
@@ -385,10 +397,11 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
 
   function getJson(
     accountKey: string,
+    purpose: OfApiPurpose,
     path: string,
     query: Record<string, QueryValue> = {},
   ): Promise<unknown> {
-    return requestJson({ accountKey, method: 'GET', path, query, retry: 'idempotent' });
+    return requestJson({ accountKey, method: 'GET', path, query, retry: 'idempotent', purpose });
   }
 
   function parseWith<T>(schema: z.ZodType<T>, value: unknown, url: string): T {
@@ -428,7 +441,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       throw usageError(`listFans: upstream limit max is ${FANS_LIST_MAX_LIMIT}`);
     }
     const path = accountPath(params.accountId, endpoint);
-    const payload = await getJson(params.accountId, path, {
+    const payload = await getJson(params.accountId, params.purpose, path, {
       limit: params.limit,
       offset: params.offset,
       query: params.query,
@@ -441,23 +454,23 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
   return {
     creditMeter,
 
-    async listAccounts(): Promise<OfApiAccount[]> {
+    async listAccounts(params?: Partial<PurposeTagged>): Promise<OfApiAccount[]> {
       const path = '/accounts';
       // Bare top-level array — no envelope (live-verified).
-      const payload = await getJson(GLOBAL_KEY, path);
+      const payload = await getJson(GLOBAL_KEY, params?.purpose ?? 'hydration', path);
       return parseWith(z.array(ofapiAccountSchema), payload, path);
     },
 
-    async whoami(): Promise<OfApiWhoami> {
+    async whoami(params?: Partial<PurposeTagged>): Promise<OfApiWhoami> {
       const path = '/whoami';
       // Bare object — no envelope (live-verified).
-      const payload = await getJson(GLOBAL_KEY, path);
+      const payload = await getJson(GLOBAL_KEY, params?.purpose ?? 'hydration', path);
       return parseWith(ofapiWhoamiSchema, payload, path);
     },
 
     async listChats(params): Promise<{ chats: OfApiChat[]; nextPageUrl: string | null }> {
       const path = accountPath(params.accountId, '/chats');
-      const payload = await getJson(params.accountId, path, {
+      const payload = await getJson(params.accountId, params.purpose, path, {
         limit: params.limit ?? 50,
         offset: params.offset,
         order: params.order ?? 'recent',
@@ -485,7 +498,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         params.accountId,
         `/chats/${encodeURIComponent(params.chatId)}/messages`,
       );
-      const payload = await getJson(params.accountId, path, {
+      const payload = await getJson(params.accountId, params.purpose, path, {
         limit: params.limit ?? 100,
         order,
         first_id: params.firstId,
@@ -501,14 +514,14 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         params.accountId,
         `/chats/${encodeURIComponent(params.chatId)}/messages/${encodeURIComponent(params.messageId)}`,
       );
-      const payload = await getJson(params.accountId, path);
+      const payload = await getJson(params.accountId, params.purpose, path);
       const { data } = unwrapEnvelope(payload, path);
       return parseWith(ofapiMessageSchema, data, path);
     },
 
     async getUserByUsername(params): Promise<OfApiUser> {
       const path = accountPath(params.accountId, `/users/${encodeURIComponent(params.username)}`);
-      const payload = await getJson(params.accountId, path);
+      const payload = await getJson(params.accountId, params.purpose, path);
       const { data } = unwrapEnvelope(payload, path);
       return parseWith(ofapiUserSchema, data, path);
     },
@@ -523,7 +536,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         );
       }
       const path = accountPath(params.accountId, '/users/list');
-      const payload = await getJson(params.accountId, path, { ids: params.ids.join(',') });
+      const payload = await getJson(params.accountId, params.purpose, path, { ids: params.ids.join(',') });
       const { data } = unwrapEnvelope(payload, path);
       return parseWith(ofapiUsersByIdSchema, data, path);
     },
@@ -535,7 +548,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       nextPageUrl: string | null;
     }> {
       const path = accountPath(params.accountId, '/transactions');
-      const payload = await getJson(params.accountId, path, {
+      const payload = await getJson(params.accountId, params.purpose, path, {
         limit: params.limit,
         type: params.type,
         marker: params.marker,
@@ -564,7 +577,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         throw usageError(`listVaultMedia: upstream limit max is ${VAULT_LIST_MAX_LIMIT}`);
       }
       const path = accountPath(params.accountId, '/media/vault');
-      const payload = await getJson(params.accountId, path, {
+      const payload = await getJson(params.accountId, params.purpose, path, {
         query: params.query,
         field: params.field,
         type: params.type,
@@ -580,7 +593,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
 
     async listVaultLists(params): Promise<{ lists: OfApiVaultList[]; hasMore: boolean }> {
       const path = accountPath(params.accountId, '/media/vault/lists');
-      const payload = await getJson(params.accountId, path, {
+      const payload = await getJson(params.accountId, params.purpose, path, {
         query: params.query,
         limit: params.limit,
         offset: params.offset,
@@ -595,7 +608,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         params.accountId,
         `/media/vault/${encodeURIComponent(String(params.mediaId))}`,
       );
-      const payload = await getJson(params.accountId, path);
+      const payload = await getJson(params.accountId, params.purpose, path);
       const { data } = unwrapEnvelope(payload, path);
       return parseWith(ofapiVaultMediaSchema, data, path);
     },
@@ -606,7 +619,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       nextLastId: string | null;
     }> {
       const path = chatPath(params, '/media');
-      const payload = await getJson(params.accountId, path, {
+      const payload = await getJson(params.accountId, params.purpose, path, {
         type: params.type,
         limit: params.limit,
         offset: params.offset,
@@ -628,7 +641,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         `/media/uploads/${encodeURIComponent(params.uploadId)}/status`,
       );
       // Bare object — no envelope (openapi-verified); free, no credits.
-      const payload = await getJson(params.accountId, path);
+      const payload = await getJson(params.accountId, params.purpose, path);
       return parseWith(ofapiUploadStatusSchema, payload, path);
     },
 
@@ -657,6 +670,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         // Large multipart bodies outlive the default API deadline.
         timeoutMs: UPLOAD_TIMEOUT_MS,
         retry: 'none', // credits are billed per attempt — never auto-retry
+        purpose: params.purpose,
       });
       // async=true → 202 with a BARE {status,prefixed_id,polling_url} (no
       // envelope); the sync 200 envelope carries none of those keys.
@@ -689,6 +703,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
           ...(params.previews !== undefined ? { previews: [...params.previews] } : {}),
         },
         retry: 'none',
+        purpose: params.purpose,
       });
       const { data } = unwrapEnvelope(payload, path);
       return parseWith(ofapiSentMessageSchema, data, path);
@@ -702,6 +717,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         method: 'DELETE',
         path,
         retry: 'none',
+        purpose: params.purpose,
       });
       const { data } = unwrapEnvelope(payload, path);
       return { success: parseWith(ofapiSuccessDataSchema, data, path).success };
@@ -714,6 +730,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         method: 'POST',
         path,
         retry: 'none',
+        purpose: params.purpose,
       });
       const { data } = unwrapEnvelope(payload, path);
       return parseWith(ofapiLikeDataSchema, data, path);
@@ -726,6 +743,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         method: 'DELETE',
         path,
         retry: 'none',
+        purpose: params.purpose,
       });
       const { data } = unwrapEnvelope(payload, path);
       return parseWith(ofapiLikeDataSchema, data, path);
@@ -739,6 +757,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         method: 'POST',
         path,
         retry: 'none',
+        purpose: params.purpose,
       });
       unwrapEnvelope(payload, path);
     },
@@ -750,6 +769,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         method: 'POST',
         path,
         retry: 'none',
+        purpose: params.purpose,
       });
       const { data } = unwrapEnvelope(payload, path);
       return { success: parseWith(ofapiSuccessDataSchema, data, path).success };

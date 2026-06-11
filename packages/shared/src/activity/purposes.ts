@@ -1,0 +1,41 @@
+// Why every OFAPI request happens (SPEC §5 credit telemetry; PLAN item 9).
+// Every OfApiClient call site is compiler-forced to declare one of these; the
+// credit meter tallies per-purpose and credit_log persists per-day rows.
+
+export const OFAPI_PURPOSES = [
+  'hot-poll',
+  'deep-sweep',
+  'hydration',
+  'message-tail',
+  'media',
+  'scan-deep-fetch',
+  'send',
+  'vault',
+  'spend-sweep',
+] as const;
+
+export type OfApiPurpose = (typeof OFAPI_PURPOSES)[number];
+
+/** credit_log rows recorded before per-purpose tagging existed (migration v7). */
+export const UNTAGGED_PURPOSE = 'untagged';
+
+/**
+ * Ledger row labels (mockup wording where the mockup names the row). Keyed by
+ * string so legacy 'untagged' and forward-compat purposes still render.
+ */
+export const OFAPI_PURPOSE_LABELS: Readonly<Record<string, string>> = {
+  'hot-poll': 'Hot polls (new-message detector)',
+  'deep-sweep': 'Deep sweeps (older chats)',
+  'hydration': 'Hydration (chat-list backfill, fan details)',
+  'message-tail': 'Message fetches (changed chats)',
+  'media': 'Media downloads',
+  'scan-deep-fetch': 'Scan deep fetches',
+  'send': 'Sends & delivery checks',
+  'vault': 'Vault browsing & uploads',
+  'spend-sweep': 'Fan-spend sweeps',
+  [UNTAGGED_PURPOSE]: 'Untagged (recorded before this update)',
+};
+
+export function purposeLabel(purpose: string): string {
+  return OFAPI_PURPOSE_LABELS[purpose] ?? purpose;
+}

@@ -119,6 +119,87 @@ export interface SyncStatusVM {
   state: 'live' | 'degraded' | 'offline';
   /** Agency Hub SSE stream state (SPEC §6.2/§9); 'off' = hub not configured. */
   hub: 'off' | 'connecting' | 'live' | 'degraded' | 'auth-failed' | 'stopped';
+  /** Status bar "AI TODAY" aggregate (UTC day, ai_spend_log total). */
+  aiTodayUsd: number;
+  /** Status bar "SENDS" aggregate (UTC day, outbox state transitions). */
+  sendsToday: { sent: number; failed: number; unconfirmed: number };
+}
+
+// ─── Settings → Activity panel (PLAN item 9; binding mockup
+//     docs/mockups/experiments/activity-panel.html) ──────────────────────
+
+export interface ActivityAccountFlowVM {
+  accountId: string;
+  name: string;
+  /** ISO of the last successful chat-list poll; null before the first one. */
+  lastPolledAt: string | null;
+  /** Effective cadence after focus/hidden/budget/hub factors; null = not polling. */
+  pollIntervalMs: number | null;
+}
+
+export interface ActivityVM {
+  /** The status-bar mode word matches this panel badge. */
+  mode: 'polling' | 'hub-live';
+  syncState: 'live' | 'degraded' | 'offline';
+  accounts: ActivityAccountFlowVM[];
+  deepSweepEveryMs: number | null;
+  hub: {
+    status: SyncStatusVM['hub'];
+    lastEventAt: string | null;
+    lastEventType: string | null;
+    eventsToday: number;
+    liveSince: string | null;
+    statusChangedAt: string | null;
+    droppedFrames: number;
+    /** usage_events rows awaiting upload to core (parked when hub is off). */
+    pendingUsageEvents: number;
+    /** HTTP-400 events held back forever (never resent). */
+    quarantinedUsageEvents: number;
+    pendingSummaries: number;
+    syncedSummariesToday: number;
+  };
+  ai: { hasAnthropicKey: boolean; hasOpenRouterKey: boolean };
+  /** Today's outbox transitions (UTC). */
+  sends: { sent: number; failed: number; unconfirmed: number };
+  credits: {
+    rows: { purpose: string; requests: number; credits: number }[];
+    totalRequests: number;
+    totalCredits: number;
+    balance: number | null;
+    estimatedDaysLeft: number | null;
+    rpmRemaining: number | null;
+  };
+  aiSpend: {
+    rows: {
+      feature: string;
+      runs: number;
+      /** Null = feature has no insert affordance (renders an em dash). */
+      inserted: number | null;
+      tokens: number;
+      costUsd: number;
+    }[];
+    totals: {
+      runs: number;
+      inserted: number;
+      insertableRuns: number;
+      tokens: number;
+      costUsd: number;
+    };
+    cacheReadShare: number | null;
+    topRun: { feature: string; costUsd: number; fanLabel: string | null } | null;
+    sevenDayUsd: number;
+  };
+}
+
+/** Mirror of send/audit.ts OutboxAuditReport (contract stays main-import-free). */
+export interface OutboxAuditReportVM {
+  accountId: string | null;
+  totals: Record<OutboxStateVM, number>;
+  doubleClaims: { messageId: string; localIds: string[] }[];
+  suspectDuplicates: { chatId: string; text: string; localIds: string[]; messageIds: string[] }[];
+  staleUnconfirmed: { localId: string; chatId: string; ageMs: number }[];
+  sentMissingFromMessages: { localId: string; chatId: string; messageId: string }[];
+  cleanSends: number;
 }
 
 export interface SettingsVM {
@@ -177,11 +258,14 @@ export interface AiStartRequest {
 /**
  * Acceptance instrumentation (PRD §3): every copy (P2 companion mode) or
  * insert (P3+) of an AI draft. `partIndex` 0 = all parts, 1..N = part N.
+ * `feature` lets main increment the durable ai_spend_log inserted counter
+ * even after the usage_events row drained to the hub (Activity panel).
  */
 export interface AiFeedbackRequest {
   operationId: string;
   action: 'copied' | 'inserted';
   partIndex: number;
+  feature?: FeatureType;
 }
 
 export interface DbChangedEvent {
@@ -298,6 +382,10 @@ export interface InvokeChannels {
   'query:settings.get': { args: void; result: SettingsVM };
   'query:personalities.list': { args: void; result: Personality[] };
   'query:sync.status': { args: void; result: SyncStatusVM };
+  /** Settings → Activity panel: data flow + credit/AI ledgers (read-only). */
+  'query:activity.summary': { args: void; result: ActivityVM };
+  /** RUN OUTBOX AUDIT button — read-only sweep over the outbox audit trail. */
+  'query:outbox.audit': { args: { accountId?: string }; result: OutboxAuditReportVM };
   'query:ai.pingGate': { args: { accountId: string; chatId: string }; result: PingGateVM };
   'cmd:conversation.open': {
     args: { accountId: string; chatId: string };
@@ -435,6 +523,8 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:settings.get': true,
   'query:personalities.list': true,
   'query:sync.status': true,
+  'query:activity.summary': true,
+  'query:outbox.audit': true,
   'query:ai.pingGate': true,
   'cmd:conversation.open': true,
   'cmd:conversation.close': true,

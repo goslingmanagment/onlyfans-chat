@@ -122,7 +122,7 @@ export function createVaultService(options: VaultServiceOptions): VaultService {
   async function pollUntilSettled(accountId: string, uploadId: string): Promise<OfApiUploadStatus> {
     const deadline = now() + UPLOAD_POLL_TIMEOUT_MS;
     for (;;) {
-      const status = await client.getUploadStatus({ accountId, uploadId });
+      const status = await client.getUploadStatus({ accountId, uploadId, purpose: 'vault' });
       if (status.status === 'completed' || status.status === 'failed') {
         return status;
       }
@@ -137,6 +137,7 @@ export function createVaultService(options: VaultServiceOptions): VaultService {
     async listVault({ accountId, albumId, query, offset }) {
       const from = offset ?? 0;
       const { items, hasMore } = await client.listVaultMedia({
+        purpose: 'vault',
         accountId,
         limit: VAULT_PAGE_LIMIT,
         offset: from,
@@ -152,7 +153,7 @@ export function createVaultService(options: VaultServiceOptions): VaultService {
 
     async listAlbums({ accountId }) {
       // One page covers realistic album counts; system buckets come first upstream.
-      const { lists } = await client.listVaultLists({ accountId, limit: 100 });
+      const { lists } = await client.listVaultLists({ accountId, limit: 100, purpose: 'vault' });
       return lists.map((list) => ({
         id: String(list.id),
         name: list.name ?? String(list.id),
@@ -168,6 +169,7 @@ export function createVaultService(options: VaultServiceOptions): VaultService {
     async chatGallery({ accountId, chatId, offset }) {
       const from = offset ?? 0;
       const { messages, hasMore } = await client.listChatMedia({
+        purpose: 'media',
         accountId,
         chatId,
         limit: GALLERY_PAGE_LIMIT,
@@ -221,6 +223,7 @@ export function createVaultService(options: VaultServiceOptions): VaultService {
       pickedFiles.delete(fileToken); // one-shot: a retry must re-pick (re-preflight)
       const data = await readFileBytes(picked.path);
       const outcome = await client.uploadVaultMedia({
+        purpose: 'vault',
         accountId,
         fileName: picked.name,
         data,

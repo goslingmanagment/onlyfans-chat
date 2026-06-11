@@ -14,6 +14,7 @@ export * from './llm/capabilities';
 export * from './llm/cost';
 export * from './llm/sse';
 export * from './transcript/index';
+export * from './activity/index';
 export * from './context/spending';
 export * from './context/subscription';
 export * from './protocol/index';

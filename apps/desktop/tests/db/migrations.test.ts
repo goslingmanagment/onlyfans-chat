@@ -33,9 +33,18 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
-      expect(SCHEMA_VERSION).toBe(6);
+      expect(SCHEMA_VERSION).toBe(7);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       expect(names).toContain('media_urls');
+      // v7: per-purpose credit ledger + the durable AI spend ledger
+      const creditCols = layer.db
+        .prepare("SELECT name FROM pragma_table_info('credit_log')")
+        .all()
+        .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
+      for (const col of ['day', 'purpose', 'used', 'requests']) {
+        expect(creditCols).toContain(col);
+      }
+      expect(names).toContain('ai_spend_log');
       const chatCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('chats')")
         .all()
@@ -151,6 +160,35 @@ describe('migration runner', () => {
       media_files: '[3866342509,"ofapi_media_abc"]',
       previews: '[3866342509]',
     });
+    db.close();
+  });
+
+  it('v6 → v7 preserves credit_log history under the untagged purpose', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 6));
+    expect(readSchemaVersion(db)).toBe(6);
+
+    db.exec("INSERT INTO credit_log (day, used) VALUES ('2026-06-10', 480)");
+    db.exec("INSERT INTO credit_log (day, used) VALUES ('2026-06-11', 75)");
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 6, to: SCHEMA_VERSION });
+
+    const rows = db
+      .prepare('SELECT day, purpose, used, requests FROM credit_log ORDER BY day')
+      .all();
+    expect(rows).toEqual([
+      { day: '2026-06-10', purpose: 'untagged', used: 480, requests: 0 },
+      { day: '2026-06-11', purpose: 'untagged', used: 75, requests: 0 },
+    ]);
+
+    // the new shape is writable per purpose
+    db.exec(
+      "INSERT INTO credit_log (day, purpose, used, requests) VALUES ('2026-06-11', 'hot-poll', 12, 12)",
+    );
+    const total: unknown = db
+      .prepare("SELECT SUM(used) AS used FROM credit_log WHERE day = '2026-06-11'")
+      .get();
+    expect(total).toEqual({ used: 87 });
     db.close();
   });
 

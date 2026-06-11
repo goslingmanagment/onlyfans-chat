@@ -329,6 +329,7 @@ export function copyDockPart(partIndex: number): void {
     operationId: state.op.operationId,
     action: 'copied',
     partIndex,
+    feature: state.op.feature,
   });
 }
 
@@ -353,6 +354,7 @@ export function activateDockPart(partIndex: number, ctx: { canSend: boolean }): 
     operationId: state.op.operationId,
     action: action.feedback,
     partIndex,
+    feature: state.op.feature,
   });
 }
 

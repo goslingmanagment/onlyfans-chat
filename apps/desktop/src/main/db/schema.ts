@@ -201,6 +201,43 @@ CREATE INDEX idx_fan_tx_fan ON fan_transactions (account_id, fan_id, created_at)
 CREATE INDEX idx_fan_tx_created ON fan_transactions (account_id, created_at);
 `;
 
+// v7 — Activity panel ledgers (PLAN item 9).
+// credit_log becomes per-day per-purpose (requests + credits): the PK change
+// requires a rename-copy-drop, with pre-v7 rows preserved under the 'untagged'
+// purpose so historical totals survive.
+// ai_spend_log is the DURABLE per-day per-feature AI ledger: usage_events is a
+// hub upload queue that DRAINS once core is configured, so the panel needs its
+// own additive counters (runs / inserted / tokens / cost in integer micro-USD).
+export const SCHEMA_V7 = `
+ALTER TABLE credit_log RENAME TO credit_log_v6;
+CREATE TABLE credit_log (
+  day TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0,
+  requests INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, purpose)
+);
+INSERT INTO credit_log (day, purpose, used, requests)
+  SELECT day, 'untagged', used, 0 FROM credit_log_v6;
+DROP TABLE credit_log_v6;
+
+CREATE TABLE ai_spend_log (
+  day TEXT NOT NULL,
+  feature TEXT NOT NULL,
+  runs INTEGER NOT NULL DEFAULT 0,
+  cache_hit_runs INTEGER NOT NULL DEFAULT 0,
+  inserted INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_microusd INTEGER NOT NULL DEFAULT 0,
+  top_run_microusd INTEGER NOT NULL DEFAULT 0,
+  top_run_chat_id TEXT,
+  PRIMARY KEY (day, feature)
+);
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',
@@ -214,4 +251,5 @@ export const ALL_TABLES = [
   'usage_events',
   'credit_log',
   'fan_transactions',
+  'ai_spend_log',
 ] as const;

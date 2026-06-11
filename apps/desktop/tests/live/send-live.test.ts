@@ -41,7 +41,7 @@ describe.skipIf(!ENABLED)('LIVE send-pipeline gate check (test fan only)', () =>
 
     try {
       // The engine gates on the chats row — seed it from reality (read-only).
-      const tail = await client.listMessages({ accountId: ACCOUNT_ID, chatId, limit: 5 });
+      const tail = await client.listMessages({ purpose: 'message-tail', accountId: ACCOUNT_ID, chatId, limit: 5 });
       data.chats.upsert({
         accountId: ACCOUNT_ID,
         chatId,

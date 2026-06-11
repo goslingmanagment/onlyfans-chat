@@ -18,19 +18,20 @@ export function AppShell(): React.JSX.Element {
   const listCollapsed = useUiStore((s) => s.listCollapsed);
   const panelCollapsed = useUiStore((s) => s.panelCollapsed);
   const selectedAccountId = useUiStore((s) => s.selectedAccountId);
-  const selectAccount = useUiStore((s) => s.selectAccount);
+  const setDefaultAccount = useUiStore((s) => s.setDefaultAccount);
 
   const accounts = useAccounts();
   const settings = useSettings();
   const setFromSettings = useSettingsCache((s) => s.setFromSettings);
 
-  // default account selection once accounts load
+  // default account selection once accounts load — selection only, never a
+  // view switch (a boot into Settings must stay there)
   useEffect(() => {
     if (selectedAccountId === null) {
       const first = accounts.data?.[0];
-      if (first !== undefined) selectAccount(first.id);
+      if (first !== undefined) setDefaultAccount(first.id);
     }
-  }, [accounts.data, selectedAccountId, selectAccount]);
+  }, [accounts.data, selectedAccountId, setDefaultAccount]);
 
   // mirror notification-relevant settings for the event layer
   useEffect(() => {
