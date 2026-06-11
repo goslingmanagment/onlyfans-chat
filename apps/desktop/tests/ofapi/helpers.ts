@@ -21,6 +21,8 @@ export interface RecordedRequest {
   url: string;
   method: string;
   headers: Record<string, string>;
+  /** Raw request body string when one was sent (JSON for write paths). */
+  body?: string;
 }
 
 /** fetch stub: serves queued responses (last one repeats) and records requests. */
@@ -40,7 +42,12 @@ export function stubFetch(responses: Array<() => Response>): {
         headers[name] = value;
       });
     }
-    requests.push({ url, method: init?.method ?? 'GET', headers });
+    requests.push({
+      url,
+      method: init?.method ?? 'GET',
+      headers,
+      ...(typeof init?.body === 'string' ? { body: init.body } : {}),
+    });
     const factory = responses[Math.min(index, responses.length - 1)];
     index += 1;
     if (!factory) throw new Error('stubFetch: no responses queued');

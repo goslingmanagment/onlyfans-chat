@@ -1,5 +1,7 @@
 // OFAPI client layer (SPEC §5) — factories the composition root wires.
-// READ-ONLY toward OFAPI in this phase: GET endpoints only.
+// Reads retry idempotently; the SPEC §7 write paths run with retry:'none'
+// (exactly one attempt) and the outbox classifies failures via
+// classifySendFailure — indeterminate outcomes are NEVER auto-retried.
 
 export { createOfApiClient, OFAPI_BASE_URL, USERS_MASS_LIST_MAX_IDS, FANS_LIST_MAX_LIMIT } from './client';
 export type {
@@ -14,6 +16,9 @@ export type {
   ListMessagesParams,
   ListTransactionsParams,
   ListFansParams,
+  SendMessageParams,
+  MessageRefParams,
+  ChatRefParams,
 } from './client';
 
 export {
@@ -26,7 +31,18 @@ export {
   RATE_LIMIT_BACKOFF_MS,
   SERVER_ERROR_RETRY_DELAYS_MS,
 } from './rate-limiter';
-export type { RateLimiter, RateLimiterOptions, RequestExecutor, RetryableResponse, SleepFn } from './rate-limiter';
+export type {
+  RateLimiter,
+  RateLimiterOptions,
+  RequestExecutor,
+  RetryableResponse,
+  RetryPolicy,
+  ExecuteOptions,
+  SleepFn,
+} from './rate-limiter';
+
+export { classifySendFailure } from './send-outcome';
+export type { SendFailureKind } from './send-outcome';
 
 export {
   paginateNextPageUrl,
@@ -61,6 +77,9 @@ export {
   ofapiChatSchema,
   ofapiChatLastMessageSchema,
   ofapiMessageSchema,
+  ofapiSentMessageSchema,
+  ofapiSuccessDataSchema,
+  ofapiLikeDataSchema,
   ofapiUserSchema,
   ofapiUsersByIdSchema,
   ofapiSubscribedOnDataSchema,
@@ -75,6 +94,8 @@ export type {
   OfApiWhoami,
   OfApiChat,
   OfApiMessage,
+  OfApiSentMessage,
+  OfApiLikeResult,
   OfApiUser,
   OfApiSubscribedOnData,
   OfApiTransaction,

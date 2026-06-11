@@ -159,6 +159,35 @@ export const ofapiMessageSchema = ofapiChatMessageSchema.extend({
 
 export type OfApiMessage = z.infer<typeof ofapiMessageSchema>;
 
+// ─── Write-path responses (send pipeline, SPEC §7) ───────────────────────
+
+/**
+ * POST …/messages 200 `data` = the full created message (live-verified
+ * 2026-06-11, fixture send-message-success.json). Differs from list rows:
+ * no isSentByMe (it is ours by definition) and carries cancelSeconds — the
+ * server-computed live unsend countdown (≈24 h).
+ */
+export const ofapiSentMessageSchema = ofapiMessageSchema.extend({
+  isSentByMe: z.boolean().nullish(),
+  cancelSeconds: z.number().nullish(),
+  queueId: z.union([z.number(), z.string()]).nullish(),
+});
+
+export type OfApiSentMessage = z.infer<typeof ofapiSentMessageSchema>;
+
+/** `{success}` data of delete/typing/mark-as-read (openapi.json + live fixture). */
+export const ofapiSuccessDataSchema = z.looseObject({
+  success: z.boolean(),
+});
+
+/** like/unlike `data` (openapi.json: {success, isLiked}). */
+export const ofapiLikeDataSchema = z.looseObject({
+  success: z.boolean(),
+  isLiked: z.boolean().nullish(),
+});
+
+export type OfApiLikeResult = z.infer<typeof ofapiLikeDataSchema>;
+
 // ─── Transactions ────────────────────────────────────────────────────────
 
 export const ofapiTransactionSchema = z.looseObject({

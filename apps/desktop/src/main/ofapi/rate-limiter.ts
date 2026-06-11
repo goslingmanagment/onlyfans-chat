@@ -1,7 +1,10 @@
 // Client-side throttling for OFAPI (SPEC §5): token bucket well under plan RPM
-// (default 300 RPM, burst 20), per-account concurrency 4, global 12. Retry policy:
-// 429 honors retry-after with exponential backoff 1/2/4/8 s; 5xx retried ≤3 —
-// safe here because this layer is GET-only (P3 read-only scope).
+// (default 300 RPM, burst 20), per-account concurrency 4, global 12. Retry policy
+// is EXPLICIT and REQUIRED per request: 'idempotent' (GETs) gets 429 backoff
+// honoring retry-after (1/2/4/8 s) and ≤3 retries on 5xx; 'none' (non-idempotent
+// writes, SPEC §7 — OFAPI has no idempotency keys, a retried send can
+// double-message a fan) gets EXACTLY ONE attempt: 429/5xx/timeouts surface
+// immediately and the outbox decides what is safe.
 
 import { parseRetryAfterMs } from './errors';
 
@@ -116,8 +119,19 @@ export interface RetryableResponse {
   headers: { get(name: string): string | null };
 }
 
+/** 'idempotent': 429 backoff + 5xx ≤3. 'none': exactly one attempt, no retry of any kind. */
+export type RetryPolicy = 'idempotent' | 'none';
+
+export interface ExecuteOptions {
+  retry: RetryPolicy;
+}
+
 export interface RequestExecutor {
-  execute<R extends RetryableResponse>(accountKey: string, doFetch: () => Promise<R>): Promise<R>;
+  execute<R extends RetryableResponse>(
+    accountKey: string,
+    doFetch: () => Promise<R>,
+    options: ExecuteOptions,
+  ): Promise<R>;
 }
 
 export function createRequestExecutor(input: {
@@ -129,7 +143,11 @@ export function createRequestExecutor(input: {
     async execute<R extends RetryableResponse>(
       accountKey: string,
       doFetch: () => Promise<R>,
+      options: ExecuteOptions,
     ): Promise<R> {
+      if (options.retry === 'none') {
+        return input.limiter.run(accountKey, doFetch);
+      }
       let rateLimitRetries = 0;
       let serverErrorRetries = 0;
       for (;;) {

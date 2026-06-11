@@ -1,5 +1,6 @@
-// Token-bucket timing (fake timers), concurrency gates, and the 429/5xx retry
-// policy (SPEC §5: backoff 1/2/4/8 s honoring retry-after; 5xx ≤3 retries on GETs).
+// Token-bucket timing (fake timers), concurrency gates, and the explicit retry
+// policy (SPEC §5: 'idempotent' = backoff 1/2/4/8 s honoring retry-after, 5xx ≤3
+// retries — GETs only; 'none' = exactly one attempt for non-idempotent sends, SPEC §7).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -139,7 +140,7 @@ describe('concurrency gates', () => {
   });
 });
 
-describe('request executor retry policy', () => {
+describe('request executor retry policy: idempotent', () => {
   const passthroughLimiter = { run: <T>(_key: string, task: () => Promise<T>) => task() };
 
   it('429: waits max(backoff, retry-after) and retries until success', async () => {
@@ -157,7 +158,11 @@ describe('request executor retry policy', () => {
       fakeResponse(200),
     ];
     let call = 0;
-    const result = await executor.execute('acct', () => Promise.resolve(responses[call++] ?? fakeResponse(200)));
+    const result = await executor.execute(
+      'acct',
+      () => Promise.resolve(responses[call++] ?? fakeResponse(200)),
+      { retry: 'idempotent' },
+    );
     expect(result.status).toBe(200);
     expect(call).toBe(3);
     // attempt 1: max(1000, 2000) = 2000; attempt 2: max(2000, 0) = 2000
@@ -174,10 +179,14 @@ describe('request executor retry policy', () => {
       },
     });
     let calls = 0;
-    const result = await executor.execute('acct', () => {
-      calls += 1;
-      return Promise.resolve(fakeResponse(429));
-    });
+    const result = await executor.execute(
+      'acct',
+      () => {
+        calls += 1;
+        return Promise.resolve(fakeResponse(429));
+      },
+      { retry: 'idempotent' },
+    );
     expect(result.status).toBe(429);
     expect(calls).toBe(1 + RATE_LIMIT_BACKOFF_MS.length);
     expect(sleeps).toEqual([...RATE_LIMIT_BACKOFF_MS]);
@@ -193,10 +202,14 @@ describe('request executor retry policy', () => {
       },
     });
     let calls = 0;
-    const result = await executor.execute('acct', () => {
-      calls += 1;
-      return Promise.resolve(fakeResponse(502));
-    });
+    const result = await executor.execute(
+      'acct',
+      () => {
+        calls += 1;
+        return Promise.resolve(fakeResponse(502));
+      },
+      { retry: 'idempotent' },
+    );
     expect(result.status).toBe(502);
     expect(calls).toBe(1 + SERVER_ERROR_RETRY_DELAYS_MS.length);
     expect(sleeps).toEqual([...SERVER_ERROR_RETRY_DELAYS_MS]);
@@ -206,7 +219,11 @@ describe('request executor retry policy', () => {
     const executor = createRequestExecutor({ limiter: passthroughLimiter, sleep: () => Promise.resolve() });
     const responses = [fakeResponse(500), fakeResponse(500), fakeResponse(200)];
     let call = 0;
-    const result = await executor.execute('acct', () => Promise.resolve(responses[call++] ?? fakeResponse(200)));
+    const result = await executor.execute(
+      'acct',
+      () => Promise.resolve(responses[call++] ?? fakeResponse(200)),
+      { retry: 'idempotent' },
+    );
     expect(result.status).toBe(200);
     expect(call).toBe(3);
   });
@@ -214,11 +231,100 @@ describe('request executor retry policy', () => {
   it('definitive 4xx responses are returned without retry', async () => {
     const executor = createRequestExecutor({ limiter: passthroughLimiter, sleep: () => Promise.resolve() });
     let calls = 0;
-    const result = await executor.execute('acct', () => {
-      calls += 1;
-      return Promise.resolve(fakeResponse(404));
-    });
+    const result = await executor.execute(
+      'acct',
+      () => {
+        calls += 1;
+        return Promise.resolve(fakeResponse(404));
+      },
+      { retry: 'idempotent' },
+    );
     expect(result.status).toBe(404);
     expect(calls).toBe(1);
+  });
+});
+
+describe("request executor retry policy: none (non-idempotent sends, SPEC §7)", () => {
+  const passthroughLimiter = { run: <T>(_key: string, task: () => Promise<T>) => task() };
+
+  function trackingExecutor(): {
+    executor: ReturnType<typeof createRequestExecutor>;
+    sleeps: number[];
+  } {
+    const sleeps: number[] = [];
+    const executor = createRequestExecutor({
+      limiter: passthroughLimiter,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+    });
+    return { executor, sleeps };
+  }
+
+  it('5xx: exactly one attempt, no sleep, response surfaces as-is', async () => {
+    const { executor, sleeps } = trackingExecutor();
+    let calls = 0;
+    const result = await executor.execute(
+      'acct',
+      () => {
+        calls += 1;
+        return Promise.resolve(fakeResponse(500));
+      },
+      { retry: 'none' },
+    );
+    expect(result.status).toBe(500);
+    expect(calls).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it('429: exactly one attempt even with retry-after present', async () => {
+    const { executor, sleeps } = trackingExecutor();
+    let calls = 0;
+    const result = await executor.execute(
+      'acct',
+      () => {
+        calls += 1;
+        return Promise.resolve(fakeResponse(429, { 'retry-after': '1' }));
+      },
+      { retry: 'none' },
+    );
+    expect(result.status).toBe(429);
+    expect(calls).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it('timeout rejection: exactly one attempt, error propagates', async () => {
+    const { executor, sleeps } = trackingExecutor();
+    let calls = 0;
+    const timeout = new Error('timed out');
+    timeout.name = 'TimeoutError';
+    await expect(
+      executor.execute(
+        'acct',
+        () => {
+          calls += 1;
+          return Promise.reject(timeout);
+        },
+        { retry: 'none' },
+      ),
+    ).rejects.toBe(timeout);
+    expect(calls).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it('still flows through the rate limiter', async () => {
+    const ran: string[] = [];
+    const limiter = {
+      run<T>(key: string, task: () => Promise<T>): Promise<T> {
+        ran.push(key);
+        return task();
+      },
+    };
+    const executor = createRequestExecutor({ limiter, sleep: () => Promise.resolve() });
+    await executor.execute('acct-send', () => Promise.resolve(fakeResponse(200)), {
+      retry: 'none',
+    });
+    expect(ran).toEqual(['acct-send']);
   });
 });

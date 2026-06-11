@@ -1,7 +1,10 @@
-// Hand-written OFAPI client (SPEC §5). READ-ONLY by design for P3: every method
-// is a GET; send / mark-read / typing / notes write paths deliberately do not
-// exist in this module yet. All calls flow through the metered rate limiter and
-// publish credit telemetry — never fetch OFAPI outside this client.
+// Hand-written OFAPI client (SPEC §5): read paths plus the §7 send-path writes
+// (sendMessage / deleteMessage / like / unlike / typing / mark-as-read). OFAPI
+// has NO idempotency keys, so every write runs with retry:'none' — EXACTLY one
+// attempt, never auto-retried (a retried send can double-message a fan); the
+// outbox owns recovery via classifySendFailure. All calls flow through the
+// metered rate limiter and publish credit telemetry — never fetch OFAPI outside
+// this client.
 //
 // Envelope unwrap is PER-OPERATION: account-scoped endpoints return
 // {data,_meta,_pagination}, but /api/accounts returns a bare array and
@@ -13,7 +16,7 @@ import type { operations } from './ofapi.gen';
 import { createCreditMeter } from './credit-meter';
 import type { CreditMeter, CreditMeterListener } from './credit-meter';
 import { createRateLimiter, createRequestExecutor } from './rate-limiter';
-import type { RateLimiter, RateLimiterOptions, SleepFn } from './rate-limiter';
+import type { RateLimiter, RateLimiterOptions, RetryPolicy, SleepFn } from './rate-limiter';
 import { OfApiError, mapOfApiHttpError, mapOfApiNetworkError, ofApiShapeError, parseRetryAfterMs } from './errors';
 import type { FixtureCapture } from './fixture-capture';
 import {
@@ -21,7 +24,10 @@ import {
   ofapiChatSchema,
   ofapiEnvelopeSchema,
   ofapiFansDataSchema,
+  ofapiLikeDataSchema,
   ofapiMessageSchema,
+  ofapiSentMessageSchema,
+  ofapiSuccessDataSchema,
   ofapiTransactionsDataSchema,
   ofapiUserSchema,
   ofapiUsersByIdSchema,
@@ -30,7 +36,9 @@ import {
 import type {
   OfApiAccount,
   OfApiChat,
+  OfApiLikeResult,
   OfApiMessage,
+  OfApiSentMessage,
   OfApiTransaction,
   OfApiUser,
   OfApiWhoami,
@@ -103,6 +111,32 @@ export interface ListFansParams {
   query?: string;
 }
 
+export interface SendMessageParams {
+  accountId: string;
+  chatId: string;
+  text: string;
+  replyToMessageId?: number;
+  /** Hide the text behind the paywall (requires price + mediaFiles upstream). */
+  lockedText?: boolean;
+  /** Dollars; 0 or 3–200 upstream. Non-zero requires mediaFiles. */
+  price?: number;
+  /** OFAPI `ofapi_media_…` ids or OF vault ids. */
+  mediaFiles?: ReadonlyArray<string | number>;
+  /** Same id forms, or integer indices into mediaFiles. */
+  previews?: ReadonlyArray<string | number>;
+}
+
+export interface MessageRefParams {
+  accountId: string;
+  chatId: string;
+  messageId: string;
+}
+
+export interface ChatRefParams {
+  accountId: string;
+  chatId: string;
+}
+
 export interface OfApiClient {
   readonly creditMeter: CreditMeter;
   listAccounts(): Promise<OfApiAccount[]>;
@@ -126,6 +160,15 @@ export interface OfApiClient {
   }>;
   listFansAll(params: ListFansParams): Promise<{ fans: OfApiUser[]; hasMore: boolean }>;
   listFansActive(params: ListFansParams): Promise<{ fans: OfApiUser[]; hasMore: boolean }>;
+  // ── Write paths (SPEC §7): non-idempotent, retry:'none', NEVER auto-retried ──
+  sendMessage(params: SendMessageParams): Promise<OfApiSentMessage>;
+  /** Unsend; only within the message's cancelSeconds window (≈24 h). */
+  deleteMessage(params: MessageRefParams): Promise<{ success: boolean }>;
+  likeMessage(params: MessageRefParams): Promise<OfApiLikeResult>;
+  unlikeMessage(params: MessageRefParams): Promise<OfApiLikeResult>;
+  /** Fire-and-forget (0 credits): failures surface but must never be queued/retried. */
+  startTyping(params: ChatRefParams): Promise<void>;
+  markChatRead(params: ChatRefParams): Promise<{ success: boolean }>;
 }
 
 type QueryValue = string | number | undefined;
@@ -164,23 +207,35 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     return url.toString();
   }
 
-  async function getJson(
-    accountKey: string,
-    path: string,
-    query: Record<string, QueryValue> = {},
-  ): Promise<unknown> {
-    const url = buildUrl(path, query);
+  interface RequestSpec {
+    accountKey: string;
+    method: 'GET' | 'POST' | 'DELETE';
+    path: string;
+    query?: Record<string, QueryValue>;
+    /** JSON-serialized request body (POST). */
+    jsonBody?: unknown;
+    retry: RetryPolicy;
+  }
+
+  async function requestJson(spec: RequestSpec): Promise<unknown> {
+    const url = buildUrl(spec.path, spec.query ?? {});
+    const requestHeaders: Record<string, string> = {
+      authorization: `Bearer ${options.apiKey}`,
+      accept: 'application/json',
+      ...(spec.jsonBody !== undefined ? { 'content-type': 'application/json' } : {}),
+    };
     let response: Response;
     try {
-      response = await executor.execute(accountKey, () =>
-        fetchImpl(url, {
-          method: 'GET',
-          headers: {
-            authorization: `Bearer ${options.apiKey}`,
-            accept: 'application/json',
-          },
-          signal: AbortSignal.timeout(requestTimeoutMs),
-        }),
+      response = await executor.execute(
+        spec.accountKey,
+        () =>
+          fetchImpl(url, {
+            method: spec.method,
+            headers: requestHeaders,
+            ...(spec.jsonBody !== undefined ? { body: JSON.stringify(spec.jsonBody) } : {}),
+            signal: AbortSignal.timeout(requestTimeoutMs),
+          }),
+        { retry: spec.retry },
       );
     } catch (error) {
       throw mapOfApiNetworkError(error, url);
@@ -204,9 +259,10 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
 
     if (options.fixtureCapture?.enabled) {
       options.fixtureCapture.record({
-        method: 'GET',
+        method: spec.method,
         url,
-        requestHeaders: { authorization: `Bearer ${options.apiKey}`, accept: 'application/json' },
+        requestHeaders,
+        ...(spec.jsonBody !== undefined ? { requestBody: spec.jsonBody } : {}),
         status: response.status,
         responseHeaders: headersToRecord(response.headers),
         responseBody: body,
@@ -223,6 +279,14 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       });
     }
     return body;
+  }
+
+  function getJson(
+    accountKey: string,
+    path: string,
+    query: Record<string, QueryValue> = {},
+  ): Promise<unknown> {
+    return requestJson({ accountKey, method: 'GET', path, query, retry: 'idempotent' });
   }
 
   function parseWith<T>(schema: z.ZodType<T>, value: unknown, url: string): T {
@@ -244,6 +308,14 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
 
   function accountPath(accountId: string, rest: string): string {
     return `/${encodeURIComponent(accountId)}${rest}`;
+  }
+
+  function chatPath(params: ChatRefParams, rest: string): string {
+    return accountPath(params.accountId, `/chats/${encodeURIComponent(params.chatId)}${rest}`);
+  }
+
+  function messagePath(params: MessageRefParams, rest = ''): string {
+    return chatPath(params, `/messages/${encodeURIComponent(params.messageId)}${rest}`);
   }
 
   async function listFans(
@@ -383,6 +455,89 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
 
     async listFansActive(params): Promise<{ fans: OfApiUser[]; hasMore: boolean }> {
       return listFans('/fans/active', params);
+    },
+
+    async sendMessage(params): Promise<OfApiSentMessage> {
+      const path = chatPath(params, '/messages');
+      const payload = await requestJson({
+        accountKey: params.accountId,
+        method: 'POST',
+        path,
+        jsonBody: {
+          text: params.text,
+          ...(params.replyToMessageId !== undefined
+            ? { replyToMessageId: params.replyToMessageId }
+            : {}),
+          ...(params.lockedText !== undefined ? { lockedText: params.lockedText } : {}),
+          ...(params.price !== undefined ? { price: params.price } : {}),
+          ...(params.mediaFiles !== undefined ? { mediaFiles: [...params.mediaFiles] } : {}),
+          ...(params.previews !== undefined ? { previews: [...params.previews] } : {}),
+        },
+        retry: 'none',
+      });
+      const { data } = unwrapEnvelope(payload, path);
+      return parseWith(ofapiSentMessageSchema, data, path);
+    },
+
+    async deleteMessage(params): Promise<{ success: boolean }> {
+      const path = messagePath(params);
+      // Non-idempotent in effect: a second DELETE after an unseen success errors.
+      const payload = await requestJson({
+        accountKey: params.accountId,
+        method: 'DELETE',
+        path,
+        retry: 'none',
+      });
+      const { data } = unwrapEnvelope(payload, path);
+      return { success: parseWith(ofapiSuccessDataSchema, data, path).success };
+    },
+
+    async likeMessage(params): Promise<OfApiLikeResult> {
+      const path = messagePath(params, '/like');
+      const payload = await requestJson({
+        accountKey: params.accountId,
+        method: 'POST',
+        path,
+        retry: 'none',
+      });
+      const { data } = unwrapEnvelope(payload, path);
+      return parseWith(ofapiLikeDataSchema, data, path);
+    },
+
+    async unlikeMessage(params): Promise<OfApiLikeResult> {
+      const path = messagePath(params, '/unlike');
+      const payload = await requestJson({
+        accountKey: params.accountId,
+        method: 'DELETE',
+        path,
+        retry: 'none',
+      });
+      const { data } = unwrapEnvelope(payload, path);
+      return parseWith(ofapiLikeDataSchema, data, path);
+    },
+
+    async startTyping(params): Promise<void> {
+      const path = chatPath(params, '/typing');
+      // 0 credits; losing one is harmless — surface failures, never queue retries.
+      const payload = await requestJson({
+        accountKey: params.accountId,
+        method: 'POST',
+        path,
+        retry: 'none',
+      });
+      unwrapEnvelope(payload, path);
+    },
+
+    async markChatRead(params): Promise<{ success: boolean }> {
+      const path = chatPath(params, '/mark-as-read');
+      const payload = await requestJson({
+        accountKey: params.accountId,
+        method: 'POST',
+        path,
+        retry: 'none',
+      });
+      const { data } = unwrapEnvelope(payload, path);
+      return { success: parseWith(ofapiSuccessDataSchema, data, path).success };
     },
   };
 }

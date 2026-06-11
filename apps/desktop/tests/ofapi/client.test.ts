@@ -1,6 +1,7 @@
 // Contract tests for the OFAPI client against recorded (sanitized) live fixtures
-// (SPEC §5, §14): per-operation envelope unwrap, explicit skip_users, read-only
-// surface, error mapping through the request path, credit telemetry wiring.
+// (SPEC §5, §14): per-operation envelope unwrap, explicit skip_users, error
+// mapping through the request path, credit telemetry wiring, and the SPEC §7
+// guard that write methods are never auto-retried (send paths live in send.test.ts).
 
 import { describe, expect, it } from 'vitest';
 import { createOfApiClient } from '@main/ofapi/client';
@@ -308,14 +309,64 @@ describe('error mapping through the request path', () => {
   });
 });
 
-describe('read-only invariant (P3)', () => {
-  it('exposes no send/mark-read/typing/notes methods', () => {
-    const { client } = makeClient([() => jsonResponse({})]);
-    const surface = Object.keys(client).join(' ');
-    expect(surface).not.toMatch(/send|mark|typing|note|unsend|delete|like|pin|mute/i);
+describe('write methods never auto-retry (SPEC §7 / §15.5)', () => {
+  const WRITE_CALLS: ReadonlyArray<{
+    name: string;
+    invoke: (client: ReturnType<typeof createOfApiClient>) => Promise<unknown>;
+  }> = [
+    {
+      name: 'sendMessage',
+      invoke: (c) => c.sendMessage({ accountId: ACCOUNT_ID, chatId: '1000039', text: 'hi' }),
+    },
+    {
+      name: 'deleteMessage',
+      invoke: (c) =>
+        c.deleteMessage({ accountId: ACCOUNT_ID, chatId: '1000039', messageId: '9000000001' }),
+    },
+    {
+      name: 'likeMessage',
+      invoke: (c) =>
+        c.likeMessage({ accountId: ACCOUNT_ID, chatId: '1000039', messageId: '9000000001' }),
+    },
+    {
+      name: 'unlikeMessage',
+      invoke: (c) =>
+        c.unlikeMessage({ accountId: ACCOUNT_ID, chatId: '1000039', messageId: '9000000001' }),
+    },
+    { name: 'startTyping', invoke: (c) => c.startTyping({ accountId: ACCOUNT_ID, chatId: '1000039' }) },
+    { name: 'markChatRead', invoke: (c) => c.markChatRead({ accountId: ACCOUNT_ID, chatId: '1000039' }) },
+  ];
+
+  it('every write method makes exactly ONE attempt on 500 (no sleep, no retry)', async () => {
+    for (const { name, invoke } of WRITE_CALLS) {
+      const sleeps: number[] = [];
+      const { client, requests } = makeClient(
+        [() => jsonResponse({ message: 'Server Error' }, { status: 500 })],
+        {
+          sleep: (ms) => {
+            sleeps.push(ms);
+            return Promise.resolve();
+          },
+        },
+      );
+      await expect(invoke(client), name).rejects.toMatchObject({ code: 'CG-NET-01' });
+      expect(requests, name).toHaveLength(1);
+      expect(sleeps, name).toEqual([]);
+    }
   });
 
-  it('only ever issues GET requests', async () => {
+  it('every write method makes exactly ONE attempt on 429 (rate-limit surfaces)', async () => {
+    for (const { name, invoke } of WRITE_CALLS) {
+      const { client, requests } = makeClient([
+        () =>
+          jsonResponse({ message: 'Too Many Attempts.' }, { status: 429, headers: { 'retry-after': '1' } }),
+      ]);
+      await expect(invoke(client), name).rejects.toMatchObject({ code: 'CG-OF-03' });
+      expect(requests, name).toHaveLength(1);
+    }
+  });
+
+  it('reads keep issuing GETs only; writes use the verified upstream methods', async () => {
     const fixture = loadFixture('list-chats.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
     await client.listChats({ accountId: ACCOUNT_ID });

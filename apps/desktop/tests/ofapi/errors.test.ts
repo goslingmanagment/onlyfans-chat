@@ -9,6 +9,7 @@ import {
   parseRetryAfterMs,
 } from '@main/ofapi/errors';
 import { accountNeedsReauth, ofapiAccountSchema } from '@main/ofapi/schemas';
+import { loadFixture } from './helpers';
 
 const URL_OK = 'https://app.onlyfansapi.com/api/acct_x/chats';
 const URL_NO_PREFIX = 'https://app.onlyfansapi.com/api/123456/chats';
@@ -56,7 +57,7 @@ describe('mapOfApiHttpError', () => {
     }
   });
 
-  it('400 restricted words → CG-OF-05 carrying textHighLight', () => {
+  it('400 restricted words (top-level fallback shape) → CG-OF-05 carrying textHighLight', () => {
     const error = mapOfApiHttpError({
       status: 400,
       url: URL_OK,
@@ -65,9 +66,10 @@ describe('mapOfApiHttpError', () => {
     expect(error.code).toBe('CG-OF-05');
     expect(error).toBeInstanceOf(OfApiError);
     expect(error.textHighLight).toBe('badword');
+    expect(error.textHighLights).toEqual(['badword']);
   });
 
-  it('textHighLight as array is normalized to one string', () => {
+  it('top-level textHighLight array is normalized to one string and kept as array', () => {
     const error = mapOfApiHttpError({
       status: 400,
       url: URL_OK,
@@ -75,6 +77,57 @@ describe('mapOfApiHttpError', () => {
     });
     expect(error.code).toBe('CG-OF-05');
     expect(error.textHighLight).toBe('a, b');
+    expect(error.textHighLights).toEqual(['a', 'b']);
+  });
+
+  it('LIVE wrapped restricted-words 400 (fixture) → CG-OF-05 with the nested textHighLight array', () => {
+    const error = mapOfApiHttpError({
+      status: 400,
+      url: URL_OK,
+      body: loadFixture('send-message-restricted-400.json'),
+    });
+    expect(error.code).toBe('CG-OF-05');
+    // Live capture: the entry is the FULL message text, no per-word markers.
+    expect(error.textHighLights).toEqual(['haha no I do not even have a cashapp']);
+    expect(error.textHighLight).toBe('haha no I do not even have a cashapp');
+    expect(error.upstreamStatus).toBe(400);
+    expect(error.detail?.status).toBe(400);
+  });
+
+  it('wrapped ONLYFANS_COM_ERROR classifies by onlyfans_response.status', () => {
+    const wrap = (status: number, message: string): unknown => ({
+      error: 'ONLYFANS_COM_ERROR',
+      message: 'Bad Request - The request could not be understood by the server.',
+      onlyfans_response: { status, body: { error: { code: 0, message } } },
+    });
+    const session = mapOfApiHttpError({ status: 400, url: URL_OK, body: wrap(401, 'Unauthorized') });
+    expect(session.code).toBe('CG-OF-02');
+    expect(session.upstreamStatus).toBe(401);
+
+    const limited = mapOfApiHttpError({ status: 400, url: URL_OK, body: wrap(429, 'Too many requests') });
+    expect(limited.code).toBe('CG-OF-03');
+
+    const upstream5xx = mapOfApiHttpError({ status: 400, url: URL_OK, body: wrap(502, 'Bad gateway') });
+    expect(upstream5xx.code).toBe('CG-NET-01');
+    expect(upstream5xx.upstreamStatus).toBe(502);
+
+    const unknown = mapOfApiHttpError({ status: 400, url: URL_OK, body: wrap(403, 'Forbidden') });
+    expect(unknown.code).toBe('CG-APP-01');
+    expect(unknown.upstreamStatus).toBe(403);
+  });
+
+  it('wrapped error without textHighLight but with restricted-words message → CG-OF-05', () => {
+    const error = mapOfApiHttpError({
+      status: 400,
+      url: URL_OK,
+      body: {
+        error: 'ONLYFANS_COM_ERROR',
+        message: 'Bad Request',
+        onlyfans_response: { status: 400, body: { error: { code: 0, message: 'Input contains restricted words' } } },
+      },
+    });
+    expect(error.code).toBe('CG-OF-05');
+    expect(error.textHighLights).toBeUndefined();
   });
 
   it('404 → CG-APP-01 with an acct_-prefix hint when the path lacks it', () => {
@@ -118,6 +171,17 @@ describe('mapOfApiHttpError', () => {
     const error = mapOfApiHttpError({ status: 400, url: URL_OK, body: '<html>nope</html>' });
     expect(error.code).toBe('CG-APP-01');
   });
+
+  it('tolerates the live 405 HTML page body (method probing 2026-06-11)', () => {
+    const error = mapOfApiHttpError({
+      status: 405,
+      url: URL_OK,
+      body: '<html><body><h1>405 Method Not Allowed</h1></body></html>',
+    });
+    expect(error.code).toBe('CG-APP-01');
+    expect(error.detail?.status).toBe(405);
+    expect(error.detail?.responseSnippet).toContain('405 Method Not Allowed');
+  });
 });
 
 describe('mapOfApiNetworkError', () => {
@@ -133,6 +197,13 @@ describe('mapOfApiNetworkError', () => {
   it('other network failures → CG-NET-01', () => {
     expect(mapOfApiNetworkError(new TypeError('fetch failed'), URL_OK).code).toBe('CG-NET-01');
     expect(mapOfApiNetworkError('boom', URL_OK).code).toBe('CG-NET-01');
+  });
+
+  it('preserves the original error chain on .cause (classifySendFailure needs the codes)', () => {
+    const syscall = Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' });
+    const raw = new TypeError('fetch failed', { cause: syscall });
+    const mapped = mapOfApiNetworkError(raw, URL_OK);
+    expect(mapped.cause).toBe(raw);
   });
 });
 

@@ -12,6 +12,8 @@ export interface CapturedExchange {
   method: string;
   url: string;
   requestHeaders: Record<string, string>;
+  /** JSON request body (write paths) — sanitized like the response. */
+  requestBody?: unknown;
   status: number;
   responseHeaders: Record<string, string>;
   responseBody: unknown;
@@ -73,6 +75,9 @@ export function createFixtureCapture(options: FixtureCaptureOptions): FixtureCap
           method: exchange.method,
           url: sanitizer.sanitizeApiUrl(exchange.url),
           headers: redactHeaders(exchange.requestHeaders),
+          ...(exchange.requestBody !== undefined
+            ? { body: sanitizer.sanitize(exchange.requestBody) }
+            : {}),
         },
         response: {
           status: exchange.status,
