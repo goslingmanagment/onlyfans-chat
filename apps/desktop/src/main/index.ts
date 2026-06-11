@@ -9,9 +9,10 @@ import { createKeychain, type Keychain } from './secrets/keychain';
 import { createDataLayer, type DataLayer } from './db/index';
 import { createSettingsStore, type SettingsStore } from './settings/store';
 import {
+  createToMediaUrl,
+  isAllowedMediaUrl,
   MEDIA_SCHEME_PRIVILEGES,
   registerMediaProtocol,
-  toMediaUrl,
   type FetchRemote,
 } from './media/protocol';
 import { createSqliteMediaCacheQueries } from './media/cache';
@@ -118,6 +119,9 @@ async function initOfapi(
     }
   });
 
+  // Minting registers the remote URL in media_urls; only registered tokens
+  // resolve through the media:// handler (SPEC §4).
+  const toMediaUrl = createToMediaUrl(dataLayer.mediaUrls);
   sync = createPollingSync({
     client,
     data: dataLayer,
@@ -161,6 +165,11 @@ async function boot(): Promise<void> {
   // 0 credits). OFAPI download-endpoint fallback is a P3 follow-up — P1 media
   // is avatars/thumbs, which fetch directly.
   const fetchRemote: FetchRemote = async (remoteUrl) => {
+    // Defense in depth (SPEC §15.1): even a poisoned registry/cache row must
+    // never make main fetch a non-OF or non-https URL.
+    if (!isAllowedMediaUrl(remoteUrl)) {
+      return null;
+    }
     const response = await fetch(remoteUrl);
     if (response.status === 404 || response.status === 410) {
       return null;
@@ -178,6 +187,7 @@ async function boot(): Promise<void> {
     cacheDir: join(userData, 'media-cache'),
     encryptionKey: Buffer.from(mediaKeyHex, 'hex'),
     queries: createSqliteMediaCacheQueries(data.db),
+    registry: data.mediaUrls,
     fetchRemote,
   });
 

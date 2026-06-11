@@ -1,9 +1,8 @@
 // db rows → renderer view models (DESIGN §3.3: the renderer never sees raw
-// OFAPI JSON). Pure functions; the only Node dependency is Buffer via the
-// media URL codec. Remote media URLs leave main only as media:// references
-// (SPEC §4 — OF CDN URLs carry expiring signatures).
+// OFAPI JSON). Pure functions. Media leaves main only as the opaque
+// media://<sha256> token minted at sync time (SPEC §4 — OF CDN URLs carry
+// expiring signatures and must never reach the renderer, even encoded).
 
-import { z } from 'zod';
 import { getModelDisplayName } from '@chatgoose/shared/llm/model-registry';
 import type { SummaryCacheEntry } from '@chatgoose/shared/summary/validity';
 import type { TranscriptMessage } from '@chatgoose/shared/transcript/index';
@@ -16,22 +15,21 @@ import type {
   PpvStateVM,
 } from '../../preload/contract';
 import type { AccountListRow, ChatRow, FanRow, MessageRow } from '../db/index';
-import { MEDIA_SCHEME, toMediaUrl } from '../media/protocol';
+import { parseMediaToken } from '../media/protocol';
 
 // ─── media:// mapping ─────────────────────────────────────────────────────
 
-const MEDIA_PREFIX = `${MEDIA_SCHEME}://`;
-
 /**
- * Remote http(s) URL → media:// reference. Idempotent (already-mapped URLs
- * pass through); anything else (data:, file:, garbage) maps to null so a
- * poisoned row can never hand the renderer a fetchable non-OF URL scheme.
+ * Stored media reference → renderer-facing media:// token. Rows written by
+ * sync already hold opaque tokens; those pass through. Anything else — a raw
+ * remote URL, a legacy reversible token, data:/file:/garbage from a poisoned
+ * row — maps to null: minting requires registration in media_urls (sync
+ * mapping owns that), so this pure layer never hands the renderer a
+ * fetchable or reversible URL.
  */
 export function toRendererMediaUrl(url: string | null): string | null {
   if (url === null) return null;
-  if (url.startsWith(MEDIA_PREFIX)) return url;
-  if (!/^https?:\/\//.test(url)) return null;
-  return toMediaUrl(url);
+  return parseMediaToken(url) !== null ? url : null;
 }
 
 export function mediaItemToVM(item: MessageMediaVM): MessageMediaVM {
@@ -99,6 +97,7 @@ export function chatToVM(row: ChatRow, avatarUrl: string | null): ChatListItemVM
     hasUnreadTips: row.hasUnreadTips,
     fanWaiting: deriveFanWaiting(row),
     canSendMessage: row.canSendMessage,
+    canNotSendReason: row.canNotSendReason,
   };
 }
 
@@ -147,45 +146,10 @@ export function fanToVM(
   };
 }
 
-// ─── Avatars from raw columns (storage trust boundary → zod, tolerant) ────
-
-const chatRawSchema = z.looseObject({
-  fan: z
-    .looseObject({
-      avatar: z.string().nullish(),
-      avatarThumbs: z
-        .looseObject({ c50: z.string().nullish(), c144: z.string().nullish() })
-        .nullish(),
-    })
-    .nullish(),
-});
-
-const accountRawSchema = z.looseObject({
-  onlyfans_user_data: z.looseObject({ avatar: z.string().nullish() }).nullish(),
-});
-
-function parseRawJson(rawJson: string): unknown {
-  try {
-    const parsed: unknown = JSON.parse(rawJson);
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-/** Thumb preferred (cached on OF CDN after first fetch); returns a media:// URL. */
-export function avatarFromChatRaw(rawJson: string): string | null {
-  const parsed = chatRawSchema.safeParse(parseRawJson(rawJson));
-  if (!parsed.success) return null;
-  const fan = parsed.data.fan;
-  return toRendererMediaUrl(fan?.avatarThumbs?.c144 ?? fan?.avatar ?? null);
-}
-
-export function avatarFromAccountRaw(rawJson: string): string | null {
-  const parsed = accountRawSchema.safeParse(parseRawJson(rawJson));
-  if (!parsed.success) return null;
-  return toRendererMediaUrl(parsed.data.onlyfans_user_data?.avatar ?? null);
-}
+// NOTE: the former avatarFromChatRaw/avatarFromAccountRaw helpers are gone —
+// raw-JSON columns hold remote OF URLs, which only the registering sync
+// mapping may mint into tokens; avatars render from the rows' avatar columns
+// (already tokens).
 
 // ─── Ping-gate transcript shaping (shared analyzer owns the algorithm) ────
 

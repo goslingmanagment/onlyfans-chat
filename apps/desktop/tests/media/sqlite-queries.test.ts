@@ -1,11 +1,14 @@
 // Exercises the better-sqlite3-backed media_cache queries against the real
 // node-ABI driver build, including upgrading the db module's base schema
-// (which lacks content_type / last_accessed_at) in place.
+// (which lacks content_type / last_accessed_at) in place. Also covers the
+// media_urls registry queries behind the opaque media:// token.
 
 import { describe, expect, it } from 'vitest';
 import { loadSqliteDriver } from '@main/db/driver';
+import { createMediaUrlsQueries } from '@main/db/index';
 import { createSqliteMediaCacheQueries } from '@main/media/cache';
 import type { MediaCacheRow } from '@main/media/cache';
+import { memoryDataLayer } from '../db/helpers';
 
 function openMemoryDb() {
   const Driver = loadSqliteDriver('bsqlite3-mc-node');
@@ -89,5 +92,36 @@ describe('createSqliteMediaCacheQueries', () => {
     // running the factory twice is harmless
     const again = createSqliteMediaCacheQueries(db);
     expect(again.get('new')?.bytes).toBe(100);
+  });
+});
+
+describe('createMediaUrlsQueries', () => {
+  it('registers and looks up URL rows, stamping created_at', () => {
+    const layer = memoryDataLayer();
+    try {
+      const queries = createMediaUrlsQueries(layer.db, () => new Date('2026-06-11T12:00:00.000Z'));
+      expect(queries.lookup('h1')).toBeUndefined();
+
+      queries.register('h1', 'https://thumbs.onlyfans.com/a.jpg?sig=1');
+      expect(queries.lookup('h1')).toBe('https://thumbs.onlyfans.com/a.jpg?sig=1');
+
+      const raw: unknown = layer.db
+        .prepare('SELECT created_at FROM media_urls WHERE url_hash = @url_hash')
+        .get({ url_hash: 'h1' });
+      expect(raw).toEqual({ created_at: '2026-06-11T12:00:00.000Z' });
+    } finally {
+      layer.close();
+    }
+  });
+
+  it('INSERT OR IGNORE: re-registering a hash is a no-op (first write wins)', () => {
+    const layer = memoryDataLayer();
+    try {
+      layer.mediaUrls.register('h1', 'https://thumbs.onlyfans.com/a.jpg');
+      layer.mediaUrls.register('h1', 'https://thumbs.onlyfans.com/OTHER.jpg');
+      expect(layer.mediaUrls.lookup('h1')).toBe('https://thumbs.onlyfans.com/a.jpg');
+    } finally {
+      layer.close();
+    }
   });
 });

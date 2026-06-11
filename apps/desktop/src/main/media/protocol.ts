@@ -1,58 +1,81 @@
 // media:// protocol (SPEC §4): the renderer references media only as
-// media://<urlsafe-base64-of-remote-URL>; main resolves it via the encrypted
-// disk cache, falling back to the injected fetchRemote (direct signed-URL
-// fetch first — 0 credits — then OFAPI download endpoint; composition wires
-// that policy). The request handler is a pure function, testable sans Electron.
+// media://<sha256-hex-of-remote-URL> — an opaque token, non-reversible by
+// construction. Minting registers the remote URL in media_urls; the request
+// handler resolves only registered tokens (unknown → 404, never fetched)
+// through the encrypted disk cache, falling back to the injected fetchRemote
+// (direct signed-URL fetch first — 0 credits — then OFAPI download endpoint;
+// composition wires that policy). Only https OnlyFans media hosts mint, and
+// the allowlist is re-checked before any fetch (defense in depth) — the
+// scheme must never become an SSRF path out of main.
 
-import { createMediaCache, MEDIA_CACHE_MAX_BYTES } from './cache';
+import { createMediaCache, hashRemoteUrl, MEDIA_CACHE_MAX_BYTES } from './cache';
 import type { MediaCacheQueries } from './cache';
 
 export const MEDIA_SCHEME = 'media';
 
-// NOTE for the composition root: do NOT mark the scheme `standard` in
-// registerSchemesAsPrivileged — standard schemes lowercase the host part,
-// which would corrupt the case-sensitive base64url payload.
+// NOTE for the composition root: keep the scheme non-`standard` in
+// registerSchemesAsPrivileged — nothing here needs standard-scheme URL
+// semantics (tokens are plain lowercase hex).
 export const MEDIA_SCHEME_PRIVILEGES = {
   scheme: MEDIA_SCHEME,
   privileges: { supportFetchAPI: true, stream: true },
 } as const;
 
-// ─── URL mapping ─────────────────────────────────────────────────────────
+// ─── Host allowlist (https + OnlyFans hosts only) ────────────────────────
 
-export function toMediaUrl(remoteUrl: string): string {
-  return `${MEDIA_SCHEME}://${Buffer.from(remoteUrl, 'utf8').toString('base64url')}`;
+export function isAllowedMediaUrl(remoteUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(remoteUrl);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:') return false;
+  return url.hostname === 'onlyfans.com' || url.hostname.endsWith('.onlyfans.com');
+}
+
+// ─── Token mapping ────────────────────────────────────────────────────────
+
+/** url_hash → remote URL registry (db module: media_urls table). */
+export interface MediaUrlRegistry {
+  /** INSERT OR IGNORE semantics: re-registering a known hash is a no-op. */
+  register(urlHash: string, url: string): void;
+  lookup(urlHash: string): string | undefined;
 }
 
 /**
- * media://<base64url> → remote http(s) URL, or null for anything malformed.
- * Renderer-controlled input (trust boundary): parses by hand to avoid URL
- * normalization, requires the decoded value to be a well-formed http(s) URL.
+ * Remote URL → opaque media:// token; minting registers the URL so the
+ * protocol handler can resolve the token later. Non-allowlisted input mints
+ * nothing (null) and is never registered — such URLs must never become
+ * renderer-fetchable. The token equals the media_cache url_hash (one sha256).
  */
-export function parseMediaUrl(requestUrl: string): string | null {
+export function createToMediaUrl(
+  registry: Pick<MediaUrlRegistry, 'register'>,
+): (remoteUrl: string) => string | null {
+  return (remoteUrl) => {
+    if (!isAllowedMediaUrl(remoteUrl)) return null;
+    const urlHash = hashRemoteUrl(remoteUrl);
+    registry.register(urlHash, remoteUrl);
+    return `${MEDIA_SCHEME}://${urlHash}`;
+  };
+}
+
+const TOKEN_PATTERN = /^[0-9a-f]{64}$/;
+
+/**
+ * media://<token> → 64-hex sha256 token, or null for anything else. Legacy
+ * reversible base64url-of-URL payloads never match (an encoded http(s) URL
+ * always contains base64 bytes outside lowercase hex). Renderer-controlled
+ * input (trust boundary).
+ */
+export function parseMediaToken(requestUrl: string): string | null {
   const prefix = `${MEDIA_SCHEME}://`;
   if (!requestUrl.startsWith(prefix)) return null;
   let payload = requestUrl.slice(prefix.length);
-  // Chromium may append a trailing slash or query/fragment; the payload itself
-  // is pure base64url so the first such character ends it.
+  // Chromium may append a trailing slash or query/fragment.
   const end = payload.search(/[/?#]/);
   if (end !== -1) payload = payload.slice(0, end);
-  if (payload.length === 0 || !/^[A-Za-z0-9_-]+$/.test(payload)) return null;
-
-  let decoded: string;
-  try {
-    decoded = Buffer.from(payload, 'base64url').toString('utf8');
-  } catch {
-    return null;
-  }
-
-  let url: URL;
-  try {
-    url = new URL(decoded);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
-  return decoded;
+  return TOKEN_PATTERN.test(payload) ? payload : null;
 }
 
 // ─── Request handler ─────────────────────────────────────────────────────
@@ -66,7 +89,7 @@ export interface MediaFetchResult {
  * Composition root passes the fetch policy: try the signed URL directly
  * (0 credits), fall back to the OFAPI download endpoint on 403/expired
  * signature. Resolve null when the media is gone/unavailable; throw on
- * transport failure.
+ * transport failure. Must itself re-check the host allowlist before fetching.
  */
 export type FetchRemote = (remoteUrl: string) => Promise<MediaFetchResult | null>;
 
@@ -76,6 +99,7 @@ interface MediaCacheLike {
 }
 
 export interface MediaRequestHandlerDeps {
+  registry: Pick<MediaUrlRegistry, 'lookup'>;
   cache: MediaCacheLike;
   fetchRemote: FetchRemote;
 }
@@ -95,11 +119,18 @@ function blobResponse(data: Uint8Array, contentType: string | null, cacheState: 
 }
 
 export function createMediaRequestHandler(deps: MediaRequestHandlerDeps): MediaRequestHandler {
-  const { cache, fetchRemote } = deps;
+  const { registry, cache, fetchRemote } = deps;
 
   return async (request) => {
-    const remoteUrl = parseMediaUrl(request.url);
-    if (remoteUrl === null) return new Response('invalid media url', { status: 400 });
+    const token = parseMediaToken(request.url);
+    if (token === null) return new Response('invalid media url', { status: 400 });
+
+    const remoteUrl = registry.lookup(token);
+    // Unknown token, or a poisoned registry row pointing off-allowlist:
+    // 404 without ever touching the network.
+    if (remoteUrl === undefined || !isAllowedMediaUrl(remoteUrl)) {
+      return new Response('unknown media', { status: 404 });
+    }
 
     const cached = await cache.get(remoteUrl);
     if (cached !== null) return blobResponse(cached.data, cached.contentType, 'hit');
@@ -137,6 +168,7 @@ export interface RegisterMediaProtocolOptions {
   /** 32-byte mediaCacheKey from the keychain. */
   encryptionKey: Buffer;
   queries: MediaCacheQueries;
+  registry: Pick<MediaUrlRegistry, 'lookup'>;
   fetchRemote: FetchRemote;
   maxCacheBytes?: number;
 }
@@ -155,7 +187,11 @@ export function registerMediaProtocol(
     queries: options.queries,
     maxBytes: options.maxCacheBytes ?? MEDIA_CACHE_MAX_BYTES,
   });
-  const handler = createMediaRequestHandler({ cache, fetchRemote: options.fetchRemote });
+  const handler = createMediaRequestHandler({
+    registry: options.registry,
+    cache,
+    fetchRemote: options.fetchRemote,
+  });
   options.session.protocol.handle(MEDIA_SCHEME, handler);
   return { cache, handler };
 }

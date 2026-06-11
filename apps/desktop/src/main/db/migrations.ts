@@ -3,20 +3,26 @@
 
 import { z } from 'zod';
 import type { SqliteDatabase } from './driver';
-import { SCHEMA_V1 } from './schema';
+import { SCHEMA_V1, SCHEMA_V2 } from './schema';
 
 export interface Migration {
   toVersion: number;
   up(db: SqliteDatabase): void;
 }
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const MIGRATIONS: readonly Migration[] = [
   {
     toVersion: 1,
     up(db) {
       db.exec(SCHEMA_V1);
+    },
+  },
+  {
+    toVersion: 2,
+    up(db) {
+      db.exec(SCHEMA_V2);
     },
   },
 ];

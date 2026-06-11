@@ -20,6 +20,8 @@ import { createSettingsQueries } from './queries/settings';
 import type { SettingsQueries } from './queries/settings';
 import { createCreditLogQueries } from './queries/credit-log';
 import type { CreditLogQueries } from './queries/credit-log';
+import { createMediaUrlsQueries } from './queries/media-urls';
+import type { MediaUrlsQueries } from './queries/media-urls';
 
 export interface DataLayer {
   db: ChatGooseDb;
@@ -31,6 +33,7 @@ export interface DataLayer {
   summaries: SummariesQueries;
   settings: SettingsQueries;
   creditLog: CreditLogQueries;
+  mediaUrls: MediaUrlsQueries;
   close(): void;
 }
 
@@ -47,6 +50,7 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     summaries: createSummariesQueries(db, bus),
     settings: createSettingsQueries(db, bus),
     creditLog: createCreditLogQueries(db),
+    mediaUrls: createMediaUrlsQueries(db),
     close() {
       bus.flushNow();
       bus.dispose();
@@ -93,3 +97,5 @@ export { createSettingsQueries } from './queries/settings';
 export type { SettingsQueries } from './queries/settings';
 export { createCreditLogQueries } from './queries/credit-log';
 export type { CreditLogQueries } from './queries/credit-log';
+export { createMediaUrlsQueries } from './queries/media-urls';
+export type { MediaUrlsQueries } from './queries/media-urls';

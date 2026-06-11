@@ -123,6 +123,17 @@ CREATE TABLE credit_log (
 );
 `;
 
+// v2 (additive) — media_urls backs the opaque media:// token (SPEC §4): the
+// protocol handler resolves only url_hashes registered here, so a renderer
+// can never make main fetch a URL that sync/mapping did not mint.
+export const SCHEMA_V2 = `
+CREATE TABLE media_urls (
+  url_hash TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',
@@ -132,6 +143,7 @@ export const ALL_TABLES = [
   'summaries',
   'outbox',
   'media_cache',
+  'media_urls',
   'usage_events',
   'credit_log',
 ] as const;

@@ -1,4 +1,23 @@
 import type { MediaCacheQueries, MediaCacheRow } from '@main/media/cache';
+import type { MediaUrlRegistry } from '@main/media/protocol';
+
+export interface InMemoryMediaUrlRegistry extends MediaUrlRegistry {
+  rows: Map<string, string>;
+}
+
+/** INSERT OR IGNORE semantics, like the media_urls table. */
+export function createInMemoryMediaUrlRegistry(): InMemoryMediaUrlRegistry {
+  const rows = new Map<string, string>();
+  return {
+    rows,
+    register(urlHash, url) {
+      if (!rows.has(urlHash)) rows.set(urlHash, url);
+    },
+    lookup(urlHash) {
+      return rows.get(urlHash);
+    },
+  };
+}
 
 export interface InMemoryMediaCacheQueries extends MediaCacheQueries {
   rows: Map<string, MediaCacheRow>;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { SummaryCacheEntry } from '@chatgoose/shared/summary/validity';
 import type { DataLayer } from '@main/db/index';
+import { SCHEMA_VERSION } from '@main/db/migrations';
 import { memoryDataLayer } from './helpers';
 
 let layer: DataLayer;
@@ -94,7 +95,7 @@ describe('settings(key, value JSON)', () => {
   it('refuses to touch schema_version (owned by migrations)', () => {
     expect(() => layer.settings.set('schema_version', 99)).toThrow(/migration/);
     expect(() => layer.settings.remove('schema_version')).toThrow(/migration/);
-    expect(layer.db.schemaVersion()).toBe(1);
+    expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
   });
 
   it('rejects non-JSON-serializable values', () => {

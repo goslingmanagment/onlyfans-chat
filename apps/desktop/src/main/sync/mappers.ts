@@ -14,7 +14,9 @@ import type {
 } from '../db/rows';
 import type { OfApiAccount, OfApiChat, OfApiMessage, OfApiUser } from '../ofapi/schemas';
 
-export type ToMediaUrl = (remoteUrl: string) => string;
+/** Mints an opaque media:// token; null when the remote URL is not an
+ *  allowlisted OF media URL (such URLs must never reach the renderer). */
+export type ToMediaUrl = (remoteUrl: string) => string | null;
 
 // media[].files.{full,thumb,preview}.url — live-verified shape (tmp/golden probes).
 const mediaFilesSchema = z.looseObject({

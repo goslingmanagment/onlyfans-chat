@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   loadSqliteDriver,
+  MIGRATIONS,
   readSchemaVersion,
   runMigrations,
   SCHEMA_VERSION,
@@ -15,7 +16,7 @@ function rawDb(): SqliteDatabase {
 }
 
 describe('migration runner', () => {
-  it('creates the full v1 schema with indexes via openDatabase', () => {
+  it('fresh install lands at v2 with the full schema and indexes via openDatabase', () => {
     const layer = memoryDataLayer();
     try {
       const names = layer.db
@@ -31,10 +32,47 @@ describe('migration runner', () => {
         .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
+      expect(SCHEMA_VERSION).toBe(2);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
+      expect(names).toContain('media_urls');
     } finally {
       layer.close();
     }
+  });
+
+  it('upgrades v1 → v2 in place, preserving data and adding media_urls', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 1));
+    expect(readSchemaVersion(db)).toBe(1);
+
+    // v1 data that must survive the upgrade
+    db.exec(
+      "INSERT INTO chats (account_id, chat_id, fan_name, raw, updated_at) " +
+        "VALUES ('acct_1', '101', 'Fan One', '{}', '2026-06-11T00:00:00.000Z')",
+    );
+    db.exec(
+      "INSERT INTO media_cache (url_hash, path, bytes, fetched_at) " +
+        "VALUES ('h1', 'h1.bin', 10, '2026-06-11T00:00:00.000Z')",
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 1, to: 2 });
+    expect(readSchemaVersion(db)).toBe(2);
+
+    const chat: unknown = db
+      .prepare("SELECT fan_name FROM chats WHERE account_id = 'acct_1' AND chat_id = '101'")
+      .get();
+    expect(chat).toEqual({ fan_name: 'Fan One' });
+    const cacheRow: unknown = db.prepare("SELECT bytes FROM media_cache WHERE url_hash = 'h1'").get();
+    expect(cacheRow).toEqual({ bytes: 10 });
+
+    // the new table is present and usable
+    db.exec(
+      "INSERT INTO media_urls (url_hash, url, created_at) " +
+        "VALUES ('t1', 'https://thumbs.onlyfans.com/a.jpg', '2026-06-11T00:00:00.000Z')",
+    );
+    const urlRow: unknown = db.prepare("SELECT url FROM media_urls WHERE url_hash = 't1'").get();
+    expect(urlRow).toEqual({ url: 'https://thumbs.onlyfans.com/a.jpg' });
+    db.close();
   });
 
   it('applies steps sequentially and records the version', () => {
