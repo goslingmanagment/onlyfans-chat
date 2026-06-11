@@ -77,7 +77,8 @@ export const MessageRow = memo(function MessageRow({
       <div className={cx('max-w-[68%]', me && 'flex flex-col items-end')}>
         <div
           className={cx(
-            'rounded-bubble border text-msg',
+            // max-w-full: a long nowrap reply-quote must not inflate the bubble past its wrapper
+            'max-w-full rounded-bubble border text-msg',
             me
               ? 'rounded-br-flat border-bubble-me-line bg-bubble-me'
               : 'rounded-bl-flat border-line bg-bg1',
@@ -101,9 +102,9 @@ export const MessageRow = memo(function MessageRow({
               )}
               <div className={cx(isPpv && 'px-[14px] py-[10px]')}>
                 {message.replyTo !== null && (
-                  <div className="mb-1.5 border-l-2 border-clay-line pl-2 text-[12px] text-ink-low">
-                    <span className="cap mr-1.5">{message.replyTo.sender}</span>
-                    <span className="truncate">{message.replyTo.textPreview}</span>
+                  <div className="mb-1.5 flex items-baseline gap-1.5 border-l-2 border-clay-line pl-2 text-[12px] text-ink-low">
+                    <span className="cap">{message.replyTo.sender}</span>
+                    <span className="min-w-0 truncate">{message.replyTo.textPreview}</span>
                   </div>
                 )}
                 {visibleMedia.length > 0 && (
