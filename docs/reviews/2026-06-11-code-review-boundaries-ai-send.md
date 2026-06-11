@@ -2,6 +2,15 @@
 
 Scope: first high-risk pass from `docs/reviews/2026-06-11-code-review-plan.md`.
 
+> **Resolution status (same day, P3 session):** all five findings fixed and committed —
+> [P1] `media://` → opaque sha256 tokens resolved via the `media_urls` registry + OF-host
+> allowlist at mint AND fetch (`6cdee0c`); [P2] preload invoke allowlist via the
+> compile-enforced `INVOKE_CHANNEL_REGISTRY` (`d409fe5`); [P2] executor retry policy is now
+> an explicit required parameter — write methods are single-attempt, proven by regression
+> tests (`dc9c2f1`); [P2] `canNotSendReason` plumbed through `ChatListItemVM` into the
+> composer disabled state (`d409fe5`); [P2] historical messages no longer replay as live
+> events on baseline/hydration polls (`9ea7bd0`, hardened in `d7b8955`).
+
 Reviewed:
 - Static boundary audit: renderer/main/preload imports, IPC, zod validation, network/secrets boundaries.
 - AI safety audit: prompt escaping, safety preambles, output sanitizer, stale operation handling.
