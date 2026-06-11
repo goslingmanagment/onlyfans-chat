@@ -8,7 +8,7 @@ Status: Draft v1 — 2026-06-10. Companion to [PRD.md](PRD.md) (what/why) and [P
 DIRECT MODE (P1+, polling)                    HUB MODE (real-time from ~P3, AI gateway P6)
 ┌─────────────────────────────┐               ┌─────────────────────────────┐
 │  Desktop app (Electron)     │               │  Desktop app                │
-│ ┌─────────┐   ┌───────────┐ │               │  (scoped OFAPI key or none) │
+│ ┌─────────┐   ┌───────────┐ │               │  (per-chatter OFAPI key     │
 │ │Renderer │◄─►│   Main    │ │   REST        └───────┬─────────▲───────────┘
 │ │React UI │IPC│ ofapi cli ├─┼──────► OFAPI          │REST     │SSE push
 │ │         │   │ llm cli   ├─┼──────► Anthropic/     ▼         │
@@ -96,7 +96,7 @@ scripts/                 # codegen (openapi → types), fixture capture
 - **Pagination adapters** (four upstream styles — research doc §6): `nextPageUrl`, `limitOffset`, `marker`, `firstLastId`. One `paginate()` helper per style; callers request "N items" or "until predicate" with a hard page cap + inter-page delay (legacy: 300 ms between pages, deep fetch caps). Always pass `skip_users` explicitly — live default behavior differs from the documented default.
 - **Error mapping** into the `CG-*` registry (§11): 401→`OFAPI-AUTH`, 404 acct-prefix hint, 422 validation detail, 400 restricted-words (carry `textHighLight`), session-expired detection from account state.
 - **Fixture capture mode:** debug flag records sanitized request/response pairs into `tests/fixtures/ofapi/` for contract tests (no sandbox upstream — recorded fixtures are our regression net).
-- **Key scoping per phase** (configured in the OFAPI console; exact scope granularity to verify in Phase 0): P1–P2 chatter keys = read-only (chats/messages/fans/users/transactions GET); P3 adds send-message, mark-read, typing, notes/custom-name writes; P5 adds media upload + vault; webhook CRUD and account connect/disconnect stay on the admin/core key only. Never put the unscoped master key on a chatter machine.
+- **Key custody (RESOLVED 2026-06-11 — vendor FAQ is explicit): OFAPI keys have NO scopes or permissions.** “Every API key has full access to every account you've connected to OnlyFans API, including every endpoint.” Multiple keys exist only for naming, usage tracking, and individual revocation — the per-phase scoped-key matrix originally planned here is impossible. Custody rules instead: **(a) pilot (P1–P2, 1–2 supervised chatters):** one dedicated *named* key per chatter machine (revoke individually, instantly), stored only via the encrypted keychain store (§4), anomaly watch via core's webhook journal (`accounts.*` events, credit spikes); **(b) scale gate: before any rollout beyond the supervised pilot, key custody moves server-side (P6 gateway mode — desktops hold no OFAPI key) unless the vendor ships scoped keys first** (feature request to be filed); **(c)** the admin key used for webhook CRUD and account connect/disconnect never leaves the owner's machines.
 
 ## 6. Sync engine
 
@@ -203,7 +203,7 @@ Notes that bind us: chatter API keys are **one-active-per-chatter, page-scoped, 
 - **OFAPI webhook receiver** — verify `HMAC-SHA256(rawBody, signing_secret)` from the **`signature` header**, dedupe by the **`x-ofapi-idempotency-key` header** (`evt_<40 hex>`; live-verified 2026-06-10 — the body has no event-id field) with a unique index, journal to an events table, ack 200 < 1 s (async processing via pg-boss) to stay inside OFAPI's 15 s timeout / 5-retry policy. Admin flow to register the webhook at OFAPI (`account_scope: global`, events per PRD F8).
 - **SSE event fanout** — `GET /api/v1/events/stream`: chatter-key auth, events filtered to the chatter's assigned pages, `Last-Event-ID` replay from the journal (retention ~7 days). Frames = `SyncEvent` union (schema shared conceptually with `packages/shared/protocol`; core owns its copy in `contracts`).
 - **AI gateway** — SSE streaming proxy to Anthropic/OpenRouter with central keys, per-chatter quotas, cost ledger, prompt caching (this is core's planned Phase 7 scope verbatim).
-- **(Stretch)** OFAPI key custody + proxying of OF calls, so desktops hold no OFAPI key at all. Until then: per-chatter scoped OFAPI keys.
+- OFAPI key custody + proxying of OF calls, so desktops hold no OFAPI key at all — **upgraded from stretch to required-before-scale (2026-06-11): OFAPI keys cannot be scoped (§5), so gateway custody is the only real containment unless the vendor ships scoped keys first.** Until then: per-chatter named full-access keys, supervised pilot only, instantly revocable.
 
 ### 9.3 Desktop side
 Settings hold core base URL + chatter API key (keychain). HubSync (§6.2) and HubGateway (§8.6) consume the new endpoints; profile sync and usage reporting (§8.5, §8.6) already point at 9.1 from P4. Mapping OFAPI accounts to core page labels per §8.5.

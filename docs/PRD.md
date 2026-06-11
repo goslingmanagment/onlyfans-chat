@@ -55,7 +55,7 @@ OFAPI gives us full programmatic access to connected OnlyFans accounts (read cha
 
 Two components, introduced in stages (details in [PLAN.md](PLAN.md)):
 
-1. **Desktop app** (this repo, `apps/desktop`) — the chatter's workspace. In early phases it talks to OFAPI directly (polling) and to LLM providers directly, with scoped API keys.
+1. **Desktop app** (this repo, `apps/desktop`) — the chatter's workspace. In early phases it talks to OFAPI directly (polling) and to LLM providers directly, with per-chatter API keys (OFAPI offers no key scopes — custody rules in SPEC §5).
 2. **Agency Hub ("core", `~/code/core`) integration** — the agency's existing production backend (Fastify + Postgres + worker, Docker on a VPS) takes the hub role; we do **not** build a separate relay. Core already serves the legacy ChatGoose API (it calls the product "ChatMuse"): central fan-profile storage with append-only versions, AI-usage ingestion, per-chatter revocable API keys with page scoping — the desktop integrates these from P4. Core then gains the OnlyFans real-time pieces — an OFAPI webhook receiver + SSE event push to desktop clients — on a parallel track targeting desktop P3, and in P6 its planned hub-owned AI gateway (core roadmap Phase 7) with per-chatter limits.
 
 Rollout: internal pilot on 1 creator account + 1–2 trusted chatters in read+AI mode (sends still via OnlyMonster) → enable sending in-app → expand accounts/chatters → hub phase.
@@ -65,7 +65,7 @@ Rollout: internal pilot on 1 creator account + 1–2 trusted chatters in read+AI
 Features marked **[P1]**–**[P7]** map to plan phases. Legacy behavioral details (exact prompts, thresholds, timeouts) are normative where referenced — see [research/legacy-chatgoose.md](research/legacy-chatgoose.md).
 
 ### F1. Accounts & onboarding [P1]
-- App configured with an OFAPI key (per-chatter **scoped** key in direct mode) and, from P4, an Agency Hub (core) chatter API key. Keys stored in OS keychain, never in plaintext config.
+- App configured with an OFAPI key (per-chatter **named** key in direct mode — OFAPI keys cannot be scoped, every key is full-access; custody rules in SPEC §5) and, from P4, an Agency Hub (core) chatter API key. Keys stored in OS keychain, never in plaintext config.
 - App lists connected OF accounts (`GET /api/accounts`), shows auth state (`is_authenticated`), and surfaces re-auth needs (later via `accounts.authentication_failed` / `is_authenticated=false`; a lone `accounts.session_expired` is informational — OFAPI auto-recovers it; in P1 via API errors).
 - Account connection itself happens in the OFAPI console by the admin (out of app scope for v1; revisit embedded connect widget later).
 - **Personality mapping:** every account must be mapped to a personality before AI features activate (same rule as legacy; unmapped → AI buttons disabled with clear prompt). Personalities: name + free-form content, CRUD in settings, bundled "Lora" starter ported from legacy.
@@ -127,7 +127,7 @@ Model support: per-feature model selection + reasoning effort (off/low/medium/hi
 - Desktop drops its polling loops in favor of push (polling stays as degraded fallback); read-state (`isNew`) still polled on-demand for the open conversation.
 - Desktop authenticates to core with the existing per-chatter API keys (page-scoped, revocable — the central kill-switch already works today).
 - Central storage is live from P4 (fan summaries, AI usage); P6 adds per-chatter LLM token limits via core's hub-owned AI gateway (its roadmap Phase 7) — LLM calls proxy through core (central provider keys, caching, limits); desktop-direct mode remains for solo/dev use.
-- OFAPI key custody (desktop holds no OFAPI key, OF calls proxied via core) is a P6 stretch decision; interim mitigation remains per-chatter scoped OFAPI keys.
+- OFAPI key custody (desktop holds no OFAPI key, OF calls proxied via core) was a P6 stretch decision — **upgraded to required-before-scale 2026-06-11** (OFAPI keys cannot be scoped; vendor FAQ). Interim mitigation: per-chatter *named* full-access keys, supervised pilot only, instant revocation (SPEC §5).
 
 ### F9. Settings [P1–P2, grows with features]
 Ported legacy schema where applicable: provider API keys; per-feature model + reasoning; message-count knobs (quick 100 / improve 25 / deep 1500, same ranges); personalities CRUD; account→personality mappings; debug mode (+ pipeline profiling view); prompt-caching toggle; sound/notification prefs; mark-as-read policy; Agency Hub (core) URL + chatter API key (from P4).
@@ -158,7 +158,7 @@ Concrete layout anatomy, hotkey map, performance-engineering checklist and visua
 - **No send idempotency upstream** → client-side dedup is a correctness requirement, not polish.
 - **Account-scoped calls cost 1 credit each, never cached** → sync design is a cost feature (SPEC §6).
 - **OF restricted-words** and 24 h unsend window are platform rules surfaced in UX.
-- Chatter machines hold sensitive data (fan PII, adult DM history) → local store is **encrypted at rest** with purge controls (SPEC §10); per-chatter scoped OFAPI keys per the phase matrix (SPEC §5).
+- Chatter machines hold sensitive data (fan PII, adult DM history) → local store is **encrypted at rest** with purge controls (SPEC §10); per-chatter named OFAPI keys under the SPEC §5 custody rules (vendor offers no key scopes — verified 2026-06-11).
 - AI provider usage policies: agency-operated assistant for adult-platform chat; same posture as the legacy product (human-in-the-loop, no platform ToS evasion features beyond what the agency already accepts by using OnlyMonster/OFAPI).
 
 ## 9. Competitive/context note

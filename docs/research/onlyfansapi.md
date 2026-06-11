@@ -24,7 +24,7 @@ How it works:
 ### 2a. Your app's auth to OFAPI
 - **Base URL:** `https://app.onlyfansapi.com`, all endpoints under `/api`.
 - **Auth:** HTTP Bearer. Header `Authorization: Bearer YOUR_API_KEY`. API keys created in the console; keys start with `ofapi_`. 401 = bad/missing key.
-- **No scopes by default**: "Every API key has full access to every account you've connected, including every endpoint." The console adds optional **scoped keys** and per-account permissions, plus team RBAC (roles Owner/Admin/Member/Developer/Viewer/Custom with `category.action` permission keys). The raw REST key is all-or-nothing unless scoped in console.
+- **No key scopes (verified live 2026-06-11):** the FAQ is explicit — "No. Every API key has full access to every account you've connected to OnlyFans API, including every endpoint" — and the console offers exactly one kind of key (owner-confirmed). **Vendor docs self-contradict:** the `/onlyfans-ai/mcp` marketing page advertises "Scoped API keys — restrict each key to specific endpoints", "per-account permissions" and "2FA mandatory for write-scoped keys", none of which exist in the console or FAQ. Treat scoped keys as NONEXISTENT until the vendor confirms otherwise (support ticket — see PLAN). Team RBAC (Owner/Admin/Member/Developer/Viewer/Custom with `category.action` permissions) is real but governs **dashboard members**, not API keys. Custody consequences: SPEC §5.
 - **Account ID format is load-bearing:** `acct_XXXXXXXX`. Almost every endpoint is `/api/{account}/...`. Missing the prefix is the #1 cause of 404s. Get IDs from `GET /api/accounts` (`id` field) or `GET /api/whoami`.
 
 ### 2b. Connecting an OnlyFans account — 5 methods
