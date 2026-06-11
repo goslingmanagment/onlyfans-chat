@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft v1 — 2026-06-10 |
+| Status | Updated 2026-06-11 — implementation code-complete through P5; gates await owner/pilot validation (see [PLAN](PLAN.md)) |
 | Product | Standalone desktop chat client for OnlyFans agency chatters, with built-in AI assistance |
 | Predecessor | ChatGoose Firefox extension for Fansly (`/Users/dmitriy/code/chatgoose`, analyzed in [research/legacy-chatgoose.md](research/legacy-chatgoose.md)) |
 | Platform API | onlyfansapi.com (OFAPI) — third-party hosted OnlyFans REST gateway (analyzed in [research/onlyfansapi.md](research/onlyfansapi.md)) |

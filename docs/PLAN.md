@@ -1,6 +1,21 @@
 # ChatGoose Desktop — Implementation Plan
 
-Status: Draft v1 — 2026-06-10. Phases gate on the acceptance criteria in [PRD.md](PRD.md) §12. Each phase ends with a working, demoable increment; AI features arrive as early as possible (they are the product's soul — the chat client is the vehicle).
+Status: Updated 2026-06-11 — **all build phases code-complete.** Phases gate on the acceptance criteria in [PRD.md](PRD.md) §12. Each phase ends with a working, demoable increment; AI features arrive as early as possible (they are the product's soul — the chat client is the vehicle).
+
+## Where the project stands (2026-06-11)
+
+**All build phases are code-complete; `pnpm check` is green (~1,438 tests across shared + desktop). What remains is owner/pilot validation, not engineering.** Per-phase status notes below are the source of truth; this is the summary:
+
+| Phase | State | Gate awaits (owner/pilot) |
+|---|---|---|
+| **P0–P2** companion (read-only client + quick AI) | ✅ built, verified live read-only vs loravie; golden set reviewed | — (P2 human half = pilot acceptance baseline) |
+| **Core** real-time backend (`~/code/core`) | ✅ shipped (commit `de37911`); OFAPI webhook registered, events flow end-to-end | **move core off the laptop tunnel to a stable host before the pilot** |
+| **P3** sending + SSE client | ✅ built; send contract live-validated on the test fan; outbox never auto-retries | live-send gate check + a real pilot shift (≥500 sends audited via `auditOutbox`) |
+| **P4** deep AI + central sync | ✅ built at legacy parity; hub integration in code | review the 4 deep golden references; set a chatter key in Settings → confirm a Scan lands in core |
+| **P5** vault / PPV | ✅ built; purchased-state flip fixture-tested | one live PPV round-trip on the test fan |
+
+**Owner checklist to close the gates:** see item 8 below (consolidated steps, in order).
+**Open tracks (not blocking the gates):** runbook №4 — OFAPI gateway proxy in core (key custody; required before scaling past the supervised pilot, since OFAPI keys can't be scoped — SPEC §5); two vendor tickets to file (chats `limit` override; whether scoped keys exist). After the gates: P6 AI gateway.
 
 ## Phase 0 — Validation spikes & bootstrap (~week 0–1)
 

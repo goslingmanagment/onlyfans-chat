@@ -1,6 +1,6 @@
 # ChatGoose Desktop — Technical Specification
 
-Status: Draft v1 — 2026-06-10. Companion to [PRD.md](PRD.md) (what/why) and [PLAN.md](PLAN.md) (when). Normative references: [research/legacy-chatgoose.md](research/legacy-chatgoose.md) (ported behavior, exact constants), [research/onlyfansapi.md](research/onlyfansapi.md) (API capabilities), `docs/vendor/onlyfansapi/openapi.json` (field-level API truth).
+Status: Updated 2026-06-11 — implementation built through P5 (the architecture here is realized in `apps/desktop` + `packages/shared`; per-subsystem deviations are noted inline where found live). Companion to [PRD.md](PRD.md) (what/why) and [PLAN.md](PLAN.md) (when). Normative references: [research/legacy-chatgoose.md](research/legacy-chatgoose.md) (ported behavior, exact constants), [research/onlyfansapi.md](research/onlyfansapi.md) (API capabilities), `docs/vendor/onlyfansapi/openapi.json` (field-level API truth).
 
 ## 1. Architecture overview
 
