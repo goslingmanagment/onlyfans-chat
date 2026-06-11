@@ -15,7 +15,9 @@ import type {
 } from '@chatgoose/shared/protocol/index';
 import type { AiStartRequest } from '../../../../preload/contract';
 import { getBridge } from '../../bridge/bridge';
+import { focusComposer } from '../conversation/composerDom';
 import {
+  appendToDraft,
   copyPayload,
   copyablePartsOf,
   createChunkBatcher,
@@ -23,6 +25,7 @@ import {
   cycleTone,
   deriveDockView,
   isFrameForOperation,
+  resolveDockPartAction,
   type ChunkBatcher,
   type DockView,
   type StreamRenderOp,
@@ -55,9 +58,9 @@ interface AiDockState {
   /** null = follow settings.defaultReplyTone. */
   toneOverride: ReplyTone | null;
   preferSplit: boolean;
-  /** 'COPIED' feedback: 0 = all, 1..N = part N. */
-  copiedIndex: number | null;
-  /** Composer draft — feeds Improve Draft (companion mode). */
+  /** Bubble feedback chip ('INSERTED'/'COPIED'): partIndex 0 = all, 1..N = part N. */
+  partFeedback: { partIndex: number; kind: 'copied' | 'inserted' } | null;
+  /** Composer draft — send source, Improve Draft input, per-chat persisted. */
   draftText: string;
 }
 
@@ -71,7 +74,7 @@ const CLEARED = {
   spend: null,
   profiling: null,
   debugPrompt: null,
-  copiedIndex: null,
+  partFeedback: null,
 } satisfies Partial<AiDockState>;
 
 export const useAiStore = create<AiDockState>(() => ({
@@ -123,7 +126,7 @@ export interface AiStartContext {
 }
 
 let lastDefaultTone: ReplyTone = 'casual';
-let copiedResetTimer: ReturnType<typeof setTimeout> | null = null;
+let feedbackResetTimer: ReturnType<typeof setTimeout> | null = null;
 let lastConversationKey: string | null = null;
 
 export function startAiFeature(
@@ -196,21 +199,75 @@ export function cancelActiveOperation(): void {
   if (state.op !== null && state.status === 'running') dismissDock();
 }
 
-/** Conversation switch dismisses the dock; the discarded frame then confirms. */
+// ─── Per-chat draft persistence (cmd:draft.set / query:draft.get) ─────────
+
+export const DRAFT_SAVE_DEBOUNCE_MS = 500;
+
+let draftConversation: { accountId: string; chatId: string } | null = null;
+let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let draftDirty = false;
+let draftLoadSeq = 0;
+
+/** Persist the current draft to its conversation; immediate on switch, debounced while typing. */
+function persistDraftNow(): void {
+  if (draftSaveTimer !== null) {
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+  }
+  if (!draftDirty || draftConversation === null) return;
+  const { accountId, chatId } = draftConversation;
+  draftDirty = false;
+  void getBridge().invoke('cmd:draft.set', {
+    accountId,
+    chatId,
+    text: useAiStore.getState().draftText,
+  });
+}
+
+function scheduleDraftSave(): void {
+  if (draftConversation === null) return;
+  const target = draftConversation;
+  if (draftSaveTimer !== null) clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(() => {
+    draftSaveTimer = null;
+    if (draftConversation === target) persistDraftNow();
+  }, DRAFT_SAVE_DEBOUNCE_MS);
+}
+
+/**
+ * Conversation switch dismisses the dock (the discarded frame confirms),
+ * saves the outgoing chat's draft and loads the incoming chat's.
+ */
 export function handleConversationChange(accountId: string | null, chatId: string | null): void {
   const state = useAiStore.getState();
   if (state.op !== null && (state.op.accountId !== accountId || state.op.chatId !== chatId)) {
     dismissDock();
   }
   const key = `${accountId ?? ''}/${chatId ?? ''}`;
-  if (lastConversationKey !== key) {
-    lastConversationKey = key;
-    if (useAiStore.getState().draftText !== '') useAiStore.setState({ draftText: '' });
-  }
+  if (lastConversationKey === key) return;
+  lastConversationKey = key;
+  persistDraftNow();
+  draftConversation = accountId !== null && chatId !== null ? { accountId, chatId } : null;
+  draftDirty = false;
+  if (useAiStore.getState().draftText !== '') useAiStore.setState({ draftText: '' });
+  draftLoadSeq += 1;
+  const seq = draftLoadSeq;
+  const target = draftConversation;
+  if (target === null) return;
+  void getBridge()
+    .invoke('query:draft.get', { accountId: target.accountId, chatId: target.chatId })
+    .then(({ text }) => {
+      // drop stale loads: another switch happened, or the chatter already typed
+      if (seq === draftLoadSeq && !draftDirty && text !== '') {
+        useAiStore.setState({ draftText: text });
+      }
+    });
 }
 
 export function setDraftText(text: string): void {
   useAiStore.setState({ draftText: text });
+  draftDirty = true;
+  scheduleDraftSave();
 }
 
 export function setDockTone(tone: ReplyTone): void {
@@ -226,24 +283,52 @@ export function togglePreferSplit(): void {
   useAiStore.setState((s) => ({ preferSplit: !s.preferSplit }));
 }
 
-/** Copy part N (0 = all) → clipboard + 'COPIED' feedback + acceptance instrumentation. */
+function flashPartFeedback(partIndex: number, kind: 'copied' | 'inserted'): void {
+  useAiStore.setState({ partFeedback: { partIndex, kind } });
+  if (feedbackResetTimer !== null) clearTimeout(feedbackResetTimer);
+  feedbackResetTimer = setTimeout(() => {
+    feedbackResetTimer = null;
+    if (useAiStore.getState().partFeedback?.partIndex === partIndex) {
+      useAiStore.setState({ partFeedback: null });
+    }
+  }, 1400);
+}
+
+/** Secondary copy affordance: part N (0 = all) → clipboard + 'COPIED' + instrumentation. */
 export function copyDockPart(partIndex: number): void {
   const state = useAiStore.getState();
   if (state.op === null || state.status !== 'completed') return;
   const payload = copyPayload(copyablePartsOf(state.view), partIndex);
   if (payload === null) return;
   void navigator.clipboard.writeText(payload);
-  useAiStore.setState({ copiedIndex: partIndex });
-  if (copiedResetTimer !== null) clearTimeout(copiedResetTimer);
-  copiedResetTimer = setTimeout(() => {
-    copiedResetTimer = null;
-    if (useAiStore.getState().copiedIndex === partIndex) {
-      useAiStore.setState({ copiedIndex: null });
-    }
-  }, 1400);
+  flashPartFeedback(partIndex, 'copied');
   void getBridge().invoke('cmd:ai.feedback', {
     operationId: state.op.operationId,
     action: 'copied',
+    partIndex,
+  });
+}
+
+/**
+ * Primary bubble action (click / ⌘1..9 / ⌘0): insert part N into the composer
+ * (0 = all parts as a [NEXT] sequence). Degrades to copy when the chat cannot
+ * be messaged (SPEC §7.0). Reports the matching cmd:ai.feedback action.
+ */
+export function activateDockPart(partIndex: number, ctx: { canSend: boolean }): void {
+  const state = useAiStore.getState();
+  if (state.op === null || state.status !== 'completed') return;
+  const action = resolveDockPartAction(copyablePartsOf(state.view), partIndex, ctx.canSend);
+  if (action === null) return;
+  if (action.mode === 'insert') {
+    setDraftText(appendToDraft(state.draftText, action.payload));
+    focusComposer();
+  } else {
+    void navigator.clipboard.writeText(action.payload);
+  }
+  flashPartFeedback(partIndex, action.feedback);
+  void getBridge().invoke('cmd:ai.feedback', {
+    operationId: state.op.operationId,
+    action: action.feedback,
     partIndex,
   });
 }

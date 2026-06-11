@@ -1,6 +1,8 @@
 // The AI dock (DESIGN §1 AI surface): streaming draft-message bubbles above
-// the composer. Companion mode (P2): primary action is COPY — clicking a
-// bubble copies it; ⌘1..9 copy part N, ⌘0 copies all parts.
+// the composer. P3: primary action is INSERT — clicking a bubble inserts it
+// into the composer; ⌘1..9 insert part N, ⌘0 inserts all parts as a [NEXT]
+// sequence. Copy is the secondary chip and the canSendMessage=false degrade
+// (SPEC §7.0).
 
 import { useState } from 'react';
 import type {
@@ -9,13 +11,15 @@ import type {
 } from '@chatgoose/shared/protocol/index';
 import { useUiStore } from '../../state/uiStore';
 import { useSettingsCache } from '../../state/settingsCache';
-import { useSettings } from '../../bridge/queries';
+import { useChatSendability, useSettings } from '../../bridge/queries';
 import { cx } from '../../lib/cx';
 import { Kbd } from '../../design/Kbd';
 import { AiDockSlot } from '../conversation/AiDockSlot';
+import { CANNOT_SEND_FALLBACK } from '../conversation/sendLogic';
 import { StreamingDrafts, DRAFT_BUBBLE_BASE_CLASS } from './StreamingDrafts';
 import {
   useAiStore,
+  activateDockPart,
   copyDockPart,
   dismissDock,
   cancelActiveOperation,
@@ -30,6 +34,7 @@ import {
   errorHint,
   extractPromptBlocks,
   formatOpCost,
+  insertChipLabel,
   toggleTone,
   type DockView,
 } from './dockLogic';
@@ -62,10 +67,14 @@ function AiDock(): React.JSX.Element | null {
   const profiling = useAiStore((s) => s.profiling);
   const debugPrompt = useAiStore((s) => s.debugPrompt);
   const debugMode = useSettingsCache((s) => s.debugMode);
+  const sendability = useChatSendability(op?.accountId ?? null, op?.chatId ?? null);
 
   if (op === null) return null;
   const running = status === 'running';
   const parts = view !== null && view.kind !== 'raw' ? view.parts : [];
+  // unknown chat defaults to insert — inserting never sends by itself
+  const canSend = sendability.data?.canSendMessage ?? true;
+  const cannotReason = sendability.data?.canNotSendReason ?? CANNOT_SEND_FALLBACK;
 
   return (
     <div className="overflow-hidden rounded-card border border-line-strong bg-bg1 shadow-soft">
@@ -100,7 +109,9 @@ function AiDock(): React.JSX.Element | null {
       <div className="flex flex-col gap-[7px] px-3.5 pt-[9px] pb-1">
         {/* keyed per op: a superseding run must not append into the old bubbles */}
         {running && <StreamingDrafts key={op.operationId} />}
-        {status === 'completed' && view !== null && <CompletedView view={view} />}
+        {status === 'completed' && view !== null && (
+          <CompletedView view={view} canSend={canSend} cannotReason={cannotReason} />
+        )}
         {status === 'error' && error !== null && <ErrorCard error={error} />}
       </div>
 
@@ -129,10 +140,15 @@ function AiDock(): React.JSX.Element | null {
         {status === 'completed' && parts.length > 1 && (
           <button
             type="button"
-            onClick={() => copyDockPart(0)}
+            onClick={() => activateDockPart(0, { canSend })}
+            title={
+              canSend
+                ? 'Insert all parts as a [NEXT] sequence — send delivers them as separate messages'
+                : `${cannotReason} — copies instead`
+            }
             className="flex cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold text-clay-deep hover:text-clay"
           >
-            Copy all <Kbd>⌘0</Kbd>
+            {canSend ? 'Insert all' : 'Copy all'} <Kbd>⌘0</Kbd>
           </button>
         )}
       </div>
@@ -146,9 +162,17 @@ function AiDock(): React.JSX.Element | null {
 
 // ─── Completed views ───────────────────────────────────────────────────────
 
-function CompletedView({ view }: { view: DockView }): React.JSX.Element {
+function CompletedView({
+  view,
+  canSend,
+  cannotReason,
+}: {
+  view: DockView;
+  canSend: boolean;
+  cannotReason: string;
+}): React.JSX.Element {
   if (view.kind === 'raw') {
-    // Parse/sanitizer fallback — read-only, no copy chips.
+    // Parse/sanitizer fallback — read-only, no insert/copy chips.
     return (
       <div className={cx(DRAFT_BUBBLE_BASE_CLASS, 'border-solid border-line bg-bg2')}>
         <div className="cap mb-1 font-sans text-ink-low">raw output</div>
@@ -169,6 +193,8 @@ function CompletedView({ view }: { view: DockView }): React.JSX.Element {
             text={part}
             partNumber={i + 1}
             label={i === 0 ? 'engaging' : i === 1 ? 'flirty' : null}
+            canSend={canSend}
+            cannotReason={cannotReason}
           />
         ))}
       </>
@@ -177,7 +203,14 @@ function CompletedView({ view }: { view: DockView }): React.JSX.Element {
   return (
     <>
       {view.parts.map((part, i) => (
-        <DraftBubble key={i} text={part} partNumber={i + 1} label={null} />
+        <DraftBubble
+          key={i}
+          text={part}
+          partNumber={i + 1}
+          label={null}
+          canSend={canSend}
+          cannotReason={cannotReason}
+        />
       ))}
     </>
   );
@@ -187,17 +220,36 @@ function DraftBubble({
   text,
   partNumber,
   label,
+  canSend,
+  cannotReason,
 }: {
   text: string;
   partNumber: number;
   label: string | null;
+  canSend: boolean;
+  cannotReason: string;
 }): React.JSX.Element {
-  const copied = useAiStore((s) => s.copiedIndex === partNumber || s.copiedIndex === 0);
+  const feedback = useAiStore((s) =>
+    s.partFeedback !== null &&
+    (s.partFeedback.partIndex === partNumber || s.partFeedback.partIndex === 0)
+      ? s.partFeedback.kind
+      : null,
+  );
+  const chipText =
+    feedback !== null
+      ? feedback === 'inserted'
+        ? 'INSERTED'
+        : 'COPIED'
+      : canSend
+        ? insertChipLabel(partNumber)
+        : copyChipLabel(partNumber);
   return (
     <button
       type="button"
-      onClick={() => copyDockPart(partNumber)}
-      title="Click to copy"
+      onClick={() => activateDockPart(partNumber, { canSend })}
+      title={
+        canSend ? 'Click to insert into the composer' : `${cannotReason} — click copies instead`
+      }
       className={cx(
         DRAFT_BUBBLE_BASE_CLASS,
         'w-full cursor-pointer pr-[104px] text-left transition-colors duration-150',
@@ -206,16 +258,31 @@ function DraftBubble({
     >
       {label !== null && <div className="cap mb-1 font-sans text-ink-low">{label}</div>}
       {text}
-      <span
-        className={cx(
-          'num absolute top-1/2 right-2.5 -translate-y-1/2 rounded-full border px-[9px] py-[2px]',
-          'text-micro tracking-[0.08em]',
-          copied
-            ? 'border-green-line bg-green-bg text-green'
-            : 'border-clay-line bg-bg1 text-clay-deep',
+      <span className="absolute top-1/2 right-2.5 flex -translate-y-1/2 flex-col items-end gap-1">
+        <span
+          className={cx(
+            'num rounded-full border px-[9px] py-[2px] text-micro tracking-[0.08em]',
+            feedback !== null
+              ? 'border-green-line bg-green-bg text-green'
+              : 'border-clay-line bg-bg1 text-clay-deep',
+          )}
+        >
+          {chipText}
+        </span>
+        {canSend && (
+          // secondary affordance — copy without inserting (stops the bubble's insert click)
+          <span
+            role="button"
+            title="Copy to clipboard"
+            onClick={(e) => {
+              e.stopPropagation();
+              copyDockPart(partNumber);
+            }}
+            className="num cursor-pointer text-micro tracking-[0.08em] text-ink-low hover:text-ink-mid"
+          >
+            COPY
+          </span>
         )}
-      >
-        {copied ? 'COPIED' : copyChipLabel(partNumber)}
       </span>
     </button>
   );

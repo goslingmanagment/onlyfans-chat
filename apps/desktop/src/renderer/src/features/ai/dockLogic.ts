@@ -1,7 +1,8 @@
 // Pure AI-dock logic — no DOM, no store, no IPC (tested in tests/renderer-ai/).
-// Covers tone cycling, copy payload selection, frame correlation, result→view
-// derivation (xml fallback), prompt-snapshot extraction, and the streaming
-// chunk batcher/splitter that powers the imperative DOM append path
+// Covers tone cycling, insert/copy payload selection (insert is primary,
+// copy is the SPEC §7.0 degrade), frame correlation, result→view derivation
+// (xml fallback), prompt-snapshot extraction, and the streaming chunk
+// batcher/splitter that powers the imperative DOM append path
 // (DESIGN §3.4: ≤1 flush / 50 ms, no React re-render per chunk).
 
 import { z } from 'zod';
@@ -36,7 +37,7 @@ export function toggleTone(current: ReplyTone, clicked: ReplyTone): ReplyTone {
   return current === clicked ? 'none' : clicked;
 }
 
-// ─── Copy payload selection (companion mode: COPY is the primary action) ──
+// ─── Copy payload selection (secondary affordance + the §7.0 degrade path) ─
 
 /**
  * `partIndex` 0 = all parts (blank-line separated — pasted as one block into
@@ -50,6 +51,51 @@ export function copyPayload(parts: readonly string[], partIndex: number): string
 
 export function copyChipLabel(partNumber: number): string {
   return partNumber >= 1 && partNumber <= 9 ? `COPY ⌘${partNumber}` : 'COPY';
+}
+
+// ─── Insert payload selection (P3: INSERT is the primary bubble action) ───
+
+export const INSERT_SEQUENCE_JOINER = '\n[NEXT]\n';
+
+/**
+ * `partIndex` 0 = all parts joined as a [NEXT] sequence — sending the inserted
+ * draft splits back into the same parts; 1..N = part N. Null = nothing there.
+ */
+export function insertPayload(parts: readonly string[], partIndex: number): string | null {
+  if (parts.length === 0 || partIndex < 0) return null;
+  if (partIndex === 0) return parts.join(INSERT_SEQUENCE_JOINER);
+  return parts[partIndex - 1] ?? null;
+}
+
+export function insertChipLabel(partNumber: number): string {
+  return partNumber >= 1 && partNumber <= 9 ? `INSERT ⌘${partNumber}` : 'INSERT';
+}
+
+/** Insert appends below whatever the chatter already typed; blank drafts are replaced. */
+export function appendToDraft(draft: string, payload: string): string {
+  return draft.trim().length === 0 ? payload : `${draft}\n${payload}`;
+}
+
+export type DockPartAction =
+  | { mode: 'insert'; payload: string; feedback: 'inserted' }
+  | { mode: 'copy'; payload: string; feedback: 'copied' };
+
+/**
+ * Primary bubble action wiring: insert when the chat can be messaged, copy
+ * otherwise (SPEC §7.0 degrade). The feedback action is what cmd:ai.feedback
+ * must report for the acceptance instrumentation.
+ */
+export function resolveDockPartAction(
+  parts: readonly string[],
+  partIndex: number,
+  canSend: boolean,
+): DockPartAction | null {
+  if (canSend) {
+    const payload = insertPayload(parts, partIndex);
+    return payload === null ? null : { mode: 'insert', payload, feedback: 'inserted' };
+  }
+  const payload = copyPayload(parts, partIndex);
+  return payload === null ? null : { mode: 'copy', payload, feedback: 'copied' };
 }
 
 // ─── Operation correlation ───────────────────────────────────────────────
@@ -97,7 +143,7 @@ export function deriveDockView(feature: OperationFeature, result: FeatureResultP
   return { kind: 'drafts', parts };
 }
 
-/** Parts the copy hotkeys (⌘0..⌘9) operate on; raw fallback is never copyable. */
+/** Parts the ⌘0..⌘9 hotkeys (insert/copy) operate on; raw fallback never qualifies. */
 export function copyablePartsOf(view: DockView | null): string[] {
   if (view === null || view.kind === 'raw') return [];
   return view.parts;

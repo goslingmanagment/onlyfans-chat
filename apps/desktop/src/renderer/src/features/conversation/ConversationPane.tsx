@@ -49,6 +49,17 @@ export function ConversationPane(): React.JSX.Element {
     };
   }, [accountId, chatId]);
 
+  // mark-as-read on open + on window focus regained (main owns debounce/gating, SPEC §7.9)
+  useEffect(() => {
+    if (accountId === null || chatId === null) return;
+    void getBridge().invoke('cmd:chat.markRead', { accountId, chatId });
+    const onFocus = (): void => {
+      void getBridge().invoke('cmd:chat.markRead', { accountId, chatId });
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [accountId, chatId]);
+
   const account = accounts.data?.find((a) => a.id === accountId) ?? null;
   const chat = chats.data?.items.find((c) => c.chatId === chatId) ?? null;
 
@@ -101,7 +112,7 @@ export function ConversationPane(): React.JSX.Element {
       )}
       <AiDockMount />
       <AiPillRow accountId={accountId} chatId={chatId} />
-      <ComposerBar personaName={account?.displayName ?? 'model'} />
+      <ComposerBar accountId={accountId} chat={chat} personaName={account?.displayName ?? 'model'} />
     </section>
   );
 }

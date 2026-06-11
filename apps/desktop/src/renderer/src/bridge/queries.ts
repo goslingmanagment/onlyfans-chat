@@ -16,6 +16,7 @@ import type {
   ChatListItemVM,
   FanPanelVM,
   MessageVM,
+  OutboxItemVM,
   SettingsPatch,
   SettingsVM,
   SyncStatusVM,
@@ -28,6 +29,7 @@ export const qk = {
   chats: (accountId: string, filter: ChatFilter) => ['chats', accountId, filter] as const,
   chatsSearch: (accountId: string, query: string) => ['chats-search', accountId, query] as const,
   messages: (accountId: string, chatId: string) => ['messages', accountId, chatId] as const,
+  outbox: (accountId: string, chatId: string) => ['outbox', accountId, chatId] as const,
   fan: (accountId: string, fanId: string) => ['fan', accountId, fanId] as const,
   settings: ['settings'] as const,
   personalities: ['personalities'] as const,
@@ -101,6 +103,40 @@ export function useFlatMessages(query: MessagesQuery): MessageVM[] {
     }
     return out;
   }, [pages]);
+}
+
+/** Optimistic-send rows for the open chat — refetched only on db:changed scope 'outbox'. */
+export function useOutbox(accountId: string | null, chatId: string | null) {
+  return useQuery<OutboxItemVM[]>({
+    queryKey:
+      accountId === null || chatId === null
+        ? ['outbox', 'none', 'none']
+        : qk.outbox(accountId, chatId),
+    queryFn: () =>
+      getBridge().invoke('query:outbox.list', { accountId: accountId ?? '', chatId: chatId ?? '' }),
+    enabled: accountId !== null && chatId !== null,
+  });
+}
+
+export interface ChatSendability {
+  canSendMessage: boolean;
+  canNotSendReason: string | null;
+}
+
+/** Narrow per-chat slice of the chat list (AI dock insert-vs-copy degrade, SPEC §7.0). */
+export function useChatSendability(accountId: string | null, chatId: string | null) {
+  return useQuery<{ items: ChatListItemVM[]; hasMore: boolean }, Error, ChatSendability | null>({
+    queryKey: accountId === null ? ['chats', 'none', 'all'] : qk.chats(accountId, 'all'),
+    queryFn: () =>
+      getBridge().invoke('query:chats.list', { accountId: accountId ?? '', filter: 'all', limit: 500 }),
+    enabled: accountId !== null,
+    select: (data) => {
+      const chat = data.items.find((c) => c.chatId === chatId);
+      return chat === undefined
+        ? null
+        : { canSendMessage: chat.canSendMessage, canNotSendReason: chat.canNotSendReason };
+    },
+  });
 }
 
 export function useFan(accountId: string | null, fanId: string | null) {

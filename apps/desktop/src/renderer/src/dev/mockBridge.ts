@@ -15,6 +15,7 @@ import type {
   InvokeChannels,
   MessageMediaVM,
   MessageVM,
+  OutboxItemVM,
   SettingsVM,
   SyncStatusVM,
 } from '../../../preload/contract';
@@ -363,8 +364,9 @@ function buildStore(): MockStore {
         unreadCount: unread,
         hasUnreadTips: lastIsTip || chance(0.1),
         fanWaiting: last !== undefined && !last.isSentByMe && unread > 0,
-        canSendMessage: true,
-        canNotSendReason: null,
+        // one chat per account exercises the blocked composer + Insert→Copy degrade (SPEC §7.0)
+        canSendMessage: i !== 3,
+        canNotSendReason: i !== 3 ? null : 'You cannot message this user — they unsubscribed.',
       };
       list.push(item);
       fans.set(`${account.id}/${fanId}`, buildFan(account.id, fanId, name, item.lastMessageAt ?? new Date().toISOString()));
@@ -726,6 +728,163 @@ export function createMockBridge(): ChatGooseBridge {
     });
   }
 
+  // ── send pipeline (SPEC §7, mocked) ────────────────────────────────────
+  // In-memory outbox: parts advance queued→sending→sent over a few seconds
+  // with db:changed 'outbox' emissions. A part containing 'fail!' → failed
+  // with CG-OF-05 + textHighlights; 'unconf!' → unconfirmed. Sequences abort
+  // after the first non-sent outcome; cancel only stops queued parts.
+  const outboxStore = new Map<string, OutboxItemVM[]>(); // `${accountId}/${chatId}`
+  const outboxTimers = new Map<string, Array<ReturnType<typeof setTimeout>>>(); // localId →
+  const draftStore = new Map<string, string>(); // `${accountId}/${chatId}` → text
+  let localSeq = 0;
+
+  function outboxChanged(accountId: string, chatId: string): void {
+    emit('db:changed', { scope: 'outbox', accountId, chatId });
+  }
+
+  function patchOutboxRow(
+    accountId: string,
+    chatId: string,
+    localId: string,
+    patch: Partial<OutboxItemVM>,
+  ): void {
+    const row = (outboxStore.get(`${accountId}/${chatId}`) ?? []).find((r) => r.localId === localId);
+    if (row === undefined) return;
+    Object.assign(row, patch, { updatedAt: new Date().toISOString() });
+    outboxChanged(accountId, chatId);
+  }
+
+  /** A delivered send becomes a real own message — the optimistic bubble reconciles away. */
+  function appendOwnMessage(accountId: string, chatId: string, text: string): string {
+    messageSeq += 1;
+    const message: MessageVM = {
+      id: String(messageSeq),
+      chatId,
+      createdAt: new Date().toISOString(),
+      isSentByMe: true,
+      text,
+      media: [],
+      price: 0,
+      ppvState: null,
+      isTip: false,
+      tipAmount: null,
+      tipText: null,
+      isNew: true,
+      replyTo: null,
+      deleted: false,
+    };
+    const key = `${accountId}/${chatId}`;
+    const msgs = store.messages.get(key) ?? [];
+    msgs.push(message);
+    store.messages.set(key, msgs);
+    const chats = store.chats.get(accountId) ?? [];
+    const chat = chats.find((c) => c.chatId === chatId);
+    if (chat !== undefined) {
+      chat.lastMessageAt = message.createdAt;
+      chat.lastMessagePreview = text;
+      chat.lastMessageIsSentByMe = true;
+      chat.fanWaiting = false;
+      store.chats.set(accountId, sortChatsByRecency(chats));
+    }
+    emit('sync:event', { type: 'messageSent', accountId, chatId, messageId: message.id });
+    emit('db:changed', { scope: 'messages', accountId, chatId });
+    emit('db:changed', { scope: 'chats', accountId });
+    return message.id;
+  }
+
+  /** SPEC §7.7: a sequence aborts on the first failed/unconfirmed part. */
+  function abortSequenceAfter(accountId: string, chatId: string, failed: OutboxItemVM): void {
+    if (failed.sequenceId === null) return;
+    const rows = outboxStore.get(`${accountId}/${chatId}`) ?? [];
+    let touched = false;
+    for (const row of rows) {
+      if (row.sequenceId !== failed.sequenceId) continue;
+      if (row.partIndex <= failed.partIndex || row.state !== 'queued') continue;
+      for (const timer of outboxTimers.get(row.localId) ?? []) clearTimeout(timer);
+      outboxTimers.delete(row.localId);
+      Object.assign(row, { state: 'cancelled' as const, updatedAt: new Date().toISOString() });
+      touched = true;
+    }
+    if (touched) outboxChanged(accountId, chatId);
+  }
+
+  function scheduleOutboxPart(
+    accountId: string,
+    chatId: string,
+    row: OutboxItemVM,
+    startDelayMs: number,
+  ): void {
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+    outboxTimers.set(row.localId, timers);
+    timers.push(
+      setTimeout(() => {
+        patchOutboxRow(accountId, chatId, row.localId, { state: 'sending' });
+      }, startDelayMs),
+    );
+    timers.push(
+      setTimeout(() => {
+        outboxTimers.delete(row.localId);
+        if (row.text.includes('fail!')) {
+          patchOutboxRow(accountId, chatId, row.localId, {
+            state: 'failed',
+            errorCode: 'CG-OF-05',
+            errorMessage: 'OnlyFans rejected the message before delivery.',
+            // exactly 'fail!' → the live-capture shape (full text, banner only);
+            // longer text → 'fail!' is a proper substring → inline highlight path
+            textHighlights: row.text === 'fail!' ? [row.text] : ['fail!'],
+          });
+          abortSequenceAfter(accountId, chatId, row);
+        } else if (row.text.includes('unconf!')) {
+          patchOutboxRow(accountId, chatId, row.localId, {
+            state: 'unconfirmed',
+            errorCode: 'CG-OF-06',
+            errorMessage: 'Timed out waiting for OnlyFans.',
+          });
+          abortSequenceAfter(accountId, chatId, row);
+        } else {
+          const messageId = appendOwnMessage(accountId, chatId, row.text);
+          patchOutboxRow(accountId, chatId, row.localId, { state: 'sent', messageId });
+        }
+      }, startDelayMs + 900),
+    );
+  }
+
+  function makeOutboxRow(
+    chatId: string,
+    text: string,
+    sequenceId: string | null,
+    partIndex: number,
+  ): OutboxItemVM {
+    localSeq += 1;
+    const at = new Date(Date.now() + partIndex).toISOString();
+    return {
+      localId: `local_${localSeq}`,
+      chatId,
+      text,
+      state: 'queued',
+      messageId: null,
+      sequenceId,
+      partIndex,
+      errorCode: null,
+      errorMessage: null,
+      textHighlights: [],
+      createdAt: at,
+      updatedAt: at,
+    };
+  }
+
+  function findOutboxRow(
+    accountId: string,
+    localId: string,
+  ): { rows: OutboxItemVM[]; row: OutboxItemVM } | null {
+    for (const [key, rows] of outboxStore) {
+      if (!key.startsWith(`${accountId}/`)) continue;
+      const row = rows.find((r) => r.localId === localId);
+      if (row !== undefined) return { rows, row };
+    }
+    return null;
+  }
+
   // periodic liveness: freshness ticks + a fake incoming message every ~30s,
   // preceded by a typing event for realism
   setInterval(pollTick, 8_000);
@@ -824,22 +983,93 @@ export function createMockBridge(): ChatGooseBridge {
     'cmd:ai.feedback': (feedback) => {
       console.debug('[mockBridge] ai.feedback', feedback);
     },
-    // Send pipeline stubs (P3): the composer build replaces these with a
-    // mock outbox that exercises optimistic states.
-    'query:outbox.list': () => [],
-    'cmd:send.message': ({ parts }) => ({
-      localIds: parts.map((_, i) => `mock-local-${i}`),
-      sequenceId: parts.length > 1 ? 'mock-seq' : null,
-    }),
-    'cmd:send.retry': () => ({ localId: 'mock-local-retry' }),
-    'cmd:send.dismiss': () => undefined,
-    'cmd:send.cancelSequence': () => undefined,
-    'cmd:send.verifyNow': () => undefined,
+    'query:outbox.list': ({ accountId, chatId }) =>
+      (outboxStore.get(`${accountId}/${chatId}`) ?? []).map((r) => ({ ...r })),
+    'cmd:send.message': ({ accountId, chatId, parts }) => {
+      const key = `${accountId}/${chatId}`;
+      localSeq += 1;
+      const sequenceId = parts.length > 1 ? `seq_${localSeq}` : null;
+      const rows = parts.map((text, i) => makeOutboxRow(chatId, text, sequenceId, i));
+      outboxStore.set(key, [...(outboxStore.get(key) ?? []), ...rows]);
+      outboxChanged(accountId, chatId);
+      // inter-part "natural delay" compressed for dev (real pipeline: 2–5 s randomized)
+      rows.forEach((row, i) => scheduleOutboxPart(accountId, chatId, row, 250 + i * 2_400));
+      return { localIds: rows.map((r) => r.localId), sequenceId };
+    },
+    'cmd:send.retry': ({ accountId, localId, text }) => {
+      const found = findOutboxRow(accountId, localId);
+      if (found === null) return { localId };
+      // the retry is a new audit row; the original failed row is acknowledged
+      Object.assign(found.row, { state: 'cancelled' as const, updatedAt: new Date().toISOString() });
+      const row = makeOutboxRow(found.row.chatId, text, null, 0);
+      found.rows.push(row);
+      outboxChanged(accountId, found.row.chatId);
+      scheduleOutboxPart(accountId, found.row.chatId, row, 250);
+      return { localId: row.localId };
+    },
+    'cmd:send.dismiss': ({ accountId, localId }) => {
+      const found = findOutboxRow(accountId, localId);
+      if (found === null) return;
+      patchOutboxRow(accountId, found.row.chatId, localId, { state: 'cancelled' });
+    },
+    'cmd:send.cancelSequence': ({ accountId, sequenceId }) => {
+      for (const [key, rows] of outboxStore) {
+        if (!key.startsWith(`${accountId}/`)) continue;
+        let touchedChat: string | null = null;
+        for (const row of rows) {
+          if (row.sequenceId !== sequenceId || row.state !== 'queued') continue;
+          for (const timer of outboxTimers.get(row.localId) ?? []) clearTimeout(timer);
+          outboxTimers.delete(row.localId);
+          Object.assign(row, { state: 'cancelled' as const, updatedAt: new Date().toISOString() });
+          touchedChat = row.chatId;
+        }
+        if (touchedChat !== null) outboxChanged(accountId, touchedChat);
+      }
+    },
+    'cmd:send.verifyNow': ({ accountId, chatId }) => {
+      const rows = outboxStore.get(`${accountId}/${chatId}`) ?? [];
+      let touched = false;
+      for (const row of rows) {
+        if (row.state !== 'unconfirmed') continue;
+        // the mock tail-fetch always finds the message → promote to sent
+        const messageId = appendOwnMessage(accountId, chatId, row.text);
+        Object.assign(row, {
+          state: 'sent' as const,
+          messageId,
+          updatedAt: new Date().toISOString(),
+        });
+        touched = true;
+      }
+      if (touched) outboxChanged(accountId, chatId);
+    },
     'cmd:chat.typingActive': () => undefined,
-    'cmd:chat.markRead': () => undefined,
-    'cmd:message.unsend': () => undefined,
-    'query:draft.get': () => ({ text: '' }),
-    'cmd:draft.set': () => undefined,
+    'cmd:chat.markRead': ({ accountId, chatId }) => {
+      const chats = store.chats.get(accountId) ?? [];
+      const chat = chats.find((c) => c.chatId === chatId);
+      if (chat === undefined || chat.unreadCount === 0) return;
+      chat.unreadCount = 0;
+      chat.fanWaiting = false;
+      const account = store.accounts.find((a) => a.id === accountId);
+      if (account !== undefined) {
+        account.unreadCount = chats.reduce((sum, c) => sum + c.unreadCount, 0);
+      }
+      emit('db:changed', { scope: 'chats', accountId });
+      emit('db:changed', { scope: 'accounts' });
+    },
+    'cmd:message.unsend': ({ accountId, chatId, messageId }) => {
+      const message = (store.messages.get(`${accountId}/${chatId}`) ?? []).find(
+        (m) => m.id === messageId,
+      );
+      if (message === undefined) return;
+      message.deleted = true;
+      emit('db:changed', { scope: 'messages', accountId, chatId });
+    },
+    'query:draft.get': ({ accountId, chatId }) => ({
+      text: draftStore.get(`${accountId}/${chatId}`) ?? '',
+    }),
+    'cmd:draft.set': ({ accountId, chatId, text }) => {
+      draftStore.set(`${accountId}/${chatId}`, text);
+    },
   };
 
   return {

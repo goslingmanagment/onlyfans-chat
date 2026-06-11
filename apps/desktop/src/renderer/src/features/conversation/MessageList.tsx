@@ -1,19 +1,23 @@
 // Virtualized message history: measured heights, day separators, scrollback
 // pagination (older pages on near-top scroll, anchor-preserving), bottom-stick
-// for incoming messages (DESIGN §3.2).
+// for incoming messages (DESIGN §3.2). Optimistic outbox bubbles render below
+// the real thread (SPEC §7.1) and refetch only on db:changed 'outbox'.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useFlatMessages, useMessages } from '../../bridge/queries';
+import { useFlatMessages, useMessages, useOutbox } from '../../bridge/queries';
 import { buildThreadRows, type ThreadRow } from '../../lib/messages';
+import { mergeOutboxRows } from './sendLogic';
 import { SkeletonThread } from '../../design/Skeleton';
 import { EmptyState } from '../../design/EmptyState';
 import { DayDivider, MessageRow, TipLedgerRow } from './ThreadRows';
+import { OutboxRow } from './OutboxRows';
 
 function estimateRow(row: ThreadRow | undefined): number {
   if (row === undefined) return 64;
   if (row.kind === 'day') return 44;
   if (row.kind === 'tip') return 48;
+  if (row.kind === 'outbox') return 96;
   const m = row.message;
   let h = 58 + Math.ceil(m.text.length / 60) * 22;
   if (m.media.length > 0 || m.price > 0) h += 140;
@@ -31,7 +35,12 @@ export function MessageList({
 }): React.JSX.Element {
   const query = useMessages(accountId, chatId);
   const messages = useFlatMessages(query);
-  const rows = useMemo(() => buildThreadRows(messages, new Date()), [messages]);
+  const outbox = useOutbox(accountId, chatId);
+  const outboxItems = outbox.data;
+  const rows = useMemo(
+    () => mergeOutboxRows(buildThreadRows(messages, new Date()), outboxItems ?? []),
+    [messages, outboxItems],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -124,8 +133,10 @@ export function MessageList({
                 <DayDivider label={row.label} />
               ) : row.kind === 'tip' ? (
                 <TipLedgerRow message={row.message} fanName={fanName} />
+              ) : row.kind === 'outbox' ? (
+                <OutboxRow accountId={accountId} item={row.item} />
               ) : (
-                <MessageRow message={row.message} />
+                <MessageRow message={row.message} accountId={accountId} />
               )}
             </div>
           );

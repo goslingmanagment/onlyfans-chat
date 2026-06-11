@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageVM } from '../../src/preload/contract';
 import {
+  UNSEND_WINDOW_MS,
   buildThreadRows,
+  canUnsend,
   initialsOf,
   mediaCountLabel,
   ppvChip,
@@ -104,23 +106,57 @@ describe('ppvChip', () => {
   });
 });
 
-describe('sendState', () => {
+describe('sendState (DESIGN §4 mono labels)', () => {
   it('is null for fan messages', () => {
     expect(sendState(msg({ isSentByMe: false }))).toBeNull();
   });
 
-  it('maps isNew=false to SEEN', () => {
-    expect(sendState(msg({ isSentByMe: true, isNew: false }))).toEqual({
-      label: 'SEEN',
-      tone: 'seen',
-    });
+  it("maps isNew=false to 'SEEN HH:MM' carrying the message clock", () => {
+    expect(
+      sendState(
+        msg({ isSentByMe: true, isNew: false, createdAt: new Date(2026, 5, 10, 18, 42).toISOString() }),
+      ),
+    ).toEqual({ kind: 'seen', label: 'SEEN 18:42' });
   });
 
-  it('maps isNew=true to SENT', () => {
+  it("maps isNew=true to plain 'SENT'", () => {
     expect(sendState(msg({ isSentByMe: true, isNew: true }))).toEqual({
+      kind: 'sent',
       label: 'SENT',
-      tone: 'low',
     });
+  });
+});
+
+describe('canUnsend (24 h window, own non-deleted messages)', () => {
+  const now = new Date(2026, 5, 10, 19, 30);
+
+  it('true for an own recent message', () => {
+    expect(canUnsend(msg({ isSentByMe: true, createdAt: now.toISOString() }), now)).toBe(true);
+    expect(
+      canUnsend(
+        msg({
+          isSentByMe: true,
+          createdAt: new Date(now.getTime() - UNSEND_WINDOW_MS + 60_000).toISOString(),
+        }),
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it('false once the 24 h window has passed', () => {
+    expect(
+      canUnsend(
+        msg({ isSentByMe: true, createdAt: new Date(now.getTime() - UNSEND_WINDOW_MS).toISOString() }),
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it('false for fan messages and already-deleted messages', () => {
+    expect(canUnsend(msg({ isSentByMe: false, createdAt: now.toISOString() }), now)).toBe(false);
+    expect(
+      canUnsend(msg({ isSentByMe: true, deleted: true, createdAt: now.toISOString() }), now),
+    ).toBe(false);
   });
 });
 

@@ -14,7 +14,7 @@ import { playNotificationBlip } from '../lib/sound';
 import { handleAiOperationEvent } from '../features/ai/aiStore';
 
 const dbChangedSchema = z.object({
-  scope: z.enum(['accounts', 'chats', 'messages', 'fans', 'summaries', 'settings']),
+  scope: z.enum(['accounts', 'chats', 'messages', 'fans', 'summaries', 'settings', 'outbox']),
   accountId: z.string().optional(),
   chatId: z.string().optional(),
 });
@@ -61,6 +61,14 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
           queueInvalidate(qk.messages(event.accountId, event.chatId));
         } else {
           queueInvalidate(['messages']);
+        }
+        break;
+      case 'outbox':
+        // outbox refetches ONLY on this event — no polling (DESIGN §3)
+        if (event.accountId !== undefined && event.chatId !== undefined) {
+          queueInvalidate(qk.outbox(event.accountId, event.chatId));
+        } else {
+          queueInvalidate(['outbox']);
         }
         break;
       case 'fans':

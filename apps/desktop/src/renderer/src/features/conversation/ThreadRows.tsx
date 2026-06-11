@@ -1,13 +1,15 @@
 // Row renderers for the virtualized thread: day dividers, tip ledger rows,
-// message bubbles (asymmetric corners, PPV chips, media, reply-to, tombstones).
+// message bubbles (asymmetric corners, PPV chips, media, reply-to, tombstones,
+// send-state mono labels per DESIGN §4, hover unsend with inline confirm).
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import type { MessageVM } from '../../../../preload/contract';
 import { cx } from '../../lib/cx';
 import { formatClock } from '../../lib/time';
 import { formatLedgerAmount } from '../../lib/money';
-import { mediaCountLabel, ppvChip, sendState } from '../../lib/messages';
+import { canUnsend, mediaCountLabel, ppvChip, sendState } from '../../lib/messages';
 import { Badge } from '../../design/Badge';
+import { getBridge } from '../../bridge/bridge';
 import { MediaThumb } from './MediaThumb';
 
 export const DayDivider = memo(function DayDivider({ label }: { label: string }): React.JSX.Element {
@@ -46,18 +48,32 @@ export const TipLedgerRow = memo(function TipLedgerRow({
 
 export const MessageRow = memo(function MessageRow({
   message,
+  accountId,
 }: {
   message: MessageVM;
+  accountId: string;
 }): React.JSX.Element {
+  // two-step inline confirm for unsend — no modal in the shift loop (DESIGN §4)
+  const [confirmUnsend, setConfirmUnsend] = useState(false);
   const me = message.isSentByMe;
   const state = sendState(message);
   const chip = ppvChip(message);
   const isPpv = chip !== null;
   const lockedMedia = message.media.filter((m) => m.locked);
   const visibleMedia = message.media.filter((m) => !m.locked);
+  const unsendable = canUnsend(message, new Date());
+
+  function unsend(): void {
+    setConfirmUnsend(false);
+    void getBridge().invoke('cmd:message.unsend', {
+      accountId,
+      chatId: message.chatId,
+      messageId: message.id,
+    });
+  }
 
   return (
-    <div className={cx('flex py-1', me ? 'justify-end' : 'justify-start')}>
+    <div className={cx('group flex py-1', me ? 'justify-end' : 'justify-start')}>
       <div className={cx('max-w-[68%]', me && 'flex flex-col items-end')}>
         <div
           className={cx(
@@ -116,10 +132,42 @@ export const MessageRow = memo(function MessageRow({
             me && 'justify-end',
           )}
         >
-          <span>{formatClock(new Date(message.createdAt))}</span>
-          {state !== null && (
-            <span className={state.tone === 'seen' ? 'text-seen' : 'text-ink-low'}>{state.label}</span>
+          {/* the SEEN label carries the clock (DESIGN §4: 'SEEN 18:42') — no duplicate time */}
+          {(state === null || state.kind !== 'seen') && (
+            <span>{formatClock(new Date(message.createdAt))}</span>
           )}
+          {state !== null && (
+            <span className={state.kind === 'seen' ? 'text-seen' : 'text-ink-low'}>{state.label}</span>
+          )}
+          {unsendable &&
+            (confirmUnsend ? (
+              <span className="flex items-baseline gap-1.5">
+                <span className="text-bad">UNSEND?</span>
+                <button
+                  type="button"
+                  onClick={unsend}
+                  className="cursor-pointer font-semibold text-bad hover:underline"
+                >
+                  yes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmUnsend(false)}
+                  className="cursor-pointer hover:text-ink-mid"
+                >
+                  keep
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                title="Unsend (removes the message for the fan — works for 24 h)"
+                onClick={() => setConfirmUnsend(true)}
+                className="cursor-pointer opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:text-bad"
+              >
+                unsend
+              </button>
+            ))}
         </div>
       </div>
     </div>

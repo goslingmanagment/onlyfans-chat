@@ -40,7 +40,7 @@ describe('toggleTone (pill click)', () => {
   });
 });
 
-describe('copyPayload (⌘0..⌘9 / bubble click)', () => {
+describe('copyPayload (secondary copy chip + the canSend=false degrade)', () => {
   const parts = ['first part', 'second part', 'third part'];
 
   it('partIndex N copies part N (1-based)', () => {

@@ -13,15 +13,15 @@ import type { AccountVM, ChatListItemVM, SettingsVM } from '../../../preload/con
 import {
   useAiStore,
   startAiFeature,
+  activateDockPart,
   cancelActiveOperation,
-  copyDockPart,
   cycleDockTone,
   dismissDock,
   type LiveAiFeature,
 } from '../features/ai/aiStore';
 import { evaluateAiGate } from '../features/ai/dockLogic';
-
-export const COMPOSER_TEXTAREA_ID = 'composer-draft';
+import { sendCurrentDraft } from '../features/conversation/sendController';
+import { COMPOSER_TEXTAREA_ID } from '../features/conversation/composerDom';
 
 function toEventLike(e: KeyboardEvent): KeyEventLike {
   const target = e.target;
@@ -49,6 +49,13 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
     function chatItems(accountId: string, filter: 'all' | 'unread' | 'with_tips'): ChatListItemVM[] {
       const data = queryClient.getQueryData<{ items: ChatListItemVM[] }>(qk.chats(accountId, filter));
       return data?.items ?? [];
+    }
+
+    function findChat(accountId: string, chatId: string): ChatListItemVM | undefined {
+      return (
+        chatItems(accountId, 'all').find((c) => c.chatId === chatId) ??
+        chatItems(accountId, useUiStore.getState().chatFilter).find((c) => c.chatId === chatId)
+      );
     }
 
     // Same gate as the pill row (mapped personality + an LLM key).
@@ -103,11 +110,17 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
           break;
       }
 
-      // ⌘1..9 / ⌘0 — copy AI draft part N / all parts (companion-mode primary action)
-      if (action.startsWith('ai-copy-')) {
-        if (useAiStore.getState().op === null) return; // let the default through
+      // ⌘1..9 / ⌘0 — insert AI draft part N / all parts; degrades to copy when
+      // the chat can't be messaged (SPEC §7.0)
+      if (action.startsWith('ai-part-')) {
+        const aiOp = useAiStore.getState().op;
+        if (aiOp === null) return; // let the default through
         e.preventDefault();
-        copyDockPart(Number(action.slice('ai-copy-'.length)));
+        const chat = findChat(aiOp.accountId, aiOp.chatId);
+        // unknown chat defaults to insert — inserting never sends by itself
+        activateDockPart(Number(action.slice('ai-part-'.length)), {
+          canSend: chat?.canSendMessage ?? true,
+        });
         return;
       }
 
@@ -149,6 +162,14 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
             e.preventDefault();
             textarea.focus();
           }
+          return;
+        }
+        case 'send': {
+          e.preventDefault();
+          if (ui.selectedChatId === null) return;
+          const chat = findChat(accountId, ui.selectedChatId);
+          if (chat === undefined) return;
+          sendCurrentDraft({ accountId, chatId: chat.chatId, canSend: chat.canSendMessage });
           return;
         }
         case 'ai-reply':

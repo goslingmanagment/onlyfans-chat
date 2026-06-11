@@ -1,14 +1,16 @@
 // Thread shaping: day separators, tip ledger rows, PPV chips, send states.
 // Pure — unit tested in tests/renderer/messages.test.ts.
 
-import type { MessageVM, PpvStateVM } from '../../../preload/contract';
-import { dayKey, formatDayLabel } from './time';
+import type { MessageVM, OutboxItemVM, PpvStateVM } from '../../../preload/contract';
+import { dayKey, formatClock, formatDayLabel } from './time';
 import { formatDollars } from './money';
 
 export type ThreadRow =
   | { kind: 'day'; key: string; label: string }
   | { kind: 'tip'; key: string; message: MessageVM }
-  | { kind: 'message'; key: string; message: MessageVM };
+  | { kind: 'message'; key: string; message: MessageVM }
+  /** Optimistic outbox bubble (SPEC §7.1) — appended below the real thread. */
+  | { kind: 'outbox'; key: string; item: OutboxItemVM };
 
 /** Input messages must be in ascending chronological order. */
 export function buildThreadRows(messages: readonly MessageVM[], now: Date): ThreadRow[] {
@@ -51,17 +53,37 @@ export function ppvChip(message: Pick<MessageVM, 'price' | 'ppvState'>): PpvChip
 }
 
 export interface SendState {
-  label: 'SEEN' | 'SENT';
-  tone: 'seen' | 'low';
+  kind: 'seen' | 'sent';
+  /** Mono micro-label (DESIGN §4): 'SEEN HH:MM' / 'SENT'. */
+  label: string;
 }
 
 /**
- * Read-state for our sent messages, honest: derived from `isNew` only (poll
- * refreshed; we never know *when* the fan saw it — no fabricated timestamps).
+ * Read-state for our sent messages, derived from `isNew` only. The HH:MM in
+ * the SEEN label is the message's own clock — the only timestamp OFAPI gives
+ * (it replaces the meta clock; we never fabricate a separate seen-time).
  */
-export function sendState(message: Pick<MessageVM, 'isSentByMe' | 'isNew'>): SendState | null {
+export function sendState(
+  message: Pick<MessageVM, 'isSentByMe' | 'isNew' | 'createdAt'>,
+): SendState | null {
   if (!message.isSentByMe) return null;
-  return message.isNew ? { label: 'SENT', tone: 'low' } : { label: 'SEEN', tone: 'seen' };
+  if (message.isNew) return { kind: 'sent', label: 'SENT' };
+  return { kind: 'seen', label: `SEEN ${formatClock(new Date(message.createdAt))}` };
+}
+
+export const UNSEND_WINDOW_MS = 24 * 3_600_000;
+
+/**
+ * Unsend affordance gate (SPEC §7 callout ④: DELETE works <24 h, own messages
+ * only; deleted ones already render tombstones). Main re-validates against
+ * server time — this is the optimistic UI gate only.
+ */
+export function canUnsend(
+  message: Pick<MessageVM, 'isSentByMe' | 'deleted' | 'createdAt'>,
+  now: Date,
+): boolean {
+  if (!message.isSentByMe || message.deleted) return false;
+  return now.getTime() - Date.parse(message.createdAt) < UNSEND_WINDOW_MS;
 }
 
 /** '3 photos · 1 video' style media count label. */
