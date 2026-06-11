@@ -109,6 +109,8 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
         queueInvalidate(qk.messages(event.accountId, event.chatId));
         invalidateChats(event.accountId);
         queueInvalidate(qk.accounts);
+        // a fan message can unblock Ping (5-day rule) — refresh the gate
+        queueInvalidate(['ai-ping-gate', event.accountId, event.chatId]);
         const isOpenChat =
           ui.selectedAccountId === event.accountId &&
           ui.selectedChatId === event.chatId &&

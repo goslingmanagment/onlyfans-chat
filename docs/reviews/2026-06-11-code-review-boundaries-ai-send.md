@@ -91,6 +91,34 @@ Reviewed:
 
 **Concrete fix.** Suppress message-level sync events during first hydration of an uncached chat. For a brand-new chat discovered after the first account poll, emit at most the list `lastMessage` when it is from the fan and newer than the account loop's previous success timestamp. Update the initial-poll test to expect only `chatListUpdated`, and add a separate new-arrival test.
 
+## Adversarial Send-Pipeline Pass (post-P3-build, 2026-06-11)
+
+A dedicated adversarial review of the implemented send pipeline (engine, outbox queries,
+classifier, rate limiter, IPC handlers, composer, audit) hunting double-send paths.
+
+**Headline: no path exists by which one outbox row reaches `client.sendMessage` twice, and
+no path by which one user action silently creates two sends.** Evidence: atomic
+SELECT+UPDATE claim transaction (the only gateway into 'sending'), single-flight pump keyed
+per chat with JS single-threading, retry hard-gated to 'failed' rows, boot reconcile only
+cancels/verifies, executor `retry:'none'` bypasses the retry loop entirely, renderer
+in-flight guard + main-side idempotent pump kicks.
+
+Findings (fix-before-pilot unless noted):
+- **[P2] `reconcileOnBoot` is not awaited in `main/index.ts`** — the "reconciliation runs
+  before any send" comment is not enforced; a fast user could send while old unconfirmed
+  rows are still being verified (no double-send, but the documented ordering guarantee is
+  violated). Fix: await it before loading the window. → **FIXED same day (await added).**
+- **[P2, accepted]** Verifier attribution: two unconfirmed rows with identical normalized
+  text can have their server message ids swapped (both rows still promote correctly; the
+  audit still sees two distinct sends). Safety-neutral; revisit only if id-level attribution
+  ever matters. Also: the 10-min verify window may be tight for slow OF deliveries — stale
+  unconfirmed rows surface in the UI for manual resolution by design.
+- **[P3]** `transition`/`cancelQueuedInSequence` are read-then-write without a wrapping
+  transaction — safe single-process (better-sqlite3 is synchronous); only a theoretical
+  TOCTOU under the two-app-instances scenario PRD risk #7 already excludes operationally.
+- **[P3]** Audit `suspectDuplicates` compares chronologically adjacent pairs only; a
+  3+ burst of identical sends flags at least one pair (sufficient to trigger human review).
+
 ## Areas With No Findings In This Pass
 
 ### AI Safety
