@@ -155,6 +155,48 @@ describe('settings store', () => {
     expect(secrets.values.get('ofapiKey')).toBe('sk-padded');
   });
 
+  it('routes the hub chatter key to the keychain and persists hubBaseUrl (round-trip)', async () => {
+    const { store, queries, secrets } = createStore();
+    const vm = await store.update({
+      hubBaseUrl: 'https://hub.example.com',
+      hubApiKey: 'agency_hub_core_secret',
+    });
+    expect(vm.hubBaseUrl).toBe('https://hub.example.com');
+    expect(vm.hasHubKey).toBe(true);
+    expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_secret');
+
+    // key material never lands in the settings table or the VM
+    const tableDump = JSON.stringify([...queries.rows.entries()]);
+    expect(tableDump).not.toContain('agency_hub_core_secret');
+    expect(JSON.stringify(vm)).not.toContain('agency_hub_core_secret');
+    expect(Object.keys(vm)).not.toContain('hubApiKey');
+
+    const reread = createSettingsStore({ queries, secrets });
+    const again = await reread.get();
+    expect(again.hubBaseUrl).toBe('https://hub.example.com');
+    expect(again.hasHubKey).toBe(true);
+  });
+
+  it('hubBaseUrl defaults to null, clears to null, and rejects the empty string', async () => {
+    const { store } = createStore();
+    const initial = await store.get();
+    expect(initial.hubBaseUrl).toBeNull();
+    expect(initial.hasHubKey).toBe(false);
+
+    await store.update({ hubBaseUrl: 'https://hub.example.com' });
+    const cleared = await store.update({ hubBaseUrl: null });
+    expect(cleared.hubBaseUrl).toBeNull();
+    await expect(store.update({ hubBaseUrl: '' })).rejects.toThrow();
+  });
+
+  it('clears the hub key when the patch value is whitespace', async () => {
+    const { store } = createStore();
+    await store.update({ hubApiKey: 'hub-key' });
+    expect((await store.get()).hasHubKey).toBe(true);
+    const vm = await store.update({ hubApiKey: '   ' });
+    expect(vm.hasHubKey).toBe(false);
+  });
+
   it('falls back to defaults on corrupt or invalid stored rows', async () => {
     const { store, queries } = createStore();
     queries.rows.set('quickMessageCount', 'not-json{');

@@ -399,6 +399,34 @@ describe('sync events (SPEC §6 union, IPC today / hub SSE later)', () => {
       chatId: '4471102',
       lastReadMessageId: '987650',
     })).not.toBeNull();
+    expect(parseSyncEvent({
+      type: 'messageDeleted',
+      accountId: 'acct_abc123',
+      messageId: '987658',
+      chatId: '4471102',
+    })).not.toBeNull();
+  });
+
+  // Hub SSE frame fact (live-verified 2026-06-11): the upstream messages.deleted
+  // payload has no chat id, so the wire frame arrives without chatId.
+  it('messageDeleted accepts a frame without chatId and rejects malformed ids', () => {
+    expect(parseSyncEvent({
+      type: 'messageDeleted',
+      accountId: 'acct_abc123',
+      messageId: '987658',
+    })).toEqual({ type: 'messageDeleted', accountId: 'acct_abc123', messageId: '987658' });
+    expect(parseSyncEvent({ type: 'messageDeleted', accountId: 'acct_abc123' })).toBeNull();
+    expect(parseSyncEvent({
+      type: 'messageDeleted',
+      accountId: 'acct_abc123',
+      messageId: '987658',
+      chatId: '',
+    })).toBeNull();
+    expect(parseSyncEvent({
+      type: 'messageDeleted',
+      accountId: 'acct_abc123',
+      messageId: 987658,
+    })).toBeNull();
   });
 
   it('tip amount is optional (never fabricated) but must be a non-negative number', () => {

@@ -5,6 +5,7 @@ import { AiHeaderMenu } from '../ai/AiHeaderMenu';
 import { formatDollars } from '../../lib/money';
 import { formatLastSeen, isOnline } from '../../lib/time';
 import { cx } from '../../lib/cx';
+import { presenceKey, useUiStore } from '../../state/uiStore';
 
 function ValueChip({
   cap,
@@ -41,7 +42,18 @@ export function ConversationHeader({
 }): React.JSX.Element {
   const now = new Date();
   const lastSeen = fan?.lastSeen ?? null;
-  const online = isOnline(lastSeen, now);
+  // Live presence (hub SSE) wins while fresh; the cached fan.lastSeen heuristic
+  // covers polling-only mode and expired entries. Dot color: bg-online (#3f9e54,
+  // DESIGN §4).
+  const presence = useUiStore((s) =>
+    s.selectedAccountId === null
+      ? undefined
+      : s.presence[presenceKey(s.selectedAccountId, chat.chatId)],
+  );
+  const presenceFresh = presence !== undefined && presence.expiresAt > now.getTime();
+  const online = presenceFresh ? presence.online : isOnline(lastSeen, now);
+  const lastSeenLabel =
+    presenceFresh && presence.online ? 'online now' : formatLastSeen(lastSeen, now);
   const sub = fan?.subscription ?? null;
 
   return (
@@ -57,7 +69,7 @@ export function ConversationHeader({
             )}
           >
             {online && <span className="h-[7px] w-[7px] rounded-full bg-online" />}
-            {formatLastSeen(lastSeen, now)}
+            {lastSeenLabel}
           </div>
         </div>
       </div>

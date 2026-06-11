@@ -14,6 +14,19 @@ export interface ToastItem {
 
 export type AppView = 'workspace' | 'settings';
 
+/** Hub presence frame for one chat; stale entries expire client-side (TTL). */
+export interface PresenceEntry {
+  online: boolean;
+  /** Epoch ms from the presence event; null when upstream omitted it. */
+  lastSeenAt: number | null;
+  /** Entry is authoritative until this epoch ms; afterwards fall back to fan.lastSeen. */
+  expiresAt: number;
+}
+
+export function presenceKey(accountId: string, chatId: string): string {
+  return `${accountId}:${chatId}`;
+}
+
 interface UiState {
   view: AppView;
   selectedAccountId: string | null;
@@ -26,6 +39,8 @@ interface UiState {
   fanPanelTab: 'info' | 'scan';
   /** chat currently showing a typing indicator (expires client-side). */
   typing: { accountId: string; chatId: string; expiresAt: number } | null;
+  /** keyed by presenceKey(accountId, chatId); TTL'd like typing. */
+  presence: Record<string, PresenceEntry>;
   lastLlmCostUsd: number | null;
   toasts: ToastItem[];
 
@@ -39,6 +54,7 @@ interface UiState {
   setCheatsheetOpen: (open: boolean) => void;
   setFanPanelTab: (tab: 'info' | 'scan') => void;
   setTyping: (typing: UiState['typing']) => void;
+  setPresence: (accountId: string, chatId: string, entry: PresenceEntry) => void;
   setLastLlmCost: (usd: number) => void;
   pushToast: (toast: Omit<ToastItem, 'id'>) => void;
   dismissToast: (id: number) => void;
@@ -57,6 +73,7 @@ export const useUiStore = create<UiState>((set) => ({
   cheatsheetOpen: false,
   fanPanelTab: 'info',
   typing: null,
+  presence: {},
   lastLlmCostUsd: null,
   toasts: [],
 
@@ -76,6 +93,17 @@ export const useUiStore = create<UiState>((set) => ({
   setCheatsheetOpen: (open) => set({ cheatsheetOpen: open, paletteOpen: false }),
   setFanPanelTab: (tab) => set({ fanPanelTab: tab }),
   setTyping: (typing) => set({ typing }),
+  setPresence: (accountId, chatId, entry) =>
+    set((s) => {
+      // Sweep expired entries on write so the map never grows unbounded.
+      const now = Date.now();
+      const presence: Record<string, PresenceEntry> = {};
+      for (const [key, existing] of Object.entries(s.presence)) {
+        if (existing.expiresAt > now) presence[key] = existing;
+      }
+      presence[presenceKey(accountId, chatId)] = entry;
+      return { presence };
+    }),
   setLastLlmCost: (usd) => set({ lastLlmCostUsd: usd }),
   pushToast: (toast) =>
     set((s) => {

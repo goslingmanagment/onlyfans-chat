@@ -11,6 +11,7 @@ export const SECRET_NAMES = [
   'ofapiKey',
   'anthropicKey',
   'openRouterKey',
+  'hubApiKey',
   'dbKey',
   'mediaCacheKey',
 ] as const;

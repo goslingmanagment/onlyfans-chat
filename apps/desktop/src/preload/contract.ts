@@ -119,6 +119,7 @@ export interface SettingsVM {
   hasOfapiKey: boolean;
   hasAnthropicKey: boolean;
   hasOpenRouterKey: boolean;
+  hasHubKey: boolean;
   featureModels: Record<ModelSelectableFeature, string>;
   featureReasoning: Record<ModelSelectableFeature, ReasoningEffort>;
   quickMessageCount: number;
@@ -133,14 +134,18 @@ export interface SettingsVM {
   defaultReplyTone: ReplyTone;
   creditBudgetPerShift: number | null;
   accountMappings: Record<string, string>;
+  /** Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off. */
+  hubBaseUrl: string | null;
 }
 
 export type SettingsPatch = Partial<
-  Omit<SettingsVM, 'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey'>
+  Omit<SettingsVM, 'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey'>
 > & {
   ofapiKey?: string;
   anthropicKey?: string;
   openRouterKey?: string;
+  /** Chatter key (`agency_hub_core_…`) — write-only into the keychain. */
+  hubApiKey?: string;
 };
 
 export interface AiStartRequest {

@@ -474,6 +474,35 @@ describe('PollingSync', () => {
     sync.stop();
   });
 
+  it('hub demotion slows the poll loop ×6 but read-state sweeps stay FULL-RATE (SPEC §6.2)', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 9 })]);
+    const recentIso = new Date(Date.now() - 60_000).toISOString();
+    stub.setMessages([makeMessage({ id: 9, fromMe: true, isNew: true, createdAt: recentIso })]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    await sync.openConversation(ACCT, '101'); // arms the read-state sweep
+
+    sync.setHubDemoted(true);
+    // the already-pending 60s timer fires once more, then reschedules at ×6
+    await vi.advanceTimersByTimeAsync(60_000);
+    const base = stub.listChatsCalls;
+    const sweepsBefore = stub.listMessagesCalls.length;
+
+    await vi.advanceTimersByTimeAsync(60_000 * 6 - 2);
+    expect(stub.listChatsCalls).toBe(base); // poll loop demoted
+    // sweeps kept their 30s cadence through the entire demoted window
+    expect(stub.listMessagesCalls.length - sweepsBefore).toBeGreaterThanOrEqual(10);
+    await vi.advanceTimersByTimeAsync(4);
+    expect(stub.listChatsCalls).toBe(base + 1); // ×6 but still polling
+
+    // restore reschedules at the full cadence without waiting out the slow timer
+    sync.setHubDemoted(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(stub.listChatsCalls).toBe(base + 2);
+    sync.stop();
+  });
+
   it('budget exhaustion slows polling ×4 (never stops)', async () => {
     stub.setChats([]);
     const sync = makeSync(() => true);

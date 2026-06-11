@@ -21,6 +21,10 @@ const dbChangedSchema = z.object({
 
 const FLUSH_MS = 50;
 const TYPING_TTL_MS = 5_000;
+// Presence is authoritative while fresh; a missed users.offline webhook must
+// not pin a fan online forever — match the 5-min "online now" window of
+// formatLastSeen/isOnline so both signals age out together.
+const PRESENCE_TTL_MS = 5 * 60_000;
 
 export function attachBridgeEvents(queryClient: QueryClient): () => void {
   const bridge = getBridge();
@@ -136,7 +140,20 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
       case 'readStateChanged':
         queueInvalidate(qk.messages(event.accountId, event.chatId));
         break;
+      case 'messageDeleted':
+        // Main enriches chatId via local lookup before re-emitting; a frame
+        // without it identifies no chat — nothing to invalidate.
+        if (event.chatId !== undefined) {
+          queueInvalidate(qk.messages(event.accountId, event.chatId));
+          invalidateChats(event.accountId);
+        }
+        break;
       case 'presence':
+        ui.setPresence(event.accountId, event.chatId, {
+          online: event.online,
+          lastSeenAt: event.lastSeenAt ?? null,
+          expiresAt: Date.now() + PRESENCE_TTL_MS,
+        });
         queueInvalidate(qk.fan(event.accountId, event.chatId));
         break;
       case 'typing':

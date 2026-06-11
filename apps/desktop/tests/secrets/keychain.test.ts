@@ -82,6 +82,15 @@ describe('keychain', () => {
     expect(await readdir(secretsDir)).toEqual([]);
   });
 
+  it('allowlists the hub chatter key (write-only secret, SPEC §6.2)', async () => {
+    expect(SECRET_NAMES).toContain('hubApiKey');
+    const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
+    await keychain.setSecret('hubApiKey', 'agency_hub_core_abc');
+    expect(await keychain.getSecret('hubApiKey')).toBe('agency_hub_core_abc');
+    const fileBytes = await readFile(join(secretsDir, 'hubApiKey.secret'));
+    expect(fileBytes.includes(Buffer.from('agency_hub_core_abc', 'utf8'))).toBe(false);
+  });
+
   it('writes one file per secret, named by the allowlisted secret name', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
     for (const name of SECRET_NAMES) {

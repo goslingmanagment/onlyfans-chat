@@ -397,6 +397,8 @@ function buildStore(): MockStore {
     hasOfapiKey: true,
     hasAnthropicKey: true,
     hasOpenRouterKey: false,
+    hasHubKey: false,
+    hubBaseUrl: null,
     featureModels: {
       'fast-reply': 'anthropic:claude-sonnet-4-6',
       'help-me': 'anthropic:claude-sonnet-4-6',

@@ -5,6 +5,7 @@
 import { app, BrowserWindow, Notification, protocol, safeStorage, shell } from 'electron';
 import { join } from 'node:path';
 import { rm } from 'node:fs/promises';
+import { z } from 'zod';
 import { createKeychain, type Keychain } from './secrets/keychain';
 import { createDataLayer, type DataLayer } from './db/index';
 import { createSettingsStore, type SettingsStore } from './settings/store';
@@ -20,7 +21,8 @@ import { createOfApiClient, type OfApiClient } from './ofapi/client';
 import { createSendEngine, type SendEngine } from './send/engine';
 import { createPollingSync, syncAccounts } from './sync/polling-sync';
 import { createBudgetGuard } from './sync/budget-guard';
-import type { SyncProvider } from './sync/provider';
+import { createHubSync } from './sync/hub-sync';
+import { createHubAwareSync, type HubAwareSync } from './sync/hub-provider';
 import { registerIpcHandlers } from './ipc/handlers';
 import { createAiCoordinator, type AiCoordinator } from './ai/index';
 import { attachEventForwarding } from './ipc/events';
@@ -29,7 +31,7 @@ protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 
 let mainWindow: BrowserWindow | null = null;
 let data: DataLayer | null = null;
-let sync: (SyncProvider & { pollAccount(accountId: string): Promise<void> }) | null = null;
+let sync: HubAwareSync | null = null;
 let client: OfApiClient | null = null;
 let coordinator: AiCoordinator | null = null;
 let sendEngine: SendEngine | null = null;
@@ -113,10 +115,28 @@ async function initOfapi(
   });
 
   let settingsCache: { creditBudgetPerShift: number | null } | null = await settingsStore.get();
+
+  // Hub config fingerprint: reconfigure the SSE connection only when the base
+  // URL or the chatter key actually changed — NOT on every settings write
+  // (HubSync itself persists hubSync.lastEventId into the settings table, so a
+  // naive resubscribe-on-settings-change would loop the stream forever).
+  async function hubConfigFingerprint(): Promise<string> {
+    const vm = await settingsStore.get();
+    const hubKey = await keychain.getSecret('hubApiKey');
+    return `${vm.hubBaseUrl ?? ''}\n${hubKey ?? ''}`;
+  }
+  let hubFingerprint = await hubConfigFingerprint();
+
   dataLayer.bus.subscribe((events) => {
     if (events.some((event) => event.scope === 'settings')) {
       void settingsStore.get().then((vm) => {
         settingsCache = vm;
+      });
+      void hubConfigFingerprint().then((next) => {
+        if (next !== hubFingerprint) {
+          hubFingerprint = next;
+          void sync?.reconfigureHub();
+        }
       });
     }
   });
@@ -124,11 +144,36 @@ async function initOfapi(
   // Minting registers the remote URL in media_urls; only registered tokens
   // resolve through the media:// handler (SPEC §4).
   const toMediaUrl = createToMediaUrl(dataLayer.mediaUrls);
-  sync = createPollingSync({
+  const polling = createPollingSync({
     client,
     data: dataLayer,
     toMediaUrl,
     isBudgetExhausted: () => budgetGuard.isExhausted(),
+  });
+
+  const lastEventIdSchema = z.number().int().nonnegative();
+  sync = createHubAwareSync({
+    polling,
+    data: dataLayer,
+    // Resolved per (re)connect attempt so settings edits take effect on
+    // reconfigureHub without re-running OFAPI init. Null = hub mode off.
+    createHub: async ({ onEvent, onStatusChange }) => {
+      const vm = await settingsStore.get();
+      const hubKey = await keychain.getSecret('hubApiKey');
+      if (vm.hubBaseUrl === null || hubKey === null || hubKey.length === 0) {
+        return null;
+      }
+      return createHubSync({
+        baseUrl: vm.hubBaseUrl,
+        apiKey: hubKey,
+        onEvent,
+        onStatusChange,
+        // Resume checkpoint is global per chatter key (core fanout_seq).
+        getLastEventId: () =>
+          dataLayer.settings.getParsed('hubSync.lastEventId', lastEventIdSchema) ?? null,
+        setLastEventId: (id) => dataLayer.settings.set('hubSync.lastEventId', id),
+      });
+    },
   });
 
   // Send engine (SPEC §7): exists exactly when a client does. messageSent sync

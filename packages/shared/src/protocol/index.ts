@@ -253,6 +253,16 @@ export const accountAuthChangedEventSchema = z.object({
   authenticated: z.boolean(),
 });
 
+export const messageDeletedEventSchema = z.object({
+  type: z.literal('messageDeleted'),
+  accountId: idSchema,
+  messageId: idSchema,
+  // Upstream OFAPI messages.deleted carries no chat id — chatId is optional so
+  // main can enrich via local (accountId, messageId) lookup before re-emitting.
+  chatId: idSchema.optional(),
+});
+export type MessageDeletedEvent = z.infer<typeof messageDeletedEventSchema>;
+
 export const readStateChangedEventSchema = z.object({
   type: z.literal('readStateChanged'),
   accountId: idSchema,
@@ -270,6 +280,7 @@ export const syncEventSchema = z.discriminatedUnion('type', [
   typingEventSchema,
   accountAuthChangedEventSchema,
   readStateChangedEventSchema,
+  messageDeletedEventSchema,
 ]);
 export type SyncEvent = z.infer<typeof syncEventSchema>;
 

@@ -21,6 +21,7 @@ import { useUiStore } from '../../state/uiStore';
 import { Skeleton } from '../../design/Skeleton';
 import { Kbd } from '../../design/Kbd';
 import { KeySettings } from './sections/KeySettings';
+import { HubSettings } from './sections/HubSettings';
 import { ModelSettings } from './sections/ModelSettings';
 import { PersonalitySettings } from './sections/PersonalitySettings';
 import { BehaviorSettings } from './sections/BehaviorSettings';
@@ -110,6 +111,7 @@ function SettingsBody({ settings }: { settings: SettingsVM }): React.JSX.Element
         {savedFlash ? 'SAVED' : ''}
       </div>
       <KeySettings settings={settings} patch={patch} />
+      <HubSettings settings={settings} patch={patch} />
       <ModelSettings settings={settings} patch={patch} />
       <PersonalitySettings />
       <BehaviorSettings settings={settings} patch={patch} />

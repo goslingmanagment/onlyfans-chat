@@ -21,6 +21,11 @@ const FOCUSED_POLL_MS = 20_000;
 const UNFOCUSED_POLL_MS = 60_000;
 const HIDDEN_FACTOR = 4;
 const BUDGET_FACTOR = 4;
+// SPEC §6.2: while hub SSE is live, the chat-list poll is reconciliation only —
+// slow ×6, never stop (the hub stream carries ids, not bodies). The read-state
+// sweep stays FULL-RATE regardless: no upstream webhook exists for isNew flips,
+// so hub mode changes nothing about seen-tick detection.
+const HUB_DEMOTION_FACTOR = 6;
 // OnlyFans ignores limit>10 on chats and dictates its own page size (live
 // 2026-06-11: ~10 near the order=recent head, 10–19 deeper); limit≤10 is
 // honored, so we request an explicit 10 and advance the offset by what
@@ -84,6 +89,8 @@ function hydrationKey(accountId: string): string {
 export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   /** Visible for the composition root: poll one account immediately. */
   pollAccount(accountId: string): Promise<void>;
+  /** Hub-live cadence demotion (×6 on the poll loop only; sweeps unaffected). */
+  setHubDemoted(demoted: boolean): void;
 } {
   const { client, data, toMediaUrl } = options;
   const now = options.now ?? Date.now;
@@ -96,6 +103,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   let running = false;
   let focusedAccount: string | null = null;
   let windowVisible = true;
+  let hubDemoted = false;
   let openConversation: { accountId: string; chatId: string } | null = null;
 
   let sweepTimer: ReturnType<typeof setTimeout> | null = null;
@@ -112,7 +120,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     const base = accountId === focusedAccount ? FOCUSED_POLL_MS : UNFOCUSED_POLL_MS;
     const hidden = windowVisible ? 1 : HIDDEN_FACTOR;
     const budget = isBudgetExhausted() ? BUDGET_FACTOR : 1;
-    return base * hidden * budget;
+    const hub = hubDemoted ? HUB_DEMOTION_FACTOR : 1;
+    return base * hidden * budget * hub;
   }
 
   function schedule(accountId: string, delayMs: number): void {
@@ -534,6 +543,18 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       if (running && visible && wasHidden) {
         for (const accountId of loops.keys()) {
           schedule(accountId, 0); // resume burst when the window comes back
+        }
+      }
+    },
+    setHubDemoted(demoted) {
+      const wasDemoted = hubDemoted;
+      hubDemoted = demoted;
+      if (running && !demoted && wasDemoted) {
+        // Hub dropped: pending timers were scheduled at the slow cadence —
+        // reschedule at the restored interval (the composition root's
+        // reconciliation forceRefresh covers the immediate gap).
+        for (const accountId of loops.keys()) {
+          schedule(accountId, intervalFor(accountId));
         }
       }
     },

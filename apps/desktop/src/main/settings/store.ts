@@ -52,7 +52,7 @@ const REPLY_TONE_VALUES = [
 
 export type PersistedSettings = Omit<
   SettingsVM,
-  'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey'
+  'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey'
 >;
 
 export const PERSISTED_SETTINGS_KEYS = [
@@ -70,6 +70,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'defaultReplyTone',
   'creditBudgetPerShift',
   'accountMappings',
+  'hubBaseUrl',
 ] as const satisfies readonly (keyof PersistedSettings)[];
 
 const persistedFieldSchemas = {
@@ -91,6 +92,8 @@ const persistedFieldSchemas = {
   defaultReplyTone: z.enum(REPLY_TONE_VALUES),
   creditBudgetPerShift: z.number().positive().nullable(),
   accountMappings: z.record(z.string(), z.string()),
+  // Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off.
+  hubBaseUrl: z.string().min(1).nullable(),
 };
 
 interface FieldValidator<T> {
@@ -118,6 +121,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   defaultReplyTone: DEFAULT_SETTINGS.defaultReplyTone,
   creditBudgetPerShift: null,
   accountMappings: {},
+  hubBaseUrl: null,
 };
 
 // ─── Patch schema (IPC trust boundary for cmd:settings.update) ──────────
@@ -137,10 +141,12 @@ export const settingsPatchSchema = z.strictObject({
   defaultReplyTone: persistedFieldSchemas.defaultReplyTone.optional(),
   creditBudgetPerShift: persistedFieldSchemas.creditBudgetPerShift.optional(),
   accountMappings: persistedFieldSchemas.accountMappings.optional(),
+  hubBaseUrl: persistedFieldSchemas.hubBaseUrl.optional(),
   // Secret material: routed to the keychain, never stored in the settings table.
   ofapiKey: z.string().optional(),
   anthropicKey: z.string().optional(),
   openRouterKey: z.string().optional(),
+  hubApiKey: z.string().optional(),
 });
 
 export type ValidatedSettingsPatch = z.infer<typeof settingsPatchSchema>;
@@ -208,16 +214,18 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       defaultReplyTone: readField('defaultReplyTone'),
       creditBudgetPerShift: readField('creditBudgetPerShift'),
       accountMappings: readField('accountMappings'),
+      hubBaseUrl: readField('hubBaseUrl'),
     };
   }
 
   async function buildVm(): Promise<SettingsVM> {
-    const [hasOfapiKey, hasAnthropicKey, hasOpenRouterKey] = await Promise.all([
+    const [hasOfapiKey, hasAnthropicKey, hasOpenRouterKey, hasHubKey] = await Promise.all([
       secrets.hasSecret('ofapiKey'),
       secrets.hasSecret('anthropicKey'),
       secrets.hasSecret('openRouterKey'),
+      secrets.hasSecret('hubApiKey'),
     ]);
-    return { hasOfapiKey, hasAnthropicKey, hasOpenRouterKey, ...readPersisted() };
+    return { hasOfapiKey, hasAnthropicKey, hasOpenRouterKey, hasHubKey, ...readPersisted() };
   }
 
   async function applySecret(name: SecretName, rawValue: string): Promise<void> {
@@ -240,6 +248,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       if (parsed.openRouterKey !== undefined) {
         await applySecret('openRouterKey', parsed.openRouterKey);
       }
+      if (parsed.hubApiKey !== undefined) await applySecret('hubApiKey', parsed.hubApiKey);
 
       for (const key of PERSISTED_SETTINGS_KEYS) {
         const value = parsed[key];
