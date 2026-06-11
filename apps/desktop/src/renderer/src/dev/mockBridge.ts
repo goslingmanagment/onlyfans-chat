@@ -824,6 +824,22 @@ export function createMockBridge(): ChatGooseBridge {
     'cmd:ai.feedback': (feedback) => {
       console.debug('[mockBridge] ai.feedback', feedback);
     },
+    // Send pipeline stubs (P3): the composer build replaces these with a
+    // mock outbox that exercises optimistic states.
+    'query:outbox.list': () => [],
+    'cmd:send.message': ({ parts }) => ({
+      localIds: parts.map((_, i) => `mock-local-${i}`),
+      sequenceId: parts.length > 1 ? 'mock-seq' : null,
+    }),
+    'cmd:send.retry': () => ({ localId: 'mock-local-retry' }),
+    'cmd:send.dismiss': () => undefined,
+    'cmd:send.cancelSequence': () => undefined,
+    'cmd:send.verifyNow': () => undefined,
+    'cmd:chat.typingActive': () => undefined,
+    'cmd:chat.markRead': () => undefined,
+    'cmd:message.unsend': () => undefined,
+    'query:draft.get': () => ({ text: '' }),
+    'cmd:draft.set': () => undefined,
   };
 
   return {

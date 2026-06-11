@@ -141,6 +141,35 @@ export const SCHEMA_V3 = `
 ALTER TABLE chats ADD COLUMN last_message_id TEXT;
 `;
 
+// v4 — outbox shaped for the SPEC §7 state machine. Recreate is safe: nothing
+// could have written the v1 outbox (no send path existed before this version).
+// States: queued (sequence parts awaiting their turn) → sending (persisted
+// BEFORE the POST) → sent | failed (definite non-delivery) | unconfirmed
+// (indeterminate — NEVER auto-retried) | cancelled (sequence abort, restart
+// policy, or user dismissal). Rows are kept forever — they are the send audit.
+export const SCHEMA_V4 = `
+DROP TABLE outbox;
+CREATE TABLE outbox (
+  local_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  text TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('queued', 'sending', 'sent', 'failed', 'unconfirmed', 'cancelled')),
+  sequence_id TEXT,
+  part_index INTEGER NOT NULL DEFAULT 0,
+  message_id TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  text_highlights TEXT NOT NULL DEFAULT '[]',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  retry_of TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_outbox_chat ON outbox (account_id, chat_id, created_at);
+CREATE INDEX idx_outbox_state ON outbox (state);
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',

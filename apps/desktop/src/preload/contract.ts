@@ -157,19 +157,41 @@ export interface AiStartRequest {
 }
 
 /**
- * P2 acceptance instrumentation (PRD §3): every copy of an AI draft.
- * `partIndex` 0 = all parts, 1..N = part N.
+ * Acceptance instrumentation (PRD §3): every copy (P2 companion mode) or
+ * insert (P3+) of an AI draft. `partIndex` 0 = all parts, 1..N = part N.
  */
 export interface AiFeedbackRequest {
   operationId: string;
-  action: 'copied';
+  action: 'copied' | 'inserted';
   partIndex: number;
 }
 
 export interface DbChangedEvent {
-  scope: 'accounts' | 'chats' | 'messages' | 'fans' | 'summaries' | 'settings';
+  scope: 'accounts' | 'chats' | 'messages' | 'fans' | 'summaries' | 'settings' | 'outbox';
   accountId?: string;
   chatId?: string;
+}
+
+// ─── Send pipeline (SPEC §7) ─────────────────────────────────────────────
+
+export type OutboxStateVM = 'queued' | 'sending' | 'sent' | 'failed' | 'unconfirmed' | 'cancelled';
+
+export interface OutboxItemVM {
+  localId: string;
+  chatId: string;
+  text: string;
+  state: OutboxStateVM;
+  /** Server message id once confirmed (POST response or verifier match). */
+  messageId: string | null;
+  /** Multi-part ([NEXT]) sequence grouping; null for single sends. */
+  sequenceId: string | null;
+  partIndex: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  /** CG-OF-05 restricted words: raw textHighLight entries (may be the full text). */
+  textHighlights: string[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface PingGateVM {
@@ -215,6 +237,42 @@ export interface InvokeChannels {
   'ai:start': { args: AiStartRequest; result: void };
   'ai:cancel': { args: { operationId: string }; result: void };
   'cmd:ai.feedback': { args: AiFeedbackRequest; result: void };
+  // ── Send pipeline (SPEC §7) ──
+  /** Active + recent rows for the chat's optimistic bubbles and audit strip. */
+  'query:outbox.list': {
+    args: { accountId: string; chatId: string };
+    result: OutboxItemVM[];
+  };
+  /** parts.length > 1 ⇒ a [NEXT] sequence (own row per part, 2–5 s delays). */
+  'cmd:send.message': {
+    args: { accountId: string; chatId: string; parts: string[] };
+    result: { localIds: string[]; sequenceId: string | null };
+  };
+  /** Manual retry of a FAILED row (edited text allowed) — a new audit row linked via retry_of. */
+  'cmd:send.retry': {
+    args: { accountId: string; localId: string; text: string };
+    result: { localId: string };
+  };
+  /** Acknowledge a failed/unconfirmed row (state → cancelled; audit row kept). */
+  'cmd:send.dismiss': { args: { accountId: string; localId: string }; result: void };
+  'cmd:send.cancelSequence': { args: { accountId: string; sequenceId: string }; result: void };
+  /** User-triggered verifier pass for the chat's unconfirmed rows. */
+  'cmd:send.verifyNow': { args: { accountId: string; chatId: string }; result: void };
+  'cmd:chat.typingActive': { args: { accountId: string; chatId: string }; result: void };
+  /** Debounced in main (1.5 s) and gated on settings.markAsReadOnOpen. */
+  'cmd:chat.markRead': { args: { accountId: string; chatId: string }; result: void };
+  'cmd:message.unsend': {
+    args: { accountId: string; chatId: string; messageId: string };
+    result: void;
+  };
+  'query:draft.get': {
+    args: { accountId: string; chatId: string };
+    result: { text: string };
+  };
+  'cmd:draft.set': {
+    args: { accountId: string; chatId: string; text: string };
+    result: void;
+  };
 }
 
 /**
@@ -276,6 +334,17 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'ai:start': true,
   'ai:cancel': true,
   'cmd:ai.feedback': true,
+  'query:outbox.list': true,
+  'cmd:send.message': true,
+  'cmd:send.retry': true,
+  'cmd:send.dismiss': true,
+  'cmd:send.cancelSequence': true,
+  'cmd:send.verifyNow': true,
+  'cmd:chat.typingActive': true,
+  'cmd:chat.markRead': true,
+  'cmd:message.unsend': true,
+  'query:draft.get': true,
+  'cmd:draft.set': true,
 };
 
 export const INVOKE_CHANNEL_NAMES = Object.keys(INVOKE_CHANNEL_REGISTRY) as InvokeChannelName[];
