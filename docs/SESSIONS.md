@@ -16,7 +16,7 @@
 | 2 | `~/code/core` | **Серверная часть разом** — 2 патча + вебхук-приёмник + SSE | как только №1 закоммитит вебхук-фикстуры (рано по ходу №1); дальше параллельно |
 | 3 | `chatgoose_desktop_fable` | **Полный клиент** — Phases 3–5 (отправка + SSE-клиент → deep AI + центральные саммари → vault/PPV) | после №2, №3-гейта и твоего ручного send-чеклиста |
 
-Потом, отдельным заходом: P6 — AI gateway в core + gateway-режим в десктопе.
+Потом, отдельным заходом: №4 (ниже) — OFAPI gateway-прокси в core (key custody; обязателен до масштабирования за пределы пилота — у OFAPI-ключей нет скоупов), затем P6 — AI gateway в core + переключение десктопа в gateway-режим (конфиг + тонкая правка OfApiClient).
 Опционально между этапами — ревью: `Прочитай docs/reviews/review-prompt.md и выполни его`.
 
 ## Промпты
@@ -29,6 +29,9 @@
 
 **№3 — Полный клиент** (репо: этот):
 > Preconditions — verify both are recorded in docs/PLAN.md, refuse to start otherwise: (a) the owner's manual send checklist (PLAN Phase 0 item 8) is done; (b) before entering P4 — core's pre-P4 patch (profile auto-create + per-event usage skip) is deployed. Read CLAUDE.md, docs/PRD.md, docs/SPEC.md, docs/PLAN.md, docs/DESIGN.md. **Goal: Phases 3 → 4 → 5 sequentially to their exit gates** — sending + HubSync SSE client; deep AI + central Scan sync via core; vault/PPV. Same latitude and pins as №1; one session = one repo — needed core-side changes are recorded in PLAN for a separate core session, never edited from here. The send pipeline (SPEC §7) is the most correctness-critical code in the product: never auto-retry an indeterminate send. **Definition of done: each phase gate demonstrated with evidence** — outbox audit across real sends, golden parity outputs vs legacy, a PPV send verified end-to-end including the purchased-state flip. If a previous session already started this, continue from the current state.
+
+**№4 — OFAPI gateway-прокси, key custody** (репо: `~/code/core`; запускать после фаз 1–3 `docs/ofapi-integration-plan.md` — прокси переиспользует их REST-клиент и кредитную телеметрию; обязателен до раскатки за пределы пилота):
+> This is the production Agency Hub — nothing live may break; follow this repo's conventions (contracts:generate, additive migrations, env flags default-off, numbered decision entry). Context: OFAPI API keys cannot be scoped (vendor FAQ + console, verified 2026-06-11) — any key on a chatter machine is a master key for every connected account, so chatter desktops must hold no OFAPI key at all. Read first: `~/code/chatgoose_desktop_fable/docs/SPEC.md` §5 (custody rules) and §9; this repo's `docs/ofapi-integration-plan.md` (reuse its OFAPI client, pacing, credit telemetry, alerting). **Goal: an authenticated passthrough proxy `/api/v1/ofapi-proxy/{account}/{...path}`** with: (a) chatter API-key auth + page ACL via `pages.ofapi_account_id` — a chatter reaches only accounts mapped to their assigned pages; (b) a per-phase endpoint **allowlist, deny by default** (read-only set first; send/mark-read/typing flip on when the desktop's P3 ships; vault/media later); (c) verbatim passthrough of bodies, status codes and `_meta` (the desktop credit meter depends on it); (d) per-chatter rate budget + audit log (who, what, when, credits); (e) **non-idempotent methods pass through exactly once — never retried** (the desktop outbox owns send semantics; an upstream timeout must surface as-is). **DoD: integration tests prove ACL allow/deny, allowlist deny, `_meta` passthrough, and single-shot POST on upstream timeout; decision entry documents the contract.** If a previous session already started this, continue from the current state.
 
 ## Твоё (вне сессий)
 
