@@ -1,0 +1,32 @@
+{
+  "_fixture": {
+    "source": "DELETE /{account}/chats/{chat_id}/messages/{message_id} — live P3 send-contract validation 2026-06-11 (unsend within the 24h window)",
+    "anonymized": true,
+    "notes": [
+      "data = {success:true} only — the deleted message object is NOT returned.",
+      "Costs 1 credit.",
+      "Only messages sent <24h ago can be deleted (cancelSeconds on the message is the live countdown)."
+    ]
+  },
+  "data": {
+    "success": true
+  },
+  "_meta": {
+    "_credits": {
+      "used": 1,
+      "balance": 90000,
+      "note": "Always"
+    },
+    "_cache": {
+      "is_cached": false,
+      "note": "Cache disabled for this endpoint"
+    },
+    "_rate_limits": {
+      "limit_minute": 5000,
+      "limit_day": null,
+      "remaining_minute": 4999,
+      "remaining_day": null,
+      "notice": "We have decided to remove our daily rate limits. Please remove any references to these in your integrations."
+    }
+  }
+}

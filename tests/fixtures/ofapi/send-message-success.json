@@ -1,0 +1,66 @@
+{
+  "_fixture": {
+    "source": "POST /{account}/chats/{chat_id}/messages {text} — live P3 send-contract validation 2026-06-11, owner-designated test fan, envelope {data,_meta}",
+    "anonymized": true,
+    "notes": [
+      "data = the full created message object (same shape as list-messages rows): server-assigned id, cancelSeconds (~24h unsend countdown, server-computed), isOpened:false, isNew:true.",
+      "fromUser is the creator's own OF user id (terse {id,_view} form).",
+      "No _pagination on this endpoint's success response in live capture (docs show one; do not rely on it).",
+      "Round-trip observed live: 3.6 s — optimistic UI is mandatory (SPEC §7).",
+      "Cross-ref: the messages.sent webhook fixture messages_sent_own_api_send.json carries the SAME message (id 9000000001) as delivered by webhook ~0.2 s after this response."
+    ]
+  },
+  "data": {
+    "responseType": "message",
+    "text": "hey! just checking in 💬 (sample-marker-0001)",
+    "giphyId": null,
+    "lockedText": false,
+    "isFree": true,
+    "price": 0,
+    "isMediaReady": true,
+    "mediaCount": 0,
+    "media": [],
+    "previews": [],
+    "isTip": false,
+    "isReportedByMe": false,
+    "isCouplePeopleMedia": false,
+    "queueId": 41000000001,
+    "isMarkdownDisabled": true,
+    "releaseForms": [],
+    "fromUser": {
+      "id": 1000001,
+      "_view": "s"
+    },
+    "isFromQueue": false,
+    "id": 9000000001,
+    "isOpened": false,
+    "isNew": true,
+    "createdAt": "2026-06-11T02:57:25+00:00",
+    "changedAt": "2026-06-11T02:57:25+00:00",
+    "cancelSeconds": 86399,
+    "isLiked": false,
+    "canPurchase": false,
+    "canPurchaseReason": "free",
+    "canReport": false,
+    "canBePinned": true,
+    "isPinned": false
+  },
+  "_meta": {
+    "_credits": {
+      "used": 1,
+      "balance": 90000,
+      "note": "Always"
+    },
+    "_cache": {
+      "is_cached": false,
+      "note": "Cache disabled for this endpoint"
+    },
+    "_rate_limits": {
+      "limit_minute": 5000,
+      "limit_day": null,
+      "remaining_minute": 4999,
+      "remaining_day": null,
+      "notice": "We have decided to remove our daily rate limits. Please remove any references to these in your integrations."
+    }
+  }
+}

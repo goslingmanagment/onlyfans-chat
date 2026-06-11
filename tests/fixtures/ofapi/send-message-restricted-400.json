@@ -1,0 +1,33 @@
+{
+  "_fixture": {
+    "source": "POST /{account}/chats/{chat_id}/messages — live P3 send-contract validation 2026-06-11, deliberate restricted-word send (HTTP 400, rejected by OnlyFans PRE-DELIVERY: nothing reaches the fan)",
+    "anonymized": true,
+    "notes": [
+      "OFAPI wraps the OnlyFans 400 as error:ONLYFANS_COM_ERROR with the raw OF body nested under onlyfans_response.body — textHighLight is NOT top-level.",
+      "errors.textHighLight is an ARRAY of strings; in live capture it contained the FULL message text with no per-word markers — the UX must not assume word-level highlighting (CG-OF-05 shows the platform reason and keeps the composer text).",
+      "No _meta envelope on this error response (credit meter gets nothing from it).",
+      "Trigger word in this capture: 'cashapp'. 'venmo' was NOT restricted (delivered, then unsent) — OF's list shifts; never hardcode it.",
+      "This is a DEFINITE failure for the outbox state machine (SPEC §7.4): a 4xx application response, state:'failed', safe to let the user edit and resend."
+    ]
+  },
+  "error": "ONLYFANS_COM_ERROR",
+  "message": "Bad Request - The request could not be understood by the server.",
+  "description": "This error happened most probably because of a bug in the OnlyFans.com API or you sent wrong parameters (like a non-existing user id).",
+  "onlyfans_response": {
+    "status": 400,
+    "body": {
+      "error": {
+        "code": 0,
+        "message": "Input contains restricted words"
+      },
+      "errors": {
+        "text": [
+          "Input contains restricted words"
+        ],
+        "textHighLight": [
+          "haha no I do not even have a cashapp"
+        ]
+      }
+    }
+  }
+}

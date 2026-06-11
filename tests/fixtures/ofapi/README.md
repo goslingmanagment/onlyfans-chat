@@ -24,6 +24,22 @@ These are the regression net for the OFAPI client contract tests
 - `user-details.json`: envelope with `data` = single user object, `_meta` but **no `_pagination`**.
 - `_meta._credits.{used,balance}` is present on every account-scoped call (1 credit each).
 
+### Send contract (live P3 validation, 2026-06-11, owner-designated test fan only)
+
+- `send-message-success.json`: `POST …/messages {text}` → 200 `{data: <full message object>, _meta}` —
+  server-assigned `id`, `cancelSeconds` (≈24 h unsend countdown), `isOpened:false`, `isNew:true`,
+  `fromUser` = creator's own OF id. 1 credit. Observed round-trip 3.6 s.
+- `send-message-restricted-400.json`: restricted words → HTTP 400 wrapped as
+  `error:"ONLYFANS_COM_ERROR"` with the raw OF body under `onlyfans_response.body`;
+  `errors.textHighLight` is an **array of strings** (observed: the full message text, no per-word
+  markers). **No `_meta` on this error.** Rejected pre-delivery. `cashapp` triggered it; `venmo`
+  did not (word list shifts — never hardcode).
+- `delete-message-success.json`: `DELETE …/messages/{id}` (unsend, <24 h) → `{data:{success:true}}`, 1 credit.
+- Method probing (2026-06-11): `GET /api/{account}/chats/{chat_id}` does not exist for OnlyFans
+  accounts — returns a **405 HTML page** (error mapping must tolerate non-JSON bodies); that path
+  is DELETE-only (Delete Chat). Single-chat reads go through `…/messages` and `users/list?ids=`.
+- `_rate_limits.limit_day` is now `null` — vendor removed daily rate limits (notice in `_meta`).
+
 `_fixture` on each file is ours (provenance/anonymization marker), not part of the wire format.
 
 Regenerate (requires the uncommitted live probes in `tmp/`):
