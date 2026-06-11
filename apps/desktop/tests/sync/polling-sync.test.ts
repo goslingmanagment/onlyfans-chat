@@ -61,27 +61,43 @@ function makeMessage(overrides: {
 interface StubClient {
   client: OfApiClient;
   listChatsCalls: number;
+  listChatsParams: { limit?: number; offset?: number }[];
   listMessagesCalls: { lastId?: string; order?: string }[];
   setChats(chats: OfApiChat[]): void;
+  /** Pages of 10; nextPageUrl is non-null while deeper pages remain. */
+  setChatPages(pages: OfApiChat[][]): void;
   setMessages(messages: OfApiMessage[]): void;
 }
 
 function makeStubClient(): StubClient {
-  let chats: OfApiChat[] = [];
+  let pages: OfApiChat[][] = [[]];
   let messages: OfApiMessage[] = [];
   const state: StubClient = {
     listChatsCalls: 0,
+    listChatsParams: [],
     listMessagesCalls: [],
     setChats: (next) => {
-      chats = next;
+      pages = [next];
+    },
+    setChatPages: (next) => {
+      pages = next;
     },
     setMessages: (next) => {
       messages = next;
     },
     client: {
-      listChats: vi.fn(async () => {
+      listChats: vi.fn(async (params: { limit?: number; offset?: number }) => {
         state.listChatsCalls += 1;
-        return { chats, nextPageUrl: null };
+        state.listChatsParams.push({
+          ...(params.limit != null ? { limit: params.limit } : {}),
+          ...(params.offset != null ? { offset: params.offset } : {}),
+        });
+        const index = Math.floor((params.offset ?? 0) / 10);
+        return {
+          chats: pages[index] ?? [],
+          nextPageUrl:
+            index < pages.length - 1 ? `https://stub/chats?offset=${(index + 1) * 10}` : null,
+        };
       }),
       listMessages: vi.fn(async (params: { lastId?: string; order?: string }) => {
         state.listMessagesCalls.push({
@@ -103,6 +119,7 @@ describe('PollingSync', () => {
   let data: DataLayer;
   let stub: StubClient;
   let events: SyncEvent[];
+  let sleeps: number[];
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -113,6 +130,7 @@ describe('PollingSync', () => {
     });
     stub = makeStubClient();
     events = [];
+    sleeps = [];
   });
 
   afterEach(() => {
@@ -120,18 +138,32 @@ describe('PollingSync', () => {
     data.close();
   });
 
+  /**
+   * Completes an in-flight poll (all stubs resolve in microtasks) WITHOUT firing
+   * the rescheduled tick — runOnlyPendingTimersAsync would run one extra poll.
+   */
+  async function drainPoll(): Promise<void> {
+    for (let i = 0; i < 5000; i += 1) {
+      await Promise.resolve();
+    }
+  }
+
   function makeSync(budgetExhausted = (): boolean => false) {
     const sync = createPollingSync({
       client: stub.client,
       data,
       toMediaUrl: (url) => `media://${Buffer.from(url).toString('base64url')}`,
       isBudgetExhausted: budgetExhausted,
+      // No-op sleep so multi-page walks resolve under fake timers; pacing asserted via `sleeps`.
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
     });
     sync.subscribe((event) => events.push(event));
     return sync;
   }
 
-  it('initial poll upserts chats + fans and fetches tails for new chats', async () => {
+  it('initial poll hydrates chats + fans + tails but suppresses historical message events', async () => {
     stub.setChats([makeChat({ fanId: 101, lastMessageId: 5, unread: 2 })]);
     stub.setMessages([makeMessage({ id: 4 }), makeMessage({ id: 5, fromMe: true })]);
 
@@ -143,8 +175,10 @@ describe('PollingSync', () => {
     expect(data.fans.get(ACCT, '101')?.username).toBe('fan101');
     expect(data.messages.count(ACCT, '101')).toBe(2);
     expect(events.some((e) => e.type === 'chatListUpdated')).toBe(true);
-    expect(events.filter((e) => e.type === 'messageReceived')).toHaveLength(1);
-    expect(events.filter((e) => e.type === 'messageSent')).toHaveLength(1);
+    // Baseline poll: history is not news — no message-level events.
+    expect(events.filter((e) => e.type === 'messageReceived')).toHaveLength(0);
+    expect(events.filter((e) => e.type === 'messageSent')).toHaveLength(0);
+    expect(events.filter((e) => e.type === 'tipReceived')).toHaveLength(0);
     sync.stop();
   });
 
@@ -183,16 +217,143 @@ describe('PollingSync', () => {
     sync.stop();
   });
 
-  it('tip messages emit tipReceived with the dollar amount', async () => {
-    stub.setChats([makeChat({ fanId: 101, lastMessageId: 7 })]);
-    stub.setMessages([makeMessage({ id: 7, isTip: true, tipAmount: 5 })]);
+  it('tip messages arriving post-baseline emit tipReceived with the dollar amount', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+    stub.setMessages([makeMessage({ id: 5 })]);
     const sync = makeSync();
     sync.start([ACCT]);
     await vi.runOnlyPendingTimersAsync();
+    events = [];
+
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 7 })]);
+    stub.setMessages([makeMessage({ id: 5 }), makeMessage({ id: 7, isTip: true, tipAmount: 5 })]);
+    await vi.advanceTimersByTimeAsync(60_000);
 
     const tip = events.find((e) => e.type === 'tipReceived');
     expect(tip).toMatchObject({ chatId: '101', amountUsd: 5 });
     sync.stop();
+  });
+
+  it('hot poll requests page 1 only with explicit limit 10 (OnlyFans live cap)', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+    stub.setMessages([makeMessage({ id: 5 })]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+
+    await vi.advanceTimersByTimeAsync(60_000); // post-baseline hot tick
+    expect(stub.listChatsParams.at(-1)).toEqual({ limit: 10, offset: 0 });
+    expect(stub.listChatsParams.every((p) => p.limit === 10)).toBe(true);
+    sync.stop();
+  });
+
+  it('initial hydration (empty cache) walks pages to exhaustion with 300ms pacing, silently', async () => {
+    stub.setChatPages([
+      [makeChat({ fanId: 101, lastMessageId: 5 })],
+      [makeChat({ fanId: 102, lastMessageId: 6 })],
+      [makeChat({ fanId: 103 })],
+    ]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await drainPoll();
+
+    expect(stub.listChatsParams.map((p) => p.offset)).toEqual([0, 10, 20]);
+    expect(sleeps).toEqual([300, 300]);
+    expect(data.chats.get(ACCT, '101')).not.toBeNull();
+    expect(data.chats.get(ACCT, '102')).not.toBeNull();
+    expect(data.chats.get(ACCT, '103')).not.toBeNull();
+    expect(
+      events.filter((e) => e.type === 'messageReceived' || e.type === 'messageSent'),
+    ).toHaveLength(0);
+    sync.stop();
+  });
+
+  it('initial hydration caps at 30 pages', async () => {
+    stub.setChatPages(Array.from({ length: 40 }, (_, i) => [makeChat({ fanId: 1000 + i })]));
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await drainPoll();
+
+    expect(stub.listChatsCalls).toBe(30);
+    sync.stop();
+  });
+
+  it('deep sweep walks 5 pages every 5 minutes; hot ticks in between stay on page 1', async () => {
+    stub.setChatPages(Array.from({ length: 7 }, (_, i) => [makeChat({ fanId: 200 + i })]));
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await drainPoll(); // hydration walks all 7 pages
+    const afterHydration = stub.listChatsParams.length;
+    expect(afterHydration).toBe(7);
+
+    // unfocused ticks at 60..240s are hot (page 1); the 300s tick is deep due
+    await vi.advanceTimersByTimeAsync(300_000);
+    const offsets = stub.listChatsParams.slice(afterHydration).map((p) => p.offset);
+    expect(offsets).toEqual([0, 0, 0, 0, 0, 10, 20, 30, 40]);
+    sync.stop();
+  });
+
+  it('forceRefresh performs a deep sweep, not just page 1', async () => {
+    stub.setChatPages(Array.from({ length: 7 }, (_, i) => [makeChat({ fanId: 300 + i })]));
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await drainPoll();
+    const before = stub.listChatsParams.length;
+
+    await sync.forceRefresh(ACCT);
+    expect(stub.listChatsParams.slice(before).map((p) => p.offset)).toEqual([0, 10, 20, 30, 40]);
+    sync.stop();
+  });
+
+  it('chat discovered post-baseline emits only messages newer than the previous poll', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+    stub.setMessages([makeMessage({ id: 5 })]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync(); // baseline at t0
+    events = [];
+    const baselineMs = Date.now();
+
+    // fan 202 enters the window: day-old backlog + one fresh message
+    stub.setChats([
+      makeChat({ fanId: 202, lastMessageId: 301 }),
+      makeChat({ fanId: 101, lastMessageId: 5 }),
+    ]);
+    stub.setMessages([
+      makeMessage({ id: 300, createdAt: new Date(baselineMs - 86_400_000).toISOString() }),
+      makeMessage({ id: 301, createdAt: new Date(baselineMs + 30_000).toISOString() }),
+    ]);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const received = events.filter((e) => e.type === 'messageReceived');
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ chatId: '202', messageId: '301' });
+    expect(data.messages.count(ACCT, '202')).toBe(2); // backlog still hydrated
+    sync.stop();
+  });
+
+  it('restart with warm cache replays no burst for messages that arrived while down', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+    stub.setMessages([makeMessage({ id: 5 })]);
+    const first = makeSync();
+    first.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    first.stop();
+
+    // two messages land while the app is down
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 7, unread: 2 })]);
+    stub.setMessages([makeMessage({ id: 5 }), makeMessage({ id: 6 }), makeMessage({ id: 7 })]);
+    events = [];
+    const second = makeSync(); // same DataLayer = warm cache
+    second.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(data.messages.count(ACCT, '101')).toBe(3);
+    expect(
+      events.filter((e) => e.type === 'messageReceived' || e.type === 'messageSent'),
+    ).toHaveLength(0);
+    expect(events.some((e) => e.type === 'chatListUpdated')).toBe(true);
+    second.stop();
   });
 
   it('never overlaps polls of one account (Phase-0 latency reality)', async () => {

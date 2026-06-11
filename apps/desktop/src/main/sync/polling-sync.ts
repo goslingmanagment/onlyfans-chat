@@ -1,11 +1,15 @@
 // PollingSync (SPEC §6.1) — designed as a cost feature. Chat-list poll is the
 // primary detector; message fetches happen only on list deltas, as ascending
-// tail fetches from the cached boundary. STRICTLY READ-ONLY toward OFAPI.
+// tail fetches from the cached boundary. Hot poll reads page 1 only; periodic
+// deep sweeps and a one-time initial hydration walk deeper pages (OnlyFans caps
+// the chats page size at 10). STRICTLY READ-ONLY toward OFAPI.
 
+import { OFAPI_INTER_PAGE_DELAY_MS } from '@chatgoose/shared';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { OfApiClient } from '../ofapi/client';
 import type { DataLayer } from '../db/index';
 import type { OfApiChat } from '../ofapi/schemas';
+import type { SleepFn } from '../ofapi/rate-limiter';
 import { mapAccount, mapChat, mapFan, mapMessage, type ToMediaUrl } from './mappers';
 import type { SyncListener, SyncProvider, SyncStatusSnapshot } from './provider';
 
@@ -13,6 +17,16 @@ const FOCUSED_POLL_MS = 20_000;
 const UNFOCUSED_POLL_MS = 60_000;
 const HIDDEN_FACTOR = 4;
 const BUDGET_FACTOR = 4;
+// OnlyFans hard-caps the chats page size at 10 (live-verified 2026-06-11):
+// limit>10 is silently truncated, so always page by an explicit 10.
+const CHATS_PAGE_LIMIT = 10;
+// Recency invariant (order=recent): any chat whose lastMessage changed surfaces
+// on page 1, so the hot poll needs page 1 only. Deeper pages matter solely for
+// initial load and for read-state/unread drift on older chats — the deep sweep
+// covers those.
+const DEEP_SWEEP_PAGES = 5;
+const DEEP_SWEEP_INTERVAL_MS = 5 * 60_000;
+const INITIAL_HYDRATION_MAX_PAGES = 30;
 const READ_STATE_SWEEP_MS = 30_000;
 const READ_STATE_SWEEP_IDLE_STOP_MS = 10 * 60_000;
 const READ_STATE_OWN_MESSAGE_MAX_AGE_MS = 24 * 60 * 60_000;
@@ -28,12 +42,22 @@ export interface PollingSyncOptions {
   /** ×4 polling slowdown when the shift credit budget is exhausted (never stops). */
   isBudgetExhausted?: () => boolean;
   now?: () => number;
+  /** Inter-page pacing during multi-page chat walks (injectable for tests). */
+  sleep?: SleepFn;
 }
+
+type PollDepth = 'hot' | 'deep';
 
 interface AccountLoop {
   timer: ReturnType<typeof setTimeout> | null;
   inFlight: boolean;
   lastSuccessAt: number | null;
+  lastDeepSweepAt: number | null;
+  /**
+   * In-memory only: a restart mid-hydration leaves a partial cache and does NOT
+   * re-walk 30 pages on next launch — deep sweeps heal the remainder over time.
+   */
+  hydrated: boolean;
   consecutiveFailures: number;
 }
 
@@ -44,6 +68,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   const { client, data, toMediaUrl } = options;
   const now = options.now ?? Date.now;
   const isBudgetExhausted = options.isBudgetExhausted ?? ((): boolean => false);
+  const sleep: SleepFn =
+    options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
   const listeners = new Set<SyncListener>();
   const loops = new Map<string, AccountLoop>();
@@ -160,28 +186,71 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     );
   }
 
-  async function pollAccount(accountId: string): Promise<void> {
+  /** Walk recency-ordered chat pages (limit/offset cursor; nextPageUrl presence = has-more). */
+  async function listChatPages(accountId: string, maxPages: number): Promise<OfApiChat[]> {
+    const collected: OfApiChat[] = [];
+    const seenFanIds = new Set<string>();
+    for (let page = 0; page < maxPages; page += 1) {
+      if (page > 0) {
+        await sleep(OFAPI_INTER_PAGE_DELAY_MS); // legacy deep-fetch pacing
+      }
+      const { chats, nextPageUrl } = await client.listChats({
+        accountId,
+        limit: CHATS_PAGE_LIMIT,
+        offset: page * CHATS_PAGE_LIMIT,
+        order: 'recent',
+        skipUsers: 'none',
+      });
+      for (const chat of chats) {
+        const fanId = chat.fan?.id;
+        if (fanId != null) {
+          if (seenFanIds.has(String(fanId))) {
+            continue; // recency reshuffle between pages can repeat a chat
+          }
+          seenFanIds.add(String(fanId));
+        }
+        collected.push(chat);
+      }
+      if (nextPageUrl === null || chats.length === 0) {
+        break;
+      }
+    }
+    return collected;
+  }
+
+  async function pollAccount(accountId: string, depth: PollDepth = 'hot'): Promise<void> {
     const loop = loops.get(accountId);
     if (!loop || loop.inFlight) {
       return; // overlap protection — Phase-0 measured p95 7.5 s on list-chats
     }
     loop.inFlight = true;
     try {
-      const { chats } = await client.listChats({
-        accountId,
-        limit: 50,
-        order: 'recent',
-        skipUsers: 'none',
-      });
+      // Initial hydration: empty chats cache → full walk, once per loop lifetime.
+      const cacheEmpty =
+        data.chats.list({ accountId, filter: 'all', limit: 1 }).items.length === 0;
+      const hydrating = !loop.hydrated && cacheEmpty;
+      const deepDue =
+        depth === 'deep' ||
+        loop.lastDeepSweepAt === null ||
+        now() - loop.lastDeepSweepAt >= DEEP_SWEEP_INTERVAL_MS;
+      const maxPages = hydrating
+        ? INITIAL_HYDRATION_MAX_PAGES
+        : deepDue
+          ? DEEP_SWEEP_PAGES
+          : 1; // hot poll: page 1 only — recency invariant, see CHATS_PAGE_LIMIT
 
-      const deltas: { chatId: string; chat: OfApiChat }[] = [];
+      const prevSuccessAt = loop.lastSuccessAt;
+      const chats = await listChatPages(accountId, maxPages);
+
+      const deltas: { chatId: string; wasCached: boolean }[] = [];
       const chatUpserts = [];
       const fetchedAt = new Date(now()).toISOString();
       for (const chat of chats) {
         if (chatChanged(accountId, chat)) {
           const fanId = chat.fan?.id;
           if (fanId != null) {
-            deltas.push({ chatId: String(fanId), chat });
+            const chatId = String(fanId);
+            deltas.push({ chatId, wasCached: data.chats.get(accountId, chatId) !== null });
           }
         }
         const mapped = mapChat(accountId, chat, toMediaUrl);
@@ -194,11 +263,22 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       }
       data.chats.upsertMany(chatUpserts);
 
+      // Baseline (first successful poll of this process lifetime, incl. initial
+      // hydration): hydrate the DB fully but emit no message-level events —
+      // history is not news (notifications/toasts hang off these events).
       for (const delta of deltas) {
         const freshIds = await fetchChatTail(accountId, delta.chatId);
+        if (prevSuccessAt === null) {
+          continue;
+        }
         for (const messageId of freshIds) {
           const row = data.messages.get(accountId, delta.chatId, messageId);
           if (!row) {
+            continue;
+          }
+          // Uncached chat entering the window post-baseline: its tail is mostly
+          // backlog — only messages newer than the previous successful poll are live.
+          if (!delta.wasCached && Date.parse(row.createdAt) <= prevSuccessAt) {
             continue;
           }
           emit(
@@ -220,6 +300,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
 
       emit({ type: 'chatListUpdated', accountId });
       loop.lastSuccessAt = now();
+      loop.hydrated = true;
+      if (maxPages > 1) {
+        loop.lastDeepSweepAt = now();
+      }
       loop.consecutiveFailures = 0;
     } catch {
       loop.consecutiveFailures += 1;
@@ -316,6 +400,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
             timer: null,
             inFlight: false,
             lastSuccessAt: null,
+            lastDeepSweepAt: null,
+            hydrated: false,
             consecutiveFailures: 0,
           });
         }
@@ -383,7 +469,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     },
     async forceRefresh(accountId) {
       const targets = accountId ? [accountId] : [...loops.keys()];
-      await Promise.all(targets.map((target) => pollAccount(target)));
+      // Manual refresh = deep sweep: pull DEEP_SWEEP_PAGES, not just page 1.
+      await Promise.all(targets.map((target) => pollAccount(target, 'deep')));
     },
     status(): SyncStatusSnapshot {
       const freshness: Record<string, string> = {};
