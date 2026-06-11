@@ -1,0 +1,416 @@
+// Agency Hub ("core") REST client — SPEC §8.5/§8.6/§9.1. Fresh code to the
+// legacy behavioral spec (legacy research §7); response shapes verified against
+// core's OpenAPI snapshot (~/code/core/reference/agency-hub.openapi.json) and
+// the live contract check of 2026-06-11. Platform-pure: fetch + AbortSignal only,
+// typed structurally (lib "ES2023" has no DOM types). Instantiated in the
+// Electron main process only — never import from the renderer (SPEC §15).
+
+import { z } from 'zod';
+import type { CgErrorDetail } from '../errors/index';
+import { CgError } from '../errors/index';
+
+// ─── Timeouts & limits (legacy constants are normative; research §7) ─────
+
+/** Legacy AGENCY_HUB_PREFETCH_TIMEOUT_MS — profile GET before generation (SPEC §8.5). */
+export const HUB_PROFILE_GET_TIMEOUT_MS = 5_000;
+/** Legacy AGENCY_HUB_SYNC_TIMEOUT_MS — fire-and-forget profile push (SPEC §8.5). */
+export const HUB_PROFILE_PUT_TIMEOUT_MS = 10_000;
+/** SPEC-era value; legacy used 5 s per flush, superseded for the desktop reporter. */
+export const HUB_USAGE_BATCH_TIMEOUT_MS = 15_000;
+/** No legacy constant; bounded by the 10 s sync window the call used to run inside. */
+export const HUB_LIST_PAGES_TIMEOUT_MS = 10_000;
+
+/**
+ * Core's zod cap on PUT profile body (string length, matching core's check).
+ * Legacy gated upstream on 50,000 UTF-8 bytes (AGENCY_HUB_PROFILE_MAX_BYTES);
+ * that byte gate stays in the summary-sync caller.
+ */
+export const HUB_PROFILE_MAX_CHARS = 50_000;
+/** Legacy AGENCY_HUB_AI_USAGE_BATCH_MAX_EVENTS; also core's zod maxItems. */
+export const HUB_USAGE_BATCH_MAX_EVENTS = 100;
+
+// ─── Structural fetch surface (platform-pure seams) ──────────────────────
+
+export interface HubAbortSignalLike {
+  readonly aborted: boolean;
+}
+
+export interface HubResponseLike {
+  status: number;
+  headers: { get(name: string): string | null };
+  text(): Promise<string>;
+}
+
+export interface HubRequestInit {
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+  signal?: HubAbortSignalLike;
+}
+
+export type HubFetch = (url: string, init: HubRequestInit) => Promise<HubResponseLike>;
+
+interface FetchGlobals {
+  fetch?: HubFetch;
+  AbortSignal?: { timeout(ms: number): HubAbortSignalLike };
+}
+
+const fetchGlobals = globalThis as unknown as FetchGlobals;
+
+function defaultFetch(url: string, init: HubRequestInit): Promise<HubResponseLike> {
+  const fetchFn = fetchGlobals.fetch;
+  if (!fetchFn) {
+    throw new Error('global fetch is unavailable; pass fetchImpl to createHubClient');
+  }
+  return fetchFn(url, init);
+}
+
+function defaultTimeoutSignal(ms: number): HubAbortSignalLike | undefined {
+  return fetchGlobals.AbortSignal?.timeout(ms);
+}
+
+// ─── Errors ───────────────────────────────────────────────────────────────
+
+/**
+ * Why a hub call failed. 'bad-request' covers both server HTTP 400 and
+ * client-side contract validation (a request core would deterministically
+ * 400) — the usage reporter quarantines on it and must never blind-retry
+ * (SPEC §8.6). Everything except 'auth' maps to CG-HUB-02.
+ */
+export type HubFailureReason = 'auth' | 'bad-request' | 'http' | 'timeout' | 'network' | 'invalid-response';
+
+export class HubError extends CgError {
+  readonly reason: HubFailureReason;
+
+  constructor(reason: HubFailureReason, options: { message?: string; detail?: CgErrorDetail } = {}) {
+    super(reason === 'auth' ? 'CG-HUB-01' : 'CG-HUB-02', options);
+    this.name = 'HubError';
+    this.reason = reason;
+  }
+}
+
+function classifyFetchFailure(error: unknown): 'timeout' | 'network' {
+  if (typeof error === 'object' && error !== null && 'name' in error) {
+    const name = (error as { name?: unknown }).name;
+    // AbortSignal.timeout rejects with DOMException 'TimeoutError'; some
+    // runtimes surface plain 'AbortError' for an aborted signal.
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      return 'timeout';
+    }
+  }
+  return 'network';
+}
+
+function errorMessageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// ─── Response schemas (zod at the trust boundary; SPEC §15) ───────────────
+
+const hubPageSchema = z.object({
+  id: z.number().int().positive(),
+  label: z.string().min(1),
+  platform: z.enum(['fansly', 'onlyfans']),
+  modelSlug: z.string(),
+  modelName: z.string(),
+  // Present per OpenAPI but nullable, and the live 2026-06-11 check did not
+  // confirm them — treat as optional so page-list parsing never breaks mapping.
+  username: z.string().nullish(),
+  displayName: z.string().nullish(),
+});
+
+const hubPagesResponseSchema = z.array(hubPageSchema);
+
+export type HubPage = z.infer<typeof hubPageSchema>;
+
+const hubProfileVersionSchema = z.object({
+  version: z.number().int().positive(),
+  body: z.string(),
+  // Core stamps 'chatmuse' today; do not over-constrain a label we only display.
+  source: z.string(),
+  createdAt: z.string(),
+  createdByUserId: z.number().int().nullish(),
+});
+
+export type HubProfileVersion = z.infer<typeof hubProfileVersionSchema>;
+
+const hubFanProfileResponseSchema = z.object({
+  fan: z.object({
+    platform: z.enum(['fansly', 'onlyfans']),
+    platformUserId: z.string(),
+    username: z.string().nullish(),
+    displayName: z.string().nullish(),
+    createdAtExternal: z.string().nullish(),
+    pageAlias: z.string().nullish(),
+  }),
+  profile: hubProfileVersionSchema.nullable(),
+});
+
+export type HubFanProfile = z.infer<typeof hubFanProfileResponseSchema>;
+
+const hubUsageBatchResponseSchema = z.object({
+  receivedCount: z.number().int().nonnegative(),
+  insertedCount: z.number().int().nonnegative(),
+  // Added by the 2026-06-11 core patch (per-event invalid skip); default for older cores.
+  invalidCount: z.number().int().nonnegative().default(0),
+  dedupedCount: z.number().int().nonnegative(),
+});
+
+export type HubUsageBatchResult = z.infer<typeof hubUsageBatchResponseSchema>;
+
+// ─── Usage event (outbound; mirrors core's closed contract) ───────────────
+
+/** Core's closed aiUsageFeatures enum — extending it requires a core change first (SPEC §8.6). */
+export const HUB_USAGE_FEATURES = [
+  'fast-reply',
+  'improve-draft',
+  'help-me',
+  'fan-summary',
+  'chat-review',
+  'scan',
+  'ping',
+  'hi-greeting',
+] as const;
+
+export type HubUsageFeature = (typeof HUB_USAGE_FEATURES)[number];
+
+const usageTokenCount = z.number().int().min(0).max(100_000_000);
+
+/**
+ * Wire shape of one usage event. Validated before sending so a request core
+ * would 400 never leaves the client (one malformed REQUEST still fails the
+ * whole batch at core's zod layer even after the per-event-skip patch).
+ * isCacheHit/isRegeneration are required by core's OpenAPI snapshot; the
+ * reporter defaults them to false.
+ */
+export const hubUsageEventSchema = z.object({
+  clientEventId: z.string().min(1).max(255),
+  feature: z.enum(HUB_USAGE_FEATURES),
+  model: z.string().min(1).max(100),
+  inputTokens: usageTokenCount,
+  outputTokens: usageTokenCount,
+  cacheWriteTokens: usageTokenCount,
+  cacheReadTokens: usageTokenCount,
+  conversationId: z.string().min(1).max(255).nullish(),
+  durationMs: z.number().int().nonnegative().nullish(),
+  isCacheHit: z.boolean(),
+  isRegeneration: z.boolean(),
+  // Core rejects completedAt >5 min in the future; the reporter clamps to
+  // server time, which requires a parseable instant.
+  completedAt: z
+    .string()
+    .min(1)
+    .refine((value) => Number.isFinite(Date.parse(value)), 'completedAt must be a parseable ISO timestamp'),
+});
+
+export type HubUsageEvent = z.infer<typeof hubUsageEventSchema>;
+
+const hubUsageBatchRequestSchema = z.object({
+  events: z.array(hubUsageEventSchema).min(1).max(HUB_USAGE_BATCH_MAX_EVENTS),
+});
+
+// ─── Client ───────────────────────────────────────────────────────────────
+
+export interface HubClientOptions {
+  baseUrl: string;
+  /** Chatter API key (`agency_hub_core_…`); sent as a Bearer token. */
+  apiKey: string;
+  fetchImpl?: HubFetch;
+  /** Epoch ms clock; seam for the server-time offset computation. */
+  now?: () => number;
+  /** Seam over AbortSignal.timeout so tests can assert exact per-call budgets. */
+  timeoutSignal?: (ms: number) => HubAbortSignalLike | undefined;
+}
+
+export interface HubClient {
+  listPages(options?: { timeoutMs?: number }): Promise<HubPage[]>;
+  /** Returns null when core 404s (unknown page label or fan core has never seen — SPEC §9.1 caveat). */
+  getFanProfile(args: { pageLabel: string; fanId: string; timeoutMs?: number }): Promise<HubFanProfile | null>;
+  /** Appends a profile version (core auto-creates unknown onlyfans fans since the 2026-06-11 patch). */
+  putFanProfile(args: {
+    pageLabel: string;
+    fanId: string;
+    body: string;
+    timeoutMs?: number;
+  }): Promise<HubProfileVersion>;
+  postUsageBatch(args: { events: HubUsageEvent[]; timeoutMs?: number }): Promise<HubUsageBatchResult>;
+  /**
+   * Last observed server-minus-local clock offset in ms, derived from the
+   * Date header of any core response (SPEC §8.6 clock-skew guard; also feeds
+   * the 24 h unsend countdown). Null before the first response that carried
+   * a parseable Date header.
+   */
+  getServerTimeOffsetMs(): number | null;
+}
+
+export function createHubClient(options: HubClientOptions): HubClient {
+  const baseUrl = options.baseUrl.trim().replace(/\/+$/, '');
+  const apiKey = options.apiKey.trim();
+  if (!baseUrl || !apiKey) {
+    throw new Error('createHubClient requires a non-empty baseUrl and apiKey');
+  }
+
+  const fetchImpl = options.fetchImpl ?? defaultFetch;
+  const now = options.now ?? (() => Date.now());
+  const timeoutSignal = options.timeoutSignal ?? defaultTimeoutSignal;
+
+  let serverTimeOffsetMs: number | null = null;
+
+  function recordServerTime(response: HubResponseLike): void {
+    const dateHeader = response.headers.get('date');
+    if (dateHeader === null) {
+      return;
+    }
+    const serverMs = Date.parse(dateHeader);
+    if (Number.isFinite(serverMs)) {
+      serverTimeOffsetMs = serverMs - now();
+    }
+  }
+
+  async function request(args: {
+    method: string;
+    path: string;
+    timeoutMs: number;
+    body?: unknown;
+    /** 404 is a domain result (fan/profile unknown), not an error, for this call. */
+    allow404?: boolean;
+  }): Promise<{ status: number; text: string }> {
+    const init: HubRequestInit = {
+      method: args.method,
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        accept: 'application/json',
+        ...(args.body !== undefined ? { 'content-type': 'application/json' } : {}),
+      },
+      ...(args.body !== undefined ? { body: JSON.stringify(args.body) } : {}),
+    };
+    const signal = timeoutSignal(args.timeoutMs);
+    if (signal !== undefined) {
+      init.signal = signal;
+    }
+
+    let response: HubResponseLike;
+    try {
+      response = await fetchImpl(`${baseUrl}${args.path}`, init);
+    } catch (error) {
+      throw new HubError(classifyFetchFailure(error), {
+        message: errorMessageOf(error),
+        detail: { providerMessage: errorMessageOf(error) },
+      });
+    }
+
+    // Server time is server time — capture it from error responses too.
+    recordServerTime(response);
+
+    let text = '';
+    try {
+      text = await response.text();
+    } catch {
+      // Body read failures fall through to status routing with an empty snippet.
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new HubError('auth', { detail: buildHttpDetail(response.status, text) });
+    }
+    if (response.status === 400) {
+      throw new HubError('bad-request', { detail: buildHttpDetail(response.status, text) });
+    }
+    if (response.status < 200 || response.status >= 300) {
+      if (!(response.status === 404 && args.allow404 === true)) {
+        throw new HubError('http', { detail: buildHttpDetail(response.status, text) });
+      }
+    }
+    return { status: response.status, text };
+  }
+
+  function buildHttpDetail(status: number, text: string): CgErrorDetail {
+    return { status, ...(text ? { responseSnippet: text.slice(0, 400) } : {}) };
+  }
+
+  function parseBody<T>(schema: z.ZodType<T>, raw: { status: number; text: string }): T {
+    let json: unknown;
+    try {
+      json = JSON.parse(raw.text);
+    } catch {
+      throw new HubError('invalid-response', {
+        message: 'hub response was not JSON',
+        detail: buildHttpDetail(raw.status, raw.text),
+      });
+    }
+    const parsed = schema.safeParse(json);
+    if (!parsed.success) {
+      throw new HubError('invalid-response', {
+        message: 'hub response failed schema validation',
+        detail: { status: raw.status, providerMessage: parsed.error.message.slice(0, 400) },
+      });
+    }
+    return parsed.data;
+  }
+
+  function profilePath(pageLabel: string, fanId: string): string {
+    return `/api/v1/pages/${encodeURIComponent(pageLabel)}/fans/${encodeURIComponent(fanId)}/profile`;
+  }
+
+  return {
+    async listPages(listOptions) {
+      const raw = await request({
+        method: 'GET',
+        path: '/api/v1/pages',
+        timeoutMs: listOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS,
+      });
+      return parseBody(hubPagesResponseSchema, raw);
+    },
+
+    async getFanProfile({ pageLabel, fanId, timeoutMs }) {
+      const raw = await request({
+        method: 'GET',
+        path: profilePath(pageLabel, fanId),
+        timeoutMs: timeoutMs ?? HUB_PROFILE_GET_TIMEOUT_MS,
+        allow404: true,
+      });
+      if (raw.status === 404) {
+        return null;
+      }
+      return parseBody(hubFanProfileResponseSchema, raw);
+    },
+
+    async putFanProfile({ pageLabel, fanId, body, timeoutMs }) {
+      if (body.length === 0 || body.length > HUB_PROFILE_MAX_CHARS) {
+        // Core's zod would 400 this deterministically; fail before the wire.
+        throw new HubError('bad-request', {
+          message: `profile body must be 1..${HUB_PROFILE_MAX_CHARS} characters (got ${body.length})`,
+        });
+      }
+      // No allow404: an unknown page label is an error here (fan auto-create
+      // only covers fans — SPEC §9.1), so 404 maps to HubError 'http'.
+      const raw = await request({
+        method: 'PUT',
+        path: profilePath(pageLabel, fanId),
+        timeoutMs: timeoutMs ?? HUB_PROFILE_PUT_TIMEOUT_MS,
+        body: { body },
+      });
+      return parseBody(hubProfileVersionSchema, raw);
+    },
+
+    async postUsageBatch({ events, timeoutMs }) {
+      const requestBody = hubUsageBatchRequestSchema.safeParse({ events });
+      if (!requestBody.success) {
+        throw new HubError('bad-request', {
+          message: 'usage batch failed contract validation',
+          detail: { providerMessage: requestBody.error.message.slice(0, 400) },
+        });
+      }
+      const raw = await request({
+        method: 'POST',
+        path: '/api/v1/ai-usage/batch',
+        timeoutMs: timeoutMs ?? HUB_USAGE_BATCH_TIMEOUT_MS,
+        body: requestBody.data,
+      });
+      return parseBody(hubUsageBatchResponseSchema, raw);
+    },
+
+    getServerTimeOffsetMs() {
+      return serverTimeOffsetMs;
+    },
+  };
+}

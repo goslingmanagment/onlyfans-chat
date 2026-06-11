@@ -18,6 +18,10 @@ export * from './context/spending';
 export * from './context/subscription';
 export * from './protocol/index';
 export * from './summary/validity';
+// hub/client + hub/usage-reporter are main-only (network/persistence — SPEC §15)
+// and deliberately not in this barrel; import them via '@chatgoose/shared/hub'.
+// The pure account→page mapping helper is safe everywhere (settings UI preview).
+export * from './hub/page-mapping';
 
 // Ambiguity resolution for names defined in two modules (same values; one canonical home).
 export { PING_ACTIVE_WINDOW_MS, PING_MIN_FAN_MESSAGES } from './constants';
