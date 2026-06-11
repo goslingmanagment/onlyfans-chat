@@ -86,6 +86,13 @@ function previewOf(chat: OfApiChat): string {
   return '';
 }
 
+/** Creator-set custom name — OFAPI returns it as `displayName` on both chat
+ *  fans and user details (live-verified 2026-06-11); unset arrives as ''. */
+export function customNameOf(user: Pick<OfApiUser, 'displayName'> | null | undefined): string | null {
+  const trimmed = user?.displayName?.trim();
+  return trimmed != null && trimmed.length > 0 ? trimmed : null;
+}
+
 /** chat_id === fan.id (two-namespace rule); chats without a fan are dropped. */
 export function mapChat(
   accountId: string,
@@ -101,7 +108,7 @@ export function mapChat(
   return {
     accountId,
     chatId: String(fanId),
-    fanName: chat.fan?.name ?? chat.fan?.username ?? String(fanId),
+    fanName: customNameOf(chat.fan) ?? chat.fan?.name ?? chat.fan?.username ?? String(fanId),
     avatar: chat.fan ? avatarMediaUrl(chat.fan, toMediaUrl) : null,
     unreadCount: chat.unreadMessagesCount ?? 0,
     hasUnreadTips: chat.hasUnreadTips ?? false,
@@ -194,7 +201,7 @@ export function mapFan(
     fanId: String(user.id),
     username: user.username ?? '',
     name: user.name ?? user.username ?? String(user.id),
-    customName: null, // OFAPI exposes custom names via the fans subsystem (P3 write path)
+    customName: customNameOf(user),
     avatar: avatarMediaUrl(user, toMediaUrl),
     about: user.about != null && user.about.length > 0 ? htmlToPlainText(user.about) : null,
     lastSeen: user.lastSeen ?? null,

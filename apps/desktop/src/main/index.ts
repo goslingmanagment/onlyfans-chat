@@ -31,7 +31,15 @@ let sync: (SyncProvider & { pollAccount(accountId: string): Promise<void> }) | n
 let client: OfApiClient | null = null;
 let coordinator: AiCoordinator | null = null;
 
-function createWindow(): BrowserWindow {
+function loadWindowContent(win: BrowserWindow): void {
+  if (process.env['ELECTRON_RENDERER_URL']) {
+    void win.loadURL(process.env['ELECTRON_RENDERER_URL']);
+  } else {
+    void win.loadFile(join(import.meta.dirname, '../renderer/index.html'));
+  }
+}
+
+function createWindow(options: { load?: boolean } = {}): BrowserWindow {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -58,10 +66,8 @@ function createWindow(): BrowserWindow {
     void shell.openExternal(url);
     return { action: 'deny' };
   });
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    void win.loadURL(process.env['ELECTRON_RENDERER_URL']);
-  } else {
-    void win.loadFile(join(import.meta.dirname, '../renderer/index.html'));
+  if (options.load ?? true) {
+    loadWindowContent(win);
   }
   return win;
 }
@@ -149,7 +155,7 @@ async function boot(): Promise<void> {
 
   const settingsStore = createSettingsStore({ queries: data.settings, secrets: keychain });
 
-  mainWindow = createWindow();
+  mainWindow = createWindow({ load: false });
 
   // Media: direct fetch of the signed URL first (Phase-0: hosts not IP-locked,
   // 0 credits). OFAPI download-endpoint fallback is a P3 follow-up — P1 media
@@ -255,6 +261,8 @@ async function boot(): Promise<void> {
   mainWindow.on('show', () => sync?.setWindowVisible(true));
   mainWindow.on('hide', () => sync?.setWindowVisible(false));
   mainWindow.on('minimize', () => sync?.setWindowVisible(false));
+
+  loadWindowContent(mainWindow);
 }
 
 app.whenReady().then(() => {
