@@ -17,6 +17,7 @@ import {
 } from './media/protocol';
 import { createSqliteMediaCacheQueries } from './media/cache';
 import { createOfApiClient, type OfApiClient } from './ofapi/client';
+import { createSendEngine, type SendEngine } from './send/engine';
 import { createPollingSync, syncAccounts } from './sync/polling-sync';
 import { createBudgetGuard } from './sync/budget-guard';
 import type { SyncProvider } from './sync/provider';
@@ -31,6 +32,7 @@ let data: DataLayer | null = null;
 let sync: (SyncProvider & { pollAccount(accountId: string): Promise<void> }) | null = null;
 let client: OfApiClient | null = null;
 let coordinator: AiCoordinator | null = null;
+let sendEngine: SendEngine | null = null;
 
 function loadWindowContent(win: BrowserWindow): void {
   if (process.env['ELECTRON_RENDERER_URL']) {
@@ -129,6 +131,18 @@ async function initOfapi(
     isBudgetExhausted: () => budgetGuard.isExhausted(),
   });
 
+  // Send engine (SPEC §7): exists exactly when a client does. messageSent sync
+  // events feed its verifier; boot reconciliation runs before any send can.
+  const engine = createSendEngine({
+    client,
+    data: dataLayer,
+    toMediaUrl,
+    getSettings: () => settingsStore.get(),
+  });
+  sendEngine = engine;
+  sync.subscribe((event) => engine.handleSyncEvent(event));
+  void engine.reconcileOnBoot();
+
   const accountIds = await syncAccounts(client, dataLayer, toMediaUrl);
   sync.start(accountIds);
 }
@@ -203,8 +217,10 @@ async function boot(): Promise<void> {
     sync,
     creditMeter: client?.creditMeter ?? null,
     coordinator,
+    send: sendEngine,
     purge: async () => {
       sync?.stop();
+      sendEngine?.dispose();
       data?.close();
       await media.cache.clear().catch(() => undefined);
       await rm(join(userData, 'chatgoose.db'), { force: true });
@@ -292,6 +308,7 @@ app.on('window-all-closed', () => {
 
 app.on('quit', () => {
   sync?.stop();
+  sendEngine?.dispose();
   coordinator?.dispose();
   data?.close();
 });

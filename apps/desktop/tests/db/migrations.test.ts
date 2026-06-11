@@ -32,7 +32,7 @@ describe('migration runner', () => {
         .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
-      expect(SCHEMA_VERSION).toBe(3);
+      expect(SCHEMA_VERSION).toBe(4);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       expect(names).toContain('media_urls');
       const chatCols = layer.db
@@ -40,6 +40,13 @@ describe('migration runner', () => {
         .all()
         .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
       expect(chatCols).toContain('last_message_id');
+      const outboxCols = layer.db
+        .prepare("SELECT name FROM pragma_table_info('outbox')")
+        .all()
+        .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
+      for (const col of ['text', 'sequence_id', 'part_index', 'text_highlights', 'attempts', 'retry_of']) {
+        expect(outboxCols).toContain(col);
+      }
     } finally {
       layer.close();
     }

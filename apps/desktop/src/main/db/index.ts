@@ -18,6 +18,8 @@ import { createSummariesQueries } from './queries/summaries';
 import type { SummariesQueries } from './queries/summaries';
 import { createSettingsQueries } from './queries/settings';
 import type { SettingsQueries } from './queries/settings';
+import { createOutboxQueries } from './queries/outbox';
+import type { OutboxQueries } from './queries/outbox';
 import { createCreditLogQueries } from './queries/credit-log';
 import type { CreditLogQueries } from './queries/credit-log';
 import { createMediaUrlsQueries } from './queries/media-urls';
@@ -32,6 +34,7 @@ export interface DataLayer {
   fans: FansQueries;
   summaries: SummariesQueries;
   settings: SettingsQueries;
+  outbox: OutboxQueries;
   creditLog: CreditLogQueries;
   mediaUrls: MediaUrlsQueries;
   close(): void;
@@ -49,6 +52,7 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     fans: createFansQueries(db, bus),
     summaries: createSummariesQueries(db, bus),
     settings: createSettingsQueries(db, bus),
+    outbox: createOutboxQueries(db, bus),
     creditLog: createCreditLogQueries(db),
     mediaUrls: createMediaUrlsQueries(db),
     close() {
@@ -95,6 +99,14 @@ export { createSummariesQueries } from './queries/summaries';
 export type { SummariesQueries } from './queries/summaries';
 export { createSettingsQueries } from './queries/settings';
 export type { SettingsQueries } from './queries/settings';
+export { createOutboxQueries, decodeOutboxRow } from './queries/outbox';
+export type {
+  OutboxQueries,
+  OutboxRow,
+  OutboxInsert,
+  OutboxState,
+  OutboxTransitionArgs,
+} from './queries/outbox';
 export { createCreditLogQueries } from './queries/credit-log';
 export type { CreditLogQueries } from './queries/credit-log';
 export { createMediaUrlsQueries } from './queries/media-urls';

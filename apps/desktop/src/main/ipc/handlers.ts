@@ -7,11 +7,12 @@ import { z } from 'zod';
 import type { Personality } from '@chatgoose/shared/types';
 import { analyzePingSegment } from '@chatgoose/shared/transcript/index';
 import { reconcileBundledPersonalities } from '@chatgoose/shared/prompts/personalities';
-import type { DataLayer } from '../db/index';
+import type { DataLayer, OutboxRow } from '../db/index';
 import type { SettingsStore } from '../settings/store';
 import type { SyncProvider } from '../sync/provider';
 import type { CreditMeter } from '../ofapi/credit-meter';
-import type { AiStartRequest, SyncStatusVM } from '../../preload/contract';
+import type { SendEngine } from '../send/engine';
+import type { AiStartRequest, OutboxItemVM, SyncStatusVM } from '../../preload/contract';
 import {
   accountToVM,
   chatToVM,
@@ -78,6 +79,42 @@ const aiFeedbackSchema = z.object({
   partIndex: z.number().int().min(0).optional(),
 });
 
+// ── Send pipeline (SPEC §7) ──
+const sendTextSchema = z.string().min(1).max(20_000);
+const sendMessageSchema = z.object({
+  accountId: idSchema,
+  chatId: idSchema,
+  // [NEXT] sequences are small by construction (legacy splitter output).
+  parts: z.array(sendTextSchema).min(1).max(10),
+});
+const sendRetrySchema = z.object({ accountId: idSchema, localId: idSchema, text: sendTextSchema });
+const sendRowRefSchema = z.object({ accountId: idSchema, localId: idSchema });
+const sendSequenceSchema = z.object({ accountId: idSchema, sequenceId: idSchema });
+const messageRefSchema = z.object({ accountId: idSchema, chatId: idSchema, messageId: idSchema });
+const draftSetSchema = z.object({ accountId: idSchema, chatId: idSchema, text: z.string().max(20_000) });
+const draftStoredSchema = z.string();
+
+function draftKey(accountId: string, chatId: string): string {
+  return `draft.${accountId}.${chatId}`;
+}
+
+function outboxToVM(row: OutboxRow): OutboxItemVM {
+  return {
+    localId: row.localId,
+    chatId: row.chatId,
+    text: row.text,
+    state: row.state,
+    messageId: row.messageId,
+    sequenceId: row.sequenceId,
+    partIndex: row.partIndex,
+    errorCode: row.errorCode,
+    errorMessage: row.errorMessage,
+    textHighlights: row.textHighlights,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 const PERSONALITIES_KEY = 'personalities';
 const personalitiesStoredSchema = z.array(personalitySchema);
 
@@ -95,6 +132,8 @@ export interface IpcDeps {
   sync: SyncProvider | null;
   creditMeter: CreditMeter | null;
   coordinator: AiCoordinatorLike | null;
+  /** Null until an OFAPI key exists (same lifecycle as sync). */
+  send: SendEngine | null;
   purge: () => Promise<void>;
   /** Called when settings.update sets an OFAPI key while sync is offline. */
   onOfapiKeyConfigured?: () => void;
@@ -301,5 +340,77 @@ export function registerIpcHandlers(deps: IpcDeps): void {
          WHERE client_event_id = @id`,
       )
       .run({ part: args.partIndex ?? null, id: args.operationId });
+  });
+
+  // ── Send pipeline (SPEC §7) ──
+
+  function requireSend(): SendEngine {
+    if (!deps.send) {
+      throw new Error('Sending is not available yet — configure the OFAPI key in Settings.');
+    }
+    return deps.send;
+  }
+
+  ipcMain.handle('query:outbox.list', (_event, rawArgs: unknown) => {
+    const args = convSchema.parse(rawArgs);
+    return data.outbox.listForChat(args.accountId, args.chatId).map(outboxToVM);
+  });
+
+  ipcMain.handle('cmd:send.message', (_event, rawArgs: unknown) => {
+    const args = sendMessageSchema.parse(rawArgs);
+    return requireSend().sendParts(args);
+  });
+
+  ipcMain.handle('cmd:send.retry', (_event, rawArgs: unknown) => {
+    const args = sendRetrySchema.parse(rawArgs);
+    return requireSend().retry(args);
+  });
+
+  ipcMain.handle('cmd:send.dismiss', (_event, rawArgs: unknown) => {
+    const args = sendRowRefSchema.parse(rawArgs);
+    requireSend().dismiss(args);
+  });
+
+  ipcMain.handle('cmd:send.cancelSequence', (_event, rawArgs: unknown) => {
+    const args = sendSequenceSchema.parse(rawArgs);
+    requireSend().cancelSequence(args);
+  });
+
+  ipcMain.handle('cmd:send.verifyNow', async (_event, rawArgs: unknown) => {
+    const args = convSchema.parse(rawArgs);
+    await requireSend().verifyChat(args.accountId, args.chatId);
+  });
+
+  // Advisory commands: silently no-op without an engine (no key ⇒ no live composer).
+  ipcMain.handle('cmd:chat.typingActive', (_event, rawArgs: unknown) => {
+    const args = convSchema.parse(rawArgs);
+    deps.send?.typingActive(args.accountId, args.chatId);
+  });
+
+  ipcMain.handle('cmd:chat.markRead', async (_event, rawArgs: unknown) => {
+    const args = convSchema.parse(rawArgs);
+    await deps.send?.markRead(args.accountId, args.chatId);
+  });
+
+  ipcMain.handle('cmd:message.unsend', async (_event, rawArgs: unknown) => {
+    const args = messageRefSchema.parse(rawArgs);
+    await requireSend().unsend(args.accountId, args.chatId, args.messageId);
+  });
+
+  // Drafts live in the settings table (key draft.<accountId>.<chatId>) — pure
+  // local persistence, available with or without an OFAPI key.
+  ipcMain.handle('query:draft.get', (_event, rawArgs: unknown) => {
+    const args = convSchema.parse(rawArgs);
+    return { text: data.settings.getParsed(draftKey(args.accountId, args.chatId), draftStoredSchema) ?? '' };
+  });
+
+  ipcMain.handle('cmd:draft.set', (_event, rawArgs: unknown) => {
+    const args = draftSetSchema.parse(rawArgs);
+    const key = draftKey(args.accountId, args.chatId);
+    if (args.text === '') {
+      data.settings.remove(key);
+    } else {
+      data.settings.set(key, args.text);
+    }
   });
 }
