@@ -1,0 +1,9 @@
+{
+  "_fixture": {
+    "source": "GET /{account}/media/uploads/{upload}/status — SYNTHETIC, hand-built from docs/vendor/onlyfansapi/openapi.json (Get Upload Status, processing oneOf branch). NOT a live capture.",
+    "anonymized": true,
+    "notes": ["Bare object; poll again until completed/failed. Free (no credits)."]
+  },
+  "status": "processing",
+  "prefixed_id": "ofapi_media_fixture0123456789abcdef01234567"
+}

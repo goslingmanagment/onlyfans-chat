@@ -52,11 +52,37 @@ describe('outbox queries', () => {
       textHighlights: [],
       attempts: 0,
       retryOf: 'L0',
+      price: 0,
+      mediaFiles: [],
+      previews: [],
       createdAt: '2026-06-11T12:00:00.000Z',
       updatedAt: '2026-06-11T12:00:00.000Z',
     });
     data.bus.flushNow();
     expect(events).toContainEqual({ scope: 'outbox', accountId: ACCT, chatId: CHAT });
+  });
+
+  it('round-trips the v5 PPV payload (price + mixed-form media ids)', () => {
+    data.outbox.insertMany([
+      {
+        localId: 'P1',
+        accountId: ACCT,
+        chatId: CHAT,
+        text: 'ppv caption',
+        sequenceId: null,
+        partIndex: 0,
+        retryOf: null,
+        createdAt: '2026-06-11T12:00:00.000Z',
+        price: 25,
+        mediaFiles: [3866342509, 'ofapi_media_abc'],
+        previews: [3866342509],
+      },
+    ]);
+    expect(data.outbox.get('P1')).toMatchObject({
+      price: 25,
+      mediaFiles: [3866342509, 'ofapi_media_abc'],
+      previews: [3866342509],
+    });
   });
 
   it('claimNextQueued claims the OLDEST queued row exactly once (queued→sending, attempts+1)', () => {

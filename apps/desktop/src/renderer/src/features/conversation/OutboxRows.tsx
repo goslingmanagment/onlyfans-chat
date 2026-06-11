@@ -105,6 +105,12 @@ export const OutboxRow = memo(function OutboxRow({
         </div>
         <div className="num mt-1 flex items-baseline gap-2 text-micro tracking-[0.07em] text-ink-low">
           <span>{formatClock(new Date(item.createdAt))}</span>
+          {item.mediaCount > 0 && (
+            <span className={item.price > 0 ? 'font-semibold text-amber' : undefined}>
+              {item.price > 0 ? `PPV $${item.price} · ` : ''}
+              {item.mediaCount} media
+            </span>
+          )}
           <span className={cx(LABEL_TONES[view.tone], view.pulse && 'animate-pulse')}>
             {view.label}
           </span>

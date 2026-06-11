@@ -32,7 +32,7 @@ describe('migration runner', () => {
         .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
-      expect(SCHEMA_VERSION).toBe(4);
+      expect(SCHEMA_VERSION).toBe(5);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       expect(names).toContain('media_urls');
       const chatCols = layer.db
@@ -44,7 +44,18 @@ describe('migration runner', () => {
         .prepare("SELECT name FROM pragma_table_info('outbox')")
         .all()
         .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
-      for (const col of ['text', 'sequence_id', 'part_index', 'text_highlights', 'attempts', 'retry_of']) {
+      // v4 shape + the v5 PPV columns
+      for (const col of [
+        'text',
+        'sequence_id',
+        'part_index',
+        'text_highlights',
+        'attempts',
+        'retry_of',
+        'price',
+        'media_files',
+        'previews',
+      ]) {
         expect(outboxCols).toContain(col);
       }
     } finally {
@@ -90,6 +101,55 @@ describe('migration runner', () => {
       .prepare("SELECT last_message_id FROM chats WHERE account_id = 'acct_1' AND chat_id = '101'")
       .get();
     expect(upgraded).toEqual({ last_message_id: null });
+    db.close();
+  });
+
+  it('v4 → v5 is additive: existing outbox rows survive with PPV defaults (price 0, empty arrays)', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 4));
+    expect(readSchemaVersion(db)).toBe(4);
+
+    // a v4-era audit row that must survive the upgrade untouched
+    db.exec(
+      "INSERT INTO outbox (local_id, account_id, chat_id, text, state, sequence_id, part_index, " +
+        "message_id, error_code, error_message, text_highlights, attempts, retry_of, created_at, updated_at) " +
+        "VALUES ('L1', 'acct_1', '101', 'old text send', 'sent', NULL, 0, " +
+        "'9000000001', NULL, NULL, '[]', 1, NULL, '2026-06-11T00:00:00.000Z', '2026-06-11T00:00:01.000Z')",
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 4, to: SCHEMA_VERSION });
+
+    const row: unknown = db
+      .prepare(
+        "SELECT text, state, message_id, price, media_files, previews FROM outbox WHERE local_id = 'L1'",
+      )
+      .get();
+    expect(row).toEqual({
+      text: 'old text send',
+      state: 'sent',
+      message_id: '9000000001',
+      price: 0,
+      media_files: '[]',
+      previews: '[]',
+    });
+
+    // the new columns are writable with PPV payloads
+    db.exec(
+      "INSERT INTO outbox (local_id, account_id, chat_id, text, state, sequence_id, part_index, " +
+        "message_id, error_code, error_message, text_highlights, attempts, retry_of, " +
+        "price, media_files, previews, created_at, updated_at) " +
+        "VALUES ('L2', 'acct_1', '101', 'ppv caption', 'queued', NULL, 0, " +
+        "NULL, NULL, NULL, '[]', 0, NULL, " +
+        "25, '[3866342509,\"ofapi_media_abc\"]', '[3866342509]', '2026-06-11T00:00:02.000Z', '2026-06-11T00:00:02.000Z')",
+    );
+    const ppv: unknown = db
+      .prepare("SELECT price, media_files, previews FROM outbox WHERE local_id = 'L2'")
+      .get();
+    expect(ppv).toEqual({
+      price: 25,
+      media_files: '[3866342509,"ofapi_media_abc"]',
+      previews: '[3866342509]',
+    });
     db.close();
   });
 

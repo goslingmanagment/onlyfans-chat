@@ -21,6 +21,7 @@ import { OfApiError, mapOfApiHttpError, mapOfApiNetworkError, ofApiShapeError, p
 import type { FixtureCapture } from './fixture-capture';
 import {
   ofapiAccountSchema,
+  ofapiChatMediaDataSchema,
   ofapiChatSchema,
   ofapiEnvelopeSchema,
   ofapiFansDataSchema,
@@ -29,24 +30,50 @@ import {
   ofapiSentMessageSchema,
   ofapiSuccessDataSchema,
   ofapiTransactionsDataSchema,
+  ofapiUploadStatusSchema,
   ofapiUserSchema,
   ofapiUsersByIdSchema,
+  ofapiVaultListsDataSchema,
+  ofapiVaultMediaDataSchema,
+  ofapiVaultMediaSchema,
+  ofapiVaultUploadStartedSchema,
   ofapiWhoamiSchema,
 } from './schemas';
 import type {
   OfApiAccount,
   OfApiChat,
+  OfApiChatMediaMessage,
   OfApiLikeResult,
   OfApiMessage,
   OfApiSentMessage,
   OfApiTransaction,
+  OfApiUploadStatus,
   OfApiUser,
+  OfApiVaultList,
+  OfApiVaultMedia,
   OfApiWhoami,
 } from './schemas';
 
 export const OFAPI_BASE_URL = 'https://app.onlyfansapi.com/api';
 export const USERS_MASS_LIST_MAX_IDS = 10;
 export const FANS_LIST_MAX_LIMIT = 20;
+/** List Vault Media: documented limit range 10–100 (default 24). */
+export const VAULT_LIST_MAX_LIMIT = 100;
+/** Direct multipart `file` uploads are capped at 100 MB by Cloudflare
+ *  (vendored uploading-media guide; decimal MB per OFAPI credit policy). */
+export const VAULT_UPLOAD_MAX_BYTES = 100 * 1_000_000;
+/** Media upload pricing: 3 credits per decimal MB (1 MB = 1,000 KB — vendored
+ *  credits table, llms-full.txt "Media Uploading"). */
+export const UPLOAD_CREDITS_PER_MB = 3;
+
+/** Size preflight: bytes → estimated upload cost in credits (ceil to whole). */
+export function estimateUploadCredits(bytes: number): number {
+  if (!Number.isFinite(bytes) || bytes <= 0) return 0;
+  return Math.ceil((bytes / 1_000_000) * UPLOAD_CREDITS_PER_MB);
+}
+
+/** Multipart uploads can outlive the default API deadline (100 MB cap). */
+export const UPLOAD_TIMEOUT_MS = 5 * 60_000;
 
 /** Rate-limiter key for team-level endpoints (no account scope). */
 const GLOBAL_KEY = '__global__';
@@ -137,6 +164,54 @@ export interface ChatRefParams {
   chatId: string;
 }
 
+// ── Vault / media (PRD F7) ──────────────────────────────────────────────
+
+export type VaultSortField = 'recent' | 'most-liked' | 'highest-tips';
+export type VaultMediaType = 'photo' | 'gif' | 'video' | 'audio';
+
+export interface ListVaultMediaParams {
+  accountId: string;
+  /** Free-text search. */
+  query?: string;
+  field?: VaultSortField;
+  type?: VaultMediaType;
+  /** Vault list (album) id — the `list` query param. */
+  listId?: string | number;
+  sort?: 'desc' | 'asc';
+  /** 10–100, default 24 (openapi). */
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListVaultListsParams {
+  accountId: string;
+  query?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListChatMediaParams {
+  accountId: string;
+  chatId: string;
+  type?: VaultMediaType;
+  limit?: number;
+  offset?: number;
+}
+
+export interface UploadVaultMediaParams {
+  accountId: string;
+  /** Original file name (multipart filename hint). */
+  fileName: string;
+  /** Raw file bytes (read in main via fs — never a renderer-supplied path). */
+  data: Uint8Array;
+  /** Background processing: 202 + polling_url (recommended >50 MB). */
+  useAsync?: boolean;
+}
+
+export type VaultUploadOutcome =
+  | { kind: 'completed'; media: OfApiVaultMedia }
+  | { kind: 'started'; prefixedId: string; pollingUrl: string };
+
 export interface OfApiClient {
   readonly creditMeter: CreditMeter;
   listAccounts(): Promise<OfApiAccount[]>;
@@ -160,6 +235,24 @@ export interface OfApiClient {
   }>;
   listFansAll(params: ListFansParams): Promise<{ fans: OfApiUser[]; hasMore: boolean }>;
   listFansActive(params: ListFansParams): Promise<{ fans: OfApiUser[]; hasMore: boolean }>;
+  // ── Vault / media reads (PRD F7): GETs, retry 'idempotent' ──
+  listVaultMedia(params: ListVaultMediaParams): Promise<{ items: OfApiVaultMedia[]; hasMore: boolean }>;
+  /** Vault lists = albums. Listing a list's media uses listVaultMedia({listId}). */
+  listVaultLists(params: ListVaultListsParams): Promise<{ lists: OfApiVaultList[]; hasMore: boolean }>;
+  getVaultMedia(params: { accountId: string; mediaId: string | number }): Promise<OfApiVaultMedia>;
+  /** Chat media gallery: message objects carrying their media. */
+  listChatMedia(params: ListChatMediaParams): Promise<{
+    messages: OfApiChatMediaMessage[];
+    hasMore: boolean;
+    nextLastId: string | null;
+  }>;
+  /** Free polling endpoint for async uploads (no credits). */
+  getUploadStatus(params: { accountId: string; uploadId: string }): Promise<OfApiUploadStatus>;
+  /**
+   * Multipart vault upload (3 credits/MB — run estimateUploadCredits first).
+   * Write path: retry 'none' (a retried upload double-bills credits).
+   */
+  uploadVaultMedia(params: UploadVaultMediaParams): Promise<VaultUploadOutcome>;
   // ── Write paths (SPEC §7): non-idempotent, retry:'none', NEVER auto-retried ──
   sendMessage(params: SendMessageParams): Promise<OfApiSentMessage>;
   /** Unsend; only within the message's cancelSeconds window (≈24 h). */
@@ -214,6 +307,11 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     query?: Record<string, QueryValue>;
     /** JSON-serialized request body (POST). */
     jsonBody?: unknown;
+    /** Multipart body (vault upload). Mutually exclusive with jsonBody; the
+     *  content-type (with boundary) is set by fetch itself. */
+    formBody?: () => FormData;
+    /** Longer deadline for large multipart bodies. */
+    timeoutMs?: number;
     retry: RetryPolicy;
   }
 
@@ -232,8 +330,12 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
           fetchImpl(url, {
             method: spec.method,
             headers: requestHeaders,
-            ...(spec.jsonBody !== undefined ? { body: JSON.stringify(spec.jsonBody) } : {}),
-            signal: AbortSignal.timeout(requestTimeoutMs),
+            ...(spec.jsonBody !== undefined
+              ? { body: JSON.stringify(spec.jsonBody) }
+              : spec.formBody !== undefined
+                ? { body: spec.formBody() }
+                : {}),
+            signal: AbortSignal.timeout(spec.timeoutMs ?? requestTimeoutMs),
           }),
         { retry: spec.retry },
       );
@@ -455,6 +557,119 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
 
     async listFansActive(params): Promise<{ fans: OfApiUser[]; hasMore: boolean }> {
       return listFans('/fans/active', params);
+    },
+
+    async listVaultMedia(params): Promise<{ items: OfApiVaultMedia[]; hasMore: boolean }> {
+      if (params.limit !== undefined && params.limit > VAULT_LIST_MAX_LIMIT) {
+        throw usageError(`listVaultMedia: upstream limit max is ${VAULT_LIST_MAX_LIMIT}`);
+      }
+      const path = accountPath(params.accountId, '/media/vault');
+      const payload = await getJson(params.accountId, path, {
+        query: params.query,
+        field: params.field,
+        type: params.type,
+        list: params.listId,
+        sort: params.sort,
+        limit: params.limit,
+        offset: params.offset,
+      });
+      const { data } = unwrapEnvelope(payload, path);
+      const parsed = parseWith(ofapiVaultMediaDataSchema, data, path);
+      return { items: parsed.list, hasMore: parsed.hasMore ?? false };
+    },
+
+    async listVaultLists(params): Promise<{ lists: OfApiVaultList[]; hasMore: boolean }> {
+      const path = accountPath(params.accountId, '/media/vault/lists');
+      const payload = await getJson(params.accountId, path, {
+        query: params.query,
+        limit: params.limit,
+        offset: params.offset,
+      });
+      const { data } = unwrapEnvelope(payload, path);
+      const parsed = parseWith(ofapiVaultListsDataSchema, data, path);
+      return { lists: parsed.list, hasMore: parsed.hasMore ?? false };
+    },
+
+    async getVaultMedia(params): Promise<OfApiVaultMedia> {
+      const path = accountPath(
+        params.accountId,
+        `/media/vault/${encodeURIComponent(String(params.mediaId))}`,
+      );
+      const payload = await getJson(params.accountId, path);
+      const { data } = unwrapEnvelope(payload, path);
+      return parseWith(ofapiVaultMediaSchema, data, path);
+    },
+
+    async listChatMedia(params): Promise<{
+      messages: OfApiChatMediaMessage[];
+      hasMore: boolean;
+      nextLastId: string | null;
+    }> {
+      const path = chatPath(params, '/media');
+      const payload = await getJson(params.accountId, path, {
+        type: params.type,
+        limit: params.limit,
+        offset: params.offset,
+        // Gallery cells need no fan profile rows (consistent with listMessages).
+        skip_users: 'all',
+      });
+      const { data } = unwrapEnvelope(payload, path);
+      const parsed = parseWith(ofapiChatMediaDataSchema, data, path);
+      return {
+        messages: parsed.list,
+        hasMore: parsed.hasMore ?? false,
+        nextLastId: parsed.nextLastId != null ? String(parsed.nextLastId) : null,
+      };
+    },
+
+    async getUploadStatus(params): Promise<OfApiUploadStatus> {
+      const path = accountPath(
+        params.accountId,
+        `/media/uploads/${encodeURIComponent(params.uploadId)}/status`,
+      );
+      // Bare object — no envelope (openapi-verified); free, no credits.
+      const payload = await getJson(params.accountId, path);
+      return parseWith(ofapiUploadStatusSchema, payload, path);
+    },
+
+    async uploadVaultMedia(params): Promise<VaultUploadOutcome> {
+      if (params.data.byteLength === 0) {
+        throw usageError('uploadVaultMedia: file is empty');
+      }
+      if (params.data.byteLength > VAULT_UPLOAD_MAX_BYTES) {
+        throw usageError(
+          `uploadVaultMedia: direct uploads are capped at ${VAULT_UPLOAD_MAX_BYTES} bytes (Cloudflare)`,
+        );
+      }
+      const path = accountPath(params.accountId, '/media/vault');
+      const payload = await requestJson({
+        accountKey: params.accountId,
+        method: 'POST',
+        path,
+        formBody: () => {
+          const form = new FormData();
+          // Exactly one of file|file_url (422 otherwise) — we always send `file`.
+          // Cast: fs bytes are never SharedArrayBuffer-backed (TS5.7 generic Uint8Array).
+          form.append('file', new Blob([params.data as Uint8Array<ArrayBuffer>]), params.fileName);
+          if (params.useAsync === true) form.append('async', 'true');
+          return form;
+        },
+        // Large multipart bodies outlive the default API deadline.
+        timeoutMs: UPLOAD_TIMEOUT_MS,
+        retry: 'none', // credits are billed per attempt — never auto-retry
+      });
+      // async=true → 202 with a BARE {status,prefixed_id,polling_url} (no
+      // envelope); the sync 200 envelope carries none of those keys.
+      const started = ofapiVaultUploadStartedSchema.safeParse(payload);
+      if (started.success) {
+        return {
+          kind: 'started',
+          prefixedId: started.data.prefixed_id,
+          pollingUrl: started.data.polling_url,
+        };
+      }
+      const { data } = unwrapEnvelope(payload, path);
+      return { kind: 'completed', media: parseWith(ofapiVaultMediaSchema, data, path) };
     },
 
     async sendMessage(params): Promise<OfApiSentMessage> {

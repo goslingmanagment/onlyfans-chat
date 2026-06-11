@@ -10,6 +10,10 @@ import { ComposerBar } from './ComposerBar';
 import { AiDockMount } from '../ai/AiDock';
 import { AiPillRow } from '../ai/AiPillRow';
 import { handleConversationChange } from '../ai/aiStore';
+import { GalleryTab } from '../vault/GalleryTab';
+import { VaultPanel } from '../vault/VaultPanel';
+import { resetVaultForConversation } from '../vault/vaultStore';
+import { cx } from '../../lib/cx';
 
 export function ConversationPane(): React.JSX.Element {
   const accountId = useUiStore((s) => s.selectedAccountId);
@@ -17,6 +21,8 @@ export function ConversationPane(): React.JSX.Element {
   const typing = useUiStore((s) => s.typing);
   const setTyping = useUiStore((s) => s.setTyping);
   const setView = useUiStore((s) => s.setView);
+  const conversationTab = useUiStore((s) => s.conversationTab);
+  const setConversationTab = useUiStore((s) => s.setConversationTab);
 
   // expire the typing indicator client-side
   useEffect(() => {
@@ -34,10 +40,12 @@ export function ConversationPane(): React.JSX.Element {
   const chats = useChats(accountId, 'all');
   const fan = useFan(accountId, chatId);
 
-  // conversation switch dismisses the AI dock (the discarded frame confirms)
-  // and resets the per-conversation composer draft
+  // conversation switch dismisses the AI dock (the discarded frame confirms),
+  // resets the per-conversation composer draft, and drops any in-progress
+  // vault selection (it belonged to the previous fan's compose)
   useEffect(() => {
     handleConversationChange(accountId, chatId);
+    resetVaultForConversation();
   }, [accountId, chatId]);
 
   // tell main which conversation to poll aggressively
@@ -99,7 +107,26 @@ export function ConversationPane(): React.JSX.Element {
           </button>
         </div>
       )}
-      <MessageList accountId={accountId} chatId={chatId} fanName={chat.fanName} />
+      <div className="flex flex-none items-center gap-1 border-b border-line bg-bg1 px-[18px] py-1">
+        {(['thread', 'gallery'] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setConversationTab(tab)}
+            className={cx(
+              'num cursor-pointer rounded-full px-2.5 py-0.5 text-micro font-semibold tracking-[0.08em] transition-colors',
+              conversationTab === tab ? 'bg-ink text-bg1' : 'text-ink-low hover:bg-bg2',
+            )}
+          >
+            {tab === 'thread' ? 'THREAD' : 'GALLERY'}
+          </button>
+        ))}
+      </div>
+      {conversationTab === 'gallery' ? (
+        <GalleryTab accountId={accountId} chatId={chatId} />
+      ) : (
+        <MessageList accountId={accountId} chatId={chatId} fanName={chat.fanName} />
+      )}
       {typingHere && (
         <div className="flex flex-none items-center gap-2 px-6 pb-1 text-[12px] text-ink-low">
           {chat.fanName} is typing
@@ -110,6 +137,7 @@ export function ConversationPane(): React.JSX.Element {
           </span>
         </div>
       )}
+      <VaultPanel accountId={accountId} chatId={chatId} canSend={chat.canSendMessage} />
       <AiDockMount />
       <AiPillRow accountId={accountId} chatId={chatId} />
       <ComposerBar accountId={accountId} chat={chat} personaName={account?.displayName ?? 'model'} />

@@ -11,6 +11,7 @@ import type {
   EventChannelName,
   EventChannels,
   FanPanelVM,
+  GalleryItemVM,
   InvokeChannelName,
   InvokeChannels,
   MessageMediaVM,
@@ -18,6 +19,8 @@ import type {
   OutboxItemVM,
   SettingsVM,
   SyncStatusVM,
+  VaultAlbumVM,
+  VaultItemVM,
 } from '../../../preload/contract';
 import type { Personality, ReplyTone } from '@chatgoose/shared/types';
 import type {
@@ -858,6 +861,7 @@ export function createMockBridge(): ChatGooseBridge {
     text: string,
     sequenceId: string | null,
     partIndex: number,
+    ppv: { price: number; mediaCount: number } = { price: 0, mediaCount: 0 },
   ): OutboxItemVM {
     localSeq += 1;
     const at = new Date(Date.now() + partIndex).toISOString();
@@ -872,10 +876,35 @@ export function createMockBridge(): ChatGooseBridge {
       errorCode: null,
       errorMessage: null,
       textHighlights: [],
+      price: ppv.price,
+      mediaCount: ppv.mediaCount,
       createdAt: at,
       updatedAt: at,
     };
   }
+
+  // ── vault & gallery (PRD F7, mocked) ───────────────────────────────────
+  const vaultAlbums: VaultAlbumVM[] = [
+    { id: 'alb_gym', name: 'Gym set', custom: true, mediaCount: 14 },
+    { id: 'alb_b2g', name: 'B/G customs', custom: true, mediaCount: 6 },
+    { id: 'alb_msgs', name: 'Messages', custom: false, mediaCount: 240 },
+  ];
+  const vaultItems: VaultItemVM[] = [];
+  for (let i = 0; i < 64; i++) {
+    const video = chance(0.3);
+    vaultItems.push({
+      id: String(3_866_000_000 + i),
+      type: video ? 'video' : 'photo',
+      thumbUrl: svgThumb(200, 200, pick(THUMB_TONES), pick(THUMB_TONES)),
+      isReady: i % 17 !== 3, // a few processing cells exercise the spinner state
+      durationSeconds: video ? 15 + Math.floor(rng() * 200) : null,
+      createdAt: new Date(Date.now() - i * 86_400_000).toISOString(),
+      likesCount: Math.floor(rng() * 40),
+      tipsTotal: Math.floor(rng() * 300),
+    });
+  }
+  let vaultUploadSeq = 0;
+  const pickedTokens = new Map<string, { name: string; bytes: number }>();
 
   function findOutboxRow(
     accountId: string,
@@ -1077,6 +1106,75 @@ export function createMockBridge(): ChatGooseBridge {
     }),
     'cmd:draft.set': ({ accountId, chatId, text }) => {
       draftStore.set(`${accountId}/${chatId}`, text);
+    },
+    'query:vault.list': ({ query, offset }) => {
+      const filtered =
+        query === undefined || query === ''
+          ? vaultItems
+          : vaultItems.filter((item) => item.id.includes(query));
+      const start = offset ?? 0;
+      const page = filtered.slice(start, start + 24);
+      const hasMore = start + page.length < filtered.length;
+      return { items: page.map((i) => ({ ...i })), hasMore, nextOffset: hasMore ? start + page.length : null };
+    },
+    'query:vault.albums': () => vaultAlbums.map((a) => ({ ...a })),
+    'query:chat.gallery': ({ accountId, chatId, offset }) => {
+      const all = (store.messages.get(`${accountId}/${chatId}`) ?? [])
+        .filter((m) => m.media.length > 0 && !m.deleted)
+        .reverse()
+        .map(
+          (m): GalleryItemVM => ({
+            messageId: m.id,
+            createdAt: m.createdAt,
+            isSentByMe: m.isSentByMe,
+            price: m.price,
+            isOpened: m.ppvState === null ? null : m.ppvState === 'purchased',
+            mediaCount: m.media.length,
+            media: m.media.map((item) => ({ ...item })),
+          }),
+        );
+      const start = offset ?? 0;
+      const page = all.slice(start, start + 16);
+      const hasMore = start + page.length < all.length;
+      return { items: page, hasMore, nextOffset: hasMore ? start + page.length : null };
+    },
+    'cmd:vault.pickFile': () => {
+      vaultUploadSeq += 1;
+      const token = `pick_${vaultUploadSeq}`;
+      const bytes = 4_000_000 + Math.floor(rng() * 60_000_000);
+      pickedTokens.set(token, { name: `IMG_${4000 + vaultUploadSeq}.mp4`, bytes });
+      return {
+        token,
+        name: `IMG_${4000 + vaultUploadSeq}.mp4`,
+        bytes,
+        creditEstimate: Math.ceil((bytes / 1_000_000) * 3),
+      };
+    },
+    'cmd:vault.upload': async ({ fileToken }) => {
+      const picked = pickedTokens.get(fileToken);
+      if (picked === undefined) throw new Error('unknown or already-used file token');
+      pickedTokens.delete(fileToken);
+      await sleep(1_200); // exercise the uploading state
+      const item: VaultItemVM = {
+        id: String(3_866_900_000 + vaultUploadSeq),
+        type: 'video',
+        thumbUrl: svgThumb(200, 200, pick(THUMB_TONES), pick(THUMB_TONES)),
+        isReady: true,
+        durationSeconds: 42,
+        createdAt: new Date().toISOString(),
+        likesCount: 0,
+        tipsTotal: 0,
+      };
+      vaultItems.unshift(item);
+      return { vaultId: item.id, isReady: true, creditsUsed: Math.ceil((picked.bytes / 1_000_000) * 3) };
+    },
+    'cmd:send.ppv': ({ accountId, chatId, text, price, mediaFiles }) => {
+      const key = `${accountId}/${chatId}`;
+      const row = makeOutboxRow(chatId, text, null, 0, { price, mediaCount: mediaFiles.length });
+      outboxStore.set(key, [...(outboxStore.get(key) ?? []), row]);
+      outboxChanged(accountId, chatId);
+      scheduleOutboxPart(accountId, chatId, row, 250);
+      return { localId: row.localId };
     },
   };
 

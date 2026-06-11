@@ -220,3 +220,121 @@ export const ofapiTransactionsDataSchema = z.looseObject({
   marker: z.number().nullish(),
   nextMarker: z.number().nullish(),
 });
+
+// ─── Media vault (SPEC §5; PRD F7) ────────────────────────────────────────
+// Shapes verified against docs/vendor/onlyfansapi/openapi.json:
+// GET /{account}/media/vault → {data:{list,hasMore}}; items carry files.{full,
+// thumb,preview,squarePreview} (thumb/preview null for audio), isReady, counters.
+
+const ofapiMediaFileVariantSchema = z.looseObject({
+  url: z.string().nullish(),
+  width: z.number().nullish(),
+  height: z.number().nullish(),
+  size: z.number().nullish(),
+});
+
+export const ofapiVaultFilesSchema = z.looseObject({
+  full: ofapiMediaFileVariantSchema.nullish(),
+  thumb: ofapiMediaFileVariantSchema.nullish(),
+  preview: ofapiMediaFileVariantSchema.nullish(),
+  squarePreview: ofapiMediaFileVariantSchema.nullish(),
+});
+
+export const ofapiVaultMediaSchema = z.looseObject({
+  id: z.number(),
+  type: z.string().nullish(),
+  canView: z.boolean().nullish(),
+  hasError: z.boolean().nullish(),
+  createdAt: z.string().nullish(),
+  /** false ⇒ still transcoding — poll before attaching (CG-OF-08 surface). */
+  isReady: z.boolean().nullish(),
+  counters: z
+    .looseObject({
+      likesCount: z.number().nullish(),
+      tipsSumm: z.number().nullish(),
+    })
+    .nullish(),
+  files: ofapiVaultFilesSchema.nullish(),
+  duration: z.number().nullish(),
+});
+
+export type OfApiVaultMedia = z.infer<typeof ofapiVaultMediaSchema>;
+
+export const ofapiVaultMediaDataSchema = z.looseObject({
+  list: z.array(ofapiVaultMediaSchema),
+  hasMore: z.boolean().nullish(),
+});
+
+/** GET /{account}/media/vault/lists item (openapi: id, type, name, counts). */
+export const ofapiVaultListSchema = z.looseObject({
+  id: z.union([z.number(), z.string()]),
+  /** 'custom' = user album; others are system buckets (posts/messages/…). */
+  type: z.string().nullish(),
+  name: z.string().nullish(),
+  hasMedia: z.boolean().nullish(),
+  videosCount: z.number().nullish(),
+  photosCount: z.number().nullish(),
+  gifsCount: z.number().nullish(),
+  audiosCount: z.number().nullish(),
+});
+
+export type OfApiVaultList = z.infer<typeof ofapiVaultListSchema>;
+
+export const ofapiVaultListsDataSchema = z.looseObject({
+  list: z.array(ofapiVaultListSchema),
+  hasMore: z.boolean().nullish(),
+});
+
+// GET /{account}/chats/{chat_id}/media → {data:{list,hasMore,nextLastId}};
+// list items are MESSAGE objects carrying their media (openapi-verified).
+export const ofapiChatMediaMessageSchema = z.looseObject({
+  id: z.number(),
+  text: z.string().nullish(),
+  createdAt: z.string().nullish(),
+  price: z.number().nullish(),
+  isFree: z.boolean().nullish(),
+  isOpened: z.boolean().nullish(),
+  lockedText: z.boolean().nullish(),
+  mediaCount: z.number().nullish(),
+  media: z.array(z.unknown()).nullish(),
+  fromUser: z.looseObject({ id: z.number().nullish() }).nullish(),
+});
+
+export type OfApiChatMediaMessage = z.infer<typeof ofapiChatMediaMessageSchema>;
+
+export const ofapiChatMediaDataSchema = z.looseObject({
+  list: z.array(ofapiChatMediaMessageSchema),
+  hasMore: z.boolean().nullish(),
+  nextLastId: z.union([z.number(), z.string()]).nullish(),
+});
+
+// ─── Vault upload (POST /{account}/media/vault) ──────────────────────────
+// 200 (sync) → envelope {data: vault item}; 202 (async=true) → BARE
+// {status,prefixed_id,polling_url} (no envelope — openapi-verified).
+
+export const ofapiVaultUploadStartedSchema = z.looseObject({
+  status: z.string(),
+  prefixed_id: z.string(),
+  polling_url: z.string(),
+});
+
+export type OfApiVaultUploadStarted = z.infer<typeof ofapiVaultUploadStartedSchema>;
+
+/** GET /{account}/media/uploads/{upload}/status — bare object, free, poll until
+ *  completed/failed. `media.id` is the vault id for vault uploads. */
+export const ofapiUploadStatusSchema = z.looseObject({
+  status: z.enum(['pending', 'processing', 'completed', 'failed']),
+  prefixed_id: z.string().nullish(),
+  error: z.string().nullish(),
+  media: z
+    .looseObject({
+      id: z.number().nullish(),
+      prefixed_id: z.string().nullish(),
+      type: z.string().nullish(),
+      isReady: z.boolean().nullish(),
+    })
+    .nullish(),
+  credits_used: z.number().nullish(),
+});
+
+export type OfApiUploadStatus = z.infer<typeof ofapiUploadStatusSchema>;

@@ -6,6 +6,7 @@
 
 import { getBridge } from '../../bridge/bridge';
 import { setDraftText, useAiStore } from '../ai/aiStore';
+import { useVaultStore } from '../vault/vaultStore';
 import { splitDraftParts } from './sendLogic';
 
 const inFlight = new Set<string>();
@@ -16,6 +17,9 @@ export function sendCurrentDraft(args: {
   canSend: boolean;
 }): void {
   if (!args.canSend) return;
+  // PPV compose active (vault media attached): the draft is the locked-text
+  // caption — only the vault strip's explicit confirm may send (PRD F7).
+  if (useVaultStore.getState().selection.ids.length > 0) return;
   const key = `${args.accountId}/${args.chatId}`;
   if (inFlight.has(key)) return;
   const draft = useAiStore.getState().draftText;

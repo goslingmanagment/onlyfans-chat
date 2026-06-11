@@ -21,6 +21,9 @@ const OUTBOX_STATES = [
   'cancelled',
 ] as const satisfies readonly OutboxState[];
 
+/** Vault media id (number) or single-use `ofapi_media_…` id (string). */
+export type OutboxMediaId = string | number;
+
 export interface OutboxRow {
   localId: string;
   accountId: string;
@@ -36,6 +39,12 @@ export interface OutboxRow {
   textHighlights: string[];
   attempts: number;
   retryOf: string | null;
+  /** PPV price in dollars; 0 = plain text or free media message (v5). */
+  price: number;
+  /** Attached media ids; non-empty ⇒ this row is a media/PPV send (v5). */
+  mediaFiles: OutboxMediaId[];
+  /** Free-preview subset — always ⊆ mediaFiles (engine-enforced, v5). */
+  previews: OutboxMediaId[];
   createdAt: string;
   updatedAt: string;
 }
@@ -50,11 +59,16 @@ export interface OutboxInsert {
   partIndex: number;
   retryOf: string | null;
   createdAt: string;
+  /** PPV payload (v5); omitted ⇒ plain text row (price 0, no media). */
+  price?: number;
+  mediaFiles?: readonly OutboxMediaId[];
+  previews?: readonly OutboxMediaId[];
 }
 
 const COLUMNS =
   'local_id, account_id, chat_id, text, state, sequence_id, part_index, message_id, ' +
-  'error_code, error_message, text_highlights, attempts, retry_of, created_at, updated_at';
+  'error_code, error_message, text_highlights, attempts, retry_of, price, media_files, ' +
+  'previews, created_at, updated_at';
 
 const outboxSqlSchema = z.object({
   local_id: z.string(),
@@ -70,15 +84,21 @@ const outboxSqlSchema = z.object({
   text_highlights: z.string(),
   attempts: z.number().int(),
   retry_of: z.string().nullable(),
+  price: z.number(),
+  media_files: z.string(),
+  previews: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
 });
 
 const highlightsSchema = z.array(z.string());
+const mediaIdsSchema = z.array(z.union([z.string(), z.number()]));
 
 export function decodeOutboxRow(value: unknown): OutboxRow {
   const row = outboxSqlSchema.parse(value);
   const highlightsJson: unknown = JSON.parse(row.text_highlights);
+  const mediaFilesJson: unknown = JSON.parse(row.media_files);
+  const previewsJson: unknown = JSON.parse(row.previews);
   return {
     localId: row.local_id,
     accountId: row.account_id,
@@ -93,6 +113,9 @@ export function decodeOutboxRow(value: unknown): OutboxRow {
     textHighlights: highlightsSchema.parse(highlightsJson),
     attempts: row.attempts,
     retryOf: row.retry_of,
+    price: row.price,
+    mediaFiles: mediaIdsSchema.parse(mediaFilesJson),
+    previews: mediaIdsSchema.parse(previewsJson),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -138,11 +161,11 @@ const INSERT_SQL = `
 INSERT INTO outbox (
   local_id, account_id, chat_id, text, state, sequence_id, part_index,
   message_id, error_code, error_message, text_highlights, attempts, retry_of,
-  created_at, updated_at
+  price, media_files, previews, created_at, updated_at
 ) VALUES (
   @local_id, @account_id, @chat_id, @text, 'queued', @sequence_id, @part_index,
   NULL, NULL, NULL, '[]', 0, @retry_of,
-  @created_at, @created_at
+  @price, @media_files, @previews, @created_at, @created_at
 )`;
 
 export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQueries {
@@ -172,6 +195,9 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
             sequence_id: row.sequenceId,
             part_index: row.partIndex,
             retry_of: row.retryOf,
+            price: row.price ?? 0,
+            media_files: toJson(row.mediaFiles ?? []),
+            previews: toJson(row.previews ?? []),
             created_at: row.createdAt,
           });
         }

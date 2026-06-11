@@ -1,0 +1,31 @@
+{
+  "_fixture": {
+    "source": "GET /{account}/media/uploads/{upload}/status — SYNTHETIC, hand-built from docs/vendor/onlyfansapi/openapi.json (Get Upload Status, 'Completed POST /media/vault upload' oneOf branch). NOT a live capture.",
+    "anonymized": true,
+    "notes": [
+      "Bare object (no envelope). For vault uploads the completed payload carries media.id — the reusable vault id — plus credits_used.",
+      "Statuses: pending | processing | completed | failed (failed carries error)."
+    ]
+  },
+  "status": "completed",
+  "prefixed_id": "ofapi_media_fixture0123456789abcdef01234567",
+  "media": {
+    "id": 3866999002,
+    "type": "video",
+    "convertedToVideo": false,
+    "canView": true,
+    "hasError": false,
+    "createdAt": "2026-06-11T12:03:05+00:00",
+    "isReady": false,
+    "files": {
+      "full": { "url": null, "width": 0, "height": 0, "size": 0, "sources": [] },
+      "thumb": null,
+      "preview": null,
+      "squarePreview": null
+    },
+    "duration": 0,
+    "releaseForms": [],
+    "hasCustomPreview": false
+  },
+  "credits_used": 38
+}

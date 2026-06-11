@@ -37,7 +37,8 @@ const richMediaSchema = z.looseObject({
 
 const MEDIA_TYPES = new Set(['photo', 'video', 'audio', 'gif']);
 
-function mapMediaItem(raw: unknown, toMediaUrl: ToMediaUrl): MessageMediaItem | null {
+/** Message-media item → VM-ready shape (also reused by the chat gallery). */
+export function mapMediaItem(raw: unknown, toMediaUrl: ToMediaUrl): MessageMediaItem | null {
   const parsed = richMediaSchema.safeParse(raw);
   if (!parsed.success || parsed.data.id == null) {
     return null;

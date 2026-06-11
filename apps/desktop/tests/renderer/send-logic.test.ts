@@ -28,6 +28,8 @@ function outboxItem(overrides: Partial<OutboxItemVM>): OutboxItemVM {
     errorCode: null,
     errorMessage: null,
     textHighlights: [],
+    price: 0,
+    mediaCount: 0,
     createdAt: at,
     updatedAt: at,
     ...overrides,

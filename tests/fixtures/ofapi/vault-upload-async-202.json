@@ -1,0 +1,13 @@
+{
+  "_fixture": {
+    "source": "POST /{account}/media/vault (multipart file, async=true) — SYNTHETIC, hand-built from docs/vendor/onlyfansapi/openapi.json (Upload Media to Vault 202 shape). NOT a live capture.",
+    "anonymized": true,
+    "notes": [
+      "202 is a BARE object (no {data,_meta} envelope): {status, prefixed_id, polling_url}.",
+      "Poll polling_url (Get Upload Status — free, no credits) until completed/failed."
+    ]
+  },
+  "status": "pending",
+  "prefixed_id": "ofapi_media_fixture0123456789abcdef01234567",
+  "polling_url": "https://app.onlyfansapi.com/api/acct_01000000000000000000000000000000/media/uploads/ofapi_media_fixture0123456789abcdef01234567/status"
+}

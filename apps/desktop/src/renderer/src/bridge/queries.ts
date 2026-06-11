@@ -15,11 +15,14 @@ import type {
   ChatFilter,
   ChatListItemVM,
   FanPanelVM,
+  GalleryItemVM,
   MessageVM,
   OutboxItemVM,
   SettingsPatch,
   SettingsVM,
   SyncStatusVM,
+  VaultAlbumVM,
+  VaultItemVM,
 } from '../../../preload/contract';
 import type { Personality } from '@chatgoose/shared/types';
 import { getBridge } from './bridge';
@@ -34,6 +37,10 @@ export const qk = {
   settings: ['settings'] as const,
   personalities: ['personalities'] as const,
   syncStatus: ['sync-status'] as const,
+  vault: (accountId: string, albumId: string | null, query: string) =>
+    ['vault', accountId, albumId ?? 'all', query] as const,
+  vaultAlbums: (accountId: string) => ['vault-albums', accountId] as const,
+  gallery: (accountId: string, chatId: string) => ['gallery', accountId, chatId] as const,
 };
 
 export function useAccounts() {
@@ -166,6 +173,81 @@ export function useSyncStatus() {
   return useQuery<SyncStatusVM>({
     queryKey: qk.syncStatus,
     queryFn: () => getBridge().invoke('query:sync.status', undefined),
+  });
+}
+
+// ─── vault & gallery (PRD F7) ────────────────────────────────────────────
+
+interface VaultPage {
+  items: VaultItemVM[];
+  hasMore: boolean;
+  nextOffset: number | null;
+}
+
+export type VaultMediaQuery = UseInfiniteQueryResult<InfiniteData<VaultPage>>;
+
+export function useVaultMedia(
+  accountId: string | null,
+  albumId: string | null,
+  search: string,
+  enabled: boolean,
+): VaultMediaQuery {
+  return useInfiniteQuery<VaultPage, Error, InfiniteData<VaultPage>, readonly string[], number | null>({
+    queryKey:
+      accountId === null
+        ? (['vault', 'none', 'all', ''] as const)
+        : qk.vault(accountId, albumId, search),
+    queryFn: ({ pageParam }) =>
+      getBridge().invoke('query:vault.list', {
+        accountId: accountId ?? '',
+        ...(albumId !== null ? { albumId } : {}),
+        ...(search.trim() !== '' ? { query: search.trim() } : {}),
+        ...(pageParam !== null ? { offset: pageParam } : {}),
+      }),
+    initialPageParam: null,
+    getNextPageParam: (last) => last.nextOffset,
+    enabled: enabled && accountId !== null,
+    staleTime: 30_000, // vault contents change rarely within a shift
+  });
+}
+
+export function useVaultAlbums(accountId: string | null, enabled: boolean) {
+  return useQuery<VaultAlbumVM[]>({
+    queryKey: accountId === null ? ['vault-albums', 'none'] : qk.vaultAlbums(accountId),
+    queryFn: () => getBridge().invoke('query:vault.albums', { accountId: accountId ?? '' }),
+    enabled: enabled && accountId !== null,
+    staleTime: 60_000,
+  });
+}
+
+interface GalleryPage {
+  items: GalleryItemVM[];
+  hasMore: boolean;
+  nextOffset: number | null;
+}
+
+export type GalleryQuery = UseInfiniteQueryResult<InfiniteData<GalleryPage>>;
+
+export function useChatGallery(
+  accountId: string | null,
+  chatId: string | null,
+  enabled: boolean,
+): GalleryQuery {
+  return useInfiniteQuery<GalleryPage, Error, InfiniteData<GalleryPage>, readonly string[], number | null>({
+    queryKey:
+      accountId === null || chatId === null
+        ? (['gallery', 'none', 'none'] as const)
+        : qk.gallery(accountId, chatId),
+    queryFn: ({ pageParam }) =>
+      getBridge().invoke('query:chat.gallery', {
+        accountId: accountId ?? '',
+        chatId: chatId ?? '',
+        ...(pageParam !== null ? { offset: pageParam } : {}),
+      }),
+    initialPageParam: null,
+    getNextPageParam: (last) => last.nextOffset,
+    enabled: enabled && accountId !== null && chatId !== null,
+    staleTime: 15_000,
   });
 }
 

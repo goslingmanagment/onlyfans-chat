@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { CgError } from '@chatgoose/shared';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
-import type { DataLayer, MessageRow, OutboxRow } from '../db/index';
+import type { DataLayer, MessageRow, OutboxMediaId, OutboxRow } from '../db/index';
 import type { OfApiClient } from '../ofapi/client';
 import { classifySendFailure } from '../ofapi/send-outcome';
 import { OfApiError } from '../ofapi/errors';
@@ -35,6 +35,9 @@ const VERIFY_TAIL_LIMIT = 50;
 export const TYPING_MIN_INTERVAL_MS = 2500;
 // SPEC §7.9: mark-as-read debounced 1.5 s per chat, gated on the settings toggle.
 export const MARK_READ_DEBOUNCE_MS = 1500;
+// PPV price bounds (openapi send-message: "0 or between 3-200", integer dollars).
+export const PPV_PRICE_MIN = 3;
+export const PPV_PRICE_MAX = 200;
 
 /** The narrow client surface the engine touches (stubbed in tests). */
 export type SendClient = Pick<
@@ -60,6 +63,20 @@ export interface SendEngine {
     chatId: string;
     parts: readonly string[];
   }): { localIds: string[]; sequenceId: string | null };
+  /**
+   * PPV / media send (PRD F7): ALWAYS a single outbox row — [NEXT] sequences
+   * never apply to PPV. Validates BEFORE enqueue: mediaFiles non-empty, price
+   * 0 (free media message) or an integer 3–200, previews ⊆ mediaFiles.
+   */
+  sendPpv(args: {
+    accountId: string;
+    chatId: string;
+    /** Caption; may be empty (media-only message). Locked behind the paywall when priced. */
+    text: string;
+    price: number;
+    mediaFiles: readonly OutboxMediaId[];
+    previews: readonly OutboxMediaId[];
+  }): { localId: string };
   /** FAILED rows only — the old row is cancelled (superseded), a NEW row queues. */
   retry(args: { accountId: string; localId: string; text: string }): { localId: string };
   /** failed|unconfirmed → cancelled (audit row kept). */
@@ -81,6 +98,19 @@ export interface SendEngine {
 /** Plain-text equality for verifier matching: trim + collapse inner whitespace. */
 export function normalizeForMatch(text: string): string {
   return text.trim().replaceAll(/\s+/g, ' ');
+}
+
+/** PPV price: 0 (free media message) or whole dollars 3–200 (openapi: integer). */
+export function isValidPpvPrice(price: number): boolean {
+  if (!Number.isFinite(price)) return false;
+  if (price === 0) return true;
+  return Number.isInteger(price) && price >= PPV_PRICE_MIN && price <= PPV_PRICE_MAX;
+}
+
+/** Wire form: vault ids go as numbers (docs examples), `ofapi_media_…` as strings. */
+function toWireMediaId(id: OutboxMediaId): string | number {
+  if (typeof id === 'number') return id;
+  return /^\d+$/.test(id) ? Number(id) : id;
 }
 
 export function createSendEngine(options: SendEngineOptions): SendEngine {
@@ -163,10 +193,20 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
   /** Exactly one client.sendMessage per claimed row — there is no other call site. */
   async function attemptSend(row: OutboxRow): Promise<boolean> {
     try {
+      const isMediaSend = row.mediaFiles.length > 0;
       const created = await client.sendMessage({
         accountId: row.accountId,
         chatId: row.chatId,
         text: row.text,
+        ...(isMediaSend
+          ? {
+              price: row.price,
+              mediaFiles: row.mediaFiles.map(toWireMediaId),
+              ...(row.previews.length > 0 ? { previews: row.previews.map(toWireMediaId) } : {}),
+              // PRD F7 locked-text caption: a priced caption rides behind the paywall.
+              ...(row.price > 0 && row.text.trim() !== '' ? { lockedText: true } : {}),
+            }
+          : {}),
       });
       // The POST response lacks isSentByMe — it is OUR send by definition.
       const upsert = mapMessage(
@@ -217,9 +257,39 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
   // ── Verifier (SPEC §7.5) ─────────────────────────────────────────────────
 
   /**
+   * Verifier candidate test for one row (SPEC §7.5; PPV: PRD F7).
+   * - Captioned rows: normalized text equality (the caption IS the text for
+   *   PPV — same semantics as plain sends); PPV rows additionally pin
+   *   price + media count so a caption-less twin or a plain text message
+   *   with identical wording can't be cross-claimed.
+   * - Caption-less rows exist ONLY for media/PPV sends (sendParts requires
+   *   non-empty text): match on empty text + price + media count inside the
+   *   window — the strongest evidence available without a message id.
+   */
+  function rowMatchesCandidate(row: OutboxRow, candidate: MessageRow): boolean {
+    const rowCreatedMs = Date.parse(row.createdAt);
+    const createdMs = Date.parse(candidate.createdAt);
+    if (
+      createdMs < rowCreatedMs - VERIFY_WINDOW_BEFORE_MS ||
+      createdMs > rowCreatedMs + VERIFY_WINDOW_AFTER_MS
+    ) {
+      return false;
+    }
+    const isMediaSend = row.mediaFiles.length > 0;
+    const wanted = normalizeForMatch(row.text);
+    if (normalizeForMatch(candidate.textPlain) !== wanted) {
+      return false;
+    }
+    if (!isMediaSend) {
+      return true;
+    }
+    return candidate.price === row.price && candidate.media.length === row.mediaFiles.length;
+  }
+
+  /**
    * Matches the chat's unconfirmed rows against the LOCAL messages table:
-   * own message + normalized text equality + creation-time window, each
-   * message id claimable by at most one outbox row (no cross-claiming).
+   * own message + rowMatchesCandidate, each message id claimable by at most
+   * one outbox row (no cross-claiming).
    */
   function matchUnconfirmed(accountId: string, chatId: string): void {
     const unconfirmed = data.outbox.listByStateForChat(accountId, chatId, 'unconfirmed');
@@ -231,14 +301,9 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       .items.filter((message) => message.isSentByMe && !message.deleted);
     const claimed = data.outbox.claimedMessageIds(accountId, chatId);
     for (const row of unconfirmed) {
-      const rowCreatedMs = Date.parse(row.createdAt);
-      const wanted = normalizeForMatch(row.text);
       const match = candidates.find(
         (candidate: MessageRow) =>
-          !claimed.has(candidate.messageId) &&
-          normalizeForMatch(candidate.textPlain) === wanted &&
-          Date.parse(candidate.createdAt) >= rowCreatedMs - VERIFY_WINDOW_BEFORE_MS &&
-          Date.parse(candidate.createdAt) <= rowCreatedMs + VERIFY_WINDOW_AFTER_MS,
+          !claimed.has(candidate.messageId) && rowMatchesCandidate(row, candidate),
       );
       if (match !== undefined) {
         claimed.add(match.messageId);
@@ -324,6 +389,46 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       return { localIds: rows.map((row) => row.localId), sequenceId };
     },
 
+    sendPpv({ accountId, chatId, text, price, mediaFiles, previews }) {
+      // ALL validation precedes the insert: an invalid PPV must never enqueue.
+      if (mediaFiles.length === 0) {
+        throw new Error('sendPpv: at least one media file is required');
+      }
+      if (new Set(mediaFiles.map(String)).size !== mediaFiles.length) {
+        throw new Error('sendPpv: mediaFiles contains duplicates');
+      }
+      if (!isValidPpvPrice(price)) {
+        throw new Error(
+          `sendPpv: price must be 0 (free) or a whole-dollar amount between ${PPV_PRICE_MIN} and ${PPV_PRICE_MAX}`,
+        );
+      }
+      const attached = new Set(mediaFiles.map(String));
+      for (const preview of previews) {
+        if (!attached.has(String(preview))) {
+          throw new Error('sendPpv: previews must be a subset of mediaFiles');
+        }
+      }
+      gateCanSend(accountId, chatId);
+      const localId = randomUUID();
+      data.outbox.insertMany([
+        {
+          localId,
+          accountId,
+          chatId,
+          text,
+          sequenceId: null, // sequences never apply to PPV (one row, PRD F7)
+          partIndex: 0,
+          retryOf: null,
+          createdAt: nowIso(),
+          price,
+          mediaFiles,
+          previews,
+        },
+      ]);
+      kickPump(accountId, chatId);
+      return { localId };
+    },
+
     retry({ accountId, localId, text }) {
       const row = data.outbox.get(localId);
       if (row === null || row.accountId !== accountId) {
@@ -350,6 +455,11 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
           partIndex: 0,
           retryOf: localId,
           createdAt: nowIso(),
+          // PPV payload carries over unchanged (only the caption is editable);
+          // previews ⊆ mediaFiles holds because the old row enforced it.
+          price: row.price,
+          mediaFiles: row.mediaFiles,
+          previews: row.previews,
         },
       ]);
       kickPump(accountId, row.chatId);

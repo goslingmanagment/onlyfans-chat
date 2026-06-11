@@ -2,7 +2,7 @@
 // protocol → OFAPI client → PollingSync → AI coordinator → IPC. All secrets
 // and network I/O live here in main; the renderer only ever sees typed IPC.
 
-import { app, BrowserWindow, Notification, protocol, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, dialog, Notification, protocol, safeStorage, shell } from 'electron';
 import { join } from 'node:path';
 import { rm } from 'node:fs/promises';
 import { z } from 'zod';
@@ -19,6 +19,7 @@ import {
 import { createSqliteMediaCacheQueries } from './media/cache';
 import { createOfApiClient, type OfApiClient } from './ofapi/client';
 import { createSendEngine, type SendEngine } from './send/engine';
+import { createVaultService, type VaultService } from './media/vault';
 import { createPollingSync, syncAccounts } from './sync/polling-sync';
 import { createBudgetGuard } from './sync/budget-guard';
 import { createHubSync } from './sync/hub-sync';
@@ -36,6 +37,7 @@ let sync: HubAwareSync | null = null;
 let client: OfApiClient | null = null;
 let coordinator: AiCoordinator | null = null;
 let sendEngine: SendEngine | null = null;
+let vaultService: VaultService | null = null;
 let hub: HubModule | null = null;
 /** Set by initOfapi; lets cmd:settings.update trigger a hub-config recheck. */
 let recheckHubConfig: (() => void) | null = null;
@@ -201,6 +203,16 @@ async function initOfapi(
     getSettings: () => settingsStore.get(),
   });
   sendEngine = engine;
+  // Vault & PPV (PRD F7): vault/gallery thumbs are OF CDN URLs — minted into
+  // media:// tokens through the same registering toMediaUrl seam as sync.
+  vaultService = createVaultService({
+    client,
+    toMediaUrl,
+    dialog: {
+      showOpenDialog: (options) =>
+        dialog.showOpenDialog({ properties: ['openFile'], filters: options.filters }),
+    },
+  });
   sync.subscribe((event) => engine.handleSyncEvent(event));
   // Awaited on purpose (adversarial review 2026-06-11): the "reconciliation
   // before any send" guarantee must hold even for a fast first user action.
@@ -292,6 +304,7 @@ async function boot(): Promise<void> {
     creditMeter: client?.creditMeter ?? null,
     coordinator,
     send: sendEngine,
+    vault: vaultService,
     purge: async () => {
       sync?.stop();
       sendEngine?.dispose();

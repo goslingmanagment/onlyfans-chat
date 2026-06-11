@@ -1,0 +1,173 @@
+{
+  "_fixture": {
+    "source": "GET /{account}/chats/{chat_id}/media — SYNTHETIC, hand-built from docs/vendor/onlyfansapi/openapi.json (List Chat Media (Gallery) 200 shape). NOT a live capture.",
+    "anonymized": true,
+    "notes": [
+      "data = {list, hasMore, nextLastId}; list items are MESSAGE objects carrying their media array (not bare files).",
+      "First item: our sent PPV ($25, isOpened:true = purchased, lockedText). Second: fan-sent free photo (fromUser.id === chat/fan id 1000039).",
+      "Pagination params are limit/offset (openapi declares them as strings — scribe quirk; numbers serialize identically)."
+    ]
+  },
+  "data": {
+    "list": [
+      {
+        "responseType": "message",
+        "id": 9100000001,
+        "text": "<p>little something from today's set…</p>",
+        "lockedText": false,
+        "isFree": false,
+        "price": 25,
+        "isMediaReady": true,
+        "mediaCount": 2,
+        "media": [
+          {
+            "id": 5100000001,
+            "type": "photo",
+            "convertedToVideo": false,
+            "canView": true,
+            "hasError": false,
+            "createdAt": "2026-06-01T18:00:00+00:00",
+            "isReady": true,
+            "duration": 0,
+            "hasCustomPreview": false,
+            "files": {
+              "full": {
+                "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-gal-1/full.jpg?Expires=1781000000&Signature=fixture",
+                "width": 2048,
+                "height": 1360,
+                "size": 0,
+                "sources": []
+              },
+              "thumb": {
+                "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-gal-1/300x300.jpg?Expires=1781000000&Signature=fixture",
+                "width": 300,
+                "height": 300,
+                "size": 0
+              },
+              "preview": null,
+              "squarePreview": null
+            },
+            "videoSources": { "240": null, "720": null }
+          },
+          {
+            "id": 5100000002,
+            "type": "video",
+            "convertedToVideo": false,
+            "canView": true,
+            "hasError": false,
+            "createdAt": "2026-06-01T18:00:00+00:00",
+            "isReady": true,
+            "duration": 58,
+            "hasCustomPreview": false,
+            "files": {
+              "full": {
+                "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-gal-2/full.mp4?Expires=1781000000&Signature=fixture",
+                "width": 1920,
+                "height": 1080,
+                "size": 0,
+                "sources": []
+              },
+              "thumb": {
+                "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-gal-2/300x300.jpg?Expires=1781000000&Signature=fixture",
+                "width": 300,
+                "height": 300,
+                "size": 0
+              },
+              "preview": null,
+              "squarePreview": null
+            },
+            "videoSources": { "240": null, "720": null }
+          }
+        ],
+        "previews": [5100000001],
+        "isTip": false,
+        "isReportedByMe": false,
+        "isCouplePeopleMedia": false,
+        "isMarkdownDisabled": true,
+        "releaseForms": [],
+        "fromUser": { "id": 169000001, "_view": "s" },
+        "isFromQueue": false,
+        "queueId": null,
+        "canPurchaseReason": "opened",
+        "canPurchase": false,
+        "canReport": true,
+        "canBePinned": true,
+        "isPinned": false,
+        "isNew": false,
+        "isOpened": true,
+        "isLiked": false,
+        "createdAt": "2026-06-01T18:00:00+00:00",
+        "changedAt": "2026-06-01T18:00:00+00:00",
+        "cancelSeconds": 0,
+        "giphyId": null
+      },
+      {
+        "responseType": "message",
+        "id": 9100000002,
+        "text": "",
+        "lockedText": false,
+        "isFree": true,
+        "price": 0,
+        "isMediaReady": true,
+        "mediaCount": 1,
+        "media": [
+          {
+            "id": 5100000003,
+            "type": "photo",
+            "convertedToVideo": false,
+            "canView": true,
+            "hasError": false,
+            "createdAt": "2026-06-02T09:30:00+00:00",
+            "isReady": true,
+            "duration": 0,
+            "hasCustomPreview": false,
+            "files": {
+              "full": {
+                "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-gal-3/full.jpg?Expires=1781000000&Signature=fixture",
+                "width": 1200,
+                "height": 900,
+                "size": 0,
+                "sources": []
+              },
+              "thumb": {
+                "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-gal-3/300x300.jpg?Expires=1781000000&Signature=fixture",
+                "width": 300,
+                "height": 300,
+                "size": 0
+              },
+              "preview": null,
+              "squarePreview": null
+            },
+            "videoSources": { "240": null, "720": null }
+          }
+        ],
+        "previews": [],
+        "isTip": false,
+        "isReportedByMe": false,
+        "isCouplePeopleMedia": false,
+        "isMarkdownDisabled": true,
+        "releaseForms": [],
+        "fromUser": { "id": 1000039, "_view": "s" },
+        "isFromQueue": false,
+        "queueId": null,
+        "canPurchaseReason": "free",
+        "canPurchase": false,
+        "canReport": true,
+        "canBePinned": true,
+        "isPinned": false,
+        "isNew": false,
+        "isOpened": true,
+        "isLiked": false,
+        "createdAt": "2026-06-02T09:30:00+00:00",
+        "changedAt": "2026-06-02T09:30:00+00:00",
+        "cancelSeconds": 0,
+        "giphyId": null
+      }
+    ],
+    "hasMore": false,
+    "nextLastId": "9100000002"
+  },
+  "_meta": {
+    "_credits": { "used": 1, "balance": 99978, "note": "Always" }
+  }
+}

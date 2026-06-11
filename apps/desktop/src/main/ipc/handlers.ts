@@ -13,6 +13,7 @@ import type { SyncProvider } from '../sync/provider';
 import type { HubSyncStatus } from '../sync/hub-sync';
 import type { CreditMeter } from '../ofapi/credit-meter';
 import type { SendEngine } from '../send/engine';
+import type { VaultService } from '../media/vault';
 import type { AiStartRequest, OutboxItemVM, SyncStatusVM } from '../../preload/contract';
 import {
   accountToVM,
@@ -95,6 +96,36 @@ const messageRefSchema = z.object({ accountId: idSchema, chatId: idSchema, messa
 const draftSetSchema = z.object({ accountId: idSchema, chatId: idSchema, text: z.string().max(20_000) });
 const draftStoredSchema = z.string();
 
+// ── Vault & PPV (PRD F7) ──
+const vaultListSchema = z.object({
+  accountId: idSchema,
+  albumId: idSchema.optional(),
+  query: z.string().max(200).optional(),
+  offset: z.number().int().min(0).optional(),
+});
+const vaultAlbumsSchema = z.object({ accountId: idSchema });
+const chatGallerySchema = z.object({
+  accountId: idSchema,
+  chatId: idSchema,
+  offset: z.number().int().min(0).optional(),
+});
+const vaultUploadSchema = z.object({
+  accountId: idSchema,
+  fileToken: z.uuid(),
+  useAsync: z.boolean().optional(),
+});
+// Vault ids (numeric strings) or single-use ofapi_media_ ids; the engine owns
+// the previews ⊆ mediaFiles and price-bounds invariants (validated pre-enqueue).
+const ppvMediaIdSchema = z.string().min(1).max(64);
+const sendPpvSchema = z.object({
+  accountId: idSchema,
+  chatId: idSchema,
+  text: z.string().max(20_000), // caption may be empty (media-only message)
+  price: z.number().min(0).max(200),
+  mediaFiles: z.array(ppvMediaIdSchema).min(1).max(40),
+  previews: z.array(ppvMediaIdSchema).max(40),
+});
+
 function draftKey(accountId: string, chatId: string): string {
   return `draft.${accountId}.${chatId}`;
 }
@@ -111,6 +142,8 @@ function outboxToVM(row: OutboxRow): OutboxItemVM {
     errorCode: row.errorCode,
     errorMessage: row.errorMessage,
     textHighlights: row.textHighlights,
+    price: row.price,
+    mediaCount: row.mediaFiles.length,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -136,6 +169,9 @@ export interface IpcDeps {
   coordinator: AiCoordinatorLike | null;
   /** Null until an OFAPI key exists (same lifecycle as sync). */
   send: SendEngine | null;
+  /** Vault browsing/upload (PRD F7); null/absent until an OFAPI key exists.
+   *  Optional (not `| null` alone) so pre-P5 IpcDeps call sites stay valid. */
+  vault?: VaultService | null;
   purge: () => Promise<void>;
   /** Called when settings.update sets an OFAPI key while sync is offline. */
   onOfapiKeyConfigured?: () => void;
@@ -413,6 +449,57 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('cmd:message.unsend', async (_event, rawArgs: unknown) => {
     const args = messageRefSchema.parse(rawArgs);
     await requireSend().unsend(args.accountId, args.chatId, args.messageId);
+  });
+
+  // ── Vault & PPV (PRD F7) ──
+
+  function requireVault(): VaultService {
+    if (!deps.vault) {
+      throw new Error('The vault is not available yet — configure the OFAPI key in Settings.');
+    }
+    return deps.vault;
+  }
+
+  ipcMain.handle('query:vault.list', (_event, rawArgs: unknown) => {
+    const args = vaultListSchema.parse(rawArgs);
+    return requireVault().listVault({
+      accountId: args.accountId,
+      ...(args.albumId !== undefined ? { albumId: args.albumId } : {}),
+      ...(args.query !== undefined ? { query: args.query } : {}),
+      ...(args.offset !== undefined ? { offset: args.offset } : {}),
+    });
+  });
+
+  ipcMain.handle('query:vault.albums', (_event, rawArgs: unknown) => {
+    const args = vaultAlbumsSchema.parse(rawArgs);
+    return requireVault().listAlbums(args);
+  });
+
+  ipcMain.handle('query:chat.gallery', (_event, rawArgs: unknown) => {
+    const args = chatGallerySchema.parse(rawArgs);
+    return requireVault().chatGallery({
+      accountId: args.accountId,
+      chatId: args.chatId,
+      ...(args.offset !== undefined ? { offset: args.offset } : {}),
+    });
+  });
+
+  ipcMain.handle('cmd:vault.pickFile', () => requireVault().pickFile());
+
+  ipcMain.handle('cmd:vault.upload', (_event, rawArgs: unknown) => {
+    const args = vaultUploadSchema.parse(rawArgs);
+    return requireVault().upload({
+      accountId: args.accountId,
+      fileToken: args.fileToken,
+      ...(args.useAsync !== undefined ? { useAsync: args.useAsync } : {}),
+    });
+  });
+
+  ipcMain.handle('cmd:send.ppv', (_event, rawArgs: unknown) => {
+    const args = sendPpvSchema.parse(rawArgs);
+    // Engine validates the PPV invariants (price bounds, previews ⊆ media)
+    // BEFORE enqueue and owns the single-row guarantee.
+    return requireSend().sendPpv(args);
   });
 
   // Drafts live in the settings table (key draft.<accountId>.<chatId>) — pure

@@ -170,6 +170,17 @@ CREATE INDEX idx_outbox_chat ON outbox (account_id, chat_id, created_at);
 CREATE INDEX idx_outbox_state ON outbox (state);
 `;
 
+// v5 (additive) — PPV send path (SPEC §7, PRD F7): outbox rows carry the paid
+// payload. price in dollars (0 = free media message; 3–200 enforced in the
+// engine BEFORE enqueue); media_files/previews are JSON arrays of vault ids
+// (numbers) and/or single-use `ofapi_media_…` ids (strings); previews must be
+// a subset of media_files (engine-enforced invariant).
+export const SCHEMA_V5 = `
+ALTER TABLE outbox ADD COLUMN price REAL NOT NULL DEFAULT 0;
+ALTER TABLE outbox ADD COLUMN media_files TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE outbox ADD COLUMN previews TEXT NOT NULL DEFAULT '[]';
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',

@@ -1,0 +1,63 @@
+{
+  "_fixture": {
+    "source": "GET /{account}/media/vault/lists — SYNTHETIC, hand-built from docs/vendor/onlyfansapi/openapi.json (List Vault Lists 200 example shape). NOT a live capture.",
+    "anonymized": true,
+    "notes": [
+      "data = {list, hasMore, all, order, sort, canCreateVaultLists}; items: system buckets (posts/messages/stories/streams/media_stickers) + type:'custom' user albums.",
+      "Listing a list's media goes through GET /media/vault?list={id} — /lists/{id}/media is POST/DELETE (add/remove) only."
+    ]
+  },
+  "data": {
+    "all": { "videosCount": 18, "photosCount": 240, "gifsCount": 2, "audiosCount": 4 },
+    "canCreateVaultLists": true,
+    "order": "custom",
+    "sort": "desc",
+    "list": [
+      {
+        "id": 701,
+        "type": "messages",
+        "name": "Messages",
+        "hasMedia": true,
+        "canUpdate": false,
+        "canDelete": false,
+        "videosCount": 9,
+        "photosCount": 120,
+        "gifsCount": 1,
+        "audiosCount": 2,
+        "medias": [
+          { "type": "photo", "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-list-1/300x300.jpg?Expires=1781000000&Signature=fixture" }
+        ]
+      },
+      {
+        "id": 702,
+        "type": "posts",
+        "name": "Posts",
+        "hasMedia": true,
+        "canUpdate": false,
+        "canDelete": false,
+        "videosCount": 6,
+        "photosCount": 80,
+        "gifsCount": 0,
+        "audiosCount": 0,
+        "medias": []
+      },
+      {
+        "id": 703,
+        "type": "custom",
+        "name": "Gym set",
+        "hasMedia": true,
+        "canUpdate": true,
+        "canDelete": true,
+        "videosCount": 3,
+        "photosCount": 11,
+        "gifsCount": 0,
+        "audiosCount": 0,
+        "medias": []
+      }
+    ],
+    "hasMore": false
+  },
+  "_meta": {
+    "_credits": { "used": 1, "balance": 99979, "note": "Always" }
+  }
+}

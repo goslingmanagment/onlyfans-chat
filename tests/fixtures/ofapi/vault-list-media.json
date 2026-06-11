@@ -1,0 +1,129 @@
+{
+  "_fixture": {
+    "source": "GET /{account}/media/vault — SYNTHETIC, hand-built from docs/vendor/onlyfansapi/openapi.json (List Vault Media 200 example shape). NOT a live capture.",
+    "anonymized": true,
+    "notes": [
+      "data = {list, hasMore}; pagination is limit/offset (10–100, default 24) + hasMore — no _pagination cursor block on this endpoint's example.",
+      "Items carry files.{full,thumb,preview,squarePreview}; thumb/preview/squarePreview are null for audio (full only).",
+      "isReady:false models a still-transcoding upload (attachable only once ready); counters carry likesCount/tipsSumm.",
+      "URLs follow the live cdn2.onlyfans.com host pattern so the media:// allowlist mints them."
+    ]
+  },
+  "data": {
+    "list": [
+      {
+        "id": 3866342509,
+        "type": "photo",
+        "convertedToVideo": false,
+        "canView": true,
+        "hasError": false,
+        "createdAt": "2026-05-01T10:00:00+00:00",
+        "isReady": true,
+        "counters": { "likesCount": 12, "tipsSumm": 85 },
+        "files": {
+          "full": {
+            "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-vault-1/full.jpg?Expires=1781000000&Signature=fixture",
+            "width": 2048,
+            "height": 1360,
+            "size": 0,
+            "sources": []
+          },
+          "thumb": {
+            "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-vault-1/300x300.jpg?Expires=1781000000&Signature=fixture",
+            "width": 300,
+            "height": 300,
+            "size": 0
+          },
+          "preview": {
+            "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-vault-1/960x638.jpg?Expires=1781000000&Signature=fixture",
+            "width": 960,
+            "height": 638,
+            "size": 0
+          },
+          "squarePreview": {
+            "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-vault-1/960x960.jpg?Expires=1781000000&Signature=fixture",
+            "width": 960,
+            "height": 960,
+            "size": 0
+          }
+        },
+        "duration": 0,
+        "hasPosts": false,
+        "listStates": [
+          { "id": 901, "type": "messages", "name": "Messages", "hasMedia": true, "canAddMedia": false },
+          { "id": 902, "type": "custom", "name": "Gym set", "hasMedia": true, "canAddMedia": true }
+        ],
+        "releaseForms": [],
+        "hasCustomPreview": false,
+        "videoSources": { "240": null, "720": null }
+      },
+      {
+        "id": 3866342510,
+        "type": "video",
+        "convertedToVideo": false,
+        "canView": true,
+        "hasError": false,
+        "createdAt": "2026-05-02T11:30:00+00:00",
+        "isReady": true,
+        "counters": { "likesCount": 4, "tipsSumm": 0 },
+        "files": {
+          "full": {
+            "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-vault-2/full.mp4?Expires=1781000000&Signature=fixture",
+            "width": 1920,
+            "height": 1080,
+            "size": 0,
+            "sources": []
+          },
+          "thumb": {
+            "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-vault-2/300x300.jpg?Expires=1781000000&Signature=fixture",
+            "width": 300,
+            "height": 300,
+            "size": 0
+          },
+          "preview": null,
+          "squarePreview": null
+        },
+        "duration": 74,
+        "hasPosts": false,
+        "listStates": [],
+        "releaseForms": [],
+        "hasCustomPreview": false,
+        "videoSources": { "240": null, "720": null }
+      },
+      {
+        "id": 3866342511,
+        "type": "audio",
+        "convertedToVideo": false,
+        "canView": true,
+        "hasError": false,
+        "createdAt": "2026-05-03T09:15:00+00:00",
+        "isReady": false,
+        "counters": { "likesCount": 0, "tipsSumm": 0 },
+        "files": {
+          "full": {
+            "url": "https://cdn2.onlyfans.com/files/f/f0/fixture-vault-3/full.mp3?Expires=1781000000&Signature=fixture",
+            "width": 0,
+            "height": 0,
+            "size": 0,
+            "sources": []
+          },
+          "thumb": null,
+          "preview": null,
+          "squarePreview": null
+        },
+        "duration": 3,
+        "hasPosts": false,
+        "listStates": [],
+        "releaseForms": [],
+        "hasCustomPreview": false,
+        "videoSources": { "240": null, "720": null }
+      }
+    ],
+    "hasMore": true
+  },
+  "_meta": {
+    "_credits": { "used": 1, "balance": 99980, "note": "Always" },
+    "_cache": { "is_cached": false, "note": "Cache disabled for this endpoint" },
+    "_rate_limits": { "limit_minute": 1000, "limit_day": null, "remaining_minute": 999, "remaining_day": null }
+  }
+}

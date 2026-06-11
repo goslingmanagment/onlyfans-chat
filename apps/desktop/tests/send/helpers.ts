@@ -75,11 +75,24 @@ export function seedMessage(data: DataLayer, overrides: Partial<MessageUpsert> =
   ]);
 }
 
+/** Minimal media entry matching the wire shape mapMediaItem expects. */
+export function makeWireMedia(id: number): Record<string, unknown> {
+  return {
+    id,
+    type: 'photo',
+    canView: true,
+    isReady: true,
+    files: { thumb: { url: `https://cdn2.onlyfans.com/files/m${id}/300.jpg` } },
+  };
+}
+
 /** POST-response shape (fixture send-message-success.json): no isSentByMe. */
 export function makeSentMessage(overrides: {
   id: number;
   text?: string;
   createdAt?: string;
+  price?: number;
+  mediaIds?: number[];
 }): OfApiSentMessage {
   return {
     id: overrides.id,
@@ -88,6 +101,10 @@ export function makeSentMessage(overrides: {
     isOpened: false,
     isNew: true,
     cancelSeconds: 86_399,
+    ...(overrides.price !== undefined ? { price: overrides.price } : {}),
+    ...(overrides.mediaIds !== undefined
+      ? { media: overrides.mediaIds.map(makeWireMedia), mediaCount: overrides.mediaIds.length }
+      : {}),
   } as OfApiSentMessage;
 }
 
@@ -97,6 +114,8 @@ export function makeTailMessage(overrides: {
   text?: string;
   createdAt?: string;
   fromMe?: boolean;
+  price?: number;
+  mediaIds?: number[];
 }): OfApiMessage {
   return {
     id: overrides.id,
@@ -105,6 +124,10 @@ export function makeTailMessage(overrides: {
     isSentByMe: overrides.fromMe ?? true,
     isNew: false,
     isTip: false,
+    ...(overrides.price !== undefined ? { price: overrides.price } : {}),
+    ...(overrides.mediaIds !== undefined
+      ? { media: overrides.mediaIds.map(makeWireMedia), mediaCount: overrides.mediaIds.length }
+      : {}),
   } as OfApiMessage;
 }
 
@@ -112,6 +135,11 @@ export interface SendCall {
   accountId: string;
   chatId: string;
   text: string;
+  /** PPV path (P5): present only when the engine sent a media/PPV body. */
+  price?: number;
+  mediaFiles?: ReadonlyArray<string | number>;
+  previews?: ReadonlyArray<string | number>;
+  lockedText?: boolean;
 }
 
 export interface StubSendClient {
@@ -150,12 +178,30 @@ export function makeStubClient(): StubSendClient {
       markReadSuccess = success;
     },
     client: {
-      sendMessage: vi.fn((params: { accountId: string; chatId: string; text: string }) => {
-        const call = { accountId: params.accountId, chatId: params.chatId, text: params.text };
-        const index = state.sendCalls.length;
-        state.sendCalls.push(call);
-        return sendFn(call, index);
-      }),
+      sendMessage: vi.fn(
+        (params: {
+          accountId: string;
+          chatId: string;
+          text: string;
+          price?: number;
+          mediaFiles?: ReadonlyArray<string | number>;
+          previews?: ReadonlyArray<string | number>;
+          lockedText?: boolean;
+        }) => {
+          const call: SendCall = {
+            accountId: params.accountId,
+            chatId: params.chatId,
+            text: params.text,
+            ...(params.price !== undefined ? { price: params.price } : {}),
+            ...(params.mediaFiles !== undefined ? { mediaFiles: params.mediaFiles } : {}),
+            ...(params.previews !== undefined ? { previews: params.previews } : {}),
+            ...(params.lockedText !== undefined ? { lockedText: params.lockedText } : {}),
+          };
+          const index = state.sendCalls.length;
+          state.sendCalls.push(call);
+          return sendFn(call, index);
+        },
+      ),
       listMessages: vi.fn(async () => {
         state.listMessagesCalls += 1;
         return { messages: tail, nextPageUrl: null };

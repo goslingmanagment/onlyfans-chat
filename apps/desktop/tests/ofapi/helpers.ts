@@ -23,6 +23,8 @@ export interface RecordedRequest {
   headers: Record<string, string>;
   /** Raw request body string when one was sent (JSON for write paths). */
   body?: string;
+  /** Multipart fields when the body was a FormData (vault upload path). */
+  form?: Record<string, { value: string; fileName?: string; bytes?: number }>;
 }
 
 /** fetch stub: serves queued responses (last one repeats) and records requests. */
@@ -42,11 +44,22 @@ export function stubFetch(responses: Array<() => Response>): {
         headers[name] = value;
       });
     }
+    let form: RecordedRequest['form'];
+    if (init?.body instanceof FormData) {
+      form = {};
+      for (const [name, value] of init.body.entries()) {
+        form[name] =
+          typeof value === 'string'
+            ? { value }
+            : { value: '<file>', fileName: value.name, bytes: value.size };
+      }
+    }
     requests.push({
       url,
       method: init?.method ?? 'GET',
       headers,
       ...(typeof init?.body === 'string' ? { body: init.body } : {}),
+      ...(form !== undefined ? { form } : {}),
     });
     const factory = responses[Math.min(index, responses.length - 1)];
     index += 1;

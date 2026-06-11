@@ -52,7 +52,8 @@ export function auditOutbox(
   const rows = data.db
     .prepare(
       `SELECT local_id, account_id, chat_id, text, state, sequence_id, part_index, message_id,
-              error_code, error_message, text_highlights, attempts, retry_of, created_at, updated_at
+              error_code, error_message, text_highlights, attempts, retry_of,
+              price, media_files, previews, created_at, updated_at
        FROM outbox ${where} ORDER BY created_at, rowid`,
     )
     .all(options.accountId ? { account_id: options.accountId } : {})

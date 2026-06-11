@@ -104,6 +104,7 @@ export type {
   OutboxQueries,
   OutboxRow,
   OutboxInsert,
+  OutboxMediaId,
   OutboxState,
   OutboxTransitionArgs,
 } from './queries/outbox';

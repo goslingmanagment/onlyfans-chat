@@ -3,14 +3,14 @@
 
 import { z } from 'zod';
 import type { SqliteDatabase } from './driver';
-import { SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4 } from './schema';
+import { SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5 } from './schema';
 
 export interface Migration {
   toVersion: number;
   up(db: SqliteDatabase): void;
 }
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -35,6 +35,12 @@ export const MIGRATIONS: readonly Migration[] = [
     toVersion: 4,
     up(db) {
       db.exec(SCHEMA_V4);
+    },
+  },
+  {
+    toVersion: 5,
+    up(db) {
+      db.exec(SCHEMA_V5);
     },
   },
 ];

@@ -33,6 +33,7 @@ async function invoke(channel: string, args?: unknown): Promise<unknown> {
 function makeEngineStub(): SendEngine {
   return {
     sendParts: vi.fn(() => ({ localIds: ['local-1'], sequenceId: null })),
+    sendPpv: vi.fn(() => ({ localId: 'local-ppv-1' })),
     retry: vi.fn(() => ({ localId: 'local-2' })),
     dismiss: vi.fn(),
     cancelSequence: vi.fn(),
@@ -147,11 +148,46 @@ describe('send-channel IPC handlers', () => {
         errorCode: null,
         errorMessage: null,
         textHighlights: [],
+        price: 0,
+        mediaCount: 0,
         createdAt: '2026-06-11T12:00:00.000Z',
         updatedAt: '2026-06-11T12:00:00.000Z',
       },
     ]);
     await expect(invoke('query:outbox.list', { accountId: ACCT })).rejects.toThrow();
+  });
+
+  it('cmd:send.ppv validates args at the boundary and delegates to the engine', async () => {
+    const result = await invoke('cmd:send.ppv', {
+      accountId: ACCT,
+      chatId: CHAT,
+      text: 'caption',
+      price: 25,
+      mediaFiles: ['3866342509', 'ofapi_media_abc'],
+      previews: ['3866342509'],
+    });
+    expect(engine.sendPpv).toHaveBeenCalledWith({
+      accountId: ACCT,
+      chatId: CHAT,
+      text: 'caption',
+      price: 25,
+      mediaFiles: ['3866342509', 'ofapi_media_abc'],
+      previews: ['3866342509'],
+    });
+    expect(result).toEqual({ localId: 'local-ppv-1' });
+
+    // boundary rejections: empty mediaFiles, out-of-range price, missing fields
+    await expect(
+      invoke('cmd:send.ppv', { accountId: ACCT, chatId: CHAT, text: '', price: 25, mediaFiles: [], previews: [] }),
+    ).rejects.toThrow();
+    await expect(
+      invoke('cmd:send.ppv', { accountId: ACCT, chatId: CHAT, text: '', price: 201, mediaFiles: ['1'], previews: [] }),
+    ).rejects.toThrow();
+    await expect(
+      invoke('cmd:send.ppv', { accountId: ACCT, chatId: CHAT, text: '', price: -1, mediaFiles: ['1'], previews: [] }),
+    ).rejects.toThrow();
+    await expect(invoke('cmd:send.ppv', { accountId: ACCT, chatId: CHAT })).rejects.toThrow();
+    expect(engine.sendPpv).toHaveBeenCalledTimes(1);
   });
 
   it('cmd:send.retry/dismiss/cancelSequence/verifyNow/unsend validate and delegate', async () => {

@@ -202,6 +202,10 @@ export interface OutboxItemVM {
   errorMessage: string | null;
   /** CG-OF-05 restricted words: raw textHighLight entries (may be the full text). */
   textHighlights: string[];
+  /** PPV price in dollars; 0 = plain text or free media message (P5, additive). */
+  price: number;
+  /** Attached media count; > 0 ⇒ media/PPV send (P5, additive). */
+  mediaCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -209,6 +213,63 @@ export interface OutboxItemVM {
 export interface PingGateVM {
   segment: PingSegment;
   blocked: boolean;
+}
+
+// ─── Vault & PPV (PRD F7) ────────────────────────────────────────────────
+
+export interface VaultItemVM {
+  /** OF vault media id (raw OnlyFans numeric namespace, stringified). */
+  id: string;
+  type: 'photo' | 'video' | 'audio' | 'gif' | 'other';
+  /** media:// URL minted in main — never a raw OF CDN URL (SPEC §4). */
+  thumbUrl: string | null;
+  /** false ⇒ still transcoding upstream — not attachable yet. */
+  isReady: boolean;
+  durationSeconds: number | null;
+  createdAt: string | null; // ISO
+  likesCount: number;
+  /** Lifetime tips earned by this media (dollars). */
+  tipsTotal: number;
+}
+
+export interface VaultAlbumVM {
+  /** Vault list id (used as query:vault.list albumId). */
+  id: string;
+  name: string;
+  /** true = user-created album; false = system bucket (Messages/Posts/…). */
+  custom: boolean;
+  mediaCount: number;
+}
+
+/** One chat message carrying media (the gallery lists messages, not files). */
+export interface GalleryItemVM {
+  messageId: string;
+  createdAt: string | null; // ISO
+  isSentByMe: boolean;
+  /** Dollars; 0 = free media message. */
+  price: number;
+  /** PPV purchase state (true once the fan unlocked it); null when unknown. */
+  isOpened: boolean | null;
+  mediaCount: number;
+  media: MessageMediaVM[];
+}
+
+/** cmd:vault.pickFile result — the renderer never sees the filesystem path. */
+export interface VaultPickedFileVM {
+  /** Opaque one-shot token minted in main; pass to cmd:vault.upload. */
+  token: string;
+  name: string;
+  bytes: number;
+  /** Size preflight at 3 credits per decimal MB (PRD F7). */
+  creditEstimate: number;
+}
+
+export interface VaultUploadResultVM {
+  /** OF vault media id — REUSABLE (unlike single-use ofapi_media_ ids). */
+  vaultId: string;
+  /** false ⇒ still transcoding; the vault grid shows the processing state. */
+  isReady: boolean;
+  creditsUsed: number | null;
 }
 
 // ─── Channel map ─────────────────────────────────────────────────────────
@@ -285,6 +346,40 @@ export interface InvokeChannels {
     args: { accountId: string; chatId: string; text: string };
     result: void;
   };
+  // ── Vault & PPV (PRD F7, P5 — additive) ──
+  /** Offset-paginated (OFAPI vault pagination is limit/offset + hasMore). */
+  'query:vault.list': {
+    args: { accountId: string; albumId?: string; query?: string; offset?: number };
+    result: { items: VaultItemVM[]; hasMore: boolean; nextOffset: number | null };
+  };
+  'query:vault.albums': { args: { accountId: string }; result: VaultAlbumVM[] };
+  'query:chat.gallery': {
+    args: { accountId: string; chatId: string; offset?: number };
+    result: { items: GalleryItemVM[]; hasMore: boolean; nextOffset: number | null };
+  };
+  /** Main-process file dialog; null when the chatter cancels. */
+  'cmd:vault.pickFile': { args: void; result: VaultPickedFileVM | null };
+  /** Uploads the picked file into the VAULT (reusable id); token is one-shot. */
+  'cmd:vault.upload': {
+    args: { accountId: string; fileToken: string; useAsync?: boolean };
+    result: VaultUploadResultVM;
+  };
+  /**
+   * PPV / media send: single outbox row (sequences never apply). Price 0 =
+   * free media message; otherwise whole dollars 3–200. previews ⊆ mediaFiles.
+   * Ids are vault ids (numeric strings) or single-use `ofapi_media_…` ids.
+   */
+  'cmd:send.ppv': {
+    args: {
+      accountId: string;
+      chatId: string;
+      text: string;
+      price: number;
+      mediaFiles: string[];
+      previews: string[];
+    };
+    result: { localId: string };
+  };
 }
 
 /**
@@ -357,6 +452,12 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'cmd:message.unsend': true,
   'query:draft.get': true,
   'cmd:draft.set': true,
+  'query:vault.list': true,
+  'query:vault.albums': true,
+  'query:chat.gallery': true,
+  'cmd:vault.pickFile': true,
+  'cmd:vault.upload': true,
+  'cmd:send.ppv': true,
 };
 
 export const INVOKE_CHANNEL_NAMES = Object.keys(INVOKE_CHANNEL_REGISTRY) as InvokeChannelName[];

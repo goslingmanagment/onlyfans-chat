@@ -1,0 +1,32 @@
+{
+  "_fixture": {
+    "source": "POST /{account}/media/vault (multipart file, no async) — SYNTHETIC, hand-built from docs/vendor/onlyfansapi/openapi.json (Upload Media to Vault 200 shape). NOT a live capture.",
+    "anonymized": true,
+    "notes": [
+      "Sync 200 = the usual {data,_meta} envelope; data = the new vault item — data.id is the REUSABLE vault media id.",
+      "isReady:false right after upload (transcoding); thumbs may be null until ready.",
+      "Cost: 3 credits per decimal MB (vendored credits table)."
+    ]
+  },
+  "data": {
+    "id": 3866999001,
+    "type": "photo",
+    "convertedToVideo": false,
+    "canView": true,
+    "hasError": false,
+    "createdAt": "2026-06-11T12:00:00+00:00",
+    "isReady": false,
+    "files": {
+      "full": { "url": null, "width": 0, "height": 0, "size": 0, "sources": [] },
+      "thumb": null,
+      "preview": null,
+      "squarePreview": null
+    },
+    "duration": 0,
+    "releaseForms": [],
+    "hasCustomPreview": false
+  },
+  "_meta": {
+    "_credits": { "used": 8, "balance": 99970, "note": "3 credits per MB (decimal)" }
+  }
+}

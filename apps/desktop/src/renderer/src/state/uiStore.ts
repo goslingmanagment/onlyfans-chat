@@ -37,6 +37,8 @@ interface UiState {
   paletteOpen: boolean;
   cheatsheetOpen: boolean;
   fanPanelTab: 'info' | 'scan';
+  /** Conversation center pane: thread (default) or the chat media gallery (PRD F7). */
+  conversationTab: 'thread' | 'gallery';
   /** chat currently showing a typing indicator (expires client-side). */
   typing: { accountId: string; chatId: string; expiresAt: number } | null;
   /** keyed by presenceKey(accountId, chatId); TTL'd like typing. */
@@ -53,6 +55,7 @@ interface UiState {
   setPaletteOpen: (open: boolean) => void;
   setCheatsheetOpen: (open: boolean) => void;
   setFanPanelTab: (tab: 'info' | 'scan') => void;
+  setConversationTab: (tab: 'thread' | 'gallery') => void;
   setTyping: (typing: UiState['typing']) => void;
   setPresence: (accountId: string, chatId: string, entry: PresenceEntry) => void;
   setLastLlmCost: (usd: number) => void;
@@ -72,6 +75,7 @@ export const useUiStore = create<UiState>((set) => ({
   paletteOpen: false,
   cheatsheetOpen: false,
   fanPanelTab: 'info',
+  conversationTab: 'thread',
   typing: null,
   presence: {},
   lastLlmCostUsd: null,
@@ -85,13 +89,20 @@ export const useUiStore = create<UiState>((set) => ({
         : { selectedAccountId: accountId, selectedChatId: null, view: 'workspace' },
     ),
   selectChat: (accountId, chatId) =>
-    set({ selectedAccountId: accountId, selectedChatId: chatId, view: 'workspace', fanPanelTab: 'info' }),
+    set({
+      selectedAccountId: accountId,
+      selectedChatId: chatId,
+      view: 'workspace',
+      fanPanelTab: 'info',
+      conversationTab: 'thread',
+    }),
   setChatFilter: (filter) => set({ chatFilter: filter }),
   toggleList: () => set((s) => ({ listCollapsed: !s.listCollapsed })),
   togglePanel: () => set((s) => ({ panelCollapsed: !s.panelCollapsed })),
   setPaletteOpen: (open) => set({ paletteOpen: open, cheatsheetOpen: false }),
   setCheatsheetOpen: (open) => set({ cheatsheetOpen: open, paletteOpen: false }),
   setFanPanelTab: (tab) => set({ fanPanelTab: tab }),
+  setConversationTab: (tab) => set({ conversationTab: tab }),
   setTyping: (typing) => set({ typing }),
   setPresence: (accountId, chatId, entry) =>
     set((s) => {
