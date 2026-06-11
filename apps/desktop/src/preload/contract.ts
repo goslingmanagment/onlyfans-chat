@@ -41,6 +41,8 @@ export interface ChatListItemVM {
   /** PRD F2: fan waiting = last message from fan + unread > 0. */
   fanWaiting: boolean;
   canSendMessage: boolean;
+  /** Platform-provided reason when canSendMessage=false (SPEC §7.0 composer state). */
+  canNotSendReason: string | null;
 }
 
 export interface MessageMediaVM {
@@ -246,3 +248,34 @@ export interface ChatGooseBridge {
     listener: (payload: EventChannels[C]) => void,
   ): () => void;
 }
+
+// ─── Runtime invoke-channel registry ─────────────────────────────────────
+// Preload's runtime allowlist (SPEC §15.1: a compromised renderer must not
+// reach handlers by arbitrary channel string). Record<InvokeChannelName, true>
+// keeps it exhaustive both ways at compile time: a channel added to
+// InvokeChannels but missing here — or listed here without an InvokeChannels
+// entry — is a type error.
+const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
+  'query:accounts.list': true,
+  'query:chats.list': true,
+  'query:chats.search': true,
+  'query:messages.page': true,
+  'query:fan.get': true,
+  'query:settings.get': true,
+  'query:personalities.list': true,
+  'query:sync.status': true,
+  'query:ai.pingGate': true,
+  'cmd:conversation.open': true,
+  'cmd:conversation.close': true,
+  'cmd:sync.forceRefresh': true,
+  'cmd:settings.update': true,
+  'cmd:personalities.save': true,
+  'cmd:personalities.delete': true,
+  'cmd:mappings.set': true,
+  'cmd:data.purge': true,
+  'ai:start': true,
+  'ai:cancel': true,
+  'cmd:ai.feedback': true,
+};
+
+export const INVOKE_CHANNEL_NAMES = Object.keys(INVOKE_CHANNEL_REGISTRY) as InvokeChannelName[];

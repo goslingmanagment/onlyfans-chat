@@ -364,6 +364,7 @@ function buildStore(): MockStore {
         hasUnreadTips: lastIsTip || chance(0.1),
         fanWaiting: last !== undefined && !last.isSentByMe && unread > 0,
         canSendMessage: true,
+        canNotSendReason: null,
       };
       list.push(item);
       fans.set(`${account.id}/${fanId}`, buildFan(account.id, fanId, name, item.lastMessageAt ?? new Date().toISOString()));
