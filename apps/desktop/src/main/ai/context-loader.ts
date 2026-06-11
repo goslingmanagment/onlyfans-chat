@@ -38,7 +38,10 @@ import type { OfApiSubscribedOnData, OfApiUser } from '../ofapi/schemas';
 
 export interface ContextLoaderOptions {
   data: Pick<DataLayer, 'messages' | 'fans' | 'chats'>;
-  client: Pick<OfApiClient, 'listMessages' | 'getUsersByIds' | 'listTransactions'>;
+  client: Pick<
+    OfApiClient,
+    'listMessages' | 'getUserByUsername' | 'getUsersByIds' | 'listTransactions'
+  >;
   now?: () => number;
   /** Inter-page pacing sleep; injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
@@ -47,8 +50,14 @@ export interface ContextLoaderOptions {
 export interface LoadTranscriptArgs {
   accountId: string;
   chatId: string;
-  /** Last-N window: quick 100 / improve 25 / … from settings (SPEC §8.4). */
+  /** Last-N window: quick 100 / improve 25 / deep 1500 / … from settings (SPEC §8.4). */
   count: number;
+  /**
+   * Deep features (fan-summary/chat-review) are cache-first: db rows are
+   * reused and only the gap of OLDER history below the oldest cached row is
+   * fetched. Quick features re-fetch the whole window from the top instead.
+   */
+  deep?: boolean;
   signal?: AbortSignal;
   onPage?: (currentPage: number, targetPages: number) => void;
 }
@@ -59,14 +68,32 @@ export interface FanContextArgs {
   signal?: AbortSignal;
 }
 
+export interface FanContextBlock {
+  /** Legacy-locked block text; '' when no data. */
+  block: string;
+  /**
+   * The live OFAPI lookup succeeded this run — feeds the summary-cache
+   * spendingVerified/subscriptionVerified flags (SPEC §8.5: a summary built
+   * from degraded/db-fallback context must not be cached as authoritative).
+   */
+  verified: boolean;
+}
+
 export interface ContextLoader {
   loadTranscript(args: LoadTranscriptArgs): Promise<TranscriptMessage[]>;
   /** Custom name > name (SPEC §8.2); db-backed, falls back to the chat row, then the id. */
   resolveFanDisplayName(accountId: string, chatId: string): string;
-  /** FAN SPENDING DATA block ('' when no data). Optional stage: fetch failures degrade, never throw. */
-  loadSpendingBlock(args: FanContextArgs): Promise<string>;
-  /** FAN SUBSCRIPTION DATA block ('' when no data). Optional stage like spending. */
-  loadSubscriptionBlock(args: FanContextArgs): Promise<string>;
+  /** FAN SPENDING DATA block. Optional stage: fetch failures degrade, never throw. */
+  loadSpendingBlock(args: FanContextArgs): Promise<FanContextBlock>;
+  /** FAN SUBSCRIPTION DATA block. Optional stage like spending. */
+  loadSubscriptionBlock(args: FanContextArgs): Promise<FanContextBlock>;
+  /**
+   * Fan bio for hi-greeting (SPEC §8.2: `GET /{account}/users/{username}`
+   * `about`). Optional stage — absent username, fetch failure or an empty
+   * bio resolve to undefined; a failed live fetch falls back to the synced
+   * fan row's copy.
+   */
+  loadFanBio(args: FanContextArgs): Promise<string | undefined>;
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────
@@ -346,16 +373,20 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
   }
 
   return {
-    async loadTranscript({ accountId, chatId, count, signal, onPage }) {
+    async loadTranscript({ accountId, chatId, count, deep, signal, onPage }) {
       const page = data.messages.page({ accountId, chatId, limit: count });
       const rows = page.items.filter((row) => !row.deleted);
 
       // Fetch-through (newest-first, first_id scrollback) only when the db
       // window is short; failures fail open onto whatever is already local.
+      // Quick: re-fetch the whole window from the top. Deep: cache-first —
+      // fetch only the gap of older history, cursoring from the oldest cached
+      // row (first_id is boundary-inclusive; the dedupe collapses the overlap).
       const fetched: OfapiChatMessage[] = [];
-      if (rows.length < count) {
-        const targetPages = Math.min(estimateTargetPages(count), DEEP_FETCH_MAX_PAGES);
-        let cursor: string | undefined;
+      const needed = deep === true ? count - rows.length : rows.length < count ? count : 0;
+      if (needed > 0) {
+        const targetPages = Math.min(estimateTargetPages(needed), DEEP_FETCH_MAX_PAGES);
+        let cursor: string | undefined = deep === true ? rows[0]?.messageId : undefined;
         for (let pageNo = 1; pageNo <= targetPages; pageNo += 1) {
           signal?.throwIfAborted();
           onPage?.(pageNo, targetPages);
@@ -376,7 +407,7 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
           }
           fetched.push(...result.messages);
           if (
-            fetched.length >= count ||
+            fetched.length >= needed ||
             result.messages.length === 0 ||
             result.nextPageUrl === null
           ) {
@@ -430,36 +461,63 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
     async loadSpendingBlock({ accountId, chatId, signal }) {
       const user = await getUser(accountId, chatId, signal);
       const dbFan = data.fans.get(accountId, chatId);
-      const sums =
-        (user !== null ? userToSpendingSums(user) : null) ??
-        (dbFan !== null ? dbFanToSpendingSums(dbFan) : null);
+      const liveSums = user !== null ? userToSpendingSums(user) : null;
+      // Legacy spendingDataVerified semantics: the live lookup produced data
+      // this run; the db fallback is unverified by definition.
+      const verified = liveSums !== null;
+      const sums = liveSums ?? (dbFan !== null ? dbFanToSpendingSums(dbFan) : null);
       if (sums === null) {
-        return '';
+        return { block: '', verified };
       }
 
       const transactions = await getFanTransactions(accountId, chatId, signal);
       const monthlyTotals = transactions !== null ? deriveMonthlyTotals(transactions.rows) : [];
       const monthlyBreakdowns =
         transactions !== null ? deriveMonthlyBreakdowns(transactions.rows) : [];
-      return formatFanSpendingData({
+      const block = formatFanSpendingData({
         fanId: chatId,
         sums,
         monthlyTotals,
         monthlyBreakdowns,
         monthlyBreakdownsPartial: transactions === null ? true : transactions.partial,
       });
+      return { block, verified };
     },
 
     async loadSubscriptionBlock({ accountId, chatId, signal }) {
       const user = await getUser(accountId, chatId, signal);
       if (user !== null) {
-        return formatFanSubscriptionData(userToSubscriptionInput(user), now());
+        // Legacy subscriptionLookupVerified: the lookup COMPLETED in full —
+        // verified even when the fan has no subscription data.
+        return { block: formatFanSubscriptionData(userToSubscriptionInput(user), now()), verified: true };
       }
       const dbFan = data.fans.get(accountId, chatId);
       if (dbFan !== null) {
-        return formatFanSubscriptionData(dbFanToSubscriptionInput(dbFan), now());
+        return { block: formatFanSubscriptionData(dbFanToSubscriptionInput(dbFan), now()), verified: false };
       }
-      return '';
+      return { block: '', verified: false };
+    },
+
+    async loadFanBio({ accountId, chatId, signal }) {
+      const fan = data.fans.get(accountId, chatId);
+      const username = fan?.username.trim() ?? '';
+      if (username !== '') {
+        try {
+          signal?.throwIfAborted();
+          const user = await client.getUserByUsername({ accountId, username });
+          // A successful live answer is authoritative — an empty live bio
+          // means the bio was removed, so the synced copy must not resurrect it.
+          const about = user.about?.trim();
+          return about ? about : undefined;
+        } catch (error) {
+          if (isAbort(error, signal)) {
+            throw error;
+          }
+          // fall through to the synced copy
+        }
+      }
+      const dbAbout = fan?.about?.trim();
+      return dbAbout ? dbAbout : undefined;
     },
   };
 }

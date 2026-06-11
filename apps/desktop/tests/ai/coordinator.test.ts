@@ -147,20 +147,21 @@ describe('AiCoordinator', () => {
     expect(gateway.calls).toHaveLength(1);
   });
 
-  it('rejects P4 features and compare with an arrives-in-P4 CG-FLOW frame', async () => {
+  it('rejects compare with its clean deferred CG-FLOW frame (no pipeline started)', async () => {
     build();
-    for (const feature of ['ping', 'hi-greeting', 'fan-summary', 'chat-review', 'compare'] as const) {
-      coordinator.start(startRequest({ operationId: `op-${feature}`, feature }));
-    }
+    coordinator.start(startRequest({ operationId: 'op-compare', feature: 'compare' }));
     await flushAsync();
 
     const errors = framesOfType(frames, 'operation:error');
-    expect(errors).toHaveLength(5);
-    for (const frame of errors) {
-      expect(frame.error.code).toBe('CG-FLOW-P4');
-      expect(frame.error.message).toContain('arrives in P4');
-    }
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.operationId).toBe('op-compare');
+    expect(errors[0]?.error.code).toBe('CG-FLOW-P4');
+    expect(errors[0]?.error.message).toContain('arrives in P4');
     expect(gateway.calls).toHaveLength(0);
+    // the conversation slot stays free — a real feature can start immediately
+    coordinator.start(startRequest({ operationId: 'op-after' }));
+    await flushAsync();
+    expect(gateway.calls).toHaveLength(1);
   });
 
   it('discards on conversation switch mid-stream and ignores the stale completion', async () => {

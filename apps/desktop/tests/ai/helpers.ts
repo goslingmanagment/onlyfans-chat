@@ -38,6 +38,8 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hasOfapiKey: true,
     hasAnthropicKey: true,
     hasOpenRouterKey: false,
+    hasHubKey: false,
+    hubBaseUrl: null,
     featureModels: { ...DEFAULT_FEATURE_MODELS },
     featureReasoning: { ...DEFAULT_FEATURE_REASONING },
     quickMessageCount: 5,
@@ -107,19 +109,26 @@ export interface StubClient {
   client: OfApiClient;
   listMessagesCalls: Array<{ firstId?: string; lastId?: string; order?: string; limit?: number }>;
   getUsersByIdsCalls: number;
+  getUserByUsernameCalls: string[];
   listTransactionsCalls: Array<{ marker?: number }>;
   /** Consumed in order; the last page repeats when the queue is empty. */
   setMessagePages(pages: MessagesPage[]): void;
+  /** listMessages never resolves (deep-prep timeout tests). */
+  setMessagesHang(): void;
   setUser(user: OfApiUser | null): void;
   setUserError(error: Error | null): void;
+  /** getUserByUsername result; null (the default) rejects like a failed lookup. */
+  setUserByUsername(user: OfApiUser | null): void;
   setTransactionPages(pages: TransactionsPage[]): void;
 }
 
 export function makeStubClient(): StubClient {
   let messagePages: MessagesPage[] = [{ messages: [], nextPageUrl: null }];
   let messagePageIndex = 0;
+  let messagesHang = false;
   let user: OfApiUser | null = null;
   let userError: Error | null = null;
+  let userByUsername: OfApiUser | null = null;
   let transactionPages: TransactionsPage[] = [
     { transactions: [], hasMore: false, nextMarker: null, nextPageUrl: null },
   ];
@@ -128,6 +137,7 @@ export function makeStubClient(): StubClient {
   const state = {
     listMessagesCalls: [] as StubClient['listMessagesCalls'],
     getUsersByIdsCalls: 0,
+    getUserByUsernameCalls: [] as string[],
     listTransactionsCalls: [] as StubClient['listTransactionsCalls'],
   };
 
@@ -140,11 +150,21 @@ export function makeStubClient(): StubClient {
           ...(params.order !== undefined ? { order: params.order } : {}),
           ...(params.limit !== undefined ? { limit: params.limit } : {}),
         });
+        if (messagesHang) {
+          return new Promise<MessagesPage>(() => {});
+        }
         const page = messagePages[Math.min(messagePageIndex, messagePages.length - 1)];
         messagePageIndex += 1;
         return Promise.resolve(page ?? { messages: [], nextPageUrl: null });
       },
     ),
+    getUserByUsername: vi.fn((params: { username: string }) => {
+      state.getUserByUsernameCalls.push(params.username);
+      if (userByUsername === null) {
+        return Promise.reject(new Error('user lookup failed'));
+      }
+      return Promise.resolve(userByUsername);
+    }),
     getUsersByIds: vi.fn((params: { ids: ReadonlyArray<string | number> }) => {
       state.getUsersByIdsCalls += 1;
       if (userError !== null) {
@@ -170,13 +190,16 @@ export function makeStubClient(): StubClient {
   };
 
   return {
-    // Test-only widening: the coordinator/loader use exactly these three methods.
+    // Test-only widening: the coordinator/loader use exactly these four methods.
     client: clientShape as unknown as OfApiClient,
     get listMessagesCalls() {
       return state.listMessagesCalls;
     },
     get getUsersByIdsCalls() {
       return state.getUsersByIdsCalls;
+    },
+    get getUserByUsernameCalls() {
+      return state.getUserByUsernameCalls;
     },
     get listTransactionsCalls() {
       return state.listTransactionsCalls;
@@ -185,11 +208,17 @@ export function makeStubClient(): StubClient {
       messagePages = pages;
       messagePageIndex = 0;
     },
+    setMessagesHang() {
+      messagesHang = true;
+    },
     setUser(next) {
       user = next;
     },
     setUserError(error) {
       userError = error;
+    },
+    setUserByUsername(next) {
+      userByUsername = next;
     },
     setTransactionPages(pages) {
       transactionPages = pages;
@@ -246,14 +275,18 @@ export function sampleUser(overrides: Partial<OfApiUser> = {}): OfApiUser {
   };
 }
 
-export function seedMessages(data: DataLayer, count: number): void {
+/** seedMessages timeline anchor; messages land one minute apart from here. */
+export const SEED_BASE_MS = Date.parse('2026-06-10T12:00:00.000Z');
+
+export function seedMessages(data: DataLayer, count: number, startId = 1): void {
   const rows: MessageUpsert[] = [];
-  for (let i = 1; i <= count; i += 1) {
+  for (let offset = 0; offset < count; offset += 1) {
+    const i = startId + offset;
     rows.push({
       accountId: ACCT,
       chatId: CHAT,
       messageId: String(i),
-      createdAt: `2026-06-10T12:${String(i).padStart(2, '0')}:00.000Z`,
+      createdAt: new Date(SEED_BASE_MS + i * 60_000).toISOString(),
       isSentByMe: i % 2 === 0,
       textHtml: `<p>message ${i}</p>`,
       textPlain: `message ${i}`,

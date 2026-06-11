@@ -4,20 +4,24 @@
 // discard, discard on conversation switch, staged timeouts, 50 ms chunk
 // batching, sanitizer/XML result pipeline, CG-coded errors, debug profiling.
 //
-// P2 scope: fast-reply / improve-draft / help-me (+ regenerate). The remaining
-// features reject with a CG-FLOW frame ("arrives in P4") until their pipelines
-// land. LLM auto-retry (429 Retry-After ≤ 60 s, 503 + 5 s) lives INSIDE the
-// providers (runWithLegacyRetry, pre-first-chunk only) — the coordinator must
-// not add a second retry layer on top.
+// P4 scope: all seven operation features (quick fast-reply / improve-draft /
+// help-me plus deep fan-summary / chat-review and gated ping / hi-greeting).
+// 'compare' stays gated off until its orchestration lands (PLAN allows the
+// deferral). LLM auto-retry (429 Retry-After ≤ 60 s, 503 + 5 s) lives INSIDE
+// the providers (runWithLegacyRetry, pre-first-chunk only) — the coordinator
+// must not add a second retry layer on top.
 
 import { z } from 'zod';
 import {
   DEFAULT_FEATURE_MODELS,
   DEFAULT_FEATURE_REASONING,
+  HI_GREETING_MAX_TRANSCRIPT,
+  HI_GREETING_MESSAGE_COUNT,
   STREAM_CHUNK_FLUSH_MS,
 } from '@chatgoose/shared/constants';
 import {
   getFeaturePolicy,
+  isDeepFeature,
   resolveFeatureModelFeature,
 } from '@chatgoose/shared/features';
 import type { OperationFeature } from '@chatgoose/shared/features';
@@ -32,10 +36,13 @@ import { createBundledPersonalities } from '@chatgoose/shared/prompts/personalit
 import {
   normalizeReplyParts,
   normalizeSingleReplyPart,
+  normalizeVariantReplyParts,
 } from '@chatgoose/shared/output/reply-output';
 import { parseChatReviewXml, parseHelpMeXml } from '@chatgoose/shared/output/xml';
-import { formatTranscript } from '@chatgoose/shared/transcript/index';
-import type { FeatureType, Personality, ReplyMode, ReplyTone } from '@chatgoose/shared/types';
+import { isValidSummaryCacheEntry } from '@chatgoose/shared/summary/validity';
+import type { SummaryCacheEntry } from '@chatgoose/shared/summary/validity';
+import { analyzePingSegment, formatTranscript } from '@chatgoose/shared/transcript/index';
+import type { FeatureType, Personality, PingSegment, ReplyMode, ReplyTone } from '@chatgoose/shared/types';
 import {
   replyModeSchema,
   replyToneSchema,
@@ -63,12 +70,38 @@ import type { StagedTimeouts } from './timeouts';
 
 // ─── Pinned export surface ────────────────────────────────────────────────
 
+/**
+ * P4 hub wiring seam for fan-summary sync (SPEC §8.5). Both hooks are
+ * optional and absent today; the hub module will attach adapters over
+ * HubClient.getFanProfile / putFanProfile — `accountId` maps to the core
+ * `pageLabel` there and `fanId` is the raw OnlyFans id (`chat_id === fan.id`).
+ */
+export interface SummaryHubHooks {
+  /**
+   * Pre-generation prefetch (5 s budget owned by the hook). A non-null result
+   * is adopted as the cached summary — zero LLM calls. Must reject/resolve
+   * null on failure; the coordinator treats any throw as "no hub profile".
+   */
+  prefetchSummary?: (args: {
+    accountId: string;
+    fanId: string;
+  }) => Promise<{ body: string; generatedAt: number } | null>;
+  /** Fire-and-forget post-generation push (10 s budget owned by the hook). */
+  pushSummary?: (args: {
+    accountId: string;
+    fanId: string;
+    body: string;
+    generatedAt: number;
+  }) => Promise<void>;
+}
+
 export interface AiCoordinatorDeps {
   data: DataLayer;
   client: OfApiClient;
   settingsStore: SettingsStore;
   keychain: Keychain;
   gateway?: AiGateway;
+  summaryHub?: SummaryHubHooks;
 }
 
 export interface AiCoordinator {
@@ -108,13 +141,6 @@ const aiStartRequestSchema = z.object({
 
 const operationIdOnlySchema = z.object({ operationId: z.string().min(1) });
 
-/** P2 pipeline coverage; everything else answers "arrives in P4". */
-export const P2_FEATURES: ReadonlySet<FeatureType> = new Set([
-  'fast-reply',
-  'improve-draft',
-  'help-me',
-]);
-
 /**
  * Where the personalities IPC module persists the saved list (db settings
  * table). The coordinator only reads; an absent row falls back to the bundled
@@ -142,6 +168,18 @@ interface ParsedParams {
   forceRegenerate?: boolean | undefined;
 }
 
+/**
+ * fan-summary cache-write inputs collected along the pipeline. The entry is
+ * persisted at completion only when BOTH verification flags are true (legacy
+ * rule: a summary built from degraded context must not be cached).
+ */
+interface SummaryCacheSeed {
+  personalityId: string;
+  personalityUpdatedAt: number;
+  spendingVerified: boolean;
+  subscriptionVerified: boolean;
+}
+
 interface OperationState {
   operationId: string;
   feature: OperationFeature;
@@ -162,6 +200,8 @@ interface OperationState {
   chunkBuffer: string;
   chunkTimer: ReturnType<typeof setTimeout> | null;
   startedAtMs: number;
+  /** Set only on a fan-summary cache miss; null for every other feature. */
+  summarySeed: SummaryCacheSeed | null;
 }
 
 function conversationKeyOf(accountId: string, chatId: string): string {
@@ -182,11 +222,11 @@ function toWireError(error: UserFacingError): UserFacingErrorPayload {
 }
 
 /**
- * Not-yet-ported features (SPEC: ping/hi/fan-summary/chat-review/compare are
- * P4). CG-FLOW family frame; the code is outside the ported registry on
- * purpose — it disappears with P4, so it never enters the shared registry.
+ * 'compare' orchestration is deferred (PLAN: lowest priority). CG-FLOW family
+ * frame; the code is outside the ported registry on purpose — it disappears
+ * when compare lands, so it never enters the shared registry.
  */
-function arrivesInP4Error(feature: FeatureType): UserFacingErrorPayload {
+function compareDeferredError(feature: FeatureType): UserFacingErrorPayload {
   return {
     key: 'CG-FLOW-P4',
     code: 'CG-FLOW-P4',
@@ -204,6 +244,8 @@ function resolveMessageCount(feature: OperationFeature, settings: SettingsVM): n
     case 'improve':
       return settings.improveMessageCount;
     case 'hi':
+      // Fixed at one API page; deliberately not a user setting (research §1.1).
+      return HI_GREETING_MESSAGE_COUNT;
     case 'quick':
       return settings.quickMessageCount;
   }
@@ -218,7 +260,12 @@ export function buildFeatureResult(
   const policy = getFeaturePolicy(feature);
   switch (policy.resultKind) {
     case 'reply': {
-      const parts = normalizeReplyParts(rawText);
+      // hi-greeting returns 3 standalone greeting alternatives split by
+      // [VARIANT]; every other reply feature splits sequential parts by [NEXT].
+      const parts =
+        feature === 'hi-greeting'
+          ? normalizeVariantReplyParts(rawText)
+          : normalizeReplyParts(rawText);
       if (parts.length === 0) {
         throw new CgError('CG-API-06');
       }
@@ -368,6 +415,13 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       return;
     }
 
+    if (op.feature === 'fan-summary') {
+      const generatedAt = Date.now();
+      result['summaryMeta'] = { generatedAt, cached: false };
+      persistFanSummary(op, rawText, generatedAt);
+      pushFanSummary(op, rawText, generatedAt);
+    }
+
     const spend = op.usage !== null ? trySpendSummary(op.modelId, op.usage) : undefined;
     recordUsageEvent(op, spend?.totalTokens);
 
@@ -378,6 +432,72 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       feature: op.feature,
       result,
       ...(spend !== undefined ? { llmSpend: { ...spend } } : {}),
+      ...(profiling !== undefined ? { profiling } : {}),
+    });
+  }
+
+  /**
+   * SPEC §8.5 cache write (fan-summary only; chat-review is NEVER cached).
+   * Skipped when either context verification flag is false — the next Scan
+   * regenerates instead of trusting a summary built on degraded data.
+   */
+  function persistFanSummary(op: OperationState, rawText: string, generatedAt: number): void {
+    const seed = op.summarySeed;
+    if (seed === null || !seed.spendingVerified || !seed.subscriptionVerified) {
+      return;
+    }
+    const entry: SummaryCacheEntry = {
+      body: rawText,
+      personalityId: seed.personalityId,
+      personalityUpdatedAt: seed.personalityUpdatedAt,
+      generatedAt,
+      spendingVerified: true,
+      subscriptionVerified: true,
+      modelId: op.modelId,
+    };
+    try {
+      // summaries.put publishes the 'summaries' bus event → fan panel refresh.
+      deps.data.summaries.put(op.accountId, op.chatId, entry);
+    } catch {
+      // Cache bookkeeping must never fail a completed operation.
+    }
+  }
+
+  /** Fire-and-forget hub push (no-op until the P4 hub module attaches the hook). */
+  function pushFanSummary(op: OperationState, rawText: string, generatedAt: number): void {
+    const push = deps.summaryHub?.pushSummary;
+    if (push === undefined) {
+      return;
+    }
+    try {
+      void push({
+        accountId: op.accountId,
+        fanId: op.chatId,
+        body: rawText,
+        generatedAt,
+      }).catch(() => {
+        // Push failures never surface into the completed operation.
+      });
+    } catch {
+      // Same guarantee for a synchronously-throwing hook.
+    }
+  }
+
+  /** Cache/prefetch hit: terminal complete frame with zero LLM spend (legacy isCacheHit usage event). */
+  function settleCachedSummary(op: OperationState, entry: SummaryCacheEntry): void {
+    if (!beginSettle(op)) {
+      return;
+    }
+    recordUsageEvent(op, 0, { isCacheHit: true });
+    const profiling = op.profiler.snapshot();
+    emit({
+      type: 'operation:complete',
+      operationId: op.operationId,
+      feature: op.feature,
+      result: {
+        rawText: entry.body,
+        summaryMeta: { generatedAt: entry.generatedAt, cached: true },
+      },
       ...(profiling !== undefined ? { profiling } : {}),
     });
   }
@@ -428,10 +548,15 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
   }
 
   /** usage_events row, pending the P4 hub flush (dedupe key = clientEventId = operationId). */
-  function recordUsageEvent(op: OperationState, totalTokens: number | undefined): void {
+  function recordUsageEvent(
+    op: OperationState,
+    totalTokens: number | undefined,
+    flags: { isCacheHit?: boolean } = {},
+  ): void {
     const usage = op.usage;
     const payload = {
       clientEventId: op.operationId,
+      // Feature ids are wire-stable ('fan-summary', never 'scan' — SPEC §8.6).
       feature: op.feature,
       model: op.modelId,
       inputTokens: usage?.input_tokens ?? 0,
@@ -440,6 +565,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       outputTokens: usage?.output_tokens ?? 0,
       totalTokens: totalTokens ?? 0,
       durationMs: Math.max(0, Date.now() - op.startedAtMs),
+      isCacheHit: flags.isCacheHit === true,
       isRegeneration: op.params.forceRegenerate === true,
       completedAt: new Date().toISOString(),
     };
@@ -504,6 +630,21 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     }
   }
 
+  /** Best-effort hub prefetch — any hook failure means "no hub profile". */
+  async function tryPrefetchSummary(
+    op: OperationState,
+  ): Promise<{ body: string; generatedAt: number } | null> {
+    const prefetch = deps.summaryHub?.prefetchSummary;
+    if (prefetch === undefined) {
+      return null;
+    }
+    try {
+      return await prefetch({ accountId: op.accountId, fanId: op.chatId });
+    } catch {
+      return null;
+    }
+  }
+
   // ── pipeline ─────────────────────────────────────────────────────────────
 
   async function runPipeline(op: OperationState): Promise<void> {
@@ -533,23 +674,108 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       throw new CgError('CG-APP-01', { message: 'Draft text is required for this feature' });
     }
 
-    // Context: transcript (db, fetch-through when short)…
+    // fan-summary consults the cache BEFORE any context loading (legacy order:
+    // a valid cached summary short-circuits even a too-short conversation).
+    if (op.feature === 'fan-summary') {
+      const cacheStage = op.profiler.stage('summary-cache-check');
+      if (op.params.forceRegenerate === true) {
+        // Refresh = delete + regenerate (SPEC §8.5).
+        deps.data.summaries.remove(op.accountId, op.chatId);
+      } else {
+        const entry = deps.data.summaries.get(op.accountId, op.chatId);
+        if (isValidSummaryCacheEntry(entry, personality.id, personality.updatedAt, modelId)) {
+          cacheStage.complete('cache hit');
+          settleCachedSummary(op, entry);
+          return;
+        }
+        const prefetched = await tryPrefetchSummary(op);
+        if (op.settled) {
+          return;
+        }
+        if (prefetched !== null) {
+          const entry: SummaryCacheEntry = {
+            body: prefetched.body,
+            personalityId: personality.id,
+            personalityUpdatedAt: personality.updatedAt,
+            generatedAt: prefetched.generatedAt,
+            // A hub-adopted profile counts as verified (legacy prefetch rule).
+            spendingVerified: true,
+            subscriptionVerified: true,
+            modelId,
+          };
+          deps.data.summaries.put(op.accountId, op.chatId, entry);
+          cacheStage.complete('hub hit');
+          settleCachedSummary(op, entry);
+          return;
+        }
+      }
+      cacheStage.complete(op.params.forceRegenerate === true ? 'forced refresh' : 'cache miss');
+      op.summarySeed = {
+        personalityId: personality.id,
+        personalityUpdatedAt: personality.updatedAt,
+        spendingVerified: false,
+        subscriptionVerified: false,
+      };
+    }
+
+    // Context: transcript (db, fetch-through when short; deep = gap-only)…
+    const deep = isDeepFeature(op.feature);
     emitProgress(op, 'loading-messages');
     const loadStage = op.profiler.stage('load-messages');
     const transcriptMessages = await loader.loadTranscript({
       accountId: op.accountId,
       chatId: op.chatId,
       count: resolveMessageCount(op.feature, settings),
+      deep,
       signal: op.abort.signal,
       onPage: (currentPage, targetPages) =>
-        emitProgress(op, 'loading-messages', { currentPage, targetPages }),
+        emitProgress(op, 'loading-messages', {
+          currentPage,
+          targetPages,
+          // Deep loads surface page progress in the panel (legacy wording).
+          ...(deep ? { message: `Loading messages… ${currentPage}/${targetPages} pages` } : {}),
+        }),
     });
     if (op.settled) {
       return;
     }
     loadStage.complete(`${transcriptMessages.length} messages`);
+
+    if (policy.minMessages > 0 && transcriptMessages.length < policy.minMessages) {
+      throw new CgError('CG-FLOW-03');
+    }
+    if (op.feature === 'hi-greeting' && transcriptMessages.length > HI_GREETING_MAX_TRANSCRIPT) {
+      throw new CgError('CG-FLOW-09');
+    }
+
+    let pingSegment: PingSegment | undefined;
+    if (policy.usesPingSegment) {
+      const pingStage = op.profiler.stage('ping-analysis');
+      const analysis = analyzePingSegment(transcriptMessages, Date.now());
+      if (analysis.segment === 'active') {
+        pingStage.complete('active — blocked');
+        throw new CgError('CG-FLOW-05');
+      }
+      pingSegment = analysis.segment;
+      pingStage.complete(analysis.segment);
+    }
+
     const transcript = formatTranscript(transcriptMessages);
     const fanDisplayName = loader.resolveFanDisplayName(op.accountId, op.chatId);
+
+    let fanBio: string | undefined;
+    if (op.feature === 'hi-greeting') {
+      const bioStage = op.profiler.stage('account-name-lookup');
+      fanBio = await loader.loadFanBio({
+        accountId: op.accountId,
+        chatId: op.chatId,
+        signal: op.abort.signal,
+      });
+      if (op.settled) {
+        return;
+      }
+      bioStage.complete(fanBio !== undefined ? 'bio found' : 'no bio');
+    }
 
     // …then spending/subscription blocks (optional stages — loader degrades).
     let fanSpendingData = '';
@@ -557,7 +783,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     if (policy.includesEarnings) {
       emitProgress(op, 'loading-earnings');
       const earningsStage = op.profiler.stage('earnings');
-      fanSpendingData = await loader.loadSpendingBlock({
+      const spending = await loader.loadSpendingBlock({
         accountId: op.accountId,
         chatId: op.chatId,
         signal: op.abort.signal,
@@ -565,9 +791,10 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       if (op.settled) {
         return;
       }
-      earningsStage.complete();
+      fanSpendingData = spending.block;
+      earningsStage.complete(spending.verified ? 'verified' : 'unverified');
       const subscriptionStage = op.profiler.stage('subscription-lookup');
-      fanSubscriptionData = await loader.loadSubscriptionBlock({
+      const subscription = await loader.loadSubscriptionBlock({
         accountId: op.accountId,
         chatId: op.chatId,
         signal: op.abort.signal,
@@ -575,7 +802,12 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       if (op.settled) {
         return;
       }
-      subscriptionStage.complete();
+      fanSubscriptionData = subscription.block;
+      subscriptionStage.complete(subscription.verified ? 'verified' : 'unverified');
+      if (op.summarySeed !== null) {
+        op.summarySeed.spendingVerified = spending.verified;
+        op.summarySeed.subscriptionVerified = subscription.verified;
+      }
     }
 
     emitProgress(op, 'generating');
@@ -591,7 +823,9 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       fanSpendingData,
       fanSubscriptionData,
       fanDisplayName,
+      fanBio,
       draftText: op.params.draftText,
+      pingSegment,
       replyMode,
       replyTone,
     });
@@ -687,12 +921,9 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       if (byId.has(operationId)) {
         return; // duplicate start frame — already running
       }
-      if (!P2_FEATURES.has(feature)) {
-        emitErrorFrame(operationId, arrivesInP4Error(feature));
-        return;
-      }
-      // P2_FEATURES never contains 'compare', so this narrows safely.
+      // Narrows feature to OperationFeature for the rest of the pipeline.
       if (feature === 'compare') {
+        emitErrorFrame(operationId, compareDeferredError(feature));
         return;
       }
 
@@ -726,6 +957,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         chunkBuffer: '',
         chunkTimer: null,
         startedAtMs: Date.now(),
+        summarySeed: null,
       };
 
       // Synchronous reservation BEFORE the first await (legacy TOCTOU guard).

@@ -2,8 +2,8 @@
 // pagination, the tip-text ladder, legacy-locked spending/subscription block
 // formats, the transactions page cap and the 5-minute on-demand caches.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { TRANSACTIONS_PAGE_CAP } from '@chatgoose/shared/constants';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OFAPI_INTER_PAGE_DELAY_MS, TRANSACTIONS_PAGE_CAP } from '@chatgoose/shared/constants';
 import { formatTranscript } from '@chatgoose/shared/transcript/index';
 import { createContextLoader } from '@main/ai/context-loader';
 import type { ContextLoader } from '@main/ai/context-loader';
@@ -151,7 +151,8 @@ describe('createContextLoader', () => {
       },
     ]);
 
-    const block = await loader.loadSpendingBlock({ accountId: ACCT, chatId: CHAT });
+    const { block, verified } = await loader.loadSpendingBlock({ accountId: ACCT, chatId: CHAT });
+    expect(verified).toBe(true);
     expect(block).toContain('FAN SPENDING DATA:');
     expect(block).toContain(`Fan ID: ${CHAT}`);
     expect(block).toContain('Total gross (all-time): $120.00');
@@ -173,14 +174,15 @@ describe('createContextLoader', () => {
       },
     ]);
 
-    const block = await loader.loadSpendingBlock({ accountId: ACCT, chatId: CHAT });
+    const { block } = await loader.loadSpendingBlock({ accountId: ACCT, chatId: CHAT });
     expect(stub.listTransactionsCalls).toHaveLength(TRANSACTIONS_PAGE_CAP);
     expect(block).toContain('(some months could not be fetched)');
   });
 
   it('builds the subscription block from the live user (auto-renew on)', async () => {
     stub.setUser(sampleUser());
-    const block = await loader.loadSubscriptionBlock({ accountId: ACCT, chatId: CHAT });
+    const { block, verified } = await loader.loadSubscriptionBlock({ accountId: ACCT, chatId: CHAT });
+    expect(verified).toBe(true);
     expect(block).toContain('FAN SUBSCRIPTION DATA:');
     expect(block).toContain('Status: Active');
     expect(block).toContain('Price: $10.00/month');
@@ -198,11 +200,11 @@ describe('createContextLoader', () => {
         },
       }),
     );
-    const block = await loader.loadSubscriptionBlock({ accountId: ACCT, chatId: CHAT });
+    const { block } = await loader.loadSubscriptionBlock({ accountId: ACCT, chatId: CHAT });
     expect(block).toContain('Auto-renew: Off — will NOT renew (churn risk)');
   });
 
-  it('degrades to db fan data when the live fetch fails (optional stage)', async () => {
+  it('degrades to db fan data when the live fetch fails (optional stage, unverified)', async () => {
     stub.setUserError(new Error('ofapi down'));
     data.fans.upsert({
       accountId: ACCT,
@@ -226,18 +228,166 @@ describe('createContextLoader', () => {
     });
 
     const spending = await loader.loadSpendingBlock({ accountId: ACCT, chatId: CHAT });
-    expect(spending).toContain('Total gross (all-time): $200.00');
+    expect(spending.block).toContain('Total gross (all-time): $200.00');
+    expect(spending.verified).toBe(false);
     const subscription = await loader.loadSubscriptionBlock({ accountId: ACCT, chatId: CHAT });
-    expect(subscription).toContain('Status: Active');
-    expect(subscription).toContain('Auto-renew: Off — will NOT renew (churn risk)');
+    expect(subscription.block).toContain('Status: Active');
+    expect(subscription.block).toContain('Auto-renew: Off — will NOT renew (churn risk)');
+    expect(subscription.verified).toBe(false);
     expect(loader.resolveFanDisplayName(ACCT, CHAT)).toBe('Whale Brad');
   });
 
-  it('returns empty blocks when no data exists anywhere', async () => {
+  it('returns empty unverified blocks when no data exists anywhere', async () => {
     stub.setUserError(new Error('ofapi down'));
-    expect(await loader.loadSpendingBlock({ accountId: ACCT, chatId: CHAT })).toBe('');
-    expect(await loader.loadSubscriptionBlock({ accountId: ACCT, chatId: CHAT })).toBe('');
+    expect(await loader.loadSpendingBlock({ accountId: ACCT, chatId: CHAT })).toEqual({
+      block: '',
+      verified: false,
+    });
+    expect(await loader.loadSubscriptionBlock({ accountId: ACCT, chatId: CHAT })).toEqual({
+      block: '',
+      verified: false,
+    });
     expect(loader.resolveFanDisplayName(ACCT, CHAT)).toBe(CHAT);
+  });
+
+  // ── deep path (cache-first gap fetch; SPEC §8.2, research §6.1) ─────────
+
+  it('deep: reuses the db window and fetches only the older gap below the oldest cached row', async () => {
+    seedMessages(data, 100, 1000); // db window: ids 1000..1099
+    const sleeps: number[] = [];
+    const pages: Array<[number, number]> = [];
+    const pacedLoader = createContextLoader({
+      data,
+      client: stub.client,
+      now: () => nowMs,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+    });
+    const page1 = Array.from({ length: 100 }, (_, i) => fetchedMessage(999 - i));
+    const page2 = Array.from({ length: 50 }, (_, i) => fetchedMessage(899 - i));
+    stub.setMessagePages([
+      { messages: page1, nextPageUrl: 'next' },
+      { messages: page2, nextPageUrl: null },
+    ]);
+
+    const messages = await pacedLoader.loadTranscript({
+      accountId: ACCT,
+      chatId: CHAT,
+      count: 250,
+      deep: true,
+      onPage: (currentPage, targetPages) => pages.push([currentPage, targetPages]),
+    });
+
+    // gap = 250 - 100 cached → 2 pages, cursored from the oldest cached id
+    expect(stub.listMessagesCalls).toHaveLength(2);
+    expect(stub.listMessagesCalls[0]).toMatchObject({ firstId: '1000', order: 'desc', limit: 100 });
+    expect(stub.listMessagesCalls[1]).toMatchObject({ firstId: '900' });
+    expect(pages).toEqual([
+      [1, 2],
+      [2, 2],
+    ]);
+    // 300 ms pacing only BETWEEN pages
+    expect(sleeps).toEqual([OFAPI_INTER_PAGE_DELAY_MS]);
+    expect(messages).toHaveLength(250);
+    expect(messages[0]?.id).toBe(850);
+    expect(messages[messages.length - 1]?.id).toBe(1099);
+  });
+
+  it('deep: a sufficient db cache short-circuits OFAPI entirely', async () => {
+    seedMessages(data, 50);
+    const messages = await loader.loadTranscript({
+      accountId: ACCT,
+      chatId: CHAT,
+      count: 30,
+      deep: true,
+    });
+    expect(stub.listMessagesCalls).toHaveLength(0);
+    expect(messages).toHaveLength(30);
+  });
+
+  it('deep: an empty db starts the backward scroll from the top (no cursor)', async () => {
+    stub.setMessagePages([
+      { messages: Array.from({ length: 100 }, (_, i) => fetchedMessage(200 - i)), nextPageUrl: 'next' },
+      { messages: Array.from({ length: 50 }, (_, i) => fetchedMessage(100 - i)), nextPageUrl: null },
+    ]);
+    const messages = await loader.loadTranscript({
+      accountId: ACCT,
+      chatId: CHAT,
+      count: 150,
+      deep: true,
+    });
+    expect(stub.listMessagesCalls[0]?.firstId).toBeUndefined();
+    expect(messages).toHaveLength(150);
+  });
+
+  it('deep: a mid-pagination failure fails open onto cached + already-fetched messages', async () => {
+    seedMessages(data, 20, 1000);
+    const page1 = Array.from({ length: 100 }, (_, i) => fetchedMessage(999 - i));
+    const failingClient = {
+      listMessages: vi
+        .fn()
+        .mockResolvedValueOnce({ messages: page1, nextPageUrl: 'next' })
+        .mockRejectedValueOnce(new Error('ofapi down')),
+      getUserByUsername: vi.fn(),
+      getUsersByIds: vi.fn(),
+      listTransactions: vi.fn(),
+    } as unknown as Parameters<typeof createContextLoader>[0]['client'];
+    const failOpenLoader = createContextLoader({
+      data,
+      client: failingClient,
+      sleep: () => Promise.resolve(),
+    });
+
+    const messages = await failOpenLoader.loadTranscript({
+      accountId: ACCT,
+      chatId: CHAT,
+      count: 300,
+      deep: true,
+    });
+    expect(messages).toHaveLength(120);
+  });
+
+  // ── fan bio (hi-greeting; SPEC §8.2 users/{username} about) ─────────────
+
+  function seedFan(about: string | null): void {
+    data.fans.upsert({
+      accountId: ACCT,
+      fanId: CHAT,
+      username: 'brad99',
+      name: 'Brad',
+      customName: null,
+      avatar: null,
+      about,
+      lastSeen: null,
+      spending: null,
+      subscription: null,
+      fetchedAt: '2026-06-10T00:00:00.000Z',
+    });
+  }
+
+  it('loads the fan bio from the live user lookup', async () => {
+    seedFan(null);
+    stub.setUserByUsername(sampleUser({ about: '  gym rat from Texas  ' }));
+    expect(await loader.loadFanBio({ accountId: ACCT, chatId: CHAT })).toBe('gym rat from Texas');
+    expect(stub.getUserByUsernameCalls).toEqual(['brad99']);
+  });
+
+  it('an empty live bio is authoritative — the synced copy is not resurrected', async () => {
+    seedFan('stale synced bio');
+    stub.setUserByUsername(sampleUser({ about: '' }));
+    expect(await loader.loadFanBio({ accountId: ACCT, chatId: CHAT })).toBeUndefined();
+  });
+
+  it('falls back to the synced bio when the live lookup fails', async () => {
+    seedFan('synced bio');
+    expect(await loader.loadFanBio({ accountId: ACCT, chatId: CHAT })).toBe('synced bio');
+  });
+
+  it('resolves no bio without an OFAPI call when the fan is unknown', async () => {
+    expect(await loader.loadFanBio({ accountId: ACCT, chatId: CHAT })).toBeUndefined();
+    expect(stub.getUserByUsernameCalls).toEqual([]);
   });
 
   it('caches the fan detail and transactions for the 5-minute TTL', async () => {

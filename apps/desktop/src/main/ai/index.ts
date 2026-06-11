@@ -4,8 +4,8 @@
 //   'cmd:conversation.open/close' → conversationOpened/conversationClosed,
 //   coordinator.subscribe(event => webContents.send('ai:event', event)).
 
-export { createAiCoordinator, buildFeatureResult, P2_FEATURES, PERSONALITIES_SETTINGS_KEY } from './coordinator';
-export type { AiCoordinator, AiCoordinatorDeps } from './coordinator';
+export { createAiCoordinator, buildFeatureResult, PERSONALITIES_SETTINGS_KEY } from './coordinator';
+export type { AiCoordinator, AiCoordinatorDeps, SummaryHubHooks } from './coordinator';
 export { createDirectGateway } from './gateway';
 export type { AiGateway, AiGatewayCallbacks, DirectGatewayOptions } from './gateway';
 export { createContextLoader } from './context-loader';
@@ -13,6 +13,7 @@ export type {
   ContextLoader,
   ContextLoaderOptions,
   FanContextArgs,
+  FanContextBlock,
   LoadTranscriptArgs,
 } from './context-loader';
 export { createStagedTimeouts } from './timeouts';
