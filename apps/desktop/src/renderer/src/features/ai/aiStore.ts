@@ -6,6 +6,7 @@
 
 import { create } from 'zustand';
 import type { ReplyTone } from '@chatgoose/shared/types';
+import { getFeaturePolicy, type OperationFeature } from '@chatgoose/shared/features';
 import type {
   LlmSpendSummaryPayload,
   OperationEvent,
@@ -15,6 +16,7 @@ import type {
 } from '@chatgoose/shared/protocol/index';
 import type { AiStartRequest } from '../../../../preload/contract';
 import { getBridge } from '../../bridge/bridge';
+import { useUiStore } from '../../state/uiStore';
 import { focusComposer } from '../conversation/composerDom';
 import {
   appendToDraft,
@@ -31,8 +33,8 @@ import {
   type StreamRenderOp,
 } from './dockLogic';
 
-/** Live in P2 — Ping/Hi/Scan/Review stay dimmed until P4. */
-export type LiveAiFeature = 'fast-reply' | 'improve-draft' | 'help-me';
+/** Every coordinator-accepted feature is live (P4) — only 'compare' stays gated. */
+export type LiveAiFeature = OperationFeature;
 
 export interface ActiveAiOp {
   operationId: string;
@@ -50,6 +52,8 @@ interface AiDockState {
   status: DockStatus;
   phase: OperationPhase;
   progressMessage: string | null;
+  /** Deep loads report page counters via operation:progress (currentPage/targetPages). */
+  progressPages: { current: number; target: number } | null;
   view: DockView | null;
   error: UserFacingErrorPayload | null;
   spend: LlmSpendSummaryPayload | null;
@@ -62,6 +66,8 @@ interface AiDockState {
   partFeedback: { partIndex: number; kind: 'copied' | 'inserted' } | null;
   /** Composer draft — send source, Improve Draft input, per-chat persisted. */
   draftText: string;
+  /** Bumped when a Scan lands in the panel — the fan panel flashes its Scan tab. */
+  scanFlashSeq: number;
 }
 
 const CLEARED = {
@@ -69,6 +75,7 @@ const CLEARED = {
   status: 'running',
   phase: 'idle',
   progressMessage: null,
+  progressPages: null,
   view: null,
   error: null,
   spend: null,
@@ -82,6 +89,7 @@ export const useAiStore = create<AiDockState>(() => ({
   toneOverride: null,
   preferSplit: false,
   draftText: '',
+  scanFlashSeq: 0,
 }));
 
 // ─── Imperative stream sink (registered by the streaming bubble) ──────────
@@ -132,7 +140,7 @@ let lastConversationKey: string | null = null;
 export function startAiFeature(
   feature: LiveAiFeature,
   ctx: AiStartContext,
-  opts: { draftText?: string } = {},
+  opts: { draftText?: string; forceRegenerate?: boolean } = {},
 ): void {
   const state = useAiStore.getState();
   if (state.op !== null && state.status === 'running') {
@@ -153,6 +161,7 @@ export function startAiFeature(
     params.mode = state.preferSplit ? 'preferSplit' : 'default';
   }
   if (feature === 'improve-draft') params.draftText = draft;
+  if (opts.forceRegenerate === true) params.forceRegenerate = true;
 
   useAiStore.setState({
     ...CLEARED,
@@ -176,10 +185,16 @@ export function startAiFeature(
 export function regenerateActiveOperation(): void {
   const state = useAiStore.getState();
   if (state.op === null || state.status === 'running') return;
+  // rerunAction 'refresh' (fan-summary/chat-review) forces past the cache —
+  // otherwise a re-run of Scan would short-circuit on the entry it just wrote.
+  const refresh = getFeaturePolicy(state.op.feature).rerunAction === 'refresh';
   startAiFeature(
     state.op.feature,
     { accountId: state.op.accountId, chatId: state.op.chatId, defaultTone: lastDefaultTone },
-    state.op.draftText !== undefined ? { draftText: state.op.draftText } : {},
+    {
+      ...(state.op.draftText !== undefined ? { draftText: state.op.draftText } : {}),
+      ...(refresh ? { forceRegenerate: true } : {}),
+    },
   );
 }
 
@@ -283,6 +298,14 @@ export function togglePreferSplit(): void {
   useAiStore.setState((s) => ({ preferSplit: !s.preferSplit }));
 }
 
+/** Reveal + flash the fan panel's Scan tab (scan completion, pointer-card click). */
+export function focusScanTab(): void {
+  const ui = useUiStore.getState();
+  ui.setFanPanelTab('scan');
+  if (ui.panelCollapsed) ui.togglePanel();
+  useAiStore.setState((s) => ({ scanFlashSeq: s.scanFlashSeq + 1 }));
+}
+
 function flashPartFeedback(partIndex: number, kind: 'copied' | 'inserted'): void {
   useAiStore.setState({ partFeedback: { partIndex, kind } });
   if (feedbackResetTimer !== null) clearTimeout(feedbackResetTimer);
@@ -343,6 +366,10 @@ export function handleAiOperationEvent(event: OperationEvent): void {
       useAiStore.setState({
         phase: event.phase,
         progressMessage: event.message ?? null,
+        progressPages:
+          event.currentPage !== undefined && event.targetPages !== undefined
+            ? { current: event.currentPage, target: event.targetPages }
+            : null,
       });
       return;
     case 'operation:chunk':
@@ -361,10 +388,13 @@ export function handleAiOperationEvent(event: OperationEvent): void {
         status: 'completed',
         phase: 'completed',
         progressMessage: null,
+        progressPages: null,
         view: deriveDockView(op.feature, event.result),
         spend: event.llmSpend ?? null,
         profiling: event.profiling ?? null,
       });
+      // Scan body lives in the panel — point the chatter there (DESIGN §1).
+      if (op.feature === 'fan-summary') focusScanTab();
       return;
     }
     case 'operation:error':
@@ -373,6 +403,7 @@ export function handleAiOperationEvent(event: OperationEvent): void {
         status: 'error',
         phase: 'error',
         progressMessage: null,
+        progressPages: null,
         error: event.error,
         profiling: event.profiling ?? null,
       });

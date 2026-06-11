@@ -1,30 +1,54 @@
 // ✳ AI menu in the conversation header (DESIGN §1 tier 2): rare/deep actions
-// only — Scan / Chat review / Compare. All dimmed in P2 (arrive in P4).
+// only — Scan ⌘S (fan-summary → panel's Scan tab) and Chat review ⌘E are live;
+// Compare stays gated (P4-stretch, lowest priority — PRD F6.8). The deep
+// minimum-history gate (CG-FLOW-03) is the coordinator's: errors land in the
+// dock as coded cards.
 
 import { useEffect, useRef, useState } from 'react';
+import { useAccounts, useSettings } from '../../bridge/queries';
+import { useUiStore } from '../../state/uiStore';
 import { Kbd } from '../../design/Kbd';
+import { cx } from '../../lib/cx';
+import { startAiFeature, type LiveAiFeature } from './aiStore';
+import { evaluateAiGate } from './dockLogic';
 
 function MenuItem({
   glyph,
   title,
   sub,
   kbd,
+  disabledReason,
+  badge,
+  onRun,
 }: {
   glyph: string;
   title: string;
   sub: string;
   kbd?: string;
+  /** Non-null = rendered dimmed and inert, reason in the tooltip. */
+  disabledReason: string | null;
+  badge?: string;
+  onRun?: () => void;
 }): React.JSX.Element {
+  const disabled = disabledReason !== null;
   return (
-    <div
-      title="Arrives in P4"
-      className="flex items-center gap-2.5 rounded-chip px-2.5 py-2 opacity-45"
+    <button
+      type="button"
+      disabled={disabled}
+      title={disabledReason ?? sub}
+      onClick={onRun}
+      className={cx(
+        'flex w-full items-center gap-2.5 rounded-chip px-2.5 py-2 text-left',
+        disabled
+          ? 'cursor-default opacity-45'
+          : 'cursor-pointer transition-colors duration-150 hover:bg-clay-bg',
+      )}
     >
       <span className="w-4 flex-none text-center text-[12px] text-clay">{glyph}</span>
       <span className="min-w-0">
         <span className="flex items-center gap-1.5 text-[13px] font-semibold text-ink">
           {title}
-          <span className="num text-micro text-ink-low">P4</span>
+          {badge !== undefined && <span className="num text-micro text-ink-low">{badge}</span>}
         </span>
         <span className="mt-px block text-[10.5px] text-ink-low">{sub}</span>
       </span>
@@ -33,13 +57,28 @@ function MenuItem({
           <Kbd>{kbd}</Kbd>
         </span>
       )}
-    </div>
+    </button>
   );
 }
 
 export function AiHeaderMenu(): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  const accountId = useUiStore((s) => s.selectedAccountId);
+  const chatId = useUiStore((s) => s.selectedChatId);
+  const accounts = useAccounts();
+  const settings = useSettings();
+
+  const account = accounts.data?.find((a) => a.id === accountId) ?? null;
+  const ready = account !== null && settings.data !== undefined && chatId !== null;
+  const gate = ready
+    ? evaluateAiGate({
+        mapped: account.personalityId !== null,
+        hasLlmKey: settings.data.hasAnthropicKey || settings.data.hasOpenRouterKey,
+      })
+    : null;
+  const blockedReason = gate === null ? 'Loading…' : gate.ok ? null : gate.message;
 
   useEffect(() => {
     if (!open) return;
@@ -59,6 +98,16 @@ export function AiHeaderMenu(): React.JSX.Element {
     };
   }, [open]);
 
+  function run(feature: LiveAiFeature): void {
+    if (accountId === null || chatId === null || settings.data === undefined) return;
+    setOpen(false);
+    startAiFeature(feature, {
+      accountId,
+      chatId,
+      defaultTone: settings.data.defaultReplyTone,
+    });
+  }
+
   return (
     <div ref={rootRef} className="relative">
       <button
@@ -70,10 +119,30 @@ export function AiHeaderMenu(): React.JSX.Element {
       </button>
       {open && (
         <div className="absolute top-[calc(100%+8px)] right-0 z-40 w-[264px] rounded-menu border border-line-strong bg-bg1 p-1.5 shadow-pop">
-          <MenuItem glyph="◎" title="Scan" sub="deep fan profile → panel · Scan tab" kbd="⌘S" />
-          <MenuItem glyph="▤" title="Chat review" sub="score this conversation 1–10, find mistakes" kbd="⌘E" />
+          <MenuItem
+            glyph="◎"
+            title="Scan"
+            sub="deep fan profile → panel · Scan tab"
+            kbd="⌘S"
+            disabledReason={blockedReason}
+            onRun={() => run('fan-summary')}
+          />
+          <MenuItem
+            glyph="▤"
+            title="Chat review"
+            sub="score this conversation 1–10, find mistakes"
+            kbd="⌘E"
+            disabledReason={blockedReason}
+            onRun={() => run('chat-review')}
+          />
           <div className="my-1 h-px bg-line" />
-          <MenuItem glyph="⇄" title="Compare" sub="one reply, several personas side-by-side" />
+          <MenuItem
+            glyph="⇄"
+            title="Compare"
+            sub="one reply, several personas side-by-side"
+            disabledReason="Arrives as a P4 stretch goal"
+            badge="P4-STRETCH"
+          />
         </div>
       )}
     </div>

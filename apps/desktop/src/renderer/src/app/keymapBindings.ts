@@ -30,6 +30,10 @@ export type KeyAction =
   | 'ai-reply'
   | 'ai-improve'
   | 'ai-help'
+  | 'ai-ping'
+  | 'ai-hi'
+  | 'ai-review'
+  | 'ai-scan'
   | 'ai-tone'
   | 'ai-cancel'
   | AiPartAction;
@@ -68,6 +72,10 @@ export const KEY_BINDINGS: KeyBinding<KeyAction>[] = [
   { action: 'ai-reply', combo: 'mod+r', label: '⌘R', description: 'Fast Reply (AI suggestion)' },
   { action: 'ai-improve', combo: 'mod+i', label: '⌘I', description: 'Improve draft (AI)' },
   { action: 'ai-help', combo: 'mod+h', label: '⌘H', description: 'Help me (AI coaching)' },
+  { action: 'ai-ping', combo: 'mod+p', label: '⌘P', description: 'Ping — reactivation message (AI, silent fans)' },
+  { action: 'ai-hi', combo: 'mod+g', label: '⌘G', description: 'Hi greeting — 3 opener variants (AI, fresh chats)' },
+  { action: 'ai-review', combo: 'mod+e', label: '⌘E', description: 'Chat review — rate this conversation (AI)' },
+  { action: 'ai-scan', combo: 'mod+s', label: '⌘S', description: 'Scan — deep fan profile → panel (AI)' },
   { action: 'ai-tone', combo: 'mod+t', label: '⌘T', description: 'Cycle tone (casual / flirty / upsell / spicy)' },
   { action: 'ai-cancel', combo: 'mod+.', label: '⌘.', description: 'Cancel running AI operation' },
   { action: 'ai-part-0', combo: 'mod+0', label: '⌘0', description: 'Insert all AI draft parts as a [NEXT] sequence' },
@@ -79,8 +87,5 @@ export const CHEATSHEET_EXTRAS: ReadonlyArray<{ label: string; description: stri
   { label: '⌘1…9', description: 'Insert AI draft part N (or click the bubble)' },
 ];
 
-/** Shown dimmed in the cheatsheet — wired by later phases. */
-export const UPCOMING_BINDINGS: ReadonlyArray<{ label: string; description: string; phase: string }> = [
-  { label: '⌘P / ⌘G', description: 'Ping / Hi greeting', phase: 'P4' },
-  { label: '⌘E / ⌘S', description: 'Chat review / Scan (fan summary)', phase: 'P4' },
-];
+/** Shown dimmed in the cheatsheet — wired by later phases (empty = section hidden). */
+export const UPCOMING_BINDINGS: ReadonlyArray<{ label: string; description: string; phase: string }> = [];

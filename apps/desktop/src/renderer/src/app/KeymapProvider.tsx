@@ -9,17 +9,15 @@ import { nextChatId, nextUnreadChatId } from '../lib/filters';
 import { KEY_BINDINGS } from './keymapBindings';
 import { useUiStore } from '../state/uiStore';
 import { qk } from '../bridge/queries';
-import type { AccountVM, ChatListItemVM, SettingsVM } from '../../../preload/contract';
+import type { ChatListItemVM, SettingsVM } from '../../../preload/contract';
 import {
   useAiStore,
-  startAiFeature,
   activateDockPart,
   cancelActiveOperation,
   cycleDockTone,
   dismissDock,
-  type LiveAiFeature,
 } from '../features/ai/aiStore';
-import { evaluateAiGate } from '../features/ai/dockLogic';
+import { startAiFromGlobal } from '../features/ai/globalStart';
 import { sendCurrentDraft } from '../features/conversation/sendController';
 import { COMPOSER_TEXTAREA_ID } from '../features/conversation/composerDom';
 
@@ -56,27 +54,6 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
         chatItems(accountId, 'all').find((c) => c.chatId === chatId) ??
         chatItems(accountId, useUiStore.getState().chatFilter).find((c) => c.chatId === chatId)
       );
-    }
-
-    // Same gate as the pill row (mapped personality + an LLM key).
-    function startAiFromKeys(feature: LiveAiFeature): void {
-      const ui = useUiStore.getState();
-      if (ui.view !== 'workspace' || ui.selectedAccountId === null || ui.selectedChatId === null) return;
-      const settings = queryClient.getQueryData<SettingsVM>(qk.settings);
-      const account = queryClient
-        .getQueryData<AccountVM[]>(qk.accounts)
-        ?.find((a) => a.id === ui.selectedAccountId);
-      if (settings === undefined || account === undefined) return;
-      const gate = evaluateAiGate({
-        mapped: account.personalityId !== null,
-        hasLlmKey: settings.hasAnthropicKey || settings.hasOpenRouterKey,
-      });
-      if (!gate.ok) return;
-      startAiFeature(feature, {
-        accountId: ui.selectedAccountId,
-        chatId: ui.selectedChatId,
-        defaultTone: settings.defaultReplyTone,
-      });
     }
 
     function onKeyDown(e: KeyboardEvent): void {
@@ -172,17 +149,35 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
           sendCurrentDraft({ accountId, chatId: chat.chatId, canSend: chat.canSendMessage });
           return;
         }
+        // startAiFromGlobal applies the same gates as the pill row / AI menu
+        // (mapped + key, ping fan-active, hi message cap)
         case 'ai-reply':
           e.preventDefault();
-          startAiFromKeys('fast-reply');
+          startAiFromGlobal('fast-reply', queryClient);
           return;
         case 'ai-improve':
           e.preventDefault();
-          startAiFromKeys('improve-draft');
+          startAiFromGlobal('improve-draft', queryClient);
           return;
         case 'ai-help':
           e.preventDefault();
-          startAiFromKeys('help-me');
+          startAiFromGlobal('help-me', queryClient);
+          return;
+        case 'ai-ping':
+          e.preventDefault();
+          startAiFromGlobal('ping', queryClient);
+          return;
+        case 'ai-hi':
+          e.preventDefault();
+          startAiFromGlobal('hi-greeting', queryClient);
+          return;
+        case 'ai-review':
+          e.preventDefault();
+          startAiFromGlobal('chat-review', queryClient);
+          return;
+        case 'ai-scan':
+          e.preventDefault();
+          startAiFromGlobal('fan-summary', queryClient);
           return;
         case 'ai-tone': {
           e.preventDefault();

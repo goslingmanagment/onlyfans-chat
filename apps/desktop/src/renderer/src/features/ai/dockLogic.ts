@@ -8,12 +8,14 @@
 import { z } from 'zod';
 import type { ReplyTone } from '@chatgoose/shared/types';
 import type { OperationFeature } from '@chatgoose/shared/features';
+import { HI_GREETING_MAX_TRANSCRIPT } from '@chatgoose/shared/constants';
 import type {
   FeatureResultPayload,
   OperationEvent,
+  OperationPhase,
   UserFacingErrorPayload,
 } from '@chatgoose/shared/protocol/index';
-import { parseHelpMeXml } from '@chatgoose/shared/output/xml';
+import { parseChatReviewXml, parseHelpMeXml } from '@chatgoose/shared/output/xml';
 import {
   normalizeProvidedReplyParts,
   normalizeReplyParts,
@@ -115,8 +117,29 @@ export type DockView =
   | { kind: 'drafts'; parts: string[] }
   /** Help Me: read-only coaching card + engaging/flirty as copyable drafts. */
   | { kind: 'help'; coaching: string; parts: string[] }
+  /** Chat Review: read-only analysis card — rating 1–10, evaluation, recommendation list. */
+  | { kind: 'review'; rating: number; evaluation: string; recommendations: string[] }
+  /** Fan summary (Scan): completion pointer to the panel's Scan tab, never the body. */
+  | { kind: 'scan-pointer'; generatedAt: number | null; cached: boolean }
   /** Parse/sanitize fallback — read-only raw text, no copy chips. */
   | { kind: 'raw'; text: string };
+
+/**
+ * Recommendation block → list items: one per line, bullet/number markers
+ * stripped; an unstructured paragraph stays a single item.
+ */
+export function splitRecommendationItems(recommendations: string): string[] {
+  return recommendations
+    .split('\n')
+    .map((line) => line.replace(/^\s*(?:[-—•*]|\d+[.)])\s*/, '').trim())
+    .filter((line) => line.length > 0);
+}
+
+/** Coordinator attaches summaryMeta to fan-summary results (cache hits set cached). */
+const summaryMetaSchema = z.looseObject({
+  generatedAt: z.number(),
+  cached: z.boolean().optional(),
+});
 
 export function deriveDockView(feature: OperationFeature, result: FeatureResultPayload): DockView {
   if (feature === 'help-me') {
@@ -127,9 +150,26 @@ export function deriveDockView(feature: OperationFeature, result: FeatureResultP
     }
     return { kind: 'raw', text: result.rawText };
   }
-  if (feature === 'chat-review' || feature === 'fan-summary') {
-    // Analysis surfaces (P4) — read-only if they ever land in the dock.
+  if (feature === 'chat-review') {
+    const parsed = parseChatReviewXml(result.rawText);
+    if (parsed.valid && parsed.rating !== null && parsed.evaluation !== null) {
+      return {
+        kind: 'review',
+        rating: parsed.rating,
+        evaluation: parsed.evaluation,
+        recommendations: splitRecommendationItems(parsed.recommendations ?? ''),
+      };
+    }
     return { kind: 'raw', text: result.rawText };
+  }
+  if (feature === 'fan-summary') {
+    // The body lives in the panel's Scan tab (DESIGN §1); the dock only points there.
+    const meta = summaryMetaSchema.safeParse(result['summaryMeta']);
+    return {
+      kind: 'scan-pointer',
+      generatedAt: meta.success ? meta.data.generatedAt : null,
+      cached: meta.success && meta.data.cached === true,
+    };
   }
   const parts =
     result.parts !== undefined && result.parts.length > 0
@@ -143,9 +183,14 @@ export function deriveDockView(feature: OperationFeature, result: FeatureResultP
   return { kind: 'drafts', parts };
 }
 
-/** Parts the ⌘0..⌘9 hotkeys (insert/copy) operate on; raw fallback never qualifies. */
+/**
+ * Parts the ⌘0..⌘9 hotkeys (insert/copy) operate on. Analysis views (review,
+ * scan-pointer) and the raw fallback never qualify — only true reply drafts
+ * are insertable (SPEC §15 / DESIGN §1).
+ */
 export function copyablePartsOf(view: DockView | null): string[] {
-  if (view === null || view.kind === 'raw') return [];
+  if (view === null) return [];
+  if (view.kind !== 'drafts' && view.kind !== 'help') return [];
   return view.parts;
 }
 
@@ -179,6 +224,81 @@ export function evaluateAiGate(input: AiGateInput): AiGate {
     return { ok: false, reason: 'no-key', message: 'Add an Anthropic or OpenRouter key in Settings' };
   }
   return { ok: true };
+}
+
+// ─── Deep-feature gates (Ping / Hi pills, DESIGN §1 tier 1) ──────────────
+
+export type PillGate = { enabled: true } | { enabled: false; reason: string };
+
+export const PING_BLOCKED_REASON = 'Fan is active — use Reply';
+export const HI_LOCKED_REASON = `Conversation already has more than ${HI_GREETING_MAX_TRANSCRIPT} messages — use Reply`;
+
+/**
+ * Precedence: account-level gate (unmapped → no-key) blocks first; the
+ * feature-specific gate applies only on an otherwise-enabled row.
+ * `base === null` = accounts/settings still loading; feature gate `null` =
+ * unknown (query not loaded) — allowed, the coordinator stays authoritative
+ * (CG-FLOW-05 / CG-FLOW-09).
+ */
+function evaluateDeepPillGate(base: AiGate | null, featureBlockReason: string | null): PillGate {
+  if (base === null) return { enabled: false, reason: 'Loading…' };
+  if (!base.ok) return { enabled: false, reason: base.message };
+  if (featureBlockReason !== null) return { enabled: false, reason: featureBlockReason };
+  return { enabled: true };
+}
+
+/** `blocked === true` = query:ai.pingGate said the fan texted within the ping window. */
+export function evaluatePingGate(base: AiGate | null, blocked: boolean | null): PillGate {
+  return evaluateDeepPillGate(base, blocked === true ? PING_BLOCKED_REASON : null);
+}
+
+/** `locked === true` = conversation already exceeds the hi-greeting message cap. */
+export function evaluateHiGate(base: AiGate | null, locked: boolean | null): PillGate {
+  return evaluateDeepPillGate(base, locked === true ? HI_LOCKED_REASON : null);
+}
+
+/**
+ * Client-side hi-greeting heuristic over the loaded message pages: locked when
+ * more than HI_GREETING_MAX_TRANSCRIPT non-deleted messages are loaded, or any
+ * page reports unloaded history (a full page is already far past the cap).
+ * Null = pages not loaded yet (unknown). Heuristic only — the coordinator's
+ * CG-FLOW-09 check is authoritative for edge counts.
+ */
+export function deriveHiLocked(
+  pages:
+    | ReadonlyArray<{ items: ReadonlyArray<{ deleted: boolean }>; hasMore: boolean }>
+    | undefined,
+): boolean | null {
+  if (pages === undefined || pages.length === 0) return null;
+  let count = 0;
+  for (const page of pages) {
+    if (page.hasMore) return true;
+    for (const item of page.items) {
+      if (!item.deleted) count += 1;
+    }
+  }
+  return count > HI_GREETING_MAX_TRANSCRIPT;
+}
+
+// ─── Progress label (deep ops stage through page-counted loading) ────────
+
+const PHASE_LABELS: Partial<Record<OperationPhase, string>> = {
+  'idle': 'STARTING',
+  'loading-messages': 'LOADING MESSAGES',
+  'loading-earnings': 'LOADING EARNINGS',
+  'generating': 'GENERATING',
+};
+
+/** Deep loads carry currentPage/targetPages (operation:progress) — show the counter. */
+export function progressLabel(
+  phase: OperationPhase,
+  pages: { current: number; target: number } | null = null,
+): string {
+  const base = PHASE_LABELS[phase] ?? phase.toUpperCase();
+  if (phase === 'loading-messages' && pages !== null && pages.target > 0) {
+    return `${base} · ${pages.current}/${pages.target} PAGES`;
+  }
+  return base;
 }
 
 // ─── Labels ──────────────────────────────────────────────────────────────

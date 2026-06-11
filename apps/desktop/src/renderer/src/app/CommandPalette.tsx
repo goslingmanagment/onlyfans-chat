@@ -2,8 +2,10 @@
 // search surface (no list search box, per DESIGN §1).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useUiStore } from '../state/uiStore';
 import { useAccounts, useChatSearch, useChats, useForceRefresh } from '../bridge/queries';
+import { startAiFromGlobal } from '../features/ai/globalStart';
 import { fuzzyFilter } from '../lib/fuzzy';
 import { Avatar } from '../design/Avatar';
 import { ListRow } from '../design/ListRow';
@@ -41,6 +43,7 @@ function PaletteBody(): React.JSX.Element {
   const loadedChats = useChats(accountId, 'all');
   const search = useChatSearch(accountId, query);
   const forceRefresh = useForceRefresh();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -81,14 +84,24 @@ function PaletteBody(): React.JSX.Element {
       });
     }
 
+    // AI starts go through the shared gated entry point — same gates as the
+    // pill row and ✳ menu; gated/contextless invocations are silent no-ops.
+    // 'compare' stays out of the palette (P4-stretch, hidden while gated).
     const actions: Array<{ id: string; title: string; run: () => void }> = [
+      { id: 'act:ai-reply', title: 'AI: Fast Reply (⌘R)', run: () => startAiFromGlobal('fast-reply', queryClient) },
+      { id: 'act:ai-improve', title: 'AI: Improve draft (⌘I)', run: () => startAiFromGlobal('improve-draft', queryClient) },
+      { id: 'act:ai-help', title: 'AI: Help me — coaching (⌘H)', run: () => startAiFromGlobal('help-me', queryClient) },
+      { id: 'act:ai-ping', title: 'AI: Ping — reactivation message (⌘P)', run: () => startAiFromGlobal('ping', queryClient) },
+      { id: 'act:ai-hi', title: 'AI: Hi greeting — opener variants (⌘G)', run: () => startAiFromGlobal('hi-greeting', queryClient) },
+      { id: 'act:ai-scan', title: 'AI: Scan — deep fan profile (⌘S)', run: () => startAiFromGlobal('fan-summary', queryClient) },
+      { id: 'act:ai-review', title: 'AI: Chat review — rate this conversation (⌘E)', run: () => startAiFromGlobal('chat-review', queryClient) },
       { id: 'act:settings', title: 'Open settings', run: () => setView('settings') },
       { id: 'act:refresh', title: 'Force refresh', run: () => forceRefresh.mutate(undefined) },
       { id: 'act:panel', title: 'Toggle fan panel', run: togglePanel },
       { id: 'act:list', title: 'Toggle chat list', run: toggleList },
       { id: 'act:keys', title: 'Show keyboard shortcuts', run: () => setCheatsheetOpen(true) },
     ];
-    for (const action of fuzzyFilter(actions, query, (a) => a.title, 5)) {
+    for (const action of fuzzyFilter(actions, query, (a) => a.title, 8)) {
       out.push({
         id: action.id,
         section: 'Actions',
@@ -115,6 +128,7 @@ function PaletteBody(): React.JSX.Element {
     toggleList,
     setCheatsheetOpen,
     forceRefresh,
+    queryClient,
   ]);
 
   const clampedCursor = Math.min(cursor, Math.max(0, entries.length - 1));

@@ -10,6 +10,17 @@ const STATE_LABEL = {
   offline: 'OFFLINE',
 } as const;
 
+// Hub SSE chip (SPEC §6.2/§9; DESIGN §4 tokens): hidden when hub is off,
+// online-green when live, amber while connecting/degraded/stopped, amber-red
+// on auth failure (CG-HUB-01 — key problem, needs Settings).
+const HUB_LABEL = {
+  connecting: 'HUB CONNECTING',
+  live: 'HUB LIVE',
+  degraded: 'HUB DEGRADED',
+  'auth-failed': 'HUB AUTH',
+  stopped: 'HUB STOPPED',
+} as const;
+
 export function StatusBar(): React.JSX.Element {
   const sync = useSyncStatus();
   const selectedAccountId = useUiStore((s) => s.selectedAccountId);
@@ -37,6 +48,30 @@ export function StatusBar(): React.JSX.Element {
         />
         {STATE_LABEL[state]}
       </span>
+      {status !== null && status.hub !== 'off' && (
+        <span
+          className={cx(
+            'flex items-center gap-1.5',
+            status.hub === 'live'
+              ? 'text-green'
+              : status.hub === 'auth-failed'
+                ? 'text-bad'
+                : 'text-warn',
+          )}
+        >
+          <span
+            className={cx(
+              'h-[6px] w-[6px] rounded-full',
+              status.hub === 'live'
+                ? 'bg-online'
+                : status.hub === 'auth-failed'
+                  ? 'bg-bad'
+                  : 'bg-warn',
+            )}
+          />
+          {HUB_LABEL[status.hub]}
+        </span>
+      )}
       <span>
         CREDITS TODAY <span className="text-green">{status?.creditsUsedToday.toLocaleString('en-US') ?? '—'}</span>
         {' · '}BAL {status?.creditsBalance?.toLocaleString('en-US') ?? '—'}

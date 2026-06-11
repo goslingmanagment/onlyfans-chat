@@ -1,11 +1,19 @@
 // Composer pill row (DESIGN §1 tier 1): all five frequent AI actions, always
-// visible above the composer. Reply/Improve/Help live in P2; Ping/Hi dimmed
-// until P4 (their gate logic exists but the features are out of P2 scope).
+// visible above the composer. Ping/Hi dim with their gate reason when
+// inapplicable (fan-active for Ping, >10 msgs for Hi — legacy gates); the
+// coordinator's CG-FLOW-05/09 checks stay authoritative for unknowns.
 
-import { useAccounts, useSettings } from '../../bridge/queries';
+import { useAccounts, useMessages, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { useAiStore, startAiFeature, type LiveAiFeature } from './aiStore';
-import { evaluateAiGate, type AiGate } from './dockLogic';
+import {
+  deriveHiLocked,
+  evaluateAiGate,
+  evaluateHiGate,
+  evaluatePingGate,
+  type AiGate,
+} from './dockLogic';
+import { usePingGate } from './pingGate';
 import { Kbd } from '../../design/Kbd';
 import { cx } from '../../lib/cx';
 
@@ -59,6 +67,14 @@ export function AiPillRow({
   const settings = useSettings();
   const draftEmpty = useAiStore((s) => s.draftText.trim().length === 0);
 
+  // Shares the conversation's message cache (same key as MessageList — no
+  // extra fetch): hi gate heuristic + the ping gate's refetch trigger.
+  const messages = useMessages(accountId, chatId);
+  const pages = messages.data?.pages;
+  // pages[0] = newest page, items ascending — last item is the newest message
+  const lastMessageId = pages?.[0]?.items.at(-1)?.id ?? null;
+  const pingGate = usePingGate(accountId, chatId, lastMessageId);
+
   const account = accounts.data?.find((a) => a.id === accountId) ?? null;
   const ready = account !== null && settings.data !== undefined;
   const gate: AiGate | null = ready
@@ -70,8 +86,11 @@ export function AiPillRow({
   const blockedMessage = gate !== null && !gate.ok ? gate.message : null;
   const rowDisabled = !ready || blockedMessage !== null;
 
+  const pingPill = evaluatePingGate(gate, pingGate.data?.blocked ?? null);
+  const hiPill = evaluateHiGate(gate, deriveHiLocked(pages));
+
   function start(feature: LiveAiFeature): void {
-    if (rowDisabled || settings.data === undefined) return;
+    if (settings.data === undefined) return;
     startAiFeature(feature, {
       accountId,
       chatId,
@@ -85,28 +104,48 @@ export function AiPillRow({
         primary
         disabled={rowDisabled}
         title={blockedMessage ?? 'Generate a reply suggestion'}
-        onClick={() => start('fast-reply')}
+        onClick={() => {
+          if (!rowDisabled) start('fast-reply');
+        }}
       >
         <i className="not-italic">✳</i> Reply <Kbd>⌘R</Kbd>
       </PillButton>
       <PillButton
         disabled={rowDisabled || draftEmpty}
         title={blockedMessage ?? (draftEmpty ? 'Type a draft in the composer to improve' : 'Improve your draft')}
-        onClick={() => start('improve-draft')}
+        onClick={() => {
+          if (!rowDisabled) start('improve-draft');
+        }}
       >
         Improve <Kbd>⌘I</Kbd>
       </PillButton>
       <PillButton
         disabled={rowDisabled}
         title={blockedMessage ?? 'Coaching + two suggested directions'}
-        onClick={() => start('help-me')}
+        onClick={() => {
+          if (!rowDisabled) start('help-me');
+        }}
       >
         Help <Kbd>⌘H</Kbd>
       </PillButton>
-      <PillButton dimmed disabled title="Arrives in P4">
+      <PillButton
+        dimmed={!pingPill.enabled}
+        disabled={!pingPill.enabled}
+        title={pingPill.enabled ? 'Reactivation message for a silent fan' : pingPill.reason}
+        onClick={() => {
+          if (pingPill.enabled) start('ping');
+        }}
+      >
         Ping <Kbd>⌘P</Kbd>
       </PillButton>
-      <PillButton dimmed disabled title="Arrives in P4">
+      <PillButton
+        dimmed={!hiPill.enabled}
+        disabled={!hiPill.enabled}
+        title={hiPill.enabled ? '3 opener variants for a fresh conversation' : hiPill.reason}
+        onClick={() => {
+          if (hiPill.enabled) start('hi-greeting');
+        }}
+      >
         Hi <Kbd>⌘G</Kbd>
       </PillButton>
       {blockedMessage !== null && (

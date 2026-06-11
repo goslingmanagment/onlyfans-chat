@@ -1,23 +1,48 @@
 // Fan context panel (collapsible ']'): Info / Scan tabs, money chips, churn
-// badge, data-age honesty (PRD F5 read-only scope).
+// badge, data-age honesty (PRD F5 read-only scope). The Scan tab is the home
+// of the AI fan dossier (F6.4, "Scan" = fan-summary): Russian body in serif,
+// generated-at + model, refresh (forceRegenerate), quiet stale hint.
 
+import { useEffect, useRef, useState } from 'react';
 import type { FanPanelVM } from '../../../../preload/contract';
-import { useFan } from '../../bridge/queries';
+import { useAccounts, useFan, useMessages, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
+import { startAiFeature, useAiStore } from '../ai/aiStore';
+import { evaluateAiGate } from '../ai/dockLogic';
+import { isScanStale, splitSummaryParagraphs } from './scanLogic';
 import { Avatar } from '../../design/Avatar';
 import { Badge } from '../../design/Badge';
 import { DataAge } from '../../design/DataAge';
 import { EmptyState } from '../../design/EmptyState';
+import { Kbd } from '../../design/Kbd';
 import { Skeleton } from '../../design/Skeleton';
 import { cx } from '../../lib/cx';
 import { formatDollars } from '../../lib/money';
 import { formatLastSeen, isOnline } from '../../lib/time';
+
+const SCAN_FLASH_MS = 1600;
+
+/** True after a Scan completion bumped the flash signal — briefly highlights the tab. */
+function useScanFlash(): boolean {
+  const seq = useAiStore((s) => s.scanFlashSeq);
+  const seenSeq = useRef(seq);
+  const [flashing, setFlashing] = useState(false);
+  useEffect(() => {
+    if (seq === seenSeq.current) return;
+    seenSeq.current = seq;
+    setFlashing(true);
+    const timer = setTimeout(() => setFlashing(false), SCAN_FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [seq]);
+  return flashing;
+}
 
 export function FanPanel(): React.JSX.Element {
   const accountId = useUiStore((s) => s.selectedAccountId);
   const chatId = useUiStore((s) => s.selectedChatId);
   const tab = useUiStore((s) => s.fanPanelTab);
   const setTab = useUiStore((s) => s.setFanPanelTab);
+  const scanFlashing = useScanFlash();
 
   const fan = useFan(accountId, chatId);
 
@@ -32,6 +57,7 @@ export function FanPanel(): React.JSX.Element {
             className={cx(
               'flex-1 cursor-pointer border-b-2 pt-3 pb-[10px] text-center text-[12.5px] font-semibold',
               tab === t ? 'border-clay text-ink' : 'border-transparent text-ink-low hover:text-ink-mid',
+              t === 'scan' && scanFlashing && 'animate-pulse border-clay text-clay-deep',
             )}
           >
             {t === 'info' ? 'Info' : 'Scan'}
@@ -48,7 +74,7 @@ export function FanPanel(): React.JSX.Element {
         ) : tab === 'info' ? (
           <InfoTab fan={fan.data} fetchedAt={fan.dataUpdatedAt} />
         ) : (
-          <ScanTab fan={fan.data} />
+          <ScanTab accountId={accountId} chatId={chatId} fan={fan.data} />
         )}
       </div>
     </aside>
@@ -193,27 +219,108 @@ function KV({
   );
 }
 
-function ScanTab({ fan }: { fan: FanPanelVM }): React.JSX.Element {
-  if (fan.summary === null) {
-    return (
-      <EmptyState
-        glyph="◎"
-        title="No scan yet"
-        hint="Deep fan scans arrive in P4 — the AI dossier will live here."
-      />
+function ScanTab({
+  accountId,
+  chatId,
+  fan,
+}: {
+  accountId: string | null;
+  chatId: string;
+  fan: FanPanelVM;
+}): React.JSX.Element {
+  const accounts = useAccounts();
+  const settings = useSettings();
+  const scanRunning = useAiStore(
+    (s) => s.op?.feature === 'fan-summary' && s.status === 'running',
+  );
+  // shares the conversation's message cache — newest message drives the stale hint
+  const messages = useMessages(accountId, chatId);
+  const newestMessageAt = messages.data?.pages[0]?.items.at(-1)?.createdAt ?? null;
+
+  const account = accounts.data?.find((a) => a.id === accountId) ?? null;
+  const gate =
+    account !== null && settings.data !== undefined
+      ? evaluateAiGate({
+          mapped: account.personalityId !== null,
+          hasLlmKey: settings.data.hasAnthropicKey || settings.data.hasOpenRouterKey,
+        })
+      : null;
+  const blockedReason = gate === null ? 'Loading…' : gate.ok ? null : gate.message;
+  const runnable = blockedReason === null && !scanRunning && accountId !== null;
+
+  function runScan(forceRegenerate: boolean): void {
+    if (!runnable || accountId === null || settings.data === undefined) return;
+    startAiFeature(
+      'fan-summary',
+      { accountId, chatId, defaultTone: settings.data.defaultReplyTone },
+      forceRegenerate ? { forceRegenerate: true } : {},
     );
   }
+
+  if (fan.summary === null) {
+    return (
+      <div className="flex h-full flex-col">
+        <EmptyState
+          glyph="◎"
+          title={scanRunning ? 'Scanning…' : 'No scan yet'}
+          hint={
+            scanRunning ? (
+              'Deep profile is generating — progress streams in the AI dock.'
+            ) : (
+              <span className="flex flex-col items-center gap-2.5">
+                Run Scan to build the AI dossier for this fan.
+                <button
+                  type="button"
+                  disabled={!runnable}
+                  title={blockedReason ?? 'Deep fan profile (Scan)'}
+                  onClick={() => runScan(false)}
+                  className="flex cursor-pointer items-center gap-[7px] rounded-full border border-clay-line bg-clay-bg px-[13px] py-1 text-[12.5px] font-semibold text-clay-deep hover:border-clay hover:text-clay disabled:cursor-default disabled:opacity-45"
+                >
+                  ◎ Run Scan <Kbd>⌘S</Kbd>
+                </button>
+              </span>
+            )
+          }
+        />
+      </div>
+    );
+  }
+
+  const stale = isScanStale(fan.summary.generatedAt, newestMessageAt);
+
   return (
     <div className="p-4">
       <div className="flex items-center gap-2">
         <span className="cap text-ink-low">Scan</span>
         <DataAge at={fan.summary.generatedAt} prefix="GENERATED" />
         <span className="num ml-auto text-micro text-ink-low">{fan.summary.modelLabel}</span>
+        <button
+          type="button"
+          disabled={!runnable}
+          title={blockedReason ?? 'Regenerate the scan (drops the cached one)'}
+          onClick={() => runScan(true)}
+          className="num cursor-pointer text-micro tracking-[0.08em] text-clay-deep hover:text-clay disabled:cursor-default disabled:opacity-45"
+        >
+          {scanRunning ? 'SCANNING…' : '↻ REFRESH'}
+        </button>
       </div>
-      {/* AI-authored text always renders in serif (DESIGN §4) */}
-      <p className="mt-2 font-serif text-[13.5px] leading-[1.6] whitespace-pre-wrap text-ink-mid select-text">
-        {fan.summary.body}
-      </p>
+      {stale && !scanRunning && (
+        // quiet hint, not an alarm — the scan is still useful, just behind the chat
+        <div className="mt-1.5 text-[11.5px] text-ink-low">
+          New messages since this scan — refresh for a current read.
+        </div>
+      )}
+      {/* AI-authored text always renders in serif (DESIGN §4); Russian body per PRD F6.4 */}
+      <div className="mt-2 space-y-2.5">
+        {splitSummaryParagraphs(fan.summary.body).map((paragraph, i) => (
+          <p
+            key={i}
+            className="font-serif text-[13.5px] leading-[1.6] whitespace-pre-wrap text-ink-mid select-text"
+          >
+            {paragraph}
+          </p>
+        ))}
+      </div>
     </div>
   );
 }

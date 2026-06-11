@@ -23,6 +23,7 @@ import {
   copyDockPart,
   dismissDock,
   cancelActiveOperation,
+  focusScanTab,
   regenerateActiveOperation,
   setDockTone,
   togglePreferSplit,
@@ -31,13 +32,16 @@ import {
   DOCK_FEATURE_LABELS,
   DOCK_TONES,
   copyChipLabel,
+  copyablePartsOf,
   errorHint,
   extractPromptBlocks,
   formatOpCost,
   insertChipLabel,
+  progressLabel,
   toggleTone,
   type DockView,
 } from './dockLogic';
+import { getFeaturePolicy } from '@chatgoose/shared/features';
 
 /** Mounts the dock only while an operation is active — the pane never re-renders. */
 export function AiDockMount(): React.JSX.Element | null {
@@ -50,17 +54,11 @@ export function AiDockMount(): React.JSX.Element | null {
   );
 }
 
-const PHASE_LABELS: Record<string, string> = {
-  'idle': 'STARTING',
-  'loading-messages': 'LOADING MESSAGES',
-  'loading-earnings': 'LOADING EARNINGS',
-  'generating': 'GENERATING',
-};
-
 function AiDock(): React.JSX.Element | null {
   const op = useAiStore((s) => s.op);
   const status = useAiStore((s) => s.status);
   const phase = useAiStore((s) => s.phase);
+  const progressPages = useAiStore((s) => s.progressPages);
   const view = useAiStore((s) => s.view);
   const error = useAiStore((s) => s.error);
   const spend = useAiStore((s) => s.spend);
@@ -71,7 +69,7 @@ function AiDock(): React.JSX.Element | null {
 
   if (op === null) return null;
   const running = status === 'running';
-  const parts = view !== null && view.kind !== 'raw' ? view.parts : [];
+  const parts = copyablePartsOf(view);
   // unknown chat defaults to insert — inserting never sends by itself
   const canSend = sendability.data?.canSendMessage ?? true;
   const cannotReason = sendability.data?.canNotSendReason ?? CANNOT_SEND_FALLBACK;
@@ -85,8 +83,9 @@ function AiDock(): React.JSX.Element | null {
           {DOCK_FEATURE_LABELS[op.feature]}
         </span>
         {running && (
+          // deep ops count message pages through phase 'loading-messages'
           <span className="num text-micro tracking-[0.08em] text-ink-low">
-            {PHASE_LABELS[phase] ?? phase.toUpperCase()}
+            {progressLabel(phase, progressPages)}
           </span>
         )}
         <span className="ml-auto" />
@@ -133,7 +132,8 @@ function AiDock(): React.JSX.Element | null {
             onClick={regenerateActiveOperation}
             className="ml-3 flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-ink-mid hover:text-clay-deep"
           >
-            ↻ Regenerate
+            {/* refresh-policy features (Scan/Review) force past the summary cache */}
+            {getFeaturePolicy(op.feature).rerunAction === 'refresh' ? '↻ Refresh' : '↻ Regenerate'}
           </button>
         )}
         <span className="flex-1" />
@@ -178,6 +178,51 @@ function CompletedView({
         <div className="cap mb-1 font-sans text-ink-low">raw output</div>
         {view.text}
       </div>
+    );
+  }
+  if (view.kind === 'review') {
+    // Analysis output — read-only serif card, never insertable (SPEC §15).
+    return (
+      <div className={cx(DRAFT_BUBBLE_BASE_CLASS, 'border-solid border-line bg-bg2')}>
+        <div className="mb-1.5 flex items-baseline gap-2.5">
+          <span className="cap font-sans text-ink-low">chat review</span>
+          <span className="num text-[18px] font-semibold text-clay-deep">{view.rating}</span>
+          <span className="num text-micro text-ink-low">/ 10</span>
+        </div>
+        <p>{view.evaluation}</p>
+        {view.recommendations.length > 0 && (
+          <>
+            <div className="cap mt-2.5 mb-1 font-sans text-ink-low">recommendations</div>
+            <ul className="list-none space-y-1">
+              {view.recommendations.map((item, i) => (
+                <li key={i} className="flex gap-2">
+                  <span className="flex-none text-clay">·</span>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+    );
+  }
+  if (view.kind === 'scan-pointer') {
+    // The dossier body renders in the panel's Scan tab — the dock only points there.
+    return (
+      <button
+        type="button"
+        onClick={focusScanTab}
+        className={cx(
+          DRAFT_BUBBLE_BASE_CLASS,
+          'w-full cursor-pointer border-solid border-line bg-bg2 text-left transition-colors duration-150',
+          'hover:border-clay-line hover:bg-clay-bg',
+        )}
+      >
+        <div className="cap mb-1 font-sans text-ink-low">scan</div>
+        <span className="font-semibold text-clay-deep">
+          {view.cached ? 'Scan loaded from cache — in the panel →' : 'Scan saved to the panel →'}
+        </span>
+      </button>
     );
   }
   if (view.kind === 'help') {

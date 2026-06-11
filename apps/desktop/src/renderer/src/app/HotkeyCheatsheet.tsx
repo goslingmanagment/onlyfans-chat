@@ -36,17 +36,21 @@ export function HotkeyCheatsheet(): React.JSX.Element | null {
             </div>
           ))}
         </div>
-        <div className="cap mt-4 mb-1.5 text-ink-low">Coming with later phases</div>
-        <div className="space-y-1.5 opacity-50">
-          {UPCOMING_BINDINGS.map((b) => (
-            <div key={b.label} className="flex items-center justify-between py-[3px] text-[12.5px]">
-              <span className="text-ink-mid">
-                {b.description} <span className="num text-micro text-ink-low">{b.phase}</span>
-              </span>
-              <Kbd>{b.label}</Kbd>
+        {UPCOMING_BINDINGS.length > 0 && (
+          <>
+            <div className="cap mt-4 mb-1.5 text-ink-low">Coming with later phases</div>
+            <div className="space-y-1.5 opacity-50">
+              {UPCOMING_BINDINGS.map((b) => (
+                <div key={b.label} className="flex items-center justify-between py-[3px] text-[12.5px]">
+                  <span className="text-ink-mid">
+                    {b.description} <span className="num text-micro text-ink-low">{b.phase}</span>
+                  </span>
+                  <Kbd>{b.label}</Kbd>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );
