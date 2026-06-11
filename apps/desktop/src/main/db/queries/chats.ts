@@ -10,17 +10,17 @@ import type { ChatRow, ChatUpsert } from '../rows';
 
 const COLUMNS =
   'account_id, chat_id, fan_name, avatar, unread_count, has_unread_tips, last_message_at, ' +
-  'last_message_preview, last_message_is_sent_by_me, last_read_message_id, pinned, ' +
+  'last_message_preview, last_message_is_sent_by_me, last_message_id, last_read_message_id, pinned, ' +
   'can_send_message, can_not_send_reason, updated_at';
 
 const UPSERT_SQL = `
 INSERT INTO chats (
   account_id, chat_id, fan_name, avatar, unread_count, has_unread_tips, last_message_at,
-  last_message_preview, last_message_is_sent_by_me, last_read_message_id, pinned,
+  last_message_preview, last_message_is_sent_by_me, last_message_id, last_read_message_id, pinned,
   can_send_message, can_not_send_reason, raw, updated_at
 ) VALUES (
   @account_id, @chat_id, @fan_name, @avatar, @unread_count, @has_unread_tips, @last_message_at,
-  @last_message_preview, @last_message_is_sent_by_me, @last_read_message_id, @pinned,
+  @last_message_preview, @last_message_is_sent_by_me, @last_message_id, @last_read_message_id, @pinned,
   @can_send_message, @can_not_send_reason, @raw, @updated_at
 )
 ON CONFLICT (account_id, chat_id) DO UPDATE SET
@@ -31,6 +31,7 @@ ON CONFLICT (account_id, chat_id) DO UPDATE SET
   last_message_at = excluded.last_message_at,
   last_message_preview = excluded.last_message_preview,
   last_message_is_sent_by_me = excluded.last_message_is_sent_by_me,
+  last_message_id = excluded.last_message_id,
   last_read_message_id = excluded.last_read_message_id,
   pinned = excluded.pinned,
   can_send_message = excluded.can_send_message,
@@ -76,6 +77,7 @@ export function createChatsQueries(db: ChatGooseDb, bus: DbChangeBus): ChatsQuer
       last_message_at: chat.lastMessageAt,
       last_message_preview: chat.lastMessagePreview,
       last_message_is_sent_by_me: toSqlBool(chat.lastMessageIsSentByMe),
+      last_message_id: chat.lastMessageId,
       last_read_message_id: chat.lastReadMessageId,
       pinned: toSqlBool(chat.pinned),
       can_send_message: toSqlBool(chat.canSendMessage),

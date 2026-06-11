@@ -134,6 +134,13 @@ CREATE TABLE media_urls (
 );
 `;
 
+// v3 (additive) — the chat-list delta detector compares against the row's own
+// last_message_id: hydration is list-only (no message bodies), so the messages
+// table can no longer serve as the "what did we last see" baseline.
+export const SCHEMA_V3 = `
+ALTER TABLE chats ADD COLUMN last_message_id TEXT;
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',

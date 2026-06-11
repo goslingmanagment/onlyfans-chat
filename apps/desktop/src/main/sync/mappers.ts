@@ -117,6 +117,7 @@ export function mapChat(
     lastMessageAt: last?.createdAt ?? null,
     lastMessagePreview: previewOf(chat),
     lastMessageIsSentByMe: last != null && !lastFromFan,
+    lastMessageId: last?.id != null ? String(last.id) : null,
     lastReadMessageId: chat.lastReadMessageId != null ? String(chat.lastReadMessageId) : null,
     pinned: false, // no flag source exists (Phase-0 verdict, PRD F2)
     canSendMessage: chat.canSendMessage ?? true,

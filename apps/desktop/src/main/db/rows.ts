@@ -74,6 +74,8 @@ export interface ChatRow {
   lastMessageAt: string | null;
   lastMessagePreview: string;
   lastMessageIsSentByMe: boolean;
+  /** Newest message id per the list payload — the delta detector's baseline. */
+  lastMessageId: string | null;
   lastReadMessageId: string | null;
   pinned: boolean;
   canSendMessage: boolean;
@@ -95,6 +97,7 @@ const chatSqlSchema = z.object({
   last_message_at: z.string().nullable(),
   last_message_preview: z.string(),
   last_message_is_sent_by_me: sqlBool,
+  last_message_id: z.string().nullable(),
   last_read_message_id: z.string().nullable(),
   pinned: sqlBool,
   can_send_message: sqlBool,
@@ -114,6 +117,7 @@ export function decodeChatRow(value: unknown): ChatRow {
     lastMessageAt: row.last_message_at,
     lastMessagePreview: row.last_message_preview,
     lastMessageIsSentByMe: row.last_message_is_sent_by_me,
+    lastMessageId: row.last_message_id,
     lastReadMessageId: row.last_read_message_id,
     pinned: row.pinned,
     canSendMessage: row.can_send_message,

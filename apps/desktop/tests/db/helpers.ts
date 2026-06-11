@@ -44,6 +44,7 @@ export function sampleChat(overrides: Partial<ChatUpsert> = {}): ChatUpsert {
     lastMessageAt: '2026-06-01T10:00:00.000Z',
     lastMessagePreview: 'hey',
     lastMessageIsSentByMe: false,
+    lastMessageId: null,
     lastReadMessageId: null,
     pinned: false,
     canSendMessage: true,

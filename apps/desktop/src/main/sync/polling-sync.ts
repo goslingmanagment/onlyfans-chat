@@ -1,9 +1,13 @@
 // PollingSync (SPEC §6.1) — designed as a cost feature. Chat-list poll is the
 // primary detector; message fetches happen only on list deltas, as ascending
 // tail fetches from the cached boundary. Hot poll reads page 1 only; periodic
-// deep sweeps and a one-time initial hydration walk deeper pages (OnlyFans caps
-// the chats page size at 10). STRICTLY READ-ONLY toward OFAPI.
+// deep sweeps and a chunked, resumable initial hydration walk deeper pages.
+// Hydration is LIST-ONLY: at 900+ chats (loravie, measured 2026-06-11) a
+// tail-fetch per discovered chat would cost ~900 credits and hours of serial
+// fetches — message history loads on conversation open instead.
+// STRICTLY READ-ONLY toward OFAPI.
 
+import { z } from 'zod';
 import { OFAPI_INTER_PAGE_DELAY_MS } from '@chatgoose/shared';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { OfApiClient } from '../ofapi/client';
@@ -17,8 +21,10 @@ const FOCUSED_POLL_MS = 20_000;
 const UNFOCUSED_POLL_MS = 60_000;
 const HIDDEN_FACTOR = 4;
 const BUDGET_FACTOR = 4;
-// OnlyFans hard-caps the chats page size at 10 (live-verified 2026-06-11):
-// limit>10 is silently truncated, so always page by an explicit 10.
+// OnlyFans ignores limit>10 on chats and dictates its own page size (live
+// 2026-06-11: ~10 near the order=recent head, 10–19 deeper); limit≤10 is
+// honored, so we request an explicit 10 and advance the offset by what
+// actually arrived (self-correcting against server-chosen sizes).
 const CHATS_PAGE_LIMIT = 10;
 // Recency invariant (order=recent): any chat whose lastMessage changed surfaces
 // on page 1, so the hot poll needs page 1 only. Deeper pages matter solely for
@@ -26,7 +32,12 @@ const CHATS_PAGE_LIMIT = 10;
 // covers those.
 const DEEP_SWEEP_PAGES = 5;
 const DEEP_SWEEP_INTERVAL_MS = 5 * 60_000;
-const INITIAL_HYDRATION_MAX_PAGES = 30;
+// Initial hydration: resumable chunked walk, a few pages per poll tick so the
+// hot detector keeps running between chunks. loravie FREE measured at 900+
+// chats ≈ 60–90 pages; the cap is a runaway guard, not the expected size.
+// Progress persists in settings so a restart resumes instead of rewalking.
+const HYDRATION_PAGES_PER_TICK = 10;
+const HYDRATION_MAX_PAGES = 150;
 const READ_STATE_SWEEP_MS = 30_000;
 const READ_STATE_SWEEP_IDLE_STOP_MS = 10 * 60_000;
 const READ_STATE_OWN_MESSAGE_MAX_AGE_MS = 24 * 60 * 60_000;
@@ -53,12 +64,21 @@ interface AccountLoop {
   inFlight: boolean;
   lastSuccessAt: number | null;
   lastDeepSweepAt: number | null;
-  /**
-   * In-memory only: a restart mid-hydration leaves a partial cache and does NOT
-   * re-walk 30 pages on next launch — deep sweeps heal the remainder over time.
-   */
-  hydrated: boolean;
   consecutiveFailures: number;
+}
+
+/** Persisted per account (settings table) so restarts resume, never rewalk. */
+const hydrationStateSchema = z.object({
+  nextOffset: z.number().int().nonnegative(),
+  pagesWalked: z.number().int().nonnegative(),
+  done: z.boolean(),
+});
+type HydrationState = z.infer<typeof hydrationStateSchema>;
+
+const FRESH_HYDRATION: HydrationState = { nextOffset: 0, pagesWalked: 0, done: false };
+
+function hydrationKey(accountId: string): string {
+  return `sync.chatHydration.${accountId}`;
 }
 
 export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
@@ -109,7 +129,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   }
 
   /** Tail fetch from the newest cached id (last_id+asc is boundary-inclusive — dedupe by id). */
-  async function fetchChatTail(accountId: string, chatId: string): Promise<string[]> {
+  async function fetchChatTail(
+    accountId: string,
+    chatId: string,
+  ): Promise<{ freshIds: string[]; hadCachedMessages: boolean }> {
     const cachedPage = data.messages.page({ accountId, chatId, limit: 1 });
     const newestCached = cachedPage.items.at(-1)?.messageId;
     const { messages } = newestCached
@@ -123,7 +146,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     data.messages.upsertMany(upserts);
     data.messages.prune(accountId, chatId); // retention (SPEC §10: 5,000/chat default)
     trackUnreadyMedia(accountId, chatId, upserts);
-    return fresh.map((message) => String(message.id));
+    return {
+      freshIds: fresh.map((message) => String(message.id)),
+      hadCachedMessages: newestCached !== undefined,
+    };
   }
 
   function trackUnreadyMedia(
@@ -164,7 +190,11 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }
   }
 
-  /** Delta rule (SPEC §6.1): message fetches only when the list shows change. */
+  /**
+   * Delta rule (SPEC §6.1): message fetches only when the list shows change.
+   * Compares against the chat ROW's own last_message_id baseline — hydration is
+   * list-only, so the messages table says nothing about what we last saw.
+   */
   function chatChanged(accountId: string, chat: OfApiChat): boolean {
     const fanId = chat.fan?.id;
     if (fanId == null) {
@@ -175,11 +205,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       return true;
     }
     const lastId = chat.lastMessage?.id != null ? String(chat.lastMessage.id) : null;
-    const cachedNewest = data.messages
-      .page({ accountId, chatId: String(fanId), limit: 1 })
-      .items.at(-1)?.messageId;
     return (
-      (lastId !== null && lastId !== (cachedNewest ?? null)) ||
+      (lastId !== null && lastId !== cached.lastMessageId) ||
       (chat.unreadMessagesCount ?? 0) !== cached.unreadCount ||
       (chat.lastReadMessageId != null ? String(chat.lastReadMessageId) : null) !==
         cached.lastReadMessageId
@@ -187,9 +214,16 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   }
 
   /** Walk recency-ordered chat pages (limit/offset cursor; nextPageUrl presence = has-more). */
-  async function listChatPages(accountId: string, maxPages: number): Promise<OfApiChat[]> {
+  async function walkChatPages(
+    accountId: string,
+    startOffset: number,
+    maxPages: number,
+  ): Promise<{ chats: OfApiChat[]; nextOffset: number; pages: number; exhausted: boolean }> {
     const collected: OfApiChat[] = [];
     const seenFanIds = new Set<string>();
+    let offset = startOffset;
+    let pages = 0;
+    let exhausted = false;
     for (let page = 0; page < maxPages; page += 1) {
       if (page > 0) {
         await sleep(OFAPI_INTER_PAGE_DELAY_MS); // legacy deep-fetch pacing
@@ -197,10 +231,11 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       const { chats, nextPageUrl } = await client.listChats({
         accountId,
         limit: CHATS_PAGE_LIMIT,
-        offset: page * CHATS_PAGE_LIMIT,
+        offset,
         order: 'recent',
         skipUsers: 'none',
       });
+      pages += 1;
       for (const chat of chats) {
         const fanId = chat.fan?.id;
         if (fanId != null) {
@@ -211,11 +246,33 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         }
         collected.push(chat);
       }
+      offset += chats.length; // server-chosen page sizes vary — advance by what arrived
       if (nextPageUrl === null || chats.length === 0) {
+        exhausted = true;
         break;
       }
     }
-    return collected;
+    return { chats: collected, nextOffset: offset, pages, exhausted };
+  }
+
+  function readHydration(accountId: string): HydrationState {
+    return data.settings.getParsed(hydrationKey(accountId), hydrationStateSchema) ?? FRESH_HYDRATION;
+  }
+
+  /** Upsert chat + fan rows only — the list payload is all the inbox needs. */
+  function upsertChatRows(accountId: string, chats: readonly OfApiChat[]): void {
+    const chatUpserts = [];
+    const fetchedAt = new Date(now()).toISOString();
+    for (const chat of chats) {
+      const mapped = mapChat(accountId, chat, toMediaUrl);
+      if (mapped) {
+        chatUpserts.push(mapped);
+      }
+      if (chat.fan != null) {
+        data.fans.upsert(mapFan(accountId, chat.fan, toMediaUrl, fetchedAt));
+      }
+    }
+    data.chats.upsertMany(chatUpserts);
   }
 
   async function pollAccount(accountId: string, depth: PollDepth = 'hot'): Promise<void> {
@@ -225,60 +282,53 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }
     loop.inFlight = true;
     try {
-      // Initial hydration: empty chats cache → full walk, once per loop lifetime.
-      const cacheEmpty =
-        data.chats.list({ accountId, filter: 'all', limit: 1 }).items.length === 0;
-      const hydrating = !loop.hydrated && cacheEmpty;
-      const deepDue =
-        depth === 'deep' ||
-        loop.lastDeepSweepAt === null ||
-        now() - loop.lastDeepSweepAt >= DEEP_SWEEP_INTERVAL_MS;
-      const maxPages = hydrating
-        ? INITIAL_HYDRATION_MAX_PAGES
-        : deepDue
-          ? DEEP_SWEEP_PAGES
-          : 1; // hot poll: page 1 only — recency invariant, see CHATS_PAGE_LIMIT
-
       const prevSuccessAt = loop.lastSuccessAt;
-      const chats = await listChatPages(accountId, maxPages);
+      const hydration = readHydration(accountId);
+      const deepDue =
+        hydration.done &&
+        (depth === 'deep' ||
+          loop.lastDeepSweepAt === null ||
+          now() - loop.lastDeepSweepAt >= DEEP_SWEEP_INTERVAL_MS);
+      // Head walk: the delta detector. Page 1 suffices on hot ticks (recency
+      // invariant, see CHATS_PAGE_LIMIT); deep sweeps cover read-state drift.
+      const head = await walkChatPages(accountId, 0, deepDue ? DEEP_SWEEP_PAGES : 1);
 
       const deltas: { chatId: string; wasCached: boolean }[] = [];
-      const chatUpserts = [];
-      const fetchedAt = new Date(now()).toISOString();
-      for (const chat of chats) {
-        if (chatChanged(accountId, chat)) {
-          const fanId = chat.fan?.id;
-          if (fanId != null) {
-            const chatId = String(fanId);
-            deltas.push({ chatId, wasCached: data.chats.get(accountId, chatId) !== null });
-          }
+      for (const chat of head.chats) {
+        if (!chatChanged(accountId, chat)) {
+          continue;
         }
-        const mapped = mapChat(accountId, chat, toMediaUrl);
-        if (mapped) {
-          chatUpserts.push(mapped);
+        const fanId = chat.fan?.id;
+        if (fanId == null) {
+          continue;
         }
-        if (chat.fan != null) {
-          data.fans.upsert(mapFan(accountId, chat.fan, toMediaUrl, fetchedAt));
+        const chatId = String(fanId);
+        const wasCached = data.chats.get(accountId, chatId) !== null;
+        // Tail-fetch policy (the cost rule at 900+ chats):
+        //  - cached chat changed → always fetch, even at baseline (silently
+        //    swallows the downtime backlog so it never replays as live events);
+        //  - uncached chat → fetch only post-baseline (a fresh conversation
+        //    surfacing on the head pages); at baseline it is pure hydration.
+        if (wasCached || prevSuccessAt !== null) {
+          deltas.push({ chatId, wasCached });
         }
       }
-      data.chats.upsertMany(chatUpserts);
+      upsertChatRows(accountId, head.chats);
 
-      // Baseline (first successful poll of this process lifetime, incl. initial
-      // hydration): hydrate the DB fully but emit no message-level events —
-      // history is not news (notifications/toasts hang off these events).
       for (const delta of deltas) {
-        const freshIds = await fetchChatTail(accountId, delta.chatId);
+        const { freshIds, hadCachedMessages } = await fetchChatTail(accountId, delta.chatId);
         if (prevSuccessAt === null) {
-          continue;
+          continue; // baseline: history is not news (notifications hang off these)
         }
         for (const messageId of freshIds) {
           const row = data.messages.get(accountId, delta.chatId, messageId);
           if (!row) {
             continue;
           }
-          // Uncached chat entering the window post-baseline: its tail is mostly
-          // backlog — only messages newer than the previous successful poll are live.
-          if (!delta.wasCached && Date.parse(row.createdAt) <= prevSuccessAt) {
+          // No cached boundary (chat never opened / just discovered): the tail
+          // is mostly backlog — only messages newer than the previous successful
+          // poll are live. With a boundary, fresh-by-id is exact.
+          if (!hadCachedMessages && Date.parse(row.createdAt) <= prevSuccessAt) {
             continue;
           }
           emit(
@@ -299,9 +349,30 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       }
 
       emit({ type: 'chatListUpdated', accountId });
+
+      // Hydration chunk: list-only, no delta processing — message history loads
+      // on conversation open. Runs after the fresh-delta work so live messages
+      // never wait behind a deep walk; resumes past the head across ticks and
+      // restarts (progress persisted).
+      if (!hydration.done) {
+        await sleep(OFAPI_INTER_PAGE_DELAY_MS);
+        const chunk = await walkChatPages(
+          accountId,
+          Math.max(hydration.nextOffset, head.nextOffset),
+          HYDRATION_PAGES_PER_TICK,
+        );
+        upsertChatRows(accountId, chunk.chats);
+        const pagesWalked = hydration.pagesWalked + chunk.pages;
+        data.settings.set(hydrationKey(accountId), {
+          nextOffset: chunk.nextOffset,
+          pagesWalked,
+          done: chunk.exhausted || pagesWalked >= HYDRATION_MAX_PAGES,
+        } satisfies HydrationState);
+        emit({ type: 'chatListUpdated', accountId }); // progressive inbox paint
+      }
+
       loop.lastSuccessAt = now();
-      loop.hydrated = true;
-      if (maxPages > 1) {
+      if (deepDue) {
         loop.lastDeepSweepAt = now();
       }
       loop.consecutiveFailures = 0;
@@ -401,7 +472,6 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
             inFlight: false,
             lastSuccessAt: null,
             lastDeepSweepAt: null,
-            hydrated: false,
             consecutiveFailures: 0,
           });
         }
