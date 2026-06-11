@@ -30,7 +30,7 @@ import type { FeatureType, ReplyTone } from '@chatgoose/shared/types';
 import { streamAnthropic } from '../../src/main/ai/providers/anthropic';
 import { buildFeatureResult } from '../../src/main/ai/index';
 
-const goldenRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../tests/fixtures/golden');
+const goldenRoot = join(dirname(fileURLToPath(import.meta.url)), '../../../../tests/fixtures/golden');
 const MODEL_ID = 'claude-sonnet-4-6'; // production default (registry: anthropic:claude-sonnet-4-6)
 const NOW = Date.parse('2026-06-10T12:00:00Z'); // matches golden-context.test.ts
 
