@@ -95,6 +95,29 @@ export interface SummaryHubHooks {
   }) => Promise<void>;
 }
 
+/**
+ * Raw usage payload — exactly what recordUsageEvent persists to usage_events
+ * and hands to the optional onUsageEvent hook. Field names follow the LLM
+ * usage metrics (cacheCreationInputTokens…), not core's wire contract; the hub
+ * module owns the mapping (src/main/hub/usage-mapper.ts). `chatId` is the raw
+ * OnlyFans id (`chat_id === fan.id`) backing core's conversationId.
+ */
+export interface UsageEventRecord {
+  clientEventId: string;
+  feature: FeatureType;
+  model: string;
+  inputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  chatId: string;
+  durationMs: number;
+  isCacheHit: boolean;
+  isRegeneration: boolean;
+  completedAt: string;
+}
+
 export interface AiCoordinatorDeps {
   data: DataLayer;
   client: OfApiClient;
@@ -102,6 +125,12 @@ export interface AiCoordinatorDeps {
   keychain: Keychain;
   gateway?: AiGateway;
   summaryHub?: SummaryHubHooks;
+  /**
+   * P4 hub wiring seam (SPEC §8.6): fired after the usage_events row is
+   * written so fresh events reach the hub usage reporter immediately. The
+   * table write stays the persistence — this hook is delivery only.
+   */
+  onUsageEvent?: (event: UsageEventRecord) => void;
 }
 
 export interface AiCoordinator {
@@ -554,7 +583,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     flags: { isCacheHit?: boolean } = {},
   ): void {
     const usage = op.usage;
-    const payload = {
+    const payload: UsageEventRecord = {
       clientEventId: op.operationId,
       // Feature ids are wire-stable ('fan-summary', never 'scan' — SPEC §8.6).
       feature: op.feature,
@@ -564,6 +593,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       cacheReadInputTokens: usage?.cache_read_input_tokens ?? 0,
       outputTokens: usage?.output_tokens ?? 0,
       totalTokens: totalTokens ?? 0,
+      chatId: op.chatId,
       durationMs: Math.max(0, Date.now() - op.startedAtMs),
       isCacheHit: flags.isCacheHit === true,
       isRegeneration: op.params.forceRegenerate === true,
@@ -583,6 +613,11 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         });
     } catch {
       // Usage bookkeeping must never fail a completed operation.
+    }
+    try {
+      deps.onUsageEvent?.(payload);
+    } catch {
+      // Same guarantee for a throwing hook.
     }
   }
 

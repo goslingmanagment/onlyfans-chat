@@ -425,6 +425,7 @@ function buildStore(): MockStore {
     defaultReplyTone: 'casual',
     creditBudgetPerShift: null,
     accountMappings: { acct_lora: 'builtin:lora' },
+    accountPageLabels: {},
   };
 
   const freshness: Record<string, string> = {};
@@ -443,6 +444,7 @@ function buildStore(): MockStore {
       rpmRemaining: 288,
       freshness,
       state: 'live',
+      hub: 'off',
     },
     creditsToday: 1_243,
   };
@@ -938,11 +940,15 @@ export function createMockBridge(): ChatGooseBridge {
       pollTick();
     },
     'cmd:settings.update': (patch) => {
-      const { ofapiKey, anthropicKey, openRouterKey, ...rest } = patch;
+      const { ofapiKey, anthropicKey, openRouterKey, hubApiKey, ...rest } = patch;
       store.settings = { ...store.settings, ...rest };
       if (ofapiKey !== undefined) store.settings.hasOfapiKey = ofapiKey.length > 0;
       if (anthropicKey !== undefined) store.settings.hasAnthropicKey = anthropicKey.length > 0;
       if (openRouterKey !== undefined) store.settings.hasOpenRouterKey = openRouterKey.length > 0;
+      if (hubApiKey !== undefined) store.settings.hasHubKey = hubApiKey.trim().length > 0;
+      // Mock hub: configured = instantly live (exercises the status chip).
+      store.sync.hub =
+        store.settings.hubBaseUrl !== null && store.settings.hasHubKey ? 'live' : 'off';
       emit('db:changed', { scope: 'settings' });
       return { ...store.settings };
     },

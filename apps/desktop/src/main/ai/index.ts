@@ -5,7 +5,7 @@
 //   coordinator.subscribe(event => webContents.send('ai:event', event)).
 
 export { createAiCoordinator, buildFeatureResult, PERSONALITIES_SETTINGS_KEY } from './coordinator';
-export type { AiCoordinator, AiCoordinatorDeps, SummaryHubHooks } from './coordinator';
+export type { AiCoordinator, AiCoordinatorDeps, SummaryHubHooks, UsageEventRecord } from './coordinator';
 export { createDirectGateway } from './gateway';
 export type { AiGateway, AiGatewayCallbacks, DirectGatewayOptions } from './gateway';
 export { createContextLoader } from './context-loader';

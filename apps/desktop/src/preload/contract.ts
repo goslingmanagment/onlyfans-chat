@@ -113,6 +113,8 @@ export interface SyncStatusVM {
   /** Per-account ISO timestamp of last successful chat-list poll. */
   freshness: Record<string, string>;
   state: 'live' | 'degraded' | 'offline';
+  /** Agency Hub SSE stream state (SPEC §6.2/§9); 'off' = hub not configured. */
+  hub: 'off' | 'connecting' | 'live' | 'degraded' | 'auth-failed' | 'stopped';
 }
 
 export interface SettingsVM {
@@ -136,6 +138,11 @@ export interface SettingsVM {
   accountMappings: Record<string, string>;
   /** Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off. */
   hubBaseUrl: string | null;
+  /**
+   * Manual OFAPI accountId → core page-label overrides (SPEC §8.5). Accounts
+   * not listed here auto-match by normalized username in main.
+   */
+  accountPageLabels: Record<string, string>;
 }
 
 export type SettingsPatch = Partial<

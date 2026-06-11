@@ -75,6 +75,7 @@ describe('settings store', () => {
     expect(vm.markAsReadOnOpen).toBe(false);
     expect(vm.creditBudgetPerShift).toBeNull();
     expect(vm.accountMappings).toEqual({});
+    expect(vm.accountPageLabels).toEqual({});
     expect(vm.hasOfapiKey).toBe(false);
     expect(vm.hasAnthropicKey).toBe(false);
     expect(vm.hasOpenRouterKey).toBe(false);
@@ -187,6 +188,22 @@ describe('settings store', () => {
     const cleared = await store.update({ hubBaseUrl: null });
     expect(cleared.hubBaseUrl).toBeNull();
     await expect(store.update({ hubBaseUrl: '' })).rejects.toThrow();
+  });
+
+  it('persists accountPageLabels overrides (round-trip) and rejects bad shapes', async () => {
+    const { store, queries, secrets } = createStore();
+    const vm = await store.update({ accountPageLabels: { acct_1: 'Lora', acct_2: 'Lexi' } });
+    expect(vm.accountPageLabels).toEqual({ acct_1: 'Lora', acct_2: 'Lexi' });
+
+    const reread = createSettingsStore({ queries, secrets });
+    expect((await reread.get()).accountPageLabels).toEqual({ acct_1: 'Lora', acct_2: 'Lexi' });
+
+    // Clearing = writing the whole record without the key.
+    const cleared = await store.update({ accountPageLabels: {} });
+    expect(cleared.accountPageLabels).toEqual({});
+
+    await expect(store.update({ accountPageLabels: { acct_1: 3 } })).rejects.toThrow();
+    await expect(store.update({ accountPageLabels: 'Lora' })).rejects.toThrow();
   });
 
   it('clears the hub key when the patch value is whitespace', async () => {

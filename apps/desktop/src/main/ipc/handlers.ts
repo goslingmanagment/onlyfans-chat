@@ -10,6 +10,7 @@ import { reconcileBundledPersonalities } from '@chatgoose/shared/prompts/persona
 import type { DataLayer, OutboxRow } from '../db/index';
 import type { SettingsStore } from '../settings/store';
 import type { SyncProvider } from '../sync/provider';
+import type { HubSyncStatus } from '../sync/hub-sync';
 import type { CreditMeter } from '../ofapi/credit-meter';
 import type { SendEngine } from '../send/engine';
 import type { AiStartRequest, OutboxItemVM, SyncStatusVM } from '../../preload/contract';
@@ -129,7 +130,8 @@ export interface AiCoordinatorLike {
 export interface IpcDeps {
   data: DataLayer;
   settingsStore: SettingsStore;
-  sync: SyncProvider | null;
+  /** hubStatus is the HubAwareSync extension; plain providers report hub 'off'. */
+  sync: (SyncProvider & { hubStatus?: () => HubSyncStatus | null }) | null;
   creditMeter: CreditMeter | null;
   coordinator: AiCoordinatorLike | null;
   /** Null until an OFAPI key exists (same lifecycle as sync). */
@@ -137,6 +139,12 @@ export interface IpcDeps {
   purge: () => Promise<void>;
   /** Called when settings.update sets an OFAPI key while sync is offline. */
   onOfapiKeyConfigured?: () => void;
+  /**
+   * Called after any settings.update that touched hubApiKey/hubBaseUrl. Key
+   * writes go to the keychain and publish no settings-table change, so this
+   * hook is the only reconnect signal for key-only edits.
+   */
+  onHubConfigChanged?: () => void;
 }
 
 function normalizePersonality(parsed: z.infer<typeof personalitySchema>): Personality {
@@ -221,6 +229,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       rpmRemaining: snapshot?.rpmRemaining ?? null,
       freshness: syncStatus.freshness,
       state: syncStatus.state,
+      hub: deps.sync?.hubStatus?.() ?? 'off',
     };
   });
 
@@ -260,6 +269,15 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     const result = await settingsStore.update(rawPatch);
     if (!before.hasOfapiKey && result.hasOfapiKey) {
       deps.onOfapiKeyConfigured?.();
+    }
+    // Fires on any patch carrying hub config (incl. key replacement, which is
+    // invisible in before/after VM comparison) — but only after validation.
+    const touchedHub =
+      typeof rawPatch === 'object' &&
+      rawPatch !== null &&
+      ('hubApiKey' in rawPatch || 'hubBaseUrl' in rawPatch);
+    if (touchedHub) {
+      deps.onHubConfigChanged?.();
     }
     return result;
   });

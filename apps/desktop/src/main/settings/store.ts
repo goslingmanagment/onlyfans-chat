@@ -71,6 +71,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'creditBudgetPerShift',
   'accountMappings',
   'hubBaseUrl',
+  'accountPageLabels',
 ] as const satisfies readonly (keyof PersistedSettings)[];
 
 const persistedFieldSchemas = {
@@ -94,6 +95,8 @@ const persistedFieldSchemas = {
   accountMappings: z.record(z.string(), z.string()),
   // Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off.
   hubBaseUrl: z.string().min(1).nullable(),
+  // Manual OFAPI accountId → core page-label overrides (SPEC §8.5).
+  accountPageLabels: z.record(z.string(), z.string()),
 };
 
 interface FieldValidator<T> {
@@ -122,6 +125,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   creditBudgetPerShift: null,
   accountMappings: {},
   hubBaseUrl: null,
+  accountPageLabels: {},
 };
 
 // ─── Patch schema (IPC trust boundary for cmd:settings.update) ──────────
@@ -142,6 +146,7 @@ export const settingsPatchSchema = z.strictObject({
   creditBudgetPerShift: persistedFieldSchemas.creditBudgetPerShift.optional(),
   accountMappings: persistedFieldSchemas.accountMappings.optional(),
   hubBaseUrl: persistedFieldSchemas.hubBaseUrl.optional(),
+  accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
   // Secret material: routed to the keychain, never stored in the settings table.
   ofapiKey: z.string().optional(),
   anthropicKey: z.string().optional(),
@@ -215,6 +220,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       creditBudgetPerShift: readField('creditBudgetPerShift'),
       accountMappings: readField('accountMappings'),
       hubBaseUrl: readField('hubBaseUrl'),
+      accountPageLabels: readField('accountPageLabels'),
     };
   }
 

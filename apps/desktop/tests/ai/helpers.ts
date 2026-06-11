@@ -54,6 +54,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     defaultReplyTone: 'casual',
     creditBudgetPerShift: null,
     accountMappings: { [ACCT]: 'builtin:lora' },
+    accountPageLabels: {},
     ...overrides,
   };
 }

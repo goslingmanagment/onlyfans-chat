@@ -25,6 +25,7 @@ import { createHubSync } from './sync/hub-sync';
 import { createHubAwareSync, type HubAwareSync } from './sync/hub-provider';
 import { registerIpcHandlers } from './ipc/handlers';
 import { createAiCoordinator, type AiCoordinator } from './ai/index';
+import { createHubModule, type HubModule } from './hub/index';
 import { attachEventForwarding } from './ipc/events';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
@@ -35,6 +36,9 @@ let sync: HubAwareSync | null = null;
 let client: OfApiClient | null = null;
 let coordinator: AiCoordinator | null = null;
 let sendEngine: SendEngine | null = null;
+let hub: HubModule | null = null;
+/** Set by initOfapi; lets cmd:settings.update trigger a hub-config recheck. */
+let recheckHubConfig: (() => void) | null = null;
 
 function loadWindowContent(win: BrowserWindow): void {
   if (process.env['ELECTRON_RENDERER_URL']) {
@@ -127,17 +131,24 @@ async function initOfapi(
   }
   let hubFingerprint = await hubConfigFingerprint();
 
+  // Shared by the settings-bus watcher and the IPC onHubConfigChanged hook
+  // (key-only writes hit the keychain and never publish a bus event).
+  recheckHubConfig = () => {
+    void hubConfigFingerprint().then((next) => {
+      if (next !== hubFingerprint) {
+        hubFingerprint = next;
+        void sync?.reconfigureHub();
+        void hub?.reconfigure();
+      }
+    });
+  };
+
   dataLayer.bus.subscribe((events) => {
     if (events.some((event) => event.scope === 'settings')) {
       void settingsStore.get().then((vm) => {
         settingsCache = vm;
       });
-      void hubConfigFingerprint().then((next) => {
-        if (next !== hubFingerprint) {
-          hubFingerprint = next;
-          void sync?.reconfigureHub();
-        }
-      });
+      recheckHubConfig?.();
     }
   });
 
@@ -176,6 +187,11 @@ async function initOfapi(
     },
   });
 
+  // Hub REST cluster (SPEC §8.5/§8.6): summary prefetch/push + usage reporter.
+  // Inert until hub config exists; rebuilt by recheckHubConfig on changes.
+  hub = createHubModule({ data: dataLayer, settingsStore, keychain });
+  void hub.reconfigure();
+
   // Send engine (SPEC §7): exists exactly when a client does. messageSent sync
   // events feed its verifier; boot reconciliation runs before any send can.
   const engine = createSendEngine({
@@ -186,7 +202,11 @@ async function initOfapi(
   });
   sendEngine = engine;
   sync.subscribe((event) => engine.handleSyncEvent(event));
-  void engine.reconcileOnBoot();
+  // Awaited on purpose (adversarial review 2026-06-11): the "reconciliation
+  // before any send" guarantee must hold even for a fast first user action.
+  // reconcileOnBoot swallows network errors internally, so this never blocks
+  // startup on connectivity.
+  await engine.reconcileOnBoot();
 
   const accountIds = await syncAccounts(client, dataLayer, toMediaUrl);
   sync.start(accountIds);
@@ -253,7 +273,16 @@ async function boot(): Promise<void> {
   await initOfapi(keychain, data, settingsStore);
 
   if (client) {
-    coordinator = createAiCoordinator({ data, client, settingsStore, keychain });
+    coordinator = createAiCoordinator({
+      data,
+      client,
+      settingsStore,
+      keychain,
+      // Hooks delegate through the hub module — unconfigured hub stays inert.
+      ...(hub !== null
+        ? { summaryHub: hub.summaryHub, onUsageEvent: (event) => hub?.onUsageEvent(event) }
+        : {}),
+    });
   }
 
   registerIpcHandlers({
@@ -266,6 +295,7 @@ async function boot(): Promise<void> {
     purge: async () => {
       sync?.stop();
       sendEngine?.dispose();
+      hub?.dispose();
       data?.close();
       await media.cache.clear().catch(() => undefined);
       await rm(join(userData, 'chatgoose.db'), { force: true });
@@ -280,6 +310,7 @@ async function boot(): Promise<void> {
         void initOfapi(keychain, data, settingsStore);
       }
     },
+    onHubConfigChanged: () => recheckHubConfig?.(),
   });
 
   attachEventForwarding({
@@ -355,5 +386,6 @@ app.on('quit', () => {
   sync?.stop();
   sendEngine?.dispose();
   coordinator?.dispose();
+  hub?.dispose();
   data?.close();
 });
