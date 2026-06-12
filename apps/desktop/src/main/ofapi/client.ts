@@ -152,7 +152,7 @@ export interface ListFansParams extends PurposeTagged {
   query?: string;
 }
 
-// ── User lists (Supporters board, PLAN item 12) — READ-ONLY ──────────────
+// ── User lists (Spenders board, PLAN item 12) — READ-ONLY ──────────────
 // OnlyMonster owns these lists; the client deliberately exposes no method
 // that writes to them (no add/remove/clear/create/delete).
 

@@ -1,10 +1,10 @@
-// One supporter row — chat-row anatomy per the binding mockup .lrow: lifetime
+// One spender row — chat-row anatomy per the binding mockup .lrow: lifetime
 // (mono 10.5) right after the nick, 30-day green +$N top-right (only when >0),
 // author-prefixed preview, staleness dot before the «МОДЕЛЬ N Д · ФАН M Д»
 // counters. The dot tracks FAN silence (warm 8–21 d, hot >21 d).
 
 import { memo } from 'react';
-import type { SupporterRowVM } from '../../../../preload/contract';
+import type { SpenderRowVM } from '../../../../preload/contract';
 import { Avatar } from '../../design/Avatar';
 import { cx } from '../../lib/cx';
 import { formatWholeDollars } from '../../lib/money';
@@ -12,17 +12,17 @@ import type { UiTranslator } from '@chatgoose/shared/i18n/index';
 
 export function dayCounter(t: UiTranslator, days: number | null): string {
   if (days === null) return '—';
-  if (days === 0) return t('sup.today');
-  return `${days} ${t('sup.dayShort')}`;
+  if (days === 0) return t('sp.today');
+  return `${days} ${t('sp.dayShort')}`;
 }
 
-export const SupporterRowItem = memo(function SupporterRowItem({
+export const SpenderRowItem = memo(function SpenderRowItem({
   row,
   active,
   t,
   onOpen,
 }: {
-  row: SupporterRowVM;
+  row: SpenderRowVM;
   /** Cursor row or open-preview row — bg + clay left bar (.lrow.open). */
   active: boolean;
   t: UiTranslator;
@@ -60,7 +60,7 @@ export const SupporterRowItem = memo(function SupporterRowItem({
           )}
         </div>
         <div className="mt-[2px] truncate text-[13px] text-ink-mid">
-          {row.lastMessageIsSentByMe && <span className="text-ink-low">{t('sup.you')} </span>}
+          {row.lastMessageIsSentByMe && <span className="text-ink-low">{t('sp.you')} </span>}
           {row.lastMessagePreview}
         </div>
       </div>
@@ -75,9 +75,9 @@ export const SupporterRowItem = memo(function SupporterRowItem({
               )}
             />
           )}
-          {t('sup.model')} <b className="font-semibold text-ink-mid">{dayCounter(t, row.modelDays)}</b>
+          {t('sp.model')} <b className="font-semibold text-ink-mid">{dayCounter(t, row.modelDays)}</b>
           {' · '}
-          {t('sup.fan')} <b className="font-semibold text-ink-mid">{dayCounter(t, row.fanDays)}</b>
+          {t('sp.fan')} <b className="font-semibold text-ink-mid">{dayCounter(t, row.fanDays)}</b>
         </span>
       </div>
     </button>

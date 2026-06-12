@@ -1,4 +1,4 @@
-// Contract tests for the user-lists endpoints (Supporters board, PLAN item 12).
+// Contract tests for the user-lists endpoints (Spenders board, PLAN item 12).
 // Fixtures are SYNTHETIC (hand-built from the vendored openapi examples, marked
 // in their _fixture headers). The lists are OnlyMonster's — the client must
 // stay strictly read-only toward them.
@@ -28,7 +28,7 @@ describe('listUserLists', () => {
   it('unwraps the LIVE {list, hasMore} data shape (NOT the openapi example array)', async () => {
     const fixture = loadFixture('user-lists.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    const result = await client.listUserLists({ purpose: 'supporters', accountId: ACCOUNT_ID });
+    const result = await client.listUserLists({ purpose: 'spenders', accountId: ACCOUNT_ID });
     expect(result.lists).toHaveLength(6);
     expect(result.hasMore).toBe(false);
     const url = new URL(requests[0]?.url ?? '');
@@ -39,7 +39,7 @@ describe('listUserLists', () => {
   it('tolerates the live id namespace: custom STRING ids, built-in word ids', async () => {
     const fixture = loadFixture('user-lists.json');
     const { client } = makeClient([() => jsonResponse(fixture)]);
-    const { lists } = await client.listUserLists({ purpose: 'supporters', accountId: ACCOUNT_ID });
+    const { lists } = await client.listUserLists({ purpose: 'spenders', accountId: ACCOUNT_ID });
     expect(lists[0]?.id).toBe('1247248934');
     expect(lists[0]?.type).toBe('custom');
     expect(lists[0]?.name).toBe('🐳 Кит 600+_OM');
@@ -51,19 +51,19 @@ describe('listUserLists', () => {
   it('passes limit/offset through as query params', async () => {
     const fixture = loadFixture('user-lists.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
-    await client.listUserLists({ purpose: 'supporters', accountId: ACCOUNT_ID, limit: 50, offset: 50 });
+    await client.listUserLists({ purpose: 'spenders', accountId: ACCOUNT_ID, limit: 50, offset: 50 });
     const url = new URL(requests[0]?.url ?? '');
     expect(url.searchParams.get('limit')).toBe('50');
     expect(url.searchParams.get('offset')).toBe('50');
   });
 
-  it('records credit telemetry under the supporters purpose', async () => {
+  it('records credit telemetry under the spenders purpose', async () => {
     const fixture = loadFixture('user-lists.json');
     const { client } = makeClient([() => jsonResponse(fixture)]);
-    await client.listUserLists({ purpose: 'supporters', accountId: ACCOUNT_ID });
+    await client.listUserLists({ purpose: 'spenders', accountId: ACCOUNT_ID });
     const snapshot = client.creditMeter.snapshot();
-    expect(snapshot.usedTodayByPurpose['supporters']?.credits).toBe(1);
-    expect(snapshot.usedTodayByPurpose['supporters']?.requests).toBe(1);
+    expect(snapshot.usedTodayByPurpose['spenders']?.credits).toBe(1);
+    expect(snapshot.usedTodayByPurpose['spenders']?.requests).toBe(1);
   });
 });
 
@@ -72,7 +72,7 @@ describe('listUserListUsers', () => {
     const fixture = loadFixture('user-list-users.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
     const result = await client.listUserListUsers({
-      purpose: 'supporters',
+      purpose: 'spenders',
       accountId: ACCOUNT_ID,
       userListId: '1139401260',
       limit: 100,
@@ -92,7 +92,7 @@ describe('listUserListUsers', () => {
     const { client, requests } = makeClient([]);
     await expect(
       client.listUserListUsers({
-        purpose: 'supporters',
+        purpose: 'spenders',
         accountId: ACCOUNT_ID,
         userListId: '1',
         limit: USER_LIST_USERS_MAX_LIMIT + 1,
@@ -105,7 +105,7 @@ describe('listUserListUsers', () => {
     const fixture = loadFixture('user-list-users.json');
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
     await client.listUserListUsers({
-      purpose: 'supporters',
+      purpose: 'spenders',
       accountId: ACCOUNT_ID,
       userListId: 'rebill_on/x',
     });

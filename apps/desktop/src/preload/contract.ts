@@ -232,10 +232,10 @@ export interface SettingsVM {
   /** Chat-list lifetime-spend style (DESIGN §1): bare figure or bordered chip. */
   spendStyle: 'figure' | 'chip';
   /**
-   * Supporters board: per-account OWNER-ORDERED OnlyMonster list ids mapped to
+   * Spenders board: per-account OWNER-ORDERED OnlyMonster list ids mapped to
    * board shelves (PLAN item 12). Spenders outside mapped lists → «Без тира».
    */
-  supportersListMappings: Record<string, string[]>;
+  spendersListMappings: Record<string, string[]>;
   /** Interface language; 'system' resolves from the OS locale at runtime. */
   uiLocale: UiLocaleSetting;
   /** Window zoom factor (0.9 | 1 | 1.1 | 1.25). */
@@ -363,10 +363,10 @@ export interface PingGateVM {
   blocked: boolean;
 }
 
-// ─── Supporters board (PLAN item 12; binding mockup mockups/supporters.html) ──
+// ─── Spenders board (PLAN item 12; binding mockup mockups/supporters.html) ──
 
 /** One OnlyMonster user-list as the mapping/settings surface sees it. */
-export interface SupporterListVM {
+export interface SpenderListVM {
   /** List id as string (built-ins are string ids, custom lists numeric upstream). */
   id: string;
   name: string;
@@ -376,7 +376,7 @@ export interface SupporterListVM {
 }
 
 /** One board row (chat-row anatomy per the binding mockup). */
-export interface SupporterRowVM {
+export interface SpenderRowVM {
   /** Raw OF numeric id as string — fan id === chat id. */
   fanId: string;
   name: string;
@@ -544,25 +544,25 @@ export interface InvokeChannels {
     args: { accountId: string; chatId: string; text: string };
     result: void;
   };
-  // ── Supporters board (PLAN item 12) ──
+  // ── Spenders board (PLAN item 12) ──
   /** All OM user-lists on the account (TTL-cached fetch-through; 1 credit). */
-  'query:supporters.lists': {
+  'query:spenders.lists': {
     args: { accountId: string };
-    result: { lists: SupporterListVM[]; fetchedAt: string };
+    result: { lists: SpenderListVM[]; fetchedAt: string };
   };
   /**
    * Joined rows of one MAPPED list, sorted by fan silence; fans already on a
    * higher (earlier-mapped) shelf are deduped out. Loads the roster (and any
    * earlier shelves' rosters) lazily; roster ids TTL-cache in main.
    */
-  'query:supporters.roster': {
+  'query:spenders.roster': {
     args: { accountId: string; listId: string };
-    result: { rows: SupporterRowVM[]; truncated: boolean; fetchedAt: string };
+    result: { rows: SpenderRowVM[]; truncated: boolean; fetchedAt: string };
   };
   /** Spenders outside every mapped roster («Без тира»); loads all mapped rosters. */
-  'query:supporters.untiered': {
+  'query:spenders.untiered': {
     args: { accountId: string };
-    result: { rows: SupporterRowVM[]; fetchedAt: string };
+    result: { rows: SpenderRowVM[]; fetchedAt: string };
   };
   // ── Vault & PPV (PRD F7, P5 — additive) ──
   /** Offset-paginated (OFAPI vault pagination is limit/offset + hasMore). */
@@ -677,9 +677,9 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'cmd:message.unsend': true,
   'query:draft.get': true,
   'cmd:draft.set': true,
-  'query:supporters.lists': true,
-  'query:supporters.roster': true,
-  'query:supporters.untiered': true,
+  'query:spenders.lists': true,
+  'query:spenders.roster': true,
+  'query:spenders.untiered': true,
   'query:vault.list': true,
   'query:vault.albums': true,
   'query:chat.gallery': true,

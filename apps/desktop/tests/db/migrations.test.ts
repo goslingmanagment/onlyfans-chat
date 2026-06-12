@@ -33,7 +33,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
-      expect(SCHEMA_VERSION).toBe(7);
+      expect(SCHEMA_VERSION).toBe(8);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       expect(names).toContain('media_urls');
       // v7: per-purpose credit ledger + the durable AI spend ledger
@@ -189,6 +189,34 @@ describe('migration runner', () => {
       .prepare("SELECT SUM(used) AS used FROM credit_log WHERE day = '2026-06-11'")
       .get();
     expect(total).toEqual({ used: 87 });
+    db.close();
+  });
+
+  it('v7 → v8 carries the spenders rename: settings mapping key + credit_log purpose', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 7));
+    expect(readSchemaVersion(db)).toBe(7);
+
+    db.exec(
+      'INSERT INTO settings (key, value) VALUES (\'supportersListMappings\', \'{"acct_1":["101"]}\')',
+    );
+    db.exec(
+      "INSERT INTO credit_log (day, purpose, used, requests) VALUES ('2026-06-13', 'supporters', 9, 9)",
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 7, to: SCHEMA_VERSION });
+
+    const mapping: unknown = db
+      .prepare("SELECT value FROM settings WHERE key = 'spendersListMappings'")
+      .get();
+    expect(mapping).toEqual({ value: '{"acct_1":["101"]}' });
+    const oldKey: unknown = db
+      .prepare("SELECT value FROM settings WHERE key = 'supportersListMappings'")
+      .get();
+    expect(oldKey).toBeUndefined();
+
+    const ledger = db.prepare('SELECT day, purpose, used, requests FROM credit_log').all();
+    expect(ledger).toEqual([{ day: '2026-06-13', purpose: 'spenders', used: 9, requests: 9 }]);
     db.close();
   });
 

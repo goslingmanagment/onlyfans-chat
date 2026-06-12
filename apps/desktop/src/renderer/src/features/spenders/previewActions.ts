@@ -10,9 +10,9 @@ import { useUiStore } from '../../state/uiStore';
 import { startAiFeature } from '../ai/aiStore';
 import { deriveHiLocked, evaluateAiGate, evaluateHiGate, evaluatePingGate } from '../ai/dockLogic';
 import { pingGateKey } from '../ai/pingGate';
-import { useSupportersStore } from './supportersStore';
+import { useSpendersStore } from './spendersStore';
 
-export const PREVIEW_TEXTAREA_ID = 'supporters-preview-composer';
+export const PREVIEW_TEXTAREA_ID = 'spenders-preview-composer';
 
 export function focusPreviewComposer(): void {
   const el = document.getElementById(PREVIEW_TEXTAREA_ID);
@@ -24,8 +24,8 @@ export type PreviewAiFeature = 'ping' | 'fast-reply' | 'hi-greeting';
 
 export function startAiFromPreview(feature: PreviewAiFeature, queryClient: QueryClient): void {
   const ui = useUiStore.getState();
-  const fanId = useSupportersStore.getState().previewFanId;
-  if (ui.view !== 'supporters' || ui.selectedAccountId === null || fanId === null) return;
+  const fanId = useSpendersStore.getState().previewFanId;
+  if (ui.view !== 'spenders' || ui.selectedAccountId === null || fanId === null) return;
   const accountId = ui.selectedAccountId;
 
   const settings = queryClient.getQueryData<SettingsVM>(qk.settings);

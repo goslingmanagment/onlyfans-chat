@@ -26,7 +26,7 @@ export interface FanTransactionsQueries {
   upsertMany(rows: readonly FanTransactionUpsert[]): void;
   /** Newest stored created_at for the account — the incremental-sweep cursor. */
   latestCreatedAt(accountId: string): string | null;
-  /** Per-fan SUM(amount) since the cutoff — the Supporters board 30-day green
+  /** Per-fan SUM(amount) since the cutoff — the Spenders board 30-day green
    *  figure (account-wide GROUP BY; the rolling store is small by design). */
   sumByFanSince(accountId: string, cutoffIso: string): Map<string, number>;
   /** Drop rows older than the cutoff (retention; the 30d window is read-time). */

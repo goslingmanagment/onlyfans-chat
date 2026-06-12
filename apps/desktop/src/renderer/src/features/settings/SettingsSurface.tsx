@@ -31,7 +31,7 @@ import { HubSettings } from './sections/HubSettings';
 import { ModelSettings } from './sections/ModelSettings';
 import { PersonalitySettings } from './sections/PersonalitySettings';
 import { BehaviorSettings } from './sections/BehaviorSettings';
-import { SupportersSettings } from './sections/SupportersSettings';
+import { SpendersSettings } from './sections/SpendersSettings';
 import { DangerZone } from './sections/DangerZone';
 
 export type Feature = ModelSelectableFeature;
@@ -77,7 +77,7 @@ const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; titleKey: UiMessageKey }> =
   { id: 'models', titleKey: 'models.title' },
   { id: 'personalities', titleKey: 'personalities.title' },
   { id: 'behavior', titleKey: 'behavior.title' },
-  { id: 'supporters', titleKey: 'sup.set.title' },
+  { id: 'spenders', titleKey: 'sp.set.title' },
   { id: 'data', titleKey: 'danger.title' },
 ];
 
@@ -270,8 +270,8 @@ function SettingsBody({
       <div id={sectionDomId('behavior')} className="scroll-mt-4">
         <BehaviorSettings settings={settings} patch={patch} />
       </div>
-      <div id={sectionDomId('supporters')} className="scroll-mt-4">
-        <SupportersSettings settings={settings} patch={patch} />
+      <div id={sectionDomId('spenders')} className="scroll-mt-4">
+        <SpendersSettings settings={settings} patch={patch} />
       </div>
       <div id={sectionDomId('data')} className="scroll-mt-4">
         <DangerZone />

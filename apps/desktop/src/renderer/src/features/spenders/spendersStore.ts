@@ -1,15 +1,15 @@
-// Supporters board state (PLAN item 12). Per-field selectors only (DESIGN
+// Spenders board state (PLAN item 12). Per-field selectors only (DESIGN
 // §3.6). The surface publishes its flat visible-row list here so the global
 // keymap can drive J/K/SPACE/O without re-deriving the board's view model.
 
 import { create } from 'zustand';
-import type { SupporterRowVM } from '../../../../preload/contract';
+import type { SpenderRowVM } from '../../../../preload/contract';
 
-export type SupportersChip = 'all' | string;
+export type SpendersChip = 'all' | string;
 
-interface SupportersState {
+interface SpendersState {
   /** «Все» = tier-section view; a list id = flat single-tier view. */
-  chip: SupportersChip;
+  chip: SpendersChip;
   /** Shelves expanded past their «Все»-view preview (incl. collapsed tiers). */
   expanded: Record<string, true>;
   untieredOpen: boolean;
@@ -18,21 +18,21 @@ interface SupportersState {
   /** Quick-look overlay target; J/K retargets it without closing. */
   previewFanId: string | null;
   /** Flat ordered fan rows currently visible (published by the surface). */
-  visibleRows: SupporterRowVM[];
+  visibleRows: SpenderRowVM[];
 
-  setChip: (chip: SupportersChip) => void;
+  setChip: (chip: SpendersChip) => void;
   expandList: (listId: string) => void;
   setUntieredOpen: (open: boolean) => void;
   setCursor: (fanId: string | null) => void;
   moveCursor: (delta: 1 | -1) => void;
   openPreview: (fanId: string) => void;
   closePreview: () => void;
-  setVisibleRows: (rows: SupporterRowVM[]) => void;
+  setVisibleRows: (rows: SpenderRowVM[]) => void;
   /** Leaving the board resets transient state (cursor/preview), keeps the chip. */
   resetTransient: () => void;
 }
 
-export const useSupportersStore = create<SupportersState>((set) => ({
+export const useSpendersStore = create<SpendersState>((set) => ({
   chip: 'all',
   expanded: {},
   untieredOpen: false,
@@ -74,7 +74,7 @@ export const useSupportersStore = create<SupportersState>((set) => ({
 }));
 
 /** Row VM of the open preview (from the published visible rows). */
-export function previewRow(state: SupportersState): SupporterRowVM | null {
+export function previewRow(state: SpendersState): SpenderRowVM | null {
   if (state.previewFanId === null) return null;
   return state.visibleRows.find((row) => row.fanId === state.previewFanId) ?? null;
 }

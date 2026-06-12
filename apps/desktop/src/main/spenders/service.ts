@@ -1,13 +1,13 @@
-// Supporters board data service (PLAN item 12; binding mockup
+// Spenders board data service (PLAN item 12; binding mockup
 // docs/mockups/supporters.html). Tiers are OnlyMonster's user-lists — fetched
-// STRICTLY READ-ONLY through the metered client (purpose 'supporters') and
+// STRICTLY READ-ONLY through the metered client (purpose 'spenders') and
 // TTL-cached in memory; everything money/preview/counter-shaped joins from the
 // LOCAL SQLite stores (0 credits): lifetime from fans.spending, 30-day from
 // the fan_transactions sweep, МОДЕЛЬ/ФАН day counters from the message DB
 // (vendor lastReplyAt is null — never used).
 
 import {
-  assignSupporterTiers,
+  assignSpenderTiers,
   daysSince,
   fanSilenceBucket,
   sortBySilence,
@@ -16,10 +16,10 @@ import { htmlToPlainText } from '@chatgoose/shared/transcript/index';
 import type { OfApiClient } from '../ofapi/client';
 import type { DataLayer } from '../db/index';
 import type { ChatRow, FanRow } from '../db/rows';
-import type { SupporterListVM, SupporterRowVM } from '../../preload/contract';
+import type { SpenderListVM, SpenderRowVM } from '../../preload/contract';
 import { deriveFanWaiting } from '../ipc/viewmodels';
 
-export const SUPPORTERS_TTL_MS = 5 * 60_000;
+export const SPENDERS_TTL_MS = 5 * 60_000;
 export const LISTS_PAGE_LIMIT = 50;
 export const LISTS_MAX_PAGES = 5;
 export const ROSTER_PAGE_LIMIT = 100;
@@ -46,20 +46,20 @@ interface RosterCacheEntry {
 }
 
 interface ListsCacheEntry {
-  lists: SupporterListVM[];
+  lists: SpenderListVM[];
   fetchedAtMs: number;
 }
 
-export interface SupportersService {
-  lists(accountId: string): Promise<{ lists: SupporterListVM[]; fetchedAt: string }>;
+export interface SpendersService {
+  lists(accountId: string): Promise<{ lists: SpenderListVM[]; fetchedAt: string }>;
   roster(
     accountId: string,
     listId: string,
-  ): Promise<{ rows: SupporterRowVM[]; truncated: boolean; fetchedAt: string }>;
-  untiered(accountId: string): Promise<{ rows: SupporterRowVM[]; fetchedAt: string }>;
+  ): Promise<{ rows: SpenderRowVM[]; truncated: boolean; fetchedAt: string }>;
+  untiered(accountId: string): Promise<{ rows: SpenderRowVM[]; fetchedAt: string }>;
 }
 
-export interface SupportersServiceOptions {
+export interface SpendersServiceOptions {
   client: OfApiClient;
   data: DataLayer;
   /** Registering media:// mint (same seam as sync) for roster-only avatars. */
@@ -69,7 +69,7 @@ export interface SupportersServiceOptions {
   now?: () => number;
 }
 
-export function createSupportersService(options: SupportersServiceOptions): SupportersService {
+export function createSpendersService(options: SpendersServiceOptions): SpendersService {
   const { client, data, toMediaUrl, getMappedListIds } = options;
   const now = options.now ?? Date.now;
 
@@ -84,11 +84,11 @@ export function createSupportersService(options: SupportersServiceOptions): Supp
   }
 
   async function fetchLists(accountId: string): Promise<ListsCacheEntry> {
-    const lists: SupporterListVM[] = [];
+    const lists: SpenderListVM[] = [];
     let offset = 0;
     for (let page = 0; page < LISTS_MAX_PAGES; page += 1) {
       const result = await client.listUserLists({
-        purpose: 'supporters',
+        purpose: 'spenders',
         accountId,
         limit: LISTS_PAGE_LIMIT,
         offset,
@@ -110,7 +110,7 @@ export function createSupportersService(options: SupportersServiceOptions): Supp
 
   async function loadLists(accountId: string): Promise<ListsCacheEntry> {
     const cached = listsCache.get(accountId);
-    if (cached !== undefined && now() - cached.fetchedAtMs < SUPPORTERS_TTL_MS) {
+    if (cached !== undefined && now() - cached.fetchedAtMs < SPENDERS_TTL_MS) {
       return cached;
     }
     let pending = listsInFlight.get(accountId);
@@ -133,7 +133,7 @@ export function createSupportersService(options: SupportersServiceOptions): Supp
     let truncated = false;
     for (let page = 0; page < ROSTER_MAX_PAGES; page += 1) {
       const result = await client.listUserListUsers({
-        purpose: 'supporters',
+        purpose: 'spenders',
         accountId,
         userListId: listId,
         limit: ROSTER_PAGE_LIMIT,
@@ -163,7 +163,7 @@ export function createSupportersService(options: SupportersServiceOptions): Supp
   async function loadRoster(accountId: string, listId: string): Promise<RosterCacheEntry> {
     const key = rosterKey(accountId, listId);
     const cached = rosterCache.get(key);
-    if (cached !== undefined && now() - cached.fetchedAtMs < SUPPORTERS_TTL_MS) {
+    if (cached !== undefined && now() - cached.fetchedAtMs < SPENDERS_TTL_MS) {
       return cached;
     }
     let pending = rosterInFlight.get(key);
@@ -179,7 +179,7 @@ export function createSupportersService(options: SupportersServiceOptions): Supp
     return pending;
   }
 
-  function buildRows(accountId: string, members: readonly RosterMember[]): SupporterRowVM[] {
+  function buildRows(accountId: string, members: readonly RosterMember[]): SpenderRowVM[] {
     const nowMs = now();
     const ids = members.map((member) => member.fanId);
     const fans = data.fans.getMany(accountId, ids);
@@ -242,7 +242,7 @@ export function createSupportersService(options: SupportersServiceOptions): Supp
         canSendMessage: chat?.canSendMessage ?? false,
         canNotSendReason: chat?.canNotSendReason ?? null,
         hasChat: chat !== undefined,
-      } satisfies SupporterRowVM;
+      } satisfies SpenderRowVM;
     });
 
     return sortBySilence(
@@ -260,7 +260,7 @@ export function createSupportersService(options: SupportersServiceOptions): Supp
       const mapped = await getMappedListIds(accountId);
       const index = mapped.indexOf(listId);
       if (index === -1) {
-        throw new Error('Supporters roster: list is not mapped to a board shelf');
+        throw new Error('Spenders roster: list is not mapped to a board shelf');
       }
       // A fan in several mapped lists belongs to the FIRST (highest) shelf —
       // dedupe against every earlier shelf's roster (loaded on demand; higher
@@ -290,7 +290,7 @@ export function createSupportersService(options: SupportersServiceOptions): Supp
           roster.members.map((member) => member.fanId),
         );
       }
-      const assignment = assignSupporterTiers({
+      const assignment = assignSpenderTiers({
         orderedListIds: mapped,
         rosterByList,
         spenderIds: data.fans.listSpenderIds(accountId),

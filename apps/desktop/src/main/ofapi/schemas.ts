@@ -120,7 +120,7 @@ export const ofapiFansDataSchema = z.looseObject({
   hasMore: z.boolean().nullish(),
 });
 
-// ─── User lists (OnlyMonster tiers — Supporters board, PLAN item 12) ──────
+// ─── User lists (OnlyMonster tiers — Spenders board, PLAN item 12) ──────
 // GET /{account}/user-lists → data = {list, hasMore, order, sort} — LIVE
 // DIVERGENCE from the vendored openapi example (which shows a bare array;
 // live-verified 2026-06-13, tmp/probe-user-lists.json): custom list ids

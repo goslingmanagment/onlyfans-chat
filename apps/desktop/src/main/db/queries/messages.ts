@@ -46,7 +46,7 @@ export interface MessagePage {
   hasMore: boolean;
 }
 
-/** Per-chat newest activity timestamps split by sender (Supporters board
+/** Per-chat newest activity timestamps split by sender (Spenders board
  *  «МОДЕЛЬ N Д · ФАН M Д» counters — local DB only, vendor lastReplyAt is null). */
 export interface LastBySender {
   /** Newest non-deleted fan message (any kind — tips count as fan contact). */

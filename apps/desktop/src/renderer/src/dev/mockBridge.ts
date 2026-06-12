@@ -441,7 +441,7 @@ function buildStore(): MockStore {
     creditBudgetPerShift: null,
     accountMappings: { acct_lora: 'builtin:lora' },
     accountPageLabels: {},
-    supportersListMappings: { acct_lora: ['9001', '9002'] },
+    spendersListMappings: { acct_lora: ['9001', '9002'] },
   };
 
   const freshness: Record<string, string> = {};
@@ -1226,8 +1226,8 @@ export function createMockBridge(): ChatGooseBridge {
       return { items: page.map((i) => ({ ...i })), hasMore, nextOffset: hasMore ? start + page.length : null };
     },
     'query:vault.albums': () => vaultAlbums.map((a) => ({ ...a })),
-    // ── Supporters board (PLAN item 12): rows derived from the mock chat list ──
-    'query:supporters.lists': () => ({
+    // ── Spenders board (PLAN item 12): rows derived from the mock chat list ──
+    'query:spenders.lists': () => ({
       lists: [
         { id: '9001', name: '🐳 Кит 600+ _ОМ', usersCount: 3, custom: true },
         { id: '9002', name: '⭐ Топ 350-600 _ОМ', usersCount: 4, custom: true },
@@ -1235,7 +1235,7 @@ export function createMockBridge(): ChatGooseBridge {
       ],
       fetchedAt: new Date().toISOString(),
     }),
-    'query:supporters.roster': ({ accountId, listId }) => {
+    'query:spenders.roster': ({ accountId, listId }) => {
       const all = store.chats.get(accountId) ?? [];
       const slice = listId === '9001' ? all.slice(0, 3) : all.slice(3, 7);
       const rows = slice.map((c, i) => ({
@@ -1256,7 +1256,7 @@ export function createMockBridge(): ChatGooseBridge {
       }));
       return { rows, truncated: false, fetchedAt: new Date().toISOString() };
     },
-    'query:supporters.untiered': ({ accountId }) => {
+    'query:spenders.untiered': ({ accountId }) => {
       const all = store.chats.get(accountId) ?? [];
       const rows = all.slice(7, 9).map((c) => ({
         fanId: c.chatId,

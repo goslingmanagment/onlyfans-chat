@@ -53,11 +53,11 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     queueInvalidate(['chats', accountId]);
   }
 
-  function invalidateSupporters(accountId: string): void {
+  function invalidateSpenders(accountId: string): void {
     // Board row joins (spend / preview / counters) recompute from the local
     // DB; the OM roster ids behind them stay TTL-cached in main (0 credits).
-    queueInvalidate(['supporters-roster', accountId]);
-    queueInvalidate(['supporters-untiered', accountId]);
+    queueInvalidate(['spenders-roster', accountId]);
+    queueInvalidate(['spenders-untiered', accountId]);
   }
 
   function handleDbChanged(event: z.infer<typeof dbChangedSchema>): void {
@@ -69,7 +69,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
         if (event.accountId !== undefined) {
           invalidateChats(event.accountId);
           // also fires on fan_transactions sweeps — the 30-day board figure
-          invalidateSupporters(event.accountId);
+          invalidateSpenders(event.accountId);
         } else queueInvalidate(['chats']);
         break;
       case 'messages':
@@ -78,8 +78,8 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
         } else {
           queueInvalidate(['messages']);
         }
-        // supporters rows carry МОДЕЛЬ/ФАН counters from the message DB
-        if (event.accountId !== undefined) invalidateSupporters(event.accountId);
+        // spenders rows carry МОДЕЛЬ/ФАН counters from the message DB
+        if (event.accountId !== undefined) invalidateSpenders(event.accountId);
         break;
       case 'outbox':
         // outbox refetches ONLY on this event — no polling (DESIGN §3)
@@ -100,7 +100,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
           queueInvalidate(['fan']);
         }
         if (event.scope === 'fans' && event.accountId !== undefined) {
-          invalidateSupporters(event.accountId); // lifetime spend lives on fans
+          invalidateSpenders(event.accountId); // lifetime spend lives on fans
         }
         break;
       case 'settings':

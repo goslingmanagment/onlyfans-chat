@@ -12,7 +12,7 @@ import { ChatListPane } from '../features/inbox/ChatListPane';
 import { ConversationPane } from '../features/conversation/ConversationPane';
 import { FanPanel } from '../features/fan-panel/FanPanel';
 import { SettingsSurface } from '../features/settings/SettingsSurface';
-import { SupportersSurface } from '../features/supporters/SupportersSurface';
+import { SpendersSurface } from '../features/spenders/SpendersSurface';
 
 export function AppShell(): React.JSX.Element {
   const view = useUiStore((s) => s.view);
@@ -46,11 +46,11 @@ export function AppShell(): React.JSX.Element {
         <AccountRail />
         {view === 'settings' ? (
           <SettingsSurface />
-        ) : view === 'supporters' ? (
-          // Supporters board replaces the thread; the chat list stays (PLAN item 12)
+        ) : view === 'spenders' ? (
+          // Spenders board replaces the thread; the chat list stays (PLAN item 12)
           <>
             {!listCollapsed && <ChatListPane />}
-            <SupportersSurface />
+            <SpendersSurface />
           </>
         ) : (
           <>

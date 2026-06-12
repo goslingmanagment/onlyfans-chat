@@ -238,6 +238,21 @@ CREATE TABLE ai_spend_log (
 );
 `;
 
+// v8 — Supporters → Spenders rename (owner decision 2026-06-13): carry the
+// persisted shelf mapping and the credits-ledger purpose tag across the rename
+// so nothing needs re-configuring. The credit merge is defensive — a 'spenders'
+// row cannot exist before this migration, but summing keeps it idempotent-safe.
+export const SCHEMA_V8 = `
+UPDATE OR IGNORE settings SET key = 'spendersListMappings' WHERE key = 'supportersListMappings';
+DELETE FROM settings WHERE key = 'supportersListMappings';
+INSERT INTO credit_log (day, purpose, used, requests)
+  SELECT day, 'spenders', used, requests FROM credit_log WHERE purpose = 'supporters'
+  ON CONFLICT (day, purpose) DO UPDATE SET
+    used = used + excluded.used,
+    requests = requests + excluded.requests;
+DELETE FROM credit_log WHERE purpose = 'supporters';
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',

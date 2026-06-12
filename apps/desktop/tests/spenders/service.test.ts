@@ -1,4 +1,4 @@
-// Supporters service tests (PLAN item 12 DoD: board IPC queries fixture-tested).
+// Spenders service tests (PLAN item 12 DoD: board IPC queries fixture-tested).
 // The OFAPI side is a stub client fed from the user-lists fixtures' shapes; the
 // join side runs against the real in-memory SQLite layer.
 
@@ -6,8 +6,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createSupportersService, SUPPORTERS_TTL_MS } from '@main/supporters/service';
-import type { SupportersService } from '@main/supporters/service';
+import { createSpendersService, SPENDERS_TTL_MS } from '@main/spenders/service';
+import type { SpendersService } from '@main/spenders/service';
 import type { OfApiClient } from '@main/ofapi/client';
 import type { DataLayer } from '@main/db/index';
 import { memoryDataLayer, sampleChat, sampleMessage } from '../db/helpers';
@@ -64,8 +64,8 @@ let data: DataLayer;
 let calls: StubCalls;
 let mapping: string[];
 
-function makeService(client: OfApiClient): SupportersService {
-  return createSupportersService({
+function makeService(client: OfApiClient): SpendersService {
+  return createSpendersService({
     client,
     data,
     toMediaUrl: (url) => `media://stub-${url.length}`,
@@ -270,7 +270,7 @@ describe('roster', () => {
   });
 
   it('TTL-caches rosters per list (constant exported for the activity story)', async () => {
-    expect(SUPPORTERS_TTL_MS).toBe(5 * 60_000);
+    expect(SPENDERS_TTL_MS).toBe(5 * 60_000);
     const service = makeService(stubClient({ lists: [], rosters: { '100': [[{ id: 1 }]] }, calls }));
     await service.roster(ACCOUNT, '100');
     await service.roster(ACCOUNT, '100');

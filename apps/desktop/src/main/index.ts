@@ -21,7 +21,7 @@ import { createSqliteMediaCacheQueries } from './media/cache';
 import { createOfApiClient, type OfApiClient } from './ofapi/client';
 import { createSendEngine, type SendEngine } from './send/engine';
 import { createVaultService, type VaultService } from './media/vault';
-import { createSupportersService, type SupportersService } from './supporters/service';
+import { createSpendersService, type SpendersService } from './spenders/service';
 import { createPollingSync, syncAccounts } from './sync/polling-sync';
 import { createBudgetGuard } from './sync/budget-guard';
 import { createHubSync } from './sync/hub-sync';
@@ -41,7 +41,7 @@ let client: OfApiClient | null = null;
 let coordinator: AiCoordinator | null = null;
 let sendEngine: SendEngine | null = null;
 let vaultService: VaultService | null = null;
-let supportersService: SupportersService | null = null;
+let spendersService: SpendersService | null = null;
 let hub: HubModule | null = null;
 /** Set by initOfapi; lets cmd:settings.update trigger a hub-config recheck. */
 let recheckHubConfig: (() => void) | null = null;
@@ -100,11 +100,11 @@ function buildAppMenu(): void {
 }
 
 function loadWindowContent(win: BrowserWindow): void {
-  // Dev convenience: CHATGOOSE_OPEN_VIEW=settings|supporters boots straight
+  // Dev convenience: CHATGOOSE_OPEN_VIEW=settings|spenders boots straight
   // into that view (e.g. documenting a live run). No effect packaged.
   const openView = !app.isPackaged ? process.env['CHATGOOSE_OPEN_VIEW'] : undefined;
   const search =
-    openView === 'settings' || openView === 'supporters' ? `view=${openView}` : null;
+    openView === 'settings' || openView === 'spenders' ? `view=${openView}` : null;
   if (process.env['ELECTRON_RENDERER_URL']) {
     const url = process.env['ELECTRON_RENDERER_URL'];
     void win.loadURL(search !== null ? `${url}?${search}` : url);
@@ -310,14 +310,14 @@ async function initOfapi(
         dialog.showOpenDialog({ properties: ['openFile'], filters: options.filters }),
     },
   });
-  // Supporters board (PLAN item 12): OM tier lists read-only via the metered
+  // Spenders board (PLAN item 12): OM tier lists read-only via the metered
   // client; all spend/counter joins stay on the local DB.
-  supportersService = createSupportersService({
+  spendersService = createSpendersService({
     client,
     data: dataLayer,
     toMediaUrl,
     getMappedListIds: async (accountId) =>
-      (await settingsStore.get()).supportersListMappings[accountId] ?? [],
+      (await settingsStore.get()).spendersListMappings[accountId] ?? [],
   });
   sync.subscribe((event) => engine.handleSyncEvent(event));
   // Awaited on purpose (adversarial review 2026-06-11): the "reconciliation
@@ -356,19 +356,19 @@ async function boot(): Promise<void> {
 
   const settingsStore = createSettingsStore({ queries: data.settings, secrets: keychain });
 
-  // Dev convenience (same spirit as the spike-key import): seed the Supporters
-  // list→shelf mapping once from CHATGOOSE_SUPPORTERS_MAP="acct_…=id1,id2,…"
+  // Dev convenience (same spirit as the spike-key import): seed the Spenders
+  // list→shelf mapping once from CHATGOOSE_SPENDERS_MAP="acct_…=id1,id2,…"
   // so a live evidence run needs no manual settings entry. Never overwrites.
-  if (!app.isPackaged && process.env['CHATGOOSE_SUPPORTERS_MAP']) {
-    const raw = process.env['CHATGOOSE_SUPPORTERS_MAP'];
+  if (!app.isPackaged && process.env['CHATGOOSE_SPENDERS_MAP']) {
+    const raw = process.env['CHATGOOSE_SPENDERS_MAP'];
     const eq = raw.indexOf('=');
     const acct = eq > 0 ? raw.slice(0, eq) : '';
     const ids = eq > 0 ? raw.slice(eq + 1).split(',').filter(Boolean) : [];
     if (acct !== '' && ids.length > 0) {
       const vm = await settingsStore.get();
-      if ((vm.supportersListMappings[acct] ?? []).length === 0) {
+      if ((vm.spendersListMappings[acct] ?? []).length === 0) {
         await settingsStore.update({
-          supportersListMappings: { ...vm.supportersListMappings, [acct]: ids },
+          spendersListMappings: { ...vm.spendersListMappings, [acct]: ids },
         });
       }
     }
@@ -447,7 +447,7 @@ async function boot(): Promise<void> {
     coordinator,
     send: sendEngine,
     vault: vaultService,
-    supporters: supportersService,
+    spenders: spendersService,
     purge: async () => {
       // Re-entry guard: a double-fired cmd:data.purge would otherwise call
       // app.relaunch() twice before exit — Electron then spawns TWO instances

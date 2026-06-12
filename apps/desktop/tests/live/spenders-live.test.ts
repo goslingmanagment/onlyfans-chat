@@ -1,26 +1,26 @@
-// Supporters board live READ-ONLY verification (PLAN item 12). Probes the real
+// Spenders board live READ-ONLY verification (PLAN item 12). Probes the real
 // account's OM user-lists + one roster page and surveys expired/blocked chats
 // for their canNotSendReason shapes — GET requests only, a handful of credits,
 // no mutations of any kind (the lists are OnlyMonster's process).
 //
-//   SUPPORTERS_LIVE=1 npx vitest run tests/live/supporters-live.test.ts --testTimeout=120000
+//   SPENDERS_LIVE=1 npx vitest run tests/live/spenders-live.test.ts --testTimeout=120000
 
 import { describe, expect, it } from 'vitest';
 import { createOfApiClient } from '@main/ofapi/client';
 
 const ENABLED =
-  process.env['SUPPORTERS_LIVE'] === '1' &&
+  process.env['SPENDERS_LIVE'] === '1' &&
   typeof process.env['ONLYFANSAPI_API_KEY'] === 'string' &&
   process.env['ONLYFANSAPI_API_KEY'] !== '';
 
 const ACCOUNT_ID = process.env['P3_LIVE_ACCOUNT_ID'] ?? 'acct_fbaf2216a7c84147a599f349e0a6fb87';
 
-describe.skipIf(!ENABLED)('LIVE supporters read-only probes', () => {
+describe.skipIf(!ENABLED)('LIVE spenders read-only probes', () => {
   const client = createOfApiClient({ apiKey: process.env['ONLYFANSAPI_API_KEY'] ?? '' });
 
   it('user-lists: real lists parse, mixed id namespace, OM tier lists present', async () => {
     const { lists } = await client.listUserLists({
-      purpose: 'supporters',
+      purpose: 'spenders',
       accountId: ACCOUNT_ID,
       limit: 50,
     });
@@ -35,7 +35,7 @@ describe.skipIf(!ENABLED)('LIVE supporters read-only probes', () => {
 
   it('roster page: numeric raw OF ids, offset cursor', async () => {
     const { lists } = await client.listUserLists({
-      purpose: 'supporters',
+      purpose: 'spenders',
       accountId: ACCOUNT_ID,
       limit: 50,
     });
@@ -45,7 +45,7 @@ describe.skipIf(!ENABLED)('LIVE supporters read-only probes', () => {
     expect(target).toBeDefined();
     if (target === undefined) return;
     const page = await client.listUserListUsers({
-      purpose: 'supporters',
+      purpose: 'spenders',
       accountId: ACCOUNT_ID,
       userListId: String(target.id),
       limit: 100,
@@ -65,7 +65,7 @@ describe.skipIf(!ENABLED)('LIVE supporters read-only probes', () => {
     let offset = 0;
     for (let page = 0; page < 5; page += 1) {
       const result = await client.listChats({
-        purpose: 'supporters',
+        purpose: 'spenders',
         accountId: ACCOUNT_ID,
         limit: 10,
         offset,

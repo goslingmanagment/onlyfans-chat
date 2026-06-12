@@ -95,8 +95,8 @@ function PaletteBody(): React.JSX.Element {
       { id: 'act:ai-hi', title: 'AI: Hi greeting — opener variants (⌘G)', run: () => startAiFromGlobal('hi-greeting', queryClient) },
       { id: 'act:ai-scan', title: 'AI: Scan — deep fan profile (⌘S)', run: () => startAiFromGlobal('fan-summary', queryClient) },
       { id: 'act:ai-review', title: 'AI: Chat review — rate this conversation (⌘E)', run: () => startAiFromGlobal('chat-review', queryClient) },
-      // Entry point for the Supporters board (PLAN item 12; recorded in DESIGN §1)
-      { id: 'act:supporters', title: 'Supporters — board of top spenders', run: () => setView('supporters') },
+      // Entry point for the Spenders board (PLAN item 12; recorded in DESIGN §1)
+      { id: 'act:spenders', title: 'Spenders — board of top spenders', run: () => setView('spenders') },
       { id: 'act:settings', title: 'Open settings', run: () => setView('settings') },
       { id: 'act:refresh', title: 'Force refresh', run: () => forceRefresh.mutate(undefined) },
       { id: 'act:panel', title: 'Toggle fan panel', run: togglePanel },

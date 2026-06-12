@@ -74,7 +74,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'hubBaseUrl',
   'accountPageLabels',
   'spendStyle',
-  'supportersListMappings',
+  'spendersListMappings',
   'uiLocale',
   'uiScale',
 ] as const satisfies readonly (keyof PersistedSettings)[];
@@ -104,8 +104,8 @@ const persistedFieldSchemas = {
   accountPageLabels: z.record(z.string(), z.string()),
   // Chat-list lifetime-spend style (DESIGN §1): bare figure (default) or chip.
   spendStyle: z.enum(['figure', 'chip']),
-  // Supporters board: per-account ordered OM list ids → shelves (PLAN item 12).
-  supportersListMappings: z.record(z.string(), z.array(z.string().min(1).max(64)).max(50)),
+  // Spenders board: per-account ordered OM list ids → shelves (PLAN item 12).
+  spendersListMappings: z.record(z.string(), z.array(z.string().min(1).max(64)).max(50)),
   // Interface language; 'system' resolves from the OS locale at runtime.
   uiLocale: z.enum(UI_LOCALE_SETTINGS),
   // Window zoom factor — fixed steps only, applied via webContents.setZoomFactor.
@@ -140,7 +140,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   hubBaseUrl: null,
   accountPageLabels: {},
   spendStyle: 'figure',
-  supportersListMappings: {},
+  spendersListMappings: {},
   uiLocale: 'system',
   uiScale: 1,
 };
@@ -165,7 +165,7 @@ export const settingsPatchSchema = z.strictObject({
   hubBaseUrl: persistedFieldSchemas.hubBaseUrl.optional(),
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
   spendStyle: persistedFieldSchemas.spendStyle.optional(),
-  supportersListMappings: persistedFieldSchemas.supportersListMappings.optional(),
+  spendersListMappings: persistedFieldSchemas.spendersListMappings.optional(),
   uiLocale: persistedFieldSchemas.uiLocale.optional(),
   uiScale: persistedFieldSchemas.uiScale.optional(),
   // Secret material: routed to the keychain, never stored in the settings table.
@@ -272,7 +272,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       hubBaseUrl: readField('hubBaseUrl'),
       accountPageLabels: readField('accountPageLabels'),
       spendStyle: readField('spendStyle'),
-      supportersListMappings: readField('supportersListMappings'),
+      spendersListMappings: readField('spendersListMappings'),
       uiLocale: readField('uiLocale'),
       uiScale: readField('uiScale'),
     };

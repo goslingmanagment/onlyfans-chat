@@ -27,7 +27,7 @@ ON CONFLICT (account_id, fan_id) DO UPDATE SET
 export interface FansQueries {
   upsert(fan: FanUpsert): void;
   get(accountId: string, fanId: string): FanRow | null;
-  /** Batched lookup (Supporters board row join); chunked under the SQLite
+  /** Batched lookup (Spenders board row join); chunked under the SQLite
    *  bind-variable cap. Missing ids are simply absent from the result. */
   getMany(accountId: string, fanIds: readonly string[]): Map<string, FanRow>;
   /** Fans with lifetime spend > 0 — the «Без тира» candidate pool (PLAN item 12). */

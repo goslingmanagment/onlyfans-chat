@@ -1,20 +1,20 @@
-// Pure view-model for the Supporters board list (binding mockup
+// Pure view-model for the Spenders board list (binding mockup
 // docs/mockups/supporters.html): «Все» = tier sections with per-shelf previews
 // and collapsed big tiers; a tier chip = flat list. Kept pure for tests.
 
 import { shelfPresentation, splitTierLabel } from '@chatgoose/shared';
-import type { SupporterListVM, SupporterRowVM } from '../../../../preload/contract';
+import type { SpenderListVM, SpenderRowVM } from '../../../../preload/contract';
 
 export interface ShelfData {
-  list: SupporterListVM;
+  list: SpenderListVM;
   /** undefined = roster query not loaded yet (or not enabled). */
-  rows: SupporterRowVM[] | undefined;
+  rows: SpenderRowVM[] | undefined;
   truncated: boolean;
 }
 
 export type BoardItem =
   | { kind: 'tier'; key: string; listId: string; title: string; band: string | null; count: number }
-  | { kind: 'row'; key: string; row: SupporterRowVM }
+  | { kind: 'row'; key: string; row: SpenderRowVM }
   | { kind: 'more'; key: string; listId: string; tierTitle: string; hidden: number }
   | {
       kind: 'collapsed';
@@ -30,7 +30,7 @@ export type BoardItem =
 export interface BoardModel {
   items: BoardItem[];
   /** Flat fan rows in display order — the J/K navigation pool. */
-  fanRows: SupporterRowVM[];
+  fanRows: SpenderRowVM[];
 }
 
 const UNTIERED_ID = '__untiered__';
@@ -38,10 +38,10 @@ const UNTIERED_ID = '__untiered__';
 export function buildAllView(args: {
   shelves: ShelfData[];
   expanded: Record<string, true>;
-  untiered: { open: boolean; rows: SupporterRowVM[] | undefined; loading: boolean };
+  untiered: { open: boolean; rows: SpenderRowVM[] | undefined; loading: boolean };
 }): BoardModel {
   const items: BoardItem[] = [];
-  const fanRows: SupporterRowVM[] = [];
+  const fanRows: SpenderRowVM[] = [];
 
   args.shelves.forEach((shelf, index) => {
     const { list, rows } = shelf;
@@ -99,7 +99,7 @@ export function buildAllView(args: {
       kind: 'collapsed',
       key: `collapsed:${UNTIERED_ID}`,
       listId: UNTIERED_ID,
-      title: '', // rendered via the catalog ('sup.untiered') by the surface
+      title: '', // rendered via the catalog ('sp.untiered') by the surface
       band: null,
       count: null,
     });

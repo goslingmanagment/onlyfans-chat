@@ -24,8 +24,8 @@ import type {
   OutboxItemVM,
   SettingsPatch,
   SettingsVM,
-  SupporterListVM,
-  SupporterRowVM,
+  SpenderListVM,
+  SpenderRowVM,
   SyncStatusVM,
   VaultAlbumVM,
   VaultItemVM,
@@ -46,10 +46,10 @@ export const qk = {
   activity: ['activity'] as const,
   aiFeatureCosts: ['ai-feature-costs'] as const,
   localDataStats: ['local-data-stats'] as const,
-  supportersLists: (accountId: string) => ['supporters-lists', accountId] as const,
-  supportersRoster: (accountId: string, listId: string) =>
-    ['supporters-roster', accountId, listId] as const,
-  supportersUntiered: (accountId: string) => ['supporters-untiered', accountId] as const,
+  spendersLists: (accountId: string) => ['spenders-lists', accountId] as const,
+  spendersRoster: (accountId: string, listId: string) =>
+    ['spenders-roster', accountId, listId] as const,
+  spendersUntiered: (accountId: string) => ['spenders-untiered', accountId] as const,
   vault: (accountId: string, albumId: string | null, query: string) =>
     ['vault', accountId, albumId ?? 'all', query] as const,
   vaultAlbums: (accountId: string) => ['vault-albums', accountId] as const,
@@ -236,32 +236,32 @@ export function useExportDiagnostics() {
   });
 }
 
-// ─── supporters board (PLAN item 12) ─────────────────────────────────────
+// ─── spenders board (PLAN item 12) ─────────────────────────────────────
 // Roster/untiered joins recompute from the local DB on db:changed events; the
 // OM roster ids behind them TTL-cache in main (5 min) so invalidations stay
 // credit-free. staleTime 0 is deliberate — the join is cheap SQLite work.
 
-export function useSupporterLists(accountId: string | null, enabled: boolean) {
-  return useQuery<{ lists: SupporterListVM[]; fetchedAt: string }>({
-    queryKey: accountId === null ? ['supporters-lists', 'none'] : qk.supportersLists(accountId),
-    queryFn: () => getBridge().invoke('query:supporters.lists', { accountId: accountId ?? '' }),
+export function useSpenderLists(accountId: string | null, enabled: boolean) {
+  return useQuery<{ lists: SpenderListVM[]; fetchedAt: string }>({
+    queryKey: accountId === null ? ['spenders-lists', 'none'] : qk.spendersLists(accountId),
+    queryFn: () => getBridge().invoke('query:spenders.lists', { accountId: accountId ?? '' }),
     enabled: enabled && accountId !== null,
     staleTime: 5 * 60_000, // matches main's TTL — list metadata moves slowly
   });
 }
 
-export function useSupporterRoster(
+export function useSpenderRoster(
   accountId: string | null,
   listId: string | null,
   enabled: boolean,
 ) {
-  return useQuery<{ rows: SupporterRowVM[]; truncated: boolean; fetchedAt: string }>({
+  return useQuery<{ rows: SpenderRowVM[]; truncated: boolean; fetchedAt: string }>({
     queryKey:
       accountId === null || listId === null
-        ? ['supporters-roster', 'none', 'none']
-        : qk.supportersRoster(accountId, listId),
+        ? ['spenders-roster', 'none', 'none']
+        : qk.spendersRoster(accountId, listId),
     queryFn: () =>
-      getBridge().invoke('query:supporters.roster', {
+      getBridge().invoke('query:spenders.roster', {
         accountId: accountId ?? '',
         listId: listId ?? '',
       }),
@@ -269,10 +269,10 @@ export function useSupporterRoster(
   });
 }
 
-export function useSupporterUntiered(accountId: string | null, enabled: boolean) {
-  return useQuery<{ rows: SupporterRowVM[]; fetchedAt: string }>({
-    queryKey: accountId === null ? ['supporters-untiered', 'none'] : qk.supportersUntiered(accountId),
-    queryFn: () => getBridge().invoke('query:supporters.untiered', { accountId: accountId ?? '' }),
+export function useSpenderUntiered(accountId: string | null, enabled: boolean) {
+  return useQuery<{ rows: SpenderRowVM[]; fetchedAt: string }>({
+    queryKey: accountId === null ? ['spenders-untiered', 'none'] : qk.spendersUntiered(accountId),
+    queryFn: () => getBridge().invoke('query:spenders.untiered', { accountId: accountId ?? '' }),
     enabled: enabled && accountId !== null,
   });
 }

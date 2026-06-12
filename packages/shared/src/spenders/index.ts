@@ -1,4 +1,4 @@
-// Supporters board domain logic (PLAN item 12; binding mockup
+// Spenders board domain logic (PLAN item 12; binding mockup
 // docs/mockups/supporters.html). Pure functions only — the board's day
 // counters, staleness bucketing, tier (OnlyMonster user-list) mapping and
 // in-shelf ordering are all decided here so they can be densely unit-tested.
@@ -85,7 +85,7 @@ export interface TierAssignment {
   untiered: string[];
 }
 
-export function assignSupporterTiers(args: {
+export function assignSpenderTiers(args: {
   /** Owner-ordered mapped list ids (shelf order). */
   orderedListIds: readonly string[];
   /** Loaded rosters: listId → fan ids (raw OF numeric ids as strings). */

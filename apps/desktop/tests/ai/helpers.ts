@@ -41,7 +41,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hasHubKey: false,
     hubBaseUrl: null,
     spendStyle: 'figure',
-    supportersListMappings: {},
+    spendersListMappings: {},
     uiLocale: 'system',
     uiScale: 1,
     keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },

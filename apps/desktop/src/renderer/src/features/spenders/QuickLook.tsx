@@ -6,7 +6,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { SupporterRowVM } from '../../../../preload/contract';
+import type { SpenderRowVM } from '../../../../preload/contract';
 import { useAccounts, useFlatMessages, useMessages, useOutbox, useSettings } from '../../bridge/queries';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useUiStore } from '../../state/uiStore';
@@ -41,8 +41,8 @@ import {
   type AiGate,
 } from '../ai/dockLogic';
 import { usePingGate } from '../ai/pingGate';
-import { useSupportersStore } from './supportersStore';
-import { dayCounter } from './SupporterRowItem';
+import { useSpendersStore } from './spendersStore';
+import { dayCounter } from './SpenderRowItem';
 import {
   focusPreviewComposer,
   startAiFromPreview,
@@ -68,10 +68,10 @@ export function QuickLook({
 }: {
   accountId: string;
   fanId: string;
-  row: SupporterRowVM | null;
+  row: SpenderRowVM | null;
 }): React.JSX.Element {
   const t = useT();
-  const closePreview = useSupportersStore((s) => s.closePreview);
+  const closePreview = useSpendersStore((s) => s.closePreview);
   const selectChat = useUiStore((s) => s.selectChat);
 
   // The preview IS the active conversation while open: per-chat draft
@@ -93,11 +93,11 @@ export function QuickLook({
   const rawReason = row?.canNotSendReason ?? null;
   const cannotReason =
     row !== null && !row.hasChat
-      ? t('sup.noChatSend')
+      ? t('sp.noChatSend')
       : rawReason === 'unsubscribed'
-        ? t('sup.reason.unsubscribed')
+        ? t('sp.reason.unsubscribed')
         : rawReason === 'chat_unavailable'
-          ? t('sup.reason.chat_unavailable')
+          ? t('sp.reason.chat_unavailable')
           : (rawReason ?? CANNOT_SEND_FALLBACK);
 
   return (
@@ -124,10 +124,10 @@ export function QuickLook({
           )}
           {/* no staleness dot in the preview header (owner decision V-a) */}
           <span className="num ml-auto text-[9.5px] tracking-[0.06em] text-ink-low">
-            {t('sup.model')}{' '}
+            {t('sp.model')}{' '}
             <b className="font-semibold text-ink-mid">{dayCounter(t, row?.modelDays ?? null)}</b>
             {' · '}
-            {t('sup.fan')}{' '}
+            {t('sp.fan')}{' '}
             <b className="font-semibold text-ink-mid">{dayCounter(t, row?.fanDays ?? null)}</b>
           </span>
         </div>
@@ -140,14 +140,14 @@ export function QuickLook({
           cannotReason={cannotReason}
         />
         <div className="flex flex-none items-center gap-2 border-t border-line bg-bg1 px-4 py-[9px]">
-          <span className="num text-[9.5px] tracking-[0.06em] text-ink-low">{t('sup.previewHint')}</span>
+          <span className="num text-[9.5px] tracking-[0.06em] text-ink-low">{t('sp.previewHint')}</span>
           <span className="flex-1" />
           <button
             type="button"
             onClick={() => selectChat(accountId, fanId)}
             className="flex cursor-pointer items-center gap-[7px] rounded-[7px] border border-line-strong bg-bg1 px-3 py-[6px] text-[12px] font-semibold text-ink-mid hover:bg-bg2"
           >
-            {t('sup.openChat')} <Kbd>O</Kbd>
+            {t('sp.openChat')} <Kbd>O</Kbd>
           </button>
         </div>
       </div>
@@ -221,13 +221,13 @@ function PreviewThread({
               onClick={loadEarlier}
               className="cursor-pointer text-[10.5px] text-ink-low underline decoration-dotted underline-offset-3 hover:text-ink-mid"
             >
-              {query.isFetchingNextPage ? t('sup.loading') : t('sup.earlier')}
+              {query.isFetchingNextPage ? t('sp.loading') : t('sp.earlier')}
             </button>
           </div>
         )}
         {rows.length === 0 && !query.isPending && (
           <div className="flex h-full items-center justify-center text-[12.5px] text-ink-low">
-            {t('sup.noHistory')}
+            {t('sp.noHistory')}
           </div>
         )}
         <div className="relative mx-auto w-full" style={{ height: virtualizer.getTotalSize() }}>
@@ -309,7 +309,7 @@ function PreviewDock({
   const featureLabel = DOCK_FEATURE_LABELS[op.feature];
   const segment =
     op.feature === 'ping' && pingGate.data !== undefined && pingGate.data.segment !== 'active'
-      ? t('sup.segment', { s: pingGate.data.segment === 'segment-a' ? 'A' : 'B' })
+      ? t('sp.segment', { s: pingGate.data.segment === 'segment-a' ? 'A' : 'B' })
       : null;
 
   return (
@@ -329,7 +329,7 @@ function PreviewDock({
         </span>
       )}
       {status === 'completed' && autoInsertable && (
-        <span className="text-[11px] text-ink-low">{t('sup.inserted')}</span>
+        <span className="text-[11px] text-ink-low">{t('sp.inserted')}</span>
       )}
       {status === 'completed' && !autoInsertable && parts.length > 0 && (
         <span className="flex items-center gap-1.5">
@@ -347,7 +347,7 @@ function PreviewDock({
                 ? partFeedback.kind === 'inserted'
                   ? 'INSERTED'
                   : 'COPIED'
-                : t('sup.variant', { n: index + 1 })}
+                : t('sp.variant', { n: index + 1 })}
             </button>
           ))}
         </span>
@@ -358,7 +358,7 @@ function PreviewDock({
           onClick={regenerateActiveOperation}
           className="cursor-pointer text-[11px] text-ink-low underline decoration-dotted underline-offset-3 hover:text-ink-mid"
         >
-          {t('sup.anotherVariant')}
+          {t('sp.anotherVariant')}
         </button>
       )}
       <span className="flex-1" />

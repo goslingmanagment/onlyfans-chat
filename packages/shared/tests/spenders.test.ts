@@ -6,18 +6,18 @@ import {
   SHELF_COLLAPSED_MIN_COUNT,
   SHELF_PREVIEW_FIRST,
   SHELF_PREVIEW_REST,
-  assignSupporterTiers,
+  assignSpenderTiers,
   compareBySilence,
   daysSince,
   fanSilenceBucket,
   shelfPresentation,
   sortBySilence,
   splitTierLabel,
-} from '../src/supporters/index';
+} from '../src/spenders/index';
 
 const NOW = new Date('2026-06-13T12:00:00Z').getTime();
 
-describe('supporters constants', () => {
+describe('spenders constants', () => {
   it('pins the owner-decided staleness thresholds (≤7 none · 8–21 warm · >21 hot)', () => {
     expect(FAN_SILENCE_WARM_MIN_DAYS).toBe(8);
     expect(FAN_SILENCE_HOT_MIN_DAYS).toBe(22);
@@ -98,9 +98,9 @@ describe('splitTierLabel', () => {
   });
 });
 
-describe('assignSupporterTiers', () => {
+describe('assignSpenderTiers', () => {
   it('assigns each fan to the first mapped list containing it (shelf priority)', () => {
-    const result = assignSupporterTiers({
+    const result = assignSpenderTiers({
       orderedListIds: ['whale', 'top'],
       rosterByList: new Map([
         ['whale', ['1', '2']],
@@ -114,7 +114,7 @@ describe('assignSupporterTiers', () => {
   });
 
   it('keeps mapping order for shelves and roster order within a shelf', () => {
-    const result = assignSupporterTiers({
+    const result = assignSpenderTiers({
       orderedListIds: ['b', 'a'],
       rosterByList: new Map([
         ['a', ['10', '11']],
@@ -128,7 +128,7 @@ describe('assignSupporterTiers', () => {
   });
 
   it('skips mapped lists whose roster is not loaded', () => {
-    const result = assignSupporterTiers({
+    const result = assignSpenderTiers({
       orderedListIds: ['loaded', 'missing'],
       rosterByList: new Map([['loaded', ['1']]]),
       spenderIds: ['1', '2'],
@@ -138,7 +138,7 @@ describe('assignSupporterTiers', () => {
   });
 
   it('dedupes spender ids and roster ids', () => {
-    const result = assignSupporterTiers({
+    const result = assignSpenderTiers({
       orderedListIds: ['l'],
       rosterByList: new Map([['l', ['1', '1']]]),
       spenderIds: ['2', '2', '1'],
@@ -148,7 +148,7 @@ describe('assignSupporterTiers', () => {
   });
 
   it('handles empty mapping: every spender is untiered', () => {
-    const result = assignSupporterTiers({
+    const result = assignSpenderTiers({
       orderedListIds: [],
       rosterByList: new Map(),
       spenderIds: ['5', '6'],

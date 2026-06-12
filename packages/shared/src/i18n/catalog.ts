@@ -383,7 +383,7 @@ export const UI_MESSAGES = {
   'purpose.send': { en: 'Sends & delivery checks', ru: 'Отправка и проверка доставки' },
   'purpose.vault': { en: 'Vault browsing & uploads', ru: 'Vault: просмотр и загрузка' },
   'purpose.spend-sweep': { en: 'Fan-spend sweeps', ru: 'Сбор трат фанов' },
-  'purpose.supporters': { en: 'Supporters board (tier lists)', ru: 'Борд саппортеров (тир-списки)' },
+  'purpose.spenders': { en: 'Spenders board (tier lists)', ru: 'Борд спендеров (тир-списки)' },
   'purpose.untagged': {
     en: 'Untagged (recorded before this update)',
     ru: 'Без метки (записано до обновления)',
@@ -399,75 +399,75 @@ export const UI_MESSAGES = {
   'sb.ago': { en: 'AGO', ru: 'НАЗАД' },
   'sb.shortcuts': { en: 'SHORTCUTS', ru: 'КЛАВИШИ' },
 
-  // ── Supporters board (PLAN item 12; RU pinned to mockups/supporters.html) ──
-  'sup.title': { en: 'Supporters', ru: 'Саппортеры' },
-  'sup.sortNote': { en: 'WITHIN A SHELF — BY FAN SILENCE ↓', ru: 'ВНУТРИ ПОЛКИ — ПО МОЛЧАНИЮ ФАНА ↓' },
-  'sup.backToChat': { en: '← BACK TO CHAT · ESC', ru: '← НАЗАД К ЧАТУ · ESC' },
-  'sup.all': { en: 'All', ru: 'Все' },
-  'sup.untiered': { en: 'No tier', ru: 'Без тира' },
-  'sup.moreInTier': { en: '{n} more in {tier}', ru: 'ещё {n} в {tier}' },
-  'sup.show': { en: 'show ▾', ru: 'показать ▾' },
-  'sup.model': { en: 'MODEL', ru: 'МОДЕЛЬ' },
-  'sup.fan': { en: 'FAN', ru: 'ФАН' },
-  'sup.dayShort': { en: 'D', ru: 'Д' },
-  'sup.today': { en: 'TODAY', ru: 'СЕГОДНЯ' },
-  'sup.you': { en: 'you:', ru: 'you:' },
-  'sup.footNav': { en: 'rows', ru: 'по списку' },
-  'sup.footPreview': { en: 'preview', ru: 'превью' },
-  'sup.footChat': { en: 'chat', ru: 'чат' },
-  'sup.footReadOnly': { en: 'tiers — OM lists · read-only', ru: 'тиры — списки ОМ · только чтение' },
-  'sup.earlier': { en: '↑ earlier', ru: '↑ раньше' },
-  'sup.noHistory': {
+  // ── Spenders board (PLAN item 12; RU pinned to mockups/supporters.html) ──
+  'sp.title': { en: 'Spenders', ru: 'Спендеры' },
+  'sp.sortNote': { en: 'WITHIN A SHELF — BY FAN SILENCE ↓', ru: 'ВНУТРИ ПОЛКИ — ПО МОЛЧАНИЮ ФАНА ↓' },
+  'sp.backToChat': { en: '← BACK TO CHAT · ESC', ru: '← НАЗАД К ЧАТУ · ESC' },
+  'sp.all': { en: 'All', ru: 'Все' },
+  'sp.untiered': { en: 'No tier', ru: 'Без тира' },
+  'sp.moreInTier': { en: '{n} more in {tier}', ru: 'ещё {n} в {tier}' },
+  'sp.show': { en: 'show ▾', ru: 'показать ▾' },
+  'sp.model': { en: 'MODEL', ru: 'МОДЕЛЬ' },
+  'sp.fan': { en: 'FAN', ru: 'ФАН' },
+  'sp.dayShort': { en: 'D', ru: 'Д' },
+  'sp.today': { en: 'TODAY', ru: 'СЕГОДНЯ' },
+  'sp.you': { en: 'you:', ru: 'you:' },
+  'sp.footNav': { en: 'rows', ru: 'по списку' },
+  'sp.footPreview': { en: 'preview', ru: 'превью' },
+  'sp.footChat': { en: 'chat', ru: 'чат' },
+  'sp.footReadOnly': { en: 'tiers — OM lists · read-only', ru: 'тиры — списки ОМ · только чтение' },
+  'sp.earlier': { en: '↑ earlier', ru: '↑ раньше' },
+  'sp.noHistory': {
     en: 'No local history for this fan yet — O opens the full chat.',
     ru: 'Локальной истории пока нет — O откроет полный чат.',
   },
-  'sup.noChatSend': {
+  'sp.noChatSend': {
     en: 'Chat not synced yet — sending unavailable from the preview.',
     ru: 'Чат не синхронизирован — отправка из превью недоступна.',
   },
   // canNotSendReason tokens, live-verified 2026-06-13 (research doc §expired)
-  'sup.reason.unsubscribed': {
+  'sp.reason.unsubscribed': {
     en: 'Fan unsubscribed — OnlyFans blocks new messages to this chat.',
     ru: 'Фан отписался — OnlyFans не даёт писать в этот чат.',
   },
-  'sup.reason.chat_unavailable': {
+  'sp.reason.chat_unavailable': {
     en: 'Chat unavailable on OnlyFans.',
     ru: 'Чат недоступен на OnlyFans.',
   },
-  'sup.inserted': { en: 'inserted into composer', ru: 'вставлен в композер' },
-  'sup.anotherVariant': { en: '↻ another take', ru: '↻ другой вариант' },
-  'sup.variant': { en: 'Variant {n}', ru: 'Вариант {n}' },
-  'sup.segment': { en: 'segment {s}', ru: 'сегмент {s}' },
-  'sup.openChat': { en: 'Open chat', ru: 'Открыть чат' },
-  'sup.previewHint': { en: 'ESC CLOSE · J/K NEXT FAN', ru: 'ESC ЗАКРЫТЬ · J/K СЛЕД. ФАН' },
-  'sup.truncated': {
+  'sp.inserted': { en: 'inserted into composer', ru: 'вставлен в композер' },
+  'sp.anotherVariant': { en: '↻ another take', ru: '↻ другой вариант' },
+  'sp.variant': { en: 'Variant {n}', ru: 'Вариант {n}' },
+  'sp.segment': { en: 'segment {s}', ru: 'сегмент {s}' },
+  'sp.openChat': { en: 'Open chat', ru: 'Открыть чат' },
+  'sp.previewHint': { en: 'ESC CLOSE · J/K NEXT FAN', ru: 'ESC ЗАКРЫТЬ · J/K СЛЕД. ФАН' },
+  'sp.truncated': {
     en: 'roster capped at 1000 — sorted tail not shown',
     ru: 'ростер обрезан на 1000 — хвост не показан',
   },
-  'sup.notConfigured': {
+  'sp.notConfigured': {
     en: 'Map OnlyMonster tier lists to shelves in Settings to fill this board.',
     ru: 'Сопоставьте списки OnlyMonster полкам в настройках — борд наполнится.',
   },
-  'sup.openSettings': { en: 'Open settings', ru: 'Открыть настройки' },
-  'sup.loading': { en: 'LOADING…', ru: 'ЗАГРУЗКА…' },
-  'sup.set.title': { en: 'Supporters', ru: 'Саппортеры' },
-  'sup.set.hint': {
+  'sp.openSettings': { en: 'Open settings', ru: 'Открыть настройки' },
+  'sp.loading': { en: 'LOADING…', ru: 'ЗАГРУЗКА…' },
+  'sp.set.title': { en: 'Spenders', ru: 'Спендеры' },
+  'sp.set.hint': {
     en: 'Map OnlyMonster user-lists to board shelves, top tier first. The lists themselves are managed in OnlyMonster — the board only reads them. Spenders outside mapped lists land in «No tier».',
     ru: 'Сопоставьте user-списки OnlyMonster полкам борда, верхний тир первым. Сами списки ведёт OnlyMonster — борд их только читает. Спендеры вне выбранных списков попадают в «Без тира».',
   },
-  'sup.set.account': { en: 'Account', ru: 'Аккаунт' },
-  'sup.set.mapped': { en: 'On the board (in order)', ru: 'На борде (по порядку)' },
-  'sup.set.available': { en: 'Available OM lists', ru: 'Доступные списки ОМ' },
-  'sup.set.add': { en: 'Add', ru: 'Добавить' },
-  'sup.set.remove': { en: 'Remove', ru: 'Убрать' },
-  'sup.set.up': { en: 'Up', ru: 'Выше' },
-  'sup.set.down': { en: 'Down', ru: 'Ниже' },
-  'sup.set.empty': { en: 'No lists mapped yet.', ru: 'Списки пока не выбраны.' },
-  'sup.set.noKey': {
+  'sp.set.account': { en: 'Account', ru: 'Аккаунт' },
+  'sp.set.mapped': { en: 'On the board (in order)', ru: 'На борде (по порядку)' },
+  'sp.set.available': { en: 'Available OM lists', ru: 'Доступные списки ОМ' },
+  'sp.set.add': { en: 'Add', ru: 'Добавить' },
+  'sp.set.remove': { en: 'Remove', ru: 'Убрать' },
+  'sp.set.up': { en: 'Up', ru: 'Выше' },
+  'sp.set.down': { en: 'Down', ru: 'Ниже' },
+  'sp.set.empty': { en: 'No lists mapped yet.', ru: 'Списки пока не выбраны.' },
+  'sp.set.noKey': {
     en: 'Lists load once the OFAPI key is configured.',
     ru: 'Списки загрузятся после настройки ключа OFAPI.',
   },
-  'sup.set.fansCount': { en: '{n} fans', ru: '{n} фанов' },
+  'sp.set.fansCount': { en: '{n} fans', ru: '{n} фанов' },
 
   // ── Toasts (renderer) and notifications (main) ────────────────────────────
   'toast.newMessage': { en: 'New message', ru: 'Новое сообщение' },

@@ -1,4 +1,4 @@
-// Supporters board — center surface replacing the thread (chat list stays;
+// Spenders board — center surface replacing the thread (chat list stays;
 // ESC/← returns). Binding mockup: docs/mockups/supporters.html. A viewing
 // board: NO AI automation — the human decides; AI runs only on explicit
 // click/hotkey inside the quick-look preview.
@@ -6,9 +6,9 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { SupporterListVM, SupporterRowVM } from '../../../../preload/contract';
+import type { SpenderListVM, SpenderRowVM } from '../../../../preload/contract';
 import { getBridge } from '../../bridge/bridge';
-import { qk, useAccounts, useSettings, useSupporterLists, useSupporterUntiered } from '../../bridge/queries';
+import { qk, useAccounts, useSettings, useSpenderLists, useSpenderUntiered } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { useT } from '../../lib/i18n';
 import { Kbd } from '../../design/Kbd';
@@ -16,8 +16,8 @@ import { EmptyState } from '../../design/EmptyState';
 import { SkeletonRows } from '../../design/Skeleton';
 import { shelfPresentation, splitTierLabel } from '@chatgoose/shared';
 import { buildAllView, buildFlatView, UNTIERED_ID, type BoardItem, type ShelfData } from './boardModel';
-import { useSupportersStore } from './supportersStore';
-import { SupporterRowItem } from './SupporterRowItem';
+import { useSpendersStore } from './spendersStore';
+import { SpenderRowItem } from './SpenderRowItem';
 import { QuickLook } from './QuickLook';
 
 function estimateItem(item: BoardItem | undefined): number {
@@ -27,36 +27,36 @@ function estimateItem(item: BoardItem | undefined): number {
   return 44;
 }
 
-export function SupportersSurface(): React.JSX.Element {
+export function SpendersSurface(): React.JSX.Element {
   const accountId = useUiStore((s) => s.selectedAccountId);
   const setView = useUiStore((s) => s.setView);
   const t = useT();
 
   const accounts = useAccounts();
   const settings = useSettings();
-  const lists = useSupporterLists(accountId, true);
+  const lists = useSpenderLists(accountId, true);
 
-  const chip = useSupportersStore((s) => s.chip);
-  const expanded = useSupportersStore((s) => s.expanded);
-  const untieredOpen = useSupportersStore((s) => s.untieredOpen);
-  const cursorFanId = useSupportersStore((s) => s.cursorFanId);
-  const previewFanId = useSupportersStore((s) => s.previewFanId);
-  const setChip = useSupportersStore((s) => s.setChip);
-  const expandList = useSupportersStore((s) => s.expandList);
-  const setUntieredOpen = useSupportersStore((s) => s.setUntieredOpen);
-  const openPreview = useSupportersStore((s) => s.openPreview);
-  const setVisibleRows = useSupportersStore((s) => s.setVisibleRows);
-  const resetTransient = useSupportersStore((s) => s.resetTransient);
+  const chip = useSpendersStore((s) => s.chip);
+  const expanded = useSpendersStore((s) => s.expanded);
+  const untieredOpen = useSpendersStore((s) => s.untieredOpen);
+  const cursorFanId = useSpendersStore((s) => s.cursorFanId);
+  const previewFanId = useSpendersStore((s) => s.previewFanId);
+  const setChip = useSpendersStore((s) => s.setChip);
+  const expandList = useSpendersStore((s) => s.expandList);
+  const setUntieredOpen = useSpendersStore((s) => s.setUntieredOpen);
+  const openPreview = useSpendersStore((s) => s.openPreview);
+  const setVisibleRows = useSpendersStore((s) => s.setVisibleRows);
+  const resetTransient = useSpendersStore((s) => s.resetTransient);
 
   useEffect(() => () => resetTransient(), [resetTransient]);
 
   const mapping = useMemo(
-    () => (accountId !== null ? (settings.data?.supportersListMappings[accountId] ?? []) : []),
+    () => (accountId !== null ? (settings.data?.spendersListMappings[accountId] ?? []) : []),
     [settings.data, accountId],
   );
-  const shelves: SupporterListVM[] = useMemo(() => {
+  const shelves: SpenderListVM[] = useMemo(() => {
     const byId = new Map((lists.data?.lists ?? []).map((list) => [list.id, list]));
-    return mapping.map((id) => byId.get(id)).filter((list): list is SupporterListVM => list !== undefined);
+    return mapping.map((id) => byId.get(id)).filter((list): list is SpenderListVM => list !== undefined);
   }, [lists.data, mapping]);
 
   // A shelf's roster loads when it is on screen with rows: «Все»-preview
@@ -69,19 +69,19 @@ export function SupportersSurface(): React.JSX.Element {
         (chip === 'all' &&
           (expanded[list.id] === true || shelfPresentation(index, list.usersCount).kind === 'preview'));
       return {
-        queryKey: accountId === null ? ['supporters-roster', 'none', list.id] : qk.supportersRoster(accountId, list.id),
+        queryKey: accountId === null ? ['spenders-roster', 'none', list.id] : qk.spendersRoster(accountId, list.id),
         queryFn: () =>
-          getBridge().invoke('query:supporters.roster', { accountId: accountId ?? '', listId: list.id }),
+          getBridge().invoke('query:spenders.roster', { accountId: accountId ?? '', listId: list.id }),
         enabled: accountId !== null && wantsRows,
       };
     }),
   });
-  const untiered = useSupporterUntiered(accountId, chip === 'all' && untieredOpen && mapping.length > 0);
+  const untiered = useSpenderUntiered(accountId, chip === 'all' && untieredOpen && mapping.length > 0);
 
   const model = useMemo(() => {
     const shelfData: ShelfData[] = shelves.map((list, index) => ({
       list,
-      rows: (rosterQueries[index]?.data as { rows: SupporterRowVM[] } | undefined)?.rows,
+      rows: (rosterQueries[index]?.data as { rows: SpenderRowVM[] } | undefined)?.rows,
       truncated:
         (rosterQueries[index]?.data as { truncated?: boolean } | undefined)?.truncated === true,
     }));
@@ -130,7 +130,7 @@ export function SupportersSurface(): React.JSX.Element {
         return (
           <div className="flex items-baseline gap-[9px] bg-bg1 px-4 pt-[13px] pb-[7px]">
             <span className="text-[12px] font-semibold text-ink-mid">
-              {item.listId === UNTIERED_ID ? t('sup.untiered') : item.title}
+              {item.listId === UNTIERED_ID ? t('sp.untiered') : item.title}
             </span>
             {item.band !== null && <span className="num text-[9.5px] text-ink-low">{item.band}</span>}
             <span className="h-px flex-1 self-center bg-line" />
@@ -139,7 +139,7 @@ export function SupportersSurface(): React.JSX.Element {
         );
       case 'row':
         return (
-          <SupporterRowItem
+          <SpenderRowItem
             row={item.row}
             active={item.row.fanId === (previewFanId ?? cursorFanId)}
             t={t}
@@ -153,8 +153,8 @@ export function SupportersSurface(): React.JSX.Element {
             onClick={() => expandList(item.listId)}
             className="flex w-full cursor-pointer items-center gap-2.5 border-t border-line bg-bg1 px-4 py-[11px] text-left text-[12.5px] text-ink-mid hover:bg-bg2"
           >
-            <span>{t('sup.moreInTier', { n: item.hidden, tier: item.tierTitle })}</span>
-            <span className="num ml-auto text-[9.5px] text-ink-low">{t('sup.show')}</span>
+            <span>{t('sp.moreInTier', { n: item.hidden, tier: item.tierTitle })}</span>
+            <span className="num ml-auto text-[9.5px] text-ink-low">{t('sp.show')}</span>
           </button>
         );
       case 'collapsed':
@@ -166,24 +166,24 @@ export function SupportersSurface(): React.JSX.Element {
             }
             className="flex w-full cursor-pointer items-center gap-2.5 border-t border-line bg-bg1 px-4 py-[11px] text-left text-[12.5px] text-ink-mid hover:bg-bg2"
           >
-            <span>{item.listId === UNTIERED_ID ? t('sup.untiered') : item.title}</span>
+            <span>{item.listId === UNTIERED_ID ? t('sp.untiered') : item.title}</span>
             {item.band !== null && <span className="num text-[9.5px] text-ink-low">{item.band}</span>}
             <span className="num ml-auto text-[9.5px] text-ink-low">
               {item.count !== null ? `${item.count} · ` : ''}
-              {t('sup.show')}
+              {t('sp.show')}
             </span>
           </button>
         );
       case 'loading':
         return (
           <div className="num px-4 py-3 text-center text-micro tracking-[0.1em] text-ink-low">
-            {t('sup.loading')}
+            {t('sp.loading')}
           </div>
         );
       case 'truncated':
         return (
           <div className="num px-4 py-2 text-center text-micro tracking-[0.06em] text-warn">
-            {t('sup.truncated')}
+            {t('sp.truncated')}
           </div>
         );
       default:
@@ -197,22 +197,22 @@ export function SupportersSurface(): React.JSX.Element {
     <section className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-bg0 p-[18px]">
       <div className="mx-auto flex h-full min-h-0 w-full max-w-[880px] flex-col overflow-hidden rounded-xl border border-line-strong bg-bg1 shadow-soft">
         <div className="flex flex-none items-baseline gap-[11px] border-b border-line px-[18px] py-[13px]">
-          <h3 className="font-serif text-[16.5px] font-semibold">{t('sup.title')}</h3>
+          <h3 className="font-serif text-[16.5px] font-semibold">{t('sp.title')}</h3>
           <span className="num text-[10px] tracking-[0.05em] text-ink-low uppercase">
             {account !== null ? `${account.displayName} · ` : ''}
-            {t('sup.sortNote')}
+            {t('sp.sortNote')}
           </span>
           <button
             type="button"
             onClick={() => setView('workspace')}
             className="num ml-auto cursor-pointer text-[10px] text-ink-low hover:text-ink-mid"
           >
-            {t('sup.backToChat')}
+            {t('sp.backToChat')}
           </button>
         </div>
         <div className="flex flex-none gap-[5px] overflow-x-auto border-b border-line px-4 py-[11px]">
           <ChipButton selected={chip === 'all'} onClick={() => setChip('all')}>
-            {t('sup.all')}
+            {t('sp.all')}
             <span className="num ml-1 text-[10.5px] opacity-70">{allCount}</span>
           </ChipButton>
           {shelves.map((list) => (
@@ -226,14 +226,14 @@ export function SupportersSurface(): React.JSX.Element {
           {empty ? (
             <EmptyState
               glyph="◫"
-              title={t('sup.notConfigured')}
+              title={t('sp.notConfigured')}
               hint={
                 <button
                   type="button"
                   onClick={() => setView('settings')}
                   className="cursor-pointer font-semibold text-clay-deep underline decoration-dotted underline-offset-2"
                 >
-                  {t('sup.openSettings')}
+                  {t('sp.openSettings')}
                 </button>
               }
             />
@@ -261,10 +261,10 @@ export function SupportersSurface(): React.JSX.Element {
         </div>
         <div className="flex flex-none items-center gap-2 border-t border-line bg-bg1 px-4 py-2 text-[11px] text-ink-low">
           <Kbd>J</Kbd>
-          <Kbd>K</Kbd> {t('sup.footNav')} · <Kbd>SPACE</Kbd> {t('sup.footPreview')} · <Kbd>O</Kbd>{' '}
-          {t('sup.footChat')}
+          <Kbd>K</Kbd> {t('sp.footNav')} · <Kbd>SPACE</Kbd> {t('sp.footPreview')} · <Kbd>O</Kbd>{' '}
+          {t('sp.footChat')}
           <span className="flex-1" />
-          <span>{t('sup.footReadOnly')}</span>
+          <span>{t('sp.footReadOnly')}</span>
         </div>
       </div>
       {accountId !== null && previewFanId !== null && (

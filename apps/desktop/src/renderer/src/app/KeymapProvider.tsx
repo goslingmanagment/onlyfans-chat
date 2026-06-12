@@ -20,11 +20,11 @@ import {
 import { startAiFromGlobal } from '../features/ai/globalStart';
 import { sendCurrentDraft } from '../features/conversation/sendController';
 import { COMPOSER_TEXTAREA_ID } from '../features/conversation/composerDom';
-import { previewRow, useSupportersStore } from '../features/supporters/supportersStore';
+import { previewRow, useSpendersStore } from '../features/spenders/spendersStore';
 import {
   focusPreviewComposer,
   startAiFromPreview,
-} from '../features/supporters/previewActions';
+} from '../features/spenders/previewActions';
 
 function toEventLike(e: KeyboardEvent): KeyEventLike {
   const target = e.target;
@@ -88,12 +88,12 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
         case 'dismiss': {
           if (ui.paletteOpen) ui.setPaletteOpen(false);
           else if (ui.cheatsheetOpen) ui.setCheatsheetOpen(false);
-          else if (ui.view === 'supporters' && useSupportersStore.getState().previewFanId !== null) {
+          else if (ui.view === 'spenders' && useSpendersStore.getState().previewFanId !== null) {
             // mockup: ESC closes the quick look (its unmount discards any op)
-            useSupportersStore.getState().closePreview();
+            useSpendersStore.getState().closePreview();
           } else if (useAiStore.getState().op !== null) dismissDock();
           else if (ui.view === 'settings') ui.setView('workspace');
-          else if (ui.view === 'supporters') ui.setView('workspace');
+          else if (ui.view === 'spenders') ui.setView('workspace');
           else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
           return;
         }
@@ -115,34 +115,34 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
         return;
       }
 
-      // ── Supporters board scope (PLAN item 12) ──
-      if (ui.view === 'supporters' && ui.selectedAccountId !== null) {
+      // ── Spenders board scope (PLAN item 12) ──
+      if (ui.view === 'spenders' && ui.selectedAccountId !== null) {
         const accountId = ui.selectedAccountId;
-        const sup = useSupportersStore.getState();
+        const spd = useSpendersStore.getState();
         switch (action) {
           case 'next-chat':
           case 'prev-chat':
             e.preventDefault();
-            sup.moveCursor(action === 'next-chat' ? 1 : -1);
+            spd.moveCursor(action === 'next-chat' ? 1 : -1);
             return;
           case 'board-preview': {
             e.preventDefault();
-            if (sup.previewFanId !== null) sup.closePreview();
+            if (spd.previewFanId !== null) spd.closePreview();
             else {
-              const fanId = sup.cursorFanId ?? sup.visibleRows[0]?.fanId ?? null;
-              if (fanId !== null) sup.openPreview(fanId);
+              const fanId = spd.cursorFanId ?? spd.visibleRows[0]?.fanId ?? null;
+              if (fanId !== null) spd.openPreview(fanId);
             }
             return;
           }
           case 'board-open-chat': {
             e.preventDefault();
-            const fanId = sup.previewFanId ?? sup.cursorFanId;
+            const fanId = spd.previewFanId ?? spd.cursorFanId;
             if (fanId !== null) ui.selectChat(accountId, fanId);
             return;
           }
           case 'board-back':
             e.preventDefault();
-            if (sup.previewFanId !== null) sup.closePreview();
+            if (spd.previewFanId !== null) spd.closePreview();
             else ui.setView('workspace');
             return;
           case 'focus-composer':
@@ -153,7 +153,7 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
             // One send path: the preview composer goes through the same
             // cmd:send.message engine as the workspace composer (SPEC §7).
             e.preventDefault();
-            const row = previewRow(sup);
+            const row = previewRow(spd);
             if (row !== null) {
               sendCurrentDraft({ accountId, chatId: row.fanId, canSend: row.canSendMessage });
             }

@@ -91,7 +91,7 @@ export interface ChatsQueries {
   upsert(chat: ChatUpsert): void;
   upsertMany(chats: readonly ChatUpsert[]): void;
   get(accountId: string, chatId: string): ChatRow | null;
-  /** Batched lookup (Supporters board row join); missing chats absent from the map. */
+  /** Batched lookup (Spenders board row join); missing chats absent from the map. */
   getMany(accountId: string, chatIds: readonly string[]): Map<string, ChatRow>;
   list(args: { accountId: string; filter: ChatFilter; limit?: number; offset?: number }): ChatListPage;
   /** Case-insensitive (ASCII) substring match on fan_name. */

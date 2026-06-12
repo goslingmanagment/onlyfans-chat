@@ -13,7 +13,7 @@ import type { CreditMeter } from '../ofapi/credit-meter';
 import type { SendEngine } from '../send/engine';
 import { auditOutbox } from '../send/audit';
 import type { VaultService } from '../media/vault';
-import type { SupportersService } from '../supporters/service';
+import type { SpendersService } from '../spenders/service';
 import type {
   AiStartRequest,
   KeyTestProvider,
@@ -128,9 +128,9 @@ const messageRefSchema = z.object({ accountId: idSchema, chatId: idSchema, messa
 const draftSetSchema = z.object({ accountId: idSchema, chatId: idSchema, text: z.string().max(20_000) });
 const draftStoredSchema = z.string();
 
-// ── Supporters board (PLAN item 12) ──
-const supportersListsSchema = z.object({ accountId: idSchema });
-const supportersRosterSchema = z.object({ accountId: idSchema, listId: idSchema });
+// ── Spenders board (PLAN item 12) ──
+const spendersListsSchema = z.object({ accountId: idSchema });
+const spendersRosterSchema = z.object({ accountId: idSchema, listId: idSchema });
 
 // ── Vault & PPV (PRD F7) ──
 const vaultListSchema = z.object({
@@ -208,8 +208,8 @@ export interface IpcDeps {
   /** Vault browsing/upload (PRD F7); null/absent until an OFAPI key exists.
    *  Optional (not `| null` alone) so pre-P5 IpcDeps call sites stay valid. */
   vault?: VaultService | null;
-  /** Supporters board (PLAN item 12); null/absent until an OFAPI key exists. */
-  supporters?: SupportersService | null;
+  /** Spenders board (PLAN item 12); null/absent until an OFAPI key exists. */
+  spenders?: SpendersService | null;
   purge: () => Promise<void>;
   /** Settings "Test" buttons; probes the STORED key. Optional like vault. */
   testKey?: (provider: KeyTestProvider) => Promise<KeyTestResultVM>;
@@ -569,28 +569,28 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     await requireSend().unsend(args.accountId, args.chatId, args.messageId);
   });
 
-  // ── Supporters board (PLAN item 12; read-only toward OM lists) ──
+  // ── Spenders board (PLAN item 12; read-only toward OM lists) ──
 
-  function requireSupporters(): SupportersService {
-    if (!deps.supporters) {
-      throw new Error('The supporters board is not available yet — configure the OFAPI key in Settings.');
+  function requireSpenders(): SpendersService {
+    if (!deps.spenders) {
+      throw new Error('The spenders board is not available yet — configure the OFAPI key in Settings.');
     }
-    return deps.supporters;
+    return deps.spenders;
   }
 
-  ipcMain.handle('query:supporters.lists', (_event, rawArgs: unknown) => {
-    const args = supportersListsSchema.parse(rawArgs);
-    return requireSupporters().lists(args.accountId);
+  ipcMain.handle('query:spenders.lists', (_event, rawArgs: unknown) => {
+    const args = spendersListsSchema.parse(rawArgs);
+    return requireSpenders().lists(args.accountId);
   });
 
-  ipcMain.handle('query:supporters.roster', (_event, rawArgs: unknown) => {
-    const args = supportersRosterSchema.parse(rawArgs);
-    return requireSupporters().roster(args.accountId, args.listId);
+  ipcMain.handle('query:spenders.roster', (_event, rawArgs: unknown) => {
+    const args = spendersRosterSchema.parse(rawArgs);
+    return requireSpenders().roster(args.accountId, args.listId);
   });
 
-  ipcMain.handle('query:supporters.untiered', (_event, rawArgs: unknown) => {
-    const args = supportersListsSchema.parse(rawArgs);
-    return requireSupporters().untiered(args.accountId);
+  ipcMain.handle('query:spenders.untiered', (_event, rawArgs: unknown) => {
+    const args = spendersListsSchema.parse(rawArgs);
+    return requireSpenders().untiered(args.accountId);
   });
 
   // ── Vault & PPV (PRD F7) ──
