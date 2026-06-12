@@ -18,6 +18,7 @@ import type {
   MessageVM,
   OutboxItemVM,
   SettingsVM,
+  SpenderRowVM,
   SyncStatusVM,
   VaultAlbumVM,
   VaultItemVM,
@@ -1275,6 +1276,57 @@ export function createMockBridge(): ChatGooseBridge {
         hasChat: true,
       }));
       return { rows, fetchedAt: new Date().toISOString() };
+    },
+    'query:spenders.stats': ({ accountId }) => {
+      const all = store.chats.get(accountId) ?? [];
+      const today = new Date();
+      const dayString = (back: number): string => {
+        const d = new Date(today.getTime() - back * 24 * 60 * 60_000);
+        return d.toLocaleDateString('sv-SE');
+      };
+      const amounts = [18, 32, 0, 45, 22, 60, 14, 8, 38, 0, 26, 100, 42, 12, 30, 55, 0, 20, 34, 16, 48, 28, 64, 36, 10, 52, 24, 70, 40, 49];
+      const days = amounts.map((amount, i) => ({ day: dayString(29 - i), amount }));
+      const rowOf = (c: (typeof all)[number], fanDays: number | null): SpenderRowVM => ({
+        fanId: c.chatId,
+        name: c.fanName,
+        avatarUrl: c.avatarUrl,
+        lifetimeSpend: c.lifetimeSpend,
+        spend30d: c.spend30d,
+        lastMessagePreview: c.lastMessagePreview,
+        lastMessageIsSentByMe: c.lastMessageIsSentByMe,
+        fanWaiting: c.fanWaiting,
+        modelDays: 1,
+        fanDays,
+        silence: fanDays !== null && fanDays >= 22 ? 'hot' : fanDays !== null && fanDays >= 8 ? 'warm' : 'none',
+        canSendMessage: c.canSendMessage,
+        canNotSendReason: c.canNotSendReason,
+        hasChat: true,
+      });
+      const waiting = all.filter((c) => c.fanWaiting).slice(0, 4).map((c, i) => rowOf(c, i === 0 ? 0 : i));
+      const newSpenders = all.slice(5, 7).map((c, i) => ({ row: rowOf(c, 2), txCount: 3 - i }));
+      return {
+        days,
+        revenue30d: amounts.reduce((a, b) => a + b, 0),
+        revenue7d: 312,
+        revenue7dPct: 18,
+        revenueToday: 49,
+        payers30d: 27,
+        txCount30d: 86,
+        avgCheck30d: 11.6,
+        tiers: [
+          { listId: '9001', title: '🐳 Кит', revenue: 486, payers: 3 },
+          { listId: '9002', title: '⭐ Топ', revenue: 342, payers: 4 },
+          { listId: '__untiered__', title: '', revenue: 74, payers: 5 },
+        ],
+        radar: [
+          { listId: '9001', title: '🐳 Кит', warm: 1, hot: 1, silentLifetime: 2756 },
+          { listId: '9002', title: '⭐ Топ', warm: 2, hot: 1, silentLifetime: 890 },
+        ],
+        hotCount: 2,
+        hotLifetime: 3646,
+        waiting,
+        newSpenders,
+      };
     },
     'query:chat.gallery': ({ accountId, chatId, offset }) => {
       const all = (store.messages.get(`${accountId}/${chatId}`) ?? [])

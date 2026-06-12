@@ -58,6 +58,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     // DB; the OM roster ids behind them stay TTL-cached in main (0 credits).
     queueInvalidate(['spenders-roster', accountId]);
     queueInvalidate(['spenders-untiered', accountId]);
+    queueInvalidate(['spenders-stats', accountId]);
   }
 
   function handleDbChanged(event: z.infer<typeof dbChangedSchema>): void {

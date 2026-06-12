@@ -593,6 +593,11 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return requireSpenders().untiered(args.accountId);
   });
 
+  ipcMain.handle('query:spenders.stats', (_event, rawArgs: unknown) => {
+    const args = spendersListsSchema.parse(rawArgs);
+    return requireSpenders().stats(args.accountId);
+  });
+
   // ── Vault & PPV (PRD F7) ──
 
   function requireVault(): VaultService {

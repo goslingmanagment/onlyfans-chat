@@ -37,6 +37,18 @@ export function AccountRail(): React.JSX.Element {
         +
       </button>
       <div className="flex-1" />
+      {/* Spenders page entry (owner 2026-06-13: a visible button, not just ⌘K) */}
+      <button
+        type="button"
+        title="Spenders"
+        onClick={() => setView(view === 'spenders' ? 'workspace' : 'spenders')}
+        className={cx(
+          'flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] text-[15px] font-bold',
+          view === 'spenders' ? 'bg-clay-bg text-clay' : 'text-ink-low hover:text-ink-mid',
+        )}
+      >
+        $
+      </button>
       <button
         type="button"
         title="Settings"

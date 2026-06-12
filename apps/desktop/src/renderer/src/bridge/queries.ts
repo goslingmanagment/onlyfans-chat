@@ -26,6 +26,7 @@ import type {
   SettingsVM,
   SpenderListVM,
   SpenderRowVM,
+  SpenderStatsVM,
   SyncStatusVM,
   VaultAlbumVM,
   VaultItemVM,
@@ -50,6 +51,7 @@ export const qk = {
   spendersRoster: (accountId: string, listId: string) =>
     ['spenders-roster', accountId, listId] as const,
   spendersUntiered: (accountId: string) => ['spenders-untiered', accountId] as const,
+  spendersStats: (accountId: string) => ['spenders-stats', accountId] as const,
   vault: (accountId: string, albumId: string | null, query: string) =>
     ['vault', accountId, albumId ?? 'all', query] as const,
   vaultAlbums: (accountId: string) => ['vault-albums', accountId] as const,
@@ -273,6 +275,14 @@ export function useSpenderUntiered(accountId: string | null, enabled: boolean) {
   return useQuery<{ rows: SpenderRowVM[]; fetchedAt: string }>({
     queryKey: accountId === null ? ['spenders-untiered', 'none'] : qk.spendersUntiered(accountId),
     queryFn: () => getBridge().invoke('query:spenders.untiered', { accountId: accountId ?? '' }),
+    enabled: enabled && accountId !== null,
+  });
+}
+
+export function useSpenderStats(accountId: string | null, enabled: boolean) {
+  return useQuery<SpenderStatsVM>({
+    queryKey: accountId === null ? ['spenders-stats', 'none'] : qk.spendersStats(accountId),
+    queryFn: () => getBridge().invoke('query:spenders.stats', { accountId: accountId ?? '' }),
     enabled: enabled && accountId !== null,
   });
 }

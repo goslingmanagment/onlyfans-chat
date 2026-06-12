@@ -8,15 +8,19 @@
 
 import {
   assignSpenderTiers,
+  buildDailySeries,
   daysSince,
   fanSilenceBucket,
+  isNewSpender,
+  periodDelta,
   sortBySilence,
+  splitTierLabel,
 } from '@chatgoose/shared';
 import { htmlToPlainText } from '@chatgoose/shared/transcript/index';
 import type { OfApiClient } from '../ofapi/client';
 import type { DataLayer } from '../db/index';
 import type { ChatRow, FanRow } from '../db/rows';
-import type { SpenderListVM, SpenderRowVM } from '../../preload/contract';
+import type { SpenderListVM, SpenderRowVM, SpenderStatsVM } from '../../preload/contract';
 import { deriveFanWaiting } from '../ipc/viewmodels';
 
 export const SPENDERS_TTL_MS = 5 * 60_000;
@@ -57,7 +61,18 @@ export interface SpendersService {
     listId: string,
   ): Promise<{ rows: SpenderRowVM[]; truncated: boolean; fetchedAt: string }>;
   untiered(accountId: string): Promise<{ rows: SpenderRowVM[]; fetchedAt: string }>;
+  /** Stats panel aggregates — local joins over the cached rosters (0 extra
+   *  credits once the rosters are warm). */
+  stats(accountId: string): Promise<SpenderStatsVM>;
 }
+
+/** Sentinel for the «Без тира» pseudo-shelf (matches the renderer's UNTIERED_ID). */
+export const STATS_UNTIERED_ID = '__untiered__';
+/** Stats list caps (the panel shows queues, not full rosters). */
+export const STATS_WAITING_LIMIT = 6;
+export const STATS_NEW_LIMIT = 6;
+const STATS_DAYS = 30;
+const WEEK_DAYS = 7;
 
 export interface SpendersServiceOptions {
   client: OfApiClient;
@@ -250,6 +265,30 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
     ).map(({ fanSilenceDays: _drop, ...row }) => row);
   }
 
+  async function untieredMembers(accountId: string): Promise<RosterMember[]> {
+    const mapped = await getMappedListIds(accountId);
+    const rosterByList = new Map<string, string[]>();
+    for (const listId of mapped) {
+      const roster = await loadRoster(accountId, listId);
+      rosterByList.set(
+        listId,
+        roster.members.map((member) => member.fanId),
+      );
+    }
+    const assignment = assignSpenderTiers({
+      orderedListIds: mapped,
+      rosterByList,
+      spenderIds: data.fans.listSpenderIds(accountId),
+    });
+    return assignment.untiered.map((fanId) => ({
+      fanId,
+      name: null,
+      username: null,
+      avatarRemoteUrl: null,
+      totalSumm: null,
+    }));
+  }
+
   return {
     async lists(accountId) {
       const entry = await loadLists(accountId);
@@ -281,28 +320,122 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
     },
 
     async untiered(accountId) {
+      const members = await untieredMembers(accountId);
+      return { rows: buildRows(accountId, members), fetchedAt: new Date(now()).toISOString() };
+    },
+
+    async stats(accountId) {
+      const nowMs = now();
+      const cutoffIso = new Date(nowMs - SPEND_WINDOW_MS).toISOString();
+      // Local calendar day ('sv-SE' formats as YYYY-MM-DD) — the chart must
+      // match the day the owner lives in, not UTC.
+      const endDay = new Date(nowMs).toLocaleDateString('sv-SE');
+
+      const series = buildDailySeries(
+        data.fanTransactions.dailyTotals(accountId, cutoffIso),
+        endDay,
+        STATS_DAYS,
+      );
+      const week = periodDelta(series, WEEK_DAYS);
+      const byFan = data.fanTransactions.statsByFanSince(accountId, cutoffIso);
+      const revenue30d = series.reduce((sum, point) => sum + point.amount, 0);
+      let txCount30d = 0;
+      for (const entry of byFan.values()) txCount30d += entry.count;
+
+      // Shelf walk in board order with the same first-shelf dedup as roster().
       const mapped = await getMappedListIds(accountId);
-      const rosterByList = new Map<string, string[]>();
+      const listsEntry = await loadLists(accountId);
+      const nameOf = (listId: string): string => {
+        const list = listsEntry.lists.find((entry) => entry.id === listId);
+        return list !== undefined ? splitTierLabel(list.name).title : listId;
+      };
+      const claimed = new Set<string>();
+      const tiers: SpenderStatsVM['tiers'] = [];
+      const radar: SpenderStatsVM['radar'] = [];
+      const pool: SpenderRowVM[] = [];
       for (const listId of mapped) {
         const roster = await loadRoster(accountId, listId);
-        rosterByList.set(
-          listId,
-          roster.members.map((member) => member.fanId),
-        );
+        const members = roster.members.filter((member) => !claimed.has(member.fanId));
+        for (const member of members) claimed.add(member.fanId);
+        const rows = buildRows(accountId, members);
+        pool.push(...rows);
+        let revenue = 0;
+        let payers = 0;
+        for (const member of members) {
+          const entry = byFan.get(member.fanId);
+          if (entry !== undefined && entry.total > 0) {
+            revenue += entry.total;
+            payers += 1;
+          }
+        }
+        const title = nameOf(listId);
+        tiers.push({ listId, title, revenue, payers });
+        let warm = 0;
+        let hot = 0;
+        let silentLifetime = 0;
+        for (const row of rows) {
+          if (row.silence === 'none') continue;
+          if (row.silence === 'warm') warm += 1;
+          else hot += 1;
+          silentLifetime += row.lifetimeSpend ?? 0;
+        }
+        radar.push({ listId, title, warm, hot, silentLifetime });
       }
-      const assignment = assignSpenderTiers({
-        orderedListIds: mapped,
-        rosterByList,
-        spenderIds: data.fans.listSpenderIds(accountId),
-      });
-      const members = assignment.untiered.map((fanId) => ({
-        fanId,
-        name: null,
-        username: null,
-        avatarRemoteUrl: null,
-        totalSumm: null,
-      }));
-      return { rows: buildRows(accountId, members), fetchedAt: new Date(now()).toISOString() };
+
+      const untieredRows = buildRows(accountId, await untieredMembers(accountId));
+      pool.push(...untieredRows);
+      // «Без тира» revenue counts EVERY unclaimed payer in the window, even
+      // one without a fan row yet — money must not vanish from the split.
+      let untieredRevenue = 0;
+      let untieredPayers = 0;
+      for (const [fanId, entry] of byFan) {
+        if (claimed.has(fanId) || entry.total <= 0) continue;
+        untieredRevenue += entry.total;
+        untieredPayers += 1;
+      }
+      if (untieredPayers > 0 || untieredRows.length > 0) {
+        tiers.push({
+          listId: STATS_UNTIERED_ID,
+          title: '',
+          revenue: untieredRevenue,
+          payers: untieredPayers,
+        });
+      }
+
+      let hotCount = 0;
+      let hotLifetime = 0;
+      for (const row of pool) {
+        if (row.silence !== 'hot') continue;
+        hotCount += 1;
+        hotLifetime += row.lifetimeSpend ?? 0;
+      }
+
+      const waiting = pool
+        .filter((row) => row.fanWaiting && row.hasChat)
+        .sort((a, b) => (b.lifetimeSpend ?? 0) - (a.lifetimeSpend ?? 0))
+        .slice(0, STATS_WAITING_LIMIT);
+      const newSpenders = pool
+        .filter((row) => isNewSpender(row.lifetimeSpend, row.spend30d ?? 0))
+        .sort((a, b) => (b.spend30d ?? 0) - (a.spend30d ?? 0))
+        .slice(0, STATS_NEW_LIMIT)
+        .map((row) => ({ row, txCount: byFan.get(row.fanId)?.count ?? 0 }));
+
+      return {
+        days: series,
+        revenue30d,
+        revenue7d: week.current,
+        revenue7dPct: week.pct,
+        revenueToday: series.at(-1)?.amount ?? 0,
+        payers30d: byFan.size,
+        txCount30d,
+        avgCheck30d: txCount30d > 0 ? revenue30d / txCount30d : 0,
+        tiers,
+        radar,
+        hotCount,
+        hotLifetime,
+        waiting,
+        newSpenders,
+      } satisfies SpenderStatsVM;
     },
   };
 }

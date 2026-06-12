@@ -19,6 +19,13 @@ interface SpendersState {
   previewFanId: string | null;
   /** Flat ordered fan rows currently visible (published by the surface). */
   visibleRows: SpenderRowVM[];
+  /** Stats panel: false = compact 300px column (default — the board owns the
+   *  screen), true = full grid with the roster squeezed left (owner v2). */
+  statsExpanded: boolean;
+  /** Rows referenced by the stats queues (ждут ответа / новые) — a preview
+   *  opened from there must resolve its VM even when the board hasn't loaded
+   *  that fan's shelf (published by the stats panel). */
+  statsRows: SpenderRowVM[];
 
   setChip: (chip: SpendersChip) => void;
   expandList: (listId: string) => void;
@@ -28,6 +35,8 @@ interface SpendersState {
   openPreview: (fanId: string) => void;
   closePreview: () => void;
   setVisibleRows: (rows: SpenderRowVM[]) => void;
+  setStatsRows: (rows: SpenderRowVM[]) => void;
+  toggleStatsExpanded: () => void;
   /** Leaving the board resets transient state (cursor/preview), keeps the chip. */
   resetTransient: () => void;
 }
@@ -39,6 +48,8 @@ export const useSpendersStore = create<SpendersState>((set) => ({
   cursorFanId: null,
   previewFanId: null,
   visibleRows: [],
+  statsExpanded: false,
+  statsRows: [],
 
   setChip: (chip) => set({ chip, cursorFanId: null, previewFanId: null }),
   expandList: (listId) => set((s) => ({ expanded: { ...s.expanded, [listId]: true } })),
@@ -70,11 +81,18 @@ export const useSpendersStore = create<SpendersState>((set) => ({
       const cursorOk = s.cursorFanId !== null && rows.some((r) => r.fanId === s.cursorFanId);
       return { visibleRows: rows, ...(cursorOk ? {} : { cursorFanId: null }) };
     }),
+  setStatsRows: (rows) => set({ statsRows: rows }),
+  toggleStatsExpanded: () => set((s) => ({ statsExpanded: !s.statsExpanded })),
   resetTransient: () => set({ cursorFanId: null, previewFanId: null }),
 }));
 
-/** Row VM of the open preview (from the published visible rows). */
+/** Row VM of the open preview — board rows first, then the stats queues
+ *  (a preview opened from «ждут ответа» may target a shelf not loaded yet). */
 export function previewRow(state: SpendersState): SpenderRowVM | null {
   if (state.previewFanId === null) return null;
-  return state.visibleRows.find((row) => row.fanId === state.previewFanId) ?? null;
+  return (
+    state.visibleRows.find((row) => row.fanId === state.previewFanId) ??
+    state.statsRows.find((row) => row.fanId === state.previewFanId) ??
+    null
+  );
 }

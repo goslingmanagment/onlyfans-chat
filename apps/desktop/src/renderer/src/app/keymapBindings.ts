@@ -40,6 +40,7 @@ export type KeyAction =
   | 'board-preview'
   | 'board-open-chat'
   | 'board-back'
+  | 'board-stats'
   | AiPartAction;
 
 const AI_PART_ACTIONS = [
@@ -88,13 +89,14 @@ export const KEY_BINDINGS: KeyBinding<KeyAction>[] = [
   { action: 'board-preview', combo: ' ', label: 'SPACE', description: 'Spenders: quick-look preview', hideFromCheatsheet: true },
   { action: 'board-open-chat', combo: 'o', label: 'O', description: 'Spenders: open the full chat', hideFromCheatsheet: true },
   { action: 'board-back', combo: 'arrowleft', label: '←', description: 'Spenders: back to chat', hideFromCheatsheet: true },
+  { action: 'board-stats', combo: 's', label: 'S', description: 'Spenders: expand/collapse stats', hideFromCheatsheet: true },
   ...AI_PART_BINDINGS,
 ];
 
 /** Collapsed cheatsheet rows for hidden bindings. */
 export const CHEATSHEET_EXTRAS: ReadonlyArray<{ label: string; description: string }> = [
   { label: '⌘1…9', description: 'Insert AI draft part N (or click the bubble)' },
-  { label: 'SPACE / O / ←', description: 'Spenders board: preview / open chat / back' },
+  { label: 'SPACE / O / ← / S', description: 'Spenders page: preview / open chat / back / stats' },
 ];
 
 /** Shown dimmed in the cheatsheet — wired by later phases (empty = section hidden). */

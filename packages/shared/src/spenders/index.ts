@@ -162,3 +162,70 @@ export function shelfPresentation(shelfIndex: number, usersCount: number): Shelf
     previewCount: shelfIndex === 0 ? SHELF_PREVIEW_FIRST : SHELF_PREVIEW_REST,
   };
 }
+
+// ─── Stats panel series math (page follow-up, owner direction 2026-06-13) ──
+// Pure day-string arithmetic: the caller (Electron main) resolves "today" in
+// the user's local timezone and passes YYYY-MM-DD strings; nothing here reads
+// the clock. The local transaction store retains 31 days (SPEND_RETENTION_MS),
+// so 30 days is the longest honest window and periods compare 7-to-7.
+
+export interface DailyRevenuePoint {
+  /** Local calendar day, YYYY-MM-DD. */
+  day: string;
+  amount: number;
+}
+
+/** The `count` consecutive local days ending at `endDay` inclusive, ascending. */
+export function enumerateDays(endDay: string, count: number): string[] {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(endDay);
+  if (match === null) throw new Error(`enumerateDays: not a YYYY-MM-DD day: ${endDay}`);
+  const endUtcMs = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  const days: string[] = [];
+  for (let back = count - 1; back >= 0; back -= 1) {
+    const date = new Date(endUtcMs - back * DAY_MS);
+    days.push(date.toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+/** Dense ascending series over the window; missing days fill with 0, rows
+ *  outside the window are dropped (retention overlap), duplicates sum. */
+export function buildDailySeries(
+  rows: ReadonlyArray<DailyRevenuePoint>,
+  endDay: string,
+  count: number,
+): DailyRevenuePoint[] {
+  const byDay = new Map<string, number>();
+  for (const row of rows) {
+    byDay.set(row.day, (byDay.get(row.day) ?? 0) + row.amount);
+  }
+  return enumerateDays(endDay, count).map((day) => ({ day, amount: byDay.get(day) ?? 0 }));
+}
+
+export interface PeriodDelta {
+  current: number;
+  previous: number;
+  /** Percent change vs the prior window; null when the prior window is 0
+   *  (a percentage of nothing reads as noise, the UI hides it). */
+  pct: number | null;
+}
+
+/** Last `window` days vs the `window` before them (series is ascending). */
+export function periodDelta(series: readonly DailyRevenuePoint[], window: number): PeriodDelta {
+  const current = series.slice(-window).reduce((sum, point) => sum + point.amount, 0);
+  const previous = series.slice(-window * 2, -window).reduce((sum, point) => sum + point.amount, 0);
+  const pct = previous > 0 ? Math.round(((current - previous) / previous) * 100) : null;
+  return { current, previous, pct };
+}
+
+/** A fan whose lifetime total is (within a dollar of) their 30-day spend made
+ *  their first purchase inside the window — lifetime older than the local
+ *  transaction retention is exactly what the OFAPI fans payload carries, so
+ *  the comparison is honest. Unknown lifetime can't prove "new" → false. */
+export const NEW_SPENDER_EPSILON_USD = 1;
+
+export function isNewSpender(lifetimeSpend: number | null, windowSpend: number): boolean {
+  if (windowSpend <= 0) return false;
+  if (lifetimeSpend === null) return false;
+  return lifetimeSpend - windowSpend < NEW_SPENDER_EPSILON_USD;
+}

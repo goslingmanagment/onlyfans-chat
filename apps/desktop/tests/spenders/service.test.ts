@@ -291,3 +291,140 @@ describe('untiered («Без тира»)', () => {
     expect(rows[0]?.lifetimeSpend).toBe(90);
   });
 });
+
+describe('stats (page right panel — local joins, 0 extra credits)', () => {
+  function localDay(daysAgo: number): string {
+    return new Date(NOW - daysAgo * DAY_MS).toLocaleDateString('sv-SE');
+  }
+
+  it('30-day daily series with totals: dense, local days, 7-to-7 delta', async () => {
+    seedFan('1', 5000);
+    data.fanTransactions.upsertMany([
+      { accountId: ACCOUNT, txId: 't0', fanId: '1', amount: 30, type: 'tips', createdAt: isoDaysAgo(0) },
+      { accountId: ACCOUNT, txId: 't2', fanId: '1', amount: 50, type: 'tips', createdAt: isoDaysAgo(2) },
+      { accountId: ACCOUNT, txId: 't10', fanId: '1', amount: 20, type: 'tips', createdAt: isoDaysAgo(10) },
+    ]);
+    const service = makeService(stubClient({ lists: [], rosters: { '100': [[]], '200': [[]] }, calls }));
+    const stats = await service.stats(ACCOUNT);
+
+    expect(stats.days).toHaveLength(30);
+    expect(stats.days.at(-1)).toEqual({ day: localDay(0), amount: 30 });
+    expect(stats.days.find((p) => p.day === localDay(2))?.amount).toBe(50);
+    expect(stats.days.find((p) => p.day === localDay(10))?.amount).toBe(20);
+    expect(stats.days.filter((p) => p.amount === 0)).toHaveLength(27);
+
+    expect(stats.revenue30d).toBe(100);
+    expect(stats.revenueToday).toBe(30);
+    expect(stats.revenue7d).toBe(80); // 30 (today) + 50 (2 d ago)
+    expect(stats.revenue7dPct).toBe(300); // prior 7 days held only the 20
+    expect(stats.payers30d).toBe(1);
+    expect(stats.txCount30d).toBe(3);
+    expect(stats.avgCheck30d).toBeCloseTo(100 / 3, 5);
+  });
+
+  it('tier split follows shelf order; unclaimed payers land in «Без тира» even without a fan row', async () => {
+    seedFan('1', 600);
+    seedFan('2', 300);
+    data.fanTransactions.upsertMany([
+      { accountId: ACCOUNT, txId: 'a', fanId: '1', amount: 60, type: 'tips', createdAt: isoDaysAgo(1) },
+      { accountId: ACCOUNT, txId: 'b', fanId: '2', amount: 25, type: 'tips', createdAt: isoDaysAgo(1) },
+      // a window payer with NO fan row and NO roster membership
+      { accountId: ACCOUNT, txId: 'c', fanId: '9', amount: 15, type: 'tips', createdAt: isoDaysAgo(1) },
+    ]);
+    const service = makeService(
+      stubClient({
+        lists: [
+          { id: '100', type: 'custom', name: '🐳 Кит 600+_OM', usersCount: 1 },
+          { id: '200', type: 'custom', name: '⭐️ Топ (350-600)_OM', usersCount: 1 },
+        ],
+        rosters: { '100': [[{ id: 1 }]], '200': [[{ id: 2 }]] },
+        calls,
+      }),
+    );
+    const stats = await service.stats(ACCOUNT);
+    expect(stats.tiers).toEqual([
+      { listId: '100', title: '🐳 Кит', revenue: 60, payers: 1 },
+      { listId: '200', title: '⭐️ Топ', revenue: 25, payers: 1 },
+      { listId: '__untiered__', title: '', revenue: 15, payers: 1 },
+    ]);
+  });
+
+  it('radar counts warm/hot per shelf with the silent lifetime at stake', async () => {
+    seedFan('1', 2756); // hot
+    seedFan('2', 890); // warm
+    seedFan('3', 520); // fresh
+    for (const [id, fanDays] of [
+      ['1', 36],
+      ['2', 10],
+      ['3', 2],
+    ] as const) {
+      data.messages.upsertMany([
+        sampleMessage({ chatId: id, messageId: `f${id}`, isSentByMe: false, createdAt: isoDaysAgo(fanDays) }),
+      ]);
+    }
+    const service = makeService(
+      stubClient({
+        lists: [{ id: '100', type: 'custom', name: 'Кит_OM', usersCount: 3 }],
+        rosters: { '100': [[{ id: 1 }, { id: 2 }, { id: 3 }]], '200': [[]] },
+        calls,
+      }),
+    );
+    const stats = await service.stats(ACCOUNT);
+    expect(stats.radar[0]).toEqual({
+      listId: '100',
+      title: 'Кит',
+      warm: 1,
+      hot: 1,
+      silentLifetime: 2756 + 890,
+    });
+    expect(stats.hotCount).toBe(1);
+    expect(stats.hotLifetime).toBe(2756);
+  });
+
+  it('waiting queue: fanWaiting rows by lifetime desc; full row VMs (preview needs them)', async () => {
+    seedFan('1', 1310);
+    seedFan('2', 95);
+    data.chats.upsertMany([
+      sampleChat({ chatId: '1', unreadCount: 1, lastMessageIsSentByMe: false, lastMessageAt: isoDaysAgo(0) }),
+      sampleChat({ chatId: '2', unreadCount: 2, lastMessageIsSentByMe: false, lastMessageAt: isoDaysAgo(1) }),
+      sampleChat({ chatId: '3', unreadCount: 0, lastMessageIsSentByMe: true, lastMessageAt: isoDaysAgo(1) }),
+    ]);
+    const service = makeService(
+      stubClient({ lists: [], rosters: { '100': [[{ id: 1 }, { id: 2 }, { id: 3 }]], '200': [[]] }, calls }),
+    );
+    const stats = await service.stats(ACCOUNT);
+    expect(stats.waiting.map((row) => row.fanId)).toEqual(['1', '2']);
+    expect(stats.waiting[0]?.canSendMessage).toBe(true);
+    expect(stats.waiting[0]?.hasChat).toBe(true);
+  });
+
+  it('new spenders: lifetime ≈ window spend, with purchase counts; whales excluded', async () => {
+    seedFan('1', 120); // new: lifetime == window spend
+    seedFan('2', 2756); // whale: long history
+    data.fanTransactions.upsertMany([
+      { accountId: ACCOUNT, txId: 'n1', fanId: '1', amount: 80, type: 'tips', createdAt: isoDaysAgo(3) },
+      { accountId: ACCOUNT, txId: 'n2', fanId: '1', amount: 40, type: 'tips', createdAt: isoDaysAgo(1) },
+      { accountId: ACCOUNT, txId: 'w1', fanId: '2', amount: 79, type: 'tips', createdAt: isoDaysAgo(2) },
+    ]);
+    const service = makeService(
+      stubClient({ lists: [], rosters: { '100': [[{ id: 1 }, { id: 2 }]], '200': [[]] }, calls }),
+    );
+    const stats = await service.stats(ACCOUNT);
+    expect(stats.newSpenders).toHaveLength(1);
+    expect(stats.newSpenders[0]?.row.fanId).toBe('1');
+    expect(stats.newSpenders[0]?.txCount).toBe(2);
+  });
+
+  it('works with no mapping at all: revenue still fills, tiers fall to «Без тира»', async () => {
+    mapping = [];
+    seedFan('1', 50);
+    data.fanTransactions.upsertMany([
+      { accountId: ACCOUNT, txId: 'x', fanId: '1', amount: 50, type: 'tips', createdAt: isoDaysAgo(1) },
+    ]);
+    const service = makeService(stubClient({ lists: [], rosters: {}, calls }));
+    const stats = await service.stats(ACCOUNT);
+    expect(stats.revenue30d).toBe(50);
+    expect(stats.tiers).toEqual([{ listId: '__untiered__', title: '', revenue: 50, payers: 1 }]);
+    expect(stats.radar).toEqual([]);
+  });
+});

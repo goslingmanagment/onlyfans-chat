@@ -8,7 +8,11 @@ import {
   SHELF_PREVIEW_REST,
   assignSpenderTiers,
   compareBySilence,
+  buildDailySeries,
   daysSince,
+  enumerateDays,
+  isNewSpender,
+  periodDelta,
   fanSilenceBucket,
   shelfPresentation,
   sortBySilence,
@@ -199,5 +203,131 @@ describe('shelfPresentation', () => {
       kind: 'preview',
       previewCount: SHELF_PREVIEW_REST,
     });
+  });
+});
+
+describe('stats: enumerateDays', () => {
+  it('returns ascending consecutive days ending at endDay', () => {
+    expect(enumerateDays('2026-06-13', 3)).toEqual(['2026-06-11', '2026-06-12', '2026-06-13']);
+  });
+
+  it('crosses month boundaries', () => {
+    expect(enumerateDays('2026-06-01', 2)).toEqual(['2026-05-31', '2026-06-01']);
+  });
+
+  it('crosses year boundaries', () => {
+    expect(enumerateDays('2026-01-01', 2)).toEqual(['2025-12-31', '2026-01-01']);
+  });
+
+  it('handles leap days', () => {
+    expect(enumerateDays('2028-03-01', 2)).toEqual(['2028-02-29', '2028-03-01']);
+  });
+
+  it('single day window is just endDay', () => {
+    expect(enumerateDays('2026-06-13', 1)).toEqual(['2026-06-13']);
+  });
+
+  it('rejects non-day strings', () => {
+    expect(() => enumerateDays('13.06.2026', 3)).toThrow(/YYYY-MM-DD/);
+    expect(() => enumerateDays('2026-06-13T00:00:00Z', 3)).toThrow(/YYYY-MM-DD/);
+  });
+});
+
+describe('stats: buildDailySeries', () => {
+  it('fills missing days with zero, keeps order dense and ascending', () => {
+    const series = buildDailySeries(
+      [
+        { day: '2026-06-13', amount: 49 },
+        { day: '2026-06-11', amount: 12 },
+      ],
+      '2026-06-13',
+      4,
+    );
+    expect(series).toEqual([
+      { day: '2026-06-10', amount: 0 },
+      { day: '2026-06-11', amount: 12 },
+      { day: '2026-06-12', amount: 0 },
+      { day: '2026-06-13', amount: 49 },
+    ]);
+  });
+
+  it('drops rows outside the window (retention overlap)', () => {
+    const series = buildDailySeries(
+      [
+        { day: '2026-05-01', amount: 999 },
+        { day: '2026-06-13', amount: 5 },
+      ],
+      '2026-06-13',
+      2,
+    );
+    expect(series).toEqual([
+      { day: '2026-06-12', amount: 0 },
+      { day: '2026-06-13', amount: 5 },
+    ]);
+  });
+
+  it('sums duplicate day rows', () => {
+    const series = buildDailySeries(
+      [
+        { day: '2026-06-13', amount: 5 },
+        { day: '2026-06-13', amount: 7 },
+      ],
+      '2026-06-13',
+      1,
+    );
+    expect(series).toEqual([{ day: '2026-06-13', amount: 12 }]);
+  });
+
+  it('empty input yields an all-zero window', () => {
+    const series = buildDailySeries([], '2026-06-13', 3);
+    expect(series.every((point) => point.amount === 0)).toBe(true);
+    expect(series).toHaveLength(3);
+  });
+});
+
+describe('stats: periodDelta', () => {
+  const day = (i: number, amount: number): { day: string; amount: number } => ({
+    day: enumerateDays('2026-06-13', 14)[i] ?? '2026-06-13',
+    amount,
+  });
+
+  it('compares the last window to the one before it', () => {
+    const series = Array.from({ length: 14 }, (_, i) => day(i, i < 7 ? 10 : 20));
+    expect(periodDelta(series, 7)).toEqual({ current: 140, previous: 70, pct: 100 });
+  });
+
+  it('pct is null when the prior window is zero', () => {
+    const series = Array.from({ length: 14 }, (_, i) => day(i, i < 7 ? 0 : 20));
+    expect(periodDelta(series, 7)).toEqual({ current: 140, previous: 0, pct: null });
+  });
+
+  it('rounds pct to whole percent and supports drops', () => {
+    const series = Array.from({ length: 14 }, (_, i) => day(i, i < 7 ? 30 : 20));
+    expect(periodDelta(series, 7)).toEqual({ current: 140, previous: 210, pct: -33 });
+  });
+
+  it('short series treats missing prior days as empty', () => {
+    const series = Array.from({ length: 7 }, (_, i) => day(i, 10));
+    expect(periodDelta(series, 7)).toEqual({ current: 70, previous: 0, pct: null });
+  });
+});
+
+describe('stats: isNewSpender', () => {
+  it('true when lifetime equals the window spend (first purchases in window)', () => {
+    expect(isNewSpender(120, 120)).toBe(true);
+  });
+
+  it('true within the epsilon dollar (rounding between sources)', () => {
+    expect(isNewSpender(120.9, 120)).toBe(true);
+  });
+
+  it('false when lifetime exceeds the window by a dollar or more', () => {
+    expect(isNewSpender(121, 120)).toBe(false);
+    expect(isNewSpender(2756, 79)).toBe(false);
+  });
+
+  it('false with no window spend or unknown lifetime', () => {
+    expect(isNewSpender(0, 0)).toBe(false);
+    expect(isNewSpender(null, 50)).toBe(false);
   });
 });

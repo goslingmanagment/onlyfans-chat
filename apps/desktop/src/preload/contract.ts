@@ -400,6 +400,40 @@ export interface SpenderRowVM {
   hasChat: boolean;
 }
 
+/** Stats panel (page right side; all LOCAL data — 0 credits). The local
+ *  transaction store retains 31 days, so 30 days is the longest window and
+ *  the trend compares 7-to-7 (a month-to-month would be dishonest). */
+export interface SpenderStatsVM {
+  /** Dense ascending 30-day series in the user's LOCAL calendar days. */
+  days: Array<{ day: string; amount: number }>;
+  revenue30d: number;
+  revenue7d: number;
+  /** Percent vs the prior 7 days; null when the prior window is 0. */
+  revenue7dPct: number | null;
+  revenueToday: number;
+  payers30d: number;
+  txCount30d: number;
+  /** 0 when there were no transactions in the window. */
+  avgCheck30d: number;
+  /** Mapped shelves in board order; '__untiered__' (when non-empty) last. */
+  tiers: Array<{ listId: string; title: string; revenue: number; payers: number }>;
+  /** Fan-silence radar per mapped shelf (warm 8–21 d · hot >21 d);
+   *  silentLifetime = lifetime total of that shelf's warm+hot fans. */
+  radar: Array<{
+    listId: string;
+    title: string;
+    warm: number;
+    hot: number;
+    silentLifetime: number;
+  }>;
+  hotCount: number;
+  hotLifetime: number;
+  /** Fans with the last word (fanWaiting), highest lifetime first. */
+  waiting: SpenderRowVM[];
+  /** First purchase inside the window, by window spend. */
+  newSpenders: Array<{ row: SpenderRowVM; txCount: number }>;
+}
+
 // ─── Vault & PPV (PRD F7) ────────────────────────────────────────────────
 
 export interface VaultItemVM {
@@ -564,6 +598,11 @@ export interface InvokeChannels {
     args: { accountId: string };
     result: { rows: SpenderRowVM[]; fetchedAt: string };
   };
+  /** Stats panel aggregates (loads all mapped rosters; local joins, 0 credits). */
+  'query:spenders.stats': {
+    args: { accountId: string };
+    result: SpenderStatsVM;
+  };
   // ── Vault & PPV (PRD F7, P5 — additive) ──
   /** Offset-paginated (OFAPI vault pagination is limit/offset + hasMore). */
   'query:vault.list': {
@@ -680,6 +719,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:spenders.lists': true,
   'query:spenders.roster': true,
   'query:spenders.untiered': true,
+  'query:spenders.stats': true,
   'query:vault.list': true,
   'query:vault.albums': true,
   'query:chat.gallery': true,

@@ -1,23 +1,35 @@
-// Spenders board — center surface replacing the thread (chat list stays;
-// ESC/← returns). Binding mockup: docs/mockups/supporters.html. A viewing
-// board: NO AI automation — the human decides; AI runs only on explicit
-// click/hotkey inside the quick-look preview.
+// Spenders PAGE (owner v2 2026-06-13; experiments/spenders-page-2.html): a
+// separate page — the workspace chat list is NOT shown, ESC/← returns to it.
+// The board owns the screen with a compact stats column right; S/⤢ expands
+// stats to a full grid and squeezes the roster to 400px. Row anatomy stays
+// per the binding mockup docs/mockups/supporters.html. A viewing board: NO AI
+// automation — the human decides; AI runs only on explicit click/hotkey
+// inside the quick-look preview.
 
 import { useEffect, useMemo, useRef } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { SpenderListVM, SpenderRowVM } from '../../../../preload/contract';
 import { getBridge } from '../../bridge/bridge';
-import { qk, useAccounts, useSettings, useSpenderLists, useSpenderUntiered } from '../../bridge/queries';
+import {
+  qk,
+  useAccounts,
+  useSettings,
+  useSpenderLists,
+  useSpenderStats,
+  useSpenderUntiered,
+} from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { useT } from '../../lib/i18n';
 import { Kbd } from '../../design/Kbd';
 import { EmptyState } from '../../design/EmptyState';
 import { SkeletonRows } from '../../design/Skeleton';
+import { cx } from '../../lib/cx';
 import { shelfPresentation, splitTierLabel } from '@chatgoose/shared';
 import { buildAllView, buildFlatView, UNTIERED_ID, type BoardItem, type ShelfData } from './boardModel';
 import { useSpendersStore } from './spendersStore';
 import { SpenderRowItem } from './SpenderRowItem';
+import { StatsPanel } from './StatsPanel';
 import { QuickLook } from './QuickLook';
 
 function estimateItem(item: BoardItem | undefined): number {
@@ -46,7 +58,11 @@ export function SpendersSurface(): React.JSX.Element {
   const setUntieredOpen = useSpendersStore((s) => s.setUntieredOpen);
   const openPreview = useSpendersStore((s) => s.openPreview);
   const setVisibleRows = useSpendersStore((s) => s.setVisibleRows);
+  const statsExpanded = useSpendersStore((s) => s.statsExpanded);
+  const statsRows = useSpendersStore((s) => s.statsRows);
   const resetTransient = useSpendersStore((s) => s.resetTransient);
+
+  const stats = useSpenderStats(accountId, true);
 
   useEffect(() => () => resetTransient(), [resetTransient]);
 
@@ -121,8 +137,14 @@ export function SpendersSurface(): React.JSX.Element {
 
   const account = accounts.data?.find((a) => a.id === accountId) ?? null;
   const allCount = shelves.reduce((sum, list) => sum + list.usersCount, 0);
+  // Board rows first, stats queues second — a preview opened from «ждут
+  // ответа» must resolve even when its shelf isn't loaded on the board.
   const previewRowVM =
-    previewFanId !== null ? (model.fanRows.find((row) => row.fanId === previewFanId) ?? null) : null;
+    previewFanId !== null
+      ? (model.fanRows.find((row) => row.fanId === previewFanId) ??
+        statsRows.find((row) => row.fanId === previewFanId) ??
+        null)
+      : null;
 
   function renderItem(item: BoardItem): React.JSX.Element | null {
     switch (item.kind) {
@@ -194,14 +216,21 @@ export function SpendersSurface(): React.JSX.Element {
   const empty = mapping.length === 0;
 
   return (
-    <section className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-bg0 p-[18px]">
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-[880px] flex-col overflow-hidden rounded-xl border border-line-strong bg-bg1 shadow-soft">
+    <section className="relative flex min-h-0 min-w-0 flex-1 bg-bg0">
+      <div
+        className={cx(
+          'flex min-h-0 flex-col bg-bg1',
+          statsExpanded ? 'w-[400px] flex-none border-r border-line' : 'min-w-0 flex-1',
+        )}
+      >
         <div className="flex flex-none items-baseline gap-[11px] border-b border-line px-[18px] py-[13px]">
           <h3 className="font-serif text-[16.5px] font-semibold">{t('sp.title')}</h3>
-          <span className="num text-[10px] tracking-[0.05em] text-ink-low uppercase">
-            {account !== null ? `${account.displayName} · ` : ''}
-            {t('sp.sortNote')}
-          </span>
+          {!statsExpanded && (
+            <span className="num text-[10px] tracking-[0.05em] text-ink-low uppercase">
+              {account !== null ? `${account.displayName} · ` : ''}
+              {t('sp.sortNote')}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setView('workspace')}
@@ -264,9 +293,10 @@ export function SpendersSurface(): React.JSX.Element {
           <Kbd>K</Kbd> {t('sp.footNav')} · <Kbd>SPACE</Kbd> {t('sp.footPreview')} · <Kbd>O</Kbd>{' '}
           {t('sp.footChat')}
           <span className="flex-1" />
-          <span>{t('sp.footReadOnly')}</span>
+          {!statsExpanded && <span>{t('sp.footReadOnly')}</span>}
         </div>
       </div>
+      <StatsPanel stats={stats.data} expanded={statsExpanded} />
       {accountId !== null && previewFanId !== null && (
         <QuickLook accountId={accountId} fanId={previewFanId} row={previewRowVM} />
       )}

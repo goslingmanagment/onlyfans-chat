@@ -29,6 +29,18 @@ export interface FanTransactionsQueries {
   /** Per-fan SUM(amount) since the cutoff — the Spenders board 30-day green
    *  figure (account-wide GROUP BY; the rolling store is small by design). */
   sumByFanSince(accountId: string, cutoffIso: string): Map<string, number>;
+  /** Per-fan SUM + COUNT since the cutoff — Spenders stats (payers, avg check,
+   *  new-spender purchase counts). */
+  statsByFanSince(
+    accountId: string,
+    cutoffIso: string,
+  ): Map<string, { total: number; count: number }>;
+  /** Per-LOCAL-day SUM + COUNT since the cutoff (SQLite 'localtime' — the
+   *  owner reads the chart in their own calendar days), ascending, sparse. */
+  dailyTotals(
+    accountId: string,
+    cutoffIso: string,
+  ): Array<{ day: string; amount: number; txCount: number }>;
   /** Drop rows older than the cutoff (retention; the 30d window is read-time). */
   pruneOlderThan(accountId: string, cutoffIso: string): void;
 }
@@ -83,6 +95,40 @@ export function createFanTransactionsQueries(
         out.set(row.fan_id, row.total);
       }
       return out;
+    },
+
+    statsByFanSince(accountId, cutoffIso) {
+      const rowSchema = z.object({ fan_id: z.string(), total: z.number(), tx_count: z.number() });
+      const rows: unknown[] = db
+        .prepare(
+          `SELECT fan_id, SUM(amount) AS total, COUNT(*) AS tx_count FROM fan_transactions
+           WHERE account_id = @account_id AND created_at >= @cutoff
+           GROUP BY fan_id`,
+        )
+        .all({ account_id: accountId, cutoff: cutoffIso });
+      const out = new Map<string, { total: number; count: number }>();
+      for (const raw of rows) {
+        const row = rowSchema.parse(raw);
+        out.set(row.fan_id, { total: row.total, count: row.tx_count });
+      }
+      return out;
+    },
+
+    dailyTotals(accountId, cutoffIso) {
+      const rowSchema = z.object({ day: z.string(), amount: z.number(), tx_count: z.number() });
+      const rows: unknown[] = db
+        .prepare(
+          `SELECT date(created_at, 'localtime') AS day,
+                  SUM(amount) AS amount, COUNT(*) AS tx_count
+           FROM fan_transactions
+           WHERE account_id = @account_id AND created_at >= @cutoff
+           GROUP BY day ORDER BY day`,
+        )
+        .all({ account_id: accountId, cutoff: cutoffIso });
+      return rows.map((raw) => {
+        const row = rowSchema.parse(raw);
+        return { day: row.day, amount: row.amount, txCount: row.tx_count };
+      });
     },
 
     pruneOlderThan(accountId, cutoffIso) {

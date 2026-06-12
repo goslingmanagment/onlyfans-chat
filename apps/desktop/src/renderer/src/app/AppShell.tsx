@@ -47,11 +47,9 @@ export function AppShell(): React.JSX.Element {
         {view === 'settings' ? (
           <SettingsSurface />
         ) : view === 'spenders' ? (
-          // Spenders board replaces the thread; the chat list stays (PLAN item 12)
-          <>
-            {!listCollapsed && <ChatListPane />}
-            <SpendersSurface />
-          </>
+          // Spenders is a SEPARATE page (owner v2 2026-06-13): no workspace
+          // chat list — the board owns the screen, stats column right.
+          <SpendersSurface />
         ) : (
           <>
             {!listCollapsed && <ChatListPane />}

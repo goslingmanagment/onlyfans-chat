@@ -177,9 +177,10 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
             e.preventDefault();
             cancelActiveOperation();
             return;
-          case 'toggle-list':
+          case 'board-stats':
+            // S — compact stats column ⇄ full grid (owner v2 layout)
             e.preventDefault();
-            ui.toggleList();
+            spd.toggleStatsExpanded();
             return;
           default:
             return;
