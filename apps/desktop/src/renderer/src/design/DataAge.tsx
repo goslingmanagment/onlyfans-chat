@@ -9,11 +9,14 @@ import { formatAgeShort } from '../lib/time';
 export function DataAge({
   at,
   prefix = 'UPDATED',
+  suffix = 'AGO',
   className,
 }: {
   /** ISO string or epoch ms; null/undefined renders an em dash. */
   at: string | number | null | undefined;
   prefix?: string;
+  /** Trailing word ('AGO' / localized) — age units stay latin (12S). */
+  suffix?: string;
   className?: string;
 }): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now());
@@ -28,7 +31,7 @@ export function DataAge({
   let text = `${prefix} —`;
   if (active) {
     const ts = typeof at === 'number' ? at : Date.parse(at);
-    text = `${prefix} ${formatAgeShort(now - ts).toUpperCase()} AGO`;
+    text = `${prefix} ${formatAgeShort(now - ts).toUpperCase()} ${suffix}`;
   }
   return <span className={cx('num text-micro tracking-[0.05em] text-ink-low', className)}>{text}</span>;
 }

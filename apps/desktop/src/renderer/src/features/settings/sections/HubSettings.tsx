@@ -2,25 +2,41 @@
 // the real-time SSE stream plus summary sync / usage reporting. Quiet section —
 // most chatters never touch it. Page-label overrides: main auto-matches OFAPI
 // accounts to hub pages by username (SPEC §8.5); the inputs here override that
-// per account. The renderer never sees the hub page list (network stays in
-// main), so the auto-match result is not previewed — overrides only, honest.
+// per account. "Test connection" probes the SAVED config via GET /api/v1/auth/me
+// in main — the renderer stays networkless.
 
 import { useState } from 'react';
-import type { SettingsVM, SyncStatusVM } from '../../../../../preload/contract';
-import { useAccounts, useSyncStatus } from '../../../bridge/queries';
+import type { KeyTestResultVM, SettingsVM, SyncStatusVM } from '../../../../../preload/contract';
+import type { UiLocale, UiTranslator } from '@chatgoose/shared/i18n/index';
+import { useAccounts, useKeyTest, useSyncStatus } from '../../../bridge/queries';
+import { localizedErrorText, useLocale, useT } from '../../../lib/i18n';
 import { Badge } from '../../../design/Badge';
 import { Button } from '../../../design/Button';
 import { Section, type PatchFn } from '../SettingsSurface';
 
 type HubState = SyncStatusVM['hub'];
 
-const HUB_STATUS: Record<Exclude<HubState, 'off'>, { label: string; tone: 'green' | 'amber' | 'bad' }> = {
-  connecting: { label: 'connecting…', tone: 'amber' },
-  live: { label: 'live', tone: 'green' },
-  degraded: { label: 'degraded — polling covers', tone: 'amber' },
-  'auth-failed': { label: 'auth failed', tone: 'bad' },
-  stopped: { label: 'stopped', tone: 'amber' },
+const HUB_STATUS_TONE: Record<Exclude<HubState, 'off'>, 'green' | 'amber' | 'bad'> = {
+  connecting: 'amber',
+  live: 'green',
+  degraded: 'amber',
+  'auth-failed': 'bad',
+  stopped: 'amber',
 };
+
+function hubTestText(t: UiTranslator, locale: UiLocale, result: KeyTestResultVM): string {
+  if (result.ok) {
+    return t('hub.testOk', {
+      username: result.username ?? '',
+      role: result.role ?? '',
+      pages: result.pages ?? 0,
+    });
+  }
+  if (result.code === 'HUB_NOT_CONFIGURED') {
+    return t('hub.testNeedsConfig');
+  }
+  return localizedErrorText(locale, result.code, result.message);
+}
 
 export function HubSettings({
   settings,
@@ -34,9 +50,16 @@ export function HubSettings({
   const [labels, setLabels] = useState<Record<string, string>>(settings.accountPageLabels);
   const accounts = useAccounts();
   const syncStatus = useSyncStatus();
+  const test = useKeyTest();
+  const t = useT();
+  const locale = useLocale();
 
   const configured = settings.hubBaseUrl !== null && settings.hasHubKey;
   const hub: HubState = syncStatus.data?.hub ?? 'off';
+  // The probe runs against the SAVED config — while the form holds unsaved
+  // edits a green result would "verify" the wrong URL/key, so Test locks
+  // until the edits are saved (or reverted).
+  const formDirty = baseUrl.trim() !== (settings.hubBaseUrl ?? '') || key.trim() !== '';
 
   function save(): void {
     // One patch for everything: key writes go to the keychain and publish no
@@ -55,18 +78,16 @@ export function HubSettings({
       ...(trimmedKey !== '' ? { hubApiKey: trimmedKey } : {}),
     });
     setKey('');
+    test.reset();
   }
 
   return (
-    <Section
-      title="Agency Hub"
-      hint="Real-time message events stream from the hub when both fields are set; the app falls back to polling automatically when the stream drops."
-    >
+    <Section title={t('hub.title')} hint={t('hub.hint')}>
       <div className="space-y-2">
         <div className="flex items-center gap-3 py-1">
           <div className="w-44 flex-none">
-            <div className="text-[13px] font-semibold">Hub base URL</div>
-            <div className="text-[11px] text-ink-low">your agency's core server</div>
+            <div className="text-[13px] font-semibold">{t('hub.baseUrl.label')}</div>
+            <div className="text-[11px] text-ink-low">{t('hub.baseUrl.hint')}</div>
           </div>
           <input
             type="text"
@@ -80,17 +101,17 @@ export function HubSettings({
         </div>
         <div className="flex items-center gap-3 py-1">
           <div className="w-44 flex-none">
-            <div className="text-[13px] font-semibold">Chatter API key</div>
-            <div className="text-[11px] text-ink-low">agency_hub_core_… — set-only</div>
+            <div className="text-[13px] font-semibold">{t('hub.key.label')}</div>
+            <div className="text-[11px] text-ink-low">{t('hub.key.hint')}</div>
           </div>
           <Badge tone={settings.hasHubKey ? 'green' : 'neutral'}>
-            {settings.hasHubKey ? 'configured' : 'not set'}
+            {settings.hasHubKey ? t('common.configured') : t('common.notSet')}
           </Badge>
           <input
             type="password"
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            placeholder={settings.hasHubKey ? 'Replace key…' : 'Paste key…'}
+            placeholder={settings.hasHubKey ? t('common.replaceKey') : t('common.pasteKey')}
             autoComplete="off"
             spellCheck={false}
             className="min-w-0 flex-1 rounded-chip border border-line bg-bg1 px-3 py-1.5 text-[13px] outline-none placeholder:text-ink-low focus:border-clay-line"
@@ -99,25 +120,16 @@ export function HubSettings({
 
         {hub !== 'off' && (
           <div className="flex items-center gap-3 py-1">
-            <div className="w-44 flex-none text-[13px] font-semibold">Stream status</div>
-            <Badge tone={HUB_STATUS[hub].tone}>{HUB_STATUS[hub].label}</Badge>
+            <div className="w-44 flex-none text-[13px] font-semibold">{t('hub.streamStatus')}</div>
+            <Badge tone={HUB_STATUS_TONE[hub]}>{t(`hub.status.${hub}`)}</Badge>
           </div>
         )}
-        {hub === 'auth-failed' && (
-          <p className="text-[12px] text-bad">
-            CG-HUB-01 — the hub rejected the chatter key. Chatter keys are
-            one-active-per-chatter and revocable: paste a fresh key (hub
-            Settings → Users) and save.
-          </p>
-        )}
+        {hub === 'auth-failed' && <p className="text-[12px] text-bad">{t('hub.authFailedBody')}</p>}
 
         {configured && accounts.data !== undefined && accounts.data.length > 0 && (
           <div className="space-y-1 pt-2">
-            <div className="text-[13px] font-semibold">Hub page labels</div>
-            <p className="text-[11px] text-ink-low">
-              Each account auto-matches a hub page by its username. Set a label
-              only when that match misses; leave empty for auto.
-            </p>
+            <div className="text-[13px] font-semibold">{t('hub.pageLabels.title')}</div>
+            <p className="text-[11px] text-ink-low">{t('hub.pageLabels.hint')}</p>
             {accounts.data.map((account) => (
               <div key={account.id} className="flex items-center gap-3 py-0.5">
                 <div className="w-44 flex-none truncate text-[12.5px] text-ink-mid">
@@ -129,7 +141,7 @@ export function HubSettings({
                   onChange={(e) =>
                     setLabels((prev) => ({ ...prev, [account.id]: e.target.value }))
                   }
-                  placeholder="auto (match by username)"
+                  placeholder={t('hub.pageLabels.placeholder')}
                   autoComplete="off"
                   spellCheck={false}
                   className="min-w-0 flex-1 rounded-chip border border-line bg-bg1 px-3 py-1 text-[12.5px] outline-none placeholder:text-ink-low focus:border-clay-line"
@@ -139,14 +151,30 @@ export function HubSettings({
           </div>
         )}
 
+        {test.data !== undefined && (
+          <p
+            className={
+              test.data.ok ? 'text-right text-[11.5px] text-green' : 'text-right text-[11.5px] text-bad'
+            }
+          >
+            {hubTestText(t, locale, test.data)}
+          </p>
+        )}
+
         <div className="flex items-center gap-3 pt-1">
           <span className="text-[11px] text-ink-low">
-            {configured
-              ? 'Hub connection configured — live events active when the stream is healthy.'
-              : 'Not connected — the app runs on polling alone.'}
+            {configured ? t('hub.footerOk') : t('hub.footerOff')}
           </span>
-          <Button size="sm" className="ml-auto" onClick={save}>
-            Save hub settings
+          <Button
+            size="sm"
+            className="ml-auto"
+            disabled={!configured || formDirty || test.isPending}
+            onClick={() => test.mutate('hub')}
+          >
+            {test.isPending ? t('keys.testing') : t('hub.testBtn')}
+          </Button>
+          <Button size="sm" onClick={save}>
+            {t('hub.saveBtn')}
           </Button>
         </div>
       </div>

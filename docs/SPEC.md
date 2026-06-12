@@ -193,6 +193,7 @@ The hub is the **existing** Agency Hub project (`~/code/core` — Fastify 5 + Po
 ### 9.1 Already live in core — consumed from P4 (direct mode)
 | Capability | Endpoint (core) | Auth |
 |---|---|---|
+| Identity probe — Settings "Test connection" (returns `{authMethod, user:{username, role, assignedPages[]}}`; cheapest authenticated call, no page aggregation) | `GET /api/v1/auth/me` | chatter API key |
 | List pages visible to the chatter | `GET /api/v1/pages` | chatter API key (Bearer `agency_hub_core_…`) |
 | Read latest fan profile (summary) | `GET /api/v1/pages/{pageLabel}/fans/{platformUserId}/profile` | chatter API key |
 | Append fan profile version | `PUT /api/v1/pages/{pageLabel}/fans/{platformUserId}/profile` `{body ≤50k}` — append-only versions, stamped `source:"chatmuse"` | chatter API key only |

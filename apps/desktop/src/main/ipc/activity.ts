@@ -16,7 +16,7 @@ import type { SyncProvider } from '../sync/provider';
 import type { HubSyncStatus } from '../sync/hub-sync';
 import type { HubActivitySnapshot } from '../sync/hub-provider';
 import type { CreditMeter } from '../ofapi/credit-meter';
-import type { ActivityVM, SyncStatusVM } from '../../preload/contract';
+import type { ActivityVM, AiFeatureCostsVM, SyncStatusVM } from '../../preload/contract';
 
 /** Trailing window for the AI 7-day total and the credit pace estimate. */
 const TRAILING_DAYS = 7;
@@ -85,6 +85,28 @@ export function aiTodayUsd(data: DataLayer, day: string): number {
     }
   }
   return Math.round(micro) / 1_000_000;
+}
+
+/**
+ * Settings → Models cost hints: per-feature trailing-7-day {runs, usd}.
+ * Cheap: PK-indexed scan of ≤ 7 days × ~8 features; integer micro-USD until
+ * the final division (shared ai-spend convention).
+ */
+export function buildFeatureCosts(data: DataLayer, nowFn: () => number = Date.now): AiFeatureCostsVM {
+  const today = utcDayOf(nowFn());
+  const since = daysBefore(today, TRAILING_DAYS - 1);
+  const acc = new Map<string, { runs: number; micro: number }>();
+  for (const row of data.aiSpendLog.rowsSince(since)) {
+    const current = acc.get(row.feature) ?? { runs: 0, micro: 0 };
+    current.runs += row.runs;
+    current.micro += row.costMicroUsd;
+    acc.set(row.feature, current);
+  }
+  const byFeature: AiFeatureCostsVM['byFeature'] = {};
+  for (const [feature, { runs, micro }] of acc) {
+    byFeature[feature] = { runs, usd: Math.round(micro) / 1_000_000 };
+  }
+  return { sinceDay: since, byFeature };
 }
 
 export function buildActivitySummary(deps: ActivityDeps): ActivityVM {

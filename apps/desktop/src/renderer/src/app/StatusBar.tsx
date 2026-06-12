@@ -10,6 +10,7 @@ import { DataAge } from '../design/DataAge';
 import { Kbd } from '../design/Kbd';
 import { Tooltip } from '../design/Tooltip';
 import { cx } from '../lib/cx';
+import { useT } from '../lib/i18n';
 import { statusBarMode, STATUS_BAR_TIPS } from './statusBarTips';
 
 const TONE_DOT = { ok: 'bg-online', warn: 'bg-warn', bad: 'bg-bad' } as const;
@@ -46,6 +47,10 @@ function Key({ children }: { children: React.ReactNode }): React.JSX.Element {
 
 export function StatusBar(): React.JSX.Element {
   const sync = useSyncStatus();
+  // Segment labels localize; the mode words (POLLING / HUB LIVE / …) stay
+  // English in both locales — they are status codes, pinned by the mockup test
+  // and explained by the Russian tooltips.
+  const t = useT();
   const selectedAccountId = useUiStore((s) => s.selectedAccountId);
   const setView = useUiStore((s) => s.setView);
   const setCheatsheetOpen = useUiStore((s) => s.setCheatsheetOpen);
@@ -71,36 +76,37 @@ export function StatusBar(): React.JSX.Element {
       <Segment tip={STATUS_BAR_TIPS.credits} onClick={openActivity}>
         <span>
           <Key>
-            CREDITS TODAY{' '}
+            {t('sb.creditsToday')}{' '}
             <span className="text-green">
               {status?.creditsUsedToday.toLocaleString('en-US') ?? '—'}
             </span>
           </Key>
-          {' · '}BAL {status?.creditsBalance?.toLocaleString('en-US') ?? '—'}
+          {' · '}
+          {t('sb.bal')} {status?.creditsBalance?.toLocaleString('en-US') ?? '—'}
         </span>
       </Segment>
       <Segment tip={STATUS_BAR_TIPS.aiToday} onClick={openActivity}>
         <Key>
-          AI TODAY{' '}
+          {t('sb.aiToday')}{' '}
           {status === null ? '—' : <span className="text-green">${status.aiTodayUsd.toFixed(2)}</span>}
         </Key>
       </Segment>
       <Segment tip={STATUS_BAR_TIPS.sends} onClick={openActivity}>
         <Key>
-          SENDS {status?.sendsToday.sent.toLocaleString('en-US') ?? '—'} ·{' '}
-          {status?.sendsToday.unconfirmed ?? '—'} UNCONF
+          {t('sb.sends')} {status?.sendsToday.sent.toLocaleString('en-US') ?? '—'} ·{' '}
+          {status?.sendsToday.unconfirmed ?? '—'} {t('sb.unconf')}
         </Key>
       </Segment>
       <div className="ml-auto flex items-center gap-3.5">
         <Segment tip={STATUS_BAR_TIPS.updated} onClick={openActivity}>
-          <DataAge at={freshness} prefix="UPDATED" />
+          <DataAge at={freshness} prefix={t('sb.updated')} suffix={t('sb.ago')} />
         </Segment>
         <button
           type="button"
           className="flex cursor-pointer items-center gap-1.5 hover:text-ink-mid"
           onClick={() => setCheatsheetOpen(true)}
         >
-          <Kbd>?</Kbd> SHORTCUTS
+          <Kbd>?</Kbd> {t('sb.shortcuts')}
         </button>
       </div>
     </footer>

@@ -43,6 +43,9 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hasHubKey: false,
     hubBaseUrl: null,
     spendStyle: 'figure',
+    uiLocale: 'system',
+    uiScale: 1,
+    keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
     featureModels: {
       'fast-reply': 'anthropic:claude-sonnet-4-6',
       'help-me': 'anthropic:claude-sonnet-4-6',

@@ -13,6 +13,7 @@ import type {
   Personality,
 } from '@chatgoose/shared/types';
 import type { OperationEvent, SyncEvent } from '@chatgoose/shared/protocol/index';
+import type { UiLocaleSetting } from '@chatgoose/shared/i18n/index';
 
 // ─── View models ─────────────────────────────────────────────────────────
 
@@ -230,10 +231,62 @@ export interface SettingsVM {
   accountPageLabels: Record<string, string>;
   /** Chat-list lifetime-spend style (DESIGN §1): bare figure or bordered chip. */
   spendStyle: 'figure' | 'chip';
+  /** Interface language; 'system' resolves from the OS locale at runtime. */
+  uiLocale: UiLocaleSetting;
+  /** Window zoom factor (0.9 | 1 | 1.1 | 1.25). */
+  uiScale: number;
+  /**
+   * Non-secret fingerprints of stored keys ({last4, setAt}) recorded when a key
+   * is saved — read-only in the VM (not patchable), null when never recorded.
+   */
+  keyMeta: KeyMetaVM;
+}
+
+export interface KeyMetaEntry {
+  last4: string;
+  /** Epoch ms when the key was last saved. */
+  setAt: number;
+}
+
+export interface KeyMetaVM {
+  ofapi: KeyMetaEntry | null;
+  anthropic: KeyMetaEntry | null;
+  openRouter: KeyMetaEntry | null;
+  hub: KeyMetaEntry | null;
+}
+
+export type KeyTestProvider = 'ofapi' | 'anthropic' | 'openrouter' | 'hub';
+
+/** Result of probing a STORED key (cmd:keys.test). Never carries key material. */
+export interface KeyTestResultVM {
+  ok: boolean;
+  /** CG-* code (or NOT_CONFIGURED / HUB_NOT_CONFIGURED) on failure; null on success. */
+  code: string | null;
+  /** English registry wording; the renderer localizes known codes itself. */
+  message: string;
+  /** OFAPI success: team name from /whoami. */
+  team?: string | null;
+  /** Hub success: principal from /api/v1/auth/me. */
+  username?: string;
+  role?: string;
+  pages?: number;
+}
+
+/** Danger-zone footprint of the encrypted local cache. */
+export interface LocalDataStatsVM {
+  dbBytes: number;
+  mediaBytes: number;
+  mediaFiles: number;
+}
+
+/** Per-feature trailing-7-day AI spend (Settings → Models cost hints). */
+export interface AiFeatureCostsVM {
+  sinceDay: string;
+  byFeature: Record<string, { runs: number; usd: number }>;
 }
 
 export type SettingsPatch = Partial<
-  Omit<SettingsVM, 'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey'>
+  Omit<SettingsVM, 'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey' | 'keyMeta'>
 > & {
   ofapiKey?: string;
   anthropicKey?: string;
@@ -386,6 +439,15 @@ export interface InvokeChannels {
   'query:activity.summary': { args: void; result: ActivityVM };
   /** RUN OUTBOX AUDIT button — read-only sweep over the outbox audit trail. */
   'query:outbox.audit': { args: { accountId?: string }; result: OutboxAuditReportVM };
+  /** Settings → Models cost hints: per-feature trailing-7-day runs + USD. */
+  'query:ai.featureCosts': { args: void; result: AiFeatureCostsVM };
+  /** Settings "Test" buttons — probes the STORED key/connection (no args carry keys). */
+  'cmd:keys.test': { args: { provider: KeyTestProvider }; result: KeyTestResultVM };
+  /** Danger zone: encrypted local cache footprint. */
+  'query:localData.stats': { args: void; result: LocalDataStatsVM };
+  'cmd:localData.openFolder': { args: void; result: void };
+  /** Writes a secrets-free JSON report under userData and reveals it. */
+  'cmd:localData.exportDiagnostics': { args: void; result: { path: string } };
   'query:ai.pingGate': { args: { accountId: string; chatId: string }; result: PingGateVM };
   'cmd:conversation.open': {
     args: { accountId: string; chatId: string };
@@ -525,6 +587,11 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:sync.status': true,
   'query:activity.summary': true,
   'query:outbox.audit': true,
+  'query:ai.featureCosts': true,
+  'cmd:keys.test': true,
+  'query:localData.stats': true,
+  'cmd:localData.openFolder': true,
+  'cmd:localData.exportDiagnostics': true,
   'query:ai.pingGate': true,
   'cmd:conversation.open': true,
   'cmd:conversation.close': true,

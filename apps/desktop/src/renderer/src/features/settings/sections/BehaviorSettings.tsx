@@ -1,7 +1,15 @@
+// Behavior: notification/read toggles, interface language + UI scale, the
+// chat-list spend-style picker (real mini-previews of the ChatRow markup), and
+// an Advanced block for dev-facing switches.
+
 import type { SettingsVM } from '../../../../../preload/contract';
+import { UI_LOCALE_SETTINGS, type UiLocaleSetting } from '@chatgoose/shared/i18n/index';
 import { cx } from '../../../lib/cx';
+import { useT } from '../../../lib/i18n';
 import { Chip } from '../../../design/Chip';
 import { Section, type PatchFn } from '../SettingsSurface';
+
+const UI_SCALES = [0.9, 1, 1.1, 1.25] as const;
 
 function Toggle({
   label,
@@ -41,6 +49,26 @@ function Toggle({
   );
 }
 
+function OptionRow({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div className="flex items-center gap-3 py-2">
+      <span className="min-w-0">
+        <span className="block text-[13px] font-semibold">{label}</span>
+        <span className="block text-[11.5px] text-ink-low">{hint}</span>
+      </span>
+      <span className="ml-auto flex items-center gap-[5px]">{children}</span>
+    </div>
+  );
+}
+
 export function BehaviorSettings({
   settings,
   patch,
@@ -48,58 +76,102 @@ export function BehaviorSettings({
   settings: SettingsVM;
   patch: PatchFn;
 }): React.JSX.Element {
+  const t = useT();
+
+  const localeOptionLabel = (option: UiLocaleSetting): string => {
+    if (option === 'system') return t('behavior.language.system');
+    return option === 'ru' ? 'Русский' : 'English';
+  };
+
   return (
-    <Section title="Behavior">
+    <Section title={t('behavior.title')}>
       <div className="grid grid-cols-2 gap-x-8">
         <Toggle
-          label="Notifications"
-          hint="Toast on incoming messages"
+          label={t('behavior.notifications')}
+          hint={t('behavior.notificationsHint')}
           on={settings.notificationsEnabled}
           onChange={(v) => patch({ notificationsEnabled: v })}
         />
         <Toggle
-          label="Sound"
-          hint="Blip with each notification"
+          label={t('behavior.sound')}
+          hint={t('behavior.soundHint')}
           on={settings.soundEnabled}
           onChange={(v) => patch({ soundEnabled: v })}
         />
         <Toggle
-          label="Mark as read on open"
-          hint="Activates in P3 — read-only keys until then"
+          label={t('behavior.markRead')}
+          hint={t('behavior.markReadHint')}
           on={settings.markAsReadOnOpen}
           onChange={(v) => patch({ markAsReadOnOpen: v })}
         />
         <Toggle
-          label="Prompt caching"
-          hint="Reuse prompt prefixes to cut LLM cost"
+          label={t('behavior.promptCaching')}
+          hint={t('behavior.promptCachingHint')}
           on={settings.promptCachingEnabled}
           onChange={(v) => patch({ promptCachingEnabled: v })}
         />
+      </div>
+
+      <OptionRow label={t('behavior.language')} hint={t('behavior.languageHint')}>
+        {UI_LOCALE_SETTINGS.map((option) => (
+          <Chip
+            key={option}
+            selected={settings.uiLocale === option}
+            onClick={() => patch({ uiLocale: option })}
+          >
+            {localeOptionLabel(option)}
+          </Chip>
+        ))}
+      </OptionRow>
+
+      <OptionRow label={t('behavior.uiScale')} hint={t('behavior.uiScaleHint')}>
+        {UI_SCALES.map((scale) => (
+          <Chip
+            key={scale}
+            selected={settings.uiScale === scale}
+            onClick={() => patch({ uiScale: scale })}
+          >
+            {`${Math.round(scale * 100)}%`}
+          </Chip>
+        ))}
+      </OptionRow>
+
+      <OptionRow label={t('behavior.spendStyle')} hint={t('behavior.spendStyleHint')}>
+        {(['figure', 'chip'] as const).map((style) => (
+          <button
+            key={style}
+            type="button"
+            onClick={() => patch({ spendStyle: style })}
+            className={cx(
+              'flex h-[30px] cursor-pointer items-center rounded-chip border px-3 transition-colors duration-150',
+              settings.spendStyle === style
+                ? 'border-clay-line bg-clay-bg'
+                : 'border-line bg-bg1 hover:bg-bg2',
+            )}
+          >
+            {/* Exact ChatRow lifetime-spend markup (figure vs chip). */}
+            <span
+              className={cx(
+                'num text-ink-mid',
+                style === 'chip'
+                  ? 'rounded-full border border-line-strong bg-bg2 px-[7px] text-[9.5px] leading-[15px]'
+                  : 'text-[10.5px]',
+              )}
+            >
+              $1,284
+            </span>
+          </button>
+        ))}
+      </OptionRow>
+
+      <div className="mt-2 border-t border-line pt-2">
+        <div className="cap text-ink-low">{t('behavior.advanced')}</div>
         <Toggle
-          label="Debug mode"
-          hint="Raw payloads, prompt snapshots, profiling"
+          label={t('behavior.debug')}
+          hint={t('behavior.debugHint')}
           on={settings.debugMode}
           onChange={(v) => patch({ debugMode: v })}
         />
-      </div>
-      <div className="flex items-center gap-3 py-2">
-        <span className="min-w-0">
-          <span className="block text-[13px] font-semibold">Fan spend style</span>
-          <span className="block text-[11.5px] text-ink-low">
-            Lifetime figure beside the name in the chat list
-          </span>
-        </span>
-        <span className="ml-auto flex gap-[5px]">
-          {(['figure', 'chip'] as const).map((style) => (
-            <Chip
-              key={style}
-              selected={settings.spendStyle === style}
-              onClick={() => patch({ spendStyle: style })}
-            >
-              {style === 'figure' ? '$1,284' : 'chip'}
-            </Chip>
-          ))}
-        </span>
       </div>
     </Section>
   );

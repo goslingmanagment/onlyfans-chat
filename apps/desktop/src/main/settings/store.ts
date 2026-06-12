@@ -19,7 +19,8 @@ import type {
   ReasoningEffort,
   ReplyTone,
 } from '@chatgoose/shared/types';
-import type { SettingsVM } from '../../preload/contract';
+import { UI_LOCALE_SETTINGS } from '@chatgoose/shared/i18n/index';
+import type { KeyMetaVM, SettingsVM } from '../../preload/contract';
 import type { SecretName } from '../secrets/keychain';
 
 // ─── Enums mirrored from shared types (satisfies ties them to the source) ──
@@ -52,7 +53,7 @@ const REPLY_TONE_VALUES = [
 
 export type PersistedSettings = Omit<
   SettingsVM,
-  'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey'
+  'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey' | 'keyMeta'
 >;
 
 export const PERSISTED_SETTINGS_KEYS = [
@@ -73,6 +74,8 @@ export const PERSISTED_SETTINGS_KEYS = [
   'hubBaseUrl',
   'accountPageLabels',
   'spendStyle',
+  'uiLocale',
+  'uiScale',
 ] as const satisfies readonly (keyof PersistedSettings)[];
 
 const persistedFieldSchemas = {
@@ -100,6 +103,10 @@ const persistedFieldSchemas = {
   accountPageLabels: z.record(z.string(), z.string()),
   // Chat-list lifetime-spend style (DESIGN §1): bare figure (default) or chip.
   spendStyle: z.enum(['figure', 'chip']),
+  // Interface language; 'system' resolves from the OS locale at runtime.
+  uiLocale: z.enum(UI_LOCALE_SETTINGS),
+  // Window zoom factor — fixed steps only, applied via webContents.setZoomFactor.
+  uiScale: z.union([z.literal(0.9), z.literal(1), z.literal(1.1), z.literal(1.25)]),
 };
 
 interface FieldValidator<T> {
@@ -130,6 +137,8 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   hubBaseUrl: null,
   accountPageLabels: {},
   spendStyle: 'figure',
+  uiLocale: 'system',
+  uiScale: 1,
 };
 
 // ─── Patch schema (IPC trust boundary for cmd:settings.update) ──────────
@@ -152,6 +161,8 @@ export const settingsPatchSchema = z.strictObject({
   hubBaseUrl: persistedFieldSchemas.hubBaseUrl.optional(),
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
   spendStyle: persistedFieldSchemas.spendStyle.optional(),
+  uiLocale: persistedFieldSchemas.uiLocale.optional(),
+  uiScale: persistedFieldSchemas.uiScale.optional(),
   // Secret material: routed to the keychain, never stored in the settings table.
   ofapiKey: z.string().optional(),
   anthropicKey: z.string().optional(),
@@ -160,6 +171,32 @@ export const settingsPatchSchema = z.strictObject({
 });
 
 export type ValidatedSettingsPatch = z.infer<typeof settingsPatchSchema>;
+
+// ─── Key metadata (non-secret fingerprints, settings-table reserved key) ──
+
+/** Reserved settings-table key — outside the per-field VM machinery (like 'personalities'). */
+const KEY_META_KEY = 'keyMeta';
+
+const keyMetaEntrySchema = z.object({
+  last4: z.string(),
+  setAt: z.number().int().nonnegative(),
+});
+
+const keyMetaSchema = z.object({
+  ofapi: keyMetaEntrySchema.nullable(),
+  anthropic: keyMetaEntrySchema.nullable(),
+  openRouter: keyMetaEntrySchema.nullable(),
+  hub: keyMetaEntrySchema.nullable(),
+});
+
+const EMPTY_KEY_META: KeyMetaVM = { ofapi: null, anthropic: null, openRouter: null, hub: null };
+
+const SECRET_META_KEYS: Partial<Record<SecretName, keyof KeyMetaVM>> = {
+  ofapiKey: 'ofapi',
+  anthropicKey: 'anthropic',
+  openRouterKey: 'openRouter',
+  hubApiKey: 'hub',
+};
 
 // ─── Storage + keychain seams ────────────────────────────────────────────
 
@@ -190,10 +227,13 @@ export interface SettingsStore {
 export interface SettingsStoreOptions {
   queries: SettingsQueries;
   secrets: SecretStoreLike;
+  /** Clock seam for keyMeta.setAt (tests). */
+  now?: () => number;
 }
 
 export function createSettingsStore(options: SettingsStoreOptions): SettingsStore {
   const { queries, secrets } = options;
+  const now = options.now ?? Date.now;
 
   function readField<K extends keyof PersistedSettings>(key: K): PersistedSettings[K] {
     let json: unknown;
@@ -227,7 +267,29 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       hubBaseUrl: readField('hubBaseUrl'),
       accountPageLabels: readField('accountPageLabels'),
       spendStyle: readField('spendStyle'),
+      uiLocale: readField('uiLocale'),
+      uiScale: readField('uiScale'),
     };
+  }
+
+  function readKeyMeta(): KeyMetaVM {
+    let json: unknown;
+    try {
+      json = queries.get(KEY_META_KEY);
+    } catch {
+      return { ...EMPTY_KEY_META };
+    }
+    const result = keyMetaSchema.safeParse(json);
+    return result.success ? result.data : { ...EMPTY_KEY_META };
+  }
+
+  function recordKeyMeta(name: SecretName, trimmedValue: string): void {
+    const metaKey = SECRET_META_KEYS[name];
+    if (metaKey === undefined) return;
+    const meta = readKeyMeta();
+    meta[metaKey] =
+      trimmedValue.length === 0 ? null : { last4: trimmedValue.slice(-4), setAt: now() };
+    queries.set(KEY_META_KEY, meta);
   }
 
   async function buildVm(): Promise<SettingsVM> {
@@ -237,7 +299,14 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       secrets.hasSecret('openRouterKey'),
       secrets.hasSecret('hubApiKey'),
     ]);
-    return { hasOfapiKey, hasAnthropicKey, hasOpenRouterKey, hasHubKey, ...readPersisted() };
+    return {
+      hasOfapiKey,
+      hasAnthropicKey,
+      hasOpenRouterKey,
+      hasHubKey,
+      keyMeta: readKeyMeta(),
+      ...readPersisted(),
+    };
   }
 
   async function applySecret(name: SecretName, rawValue: string): Promise<void> {
@@ -247,6 +316,10 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
     } else {
       await secrets.setSecret(name, value);
     }
+    // Non-secret fingerprint (last4 + date) so the UI can show WHICH key is set.
+    // Riding on queries.set also publishes the settings bus event the bare
+    // keychain write lacks.
+    recordKeyMeta(name, value);
   }
 
   return {

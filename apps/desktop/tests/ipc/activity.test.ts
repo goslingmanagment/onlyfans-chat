@@ -4,7 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AccountUpsert, DataLayer } from '@main/db/index';
-import { buildActivitySummary, aiTodayUsd, sendsToday } from '@main/ipc/activity';
+import { buildActivitySummary, buildFeatureCosts, aiTodayUsd, sendsToday } from '@main/ipc/activity';
 import type { ActivitySync } from '@main/ipc/activity';
 import type { CreditMeter } from '@main/ofapi/credit-meter';
 import { memoryDataLayer } from '../db/helpers';
@@ -301,4 +301,47 @@ describe('status-bar aggregates', () => {
       )
       .run({ local_id: localId, state, updated_at: updatedAt });
   }
+});
+
+describe('buildFeatureCosts (Settings → Models cost hints)', () => {
+  let data: DataLayer;
+
+  beforeEach(() => {
+    data = memoryDataLayer();
+  });
+  afterEach(() => {
+    data.close();
+  });
+
+  it('sums runs and micro-USD per feature across the trailing 7 days', () => {
+    const run = (day: string, feature: string, costMicroUsd: number): void => {
+      data.aiSpendLog.recordRun({
+        day,
+        feature,
+        isCacheHit: false,
+        inputTokens: 1000,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 0,
+        outputTokens: 200,
+        costMicroUsd,
+        chatId: '101',
+      });
+    };
+    run(TODAY, 'fast-reply', 30_000); // $0.03
+    run('2026-06-09', 'fast-reply', 50_000); // inside the window
+    run('2026-06-05', 'fast-reply', 990_000); // today-6 — still inside (7 calendar days)
+    run('2026-06-04', 'fast-reply', 5_000_000); // outside the window — dropped
+    run(TODAY, 'fan-summary', 410_000);
+
+    const costs = buildFeatureCosts(data, () => NOW);
+    expect(costs.sinceDay).toBe('2026-06-05');
+    expect(costs.byFeature['fast-reply']).toEqual({ runs: 3, usd: 1.07 });
+    expect(costs.byFeature['fan-summary']).toEqual({ runs: 1, usd: 0.41 });
+    expect(costs.byFeature['ping']).toBeUndefined();
+  });
+
+  it('returns an empty map on a fresh install', () => {
+    const costs = buildFeatureCosts(data, () => NOW);
+    expect(costs.byFeature).toEqual({});
+  });
 });

@@ -13,10 +13,13 @@ import { useMemo } from 'react';
 import type {
   AccountVM,
   ActivityVM,
+  AiFeatureCostsVM,
   ChatFilter,
   ChatListItemVM,
   FanPanelVM,
   GalleryItemVM,
+  KeyTestProvider,
+  LocalDataStatsVM,
   MessageVM,
   OutboxItemVM,
   SettingsPatch,
@@ -39,6 +42,8 @@ export const qk = {
   personalities: ['personalities'] as const,
   syncStatus: ['sync-status'] as const,
   activity: ['activity'] as const,
+  aiFeatureCosts: ['ai-feature-costs'] as const,
+  localDataStats: ['local-data-stats'] as const,
   vault: (accountId: string, albumId: string | null, query: string) =>
     ['vault', accountId, albumId ?? 'all', query] as const,
   vaultAlbums: (accountId: string) => ['vault-albums', accountId] as const,
@@ -184,6 +189,44 @@ export function useActivitySummary(enabled: boolean) {
     queryKey: qk.activity,
     queryFn: () => getBridge().invoke('query:activity.summary', undefined),
     enabled,
+  });
+}
+
+/** Settings → Models cost hints; invalidated on operation:complete. */
+export function useAiFeatureCosts(enabled: boolean) {
+  return useQuery<AiFeatureCostsVM>({
+    queryKey: qk.aiFeatureCosts,
+    queryFn: () => getBridge().invoke('query:ai.featureCosts', undefined),
+    enabled,
+  });
+}
+
+/** Danger zone cache footprint; refetched on mount of the settings view. */
+export function useLocalDataStats(enabled: boolean) {
+  return useQuery<LocalDataStatsVM>({
+    queryKey: qk.localDataStats,
+    queryFn: () => getBridge().invoke('query:localData.stats', undefined),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+/** Settings "Test" buttons — one mutation instance per row keeps results separate. */
+export function useKeyTest() {
+  return useMutation({
+    mutationFn: (provider: KeyTestProvider) => getBridge().invoke('cmd:keys.test', { provider }),
+  });
+}
+
+export function useOpenDataFolder() {
+  return useMutation({
+    mutationFn: () => getBridge().invoke('cmd:localData.openFolder', undefined),
+  });
+}
+
+export function useExportDiagnostics() {
+  return useMutation({
+    mutationFn: () => getBridge().invoke('cmd:localData.exportDiagnostics', undefined),
   });
 }
 

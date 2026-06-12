@@ -75,6 +75,11 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
           e.preventDefault();
           ui.setCheatsheetOpen(!ui.cheatsheetOpen);
           return;
+        case 'settings':
+          // Before the line-104 workspace guard: ⌘, works from any view.
+          e.preventDefault();
+          ui.setView('settings');
+          return;
         case 'dismiss': {
           if (ui.paletteOpen) ui.setPaletteOpen(false);
           else if (ui.cheatsheetOpen) ui.setCheatsheetOpen(false);

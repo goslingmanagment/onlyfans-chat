@@ -13,8 +13,22 @@ import type { CreditMeter } from '../ofapi/credit-meter';
 import type { SendEngine } from '../send/engine';
 import { auditOutbox } from '../send/audit';
 import type { VaultService } from '../media/vault';
-import type { AiStartRequest, OutboxItemVM, SyncStatusVM } from '../../preload/contract';
-import { aiTodayUsd, buildActivitySummary, sendsToday, utcDayOf, type ActivitySync } from './activity';
+import type {
+  AiStartRequest,
+  KeyTestProvider,
+  KeyTestResultVM,
+  LocalDataStatsVM,
+  OutboxItemVM,
+  SyncStatusVM,
+} from '../../preload/contract';
+import {
+  aiTodayUsd,
+  buildActivitySummary,
+  buildFeatureCosts,
+  sendsToday,
+  utcDayOf,
+  type ActivitySync,
+} from './activity';
 import {
   accountToVM,
   chatToVM,
@@ -23,6 +37,9 @@ import {
 } from './viewmodels';
 
 const idSchema = z.string().min(1).max(64);
+const keysTestSchema = z.object({
+  provider: z.enum(['ofapi', 'anthropic', 'openrouter', 'hub']),
+});
 
 const chatsListSchema = z.object({
   accountId: idSchema,
@@ -187,6 +204,14 @@ export interface IpcDeps {
    *  Optional (not `| null` alone) so pre-P5 IpcDeps call sites stay valid. */
   vault?: VaultService | null;
   purge: () => Promise<void>;
+  /** Settings "Test" buttons; probes the STORED key. Optional like vault. */
+  testKey?: (provider: KeyTestProvider) => Promise<KeyTestResultVM>;
+  /** Danger-zone capabilities (paths/shell live only in the composition root). */
+  localData?: {
+    stats: () => Promise<LocalDataStatsVM>;
+    openFolder: () => Promise<void>;
+    exportDiagnostics: () => Promise<{ path: string }>;
+  } | null;
   /** Called when settings.update sets an OFAPI key while sync is offline. */
   onOfapiKeyConfigured?: () => void;
   /**
@@ -307,6 +332,27 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     const args = z.object({ accountId: idSchema.optional() }).parse(rawArgs ?? {});
     return auditOutbox(data, args.accountId !== undefined ? { accountId: args.accountId } : {});
   });
+
+  ipcMain.handle('query:ai.featureCosts', () => buildFeatureCosts(data));
+
+  ipcMain.handle('cmd:keys.test', (_event, rawArgs: unknown) => {
+    const args = keysTestSchema.parse(rawArgs);
+    if (!deps.testKey) {
+      throw new Error('Key testing is not available in this build.');
+    }
+    return deps.testKey(args.provider);
+  });
+
+  function requireLocalData(): NonNullable<IpcDeps['localData']> {
+    if (!deps.localData) {
+      throw new Error('Local-data tools are not available in this build.');
+    }
+    return deps.localData;
+  }
+
+  ipcMain.handle('query:localData.stats', () => requireLocalData().stats());
+  ipcMain.handle('cmd:localData.openFolder', () => requireLocalData().openFolder());
+  ipcMain.handle('cmd:localData.exportDiagnostics', () => requireLocalData().exportDiagnostics());
 
   ipcMain.handle('query:ai.pingGate', (_event, rawArgs: unknown) => {
     const args = convSchema.parse(rawArgs);

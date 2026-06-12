@@ -406,6 +406,14 @@ function buildStore(): MockStore {
     hasHubKey: false,
     hubBaseUrl: null,
     spendStyle: 'figure',
+    uiLocale: 'system',
+    uiScale: 1,
+    keyMeta: {
+      ofapi: { last4: '7f2c', setAt: Date.now() - 12 * 86_400_000 },
+      anthropic: { last4: 'a4f2', setAt: Date.now() - 5 * 86_400_000 },
+      openRouter: null,
+      hub: null,
+    },
     featureModels: {
       'fast-reply': 'anthropic:claude-sonnet-4-6',
       'help-me': 'anthropic:claude-sonnet-4-6',
@@ -1031,6 +1039,35 @@ export function createMockBridge(): ChatGooseBridge {
       staleUnconfirmed: [],
       sentMissingFromMessages: [],
       cleanSends: 142,
+    }),
+    'query:ai.featureCosts': () => ({
+      sinceDay: '2026-06-05',
+      byFeature: {
+        'fast-reply': { runs: 38, usd: 1.14 },
+        'help-me': { runs: 6, usd: 0.21 },
+        'fan-summary': { runs: 4, usd: 0.46 },
+        ping: { runs: 9, usd: 0.18 },
+      },
+    }),
+    'cmd:keys.test': ({ provider }) => {
+      // Mock: OFAPI/anthropic succeed, openrouter rejects, hub depends on config.
+      if (provider === 'ofapi') return { ok: true, code: null, message: '', team: 'Goose Team' };
+      if (provider === 'anthropic') return { ok: true, code: null, message: '' };
+      if (provider === 'hub') {
+        return store.settings.hubBaseUrl !== null && store.settings.hasHubKey
+          ? { ok: true, code: null, message: '', username: 'dasha', role: 'chatter', pages: 2 }
+          : { ok: false, code: 'HUB_NOT_CONFIGURED', message: 'Hub base URL or chatter key missing.' };
+      }
+      return { ok: false, code: 'CG-AUTH-02', message: 'OpenRouter API key is invalid.' };
+    },
+    'query:localData.stats': () => ({
+      dbBytes: 38_200_000,
+      mediaBytes: 121_500_000,
+      mediaFiles: 482,
+    }),
+    'cmd:localData.openFolder': () => undefined,
+    'cmd:localData.exportDiagnostics': () => ({
+      path: '/Users/dev/Library/Application Support/chatgoose/chatgoose-diagnostics-mock.json',
     }),
     'query:ai.pingGate': () => ({ segment: 'active', blocked: true }),
     'cmd:conversation.open': () => undefined,

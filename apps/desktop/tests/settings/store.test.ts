@@ -77,9 +77,53 @@ describe('settings store', () => {
     expect(vm.accountMappings).toEqual({});
     expect(vm.accountPageLabels).toEqual({});
     expect(vm.spendStyle).toBe('figure');
+    expect(vm.uiLocale).toBe('system');
+    expect(vm.uiScale).toBe(1);
+    expect(vm.keyMeta).toEqual({ ofapi: null, anthropic: null, openRouter: null, hub: null });
     expect(vm.hasOfapiKey).toBe(false);
     expect(vm.hasAnthropicKey).toBe(false);
     expect(vm.hasOpenRouterKey).toBe(false);
+  });
+
+  it('persists uiLocale and uiScale (round-trip) and zod-rejects bad values', async () => {
+    const { store, queries, secrets } = createStore();
+    const vm = await store.update({ uiLocale: 'ru', uiScale: 1.25 });
+    expect(vm.uiLocale).toBe('ru');
+    expect(vm.uiScale).toBe(1.25);
+
+    const reread = createSettingsStore({ queries, secrets });
+    const again = await reread.get();
+    expect(again.uiLocale).toBe('ru');
+    expect(again.uiScale).toBe(1.25);
+
+    await expect(store.update({ uiLocale: 'de' })).rejects.toThrow();
+    await expect(store.update({ uiScale: 2 })).rejects.toThrow();
+    await expect(store.update({ uiScale: 0.95 })).rejects.toThrow();
+  });
+
+  it('records non-secret key metadata (last4 + setAt) on save and clears it on delete', async () => {
+    const queries = createFakeQueries();
+    const secrets = createFakeSecrets();
+    const store = createSettingsStore({ queries, secrets, now: () => 1_750_000_000_000 });
+
+    const vm = await store.update({ anthropicKey: 'sk-ant-secret-a4f2' });
+    expect(vm.keyMeta.anthropic).toEqual({ last4: 'a4f2', setAt: 1_750_000_000_000 });
+    expect(vm.keyMeta.ofapi).toBeNull();
+
+    // last4 is the only key-derived material allowed in the table.
+    const tableDump = JSON.stringify([...queries.rows.entries()]);
+    expect(tableDump).not.toContain('sk-ant-secret-a4f2');
+    expect(tableDump).toContain('a4f2');
+
+    const cleared = await store.update({ anthropicKey: '' });
+    expect(cleared.keyMeta.anthropic).toBeNull();
+  });
+
+  it('keyMeta is read-only: a patch attempting to set it is rejected', async () => {
+    const { store } = createStore();
+    await expect(
+      store.update({ keyMeta: { ofapi: { last4: 'beef', setAt: 1 } } }),
+    ).rejects.toThrow();
   });
 
   it('applies and persists a patch (visible to a fresh store instance)', async () => {

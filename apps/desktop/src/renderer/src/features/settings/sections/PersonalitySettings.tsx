@@ -14,6 +14,7 @@ import { Badge } from '../../../design/Badge';
 import { Button } from '../../../design/Button';
 import { Avatar } from '../../../design/Avatar';
 import { cx } from '../../../lib/cx';
+import { useT } from '../../../lib/i18n';
 import { Section } from '../SettingsSurface';
 
 export function PersonalitySettings(): React.JSX.Element {
@@ -22,6 +23,7 @@ export function PersonalitySettings(): React.JSX.Element {
   const save = useSavePersonality();
   const remove = useDeletePersonality();
   const setMapping = useSetMapping();
+  const t = useT();
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
@@ -60,7 +62,7 @@ export function PersonalitySettings(): React.JSX.Element {
 
   return (
     <>
-      <Section title="Personalities" hint="The model's voice — accounts must map to one before AI activates.">
+      <Section title={t('personalities.title')} hint={t('personalities.hint')}>
         <div className="flex gap-4">
           <div className="w-52 flex-none space-y-1">
             {list.map((p) => (
@@ -78,41 +80,41 @@ export function PersonalitySettings(): React.JSX.Element {
                 <span className="truncate">{p.name}</span>
                 {p.builtin === true && (
                   <Badge tone="neutral" className="ml-auto">
-                    built-in
+                    {t('personalities.builtIn')}
                   </Badge>
                 )}
               </button>
             ))}
             <Button size="sm" onClick={() => startEdit(null)} className="mt-1 w-full justify-center">
-              + New personality
+              {t('personalities.new')}
             </Button>
           </div>
           <div className="min-w-0 flex-1">
             {editingId === null ? (
               <div className="flex h-full items-center justify-center rounded-chip border border-dashed border-line-strong p-6 text-[12.5px] text-ink-low">
-                Select a personality to edit, or create a new one.
+                {t('personalities.empty')}
               </div>
             ) : (
               <div className="space-y-2">
                 <input
                   value={draftName}
                   onChange={(e) => setDraftName(e.target.value)}
-                  placeholder="Name"
+                  placeholder={t('personalities.namePh')}
                   className="w-full rounded-chip border border-line bg-bg1 px-3 py-1.5 text-[13px] font-semibold outline-none focus:border-clay-line"
                 />
                 <textarea
                   value={draftContent}
                   onChange={(e) => setDraftContent(e.target.value)}
-                  placeholder="Personality content — who she is, how she talks…"
+                  placeholder={t('personalities.contentPh')}
                   rows={8}
                   className="w-full resize-y rounded-chip border border-line bg-bg1 px-3 py-2 text-[13px] leading-[1.5] outline-none focus:border-clay-line"
                 />
                 <div className="flex gap-2">
                   <Button size="sm" variant="primary" disabled={draftName.trim() === ''} onClick={commit}>
-                    Save
+                    {t('common.save')}
                   </Button>
                   <Button size="sm" onClick={() => setEditingId(null)}>
-                    Cancel
+                    {t('common.cancel')}
                   </Button>
                   {editing !== null && editing.builtin !== true && (
                     <Button
@@ -123,7 +125,7 @@ export function PersonalitySettings(): React.JSX.Element {
                         remove.mutate(editing.id, { onSuccess: () => setEditingId(null) });
                       }}
                     >
-                      Delete
+                      {t('common.delete')}
                     </Button>
                   )}
                 </div>
@@ -133,7 +135,7 @@ export function PersonalitySettings(): React.JSX.Element {
         </div>
       </Section>
 
-      <Section title="Account mapping" hint="Unmapped accounts show an AI gate banner in the conversation.">
+      <Section title={t('mapping.title')} hint={t('mapping.hint')}>
         <div className="space-y-1.5">
           {(accounts.data ?? []).map((account) => (
             <div key={account.id} className="flex items-center gap-3 py-1">
@@ -152,14 +154,14 @@ export function PersonalitySettings(): React.JSX.Element {
                 }
                 className="min-w-0 flex-1 cursor-pointer rounded-chip border border-line bg-bg1 px-2 py-1.5 text-[12.5px] outline-none focus:border-clay-line"
               >
-                <option value="">— unmapped (AI disabled) —</option>
+                <option value="">{t('mapping.unmapped')}</option>
                 {list.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
                 ))}
               </select>
-              {account.personalityId === null && <Badge tone="amber">AI disabled</Badge>}
+              {account.personalityId === null && <Badge tone="amber">{t('mapping.aiDisabled')}</Badge>}
             </div>
           ))}
         </div>

@@ -11,6 +11,8 @@ import { qk } from './queries';
 import { useUiStore } from '../state/uiStore';
 import { useSettingsCache } from '../state/settingsCache';
 import { playNotificationBlip } from '../lib/sound';
+import { uiMessage } from '@chatgoose/shared/i18n/index';
+import { currentLocale } from '../lib/i18n';
 import { handleAiOperationEvent } from '../features/ai/aiStore';
 
 const dbChangedSchema = z.object({
@@ -135,9 +137,10 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
               qk.chats(event.accountId, 'all'),
             );
             const chat = list?.items.find((c) => c.chatId === event.chatId);
+            const locale = currentLocale();
             ui.pushToast({
-              title: chat?.fanName ?? 'New message',
-              body: chat?.lastMessagePreview ?? 'sent you a message',
+              title: chat?.fanName ?? uiMessage(locale, 'toast.newMessage'),
+              body: chat?.lastMessagePreview ?? uiMessage(locale, 'toast.sentYou'),
               accountId: event.accountId,
               chatId: event.chatId,
             });
@@ -190,9 +193,10 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     // dock first (frame correlation lives there), then the status-bar cost slot
     handleAiOperationEvent(event);
     if (event.type === 'operation:complete') {
-      // AI TODAY (status bar) + the Activity panel's AI ledger
+      // AI TODAY (status bar) + the Activity panel's AI ledger + Models cost hints
       queueInvalidate(qk.syncStatus);
       queueInvalidate(qk.activity);
+      queueInvalidate(qk.aiFeatureCosts);
     }
   });
 

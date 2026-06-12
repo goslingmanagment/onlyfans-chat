@@ -36,6 +36,7 @@ export type KeyAction =
   | 'ai-scan'
   | 'ai-tone'
   | 'ai-cancel'
+  | 'settings'
   | AiPartAction;
 
 const AI_PART_ACTIONS = [
@@ -69,6 +70,7 @@ export const KEY_BINDINGS: KeyBinding<KeyAction>[] = [
   { action: 'toggle-panel', combo: ']', label: ']', description: 'Toggle fan panel' },
   { action: 'toggle-list', combo: '[', label: '[', description: 'Toggle chat list' },
   { action: 'cheatsheet', combo: '?', label: '?', description: 'Hotkey cheatsheet' },
+  { action: 'settings', combo: 'mod+,', label: '⌘,', description: 'Open settings' },
   { action: 'ai-reply', combo: 'mod+r', label: '⌘R', description: 'Fast Reply (AI suggestion)' },
   { action: 'ai-improve', combo: 'mod+i', label: '⌘I', description: 'Improve draft (AI)' },
   { action: 'ai-help', combo: 'mod+h', label: '⌘H', description: 'Help me (AI coaching)' },

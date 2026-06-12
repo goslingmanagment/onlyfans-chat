@@ -4,8 +4,9 @@
 
 import { app, BrowserWindow, dialog, Notification, protocol, safeStorage, shell } from 'electron';
 import { join } from 'node:path';
-import { rm } from 'node:fs/promises';
+import { readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
+import { resolveUiLocale, uiMessage, type UiLocale } from '@chatgoose/shared/i18n/index';
 import { createKeychain, type Keychain } from './secrets/keychain';
 import { createDataLayer, type DataLayer } from './db/index';
 import { createSettingsStore, type SettingsStore } from './settings/store';
@@ -25,6 +26,7 @@ import { createBudgetGuard } from './sync/budget-guard';
 import { createHubSync } from './sync/hub-sync';
 import { createHubAwareSync, type HubAwareSync } from './sync/hub-provider';
 import { registerIpcHandlers } from './ipc/handlers';
+import { runKeyTest } from './diagnostics/key-tests';
 import { createAiCoordinator, type AiCoordinator } from './ai/index';
 import { createHubModule, type HubModule } from './hub/index';
 import { attachEventForwarding } from './ipc/events';
@@ -41,6 +43,10 @@ let vaultService: VaultService | null = null;
 let hub: HubModule | null = null;
 /** Set by initOfapi; lets cmd:settings.update trigger a hub-config recheck. */
 let recheckHubConfig: (() => void) | null = null;
+/** UI prefs mirrored from settings by boot()'s bus watcher — read by window
+ *  creation (zoom) and main-side notifications (locale). */
+let uiScale = 1;
+let uiLocale: UiLocale = 'en';
 
 function loadWindowContent(win: BrowserWindow): void {
   // Dev convenience: CHATGOOSE_OPEN_VIEW=settings boots straight into Settings
@@ -80,6 +86,11 @@ function createWindow(options: { load?: boolean } = {}): BrowserWindow {
     },
   });
   win.on('ready-to-show', () => win.show());
+  // Settings → Behavior → UI scale; re-applied on every load (zoom does not
+  // survive navigation) and reactively by boot()'s settings watcher.
+  win.webContents.on('did-finish-load', () => {
+    win.webContents.setZoomFactor(uiScale);
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
@@ -117,8 +128,8 @@ async function initOfapi(
     onWarning: (used, budget) => {
       if (Notification.isSupported()) {
         new Notification({
-          title: 'Credit budget at 80%',
-          body: `${used} of ${budget} credits used this shift.`,
+          title: uiMessage(uiLocale, 'notif.budgetTitle'),
+          body: uiMessage(uiLocale, 'notif.budgetBody', { used, budget }),
         }).show();
       }
     },
@@ -284,6 +295,23 @@ async function boot(): Promise<void> {
 
   const settingsStore = createSettingsStore({ queries: data.settings, secrets: keychain });
 
+  // UI prefs (zoom + interface language for main-side notifications): seed
+  // before the window loads, then track every settings-table write.
+  const refreshUiPrefs = async (): Promise<void> => {
+    const vm = await settingsStore.get();
+    uiScale = vm.uiScale;
+    uiLocale = resolveUiLocale(vm.uiLocale, app.getLocale());
+    if (mainWindow !== null && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.setZoomFactor(uiScale);
+    }
+  };
+  await refreshUiPrefs();
+  data.bus.subscribe((events) => {
+    if (events.some((event) => event.scope === 'settings')) {
+      void refreshUiPrefs();
+    }
+  });
+
   mainWindow = createWindow({ load: false });
 
   // Media: direct fetch of the signed URL first (Phase-0: hosts not IP-locked,
@@ -331,6 +359,7 @@ async function boot(): Promise<void> {
     });
   }
 
+  let purging = false;
   registerIpcHandlers({
     data,
     settingsStore,
@@ -340,6 +369,13 @@ async function boot(): Promise<void> {
     send: sendEngine,
     vault: vaultService,
     purge: async () => {
+      // Re-entry guard: a double-fired cmd:data.purge would otherwise call
+      // app.relaunch() twice before exit — Electron then spawns TWO instances
+      // racing on the same encrypted db (no single-instance lock).
+      if (purging) {
+        return;
+      }
+      purging = true;
       sync?.stop();
       sendEngine?.dispose();
       hub?.dispose();
@@ -358,6 +394,67 @@ async function boot(): Promise<void> {
       }
     },
     onHubConfigChanged: () => recheckHubConfig?.(),
+    testKey: (provider) => runKeyTest(provider, { keychain, settingsStore }),
+    localData: {
+      stats: async () => {
+        const sizeOf = async (path: string): Promise<number> => {
+          try {
+            return (await stat(path)).size;
+          } catch {
+            return 0;
+          }
+        };
+        const dbBytes = (
+          await Promise.all([
+            sizeOf(join(userData, 'chatgoose.db')),
+            sizeOf(join(userData, 'chatgoose.db-wal')),
+            sizeOf(join(userData, 'chatgoose.db-shm')),
+          ])
+        ).reduce((sum, n) => sum + n, 0);
+        let mediaBytes = 0;
+        let mediaFiles = 0;
+        try {
+          // Flat dir of encrypted files (media/cache.ts never nests).
+          for (const name of await readdir(join(userData, 'media-cache'))) {
+            mediaBytes += await sizeOf(join(userData, 'media-cache', name));
+            mediaFiles += 1;
+          }
+        } catch {
+          // Dir does not exist until the first media write.
+        }
+        return { dbBytes, mediaBytes, mediaFiles };
+      },
+      openFolder: async () => {
+        await shell.openPath(userData);
+      },
+      exportDiagnostics: async () => {
+        const vm = await settingsStore.get();
+        // SettingsVM carries no secrets by construction, but the diagnostics
+        // file is MEANT to leave the machine — so even the last4 fingerprints
+        // are stripped (SPEC §15: no key material, partial included, exits main).
+        const { keyMeta: _keyMeta, ...settingsForExport } = vm;
+        const report = {
+          generatedAt: new Date().toISOString(),
+          app: {
+            version: app.getVersion(),
+            electron: process.versions.electron,
+            chrome: process.versions.chrome,
+            node: process.versions.node,
+            platform: process.platform,
+          },
+          settings: settingsForExport,
+          sync: sync?.status() ?? null,
+          hub: sync?.hubStatus?.() ?? null,
+          hubActivity: sync?.hubActivity?.() ?? null,
+          credits: client?.creditMeter.snapshot() ?? null,
+        };
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const file = join(userData, `chatgoose-diagnostics-${stamp}.json`);
+        await writeFile(file, JSON.stringify(report, null, 2), 'utf8');
+        shell.showItemInFolder(file);
+        return { path: file };
+      },
+    },
   });
 
   attachEventForwarding({
@@ -379,7 +476,7 @@ async function boot(): Promise<void> {
       ) {
         const chat = data?.chats.get(event.accountId, event.chatId);
         new Notification({
-          title: chat?.fanName ?? 'New message',
+          title: chat?.fanName ?? uiMessage(uiLocale, 'notif.newMessage'),
           body: chat?.lastMessagePreview ?? '',
           silent: true,
         }).show();
