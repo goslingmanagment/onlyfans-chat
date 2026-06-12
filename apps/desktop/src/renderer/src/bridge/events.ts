@@ -53,14 +53,24 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     queueInvalidate(['chats', accountId]);
   }
 
+  function invalidateSupporters(accountId: string): void {
+    // Board row joins (spend / preview / counters) recompute from the local
+    // DB; the OM roster ids behind them stay TTL-cached in main (0 credits).
+    queueInvalidate(['supporters-roster', accountId]);
+    queueInvalidate(['supporters-untiered', accountId]);
+  }
+
   function handleDbChanged(event: z.infer<typeof dbChangedSchema>): void {
     switch (event.scope) {
       case 'accounts':
         queueInvalidate(qk.accounts);
         break;
       case 'chats':
-        if (event.accountId !== undefined) invalidateChats(event.accountId);
-        else queueInvalidate(['chats']);
+        if (event.accountId !== undefined) {
+          invalidateChats(event.accountId);
+          // also fires on fan_transactions sweeps — the 30-day board figure
+          invalidateSupporters(event.accountId);
+        } else queueInvalidate(['chats']);
         break;
       case 'messages':
         if (event.accountId !== undefined && event.chatId !== undefined) {
@@ -68,6 +78,8 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
         } else {
           queueInvalidate(['messages']);
         }
+        // supporters rows carry МОДЕЛЬ/ФАН counters from the message DB
+        if (event.accountId !== undefined) invalidateSupporters(event.accountId);
         break;
       case 'outbox':
         // outbox refetches ONLY on this event — no polling (DESIGN §3)
@@ -86,6 +98,9 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
           queueInvalidate(qk.fan(event.accountId, event.chatId));
         } else {
           queueInvalidate(['fan']);
+        }
+        if (event.scope === 'fans' && event.accountId !== undefined) {
+          invalidateSupporters(event.accountId); // lifetime spend lives on fans
         }
         break;
       case 'settings':

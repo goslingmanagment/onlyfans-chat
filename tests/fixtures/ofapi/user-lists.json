@@ -1,0 +1,119 @@
+{
+  "_fixture": {
+    "source": "GET /{account}/user-lists — SYNTHETIC, mirrors the LIVE response shape captured 2026-06-13 (tmp/probe-user-lists.json). The vendored openapi example shows data as a bare ARRAY — live returns {list, hasMore, order, sort} and custom list ids as STRINGS.",
+    "anonymized": true,
+    "notes": [
+      "data = {list, hasMore, order, sort} — NOT the openapi example's array.",
+      "Custom (OM-managed) list ids are numeric STRINGS; built-ins are words ('fans', 'recent', 'tagged').",
+      "Names are HTML-entity-encoded ('&lt; 45 days') and follow the OnlyMonster tier convention: band bare or parenthesized + glued '_OM' marker.",
+      "usersCounts mirror the live pilot account's tier sizes."
+    ]
+  },
+  "data": {
+    "list": [
+      {
+        "id": "1247248934",
+        "type": "custom",
+        "name": "🐳 Кит 600+_OM",
+        "usersCount": 3,
+        "postsCount": 0,
+        "order": "default",
+        "direction": "asc",
+        "canUpdate": true,
+        "canDelete": true,
+        "canManageUsers": true,
+        "canAddUsers": true,
+        "sortList": [],
+        "users": []
+      },
+      {
+        "id": "1247248752",
+        "type": "custom",
+        "name": "⭐️ Топ (350-600)_OM",
+        "usersCount": 4,
+        "postsCount": 0,
+        "order": "default",
+        "direction": "asc",
+        "canUpdate": true,
+        "canDelete": true,
+        "canManageUsers": true,
+        "canAddUsers": true,
+        "sortList": [],
+        "users": []
+      },
+      {
+        "id": "1247247506",
+        "type": "custom",
+        "name": "1️⃣ Микро (1-25)_OM",
+        "usersCount": 48,
+        "postsCount": 0,
+        "order": "default",
+        "direction": "asc",
+        "canUpdate": true,
+        "canDelete": true,
+        "canManageUsers": true,
+        "canAddUsers": true,
+        "sortList": [],
+        "users": []
+      },
+      {
+        "id": "1290175654",
+        "type": "custom",
+        "name": "Freeloaders (&lt; 45 days)",
+        "usersCount": 16,
+        "postsCount": 0,
+        "order": "default",
+        "direction": "asc",
+        "canUpdate": true,
+        "canDelete": true,
+        "canManageUsers": true,
+        "canAddUsers": true,
+        "sortList": [],
+        "users": []
+      },
+      {
+        "id": "recent",
+        "type": "recent",
+        "name": "Recent (last 24 hours)",
+        "usersCount": 16,
+        "postsCount": 0,
+        "order": "default",
+        "direction": "asc",
+        "canUpdate": false,
+        "canDelete": false,
+        "canManageUsers": false,
+        "canAddUsers": false,
+        "sortList": [],
+        "users": []
+      },
+      {
+        "id": "fans",
+        "type": "fans",
+        "name": "Fans",
+        "usersCount": 3912,
+        "postsCount": 0,
+        "order": "default",
+        "direction": "asc",
+        "canUpdate": false,
+        "canDelete": false,
+        "canManageUsers": false,
+        "canAddUsers": false,
+        "sortList": [],
+        "users": []
+      }
+    ],
+    "hasMore": false,
+    "order": "default",
+    "sort": "desc"
+  },
+  "_meta": {
+    "_credits": { "used": 1, "balance": 224858, "note": "Always" },
+    "_cache": { "is_cached": false, "note": "Cache disabled for this endpoint" },
+    "_rate_limits": {
+      "limit_minute": 1000,
+      "limit_day": 50000,
+      "remaining_minute": 998,
+      "remaining_day": 49991
+    }
+  }
+}

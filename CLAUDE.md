@@ -2,7 +2,7 @@
 
 Desktop chat client for OnlyFans agency chatters with built-in AI assistance (reply generation, coaching, fan summaries, reactivation pings). Successor to the ChatGoose Firefox extension for Fansly. We cannot inject into OnlyFans (accounts are accessed via OnlyMonster), so this app renders its own chat interface on top of the third-party OnlyFans API (onlyfansapi.com, "OFAPI").
 
-**Current state: documentation/planning phase. No application code yet.** Start any implementation work from the plan's current phase.
+**Current state (2026-06-11): implementation underway — the Electron app lives in `apps/desktop`. Phases 0–5 are built; the P3–P5 gates await owner/pilot evidence; P6 (AI gateway, core-side) is deferred (owner decision 2026-06-11).** Start any implementation work from the plan's current phase — the per-phase status notes in `docs/PLAN.md` are the source of truth, not this line.
 
 ## Read these before designing or building anything
 
@@ -29,7 +29,7 @@ Desktop chat client for OnlyFans agency chatters with built-in AI assistance (re
 - **Prompts are copied byte-for-byte** from `~/code/chatgoose/prompts/*.md` and the prompt-builder strings in `~/code/chatgoose/src/shared/prompts.ts` (safety preambles, tone instructions, ping segment instructions). The ONLY permitted edit is platform wording (Fansly→OnlyFans). Any other change requires the regression harness (PLAN P4) + explicit owner approval — the prompts already work in production and the anti-AI-slop tuning is the most valuable asset.
 - Keep PRD/SPEC/PLAN current: when a decision changes during implementation, update the doc in the same change.
 
-## Conventions (once code exists)
+## Conventions
 
 - pnpm monorepo: `apps/desktop` (Electron + React + TS strict + Tailwind), `packages/shared` (pure TS; named to avoid collision with the "core" repo). No `apps/hub` here. Layout: SPEC §3.
 - `pnpm check` = typecheck + lint + unit tests + build — must pass before any commit (legacy discipline: 783 tests on the predecessor).

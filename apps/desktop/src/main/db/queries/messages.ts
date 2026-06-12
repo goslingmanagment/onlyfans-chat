@@ -3,10 +3,12 @@
 // sync); retention pruning beyond 5000/chat (configurable). Pages are keyset-
 // paginated on (created_at, message_id) and returned in ascending order.
 
+import { z } from 'zod';
 import type { ChatGooseDb } from '../database';
 import type { DbChangeBus } from '../change-bus';
 import { decodeMessageRow, toJson, toSqlBool } from '../rows';
 import type { MessageRow, MessageUpsert } from '../rows';
+import { chunked } from './fans';
 
 export const MESSAGE_RETENTION_DEFAULT = 5000;
 
@@ -44,10 +46,22 @@ export interface MessagePage {
   hasMore: boolean;
 }
 
+/** Per-chat newest activity timestamps split by sender (Supporters board
+ *  «МОДЕЛЬ N Д · ФАН M Д» counters — local DB only, vendor lastReplyAt is null). */
+export interface LastBySender {
+  /** Newest non-deleted fan message (any kind — tips count as fan contact). */
+  lastFanAt: string | null;
+  /** Newest non-deleted own message. */
+  lastModelAt: string | null;
+}
+
 export interface MessagesQueries {
   upsertMany(messages: readonly MessageUpsert[]): void;
   get(accountId: string, chatId: string, messageId: string): MessageRow | null;
   page(args: { accountId: string; chatId: string; beforeId?: string; limit?: number }): MessagePage;
+  /** Batched per-chat MAX(created_at) split by is_sent_by_me; deleted excluded.
+   *  Chats with no local history are absent from the map. */
+  latestBySender(accountId: string, chatIds: readonly string[]): Map<string, LastBySender>;
   /** Tombstone: keeps the rows, flags them deleted (SPEC §6.3). */
   markDeleted(accountId: string, chatId: string, messageIds: readonly string[]): void;
   /** Deletes rows beyond the newest `keep` for the chat; returns rows removed. */
@@ -141,6 +155,37 @@ export function createMessagesQueries(db: ChatGooseDb, bus: DbChangeBus): Messag
         items: rows.slice(0, limit).map(decodeMessageRow).reverse(),
         hasMore,
       };
+    },
+
+    latestBySender(accountId, chatIds) {
+      const out = new Map<string, LastBySender>();
+      const rowSchema = z.object({
+        chat_id: z.string(),
+        last_fan_at: z.string().nullable(),
+        last_model_at: z.string().nullable(),
+      });
+      for (const chunk of chunked(chatIds)) {
+        const placeholders = chunk.map((_, i) => `@id${i}`).join(', ');
+        const params: Record<string, string> = { account_id: accountId };
+        chunk.forEach((id, i) => {
+          params[`id${i}`] = id;
+        });
+        const rows: unknown[] = db
+          .prepare(
+            `SELECT chat_id,
+               MAX(CASE WHEN is_sent_by_me = 0 THEN created_at END) AS last_fan_at,
+               MAX(CASE WHEN is_sent_by_me = 1 THEN created_at END) AS last_model_at
+             FROM messages
+             WHERE account_id = @account_id AND deleted = 0 AND chat_id IN (${placeholders})
+             GROUP BY chat_id`,
+          )
+          .all(params);
+        for (const raw of rows) {
+          const row = rowSchema.parse(raw);
+          out.set(row.chat_id, { lastFanAt: row.last_fan_at, lastModelAt: row.last_model_at });
+        }
+      }
+      return out;
     },
 
     markDeleted(accountId, chatId, messageIds) {

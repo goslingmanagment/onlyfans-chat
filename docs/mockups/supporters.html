@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>ChatGoose — Supporters board mockup (binding)</title>
+<!--
+  BINDING MOCKUP — борд саппортеров. Итог экспериментов №1–7 (experiments/reactivation-pass*.html,
+  experiments/supporters-*.html — там история раундов и отброшенные варианты). Решения владельца, 2026-06-12/13:
+
+  • Назначение: «панель топ-саппортеров» — смотровая поверхность, НИКАКОЙ автоматики ИИ.
+    Показывает спендеров; решает и действует человек. Открывается в центре воркспейса вместо треда
+    (список чатов остаётся), ← / ESC возвращает к чату. Вход: ⌘K «Supporters» (финальный вход — TBD).
+  • Строка списка (не сетка!): анатомия строки чат-листа — тотал сразу после ника (mono 10.5,
+    fans.spending.total), 30-дневный зелёный +$N справа (из локального fan_transactions sweep;
+    рендер только >0 — «молчит, но платит» ловится именно этой цифрой), превью последнего сообщения
+    с автором (you:/без префикса), счётчики T1 «МОДЕЛЬ N Д · ФАН M Д» из локальной истории
+    (lastReplyAt у вендора null — не использовать).
+  • Тиры: кастомные user-lists ОМ (GET /{account}/user-lists + /users; ТОЛЬКО ЧТЕНИЕ — списки ведёт
+    OnlyMonster). Маппинг «список → полка» — ручной, в настройках аккаунта. Чип «Все» = вид с
+    секциями-полками; чип тира = плоский список. Внутри полки сортировка по молчанию фана.
+    Мелкие тиры свёрнуты, ростеры грузятся по клику. Спендеры вне тир-списков → секция «Без тира».
+  • Подсветка давности: V-a — точка перед счётчиками; метрика — МОЛЧАНИЕ ФАНА (горит, пока фан
+    не ответил, даже после пинга — безответный пинг виден как тёплая точка при свежем МОДЕЛЬ-счётчике);
+    пороги: ≤7 д ничего · 8–21 amber «остывает» · >21 clay-deep «запущен». В шапке превью точки НЕТ.
+  • Превью (quick look) — P1, оверлей по центру: SPACE/клик открыть, J/K листает фанов не закрывая,
+    ESC закрыть. Внутри мини-чат: тред из локальной БД (0 кредитов, «↑ раньше» подгружает),
+    пилюли ИИ как в композере (Ping главный; Reply/Hi гаснут с причиной в тултипе), свой композер,
+    ⌘↵ отправляет (отправка — действие человека, SPEC §15; ИИ только по явному нажатию),
+    O — открыть полный чат. Показан стейт «после ⌘P + вставки».
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg0:#efece4; --bg1:#faf9f5; --bg2:#f2f0e9; --bg3:#e8e5da;
+    --line:#e2dfd3; --line-strong:#cfcaba;
+    --t-hi:#1f1e1d; --t-mid:#5d5a52; --t-low:#97928a;
+    --clay:#d97757; --clay-deep:#c2603f; --clay-bg:#f7e8e1; --clay-line:#e8c3b3;
+    --green:#3a7d44; --green-bg:#e9f1e5; --green-line:#c9dcc2;
+    --amber:#96691c; --amber-bg:#f6efdc; --amber-line:#e4d4a8;
+    --seen:#4a72b8;
+    --sans:"Hanken Grotesk",-apple-system,sans-serif;
+    --serif:"Source Serif 4",Georgia,serif;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+    --r:9px; --rs:7px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg0); color:var(--t-hi); font-family:var(--sans); font-size:14px;
+    line-height:1.5; -webkit-font-smoothing:antialiased; padding:34px; min-width:1000px;
+    display:flex; justify-content:center}
+  .cap{font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--t-low); font-weight:600}
+  .num{font-family:var(--mono); font-variant-numeric:tabular-nums}
+  kbd{font-family:var(--mono); font-size:10px; color:var(--t-mid);
+    border:1px solid var(--line-strong); border-bottom-width:2px; border-radius:5px;
+    padding:1px 4px 0; background:var(--bg1); white-space:nowrap}
+
+  .board{width:880px; border:1px solid var(--line-strong); border-radius:12px; overflow:hidden;
+    background:var(--bg1); box-shadow:0 4px 14px rgba(31,30,29,.07); position:relative; height:fit-content}
+  .b-head{display:flex; align-items:baseline; gap:11px; padding:13px 18px;
+    border-bottom:1px solid var(--line); background:var(--bg1)}
+  .b-head h3{font-family:var(--serif); font-size:16.5px; font-weight:600}
+  .b-head .meta{font-family:var(--mono); font-size:10px; color:var(--t-low); letter-spacing:.05em}
+  .b-head .x{margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--t-low)}
+  .fchips{display:flex; gap:5px; padding:11px 16px; border-bottom:1px solid var(--line); background:var(--bg1)}
+  .fchip{font-size:12.5px; font-weight:500; padding:4px 12px; border-radius:999px;
+    border:1px solid transparent; color:var(--t-mid); white-space:nowrap; cursor:pointer}
+  .fchip.on{background:var(--t-hi); color:var(--bg1)}
+  .fchip .num{font-size:10.5px; opacity:.7; margin-left:4px}
+
+  .tierrow{display:flex; align-items:baseline; gap:9px; padding:13px 16px 7px; background:var(--bg1)}
+  .tierrow .tname{font-size:12px; font-weight:600; color:var(--t-mid)}
+  .tierrow .tband{font-family:var(--mono); font-size:9.5px; color:var(--t-low)}
+  .tierrow .rule{flex:1; height:1px; background:var(--line); align-self:center}
+  .tierrow .tcount{font-family:var(--mono); font-size:9.5px; color:var(--t-low)}
+  .collapsed{display:flex; align-items:center; gap:10px; padding:11px 16px;
+    border-top:1px solid var(--line); background:var(--bg1); color:var(--t-mid); font-size:12.5px; cursor:pointer}
+  .collapsed:hover{background:var(--bg2)}
+  .collapsed .tband{font-family:var(--mono); font-size:9.5px; color:var(--t-low)}
+  .collapsed .tcount{margin-left:auto; font-family:var(--mono); font-size:9.5px; color:var(--t-low)}
+
+  .lrow{display:grid; grid-template-columns:40px 1fr auto; gap:11px; padding:11px 16px;
+    align-items:center; background:var(--bg1); border-bottom:1px solid var(--line); cursor:pointer; position:relative}
+  .lrow:hover{background:var(--bg2)}
+  .lrow.open{background:var(--bg2)}
+  .lrow.open::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--clay)}
+  .ava{width:40px; height:40px; border-radius:11px; background:var(--bg3); display:flex;
+    align-items:center; justify-content:center; font-weight:700; font-size:13px; color:var(--t-mid); flex:0 0 auto}
+  .lr-main{min-width:0}
+  .lr-top{display:flex; align-items:center; gap:6px; min-width:0}
+  .lr-name{font-weight:600; font-size:14px; white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis; flex:0 1 auto; min-width:0}
+  .wait{width:7px; height:7px; border-radius:50%; background:var(--clay); flex:0 0 auto}
+  .lr-spend{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:10.5px;
+    color:var(--t-mid); flex:0 0 auto}
+  .lr-prev{color:var(--t-mid); font-size:13px; white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis; margin-top:2px}
+  .lr-prev .me{color:var(--t-low)}
+  .lr-side{display:flex; flex-direction:column; align-items:flex-end; gap:4px; white-space:nowrap}
+  .lr-flow{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:10px;
+    color:var(--green); font-weight:600; min-height:13px}
+  .lr-days{font-family:var(--mono); font-size:9.5px; letter-spacing:.06em; color:var(--t-low);
+    display:flex; align-items:center; gap:5px}
+  .lr-days b{font-weight:600; color:var(--t-mid)}
+  .hdot{width:7px; height:7px; border-radius:50%; flex:0 0 auto}
+  .hdot.warm{background:var(--amber)}
+  .hdot.hot{background:var(--clay-deep)}
+  .b-foot{padding:8px 16px; border-top:1px solid var(--line); display:flex; gap:8px;
+    align-items:center; color:var(--t-low); font-size:11px; background:var(--bg1)}
+  .b-foot .grow{flex:1}
+
+  /* превью P1 — оверлей по центру */
+  .backdrop{position:absolute; inset:0; background:rgba(31,30,29,.22); z-index:5}
+  .qlook{position:absolute; z-index:6; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:620px; border:1px solid var(--line-strong); border-radius:12px; overflow:hidden;
+    background:var(--bg1); box-shadow:0 18px 50px rgba(31,30,29,.28)}
+  .pv-head{display:flex; align-items:center; gap:10px; padding:12px 16px;
+    border-bottom:1px solid var(--line); background:var(--bg1)}
+  .pv-head .ava{width:32px; height:32px; border-radius:9px; font-size:11px}
+  .pv-name{font-family:var(--serif); font-weight:600; font-size:15.5px}
+  .pv-spend{font-family:var(--mono); font-size:10.5px; color:var(--t-mid)}
+  .pv-flow{font-family:var(--mono); font-size:10px; color:var(--green); font-weight:600}
+  .pv-days{margin-left:auto; font-family:var(--mono); font-size:9.5px; letter-spacing:.06em; color:var(--t-low)}
+  .pv-days b{font-weight:600; color:var(--t-mid)}
+  .pv-thread{padding:12px 18px 6px; display:flex; flex-direction:column; background:var(--bg0)}
+  .pv-more{text-align:center; font-size:10.5px; color:var(--t-low); padding:0 0 6px}
+  .pv-more u{text-decoration:underline dotted; text-underline-offset:3px; cursor:pointer}
+  .day{display:flex; align-items:center; gap:12px; margin:4px 0 8px}
+  .day::before,.day::after{content:""; flex:1; height:1px; background:var(--line-strong)}
+  .day span{font-family:var(--mono); font-size:9px; letter-spacing:.12em; color:var(--t-low)}
+  .msg{display:flex; margin:3px 0; max-width:70%}
+  .msg .bubble{padding:8px 12px; border-radius:12px; font-size:13px}
+  .msg .meta{display:flex; gap:8px; margin-top:3px; font-family:var(--mono); font-size:8.5px;
+    letter-spacing:.07em; color:var(--t-low)}
+  .msg.fan{align-self:flex-start}
+  .msg.fan .bubble{background:var(--bg1); border:1px solid var(--line); border-bottom-left-radius:4px}
+  .msg.me{align-self:flex-end; flex-direction:column; align-items:flex-end; margin-left:auto}
+  .msg.me .bubble{background:#e9e2d4; border:1px solid #ded5c2; border-bottom-right-radius:4px}
+  .st-seen{color:var(--seen)}
+  .ledger{align-self:center; display:flex; align-items:center; gap:9px; margin:6px 0;
+    border:1px solid var(--green-line); background:var(--green-bg); border-radius:999px; padding:4px 12px}
+  .ledger .amt{font-family:var(--mono); font-weight:600; color:var(--green); font-size:12px}
+  .ledger .lbl{font-size:11.5px; color:var(--t-mid)}
+  .pvdock{border-top:1px solid var(--line); background:var(--bg1); padding:8px 16px}
+  .pvdock-top{display:flex; align-items:center; gap:10px}
+  .pvdock-label{font-size:12px; font-weight:600; color:var(--t-mid)}
+  .pvdock-label i{font-style:normal; color:var(--clay); margin-right:5px}
+  .pvdock-alt{font-size:11px; color:var(--t-low)}
+  .pvdock-alt u{text-decoration:underline dotted; text-underline-offset:3px; cursor:pointer}
+  .pvdock-cost{margin-left:auto; font-family:var(--mono); font-size:9.5px; color:var(--t-low)}
+  .pvcomposer{border-top:1px solid var(--line); background:var(--bg1); padding:10px 16px 11px}
+  .pvtext{font-size:13.5px; line-height:1.5; min-height:32px; color:var(--t-hi)}
+  .pvc-row{display:flex; align-items:center; gap:9px; margin-top:6px}
+  .pvc-row .grow{flex:1}
+  .aibtn{display:flex; gap:6px; align-items:center; font-size:12px; font-weight:600;
+    color:var(--t-mid); border:1px solid var(--line); background:var(--bg2);
+    border-radius:999px; padding:3px 11px; cursor:pointer}
+  .aibtn.primary{color:var(--clay-deep); border-color:var(--clay-line); background:var(--clay-bg)}
+  .aibtn.dim{opacity:.45; cursor:default}
+  .aibtn i{font-style:normal; color:var(--clay)}
+  .openbtn{display:flex; align-items:center; gap:8px; background:var(--clay); color:#fff;
+    font-weight:700; font-size:13px; border:1px solid var(--clay); border-radius:var(--rs);
+    padding:7px 15px; cursor:pointer}
+  .openbtn kbd{border-color:rgba(255,255,255,.4); color:#fff; background:transparent}
+  .ghostbtn{display:flex; align-items:center; gap:7px; font-size:12px; font-weight:600;
+    color:var(--t-mid); border:1px solid var(--line-strong); background:var(--bg1);
+    border-radius:var(--rs); padding:6px 12px; cursor:pointer}
+  .pv-foot{display:flex; align-items:center; gap:9px; padding:9px 16px;
+    border-top:1px solid var(--line); background:var(--bg1)}
+  .pv-hint{font-family:var(--mono); font-size:9.5px; letter-spacing:.06em; color:var(--t-low)}
+  .pv-foot .grow{flex:1}
+</style>
+</head>
+<body>
+
+<div class="board">
+  <div class="b-head">
+    <h3>Саппортеры</h3>
+    <span class="meta">LORA VIE · ВНУТРИ ПОЛКИ — ПО МОЛЧАНИЮ ФАНА ↓</span>
+    <span class="x">← НАЗАД К ЧАТУ · ESC</span>
+  </div>
+  <div class="fchips">
+    <span class="fchip on">Все<span class="num">381</span></span>
+    <span class="fchip">🐳 Кит<span class="num">8</span></span>
+    <span class="fchip">⭐ Топ<span class="num">11</span></span>
+    <span class="fchip">✅ Прайм<span class="num">24</span></span>
+    <span class="fchip">Базовый<span class="num">62</span></span>
+    <span class="fchip">Низкий<span class="num">73</span></span>
+    <span class="fchip">Микро<span class="num">203</span></span>
+  </div>
+
+  <div class="tierrow"><span class="tname">🐳 Кит</span><span class="tband">600+</span><span class="rule"></span><span class="tcount">8</span></div>
+  <div class="lrow open">
+    <div class="ava">CW</div>
+    <div class="lr-main">
+      <div class="lr-top"><span class="lr-name">Christopher Wellington III</span><span class="lr-spend">$12,480</span></div>
+      <div class="lr-prev"><span class="me">you:</span> enjoy Monaco baby 🖤</div>
+    </div>
+    <div class="lr-side"><span class="lr-flow">+$50</span><span class="lr-days"><span class="hdot hot"></span>МОДЕЛЬ <b>34 Д</b> · ФАН <b>36 Д</b></span></div>
+  </div>
+  <div class="lrow">
+    <div class="ava">ST</div>
+    <div class="lr-main">
+      <div class="lr-top"><span class="lr-name">Steve</span><span class="lr-spend">$640</span></div>
+      <div class="lr-prev"><span class="me">you:</span> glad you liked it 🖤 more where that came from</div>
+    </div>
+    <div class="lr-side"><span class="lr-flow"></span><span class="lr-days"><span class="hdot hot"></span>МОДЕЛЬ <b>26 Д</b> · ФАН <b>31 Д</b></span></div>
+  </div>
+  <div class="lrow">
+    <div class="ava">BR</div>
+    <div class="lr-main">
+      <div class="lr-top"><span class="lr-name">Brandon</span><span class="lr-spend">$2,840</span></div>
+      <div class="lr-prev"><span class="me">you:</span> okay now I'm jealous AND hungry… take me next time 😏</div>
+    </div>
+    <div class="lr-side"><span class="lr-flow"></span><span class="lr-days"><span class="hdot warm"></span>МОДЕЛЬ <b>21 Д</b> · ФАН <b>21 Д</b></span></div>
+  </div>
+  <div class="lrow">
+    <div class="ava">MT</div>
+    <div class="lr-main">
+      <div class="lr-top"><span class="lr-name">Mike T.</span><span class="wait"></span><span class="lr-spend">$1,910</span></div>
+      <div class="lr-prev">rough week honestly. got passed over for the promotion again</div>
+    </div>
+    <div class="lr-side"><span class="lr-flow"></span><span class="lr-days"><span class="hdot warm"></span>МОДЕЛЬ <b>10 Д</b> · ФАН <b>9 Д</b></span></div>
+  </div>
+  <div class="collapsed"><span>ещё 4 в Кит</span><span class="tcount">показать ▾</span></div>
+
+  <div class="tierrow"><span class="tname">⭐ Топ</span><span class="tband">350–600</span><span class="rule"></span><span class="tcount">11</span></div>
+  <div class="lrow">
+    <div class="ava">RB</div>
+    <div class="lr-main">
+      <div class="lr-top"><span class="lr-name">rob_88</span><span class="lr-spend">$385</span></div>
+      <div class="lr-prev">lol fair enough. catch you around</div>
+    </div>
+    <div class="lr-side"><span class="lr-flow"></span><span class="lr-days"><span class="hdot hot"></span>МОДЕЛЬ <b>41 Д</b> · ФАН <b>41 Д</b></span></div>
+  </div>
+  <div class="lrow">
+    <div class="ava">PL</div>
+    <div class="lr-main">
+      <div class="lr-top"><span class="lr-name">Paulie</span><span class="lr-spend">$410</span></div>
+      <div class="lr-prev"><span class="me">you:</span> hey love 👋 not gonna pretend this is some spontaneous…</div>
+    </div>
+    <div class="lr-side"><span class="lr-flow"></span><span class="lr-days"><span class="hdot warm"></span>МОДЕЛЬ <b>3 Д</b> · ФАН <b>15 Д</b></span></div>
+  </div>
+  <div class="collapsed"><span>ещё 9 в Топ</span><span class="tcount">показать ▾</span></div>
+
+  <div class="tierrow"><span class="tname">✅ Прайм</span><span class="tband">150–350</span><span class="rule"></span><span class="tcount">24</span></div>
+  <div class="lrow">
+    <div class="ava">DV</div>
+    <div class="lr-main">
+      <div class="lr-top"><span class="lr-name">Dan V.</span><span class="lr-spend">$290</span></div>
+      <div class="lr-prev"><span class="me">you:</span> okay genuine question love — are you the type who…</div>
+    </div>
+    <div class="lr-side"><span class="lr-flow"></span><span class="lr-days"><span class="hdot warm"></span>МОДЕЛЬ <b>9 Д</b> · ФАН <b>15 Д</b></span></div>
+  </div>
+  <div class="lrow">
+    <div class="ava">GR</div>
+    <div class="lr-main">
+      <div class="lr-top"><span class="lr-name">Greg</span><span class="wait"></span><span class="lr-spend">$185</span></div>
+      <div class="lr-prev">haha ok you got me. what are the two ideas? 👀</div>
+    </div>
+    <div class="lr-side"><span class="lr-flow"></span><span class="lr-days">МОДЕЛЬ <b>2 Д</b> · ФАН <b>СЕГОДНЯ</b></span></div>
+  </div>
+  <div class="collapsed"><span>ещё 22 в Прайм</span><span class="tcount">показать ▾</span></div>
+
+  <div class="collapsed"><span>Базовый</span><span class="tband">50–150</span><span class="tcount">62 · показать ▾</span></div>
+  <div class="collapsed"><span>Низкий</span><span class="tband">25–50</span><span class="tcount">73 · показать ▾</span></div>
+  <div class="collapsed"><span>Микро</span><span class="tband">1–25</span><span class="tcount">203 · показать ▾</span></div>
+  <div class="b-foot"><kbd>J</kbd><kbd>K</kbd> по списку · <kbd>SPACE</kbd> превью · <kbd>O</kbd> чат<span class="grow"></span><span>тиры — списки ОМ · только чтение</span></div>
+
+  <!-- превью P1 (открыто по SPACE на строке CW) -->
+  <div class="backdrop"></div>
+  <div class="qlook">
+    <div class="pv-head">
+      <div class="ava">CW</div>
+      <span class="pv-name">Christopher Wellington III</span>
+      <span class="pv-spend">$12,480</span>
+      <span class="pv-flow">+$50</span>
+      <span class="pv-days">МОДЕЛЬ <b>34 Д</b> · ФАН <b>36 Д</b></span>
+    </div>
+    <div class="pv-thread">
+      <div class="pv-more"><u>↑ раньше</u></div>
+      <div class="day"><span>8 МАЯ</span></div>
+      <div class="msg fan">
+        <div>
+          <div class="bubble">flying to Monaco tmrw, want anything?</div>
+          <div class="meta"><span>18:10</span></div>
+        </div>
+      </div>
+      <div class="ledger"><span class="amt">+$100.00</span><span class="lbl">tip · for being you</span></div>
+      <div class="msg me">
+        <div>
+          <div class="bubble">enjoy Monaco baby 🖤</div>
+          <div class="meta"><span>9 МАЯ · 11:02</span><span class="st-seen">SEEN 11:47</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="pvdock">
+      <div class="pvdock-top"><span class="pvdock-label"><i>✳</i> Ping · сегмент A</span><span class="pvdock-alt">вставлен в композер · <u>↻ другой вариант</u></span><span class="pvdock-cost">$0.012</span></div>
+    </div>
+    <div class="pvcomposer">
+      <div class="pvtext">been thinking about you since Monaco… did the casinos survive you or should I come check on you myself? 😏</div>
+      <div class="pvc-row">
+        <span class="aibtn primary"><i>✳</i> Ping <kbd>⌘P</kbd></span>
+        <span class="aibtn dim" title="Фану отвечено — поводов для Reply нет">Reply</span>
+        <span class="aibtn dim" title="Чат не новый">Hi</span>
+        <span class="grow"></span>
+        <button class="openbtn">Send <kbd>⌘↵</kbd></button>
+      </div>
+    </div>
+    <div class="pv-foot">
+      <span class="pv-hint">ESC ЗАКРЫТЬ · J/K СЛЕД. ФАН</span>
+      <span class="grow"></span>
+      <button class="ghostbtn">Открыть чат <kbd>O</kbd></button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

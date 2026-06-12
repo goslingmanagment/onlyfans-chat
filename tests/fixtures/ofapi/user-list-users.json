@@ -1,0 +1,66 @@
+{
+  "_fixture": {
+    "source": "GET /{account}/user-lists/{userListId}/users — SYNTHETIC, hand-built from docs/vendor/onlyfansapi/openapi.json (List User List Users 200 example shape, verified 2026-06-13). NOT a live capture.",
+    "anonymized": true,
+    "notes": [
+      "data = {list, hasMore, nextOffset}; limit 1–100 (default 10), offset pagination.",
+      "Roster entries are full user objects; numeric id is the raw OnlyFans id (=== chat id).",
+      "subscribedOnData trimmed to the fields the app's ofapiUserSchema consumes."
+    ]
+  },
+  "data": {
+    "list": [
+      {
+        "view": "x",
+        "id": 90986491,
+        "name": "Fixture Fan 1",
+        "username": "fixture_fan_1",
+        "isVerified": false,
+        "avatar": "https://public.onlyfans.com/files/f/f0/fixture-fan-1/avatar.jpg",
+        "avatarThumbs": {
+          "c50": "https://thumbs.onlyfans.com/public/files/thumbs/c50/fixture-fan-1/avatar.jpg",
+          "c144": "https://thumbs.onlyfans.com/public/files/thumbs/c144/fixture-fan-1/avatar.jpg"
+        },
+        "subscribedOn": true,
+        "subscribedOnData": {
+          "totalSumm": 12480,
+          "subscribesSumm": 480,
+          "tipsSumm": 9000,
+          "messagesSumm": 3000,
+          "postsSumm": 0,
+          "streamsSumm": 0
+        }
+      },
+      {
+        "view": "x",
+        "id": 179686216,
+        "name": "Fixture Fan 2",
+        "username": "fixture_fan_2",
+        "isVerified": false,
+        "avatar": null,
+        "avatarThumbs": null,
+        "subscribedOn": true,
+        "subscribedOnData": {
+          "totalSumm": 640,
+          "subscribesSumm": 140,
+          "tipsSumm": 200,
+          "messagesSumm": 300,
+          "postsSumm": 0,
+          "streamsSumm": 0
+        }
+      }
+    ],
+    "hasMore": true,
+    "nextOffset": 2
+  },
+  "_meta": {
+    "_credits": { "used": 1, "balance": 224857, "note": "Always" },
+    "_cache": { "is_cached": false, "note": "Cache disabled for this endpoint" },
+    "_rate_limits": {
+      "limit_minute": 1000,
+      "limit_day": 50000,
+      "remaining_minute": 997,
+      "remaining_day": 49990
+    }
+  }
+}

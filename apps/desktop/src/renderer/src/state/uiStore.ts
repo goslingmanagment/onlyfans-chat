@@ -12,7 +12,7 @@ export interface ToastItem {
   chatId?: string;
 }
 
-export type AppView = 'workspace' | 'settings';
+export type AppView = 'workspace' | 'settings' | 'supporters';
 
 /** Hub presence frame for one chat; stale entries expire client-side (TTL). */
 export interface PresenceEntry {
@@ -65,11 +65,12 @@ interface UiState {
 
 let toastSeq = 0;
 
-/** Boot view: ?view=settings (main's CHATGOOSE_OPEN_VIEW dev hook). */
+/** Boot view: ?view=settings|supporters (main's CHATGOOSE_OPEN_VIEW dev hook). */
 function initialView(): AppView {
   if (typeof window !== 'undefined' && typeof window.location !== 'undefined') {
-    if (new URLSearchParams(window.location.search).get('view') === 'settings') {
-      return 'settings';
+    const view = new URLSearchParams(window.location.search).get('view');
+    if (view === 'settings' || view === 'supporters') {
+      return view;
     }
   }
   return 'workspace';

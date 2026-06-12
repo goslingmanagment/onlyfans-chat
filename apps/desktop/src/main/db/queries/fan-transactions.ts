@@ -26,6 +26,9 @@ export interface FanTransactionsQueries {
   upsertMany(rows: readonly FanTransactionUpsert[]): void;
   /** Newest stored created_at for the account — the incremental-sweep cursor. */
   latestCreatedAt(accountId: string): string | null;
+  /** Per-fan SUM(amount) since the cutoff — the Supporters board 30-day green
+   *  figure (account-wide GROUP BY; the rolling store is small by design). */
+  sumByFanSince(accountId: string, cutoffIso: string): Map<string, number>;
   /** Drop rows older than the cutoff (retention; the 30d window is read-time). */
   pruneOlderThan(accountId: string, cutoffIso: string): void;
 }
@@ -63,6 +66,23 @@ export function createFanTransactionsQueries(
         )
         .get({ account_id: accountId });
       return row === undefined ? null : maxCreatedAtSchema.parse(row).max_created_at;
+    },
+
+    sumByFanSince(accountId, cutoffIso) {
+      const rowSchema = z.object({ fan_id: z.string(), total: z.number() });
+      const rows: unknown[] = db
+        .prepare(
+          `SELECT fan_id, SUM(amount) AS total FROM fan_transactions
+           WHERE account_id = @account_id AND created_at >= @cutoff
+           GROUP BY fan_id`,
+        )
+        .all({ account_id: accountId, cutoff: cutoffIso });
+      const out = new Map<string, number>();
+      for (const raw of rows) {
+        const row = rowSchema.parse(raw);
+        out.set(row.fan_id, row.total);
+      }
+      return out;
     },
 
     pruneOlderThan(accountId, cutoffIso) {

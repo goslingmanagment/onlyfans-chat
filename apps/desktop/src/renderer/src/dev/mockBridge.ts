@@ -441,6 +441,7 @@ function buildStore(): MockStore {
     creditBudgetPerShift: null,
     accountMappings: { acct_lora: 'builtin:lora' },
     accountPageLabels: {},
+    supportersListMappings: { acct_lora: ['9001', '9002'] },
   };
 
   const freshness: Record<string, string> = {};
@@ -1225,6 +1226,56 @@ export function createMockBridge(): ChatGooseBridge {
       return { items: page.map((i) => ({ ...i })), hasMore, nextOffset: hasMore ? start + page.length : null };
     },
     'query:vault.albums': () => vaultAlbums.map((a) => ({ ...a })),
+    // ── Supporters board (PLAN item 12): rows derived from the mock chat list ──
+    'query:supporters.lists': () => ({
+      lists: [
+        { id: '9001', name: '🐳 Кит 600+ _ОМ', usersCount: 3, custom: true },
+        { id: '9002', name: '⭐ Топ 350-600 _ОМ', usersCount: 4, custom: true },
+        { id: 'following', name: 'Following', usersCount: 12, custom: false },
+      ],
+      fetchedAt: new Date().toISOString(),
+    }),
+    'query:supporters.roster': ({ accountId, listId }) => {
+      const all = store.chats.get(accountId) ?? [];
+      const slice = listId === '9001' ? all.slice(0, 3) : all.slice(3, 7);
+      const rows = slice.map((c, i) => ({
+        fanId: c.chatId,
+        name: c.fanName,
+        avatarUrl: c.avatarUrl,
+        lifetimeSpend: c.lifetimeSpend,
+        spend30d: c.spend30d,
+        lastMessagePreview: c.lastMessagePreview,
+        lastMessageIsSentByMe: c.lastMessageIsSentByMe,
+        fanWaiting: c.fanWaiting,
+        modelDays: [34, 3, 10, 0, 21, 9, 2][i] ?? null,
+        fanDays: [36, 15, 9, 0, 21, 15, 41][i] ?? null,
+        silence: ([36, 15, 9, 0, 21, 15, 41][i] ?? 0) >= 22 ? ('hot' as const) : ([36, 15, 9, 0, 21, 15, 41][i] ?? 0) >= 8 ? ('warm' as const) : ('none' as const),
+        canSendMessage: c.canSendMessage,
+        canNotSendReason: c.canNotSendReason,
+        hasChat: true,
+      }));
+      return { rows, truncated: false, fetchedAt: new Date().toISOString() };
+    },
+    'query:supporters.untiered': ({ accountId }) => {
+      const all = store.chats.get(accountId) ?? [];
+      const rows = all.slice(7, 9).map((c) => ({
+        fanId: c.chatId,
+        name: c.fanName,
+        avatarUrl: c.avatarUrl,
+        lifetimeSpend: c.lifetimeSpend,
+        spend30d: c.spend30d,
+        lastMessagePreview: c.lastMessagePreview,
+        lastMessageIsSentByMe: c.lastMessageIsSentByMe,
+        fanWaiting: c.fanWaiting,
+        modelDays: 5,
+        fanDays: 12,
+        silence: 'warm' as const,
+        canSendMessage: c.canSendMessage,
+        canNotSendReason: c.canNotSendReason,
+        hasChat: true,
+      }));
+      return { rows, fetchedAt: new Date().toISOString() };
+    },
     'query:chat.gallery': ({ accountId, chatId, offset }) => {
       const all = (store.messages.get(`${accountId}/${chatId}`) ?? [])
         .filter((m) => m.media.length > 0 && !m.deleted)

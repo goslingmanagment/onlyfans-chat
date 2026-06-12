@@ -231,6 +231,11 @@ export interface SettingsVM {
   accountPageLabels: Record<string, string>;
   /** Chat-list lifetime-spend style (DESIGN §1): bare figure or bordered chip. */
   spendStyle: 'figure' | 'chip';
+  /**
+   * Supporters board: per-account OWNER-ORDERED OnlyMonster list ids mapped to
+   * board shelves (PLAN item 12). Spenders outside mapped lists → «Без тира».
+   */
+  supportersListMappings: Record<string, string[]>;
   /** Interface language; 'system' resolves from the OS locale at runtime. */
   uiLocale: UiLocaleSetting;
   /** Window zoom factor (0.9 | 1 | 1.1 | 1.25). */
@@ -356,6 +361,43 @@ export interface OutboxItemVM {
 export interface PingGateVM {
   segment: PingSegment;
   blocked: boolean;
+}
+
+// ─── Supporters board (PLAN item 12; binding mockup mockups/supporters.html) ──
+
+/** One OnlyMonster user-list as the mapping/settings surface sees it. */
+export interface SupporterListVM {
+  /** List id as string (built-ins are string ids, custom lists numeric upstream). */
+  id: string;
+  name: string;
+  usersCount: number;
+  /** true = custom (OM-managed tier list); built-ins (recent/following/…) false. */
+  custom: boolean;
+}
+
+/** One board row (chat-row anatomy per the binding mockup). */
+export interface SupporterRowVM {
+  /** Raw OF numeric id as string — fan id === chat id. */
+  fanId: string;
+  name: string;
+  avatarUrl: string | null; // media:// URL
+  lifetimeSpend: number | null;
+  spend30d: number | null;
+  /** '' when the fan has no local chat history. */
+  lastMessagePreview: string;
+  lastMessageIsSentByMe: boolean;
+  fanWaiting: boolean;
+  /** Days since the model's last message (local DB); null = none cached. */
+  modelDays: number | null;
+  /** Days since the fan's last message (local DB); null = none cached. */
+  fanDays: number | null;
+  /** Staleness dot (fan silence): ≤7 none · 8–21 warm · >21 hot. */
+  silence: 'none' | 'warm' | 'hot';
+  /** false also when the fan has no local chat row (send engine would reject). */
+  canSendMessage: boolean;
+  canNotSendReason: string | null;
+  /** No cached chat row — preview thread will be empty, composer disabled. */
+  hasChat: boolean;
 }
 
 // ─── Vault & PPV (PRD F7) ────────────────────────────────────────────────
@@ -502,6 +544,26 @@ export interface InvokeChannels {
     args: { accountId: string; chatId: string; text: string };
     result: void;
   };
+  // ── Supporters board (PLAN item 12) ──
+  /** All OM user-lists on the account (TTL-cached fetch-through; 1 credit). */
+  'query:supporters.lists': {
+    args: { accountId: string };
+    result: { lists: SupporterListVM[]; fetchedAt: string };
+  };
+  /**
+   * Joined rows of one MAPPED list, sorted by fan silence; fans already on a
+   * higher (earlier-mapped) shelf are deduped out. Loads the roster (and any
+   * earlier shelves' rosters) lazily; roster ids TTL-cache in main.
+   */
+  'query:supporters.roster': {
+    args: { accountId: string; listId: string };
+    result: { rows: SupporterRowVM[]; truncated: boolean; fetchedAt: string };
+  };
+  /** Spenders outside every mapped roster («Без тира»); loads all mapped rosters. */
+  'query:supporters.untiered': {
+    args: { accountId: string };
+    result: { rows: SupporterRowVM[]; fetchedAt: string };
+  };
   // ── Vault & PPV (PRD F7, P5 — additive) ──
   /** Offset-paginated (OFAPI vault pagination is limit/offset + hasMore). */
   'query:vault.list': {
@@ -615,6 +677,9 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'cmd:message.unsend': true,
   'query:draft.get': true,
   'cmd:draft.set': true,
+  'query:supporters.lists': true,
+  'query:supporters.roster': true,
+  'query:supporters.untiered': true,
   'query:vault.list': true,
   'query:vault.albums': true,
   'query:chat.gallery': true,

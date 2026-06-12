@@ -31,6 +31,8 @@ import {
   ofapiSuccessDataSchema,
   ofapiTransactionsDataSchema,
   ofapiUploadStatusSchema,
+  ofapiUserListsDataSchema,
+  ofapiUserListUsersDataSchema,
   ofapiUserSchema,
   ofapiUsersByIdSchema,
   ofapiVaultListsDataSchema,
@@ -49,6 +51,7 @@ import type {
   OfApiTransaction,
   OfApiUploadStatus,
   OfApiUser,
+  OfApiUserList,
   OfApiVaultList,
   OfApiVaultMedia,
   OfApiWhoami,
@@ -57,6 +60,8 @@ import type {
 export const OFAPI_BASE_URL = 'https://app.onlyfansapi.com/api';
 export const USERS_MASS_LIST_MAX_IDS = 10;
 export const FANS_LIST_MAX_LIMIT = 20;
+/** List User List Users: documented limit range 1–100 (default 10). */
+export const USER_LIST_USERS_MAX_LIMIT = 100;
 /** List Vault Media: documented limit range 10–100 (default 24). */
 export const VAULT_LIST_MAX_LIMIT = 100;
 /** Direct multipart `file` uploads are capped at 100 MB by Cloudflare
@@ -145,6 +150,24 @@ export interface ListFansParams extends PurposeTagged {
   limit?: number;
   offset?: number;
   query?: string;
+}
+
+// ── User lists (Supporters board, PLAN item 12) — READ-ONLY ──────────────
+// OnlyMonster owns these lists; the client deliberately exposes no method
+// that writes to them (no add/remove/clear/create/delete).
+
+export interface ListUserListsParams extends PurposeTagged {
+  accountId: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListUserListUsersParams extends PurposeTagged {
+  accountId: string;
+  userListId: string;
+  /** Upstream 1–100, default 10. */
+  limit?: number;
+  offset?: number;
 }
 
 export interface SendMessageParams extends PurposeTagged {
@@ -244,6 +267,13 @@ export interface OfApiClient {
   }>;
   listFansAll(params: ListFansParams): Promise<{ fans: OfApiUser[]; hasMore: boolean }>;
   listFansActive(params: ListFansParams): Promise<{ fans: OfApiUser[]; hasMore: boolean }>;
+  // ── User lists (OnlyMonster tiers) — strictly read-only, GETs only ──
+  listUserLists(params: ListUserListsParams): Promise<{ lists: OfApiUserList[]; hasMore: boolean }>;
+  listUserListUsers(params: ListUserListUsersParams): Promise<{
+    users: OfApiUser[];
+    hasMore: boolean;
+    nextOffset: number | null;
+  }>;
   // ── Vault / media reads (PRD F7): GETs, retry 'idempotent' ──
   listVaultMedia(params: ListVaultMediaParams): Promise<{ items: OfApiVaultMedia[]; hasMore: boolean }>;
   /** Vault lists = albums. Listing a list's media uses listVaultMedia({listId}). */
@@ -570,6 +600,43 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
 
     async listFansActive(params): Promise<{ fans: OfApiUser[]; hasMore: boolean }> {
       return listFans('/fans/active', params);
+    },
+
+    async listUserLists(params): Promise<{ lists: OfApiUserList[]; hasMore: boolean }> {
+      const path = accountPath(params.accountId, '/user-lists');
+      const payload = await getJson(params.accountId, params.purpose, path, {
+        limit: params.limit,
+        offset: params.offset,
+      });
+      const { data } = unwrapEnvelope(payload, path);
+      // data = {list, hasMore, …} — live shape, NOT the openapi example's array.
+      const parsed = parseWith(ofapiUserListsDataSchema, data, path);
+      return { lists: parsed.list, hasMore: parsed.hasMore ?? false };
+    },
+
+    async listUserListUsers(params): Promise<{
+      users: OfApiUser[];
+      hasMore: boolean;
+      nextOffset: number | null;
+    }> {
+      if (params.limit !== undefined && params.limit > USER_LIST_USERS_MAX_LIMIT) {
+        throw usageError(`listUserListUsers: upstream limit max is ${USER_LIST_USERS_MAX_LIMIT}`);
+      }
+      const path = accountPath(
+        params.accountId,
+        `/user-lists/${encodeURIComponent(params.userListId)}/users`,
+      );
+      const payload = await getJson(params.accountId, params.purpose, path, {
+        limit: params.limit,
+        offset: params.offset,
+      });
+      const { data } = unwrapEnvelope(payload, path);
+      const parsed = parseWith(ofapiUserListUsersDataSchema, data, path);
+      return {
+        users: parsed.list,
+        hasMore: parsed.hasMore ?? false,
+        nextOffset: parsed.nextOffset ?? null,
+      };
     },
 
     async listVaultMedia(params): Promise<{ items: OfApiVaultMedia[]; hasMore: boolean }> {

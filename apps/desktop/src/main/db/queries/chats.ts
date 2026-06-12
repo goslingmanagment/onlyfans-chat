@@ -9,6 +9,7 @@ import type { ChatGooseDb } from '../database';
 import type { DbChangeBus } from '../change-bus';
 import { decodeChatListRow, decodeChatRow, toJson, toSqlBool } from '../rows';
 import type { ChatListRow, ChatRow, ChatUpsert } from '../rows';
+import { chunked } from './fans';
 
 const SPEND_WINDOW_MS = 30 * 24 * 60 * 60_000;
 
@@ -90,6 +91,8 @@ export interface ChatsQueries {
   upsert(chat: ChatUpsert): void;
   upsertMany(chats: readonly ChatUpsert[]): void;
   get(accountId: string, chatId: string): ChatRow | null;
+  /** Batched lookup (Supporters board row join); missing chats absent from the map. */
+  getMany(accountId: string, chatIds: readonly string[]): Map<string, ChatRow>;
   list(args: { accountId: string; filter: ChatFilter; limit?: number; offset?: number }): ChatListPage;
   /** Case-insensitive (ASCII) substring match on fan_name. */
   search(args: { accountId: string; query: string; limit?: number }): ChatListRow[];
@@ -146,6 +149,27 @@ export function createChatsQueries(db: ChatGooseDb, bus: DbChangeBus): ChatsQuer
         .prepare(`SELECT ${COLUMNS} FROM chats WHERE account_id = @account_id AND chat_id = @chat_id`)
         .get({ account_id: accountId, chat_id: chatId });
       return row === undefined ? null : decodeChatRow(row);
+    },
+
+    getMany(accountId, chatIds) {
+      const out = new Map<string, ChatRow>();
+      for (const chunk of chunked(chatIds)) {
+        const placeholders = chunk.map((_, i) => `@id${i}`).join(', ');
+        const params: Record<string, string> = { account_id: accountId };
+        chunk.forEach((id, i) => {
+          params[`id${i}`] = id;
+        });
+        const rows = db
+          .prepare(
+            `SELECT ${COLUMNS} FROM chats WHERE account_id = @account_id AND chat_id IN (${placeholders})`,
+          )
+          .all(params);
+        for (const raw of rows) {
+          const row = decodeChatRow(raw);
+          out.set(row.chatId, row);
+        }
+      }
+      return out;
     },
 
     list({ accountId, filter, limit = 50, offset = 0 }) {

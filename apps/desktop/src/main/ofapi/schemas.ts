@@ -120,6 +120,39 @@ export const ofapiFansDataSchema = z.looseObject({
   hasMore: z.boolean().nullish(),
 });
 
+// ─── User lists (OnlyMonster tiers — Supporters board, PLAN item 12) ──────
+// GET /{account}/user-lists → data = {list, hasMore, order, sort} — LIVE
+// DIVERGENCE from the vendored openapi example (which shows a bare array;
+// live-verified 2026-06-13, tmp/probe-user-lists.json): custom list ids
+// arrive as STRINGS ('1247248934'), built-ins as words ('fans', 'recent');
+// names are HTML-entity-encoded ('&lt; 45 days'). STRICTLY READ-ONLY:
+// the lists are OnlyMonster's process — this app must never write to them.
+
+export const ofapiUserListSchema = z.looseObject({
+  id: z.union([z.string(), z.number()]),
+  /** 'custom' = user/OM-created; others are OF built-ins. */
+  type: z.string().nullish(),
+  name: z.string().nullish(),
+  usersCount: z.number().nullish(),
+  canManageUsers: z.boolean().nullish(),
+});
+
+export type OfApiUserList = z.infer<typeof ofapiUserListSchema>;
+
+export const ofapiUserListsDataSchema = z.looseObject({
+  list: z.array(ofapiUserListSchema),
+  hasMore: z.boolean().nullish(),
+});
+
+/** GET /{account}/user-lists/{userListId}/users → data = {list, hasMore,
+ *  nextOffset} (openapi-verified); roster entries are user objects whose
+ *  numeric id is the raw OnlyFans id (=== chat id). */
+export const ofapiUserListUsersDataSchema = z.looseObject({
+  list: z.array(ofapiUserSchema),
+  hasMore: z.boolean().nullish(),
+  nextOffset: z.number().nullish(),
+});
+
 // ─── Chats ───────────────────────────────────────────────────────────────
 
 export const ofapiChatLastMessageSchema = z.looseObject({

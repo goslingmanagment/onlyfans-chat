@@ -37,6 +37,9 @@ export type KeyAction =
   | 'ai-tone'
   | 'ai-cancel'
   | 'settings'
+  | 'board-preview'
+  | 'board-open-chat'
+  | 'board-back'
   | AiPartAction;
 
 const AI_PART_ACTIONS = [
@@ -81,12 +84,17 @@ export const KEY_BINDINGS: KeyBinding<KeyAction>[] = [
   { action: 'ai-tone', combo: 'mod+t', label: '⌘T', description: 'Cycle tone (casual / flirty / upsell / spicy)' },
   { action: 'ai-cancel', combo: 'mod+.', label: '⌘.', description: 'Cancel running AI operation' },
   { action: 'ai-part-0', combo: 'mod+0', label: '⌘0', description: 'Insert all AI draft parts as a [NEXT] sequence' },
+  // Supporters board (PLAN item 12) — active only in the supporters view.
+  { action: 'board-preview', combo: ' ', label: 'SPACE', description: 'Supporters: quick-look preview', hideFromCheatsheet: true },
+  { action: 'board-open-chat', combo: 'o', label: 'O', description: 'Supporters: open the full chat', hideFromCheatsheet: true },
+  { action: 'board-back', combo: 'arrowleft', label: '←', description: 'Supporters: back to chat', hideFromCheatsheet: true },
   ...AI_PART_BINDINGS,
 ];
 
 /** Collapsed cheatsheet rows for hidden bindings. */
 export const CHEATSHEET_EXTRAS: ReadonlyArray<{ label: string; description: string }> = [
   { label: '⌘1…9', description: 'Insert AI draft part N (or click the bubble)' },
+  { label: 'SPACE / O / ←', description: 'Supporters board: preview / open chat / back' },
 ];
 
 /** Shown dimmed in the cheatsheet — wired by later phases (empty = section hidden). */
