@@ -50,7 +50,7 @@ Goal: **a full shift without touching the mouse.** Core triage loop: `⌘U` (nex
 | `?` | Hotkey cheatsheet overlay |
 | `⌘,` | Open settings (any view) |
 
-All hotkeys also reachable via the palette; keymap centralized (single registry, no scattered listeners).
+All hotkeys also reachable via the palette; keymap centralized (single registry, no scattered listeners). The app sets a custom application menu (main): Electron's default menu would shadow `⌘R`/`⌘H`/`⌘0` with Reload/Hide/Actual-Size accelerators before the renderer keymap sees them — Hide lives on `⌃⌘H`, Reload exists only unpackaged on `⇧⌘R`, zoom roles are dropped (UI scale is a setting), Edit clipboard roles stay.
 
 ## 3. Performance engineering — how the SPEC §13 budgets are met
 

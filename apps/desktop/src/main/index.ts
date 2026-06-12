@@ -2,7 +2,7 @@
 // protocol → OFAPI client → PollingSync → AI coordinator → IPC. All secrets
 // and network I/O live here in main; the renderer only ever sees typed IPC.
 
-import { app, BrowserWindow, dialog, Notification, protocol, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, dialog, Menu, Notification, protocol, safeStorage, shell } from 'electron';
 import { join } from 'node:path';
 import { readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
@@ -47,6 +47,55 @@ let recheckHubConfig: (() => void) | null = null;
  *  creation (zoom) and main-side notifications (locale). */
 let uiScale = 1;
 let uiLocale: UiLocale = 'en';
+
+/**
+ * Custom application menu. Electron's DEFAULT menu shadows three product
+ * hotkeys (DESIGN §2) with higher-priority accelerators: ⌘R (View → Reload vs
+ * Fast Reply), ⌘H (Hide vs Help Me), ⌘0 (Actual Size vs insert-all-parts) —
+ * menu accelerators fire before the renderer keymap ever sees the key. So:
+ * Hide moves to ⌃⌘H, Reload exists only unpackaged on ⇧⌘R (a chatter must
+ * never reload mid-shift), zoom roles are dropped (UI scale is a setting).
+ * Edit roles stay — clipboard shortcuts depend on them.
+ */
+function buildAppMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(process.platform === 'darwin'
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' as const },
+              { type: 'separator' as const },
+              { role: 'services' as const },
+              { type: 'separator' as const },
+              { role: 'hide' as const, accelerator: 'Control+Command+H' },
+              { role: 'hideOthers' as const },
+              { role: 'unhide' as const },
+              { type: 'separator' as const },
+              { role: 'quit' as const },
+            ],
+          },
+        ]
+      : []),
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        ...(!app.isPackaged
+          ? [
+              { role: 'reload' as const, accelerator: 'Shift+CommandOrControl+R' },
+              { role: 'toggleDevTools' as const },
+              { type: 'separator' as const },
+            ]
+          : []),
+        { role: 'togglefullscreen' as const },
+      ],
+    },
+    { role: 'windowMenu' },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 function loadWindowContent(win: BrowserWindow): void {
   // Dev convenience: CHATGOOSE_OPEN_VIEW=settings boots straight into Settings
@@ -512,6 +561,7 @@ async function boot(): Promise<void> {
 }
 
 app.whenReady().then(() => {
+  buildAppMenu();
   void boot();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
