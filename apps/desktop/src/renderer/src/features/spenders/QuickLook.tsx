@@ -116,7 +116,7 @@ export function QuickLook({
         type="button"
         aria-label="close"
         onClick={closePreview}
-        className="absolute inset-0 z-30 cursor-default bg-ink/20"
+        className="absolute inset-0 z-30 cursor-default bg-scrim"
       />
       <div className="absolute top-1/2 left-1/2 z-40 flex max-h-[88%] w-[620px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line-strong bg-bg1 shadow-pop">
         <div className="flex flex-none items-center gap-2.5 border-b border-line px-4 py-3">

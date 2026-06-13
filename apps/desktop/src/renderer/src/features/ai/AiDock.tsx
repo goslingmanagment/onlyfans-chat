@@ -299,7 +299,7 @@ function DraftBubble({
       className={cx(
         DRAFT_BUBBLE_BASE_CLASS,
         'w-full cursor-pointer pr-[104px] text-left transition-colors duration-150',
-        'hover:border-solid hover:border-clay hover:bg-[#f9f3ea]',
+        'hover:border-solid hover:border-clay hover:bg-draft-hover',
       )}
     >
       {label !== null && <div className="cap mb-1 font-sans text-ink-low">{label}</div>}

@@ -130,7 +130,7 @@ Model support: per-feature model selection + reasoning effort (off/low/medium/hi
 - OFAPI key custody (desktop holds no OFAPI key, OF calls proxied via core) was a P6 stretch decision — **upgraded to required-before-scale 2026-06-11** (OFAPI keys cannot be scoped; vendor FAQ). Interim mitigation: per-chatter *named* full-access keys, supervised pilot only, instant revocation (SPEC §5).
 
 ### F9. Settings [P1–P2, grows with features]
-Ported legacy schema where applicable: provider API keys; per-feature model + reasoning; message-count knobs (quick 100 / improve 25 / deep 1500, same ranges); personalities CRUD; account→personality mappings; debug mode (+ pipeline profiling view); prompt-caching toggle; sound/notification prefs; mark-as-read policy; Agency Hub (core) URL + chatter API key (from P4).
+Ported legacy schema where applicable: provider API keys; per-feature model + reasoning; message-count knobs (quick 100 / improve 25 / deep 1500, same ranges); personalities CRUD; account→personality mappings; debug mode (+ pipeline profiling view); prompt-caching toggle; sound/notification prefs; mark-as-read policy; interface language + UI scale; **color theme (`system` / `light` / `dark`, default `light`; owner 2026-06-13);** Agency Hub (core) URL + chatter API key (from P4).
 
 ### F10. Operational UX (cross-cutting)
 - **Status bar:** OFAPI credit balance + credits used today (from `_meta._credits` / `x-ofapi-credits-*` headers where present — the envelope isn't universal), per-op LLM cost after each AI action (legacy spend summary), sync freshness ("updated 12 s ago"), connection state.
@@ -147,7 +147,7 @@ Concrete layout anatomy, hotkey map, performance-engineering checklist and visua
 3. **Latency is masked, never hidden.** Optimistic sends with explicit state glyphs (sending → sent → seen); skeletons over spinners; cached conversation paints instantly, refresh reconciles; every async surface shows data age. Honest about what's not real-time (read receipts, presence in polling mode).
 4. **Streaming everywhere.** AI output renders token-by-token with cancel always available; no modal blocks the conversation — chatter can keep reading/scrolling while AI generates.
 5. **Money is visible.** Fan value (total spent, churn-risk) visible without clicks; PPV purchase states unmissable in history; tips highlighted. The chatter's next monetization move should be obvious from the screen.
-6. **Dense but calm.** Information-dense layout for power users; restrained light professional palette (DESIGN.md §4 — owner decision 2026-06-10), no decorative chrome; visual emphasis reserved for money events, unread state, and errors.
+6. **Dense but calm.** Information-dense layout for power users; restrained warm professional palette (DESIGN.md §4 — owner decision 2026-06-10), light by default with an optional dark theme (owner 2026-06-13, pure token swap — the restraint rules hold in both); no decorative chrome; visual emphasis reserved for money events, unread state, and errors.
 7. **Trust through transparency.** Per-operation cost, what context the AI saw (debug inspector), and explicit "AI never sends by itself" affordances.
 8. **Fast.** Cold start <3 s to usable inbox; cached chat open <300 ms; account switch <500 ms (budgets in SPEC §13).
 

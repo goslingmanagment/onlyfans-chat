@@ -26,6 +26,9 @@
   --color-green: #3a7d44;
   --color-green-bg: #e9f1e5;
   --color-green-line: #c9dcc2;
+  /* solid green fill carrying WHITE text (purchased-PPV chip) — kept deep so
+     white stays legible; the --color-green TEXT token lifts on dark, this does not. */
+  --color-green-fill: #3a7d44;
 
   /* pending money — amber */
   --color-amber: #96691c;
@@ -42,6 +45,14 @@
   --color-bubble-me: #e9e2d4;
   --color-bubble-me-line: #ded5c2;
   --color-draft-bg: #f7f1e8;
+  --color-draft-hover: #f9f3ea;
+
+  /* locked/loading media placeholder stripes (mockup .ppv-media) */
+  --color-stripe-a: #eae4d6;
+  --color-stripe-b: #e3dccb;
+
+  /* modal/overlay scrim — alpha baked in; stays dark in BOTH themes */
+  --color-scrim: rgb(31 30 29 / 0.2);
 
   /* typography */
   --font-sans: 'Hanken Grotesk Variable', -apple-system, 'Segoe UI', sans-serif;
@@ -67,11 +78,77 @@
   --shadow-pop: 0 10px 28px rgba(31, 30, 29, 0.14);
 }
 
+/* ── Dark theme (Settings → Behavior → Theme; optional, owner 2026-06-13) ──
+   Pure variable swap: the `dark` class lands on <html> (AppShell applier),
+   utilities keep referencing var(--color-*). Same warm hue family as light,
+   accents (clay/clay-deep) unchanged — brand constant across themes. The
+   window pre-paint color in main/index.ts WINDOW_BG mirrors --color-bg0. */
+.dark {
+  color-scheme: dark;
+
+  /* surfaces — canvas darkest, panels float lighter, chips pop above panels */
+  --color-bg0: #1b1a17;
+  --color-bg1: #262420;
+  --color-bg2: #21201c;
+  --color-bg3: #33302a;
+  --color-line: #38352e;
+  --color-line-strong: #4d4940;
+
+  /* text — warm ivory; same three-tier hierarchy */
+  --color-ink: #e9e6df;
+  --color-ink-mid: #a39e93;
+  --color-ink-low: #6f6a60;
+
+  /* terracotta — primary / attention (tints flip, accent stays) */
+  --color-clay-bg: #3f2b21;
+  --color-clay-line: #61412f;
+
+  /* money — financial green, lifted for dark-ground legibility */
+  --color-green: #54a263;
+  --color-green-bg: #233a28;
+  --color-green-line: #38583f;
+  /* NOT lifted: a solid money chip carrying white text — #3a7d44 keeps
+     white at ~5:1 (the lifted #54a263 would drop it to ~3:1). */
+  --color-green-fill: #3a7d44;
+
+  /* pending money — amber */
+  --color-amber: #cda04b;
+  --color-amber-bg: #3a3220;
+  --color-amber-line: #5c4c29;
+
+  /* semantics */
+  --color-seen: #7ba2dc;
+  --color-warn: #d0863e;
+  --color-bad: #e25549;
+  --color-online: #4fb066;
+
+  /* bubbles */
+  --color-bubble-me: #353026;
+  --color-bubble-me-line: #454033;
+  --color-draft-bg: #2e2a21;
+  --color-draft-hover: #363126;
+
+  /* media placeholder stripes */
+  --color-stripe-a: #2d2a23;
+  --color-stripe-b: #272420;
+
+  /* scrim needs more weight over dark surfaces */
+  --color-scrim: rgb(0 0 0 / 0.5);
+
+  /* hairline elevation carries less on dark — shadows compensate */
+  --shadow-soft: 0 2px 6px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 10px 28px rgba(0, 0, 0, 0.65);
+}
+
 @layer base {
   html,
   body,
   #root {
     height: 100%;
+  }
+
+  html {
+    color-scheme: light;
   }
 
   body {
@@ -130,6 +207,15 @@
 @utility num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+}
+
+/* locked/loading media placeholder (mockup .ppv-media) — thumb, thread, gallery */
+@utility media-stripes {
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--color-stripe-a) 0 12px,
+    var(--color-stripe-b) 12px 24px
+  );
 }
 
 /* AI dock streaming caret (mockup .caret) — rides the live draft bubble */

@@ -20,6 +20,7 @@ import type {
   ReplyTone,
 } from '@chatgoose/shared/types';
 import { UI_LOCALE_SETTINGS } from '@chatgoose/shared/i18n/index';
+import { UI_THEME_SETTINGS } from '@chatgoose/shared/theme';
 import type { KeyMetaVM, SettingsVM } from '../../preload/contract';
 import type { SecretName } from '../secrets/keychain';
 
@@ -77,6 +78,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'spendersListMappings',
   'uiLocale',
   'uiScale',
+  'uiTheme',
 ] as const satisfies readonly (keyof PersistedSettings)[];
 
 const persistedFieldSchemas = {
@@ -110,6 +112,8 @@ const persistedFieldSchemas = {
   uiLocale: z.enum(UI_LOCALE_SETTINGS),
   // Window zoom factor — fixed steps only, applied via webContents.setZoomFactor.
   uiScale: z.union([z.literal(0.9), z.literal(1), z.literal(1.1), z.literal(1.25)]),
+  // Color theme; 'system' follows the OS scheme (nativeTheme + matchMedia).
+  uiTheme: z.enum(UI_THEME_SETTINGS),
 };
 
 interface FieldValidator<T> {
@@ -143,6 +147,8 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   spendersListMappings: {},
   uiLocale: 'system',
   uiScale: 1,
+  // Light stays the default (owner decision 2026-06-13: dark is opt-in).
+  uiTheme: 'light',
 };
 
 // ─── Patch schema (IPC trust boundary for cmd:settings.update) ──────────
@@ -168,6 +174,7 @@ export const settingsPatchSchema = z.strictObject({
   spendersListMappings: persistedFieldSchemas.spendersListMappings.optional(),
   uiLocale: persistedFieldSchemas.uiLocale.optional(),
   uiScale: persistedFieldSchemas.uiScale.optional(),
+  uiTheme: persistedFieldSchemas.uiTheme.optional(),
   // Secret material: routed to the keychain, never stored in the settings table.
   ofapiKey: z.string().optional(),
   anthropicKey: z.string().optional(),
@@ -275,6 +282,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       spendersListMappings: readField('spendersListMappings'),
       uiLocale: readField('uiLocale'),
       uiScale: readField('uiScale'),
+      uiTheme: readField('uiTheme'),
     };
   }
 

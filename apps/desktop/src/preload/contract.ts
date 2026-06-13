@@ -14,6 +14,7 @@ import type {
 } from '@chatgoose/shared/types';
 import type { OperationEvent, SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { UiLocaleSetting } from '@chatgoose/shared/i18n/index';
+import type { UiThemeSetting } from '@chatgoose/shared/theme';
 
 // ─── View models ─────────────────────────────────────────────────────────
 
@@ -242,6 +243,8 @@ export interface SettingsVM {
   uiLocale: UiLocaleSetting;
   /** Window zoom factor (0.9 | 1 | 1.1 | 1.25). */
   uiScale: number;
+  /** Color theme; 'system' follows the OS color scheme at runtime. */
+  uiTheme: UiThemeSetting;
   /**
    * Non-secret fingerprints of stored keys ({last4, setAt}) recorded when a key
    * is saved — read-only in the VM (not patchable), null when never recorded.

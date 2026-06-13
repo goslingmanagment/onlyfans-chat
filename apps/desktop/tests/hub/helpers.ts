@@ -46,6 +46,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     spendersListMappings: {},
     uiLocale: 'system',
     uiScale: 1,
+    uiTheme: 'light',
     keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
     featureModels: {
       'fast-reply': 'anthropic:claude-sonnet-4-6',

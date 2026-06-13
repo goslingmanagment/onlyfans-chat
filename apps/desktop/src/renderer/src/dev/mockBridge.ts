@@ -410,6 +410,7 @@ function buildStore(): MockStore {
     spendStyle: 'figure',
     uiLocale: 'system',
     uiScale: 1,
+    uiTheme: 'light',
     keyMeta: {
       ofapi: { last4: '7f2c', setAt: Date.now() - 12 * 86_400_000 },
       anthropic: { last4: 'a4f2', setAt: Date.now() - 5 * 86_400_000 },

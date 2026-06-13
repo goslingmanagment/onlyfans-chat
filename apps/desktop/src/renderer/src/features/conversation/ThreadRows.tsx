@@ -91,7 +91,7 @@ export const MessageRow = memo(function MessageRow({
             <>
               {/* PPV locked-media strip */}
               {isPpv && lockedMedia.length > 0 && (
-                <div className="relative flex h-[124px] items-center justify-center border-b border-line bg-[repeating-linear-gradient(135deg,#eae4d6_0_12px,#e3dccb_12px_24px)]">
+                <div className="media-stripes relative flex h-[124px] items-center justify-center border-b border-line">
                   <span className="text-[17px] opacity-50">
                     {chip.state === 'purchased' ? '🔓' : '🔒'}
                   </span>

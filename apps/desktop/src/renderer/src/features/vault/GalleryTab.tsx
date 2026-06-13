@@ -29,7 +29,7 @@ function GalleryCell({ cell }: { cell: GalleryCellData }): React.JSX.Element {
         {showImage ? (
           <img src={media.thumbUrl ?? ''} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
         ) : (
-          <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-[repeating-linear-gradient(135deg,#eae4d6_0_12px,#e3dccb_12px_24px)]">
+          <div className="media-stripes flex h-full w-full flex-col items-center justify-center gap-1">
             <span className="text-[15px] opacity-50">
               {media !== null && media.locked ? '🔒' : media !== null && !media.isReady ? '⏳' : '∅'}
             </span>

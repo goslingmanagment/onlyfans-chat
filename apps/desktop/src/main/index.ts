@@ -8,6 +8,7 @@ import {
   dialog,
   Menu,
   nativeImage,
+  nativeTheme,
   Notification,
   protocol,
   safeStorage,
@@ -74,6 +75,16 @@ let recheckHubConfig: (() => void) | null = null;
  *  creation (zoom) and main-side notifications (locale). */
 let uiScale = 1;
 let uiLocale: UiLocale = 'en';
+
+/** Pre-paint window background per resolved theme — must equal the CSS
+ *  --color-bg0 values in renderer/src/styles/index.css or reload/resize
+ *  flashes the wrong color. The theme itself rides nativeTheme.themeSource
+ *  (set from the uiTheme setting by refreshUiPrefs). */
+const WINDOW_BG = { light: '#efece4', dark: '#1b1a17' } as const;
+
+function windowBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors ? WINDOW_BG.dark : WINDOW_BG.light;
+}
 
 /** Stamp the running app version onto a controller snapshot (or report
  *  `unsupported` when there is no controller — macOS / dev). */
@@ -157,7 +168,7 @@ function createWindow(options: { load?: boolean } = {}): BrowserWindow {
     minWidth: 1100,
     minHeight: 680,
     show: false,
-    backgroundColor: '#efece4',
+    backgroundColor: windowBackgroundColor(),
     title: 'ChatGoose',
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.mjs'),
@@ -426,17 +437,27 @@ async function boot(): Promise<void> {
     }
   }
 
-  // UI prefs (zoom + interface language for main-side notifications): seed
-  // before the window loads, then track every settings-table write.
+  // UI prefs (zoom + interface language for main-side notifications + theme):
+  // seed before the window loads, then track every settings-table write.
   const refreshUiPrefs = async (): Promise<void> => {
     const vm = await settingsStore.get();
     uiScale = vm.uiScale;
     uiLocale = resolveUiLocale(vm.uiLocale, app.getLocale());
+    // Steers prefers-color-scheme in the renderer (the .dark applier) AND
+    // native chrome (menus/dialogs). 'system' | 'light' | 'dark' map 1:1.
+    nativeTheme.themeSource = vm.uiTheme;
     if (mainWindow !== null && !mainWindow.isDestroyed()) {
       mainWindow.webContents.setZoomFactor(uiScale);
+      mainWindow.setBackgroundColor(windowBackgroundColor());
     }
   };
   await refreshUiPrefs();
+  // Covers OS scheme flips while uiTheme='system' (no settings write involved).
+  nativeTheme.on('updated', () => {
+    if (mainWindow !== null && !mainWindow.isDestroyed()) {
+      mainWindow.setBackgroundColor(windowBackgroundColor());
+    }
+  });
   data.bus.subscribe((events) => {
     if (events.some((event) => event.scope === 'settings')) {
       void refreshUiPrefs();

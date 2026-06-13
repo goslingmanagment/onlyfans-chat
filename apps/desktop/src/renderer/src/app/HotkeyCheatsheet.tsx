@@ -9,7 +9,7 @@ export function HotkeyCheatsheet(): React.JSX.Element | null {
 
   return (
     <div
-      className="absolute inset-0 z-50 flex items-center justify-center bg-ink/20"
+      className="absolute inset-0 z-50 flex items-center justify-center bg-scrim"
       onMouseDown={() => setOpen(false)}
     >
       <div

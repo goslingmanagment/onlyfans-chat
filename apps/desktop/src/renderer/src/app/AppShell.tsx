@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useAccounts, useSettings } from '../bridge/queries';
 import { useUiStore } from '../state/uiStore';
 import { useSettingsCache } from '../state/settingsCache';
+import { applyThemeSetting } from '../lib/theme';
 import { Titlebar } from './Titlebar';
 import { StatusBar } from './StatusBar';
 import { CommandPalette } from './CommandPalette';
@@ -38,6 +39,18 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => {
     if (settings.data !== undefined) setFromSettings(settings.data);
   }, [settings.data, setFromSettings]);
+
+  // Apply the color theme; resolves 'system' against the OS scheme and tracks
+  // OS flips. Drives the `dark` class on <html> — every color flips via CSS
+  // variables, so no component re-renders on theme change. Skip until settings
+  // load: bootstrapTheme() (main.tsx) already painted from the localStorage
+  // echo, so coercing undefined→'light' here would repaint light over a dark
+  // user's correct first frame (a dark→light→dark flash every launch).
+  const uiTheme = settings.data?.uiTheme;
+  useEffect(() => {
+    if (uiTheme === undefined) return;
+    return applyThemeSetting(uiTheme);
+  }, [uiTheme]);
 
   return (
     <div className="relative flex h-screen flex-col bg-bg0 font-sans text-base text-ink">

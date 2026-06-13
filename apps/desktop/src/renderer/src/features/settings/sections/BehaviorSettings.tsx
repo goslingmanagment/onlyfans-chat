@@ -4,6 +4,7 @@
 
 import type { SettingsVM } from '../../../../../preload/contract';
 import { UI_LOCALE_SETTINGS, type UiLocaleSetting } from '@chatgoose/shared/i18n/index';
+import { UI_THEME_SETTINGS } from '@chatgoose/shared/theme';
 import { cx } from '../../../lib/cx';
 import { useT } from '../../../lib/i18n';
 import { Chip } from '../../../design/Chip';
@@ -132,6 +133,18 @@ export function BehaviorSettings({
             onClick={() => patch({ uiScale: scale })}
           >
             {`${Math.round(scale * 100)}%`}
+          </Chip>
+        ))}
+      </OptionRow>
+
+      <OptionRow label={t('behavior.uiTheme')} hint={t('behavior.uiThemeHint')}>
+        {UI_THEME_SETTINGS.map((option) => (
+          <Chip
+            key={option}
+            selected={settings.uiTheme === option}
+            onClick={() => patch({ uiTheme: option })}
+          >
+            {t(`behavior.uiTheme.${option}`)}
           </Chip>
         ))}
       </OptionRow>

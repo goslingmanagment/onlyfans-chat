@@ -213,6 +213,14 @@ export const UI_MESSAGES = {
   'behavior.language.system': { en: 'System', ru: 'Системный' },
   'behavior.uiScale': { en: 'UI scale', ru: 'Масштаб интерфейса' },
   'behavior.uiScaleHint': { en: 'Zoom for the whole window', ru: 'Масштаб всего окна' },
+  'behavior.uiTheme': { en: 'Theme', ru: 'Тема' },
+  'behavior.uiThemeHint': {
+    en: 'System follows the OS color scheme',
+    ru: '«Системная» повторяет настройку ОС',
+  },
+  'behavior.uiTheme.system': { en: 'System', ru: 'Системная' },
+  'behavior.uiTheme.light': { en: 'Light', ru: 'Светлая' },
+  'behavior.uiTheme.dark': { en: 'Dark', ru: 'Тёмная' },
   'behavior.spendStyle': { en: 'Fan spend style', ru: 'Вид суммы фана' },
   'behavior.spendStyleHint': {
     en: 'Lifetime figure beside the name in the chat list',

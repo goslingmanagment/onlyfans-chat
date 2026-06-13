@@ -72,14 +72,14 @@ This section is review-blocking for renderer PRs, same weight as SPEC §15 invar
 
 ## 4. Visual direction — "Claude-style warm professional" (chosen by owner 2026-06-10)
 
-- **Light theme, only theme at v1** (dark mode revisit later). Anthropic-like warm palette: cream window `#efece4`, ivory panels `#faf9f5`, warm hairlines (`#e2dfd3`/`#cfcaba`), soft shadows, 7–14 px radii, pill-shaped chips, asymmetric bubble corners (flat side toward the sender).
+- **Light is the default; an optional dark theme ships alongside it (owner decision 2026-06-13 — `uiTheme: system | light | dark`, Settings → Behavior → Theme; default `light`, opt-in).** Anthropic-like warm palette: cream window `#efece4`, ivory panels `#faf9f5`, warm hairlines (`#e2dfd3`/`#cfcaba`), soft shadows, 7–14 px radii, pill-shaped chips, asymmetric bubble corners (flat side toward the sender). **Dark is a pure CSS-variable swap (`.dark` on `<html>`, overriding the `--color-*`/`--shadow-*` tokens in `renderer/src/styles/index.css`) — same warm hue family, accent terracotta unchanged across themes; main mirrors it via `nativeTheme.themeSource` + the window pre-paint `backgroundColor`. Dark token block in `index.css`; experiment page `mockups/experiments/dark-theme.html`. Semantic greens/ambers are lifted for legibility on dark ground; all hierarchy/flatness rules below hold in both themes.**
 - **Terracotta `#d97757`** (hover/deep `#c2603f`) for primary actions and attention: Send, active account, selected-row bar, unread pills, active tone chip, "fan waiting" dots, the AI spark.
 - **Money = financial green** (`#3a7d44` on `#e9f1e5`): lifetime/value chips, tip ledger rows, purchased-PPV badges, credit/LLM figures in the status bar. **Pending money = amber** (`#96691c`, unopened PPV). Other semantics: seen `#4a72b8`, warn `#b45309`, failed/churn `#bb4430`, online `#3f9e54`.
 - Typography: **Hanken Grotesk** (UI) + **Source Serif 4** for headings (wordmark, section titles, fan names) **and for all AI-authored text** — dock outputs, AI summaries — the "machine speaks in serif" signature; **IBM Plex Mono** for numerals, timestamps, send-states, micro-caps; tabular numerals for money and time. **Type floor (owner feedback): 14 px base, 14.5 px message text, 10 px micro-labels.**
 - Send states as terminal-style mono micro-labels: `SEEN 18:42` / `SENT` / `UNCONF` / `FAILED`.
 - Density over decoration: flat scannable rows, information-dense but calm (PRD §7.6).
 - Custom design system in `src/renderer/design/` (tokens + primitives: Button, Chip, Badge, ListRow, Skeleton, Toast, Dock). **No heavy component library**; no generic "AI-generated SaaS" look (gradient heroes, glassmorphism, decorative blur) — restraint, craft, speed.
-- Anti-goals: no modal dialogs inside the shift loop; no dark theme v1; no avatar noise in dense lists beyond the chat row.
+- Anti-goals: no modal dialogs inside the shift loop; no avatar noise in dense lists beyond the chat row. (Dark theme is no longer an anti-goal — it shipped as an optional CSS-variable swap, owner 2026-06-13; the discipline is that it stays a pure token re-skin, never per-component dark styling.)
 
 ## 5. Visual reference mockup
 

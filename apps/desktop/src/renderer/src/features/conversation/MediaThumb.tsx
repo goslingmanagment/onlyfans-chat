@@ -12,7 +12,7 @@ export const MediaThumb = memo(function MediaThumb({
 
   if (!media.isReady || media.thumbUrl === null) {
     return (
-      <div className="flex h-[124px] w-[280px] max-w-full flex-col items-center justify-center gap-1.5 rounded-[10px] border border-line bg-[repeating-linear-gradient(135deg,#eae4d6_0_12px,#e3dccb_12px_24px)]">
+      <div className="media-stripes flex h-[124px] w-[280px] max-w-full flex-col items-center justify-center gap-1.5 rounded-[10px] border border-line">
         <span className="text-[15px] opacity-50">{media.locked ? '🔒' : '⏳'}</span>
         <span className="num text-micro tracking-[0.08em] text-ink-mid">
           {media.locked ? 'LOCKED' : 'PROCESSING'}

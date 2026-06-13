@@ -153,7 +153,7 @@ function PaletteBody(): React.JSX.Element {
 
   return (
     <div
-      className="absolute inset-0 z-50 flex justify-center bg-ink/20 pt-[110px]"
+      className="absolute inset-0 z-50 flex justify-center bg-scrim pt-[110px]"
       onMouseDown={() => setPaletteOpen(false)}
     >
       <div

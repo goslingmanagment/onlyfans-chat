@@ -79,26 +79,30 @@ describe('settings store', () => {
     expect(vm.spendStyle).toBe('figure');
     expect(vm.uiLocale).toBe('system');
     expect(vm.uiScale).toBe(1);
+    expect(vm.uiTheme).toBe('light');
     expect(vm.keyMeta).toEqual({ ofapi: null, anthropic: null, openRouter: null, hub: null });
     expect(vm.hasOfapiKey).toBe(false);
     expect(vm.hasAnthropicKey).toBe(false);
     expect(vm.hasOpenRouterKey).toBe(false);
   });
 
-  it('persists uiLocale and uiScale (round-trip) and zod-rejects bad values', async () => {
+  it('persists uiLocale, uiScale and uiTheme (round-trip) and zod-rejects bad values', async () => {
     const { store, queries, secrets } = createStore();
-    const vm = await store.update({ uiLocale: 'ru', uiScale: 1.25 });
+    const vm = await store.update({ uiLocale: 'ru', uiScale: 1.25, uiTheme: 'dark' });
     expect(vm.uiLocale).toBe('ru');
     expect(vm.uiScale).toBe(1.25);
+    expect(vm.uiTheme).toBe('dark');
 
     const reread = createSettingsStore({ queries, secrets });
     const again = await reread.get();
     expect(again.uiLocale).toBe('ru');
     expect(again.uiScale).toBe(1.25);
+    expect(again.uiTheme).toBe('dark');
 
     await expect(store.update({ uiLocale: 'de' })).rejects.toThrow();
     await expect(store.update({ uiScale: 2 })).rejects.toThrow();
     await expect(store.update({ uiScale: 0.95 })).rejects.toThrow();
+    await expect(store.update({ uiTheme: 'sepia' })).rejects.toThrow();
   });
 
   it('records non-secret key metadata (last4 + setAt) on save and clears it on delete', async () => {
