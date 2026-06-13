@@ -100,6 +100,14 @@ the unprivileged `cgupdates` user; CI uploads over scp with the
 are unsigned, so the feed host being ours is the trust anchor — rotate the
 token path (nginx dir + `publish.url`) if it ever leaks somewhere noisy.
 
+**Provisioned & verified 2026-06-13.** The feed is live: a liveness probe sits
+at `https://45-8-230-111.sslip.io/u/<token>/ping.txt` (returns `feed-ok`).
+Verified end-to-end: trusted TLS from a client machine, the `cgupdates` deploy
+key can write to the feed dir, and every non-token path 404s. The server-side
+provisioning (nginx site `chatgoose-updates`, the `cgupdates` user + its
+authorized deploy key, the Let's Encrypt cert) is reproduced by
+`tmp/updates-deploy/setup-feed.sh` (gitignored — it embeds the host specifics).
+
 ## Smoke checklist for a new build (any platform)
 
 1. Install/launch from the artifact (not `pnpm dev`).
