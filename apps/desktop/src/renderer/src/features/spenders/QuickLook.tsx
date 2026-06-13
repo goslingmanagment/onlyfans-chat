@@ -45,6 +45,8 @@ import { useSpendersStore } from './spendersStore';
 import { dayCounter } from './SpenderRowItem';
 import {
   focusPreviewComposer,
+  hydratePreviewFan,
+  previewNeedsHydration,
   startAiFromPreview,
   PREVIEW_TEXTAREA_ID,
   type PreviewAiFeature,
@@ -85,6 +87,18 @@ export function QuickLook({
     },
     [],
   );
+
+  // One read-only tail GET when the local history is incomplete (one-sided
+  // counters / no chat row / empty thread) — same fetch a full chat open does;
+  // TTL-guarded in previewActions so J/K walking doesn't re-spend.
+  const threadProbe = useMessages(accountId, fanId);
+  const threadEmpty =
+    threadProbe.isSuccess &&
+    (threadProbe.data?.pages.every((page) => page.items.length === 0) ?? false);
+  useEffect(() => {
+    if (row === null && !threadProbe.isSuccess) return; // nothing known yet
+    if (previewNeedsHydration(row, threadEmpty)) hydratePreviewFan(accountId, fanId);
+  }, [accountId, fanId, row, threadEmpty, threadProbe.isSuccess]);
 
   const name = row?.name ?? '';
   const canSend = row?.canSendMessage ?? false;

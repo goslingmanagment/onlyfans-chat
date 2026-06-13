@@ -62,6 +62,12 @@ export interface MessagesQueries {
   /** Batched per-chat MAX(created_at) split by is_sent_by_me; deleted excluded.
    *  Chats with no local history are absent from the map. */
   latestBySender(accountId: string, chatIds: readonly string[]): Map<string, LastBySender>;
+  /** Batched newest non-deleted message text per chat — the Spenders board
+   *  preview fallback for fans whose chat ROW hasn't hydrated yet. */
+  newestPerChat(
+    accountId: string,
+    chatIds: readonly string[],
+  ): Map<string, { textPlain: string; isSentByMe: boolean }>;
   /** Tombstone: keeps the rows, flags them deleted (SPEC §6.3). */
   markDeleted(accountId: string, chatId: string, messageIds: readonly string[]): void;
   /** Deletes rows beyond the newest `keep` for the chat; returns rows removed. */
@@ -183,6 +189,40 @@ export function createMessagesQueries(db: ChatGooseDb, bus: DbChangeBus): Messag
         for (const raw of rows) {
           const row = rowSchema.parse(raw);
           out.set(row.chat_id, { lastFanAt: row.last_fan_at, lastModelAt: row.last_model_at });
+        }
+      }
+      return out;
+    },
+
+    newestPerChat(accountId, chatIds) {
+      const out = new Map<string, { textPlain: string; isSentByMe: boolean }>();
+      const rowSchema = z.object({
+        chat_id: z.string(),
+        text_plain: z.string(),
+        is_sent_by_me: z.number(),
+      });
+      for (const chunk of chunked(chatIds)) {
+        const placeholders = chunk.map((_, i) => `@id${i}`).join(', ');
+        const params: Record<string, string> = { account_id: accountId };
+        chunk.forEach((id, i) => {
+          params[`id${i}`] = id;
+        });
+        // SQLite bare-column semantics: with MAX(created_at) the other selected
+        // columns come from the max row (single aggregate, documented behavior).
+        const rows: unknown[] = db
+          .prepare(
+            `SELECT chat_id, text_plain, is_sent_by_me, MAX(created_at) AS created_at
+             FROM messages
+             WHERE account_id = @account_id AND deleted = 0 AND chat_id IN (${placeholders})
+             GROUP BY chat_id`,
+          )
+          .all(params);
+        for (const raw of rows) {
+          const row = rowSchema.parse(raw);
+          out.set(row.chat_id, {
+            textPlain: row.text_plain,
+            isSentByMe: row.is_sent_by_me === 1,
+          });
         }
       }
       return out;

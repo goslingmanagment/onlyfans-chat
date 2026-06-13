@@ -4,7 +4,14 @@
 // the coordinator's CG-FLOW-* checks stay authoritative.
 
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
-import type { AccountVM, MessageVM, PingGateVM, SettingsVM } from '../../../../preload/contract';
+import type {
+  AccountVM,
+  MessageVM,
+  PingGateVM,
+  SettingsVM,
+  SpenderRowVM,
+} from '../../../../preload/contract';
+import { getBridge } from '../../bridge/bridge';
 import { qk } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { startAiFeature } from '../ai/aiStore';
@@ -13,6 +20,34 @@ import { pingGateKey } from '../ai/pingGate';
 import { useSpendersStore } from './spendersStore';
 
 export const PREVIEW_TEXTAREA_ID = 'spenders-preview-composer';
+
+// ── On-open thread hydration (owner request 2026-06-13: counters were
+// one-sided for never-opened chats). One read-only tail GET per fan when the
+// quick look opens with incomplete local history; the TTL guard keeps J/K
+// walking from re-spending on fans already fetched this session.
+export const PREVIEW_HYDRATE_TTL_MS = 5 * 60_000;
+const hydratedAt = new Map<string, number>();
+
+/** Incomplete local history: no chat row, a one-sided counter, or an empty
+ *  cached thread — exactly the cases where the upstream tail has more. */
+export function previewNeedsHydration(
+  row: SpenderRowVM | null,
+  threadEmpty: boolean,
+): boolean {
+  if (row === null) return threadEmpty;
+  return !row.hasChat || row.fanDays === null || row.modelDays === null || threadEmpty;
+}
+
+export function hydratePreviewFan(accountId: string, fanId: string): void {
+  const key = `${accountId}|${fanId}`;
+  const last = hydratedAt.get(key);
+  if (last !== undefined && Date.now() - last < PREVIEW_HYDRATE_TTL_MS) return;
+  hydratedAt.set(key, Date.now());
+  // Fire-and-forget: db:changed events refresh the thread and board queries.
+  void getBridge()
+    .invoke('cmd:spenders.hydrate', { accountId, chatId: fanId })
+    .catch(() => hydratedAt.delete(key)); // transient failure → retry on next open
+}
 
 export function focusPreviewComposer(): void {
   const el = document.getElementById(PREVIEW_TEXTAREA_ID);

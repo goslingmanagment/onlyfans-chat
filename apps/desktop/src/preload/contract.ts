@@ -603,6 +603,13 @@ export interface InvokeChannels {
     args: { accountId: string };
     result: SpenderStatsVM;
   };
+  /**
+   * Tail-fetch the newest thread page into the local DB (ONE read-only GET).
+   * Fired when the quick-look opens on a fan with incomplete local history —
+   * fills both МОДЕЛЬ/ФАН counters and the preview thread; works without a
+   * cached chat row (there is no single-chat GET upstream — live 405).
+   */
+  'cmd:spenders.hydrate': { args: { accountId: string; chatId: string }; result: void };
   // ── Vault & PPV (PRD F7, P5 — additive) ──
   /** Offset-paginated (OFAPI vault pagination is limit/offset + hasMore). */
   'query:vault.list': {
@@ -720,6 +727,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:spenders.roster': true,
   'query:spenders.untiered': true,
   'query:spenders.stats': true,
+  'cmd:spenders.hydrate': true,
   'query:vault.list': true,
   'query:vault.albums': true,
   'query:chat.gallery': true,

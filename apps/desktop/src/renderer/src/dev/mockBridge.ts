@@ -1277,6 +1277,9 @@ export function createMockBridge(): ChatGooseBridge {
       }));
       return { rows, fetchedAt: new Date().toISOString() };
     },
+    'cmd:spenders.hydrate': () => {
+      // mock data is always "complete" — nothing to fetch
+    },
     'query:spenders.stats': ({ accountId }) => {
       const all = store.chats.get(accountId) ?? [];
       const today = new Date();

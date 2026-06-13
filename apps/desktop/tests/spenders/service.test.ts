@@ -428,3 +428,37 @@ describe('stats (page right panel — local joins, 0 extra credits)', () => {
     expect(stats.radar).toEqual([]);
   });
 });
+
+describe('chat-row-less preview fallback (hydrated thread, no chat row yet)', () => {
+  it('newest local message stands in for the list-payload preview', async () => {
+    data.messages.upsertMany([
+      sampleMessage({ chatId: '6', messageId: 'm1', isSentByMe: true, createdAt: isoDaysAgo(30) }),
+      sampleMessage({
+        chatId: '6',
+        messageId: 'm2',
+        isSentByMe: true,
+        createdAt: isoDaysAgo(29),
+        textPlain: 'miss you, come back 🖤',
+      }),
+    ]);
+    const service = makeService(stubClient({ lists: [], rosters: { '100': [[{ id: 6 }]] }, calls }));
+    const { rows } = await service.roster(ACCOUNT, '100');
+    expect(rows[0]?.lastMessagePreview).toBe('miss you, come back 🖤');
+    expect(rows[0]?.lastMessageIsSentByMe).toBe(true);
+    expect(rows[0]?.modelDays).toBe(29);
+    expect(rows[0]?.fanDays).toBeNull(); // fan never wrote — honest «—»
+    expect(rows[0]?.hasChat).toBe(false); // composer stays disabled until the row hydrates
+  });
+
+  it('a cached chat row always wins over the message fallback', async () => {
+    data.chats.upsertMany([
+      sampleChat({ chatId: '7', lastMessagePreview: 'list payload preview', lastMessageIsSentByMe: false }),
+    ]);
+    data.messages.upsertMany([
+      sampleMessage({ chatId: '7', messageId: 'm1', isSentByMe: true, createdAt: isoDaysAgo(1), textPlain: 'local text' }),
+    ]);
+    const service = makeService(stubClient({ lists: [], rosters: { '100': [[{ id: 7 }]] }, calls }));
+    const { rows } = await service.roster(ACCOUNT, '100');
+    expect(rows[0]?.lastMessagePreview).toBe('list payload preview');
+  });
+});

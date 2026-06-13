@@ -131,6 +131,7 @@ const draftStoredSchema = z.string();
 // ── Spenders board (PLAN item 12) ──
 const spendersListsSchema = z.object({ accountId: idSchema });
 const spendersRosterSchema = z.object({ accountId: idSchema, listId: idSchema });
+const spendersHydrateSchema = z.object({ accountId: idSchema, chatId: idSchema });
 
 // ── Vault & PPV (PRD F7) ──
 const vaultListSchema = z.object({
@@ -596,6 +597,13 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('query:spenders.stats', (_event, rawArgs: unknown) => {
     const args = spendersListsSchema.parse(rawArgs);
     return requireSpenders().stats(args.accountId);
+  });
+
+  ipcMain.handle('cmd:spenders.hydrate', async (_event, rawArgs: unknown) => {
+    const args = spendersHydrateSchema.parse(rawArgs);
+    // One read-only tail GET through the sync machinery (same path as a chat
+    // open) — fills counters/preview for never-opened chats. No sync → no-op.
+    await deps.sync?.refreshChat(args.accountId, args.chatId);
   });
 
   // ── Vault & PPV (PRD F7) ──

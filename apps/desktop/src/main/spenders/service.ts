@@ -200,6 +200,13 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
     const fans = data.fans.getMany(accountId, ids);
     const chats = data.chats.getMany(accountId, ids);
     const lastTimes = data.messages.latestBySender(accountId, ids);
+    // Preview fallback for chat-row-less fans: once the thread hydrates (e.g.
+    // the quick-look tail fetch) the newest local message stands in for the
+    // list-payload preview until normal hydration reaches the chat row.
+    const newestTexts = data.messages.newestPerChat(
+      accountId,
+      members.filter((member) => !chats.has(member.fanId)).map((member) => member.fanId),
+    );
     const spend30d = data.fanTransactions.sumByFanSince(
       accountId,
       new Date(nowMs - SPEND_WINDOW_MS).toISOString(),
@@ -246,8 +253,10 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
         avatarUrl,
         lifetimeSpend: lifetime ?? null,
         spend30d: spend30d.get(member.fanId) ?? null,
-        lastMessagePreview: chat?.lastMessagePreview ?? '',
-        lastMessageIsSentByMe: chat?.lastMessageIsSentByMe ?? false,
+        lastMessagePreview:
+          chat?.lastMessagePreview ?? newestTexts.get(member.fanId)?.textPlain ?? '',
+        lastMessageIsSentByMe:
+          chat?.lastMessageIsSentByMe ?? newestTexts.get(member.fanId)?.isSentByMe ?? false,
         fanWaiting: chat !== undefined ? deriveFanWaiting(chat) : false,
         modelDays,
         fanDays,
