@@ -65,6 +65,12 @@ describe('copyPayload (secondary copy chip + the canSend=false degrade)', () => 
     expect(copyChipLabel(9)).toBe('COPY ⌘9');
     expect(copyChipLabel(10)).toBe('COPY');
   });
+
+  it('renders the Windows mod label when the platform is injected (PLAN item 11)', () => {
+    expect(copyChipLabel(1, 'darwin')).toBe('COPY ⌘1');
+    expect(copyChipLabel(1, 'win32')).toBe('COPY Ctrl+1');
+    expect(copyChipLabel(10, 'win32')).toBe('COPY');
+  });
 });
 
 describe('isFrameForOperation (correlation)', () => {

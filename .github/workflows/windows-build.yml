@@ -1,0 +1,44 @@
+# Windows installer build (PLAN item 11, docs/RELEASE.md).
+#
+# Exists because the team has no Windows dev machine: better-sqlite3-multiple-
+# ciphers ships no prebuilds, so the Electron-ABI .node must be compiled ON
+# Windows — windows-latest runners carry VS Build Tools out of the box.
+# Trigger manually (Actions → windows-build → Run workflow) or push a v* tag;
+# download ChatGoose-Setup-<version>.exe from the run's artifacts.
+#
+# The artifact is UNSIGNED (code signing is an owner/admin task) — installing
+# it walks through SmartScreen, see docs/WINDOWS-VERIFICATION.md.
+
+name: windows-build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Windows installer
+        run: pnpm dist:win
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chatgoose-windows-installer
+          path: apps/desktop/release/ChatGoose-Setup-*.exe
+          if-no-files-found: error

@@ -53,6 +53,8 @@ Goal: **a full shift without touching the mouse.** Core triage loop: `⌘U` (nex
 
 All hotkeys also reachable via the palette; keymap centralized (single registry, no scattered listeners). The app sets a custom application menu (main): Electron's default menu would shadow `⌘R`/`⌘H`/`⌘0` with Reload/Hide/Actual-Size accelerators before the renderer keymap sees them — Hide lives on `⌃⌘H`, Reload exists only unpackaged on `⇧⌘R`, zoom roles are dropped (UI scale is a setting), Edit clipboard roles stay.
 
+Hotkey **labels** are platform-aware (PLAN item 11, 2026-06-13): every rendered mod-key label flows through the `lib/modKey.ts` seam — `⌘K` on macOS, `Ctrl+K` on Windows/Linux; never hardcode the ⌘ glyph in a component. Matching was always platform-agnostic (`mod` = metaKey || ctrlKey), so combos and behavior are identical everywhere. This doc and the mockups keep writing `⌘` as shorthand for the mod key.
+
 ## 3. Performance engineering — how the SPEC §13 budgets are met
 
 This section is review-blocking for renderer PRs, same weight as SPEC §15 invariants.

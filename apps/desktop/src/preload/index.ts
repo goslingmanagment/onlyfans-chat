@@ -11,6 +11,7 @@ const EVENT_CHANNELS: ReadonlySet<string> = new Set([
 ] satisfies EventChannelName[]);
 
 const bridge: ChatGooseBridge = {
+  platform: process.platform,
   invoke: (channel: InvokeChannelName, args: unknown) => {
     if (!INVOKE_CHANNELS.has(channel)) {
       throw new Error(`Unknown invoke channel: ${channel}`);

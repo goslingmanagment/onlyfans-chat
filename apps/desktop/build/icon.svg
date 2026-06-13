@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ChatGoose app icon source (PLAN item 11). Flat goose mark in the app
+     palette (clay-deep on cream — styles/index.css tokens). Rasterized to
+     build/icon.png by scripts/make-icon.mjs; electron-builder derives the
+     platform formats (.icns / .ico) from the PNG at package time. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#efece4"/>
+  <g fill="#c2603f">
+    <!-- body -->
+    <ellipse cx="570" cy="640" rx="250" ry="155"/>
+    <!-- tail -->
+    <path d="M 720 560 L 892 488 L 780 680 Z"/>
+    <!-- neck -->
+    <path d="M 318 330 C 318 470, 360 540, 480 590" stroke="#c2603f" stroke-width="92" stroke-linecap="round" fill="none"/>
+    <!-- head -->
+    <circle cx="318" cy="322" r="64"/>
+    <!-- beak -->
+    <path d="M 266 300 L 176 330 L 266 356 Z"/>
+  </g>
+  <!-- eye, punched in the background colour to keep the mark flat -->
+  <circle cx="330" cy="306" r="13" fill="#efece4"/>
+</svg>

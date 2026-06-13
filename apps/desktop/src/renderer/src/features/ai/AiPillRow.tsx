@@ -16,6 +16,7 @@ import {
 import { usePingGate } from './pingGate';
 import { Kbd } from '../../design/Kbd';
 import { cx } from '../../lib/cx';
+import { modCombo } from '../../lib/modKey';
 
 function PillButton({
   primary = false,
@@ -108,7 +109,7 @@ export function AiPillRow({
           if (!rowDisabled) start('fast-reply');
         }}
       >
-        <i className="not-italic">✳</i> Reply <Kbd>⌘R</Kbd>
+        <i className="not-italic">✳</i> Reply <Kbd>{modCombo('R')}</Kbd>
       </PillButton>
       <PillButton
         disabled={rowDisabled || draftEmpty}
@@ -117,7 +118,7 @@ export function AiPillRow({
           if (!rowDisabled) start('improve-draft');
         }}
       >
-        Improve <Kbd>⌘I</Kbd>
+        Improve <Kbd>{modCombo('I')}</Kbd>
       </PillButton>
       <PillButton
         disabled={rowDisabled}
@@ -126,7 +127,7 @@ export function AiPillRow({
           if (!rowDisabled) start('help-me');
         }}
       >
-        Help <Kbd>⌘H</Kbd>
+        Help <Kbd>{modCombo('H')}</Kbd>
       </PillButton>
       <PillButton
         dimmed={!pingPill.enabled}
@@ -136,7 +137,7 @@ export function AiPillRow({
           if (pingPill.enabled) start('ping');
         }}
       >
-        Ping <Kbd>⌘P</Kbd>
+        Ping <Kbd>{modCombo('P')}</Kbd>
       </PillButton>
       <PillButton
         dimmed={!hiPill.enabled}
@@ -146,7 +147,7 @@ export function AiPillRow({
           if (hiPill.enabled) start('hi-greeting');
         }}
       >
-        Hi <Kbd>⌘G</Kbd>
+        Hi <Kbd>{modCombo('G')}</Kbd>
       </PillButton>
       {blockedMessage !== null && (
         <button

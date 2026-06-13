@@ -560,6 +560,9 @@ type InvokeHandlers = {
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function createMockBridge(): ChatGooseBridge {
+  // Mirror the host browser so hotkey labels look right in plain-vite dev.
+  const platform =
+    typeof navigator !== 'undefined' && /mac/i.test(navigator.platform) ? 'darwin' : 'win32';
   const store = buildStore();
   const listeners: Listeners = {
     'sync:event': new Set(),
@@ -1392,6 +1395,7 @@ export function createMockBridge(): ChatGooseBridge {
   };
 
   return {
+    platform,
     async invoke(channel, args) {
       await sleep(30 + Math.floor(rng() * 70)); // exercise skeletons
       const handler: InvokeHandlers[typeof channel] = handlers[channel];

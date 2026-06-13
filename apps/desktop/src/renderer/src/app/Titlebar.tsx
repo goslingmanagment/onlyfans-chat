@@ -1,6 +1,7 @@
 import { useUiStore } from '../state/uiStore';
 import { useAccounts } from '../bridge/queries';
 import { Kbd } from '../design/Kbd';
+import { modCombo } from '../lib/modKey';
 
 export function Titlebar(): React.JSX.Element {
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
@@ -19,7 +20,7 @@ export function Titlebar(): React.JSX.Element {
         className="ml-[18px] flex h-[30px] w-[400px] flex-none cursor-pointer items-center gap-2 rounded-full border border-line-strong bg-bg1 px-3 text-[13px] text-ink-low hover:border-clay-line"
       >
         ⌕<span className="flex-1 text-left">Jump to chat, fan or action…</span>
-        <Kbd>⌘K</Kbd>
+        <Kbd>{modCombo('K')}</Kbd>
       </button>
       <div className="ml-auto flex items-center gap-3">
         {account !== null && (

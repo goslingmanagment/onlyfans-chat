@@ -1,0 +1,53 @@
+# Packaging pipeline (PLAN item 11; build/run docs: docs/RELEASE.md).
+# Invoked via `pnpm dist` / `dist:mac` / `dist:win` after `electron-vite build`.
+#
+# Code signing is intentionally absent: pilot builds ship unsigned (owner/admin
+# decision pending a cert purchase). Windows installs show a SmartScreen warning
+# — the verification checklist (docs/WINDOWS-VERIFICATION.md) walks past it.
+
+appId: com.chatgoose.desktop
+productName: ChatGoose
+copyright: ChatGoose
+
+directories:
+  buildResources: build
+  output: release
+
+# Only the electron-vite bundles ship; package.json + production node_modules
+# (zod, better-sqlite3-multiple-ciphers) are added by electron-builder itself.
+files:
+  - out/**
+
+# The native sqlite driver cannot dlopen from inside app.asar; unpack the whole
+# module so its createRequire('better-sqlite3-multiple-ciphers') load (main/db/
+# driver.ts) resolves to a real directory. electron-builder rebuilds it for the
+# target Electron ABI at package time (npmRebuild default).
+asarUnpack:
+  - "**/node_modules/better-sqlite3-multiple-ciphers/**"
+
+win:
+  # icon.ico is derived from build/icon.png (1024², from icon.svg) at build time.
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  # One-click per-user install — the verifier is a non-developer without admin.
+  oneClick: true
+  perMachine: false
+  artifactName: ${productName}-Setup-${version}.${ext}
+  shortcutName: ChatGoose
+  deleteAppDataOnUninstall: false
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  category: public.app-category.business
+  # No signing identity (ad-hoc): macOS pilot machines open via right-click →
+  # Open. Becomes a real identity when the owner buys certs.
+  identity: null
+
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}

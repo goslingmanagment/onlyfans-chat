@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import type { ChatListItemVM } from '../../../../preload/contract';
 import { Button } from '../../design/Button';
 import { Kbd } from '../../design/Kbd';
+import { modCombo } from '../../lib/modKey';
 import { getBridge } from '../../bridge/bridge';
 import { useOutbox } from '../../bridge/queries';
 import { DraftTextarea } from './DraftTextarea';
@@ -75,7 +76,7 @@ export function ComposerBar({
         disabled={!canSend}
         placeholder={
           canSend
-            ? `Reply as ${personaName}… (⌘R fast reply · ⌘I improve draft · [NEXT] splits parts)`
+            ? `Reply as ${personaName}… (${modCombo('R')} fast reply · ${modCombo('I')} improve draft · [NEXT] splits parts)`
             : cannotReason
         }
       />
@@ -121,11 +122,11 @@ export function ComposerBar({
               ? cannotReason
               : ppvComposeActive
                 ? 'Vault media attached — use the PPV confirm button in the vault panel'
-                : 'Send (⌘↵) — [NEXT] splits into separate messages'
+                : `Send (${modCombo('↵')}) — [NEXT] splits into separate messages`
           }
           onClick={onSend}
         >
-          Send <Kbd>⌘↵</Kbd>
+          Send <Kbd>{modCombo('↵')}</Kbd>
         </Button>
       </div>
     </div>

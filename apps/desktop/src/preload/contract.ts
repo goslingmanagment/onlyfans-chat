@@ -671,6 +671,12 @@ export type InvokeChannelName = keyof InvokeChannels;
 export type EventChannelName = keyof EventChannels;
 
 export interface ChatGooseBridge {
+  /**
+   * `process.platform` of the Electron process ('darwin' | 'win32' | …).
+   * Drives hotkey LABELS only (renderer lib/modKey.ts) — key matching is
+   * already platform-agnostic (lib/keymap.ts 'mod' = metaKey || ctrlKey).
+   */
+  platform: string;
   invoke<C extends InvokeChannelName>(
     channel: C,
     args: InvokeChannels[C]['args'],

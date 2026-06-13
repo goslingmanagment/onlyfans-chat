@@ -2,7 +2,17 @@
 // protocol → OFAPI client → PollingSync → AI coordinator → IPC. All secrets
 // and network I/O live here in main; the renderer only ever sees typed IPC.
 
-import { app, BrowserWindow, dialog, Menu, Notification, protocol, safeStorage, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  Menu,
+  nativeImage,
+  Notification,
+  protocol,
+  safeStorage,
+  shell,
+} from 'electron';
 import { join } from 'node:path';
 import { readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
@@ -31,6 +41,8 @@ import { runKeyTest } from './diagnostics/key-tests';
 import { createAiCoordinator, type AiCoordinator } from './ai/index';
 import { createHubModule, type HubModule } from './hub/index';
 import { attachEventForwarding } from './ipc/events';
+import { focusExistingWindow } from './platform/single-instance';
+import { badgePng } from './platform/badge';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 
@@ -544,9 +556,19 @@ async function boot(): Promise<void> {
     creditMeter: client?.creditMeter ?? null,
     coordinator,
     onSyncEvent: (event) => {
-      if (event.type === 'chatListUpdated' && process.platform === 'darwin' && data) {
+      if (event.type === 'chatListUpdated' && data) {
         const total = data.accounts.list().reduce((sum, account) => sum + account.unreadTotal, 0);
-        app.dock?.setBadge(total > 0 ? String(total) : '');
+        if (process.platform === 'darwin') {
+          app.dock?.setBadge(total > 0 ? String(total) : '');
+        } else if (process.platform === 'win32' && mainWindow && !mainWindow.isDestroyed()) {
+          // Taskbar parity for the dock badge (PLAN item 11): overlay icon
+          // with the count drawn in main (platform/badge.ts), null to clear.
+          const png = badgePng(total);
+          mainWindow.setOverlayIcon(
+            png === null ? null : nativeImage.createFromBuffer(png),
+            png === null ? '' : `${total} unread`,
+          );
+        }
       }
       if (
         event.type === 'messageReceived' &&
@@ -591,15 +613,47 @@ async function boot(): Promise<void> {
   loadWindowContent(mainWindow);
 }
 
-app.whenReady().then(() => {
-  buildAppMenu();
-  void boot();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createWindow();
-    }
+// Packaged builds get their own userData dir named after the product.
+// Electron derives the app name from package.json ("@chatgoose/desktop"),
+// which would nest userData under "appData/@chatgoose/" and COLLIDE with the
+// dev profile — the packaged-app smoke run (PLAN item 11) found it reading
+// dev's dbKey.secret and failing to decrypt (different binary, Keychain/DPAPI
+// denies). Dev keeps the historical path; packaged installs start clean.
+if (app.isPackaged) {
+  app.setPath('userData', join(app.getPath('appData'), 'ChatGoose'));
+}
+
+// Single-instance lock (PLAN item 11): a second process on the same encrypted
+// db would double polling/credits and race the SQLite WAL. macOS masks this
+// (dock launches re-activate the running app) but on Windows every shortcut
+// click is a fresh process — the loser exits, the winner surfaces its window.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => focusExistingWindow(mainWindow));
+
+  // Windows toasts only fire when the process AUMID matches the Start-menu
+  // shortcut's; electron-builder stamps shortcuts with the appId, so use it
+  // verbatim (electron-builder.yml). No-op outside Windows.
+  app.setAppUserModelId('com.chatgoose.desktop');
+
+  app.whenReady().then(() => {
+    buildAppMenu();
+    // A failed boot used to die as an unhandled rejection behind a blank
+    // window; surface it (PLAN item 11 — a non-developer runs verification).
+    boot().catch((err: unknown) => {
+      dialog.showErrorBox(
+        'ChatGoose failed to start',
+        err instanceof Error ? err.message : String(err),
+      );
+    });
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        mainWindow = createWindow();
+      }
+    });
   });
-});
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

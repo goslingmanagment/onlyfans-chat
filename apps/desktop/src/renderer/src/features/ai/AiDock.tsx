@@ -13,6 +13,7 @@ import { useUiStore } from '../../state/uiStore';
 import { useSettingsCache } from '../../state/settingsCache';
 import { useChatSendability, useSettings } from '../../bridge/queries';
 import { cx } from '../../lib/cx';
+import { modCombo } from '../../lib/modKey';
 import { Kbd } from '../../design/Kbd';
 import { AiDockSlot } from '../conversation/AiDockSlot';
 import { CANNOT_SEND_FALLBACK } from '../conversation/sendLogic';
@@ -124,7 +125,7 @@ function AiDock(): React.JSX.Element | null {
             onClick={cancelActiveOperation}
             className="ml-3 flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-ink-mid hover:text-bad"
           >
-            Cancel <Kbd>⌘.</Kbd>
+            Cancel <Kbd>{modCombo('.')}</Kbd>
           </button>
         ) : (
           <button
@@ -148,7 +149,7 @@ function AiDock(): React.JSX.Element | null {
             }
             className="flex cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold text-clay-deep hover:text-clay"
           >
-            {canSend ? 'Insert all' : 'Copy all'} <Kbd>⌘0</Kbd>
+            {canSend ? 'Insert all' : 'Copy all'} <Kbd>{modCombo('0')}</Kbd>
           </button>
         )}
       </div>

@@ -17,6 +17,7 @@ import { EmptyState } from '../../design/EmptyState';
 import { Kbd } from '../../design/Kbd';
 import { Skeleton } from '../../design/Skeleton';
 import { cx } from '../../lib/cx';
+import { modCombo } from '../../lib/modKey';
 import { formatDollars } from '../../lib/money';
 import { formatLastSeen, isOnline } from '../../lib/time';
 
@@ -276,7 +277,7 @@ function ScanTab({
                   onClick={() => runScan(false)}
                   className="flex cursor-pointer items-center gap-[7px] rounded-full border border-clay-line bg-clay-bg px-[13px] py-1 text-[12.5px] font-semibold text-clay-deep hover:border-clay hover:text-clay disabled:cursor-default disabled:opacity-45"
                 >
-                  ◎ Run Scan <Kbd>⌘S</Kbd>
+                  ◎ Run Scan <Kbd>{modCombo('S')}</Kbd>
                 </button>
               </span>
             )

@@ -7,6 +7,7 @@ import type { ChatFilter } from '../../../../preload/contract';
 import { useChats, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { chatFilterCounts } from '../../lib/filters';
+import { modCombo } from '../../lib/modKey';
 import { Chip } from '../../design/Chip';
 import { Kbd } from '../../design/Kbd';
 import { SkeletonRows } from '../../design/Skeleton';
@@ -99,7 +100,7 @@ export function ChatListPane(): React.JSX.Element {
       </div>
       <div className="flex flex-none items-center gap-2 border-t border-line bg-bg1 px-[14px] py-2 text-[11px] text-ink-low">
         <Kbd>J</Kbd>
-        <Kbd>K</Kbd> navigate · <Kbd>⌘U</Kbd> next unread
+        <Kbd>K</Kbd> navigate · <Kbd>{modCombo('U')}</Kbd> next unread
       </div>
     </section>
   );

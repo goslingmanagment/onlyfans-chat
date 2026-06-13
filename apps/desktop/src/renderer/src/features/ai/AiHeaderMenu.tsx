@@ -9,6 +9,7 @@ import { useAccounts, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { Kbd } from '../../design/Kbd';
 import { cx } from '../../lib/cx';
+import { modCombo } from '../../lib/modKey';
 import { startAiFeature, type LiveAiFeature } from './aiStore';
 import { evaluateAiGate } from './dockLogic';
 
@@ -123,7 +124,7 @@ export function AiHeaderMenu(): React.JSX.Element {
             glyph="◎"
             title="Scan"
             sub="deep fan profile → panel · Scan tab"
-            kbd="⌘S"
+            kbd={modCombo('S')}
             disabledReason={blockedReason}
             onRun={() => run('fan-summary')}
           />
@@ -131,7 +132,7 @@ export function AiHeaderMenu(): React.JSX.Element {
             glyph="▤"
             title="Chat review"
             sub="score this conversation 1–10, find mistakes"
-            kbd="⌘E"
+            kbd={modCombo('E')}
             disabledReason={blockedReason}
             onRun={() => run('chat-review')}
           />

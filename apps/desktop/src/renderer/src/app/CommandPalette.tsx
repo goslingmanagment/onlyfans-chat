@@ -7,6 +7,7 @@ import { useUiStore } from '../state/uiStore';
 import { useAccounts, useChatSearch, useChats, useForceRefresh } from '../bridge/queries';
 import { startAiFromGlobal } from '../features/ai/globalStart';
 import { fuzzyFilter } from '../lib/fuzzy';
+import { modCombo } from '../lib/modKey';
 import { Avatar } from '../design/Avatar';
 import { ListRow } from '../design/ListRow';
 import { Kbd } from '../design/Kbd';
@@ -88,13 +89,13 @@ function PaletteBody(): React.JSX.Element {
     // pill row and ✳ menu; gated/contextless invocations are silent no-ops.
     // 'compare' stays out of the palette (P4-stretch, hidden while gated).
     const actions: Array<{ id: string; title: string; run: () => void }> = [
-      { id: 'act:ai-reply', title: 'AI: Fast Reply (⌘R)', run: () => startAiFromGlobal('fast-reply', queryClient) },
-      { id: 'act:ai-improve', title: 'AI: Improve draft (⌘I)', run: () => startAiFromGlobal('improve-draft', queryClient) },
-      { id: 'act:ai-help', title: 'AI: Help me — coaching (⌘H)', run: () => startAiFromGlobal('help-me', queryClient) },
-      { id: 'act:ai-ping', title: 'AI: Ping — reactivation message (⌘P)', run: () => startAiFromGlobal('ping', queryClient) },
-      { id: 'act:ai-hi', title: 'AI: Hi greeting — opener variants (⌘G)', run: () => startAiFromGlobal('hi-greeting', queryClient) },
-      { id: 'act:ai-scan', title: 'AI: Scan — deep fan profile (⌘S)', run: () => startAiFromGlobal('fan-summary', queryClient) },
-      { id: 'act:ai-review', title: 'AI: Chat review — rate this conversation (⌘E)', run: () => startAiFromGlobal('chat-review', queryClient) },
+      { id: 'act:ai-reply', title: `AI: Fast Reply (${modCombo('R')})`, run: () => startAiFromGlobal('fast-reply', queryClient) },
+      { id: 'act:ai-improve', title: `AI: Improve draft (${modCombo('I')})`, run: () => startAiFromGlobal('improve-draft', queryClient) },
+      { id: 'act:ai-help', title: `AI: Help me — coaching (${modCombo('H')})`, run: () => startAiFromGlobal('help-me', queryClient) },
+      { id: 'act:ai-ping', title: `AI: Ping — reactivation message (${modCombo('P')})`, run: () => startAiFromGlobal('ping', queryClient) },
+      { id: 'act:ai-hi', title: `AI: Hi greeting — opener variants (${modCombo('G')})`, run: () => startAiFromGlobal('hi-greeting', queryClient) },
+      { id: 'act:ai-scan', title: `AI: Scan — deep fan profile (${modCombo('S')})`, run: () => startAiFromGlobal('fan-summary', queryClient) },
+      { id: 'act:ai-review', title: `AI: Chat review — rate this conversation (${modCombo('E')})`, run: () => startAiFromGlobal('chat-review', queryClient) },
       // Entry point for the Spenders board (PLAN item 12; recorded in DESIGN §1)
       { id: 'act:spenders', title: 'Spenders — board of top spenders', run: () => setView('spenders') },
       { id: 'act:settings', title: 'Open settings', run: () => setView('settings') },

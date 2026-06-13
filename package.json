@@ -13,7 +13,11 @@
     "test": "pnpm -r --no-bail test",
     "build": "pnpm -r build",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
-    "codegen:ofapi": "node scripts/codegen-ofapi.mjs"
+    "dist": "pnpm --filter @chatgoose/desktop dist",
+    "dist:mac": "pnpm --filter @chatgoose/desktop dist:mac",
+    "dist:win": "pnpm --filter @chatgoose/desktop dist:win",
+    "codegen:ofapi": "node scripts/codegen-ofapi.mjs",
+    "make:icon": "node scripts/make-icon.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

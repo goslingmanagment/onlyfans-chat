@@ -22,6 +22,7 @@ import {
   normalizeSingleReplyPart,
   normalizeVariantReplyParts,
 } from '@chatgoose/shared/output/reply-output';
+import { appPlatform, modCombo, type LabelPlatform } from '../../lib/modKey';
 
 // ─── Tones ───────────────────────────────────────────────────────────────
 
@@ -51,8 +52,10 @@ export function copyPayload(parts: readonly string[], partIndex: number): string
   return parts[partIndex - 1] ?? null;
 }
 
-export function copyChipLabel(partNumber: number): string {
-  return partNumber >= 1 && partNumber <= 9 ? `COPY ⌘${partNumber}` : 'COPY';
+export function copyChipLabel(partNumber: number, platform: LabelPlatform = appPlatform()): string {
+  return partNumber >= 1 && partNumber <= 9
+    ? `COPY ${modCombo(`${partNumber}`, platform)}`
+    : 'COPY';
 }
 
 // ─── Insert payload selection (P3: INSERT is the primary bubble action) ───
@@ -69,8 +72,10 @@ export function insertPayload(parts: readonly string[], partIndex: number): stri
   return parts[partIndex - 1] ?? null;
 }
 
-export function insertChipLabel(partNumber: number): string {
-  return partNumber >= 1 && partNumber <= 9 ? `INSERT ⌘${partNumber}` : 'INSERT';
+export function insertChipLabel(partNumber: number, platform: LabelPlatform = appPlatform()): string {
+  return partNumber >= 1 && partNumber <= 9
+    ? `INSERT ${modCombo(`${partNumber}`, platform)}`
+    : 'INSERT';
 }
 
 /** Insert appends below whatever the chatter already typed; blank drafts are replaced. */

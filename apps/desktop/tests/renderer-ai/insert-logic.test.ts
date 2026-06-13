@@ -40,6 +40,12 @@ describe('insertPayload (⌘0..⌘9 / bubble click)', () => {
     expect(insertChipLabel(9)).toBe('INSERT ⌘9');
     expect(insertChipLabel(10)).toBe('INSERT');
   });
+
+  it('renders the Windows mod label when the platform is injected (PLAN item 11)', () => {
+    expect(insertChipLabel(1, 'darwin')).toBe('INSERT ⌘1');
+    expect(insertChipLabel(1, 'win32')).toBe('INSERT Ctrl+1');
+    expect(insertChipLabel(10, 'win32')).toBe('INSERT');
+  });
 });
 
 describe('appendToDraft (insert lands below what the chatter typed)', () => {

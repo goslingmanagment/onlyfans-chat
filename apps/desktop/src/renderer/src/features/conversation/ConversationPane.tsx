@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useAccounts, useChats, useFan } from '../../bridge/queries';
 import { getBridge } from '../../bridge/bridge';
 import { useUiStore } from '../../state/uiStore';
+import { modCombo } from '../../lib/modKey';
 import { EmptyState } from '../../design/EmptyState';
 import { Kbd } from '../../design/Kbd';
 import { ConversationHeader } from './ConversationHeader';
@@ -79,7 +80,8 @@ export function ConversationPane(): React.JSX.Element {
           title="Select a conversation"
           hint={
             <span>
-              <Kbd>J</Kbd> <Kbd>K</Kbd> to navigate · <Kbd>⌘U</Kbd> next unread · <Kbd>⌘K</Kbd> to jump
+              <Kbd>J</Kbd> <Kbd>K</Kbd> to navigate · <Kbd>{modCombo('U')}</Kbd> next unread ·{' '}
+              <Kbd>{modCombo('K')}</Kbd> to jump
             </span>
           }
         />

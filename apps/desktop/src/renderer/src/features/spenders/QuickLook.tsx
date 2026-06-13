@@ -11,6 +11,7 @@ import { useAccounts, useFlatMessages, useMessages, useOutbox, useSettings } fro
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useUiStore } from '../../state/uiStore';
 import { useT } from '../../lib/i18n';
+import { modCombo } from '../../lib/modKey';
 import { formatWholeDollars } from '../../lib/money';
 import { Avatar } from '../../design/Avatar';
 import { Kbd } from '../../design/Kbd';
@@ -442,7 +443,7 @@ function PreviewComposer({
         value={draft}
         onChange={onDraftChange}
         disabled={!canSend}
-        placeholder={canSend ? '⌘P ping · ⌘↵ send' : cannotReason}
+        placeholder={canSend ? `${modCombo('P')} ping · ${modCombo('↵')} send` : cannotReason}
       />
       <div className="mt-1.5 flex items-center gap-[9px]">
         <PreviewPill
@@ -454,7 +455,7 @@ function PreviewComposer({
             if (pingPill.enabled) start('ping');
           }}
         >
-          <i className="text-clay not-italic">✳</i> Ping <Kbd>⌘P</Kbd>
+          <i className="text-clay not-italic">✳</i> Ping <Kbd>{modCombo('P')}</Kbd>
         </PreviewPill>
         <PreviewPill
           dimmed={rowDisabled}
@@ -480,11 +481,11 @@ function PreviewComposer({
         <button
           type="button"
           disabled={!canSend || blank}
-          title={canSend ? 'Send (⌘↵)' : cannotReason}
+          title={canSend ? `Send (${modCombo('↵')})` : cannotReason}
           onClick={() => sendCurrentDraft({ accountId, chatId: fanId, canSend })}
           className="flex cursor-pointer items-center gap-2 rounded-[7px] border border-clay bg-clay px-[15px] py-[7px] text-[13px] font-bold text-white transition-colors hover:bg-clay-deep disabled:cursor-default disabled:opacity-45 disabled:hover:bg-clay"
         >
-          Send <Kbd>⌘↵</Kbd>
+          Send <Kbd>{modCombo('↵')}</Kbd>
         </button>
       </div>
     </div>
