@@ -336,7 +336,7 @@ export function SpendersSurface(): React.JSX.Element {
           {!statsExpanded && <span>{t('sp.footReadOnly')}</span>}
         </div>
       </div>
-      <StatsPanel stats={stats.data} expanded={statsExpanded} />
+      <StatsPanel stats={stats.data} expanded={statsExpanded} loading={stats.isLoading} />
       {accountId !== null && previewFanId !== null && (
         <QuickLook accountId={accountId} fanId={previewFanId} row={previewRowVM} />
       )}

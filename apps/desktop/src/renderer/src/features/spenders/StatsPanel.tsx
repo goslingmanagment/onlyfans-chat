@@ -11,6 +11,7 @@ import { useT, useLocale, localeTag } from '../../lib/i18n';
 import { formatWholeDollars } from '../../lib/money';
 import { Avatar } from '../../design/Avatar';
 import { Kbd } from '../../design/Kbd';
+import { Skeleton } from '../../design/Skeleton';
 import { cx } from '../../lib/cx';
 import { UNTIERED_ID } from './boardModel';
 import { useSpendersStore } from './spendersStore';
@@ -36,9 +37,11 @@ function axisDay(day: string, tag: string): string {
 export function StatsPanel({
   stats,
   expanded,
+  loading,
 }: {
   stats: SpenderStatsVM | undefined;
   expanded: boolean;
+  loading: boolean;
 }): React.JSX.Element {
   const t = useT();
   const locale = useLocale();
@@ -88,6 +91,16 @@ export function StatsPanel({
 
   const radarRows = (stats?.radar ?? []).filter((row) => row.warm > 0 || row.hot > 0);
   const maxTier = Math.max(1, ...(stats?.tiers ?? []).map((tier) => tier.revenue));
+
+  // First load: ghost the FINAL layout (labels stay, values shimmer) so nothing
+  // pops in and a real $0 account never looks like a loading panel (owner 2026-06-14).
+  if (loading) {
+    return expanded ? (
+      <StatsSkeletonExpanded t={t} onToggle={toggle} />
+    ) : (
+      <StatsSkeletonCollapsed t={t} onToggle={toggle} />
+    );
+  }
 
   if (!expanded) {
     return (
@@ -336,6 +349,116 @@ export function StatsPanel({
 // ─── building blocks ───────────────────────────────────────────────────────
 
 type Translator = ReturnType<typeof useT>;
+
+// ─── loading skeletons (mirror the final layout — no value pop-in) ──────────
+
+function SkValueRow({ label, big = false }: { label: string; big?: boolean }): React.JSX.Element {
+  return (
+    <div className="flex items-baseline gap-2 py-0.5">
+      <span className="text-[11px] text-ink-mid">{label}</span>
+      <span className="flex-1" />
+      <Skeleton className={cx(big ? 'h-4 w-16' : 'h-3 w-12')} />
+    </div>
+  );
+}
+
+function SkShelfRow(): React.JSX.Element {
+  return (
+    <div className="flex items-center gap-2 py-[3px]">
+      <Skeleton className="h-3 w-20" />
+      <span className="flex-1" />
+      <Skeleton className="h-3 w-10" />
+    </div>
+  );
+}
+
+function SkFanLine(): React.JSX.Element {
+  return (
+    <div className="flex items-center gap-2 py-[3.5px]">
+      <Skeleton className="h-6 w-6 rounded-[7px]" />
+      <Skeleton className="h-3 w-24" />
+      <span className="flex-1" />
+      <Skeleton className="h-3 w-10" />
+    </div>
+  );
+}
+
+function StatsSkeletonCollapsed({ t, onToggle }: { t: Translator; onToggle: () => void }): React.JSX.Element {
+  return (
+    <aside className="flex min-h-0 w-[300px] flex-none flex-col overflow-y-auto border-l border-line bg-bg1">
+      <div className="flex flex-none items-baseline gap-2 border-b border-line px-3.5 py-3">
+        <h4 className="font-serif text-[14px] font-semibold">{t('sp.stats.title')}</h4>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="num ml-auto flex cursor-pointer items-center gap-1.5 text-[9px] tracking-[0.06em] text-ink-low hover:text-ink-mid"
+        >
+          {t('sp.stats.expand')} <Kbd>S</Kbd>
+        </button>
+      </div>
+      <Section cap={t('sp.stats.revenue')} meta={t('sp.stats.window30Short')}>
+        <SkValueRow label={t('sp.stats.d30')} big />
+        <SkValueRow label={t('sp.stats.d7')} />
+        <SkValueRow label={t('sp.stats.todayCap')} />
+        <SkValueRow label={t('sp.stats.payersAvg')} />
+        <Skeleton className="mt-[7px] h-[38px] w-full rounded-chip" />
+      </Section>
+      <Section cap={t('sp.stats.byShelf')} meta={t('sp.stats.window30Short')}>
+        <SkShelfRow />
+        <SkShelfRow />
+        <SkShelfRow />
+      </Section>
+      <Section cap={t('sp.stats.waiting')} meta={t('sp.stats.clickPreview')} last>
+        <SkFanLine />
+        <SkFanLine />
+        <SkFanLine />
+      </Section>
+    </aside>
+  );
+}
+
+function StatsSkeletonExpanded({ t, onToggle }: { t: Translator; onToggle: () => void }): React.JSX.Element {
+  return (
+    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-[18px]">
+      <div className="mx-0.5 mb-3 flex items-baseline gap-2.5">
+        <h4 className="font-serif text-[15px] font-semibold">{t('sp.stats.title')}</h4>
+        <span className="num text-[9.5px] tracking-[0.05em] text-ink-low">{t('sp.stats.localNote')}</span>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="num ml-auto flex cursor-pointer items-center gap-1.5 text-[9px] tracking-[0.06em] text-ink-low hover:text-ink-mid"
+        >
+          {t('sp.stats.collapse')} <Kbd>S</Kbd>
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Card wide capText={t('sp.stats.revenue')} meta={t('sp.stats.windowNote')}>
+          <div className="mb-3 flex items-baseline gap-6">
+            {['w-20', 'w-20', 'w-16', 'w-12', 'w-16'].map((w, i) => (
+              <div key={i}>
+                <Skeleton className="h-2.5 w-10" />
+                <Skeleton className={cx('mt-1.5 h-[21px]', w)} />
+              </div>
+            ))}
+          </div>
+          <Skeleton className="h-[72px] w-full rounded-chip" />
+        </Card>
+        {[
+          `${t('sp.stats.byShelf')} · ${t('sp.stats.d30')}`,
+          t('sp.stats.reactivation'),
+          t('sp.stats.waiting'),
+          t('sp.stats.new30'),
+        ].map((capText, i) => (
+          <Card key={i} capText={capText}>
+            <SkShelfRow />
+            <SkShelfRow />
+            <SkShelfRow />
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function Section({
   cap,
