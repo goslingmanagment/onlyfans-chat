@@ -15,8 +15,10 @@ import { GalleryTab } from '../vault/GalleryTab';
 import { VaultPanel } from '../vault/VaultPanel';
 import { resetVaultForConversation } from '../vault/vaultStore';
 import { cx } from '../../lib/cx';
+import { useT } from '../../lib/i18n';
 
 export function ConversationPane(): React.JSX.Element {
+  const t = useT();
   const accountId = useUiStore((s) => s.selectedAccountId);
   const chatId = useUiStore((s) => s.selectedChatId);
   const typing = useUiStore((s) => s.typing);
@@ -75,7 +77,7 @@ export function ConversationPane(): React.JSX.Element {
   if (accountId !== null && chatId !== null && selectedChat.isPending) {
     return (
       <section className="flex min-w-0 flex-1 flex-col bg-bg0">
-        <EmptyState glyph="✉" title="Loading conversation" />
+        <EmptyState glyph="✉" title={t('conv.loadingTitle')} />
       </section>
     );
   }
@@ -85,11 +87,11 @@ export function ConversationPane(): React.JSX.Element {
       <section className="flex min-w-0 flex-1 flex-col bg-bg0">
         <EmptyState
           glyph="✉"
-          title="Select a conversation"
+          title={t('conv.selectPrompt')}
           hint={
             <span>
-              <Kbd>J</Kbd> <Kbd>K</Kbd> to navigate · <Kbd>{modCombo('U')}</Kbd> next unread ·{' '}
-              <Kbd>{modCombo('K')}</Kbd> to jump
+              <Kbd>J</Kbd> <Kbd>K</Kbd> {t('conv.navHintNavigate')} · <Kbd>{modCombo('U')}</Kbd>{' '}
+              {t('conv.navHintNextUnread')} · <Kbd>{modCombo('K')}</Kbd> {t('conv.navHintJump')}
             </span>
           }
         />
@@ -106,14 +108,14 @@ export function ConversationPane(): React.JSX.Element {
       <ConversationHeader chat={chat} fan={fan.data ?? null} />
       {unmapped && (
         <div className="flex flex-none items-center gap-3 border-b border-amber-line bg-amber-bg px-[18px] py-2 text-[12.5px] text-amber">
-          <span className="font-semibold">Map a personality to enable AI</span>
-          <span className="text-amber/80">— this account has no personality yet.</span>
+          <span className="font-semibold">{t('conv.gateMapTitle')}</span>
+          <span className="text-amber/80">{t('conv.gateMapBody')}</span>
           <button
             type="button"
             onClick={() => setView('settings')}
             className="ml-auto cursor-pointer font-semibold underline decoration-dotted underline-offset-2"
           >
-            Open settings
+            {t('sp.openSettings')}
           </button>
         </div>
       )}
@@ -139,7 +141,7 @@ export function ConversationPane(): React.JSX.Element {
       )}
       {typingHere && (
         <div className="flex flex-none items-center gap-2 px-6 pb-1 text-[12px] text-ink-low">
-          {chat.fanName} is typing
+          {t('conv.isTyping', { name: chat.fanName })}
           <span className="inline-flex gap-[3px]">
             <i className="h-1 w-1 animate-pulse rounded-full bg-ink-low" />
             <i className="h-1 w-1 animate-pulse rounded-full bg-ink-low [animation-delay:200ms]" />

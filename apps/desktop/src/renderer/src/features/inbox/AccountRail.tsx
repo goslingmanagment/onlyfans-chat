@@ -5,6 +5,7 @@ import { useUiStore } from '../../state/uiStore';
 import { initialsOf } from '../../lib/messages';
 import { applyOrder, computeReorder } from '../../lib/order';
 import { cx } from '../../lib/cx';
+import { useT } from '../../lib/i18n';
 import { Skeleton } from '../../design/Skeleton';
 
 type DropPos = 'before' | 'after';
@@ -19,6 +20,7 @@ function dropPosFromEvent(e: React.DragEvent): DropPos {
 }
 
 export function AccountRail(): React.JSX.Element {
+  const t = useT();
   const accounts = useAccounts();
   const accountOrder = useSettings().data?.accountOrder;
   const { mutate: saveSettings } = useUpdateSettings();
@@ -106,7 +108,7 @@ export function AccountRail(): React.JSX.Element {
       ))}
       <button
         type="button"
-        title="Accounts are connected by your admin in the OFAPI console"
+        title={t('inbox.addAcctTitle')}
         className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] border-[1.5px] border-dashed border-line-strong text-[16px] text-ink-low"
       >
         +
@@ -115,7 +117,7 @@ export function AccountRail(): React.JSX.Element {
       {/* Spenders page entry (owner 2026-06-13: a visible button, not just ⌘K) */}
       <button
         type="button"
-        title="Spenders"
+        title={t('sp.title')}
         onClick={() => setView(view === 'spenders' ? 'workspace' : 'spenders')}
         className={cx(
           'flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] text-[15px] font-bold',
@@ -126,7 +128,7 @@ export function AccountRail(): React.JSX.Element {
       </button>
       <button
         type="button"
-        title="Settings"
+        title={t('settings.title')}
         onClick={() => setView(view === 'settings' ? 'workspace' : 'settings')}
         className={cx(
           'cursor-pointer p-1.5 text-[16px]',
@@ -162,6 +164,7 @@ const AccountTile = memo(function AccountTile({
   onDragOver: (id: string, e: React.DragEvent) => void;
   onDrop: (id: string, e: React.DragEvent) => void;
 }): React.JSX.Element {
+  const t = useT();
   return (
     <div
       className="relative flex w-full justify-center"
@@ -182,7 +185,7 @@ const AccountTile = memo(function AccountTile({
         onDragStart={(e) => onDragStart(account.id, e)}
         onDragEnd={onDragEnd}
         onClick={() => onSelect(account.id)}
-        title={`${account.displayName} (@${account.username})${account.isAuthenticated ? '' : ' — re-auth needed, ping admin'}`}
+        title={`${account.displayName} (@${account.username})${account.isAuthenticated ? '' : t('inbox.acctReauthSuffix')}`}
         className={cx(
           'relative flex h-9 w-9 items-center justify-center rounded-[10px] text-[12.5px] font-bold transition-opacity',
           draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',

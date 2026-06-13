@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { makeTranslator } from '@chatgoose/shared/i18n/index';
 import type { OutboxItemVM } from '../../src/preload/contract';
 import { buildThreadRows } from '../../src/renderer/src/lib/messages';
 import {
-  RESTRICTED_WORDS_BANNER,
-  UNCONFIRMED_EXPLAINER,
   activeSequence,
   createTypingThrottle,
   deriveOutboxRow,
@@ -12,6 +11,13 @@ import {
   splitDraftParts,
   visibleOutboxItems,
 } from '../../src/renderer/src/features/conversation/sendLogic';
+
+// deriveOutboxRow is locale-free: it emits reason CODES/flags
+// (restrictedWords / explainerCode / explainerMessage). The byte-exact English
+// copy now lives in the catalog and is asserted in the conversation component
+// tests; here we pin the structured descriptor. buildThreadRows takes the
+// translator last (seam refactor) — an EN translator keeps day labels stable.
+const t = makeTranslator('en');
 
 let seq = 0;
 function outboxItem(overrides: Partial<OutboxItemVM>): OutboxItemVM {
@@ -159,7 +165,8 @@ describe('deriveOutboxRow (state → label/actions)', () => {
       tone: 'low',
       pulse: false,
       restrictedWords: false,
-      explainer: null,
+      explainerCode: null,
+      explainerMessage: null,
       actions: [],
     });
   });
@@ -170,12 +177,13 @@ describe('deriveOutboxRow (state → label/actions)', () => {
       tone: 'low',
       pulse: true,
       restrictedWords: false,
-      explainer: null,
+      explainerCode: null,
+      explainerMessage: null,
       actions: [],
     });
   });
 
-  it('failed → FAILED with edit/retry/dismiss', () => {
+  it('failed → FAILED with edit/retry/dismiss, passes the raw wire message through verbatim', () => {
     const view = deriveOutboxRow(
       outboxItem({ state: 'failed', errorCode: 'CG-NET-02', errorMessage: 'Connection refused.' }),
     );
@@ -184,15 +192,18 @@ describe('deriveOutboxRow (state → label/actions)', () => {
       tone: 'bad',
       pulse: false,
       restrictedWords: false,
-      explainer: 'Connection refused.',
+      explainerCode: null,
+      // uncoded FAILED: the verbatim wire message, not authored/localized copy
+      explainerMessage: 'Connection refused.',
       actions: ['edit', 'retry', 'dismiss'],
     });
   });
 
-  it('failed with CG-OF-05 → restricted-words banner', () => {
+  it('failed with CG-OF-05 → restrictedWords flag, no authored explainer (banner resolved in the component)', () => {
     const view = deriveOutboxRow(outboxItem({ state: 'failed', errorCode: 'CG-OF-05' }));
     expect(view?.restrictedWords).toBe(true);
-    expect(view?.explainer).toBe(RESTRICTED_WORDS_BANNER);
+    expect(view?.explainerCode).toBeNull();
+    expect(view?.explainerMessage).toBeNull();
   });
 
   it('unconfirmed → UNCONF with verify/dismiss and NEVER a retry (SPEC §7.5)', () => {
@@ -202,7 +213,8 @@ describe('deriveOutboxRow (state → label/actions)', () => {
       tone: 'warn',
       pulse: false,
       restrictedWords: false,
-      explainer: UNCONFIRMED_EXPLAINER,
+      explainerCode: 'unconfirmed',
+      explainerMessage: null,
       actions: ['verify', 'dismiss'],
     });
     expect(view?.actions).not.toContain('retry');
@@ -254,6 +266,7 @@ describe('visibleOutboxItems / mergeOutboxRows (thread ordering)', () => {
         },
       ],
       NOW,
+      t,
     );
     // outbox row created BEFORE the last message still renders below it
     const items = [
@@ -265,7 +278,7 @@ describe('visibleOutboxItems / mergeOutboxRows (thread ordering)', () => {
   });
 
   it('returns the same rows reference when nothing is visible (memo stability)', () => {
-    const messages = buildThreadRows([], NOW);
+    const messages = buildThreadRows([], NOW, t);
     expect(mergeOutboxRows(messages, [outboxItem({ state: 'sent' })])).toBe(messages);
   });
 });

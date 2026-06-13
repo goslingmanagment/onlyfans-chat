@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { makeTranslator } from '@chatgoose/shared/i18n/index';
 import type { MessageVM } from '../../src/preload/contract';
 import {
   UNSEND_WINDOW_MS,
@@ -12,6 +13,8 @@ import {
 import { formatDollars, formatLedgerAmount, formatWholeDollars } from '../../src/renderer/src/lib/money';
 
 const NOW = new Date(2026, 5, 10, 19, 30);
+// English stub: en catalog values match the strings these helpers used to hardcode.
+const t = makeTranslator('en');
 
 let seq = 0;
 function msg(overrides: Partial<MessageVM>): MessageVM {
@@ -44,6 +47,7 @@ describe('buildThreadRows', () => {
         msg({ createdAt: new Date(2026, 5, 10, 9, 0).toISOString() }),
       ],
       NOW,
+      t,
     );
     expect(rows.map((r) => r.kind)).toEqual(['day', 'message', 'message', 'day', 'message']);
     const firstDay = rows[0];
@@ -53,7 +57,7 @@ describe('buildThreadRows', () => {
   });
 
   it('marks tips as ledger rows', () => {
-    const rows = buildThreadRows([msg({ isTip: true, tipAmount: 25 })], NOW);
+    const rows = buildThreadRows([msg({ isTip: true, tipAmount: 25 })], NOW, t);
     expect(rows.map((r) => r.kind)).toEqual(['day', 'tip']);
   });
 
@@ -61,24 +65,25 @@ describe('buildThreadRows', () => {
     const rows = buildThreadRows(
       [msg({}), msg({ isTip: true, tipAmount: 5 }), msg({})],
       NOW,
+      t,
     );
     const keys = rows.map((r) => r.key);
     expect(new Set(keys).size).toBe(keys.length);
   });
 
   it('handles empty input', () => {
-    expect(buildThreadRows([], NOW)).toEqual([]);
+    expect(buildThreadRows([], NOW, t)).toEqual([]);
   });
 });
 
 describe('ppvChip', () => {
   it('is null for non-PPV messages', () => {
-    expect(ppvChip(msg({ price: 0 }))).toBeNull();
-    expect(ppvChip(msg({ price: 45, ppvState: null }))).toBeNull();
+    expect(ppvChip(msg({ price: 0 }), t)).toBeNull();
+    expect(ppvChip(msg({ price: 45, ppvState: null }), t)).toBeNull();
   });
 
   it('renders purchased as filled green with a check', () => {
-    expect(ppvChip(msg({ price: 45, ppvState: 'purchased' }))).toEqual({
+    expect(ppvChip(msg({ price: 45, ppvState: 'purchased' }), t)).toEqual({
       tone: 'green',
       label: '$45 PPV ✓',
       state: 'purchased',
@@ -86,7 +91,7 @@ describe('ppvChip', () => {
   });
 
   it('renders not purchased as amber with the explicit words', () => {
-    expect(ppvChip(msg({ price: 45, ppvState: 'not_purchased' }))).toEqual({
+    expect(ppvChip(msg({ price: 45, ppvState: 'not_purchased' }), t)).toEqual({
       tone: 'amber',
       label: '$45 PPV — not purchased',
       state: 'not_purchased',
@@ -94,7 +99,7 @@ describe('ppvChip', () => {
   });
 
   it('renders unknown as neutral', () => {
-    expect(ppvChip(msg({ price: 6, ppvState: 'unknown' }))).toEqual({
+    expect(ppvChip(msg({ price: 6, ppvState: 'unknown' }), t)).toEqual({
       tone: 'neutral',
       label: '$6 PPV',
       state: 'unknown',
@@ -102,7 +107,7 @@ describe('ppvChip', () => {
   });
 
   it('keeps cents when present', () => {
-    expect(ppvChip(msg({ price: 9.99, ppvState: 'unknown' }))?.label).toBe('$9.99 PPV');
+    expect(ppvChip(msg({ price: 9.99, ppvState: 'unknown' }), t)?.label).toBe('$9.99 PPV');
   });
 });
 
@@ -174,13 +179,13 @@ describe('mediaCountLabel', () => {
   }
 
   it('pluralizes and joins counts', () => {
-    expect(mediaCountLabel([media('photo'), media('photo'), media('photo'), media('video')])).toBe(
+    expect(mediaCountLabel([media('photo'), media('photo'), media('photo'), media('video')], 'en')).toBe(
       '3 photos · 1 video',
     );
   });
 
   it('handles a single item', () => {
-    expect(mediaCountLabel([media('photo')])).toBe('1 photo');
+    expect(mediaCountLabel([media('photo')], 'en')).toBe('1 photo');
   });
 });
 

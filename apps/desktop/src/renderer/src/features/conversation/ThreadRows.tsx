@@ -11,6 +11,7 @@ import { canUnsend, mediaCountLabel, ppvChip, sendState } from '../../lib/messag
 import { Badge } from '../../design/Badge';
 import { getBridge } from '../../bridge/bridge';
 import { MediaThumb } from './MediaThumb';
+import { useLocale, useT } from '../../lib/i18n';
 
 export const DayDivider = memo(function DayDivider({ label }: { label: string }): React.JSX.Element {
   return (
@@ -30,13 +31,14 @@ export const TipLedgerRow = memo(function TipLedgerRow({
   message: MessageVM;
   fanName: string;
 }): React.JSX.Element {
+  const t = useT();
   return (
     <div className="my-[10px] flex justify-center">
       <div className="flex max-w-[80%] items-center gap-2.5 rounded-full border border-green-line bg-green-bg px-[14px] py-[5px]">
         <span className="num text-[13px] font-semibold text-green">
           {formatLedgerAmount(message.tipAmount ?? 0)}
         </span>
-        <span className="text-[12px] text-ink-mid">tip from {fanName}</span>
+        <span className="text-[12px] text-ink-mid">{t('conv.tipFrom', { name: fanName })}</span>
         {message.tipText !== null && message.tipText !== '' && (
           <span className="truncate text-[12px] text-ink-mid">“{message.tipText}”</span>
         )}
@@ -53,11 +55,13 @@ export const MessageRow = memo(function MessageRow({
   message: MessageVM;
   accountId: string;
 }): React.JSX.Element {
+  const t = useT();
+  const locale = useLocale();
   // two-step inline confirm for unsend — no modal in the shift loop (DESIGN §4)
   const [confirmUnsend, setConfirmUnsend] = useState(false);
   const me = message.isSentByMe;
   const state = sendState(message);
-  const chip = ppvChip(message);
+  const chip = ppvChip(message, t);
   const isPpv = chip !== null;
   const lockedMedia = message.media.filter((m) => m.locked);
   const visibleMedia = message.media.filter((m) => !m.locked);
@@ -86,7 +90,7 @@ export const MessageRow = memo(function MessageRow({
           )}
         >
           {message.deleted ? (
-            <span className="text-[13px] text-ink-low italic">message deleted</span>
+            <span className="text-[13px] text-ink-low italic">{t('conv.messageDeleted')}</span>
           ) : (
             <>
               {/* PPV locked-media strip */}
@@ -96,7 +100,7 @@ export const MessageRow = memo(function MessageRow({
                     {chip.state === 'purchased' ? '🔓' : '🔒'}
                   </span>
                   <span className="num absolute right-[9px] bottom-2 rounded-[5px] border border-line bg-bg1/90 px-[7px] py-[2px] text-micro text-ink-mid">
-                    {mediaCountLabel(message.media)}
+                    {mediaCountLabel(message.media, locale)}
                   </span>
                 </div>
               )}
@@ -149,24 +153,24 @@ export const MessageRow = memo(function MessageRow({
                   onClick={unsend}
                   className="cursor-pointer font-semibold text-bad hover:underline"
                 >
-                  yes
+                  {t('conv.unsendYes')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setConfirmUnsend(false)}
                   className="cursor-pointer hover:text-ink-mid"
                 >
-                  keep
+                  {t('conv.unsendKeep')}
                 </button>
               </span>
             ) : (
               <button
                 type="button"
-                title="Unsend (removes the message for the fan — works for 24 h)"
+                title={t('conv.unsendTooltip')}
                 onClick={() => setConfirmUnsend(true)}
                 className="cursor-pointer opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:text-bad"
               >
-                unsend
+                {t('conv.unsend')}
               </button>
             ))}
         </div>

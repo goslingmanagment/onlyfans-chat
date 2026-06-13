@@ -3,10 +3,12 @@
 
 import { useCallback, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import type { UiMessageKey } from '@chatgoose/shared/i18n/index';
 import type { ChatFilter } from '../../../../preload/contract';
 import { useChats, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { chatFilterCounts } from '../../lib/filters';
+import { useT } from '../../lib/i18n';
 import { modCombo } from '../../lib/modKey';
 import { Chip } from '../../design/Chip';
 import { Kbd } from '../../design/Kbd';
@@ -14,13 +16,14 @@ import { SkeletonRows } from '../../design/Skeleton';
 import { EmptyState } from '../../design/EmptyState';
 import { ChatRow } from './ChatRow';
 
-const FILTERS: Array<{ id: ChatFilter; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'unread', label: 'Unread' },
-  { id: 'with_tips', label: 'Tips' },
+const FILTERS: Array<{ id: ChatFilter; labelKey: UiMessageKey }> = [
+  { id: 'all', labelKey: 'sp.all' },
+  { id: 'unread', labelKey: 'inbox.filterUnread' },
+  { id: 'with_tips', labelKey: 'inbox.filterTips' },
 ];
 
 export function ChatListPane(): React.JSX.Element {
+  const t = useT();
   const accountId = useUiStore((s) => s.selectedAccountId);
   const selectedChatId = useUiStore((s) => s.selectedChatId);
   const chatFilter = useUiStore((s) => s.chatFilter);
@@ -55,7 +58,7 @@ export function ChatListPane(): React.JSX.Element {
       <div className="flex gap-[5px] border-b border-line px-3 py-[10px]">
         {FILTERS.map((f) => (
           <Chip key={f.id} selected={chatFilter === f.id} onClick={() => setChatFilter(f.id)}>
-            {f.label}
+            {t(f.labelKey)}
             {f.id !== 'all' && counts[f.id] > 0 && (
               <span className="num ml-[3px] text-[10.5px] opacity-70">{counts[f.id]}</span>
             )}
@@ -66,11 +69,11 @@ export function ChatListPane(): React.JSX.Element {
         {chats.isPending && <SkeletonRows />}
         {!chats.isPending && items.length === 0 && (
           <EmptyState
-            title={chatFilter === 'all' ? 'No chats yet' : 'Nothing here'}
+            title={chatFilter === 'all' ? t('inbox.emptyAllTitle') : t('inbox.emptyFilteredTitle')}
             hint={
               chatFilter === 'all'
-                ? 'Chats appear as soon as the first sync completes.'
-                : 'No chats match this filter right now.'
+                ? t('inbox.emptyAllHint')
+                : t('inbox.emptyFilteredHint')
             }
           />
         )}
@@ -100,7 +103,7 @@ export function ChatListPane(): React.JSX.Element {
       </div>
       <div className="flex flex-none items-center gap-2 border-t border-line bg-bg1 px-[14px] py-2 text-[11px] text-ink-low">
         <Kbd>J</Kbd>
-        <Kbd>K</Kbd> navigate · <Kbd>{modCombo('U')}</Kbd> next unread
+        <Kbd>K</Kbd> {t('inbox.footNavigate')} · <Kbd>{modCombo('U')}</Kbd> {t('inbox.footNextUnread')}
       </div>
     </section>
   );

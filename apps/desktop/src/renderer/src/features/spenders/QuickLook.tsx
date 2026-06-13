@@ -15,7 +15,7 @@ import { formatWholeDollars } from '../../lib/money';
 import { Avatar } from '../../design/Avatar';
 import { Kbd } from '../../design/Kbd';
 import { buildThreadRows, type ThreadRow } from '../../lib/messages';
-import { mergeOutboxRows, createTypingThrottle, CANNOT_SEND_FALLBACK } from '../conversation/sendLogic';
+import { mergeOutboxRows, createTypingThrottle } from '../conversation/sendLogic';
 import { DayDivider, MessageRow, TipLedgerRow } from '../conversation/ThreadRows';
 import { OutboxRow } from '../conversation/OutboxRows';
 import { DraftTextarea } from '../conversation/DraftTextarea';
@@ -40,6 +40,7 @@ import {
   DOCK_FEATURE_LABELS,
   type AiGate,
 } from '../ai/dockLogic';
+import { gateText } from '../ai/gateText';
 import { usePingGate } from '../ai/pingGate';
 import { useSpendersStore } from './spendersStore';
 import { dayCounter } from './SpenderRowItem';
@@ -111,7 +112,7 @@ export function QuickLook({
         ? t('sp.reason.unsubscribed')
         : rawReason === 'chat_unavailable'
           ? t('sp.reason.chat_unavailable')
-          : (rawReason ?? CANNOT_SEND_FALLBACK);
+          : (rawReason ?? t('conv.cannotSendFallback'));
 
   return (
     <>
@@ -200,8 +201,8 @@ function PreviewThread({
   const messages = useFlatMessages(query);
   const outbox = useOutbox(accountId, fanId);
   const rows = useMemo(
-    () => mergeOutboxRows(buildThreadRows(messages, new Date()), outbox.data ?? []),
-    [messages, outbox.data],
+    () => mergeOutboxRows(buildThreadRows(messages, new Date(), t), outbox.data ?? []),
+    [messages, outbox.data, t],
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -411,6 +412,7 @@ function PreviewComposer({
   canSend: boolean;
   cannotReason: string;
 }): React.JSX.Element {
+  const t = useT();
   const queryClient = useQueryClient();
   const draft = useAiStore((s) => s.draftText);
   const accounts = useAccounts();
@@ -429,7 +431,7 @@ function PreviewComposer({
         hasLlmKey: settings.data.hasAnthropicKey || settings.data.hasOpenRouterKey,
       })
     : null;
-  const blockedMessage = gate !== null && !gate.ok ? gate.message : null;
+  const blockedMessage = gate !== null && !gate.ok ? gateText(t, gate.reason) : null;
   const sendBlockedMessage = canSend ? null : cannotReason;
   const rowDisabled = !ready || blockedMessage !== null || sendBlockedMessage !== null;
   const pingPill = evaluatePingGate(gate, pingGate.data?.blocked ?? null);
@@ -470,7 +472,7 @@ function PreviewComposer({
           dimmed={!pingEnabled}
           disabled={!pingEnabled}
           title={
-            sendBlockedMessage ?? (pingPill.enabled ? 'Reactivation message for a silent fan' : pingPill.reason)
+            sendBlockedMessage ?? (pingPill.enabled ? t('aidock.pingTip') : gateText(t, pingPill.code))
           }
           onClick={() => {
             if (pingEnabled) start('ping');
@@ -481,7 +483,7 @@ function PreviewComposer({
         <PreviewPill
           dimmed={rowDisabled}
           disabled={rowDisabled}
-          title={sendBlockedMessage ?? blockedMessage ?? 'Generate a reply suggestion'}
+          title={sendBlockedMessage ?? blockedMessage ?? t('aidock.replyTip')}
           onClick={() => {
             if (!rowDisabled) start('fast-reply');
           }}
@@ -491,7 +493,7 @@ function PreviewComposer({
         <PreviewPill
           dimmed={!hiEnabled}
           disabled={!hiEnabled}
-          title={sendBlockedMessage ?? (hiPill.enabled ? '3 opener variants for a fresh conversation' : hiPill.reason)}
+          title={sendBlockedMessage ?? (hiPill.enabled ? t('aidock.hiTip') : gateText(t, hiPill.code))}
           onClick={() => {
             if (hiEnabled) start('hi-greeting');
           }}

@@ -5,6 +5,7 @@
 
 import type { KeyBinding } from '../lib/keymap';
 import { appPlatform, modCombo, type LabelPlatform } from '../lib/modKey';
+import type { UiMessageKey } from '@chatgoose/shared/i18n/index';
 
 /** ⌘0..⌘9 — primary dock-part action: insert (copy when sending unavailable, SPEC §7.0). */
 export type AiPartAction =
@@ -116,3 +117,35 @@ export const CHEATSHEET_EXTRAS: ReadonlyArray<{ label: string; description: stri
 
 /** Shown dimmed in the cheatsheet — wired by later phases (empty = section hidden). */
 export const UPCOMING_BINDINGS: ReadonlyArray<{ label: string; description: string; phase: string }> = [];
+
+/** Catalog key per binding description — rendered by the cheatsheet via t().
+ * The English `description` fields above are LEFT UNCHANGED so the pinned
+ * win==mac description-equality test (mod-key.test.ts) stays green; they are
+ * the English identity and are no longer rendered directly. */
+export const CMD_DESC_KEY: Partial<Record<KeyAction, UiMessageKey>> = {
+  palette: 'cmd.palette',
+  'next-unread': 'cmd.nextUnread',
+  'next-chat': 'cmd.nextChat',
+  'prev-chat': 'cmd.prevChat',
+  'focus-composer': 'cmd.focusComposer',
+  send: 'cmd.send',
+  dismiss: 'cmd.dismiss',
+  'toggle-panel': 'cmd.togglePanel',
+  'toggle-list': 'cmd.toggleList',
+  cheatsheet: 'cmd.cheatsheet',
+  settings: 'cmd.settings',
+  'ai-reply': 'cmd.aiReply',
+  'ai-improve': 'cmd.aiImprove',
+  'ai-help': 'cmd.aiHelp',
+  'ai-ping': 'cmd.aiPing',
+  'ai-hi': 'cmd.aiHi',
+  'ai-review': 'cmd.aiReview',
+  'ai-scan': 'cmd.aiScan',
+  'ai-tone': 'cmd.aiTone',
+  'ai-cancel': 'cmd.aiCancel',
+  'ai-part-0': 'cmd.aiPart0',
+  'board-preview': 'cmd.boardPreview',
+  'board-open-chat': 'cmd.boardOpenChat',
+  'board-back': 'cmd.boardBack',
+  'board-stats': 'cmd.boardStats',
+};

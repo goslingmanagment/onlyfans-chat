@@ -1,5 +1,9 @@
 // Pure time/date formatting (local time). All functions take explicit Date/now
-// arguments so they are deterministic under test.
+// arguments so they are deterministic under test. Functions that render a
+// human label take an injected translator (i18n stage 2) — kept pure: no hook,
+// no store, the caller passes the locale-bound translator.
+
+import type { UiTranslator } from '@chatgoose/shared/i18n/index';
 
 const MONTHS = [
   'JAN',
@@ -57,11 +61,11 @@ export function formatListTime(date: Date, now: Date): string {
   return `${monthDay} '${String(date.getFullYear() % 100).padStart(2, '0')}`;
 }
 
-/** Day-separator label: 'TODAY', 'YESTERDAY', 'JUN 3', "JUN 3 '25". */
-export function formatDayLabel(date: Date, now: Date): string {
+/** Day-separator label: 'TODAY', 'YESTERDAY', 'JUN 3', "JUN 3 '25" (month-day codes stay English). */
+export function formatDayLabel(date: Date, now: Date, t: UiTranslator): string {
   const days = daysBetween(date, now);
-  if (days === 0) return 'TODAY';
-  if (days === 1) return 'YESTERDAY';
+  if (days === 0) return t('sp.today');
+  if (days === 1) return t('sp.yesterdayCap');
   const monthDay = `${MONTHS[date.getMonth()] ?? ''} ${date.getDate()}`;
   if (date.getFullYear() === now.getFullYear()) return monthDay;
   return `${monthDay} '${String(date.getFullYear() % 100).padStart(2, '0')}`;
@@ -83,12 +87,12 @@ export function formatAgeShort(ageMs: number): string {
   return `${Math.floor(h / 24)}d`;
 }
 
-/** 'online now' within 5 min, else 'last seen 2h ago'; null → 'last seen unknown'. */
-export function formatLastSeen(lastSeenIso: string | null, now: Date): string {
-  if (lastSeenIso === null) return 'last seen unknown';
+/** 'online now' within 5 min, else 'last seen 2h ago'; null → 'last seen unknown' (age token stays English). */
+export function formatLastSeen(lastSeenIso: string | null, now: Date, t: UiTranslator): string {
+  if (lastSeenIso === null) return t('conv.lastSeenUnknown');
   const age = now.getTime() - new Date(lastSeenIso).getTime();
-  if (age < 5 * 60_000) return 'online now';
-  return `last seen ${formatAgeShort(age)} ago`;
+  if (age < 5 * 60_000) return t('conv.onlineNow');
+  return t('conv.lastSeenAgo', { age: formatAgeShort(age) });
 }
 
 export function isOnline(lastSeenIso: string | null, now: Date): boolean {

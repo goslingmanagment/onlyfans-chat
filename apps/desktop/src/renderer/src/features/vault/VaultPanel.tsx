@@ -12,9 +12,11 @@ import type { VaultItemVM } from '../../../../preload/contract';
 import { getBridge } from '../../bridge/bridge';
 import { useVaultAlbums, useVaultMedia } from '../../bridge/queries';
 import { useAiStore } from '../ai/aiStore';
+import { pluralWord } from '@chatgoose/shared/i18n/index';
 import { Chip } from '../../design/Chip';
 import { Button } from '../../design/Button';
 import { cx } from '../../lib/cx';
+import { useT, useLocale } from '../../lib/i18n';
 import { useVaultStore } from './vaultStore';
 import {
   chunkRows,
@@ -28,6 +30,7 @@ const GRID_COLUMNS = 6;
 const CELL_HEIGHT = 96;
 
 function VaultCell({ item }: { item: VaultItemVM }): React.JSX.Element {
+  const t = useT();
   const selection = useVaultStore((s) => s.selection);
   const toggleItem = useVaultStore((s) => s.toggleItem);
   const togglePreviewItem = useVaultStore((s) => s.togglePreviewItem);
@@ -39,7 +42,7 @@ function VaultCell({ item }: { item: VaultItemVM }): React.JSX.Element {
       type="button"
       disabled={!item.isReady}
       onClick={() => toggleItem(item.id)}
-      title={item.isReady ? 'Attach / detach' : 'Still processing on OnlyFans'}
+      title={item.isReady ? t('vault.cellAttachTip') : t('vault.cellProcessingTip')}
       className={cx(
         'relative h-[88px] overflow-hidden rounded-[8px] border text-left',
         order !== null ? 'border-clay ring-2 ring-clay/50' : 'border-line',
@@ -72,7 +75,7 @@ function VaultCell({ item }: { item: VaultItemVM }): React.JSX.Element {
         <span
           role="button"
           tabIndex={0}
-          title={isPreview ? 'Free preview — click to lock' : 'Locked — click to make a free preview'}
+          title={isPreview ? t('vault.previewToggleFree') : t('vault.previewToggleLocked')}
           onClick={(event) => {
             event.stopPropagation();
             togglePreviewItem(item.id);
@@ -98,6 +101,7 @@ function VaultCell({ item }: { item: VaultItemVM }): React.JSX.Element {
 }
 
 function UploadControls({ accountId }: { accountId: string }): React.JSX.Element {
+  const t = useT();
   const upload = useVaultStore((s) => s.upload);
   const setUpload = useVaultStore((s) => s.setUpload);
   const queryClient = useQueryClient();
@@ -128,16 +132,20 @@ function UploadControls({ accountId }: { accountId: string }): React.JSX.Element
     const { name, bytes, creditEstimate } = upload.file;
     return (
       <span className="num flex items-center gap-2 rounded-full border border-amber-line bg-amber-bg px-3 py-1 text-micro text-amber">
-        {name} · {(bytes / 1_000_000).toFixed(1)} MB · ~{creditEstimate} credits
+        {t('vault.uploadPreflight', {
+          name,
+          mb: (bytes / 1_000_000).toFixed(1),
+          credits: creditEstimate,
+        })}
         {upload.phase === 'uploading' ? (
           <span className="animate-pulse font-bold">UPLOADING…</span>
         ) : (
           <>
             <button type="button" onClick={() => void confirmUpload()} className="cursor-pointer font-bold underline decoration-dotted">
-              Upload
+              {t('vault.uploadConfirm')}
             </button>
             <button type="button" onClick={() => useVaultStore.getState().setUpload({ phase: 'idle' })} className="cursor-pointer underline decoration-dotted">
-              Cancel
+              {t('common.cancel')}
             </button>
           </>
         )}
@@ -148,11 +156,11 @@ function UploadControls({ accountId }: { accountId: string }): React.JSX.Element
     <span className="flex items-center gap-2">
       {upload.phase === 'error' && (
         <span className="text-[12px] text-bad" title={upload.message}>
-          upload failed
+          {t('vault.uploadFailed')}
         </span>
       )}
-      <Button size="sm" onClick={() => void pick()} title="Upload a file from disk into the vault (3 credits/MB)">
-        ⤒ Upload
+      <Button size="sm" onClick={() => void pick()} title={t('vault.uploadButtonTip')}>
+        {t('vault.uploadButton')}
       </Button>
     </span>
   );
@@ -167,6 +175,8 @@ export function VaultPanel({
   chatId: string;
   canSend: boolean;
 }): React.JSX.Element | null {
+  const t = useT();
+  const locale = useLocale();
   const open = useVaultStore((s) => s.open);
   const albumId = useVaultStore((s) => s.albumId);
   const search = useVaultStore((s) => s.search);
@@ -221,14 +231,14 @@ export function VaultPanel({
         <span className="cap text-micro text-ink-low">VAULT</span>
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           <Chip selected={albumId === null} onClick={() => setAlbum(null)}>
-            All
+            {t('sp.all')}
           </Chip>
           {customAlbums.map((album) => (
             <Chip
               key={album.id}
               selected={albumId === album.id}
               onClick={() => setAlbum(album.id)}
-              title={`${album.mediaCount} items`}
+              title={`${album.mediaCount} ${pluralWord(locale, album.mediaCount, ['item', 'items'], ['элемент', 'элемента', 'элементов'])}`}
             >
               {album.name}
             </Chip>
@@ -240,14 +250,14 @@ export function VaultPanel({
           onKeyDown={(event) => {
             if (event.key === 'Enter') setSearch(searchInput);
           }}
-          placeholder="Search vault…"
+          placeholder={t('vault.searchPh')}
           className="w-[150px] rounded-chip border border-line bg-bg2 px-2.5 py-1 text-[12.5px] outline-none focus:border-clay-line"
         />
         <UploadControls accountId={accountId} />
         <button
           type="button"
           onClick={() => setOpen(false)}
-          title="Close vault"
+          title={t('vault.closeTip')}
           className="cursor-pointer px-1 text-ink-low hover:text-ink-mid"
         >
           ✕
@@ -258,11 +268,11 @@ export function VaultPanel({
       <div ref={scrollRef} onScroll={onGridScroll} className="h-[208px] overflow-y-auto px-3 py-2">
         {media.isPending ? (
           <div className="num py-8 text-center text-micro tracking-[0.1em] text-ink-low">
-            LOADING VAULT…
+            {t('vault.loadingVault')}
           </div>
         ) : items.length === 0 ? (
           <div className="num py-8 text-center text-micro tracking-[0.1em] text-ink-low">
-            NO MEDIA FOUND
+            {t('vault.noMediaFound')}
           </div>
         ) : (
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
@@ -292,20 +302,22 @@ export function VaultPanel({
       <div className="flex flex-wrap items-center gap-3 border-t border-line bg-bg2 px-3 py-2">
         {selection.ids.length === 0 ? (
           <span className="text-[12.5px] text-ink-low">
-            Select media to attach — click again to detach, 🔒/FREE toggles the free-preview subset.
+            {t('vault.selectHint')}
           </span>
         ) : (
           <>
             <span className="num text-[12.5px] font-semibold text-ink-mid">
-              {selection.ids.length} {selection.ids.length === 1 ? 'item' : 'items'} ·{' '}
-              {selection.previews.length} free preview{selection.previews.length === 1 ? '' : 's'}
+              {t('vault.selectionSummary', {
+                items: `${selection.ids.length} ${pluralWord(locale, selection.ids.length, ['item', 'items'], ['элемент', 'элемента', 'элементов'])}`,
+                previews: `${selection.previews.length} ${pluralWord(locale, selection.previews.length, ['free preview', 'free previews'], ['бесплатное превью', 'бесплатных превью', 'бесплатных превью'])}`,
+              })}
             </span>
             <label className="flex items-center gap-1.5">
-              <span className="cap text-micro text-ink-low">PRICE $</span>
+              <span className="cap text-micro text-ink-low">{t('vault.priceLabel')}</span>
               <input
                 value={priceInput}
                 onChange={(event) => setPriceInput(event.target.value)}
-                placeholder="0 = free"
+                placeholder={t('vault.pricePh')}
                 inputMode="numeric"
                 className={cx(
                   'num w-[72px] rounded-chip border bg-bg1 px-2 py-1 text-[13px] outline-none',
@@ -314,7 +326,7 @@ export function VaultPanel({
               />
             </label>
             {price.kind === 'invalid' ? (
-              <span className="text-[12px] text-bad">{price.reason}</span>
+              <span className="text-[12px] text-bad">{t(price.reason.key, price.reason.params)}</span>
             ) : (
               <span
                 className={cx(
@@ -329,26 +341,34 @@ export function VaultPanel({
             )}
             {summary !== null && (
               <span className="num text-micro tracking-[0.06em] text-ink-low">
-                caption: {summary.caption === 'none' ? 'none' : summary.caption === 'locked' ? 'locked behind paywall' : 'visible'}
+                {t('vault.captionLabel', {
+                  state:
+                    summary.caption === 'none'
+                      ? t('vault.captionNone')
+                      : summary.caption === 'locked'
+                        ? t('vault.captionLocked')
+                        : t('vault.captionVisible'),
+                })}
               </span>
             )}
             <span className="ml-auto flex items-center gap-2">
               <Button size="sm" variant="subtle" onClick={clearSelection}>
-                Clear
+                {t('vault.clear')}
               </Button>
               {/* Explicit confirm: price restated in words on the button itself. */}
               <Button
                 size="sm"
                 variant="primary"
                 disabled={!canSend || summary === null}
-                title={
-                  canSend
-                    ? 'Sends exactly what the summary states'
-                    : 'OnlyFans does not allow messaging this fan right now'
-                }
+                title={canSend ? t('vault.confirmTipCanSend') : t('conv.cannotSendFallback')}
                 onClick={() => sendPpvCompose({ accountId, chatId, canSend })}
               >
-                {summary?.confirmLabel ?? 'Send'}
+                {summary !== null
+                  ? t(summary.confirmLabel.key, {
+                      items: `${summary.confirmLabel.itemCount} ${pluralWord(locale, summary.confirmLabel.itemCount, ['item', 'items'], ['элемент', 'элемента', 'элементов'])}`,
+                      dollars: summary.confirmLabel.dollars,
+                    })
+                  : t('vault.send')}
               </Button>
             </span>
           </>

@@ -2,8 +2,10 @@ import { useUiStore } from '../state/uiStore';
 import { useAccounts } from '../bridge/queries';
 import { Kbd } from '../design/Kbd';
 import { modCombo } from '../lib/modKey';
+import { useT } from '../lib/i18n';
 
 export function Titlebar(): React.JSX.Element {
+  const t = useT();
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const selectedAccountId = useUiStore((s) => s.selectedAccountId);
   const accounts = useAccounts();
@@ -19,7 +21,7 @@ export function Titlebar(): React.JSX.Element {
         onClick={() => setPaletteOpen(true)}
         className="ml-[18px] flex h-[30px] w-[400px] flex-none cursor-pointer items-center gap-2 rounded-full border border-line-strong bg-bg1 px-3 text-[13px] text-ink-low hover:border-clay-line"
       >
-        ⌕<span className="flex-1 text-left">Jump to chat, fan or action…</span>
+        ⌕<span className="flex-1 text-left">{t('palette.searchPh')}</span>
         <Kbd>{modCombo('K')}</Kbd>
       </button>
       <div className="ml-auto flex items-center gap-3">
@@ -29,7 +31,7 @@ export function Titlebar(): React.JSX.Element {
             {!account.isAuthenticated && <span className="ml-1.5 text-bad">· RE-AUTH</span>}
           </span>
         )}
-        <span className="cap text-ink-low">companion mode</span>
+        <span className="cap text-ink-low">{t('titlebar.companionMode')}</span>
       </div>
     </header>
   );

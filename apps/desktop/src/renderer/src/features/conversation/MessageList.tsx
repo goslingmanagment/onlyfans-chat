@@ -12,6 +12,7 @@ import { SkeletonThread } from '../../design/Skeleton';
 import { EmptyState } from '../../design/EmptyState';
 import { DayDivider, MessageRow, TipLedgerRow } from './ThreadRows';
 import { OutboxRow } from './OutboxRows';
+import { useT } from '../../lib/i18n';
 
 function estimateRow(row: ThreadRow | undefined): number {
   if (row === undefined) return 64;
@@ -33,13 +34,14 @@ export function MessageList({
   chatId: string;
   fanName: string;
 }): React.JSX.Element {
+  const t = useT();
   const query = useMessages(accountId, chatId);
   const messages = useFlatMessages(query);
   const outbox = useOutbox(accountId, chatId);
   const outboxItems = outbox.data;
   const rows = useMemo(
-    () => mergeOutboxRows(buildThreadRows(messages, new Date()), outboxItems ?? []),
-    [messages, outboxItems],
+    () => mergeOutboxRows(buildThreadRows(messages, new Date(), t), outboxItems ?? []),
+    [messages, outboxItems, t],
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -105,7 +107,7 @@ export function MessageList({
   if (rows.length === 0) {
     return (
       <div className="flex-1">
-        <EmptyState title="No messages yet" hint="This conversation has no history." />
+        <EmptyState title={t('conv.emptyTitle')} hint={t('conv.emptyHint')} />
       </div>
     );
   }
@@ -114,7 +116,7 @@ export function MessageList({
     <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
       {query.isFetchingNextPage && (
         <div className="num py-2 text-center text-micro tracking-[0.1em] text-ink-low">
-          LOADING OLDER…
+          {t('conv.loadingOlder')}
         </div>
       )}
       <div className="relative mx-auto w-full" style={{ height: virtualizer.getTotalSize() }}>

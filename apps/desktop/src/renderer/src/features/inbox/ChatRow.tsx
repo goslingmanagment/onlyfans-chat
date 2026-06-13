@@ -2,6 +2,7 @@ import { memo } from 'react';
 import type { ChatListItemVM, SettingsVM } from '../../../../preload/contract';
 import { Avatar } from '../../design/Avatar';
 import { cx } from '../../lib/cx';
+import { useT } from '../../lib/i18n';
 import { formatWholeDollars } from '../../lib/money';
 import { formatListTime } from '../../lib/time';
 
@@ -24,6 +25,7 @@ export const ChatRow = memo(function ChatRow({
   spendStyle: SettingsVM['spendStyle'];
   onSelect: (chatId: string) => void;
 }): React.JSX.Element {
+  const t = useT();
   const lifetime =
     chat.lifetimeSpend !== null && Math.round(chat.lifetimeSpend) > 0
       ? formatWholeDollars(chat.lifetimeSpend)
@@ -49,11 +51,11 @@ export const ChatRow = memo(function ChatRow({
             {chat.fanName}
           </span>
           {chat.fanWaiting && (
-            <span title="Fan waiting" className="h-[7px] w-[7px] flex-none rounded-full bg-clay" />
+            <span title={t('inbox.fanWaiting')} className="h-[7px] w-[7px] flex-none rounded-full bg-clay" />
           )}
           {lifetime !== null && (
             <span
-              title="Lifetime spend (net)"
+              title={t('inbox.lifetimeSpend')}
               className={cx(
                 'num flex-none text-ink-mid',
                 spendStyle === 'chip'
@@ -66,7 +68,7 @@ export const ChatRow = memo(function ChatRow({
           )}
         </div>
         <div className="mt-[2px] truncate text-[13px] text-ink-mid">
-          {chat.lastMessageIsSentByMe && <span className="text-ink-low">you: </span>}
+          {chat.lastMessageIsSentByMe && <span className="text-ink-low">{t('inbox.youPrefix')}</span>}
           {chat.lastMessagePreview}
         </div>
       </div>
@@ -76,7 +78,7 @@ export const ChatRow = memo(function ChatRow({
         </span>
         <span className="flex items-center gap-1.5">
           {flow30d !== null && (
-            <span title="Spent in the last 30 days (net)" className="num text-[10px] font-semibold text-green">
+            <span title={t('inbox.spend30d')} className="num text-[10px] font-semibold text-green">
               {flow30d}
             </span>
           )}

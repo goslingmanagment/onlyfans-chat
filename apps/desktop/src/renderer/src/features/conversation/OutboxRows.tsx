@@ -12,6 +12,7 @@ import { setDraftText, useAiStore } from '../ai/aiStore';
 import { appendToDraft } from '../ai/dockLogic';
 import { focusComposer } from './composerDom';
 import { deriveOutboxRow, restrictedSegments, type OutboxRowView } from './sendLogic';
+import { useT } from '../../lib/i18n';
 
 const LABEL_TONES: Record<OutboxRowView['tone'], string> = {
   low: 'text-ink-low',
@@ -49,6 +50,7 @@ export const OutboxRow = memo(function OutboxRow({
   accountId: string;
   item: OutboxItemVM;
 }): React.JSX.Element | null {
+  const t = useT();
   const dismiss = useCallback(() => {
     void getBridge().invoke('cmd:send.dismiss', { accountId, localId: item.localId });
   }, [accountId, item.localId]);
@@ -56,6 +58,11 @@ export const OutboxRow = memo(function OutboxRow({
   const view = deriveOutboxRow(item);
   if (view === null) return null;
   const segments = view.restrictedWords ? restrictedSegments(item.text, item.textHighlights) : null;
+  const explainer = view.restrictedWords
+    ? t('conv.restrictedWordsBanner')
+    : view.explainerCode === 'unconfirmed'
+      ? t('conv.unconfirmedExplainer')
+      : view.explainerMessage;
 
   function retry(): void {
     void getBridge().invoke('cmd:send.retry', {
@@ -108,26 +115,26 @@ export const OutboxRow = memo(function OutboxRow({
           {item.mediaCount > 0 && (
             <span className={item.price > 0 ? 'font-semibold text-amber' : undefined}>
               {item.price > 0 ? `PPV $${item.price} · ` : ''}
-              {item.mediaCount} media
+              {t('conv.mediaCount', { n: item.mediaCount })}
             </span>
           )}
           <span className={cx(LABEL_TONES[view.tone], view.pulse && 'animate-pulse')}>
             {view.label}
           </span>
         </div>
-        {view.explainer !== null && (
+        {explainer !== null && (
           <div className={cx('mt-0.5 text-[12px]', view.label === 'FAILED' ? 'text-bad' : 'text-warn')}>
-            {view.explainer}
+            {explainer}
           </div>
         )}
         {view.actions.length > 0 && (
           <div className="mt-1 flex items-center gap-3 text-[12px] font-semibold">
-            {view.actions.includes('edit') && <RowAction onClick={edit}>Edit</RowAction>}
-            {view.actions.includes('retry') && <RowAction onClick={retry}>Retry</RowAction>}
-            {view.actions.includes('verify') && <RowAction onClick={verify}>Check now</RowAction>}
+            {view.actions.includes('edit') && <RowAction onClick={edit}>{t('conv.rowEdit')}</RowAction>}
+            {view.actions.includes('retry') && <RowAction onClick={retry}>{t('conv.rowRetry')}</RowAction>}
+            {view.actions.includes('verify') && <RowAction onClick={verify}>{t('conv.rowCheckNow')}</RowAction>}
             {view.actions.includes('dismiss') && (
               <RowAction quiet onClick={dismiss}>
-                Dismiss
+                {t('toast.dismiss')}
               </RowAction>
             )}
           </div>

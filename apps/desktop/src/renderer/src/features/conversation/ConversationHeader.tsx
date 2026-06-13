@@ -6,6 +6,7 @@ import { formatDollars } from '../../lib/money';
 import { formatLastSeen, isOnline } from '../../lib/time';
 import { cx } from '../../lib/cx';
 import { presenceKey, useUiStore } from '../../state/uiStore';
+import { useT } from '../../lib/i18n';
 
 function ValueChip({
   cap,
@@ -40,6 +41,7 @@ export function ConversationHeader({
   chat: ChatListItemVM;
   fan: FanPanelVM | null;
 }): React.JSX.Element {
+  const t = useT();
   const now = new Date();
   const lastSeen = fan?.lastSeen ?? null;
   // Live presence (hub SSE) wins while fresh; the cached fan.lastSeen heuristic
@@ -53,7 +55,7 @@ export function ConversationHeader({
   const presenceFresh = presence !== undefined && presence.expiresAt > now.getTime();
   const online = presenceFresh ? presence.online : isOnline(lastSeen, now);
   const lastSeenLabel =
-    presenceFresh && presence.online ? 'online now' : formatLastSeen(lastSeen, now);
+    presenceFresh && presence.online ? t('conv.onlineNow') : formatLastSeen(lastSeen, now, t);
   const sub = fan?.subscription ?? null;
 
   return (
@@ -75,17 +77,17 @@ export function ConversationHeader({
       </div>
       <div className="ml-3.5 flex gap-[7px]">
         {fan?.spending != null && (
-          <ValueChip cap="lifetime" value={formatDollars(fan.spending.total)} money />
+          <ValueChip cap={t('conv.capLifetime')} value={formatDollars(fan.spending.total)} money />
         )}
         {sub !== null && sub.status === 'active' && !sub.autoRenewOff && sub.renewsAt !== null && (
-          <ValueChip cap="sub" value={`renews ${formatRenewDays(sub.renewsAt, now)}`} />
+          <ValueChip cap={t('conv.capSub')} value={t('conv.subRenews', { days: formatRenewDays(sub.renewsAt, now) })} />
         )}
         {sub !== null && sub.status === 'active' && sub.autoRenewOff && (
-          <ValueChip cap="sub" value="auto-renew OFF" warn />
+          <ValueChip cap={t('conv.capSub')} value={t('conv.subAutoRenewOff')} warn />
         )}
-        {sub !== null && sub.status === 'expired' && <ValueChip cap="sub" value="expired" />}
+        {sub !== null && sub.status === 'expired' && <ValueChip cap={t('conv.capSub')} value={t('conv.subExpired')} />}
         {sub?.durationLabel != null && (
-          <ValueChip cap="fan for" value={sub.durationLabel.replace(' months', ' mo')} />
+          <ValueChip cap={t('conv.capFanFor')} value={sub.durationLabel.replace(' months', ' mo')} />
         )}
       </div>
       <div className="ml-auto flex items-center gap-2.5 text-ink-low">

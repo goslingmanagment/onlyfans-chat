@@ -11,6 +11,8 @@ import { modCombo } from '../lib/modKey';
 import { Avatar } from '../design/Avatar';
 import { ListRow } from '../design/ListRow';
 import { Kbd } from '../design/Kbd';
+import { useT } from '../lib/i18n';
+import type { UiMessageKey } from '@chatgoose/shared/i18n/index';
 
 interface PaletteEntry {
   id: string;
@@ -21,12 +23,19 @@ interface PaletteEntry {
   run: () => void;
 }
 
+const SECTION_LABEL: Record<'Chats' | 'Accounts' | 'Actions', UiMessageKey> = {
+  Chats: 'palette.secChats',
+  Accounts: 'palette.secAccounts',
+  Actions: 'palette.secActions',
+};
+
 export function CommandPalette(): React.JSX.Element | null {
   const open = useUiStore((s) => s.paletteOpen);
   return open ? <PaletteBody /> : null;
 }
 
 function PaletteBody(): React.JSX.Element {
+  const t = useT();
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const selectAccount = useUiStore((s) => s.selectAccount);
   const selectChat = useUiStore((s) => s.selectChat);
@@ -76,7 +85,7 @@ function PaletteBody(): React.JSX.Element {
         id: `account:${account.id}`,
         section: 'Accounts',
         title: account.displayName,
-        subtitle: `@${account.username}${account.isAuthenticated ? '' : ' · re-auth needed'}`,
+        subtitle: `@${account.username}${account.isAuthenticated ? '' : t('palette.reauthNeeded')}`,
         leading: <Avatar name={account.displayName} url={account.avatarUrl} size={28} radius={8} />,
         run: () => {
           selectAccount(account.id);
@@ -89,20 +98,20 @@ function PaletteBody(): React.JSX.Element {
     // pill row and ✳ menu; gated/contextless invocations are silent no-ops.
     // 'compare' stays out of the palette (P4-stretch, hidden while gated).
     const actions: Array<{ id: string; title: string; run: () => void }> = [
-      { id: 'act:ai-reply', title: `AI: Fast Reply (${modCombo('R')})`, run: () => startAiFromGlobal('fast-reply', queryClient) },
-      { id: 'act:ai-improve', title: `AI: Improve draft (${modCombo('I')})`, run: () => startAiFromGlobal('improve-draft', queryClient) },
-      { id: 'act:ai-help', title: `AI: Help me — coaching (${modCombo('H')})`, run: () => startAiFromGlobal('help-me', queryClient) },
-      { id: 'act:ai-ping', title: `AI: Ping — reactivation message (${modCombo('P')})`, run: () => startAiFromGlobal('ping', queryClient) },
-      { id: 'act:ai-hi', title: `AI: Hi greeting — opener variants (${modCombo('G')})`, run: () => startAiFromGlobal('hi-greeting', queryClient) },
-      { id: 'act:ai-scan', title: `AI: Scan — deep fan profile (${modCombo('S')})`, run: () => startAiFromGlobal('fan-summary', queryClient) },
-      { id: 'act:ai-review', title: `AI: Chat review — rate this conversation (${modCombo('E')})`, run: () => startAiFromGlobal('chat-review', queryClient) },
+      { id: 'act:ai-reply', title: t('palette.aiFastReply', { combo: modCombo('R') }), run: () => startAiFromGlobal('fast-reply', queryClient) },
+      { id: 'act:ai-improve', title: t('palette.aiImprove', { combo: modCombo('I') }), run: () => startAiFromGlobal('improve-draft', queryClient) },
+      { id: 'act:ai-help', title: t('palette.aiHelp', { combo: modCombo('H') }), run: () => startAiFromGlobal('help-me', queryClient) },
+      { id: 'act:ai-ping', title: t('palette.aiPing', { combo: modCombo('P') }), run: () => startAiFromGlobal('ping', queryClient) },
+      { id: 'act:ai-hi', title: t('palette.aiHi', { combo: modCombo('G') }), run: () => startAiFromGlobal('hi-greeting', queryClient) },
+      { id: 'act:ai-scan', title: t('palette.aiScan', { combo: modCombo('S') }), run: () => startAiFromGlobal('fan-summary', queryClient) },
+      { id: 'act:ai-review', title: t('palette.aiReview', { combo: modCombo('E') }), run: () => startAiFromGlobal('chat-review', queryClient) },
       // Entry point for the Spenders board (PLAN item 12; recorded in DESIGN §1)
-      { id: 'act:spenders', title: 'Spenders — board of top spenders', run: () => setView('spenders') },
-      { id: 'act:settings', title: 'Open settings', run: () => setView('settings') },
-      { id: 'act:refresh', title: 'Force refresh', run: () => forceRefresh.mutate(undefined) },
-      { id: 'act:panel', title: 'Toggle fan panel', run: togglePanel },
-      { id: 'act:list', title: 'Toggle chat list', run: toggleList },
-      { id: 'act:keys', title: 'Show keyboard shortcuts', run: () => setCheatsheetOpen(true) },
+      { id: 'act:spenders', title: t('palette.spenders'), run: () => setView('spenders') },
+      { id: 'act:settings', title: t('sp.openSettings'), run: () => setView('settings') },
+      { id: 'act:refresh', title: t('palette.forceRefresh'), run: () => forceRefresh.mutate(undefined) },
+      { id: 'act:panel', title: t('palette.togglePanel'), run: togglePanel },
+      { id: 'act:list', title: t('palette.toggleList'), run: toggleList },
+      { id: 'act:keys', title: t('palette.showShortcuts'), run: () => setCheatsheetOpen(true) },
     ];
     for (const action of fuzzyFilter(actions, query, (a) => a.title, 8)) {
       out.push({
@@ -132,6 +141,7 @@ function PaletteBody(): React.JSX.Element {
     setCheatsheetOpen,
     forceRefresh,
     queryClient,
+    t,
   ]);
 
   const clampedCursor = Math.min(cursor, Math.max(0, entries.length - 1));
@@ -170,14 +180,14 @@ function PaletteBody(): React.JSX.Element {
               setCursor(0);
             }}
             onKeyDown={onKeyDown}
-            placeholder="Jump to chat, fan or action…"
+            placeholder={t('palette.searchPh')}
             className="flex-1 bg-transparent text-[14px] outline-none placeholder:text-ink-low"
           />
           <Kbd>esc</Kbd>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {entries.length === 0 && (
-            <div className="px-4 py-6 text-center text-[12.5px] text-ink-low">Nothing matches</div>
+            <div className="px-4 py-6 text-center text-[12.5px] text-ink-low">{t('palette.empty')}</div>
           )}
           {entries.map((entry, i) => {
             const header = entry.section !== lastSection ? entry.section : null;
@@ -185,7 +195,7 @@ function PaletteBody(): React.JSX.Element {
             return (
               <div key={entry.id}>
                 {header !== null && (
-                  <div className="cap bg-bg1 px-4 pt-3 pb-1 text-ink-low">{header}</div>
+                  <div className="cap bg-bg1 px-4 pt-3 pb-1 text-ink-low">{t(SECTION_LABEL[header])}</div>
                 )}
                 <ListRow
                   selected={i === clampedCursor}

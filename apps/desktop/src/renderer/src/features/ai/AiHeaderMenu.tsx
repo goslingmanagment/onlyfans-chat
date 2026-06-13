@@ -12,6 +12,8 @@ import { cx } from '../../lib/cx';
 import { modCombo } from '../../lib/modKey';
 import { startAiFeature, type LiveAiFeature } from './aiStore';
 import { evaluateAiGate } from './dockLogic';
+import { gateText } from './gateText';
+import { useT } from '../../lib/i18n';
 
 function MenuItem({
   glyph,
@@ -63,6 +65,7 @@ function MenuItem({
 }
 
 export function AiHeaderMenu(): React.JSX.Element {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -79,7 +82,7 @@ export function AiHeaderMenu(): React.JSX.Element {
         hasLlmKey: settings.data.hasAnthropicKey || settings.data.hasOpenRouterKey,
       })
     : null;
-  const blockedReason = gate === null ? 'Loading…' : gate.ok ? null : gate.message;
+  const blockedReason = gate === null ? t('common.loading') : gate.ok ? null : gateText(t, gate.reason);
 
   useEffect(() => {
     if (!open) return;
@@ -123,7 +126,7 @@ export function AiHeaderMenu(): React.JSX.Element {
           <MenuItem
             glyph="◎"
             title="Scan"
-            sub="deep fan profile → panel · Scan tab"
+            sub={t('aidock.menuScanSub')}
             kbd={modCombo('S')}
             disabledReason={blockedReason}
             onRun={() => run('fan-summary')}
@@ -131,7 +134,7 @@ export function AiHeaderMenu(): React.JSX.Element {
           <MenuItem
             glyph="▤"
             title="Chat review"
-            sub="score this conversation 1–10, find mistakes"
+            sub={t('aidock.menuReviewSub')}
             kbd={modCombo('E')}
             disabledReason={blockedReason}
             onRun={() => run('chat-review')}
@@ -140,8 +143,8 @@ export function AiHeaderMenu(): React.JSX.Element {
           <MenuItem
             glyph="⇄"
             title="Compare"
-            sub="one reply, several personas side-by-side"
-            disabledReason="Arrives as a P4 stretch goal"
+            sub={t('aidock.menuCompareSub')}
+            disabledReason={t('aidock.compareP4')}
             badge="P4-STRETCH"
           />
         </div>

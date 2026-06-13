@@ -14,9 +14,9 @@ import { useSettingsCache } from '../../state/settingsCache';
 import { useChatSendability, useSettings } from '../../bridge/queries';
 import { cx } from '../../lib/cx';
 import { modCombo } from '../../lib/modKey';
+import { useT } from '../../lib/i18n';
 import { Kbd } from '../../design/Kbd';
 import { AiDockSlot } from '../conversation/AiDockSlot';
-import { CANNOT_SEND_FALLBACK } from '../conversation/sendLogic';
 import { StreamingDrafts, DRAFT_BUBBLE_BASE_CLASS } from './StreamingDrafts';
 import {
   useAiStore,
@@ -56,6 +56,7 @@ export function AiDockMount(): React.JSX.Element | null {
 }
 
 function AiDock(): React.JSX.Element | null {
+  const t = useT();
   const op = useAiStore((s) => s.op);
   const status = useAiStore((s) => s.status);
   const phase = useAiStore((s) => s.phase);
@@ -73,7 +74,7 @@ function AiDock(): React.JSX.Element | null {
   const parts = copyablePartsOf(view);
   // unknown chat defaults to insert — inserting never sends by itself
   const canSend = sendability.data?.canSendMessage ?? true;
-  const cannotReason = sendability.data?.canNotSendReason ?? CANNOT_SEND_FALLBACK;
+  const cannotReason = sendability.data?.canNotSendReason ?? t('conv.cannotSendFallback');
 
   return (
     <div className="overflow-hidden rounded-card border border-line-strong bg-bg1 shadow-soft">
@@ -91,14 +92,14 @@ function AiDock(): React.JSX.Element | null {
         )}
         <span className="ml-auto" />
         {status === 'completed' && spend !== null && (
-          <span className="num text-micro text-ink-low" title="LLM cost of this operation">
+          <span className="num text-micro text-ink-low" title={t('aidock.costTip')}>
             {formatOpCost(spend.totalUsd)}
           </span>
         )}
         <button
           type="button"
           onClick={dismissDock}
-          title="Dismiss (Esc)"
+          title={t('aidock.dismissTip')}
           className="cursor-pointer px-0.5 text-[12px] text-ink-low hover:text-ink-mid"
         >
           ✕
@@ -125,7 +126,7 @@ function AiDock(): React.JSX.Element | null {
             onClick={cancelActiveOperation}
             className="ml-3 flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-ink-mid hover:text-bad"
           >
-            Cancel <Kbd>{modCombo('.')}</Kbd>
+            {t('common.cancel')} <Kbd>{modCombo('.')}</Kbd>
           </button>
         ) : (
           <button
@@ -134,7 +135,7 @@ function AiDock(): React.JSX.Element | null {
             className="ml-3 flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-ink-mid hover:text-clay-deep"
           >
             {/* refresh-policy features (Scan/Review) force past the summary cache */}
-            {getFeaturePolicy(op.feature).rerunAction === 'refresh' ? '↻ Refresh' : '↻ Regenerate'}
+            {getFeaturePolicy(op.feature).rerunAction === 'refresh' ? t('sp.refresh') : t('aidock.regenerate')}
           </button>
         )}
         <span className="flex-1" />
@@ -144,12 +145,12 @@ function AiDock(): React.JSX.Element | null {
             onClick={() => activateDockPart(0, { canSend })}
             title={
               canSend
-                ? 'Insert all parts as a [NEXT] sequence — send delivers them as separate messages'
-                : `${cannotReason} — copies instead`
+                ? t('aidock.insertAllTip')
+                : t('aidock.cannotCopiesInstead', { reason: cannotReason })
             }
             className="flex cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold text-clay-deep hover:text-clay"
           >
-            {canSend ? 'Insert all' : 'Copy all'} <Kbd>{modCombo('0')}</Kbd>
+            {canSend ? t('aidock.insertAll') : t('aidock.copyAll')} <Kbd>{modCombo('0')}</Kbd>
           </button>
         )}
       </div>
@@ -172,11 +173,12 @@ function CompletedView({
   canSend: boolean;
   cannotReason: string;
 }): React.JSX.Element {
+  const t = useT();
   if (view.kind === 'raw') {
     // Parse/sanitizer fallback — read-only, no insert/copy chips.
     return (
       <div className={cx(DRAFT_BUBBLE_BASE_CLASS, 'border-solid border-line bg-bg2')}>
-        <div className="cap mb-1 font-sans text-ink-low">raw output</div>
+        <div className="cap mb-1 font-sans text-ink-low">{t('aidock.rawOutput')}</div>
         {view.text}
       </div>
     );
@@ -186,14 +188,14 @@ function CompletedView({
     return (
       <div className={cx(DRAFT_BUBBLE_BASE_CLASS, 'border-solid border-line bg-bg2')}>
         <div className="mb-1.5 flex items-baseline gap-2.5">
-          <span className="cap font-sans text-ink-low">chat review</span>
+          <span className="cap font-sans text-ink-low">{t('aidock.chatReviewCap')}</span>
           <span className="num text-[18px] font-semibold text-clay-deep">{view.rating}</span>
           <span className="num text-micro text-ink-low">/ 10</span>
         </div>
         <p>{view.evaluation}</p>
         {view.recommendations.length > 0 && (
           <>
-            <div className="cap mt-2.5 mb-1 font-sans text-ink-low">recommendations</div>
+            <div className="cap mt-2.5 mb-1 font-sans text-ink-low">{t('aidock.recommendations')}</div>
             <ul className="list-none space-y-1">
               {view.recommendations.map((item, i) => (
                 <li key={i} className="flex gap-2">
@@ -219,9 +221,9 @@ function CompletedView({
           'hover:border-clay-line hover:bg-clay-bg',
         )}
       >
-        <div className="cap mb-1 font-sans text-ink-low">scan</div>
+        <div className="cap mb-1 font-sans text-ink-low">{t('aidock.scanCap')}</div>
         <span className="font-semibold text-clay-deep">
-          {view.cached ? 'Scan loaded from cache — in the panel →' : 'Scan saved to the panel →'}
+          {view.cached ? t('aidock.scanFromCache') : t('aidock.scanSaved')}
         </span>
       </button>
     );
@@ -230,7 +232,7 @@ function CompletedView({
     return (
       <>
         <div className={cx(DRAFT_BUBBLE_BASE_CLASS, 'border-solid border-line bg-bg2')}>
-          <div className="cap mb-1 font-sans text-ink-low">coaching</div>
+          <div className="cap mb-1 font-sans text-ink-low">{t('aidock.coaching')}</div>
           {view.coaching}
         </div>
         {view.parts.map((part, i) => (
@@ -238,7 +240,7 @@ function CompletedView({
             key={i}
             text={part}
             partNumber={i + 1}
-            label={i === 0 ? 'engaging' : i === 1 ? 'flirty' : null}
+            label={i === 0 ? t('aidock.labelEngaging') : i === 1 ? t('aidock.labelFlirty') : null}
             canSend={canSend}
             cannotReason={cannotReason}
           />
@@ -275,6 +277,7 @@ function DraftBubble({
   canSend: boolean;
   cannotReason: string;
 }): React.JSX.Element {
+  const t = useT();
   const feedback = useAiStore((s) =>
     s.partFeedback !== null &&
     (s.partFeedback.partIndex === partNumber || s.partFeedback.partIndex === 0)
@@ -294,7 +297,9 @@ function DraftBubble({
       type="button"
       onClick={() => activateDockPart(partNumber, { canSend })}
       title={
-        canSend ? 'Click to insert into the composer' : `${cannotReason} — click copies instead`
+        canSend
+          ? t('aidock.bubbleInsertTip')
+          : t('aidock.cannotClickCopies', { reason: cannotReason })
       }
       className={cx(
         DRAFT_BUBBLE_BASE_CLASS,
@@ -319,7 +324,7 @@ function DraftBubble({
           // secondary affordance — copy without inserting (stops the bubble's insert click)
           <span
             role="button"
-            title="Copy to clipboard"
+            title={t('aidock.copyToClipboard')}
             onClick={(e) => {
               e.stopPropagation();
               copyDockPart(partNumber);
@@ -337,6 +342,7 @@ function DraftBubble({
 // ─── Error card (CG-coded message + recovery hint, PRD F6) ────────────────
 
 function ErrorCard({ error }: { error: UserFacingErrorPayload }): React.JSX.Element {
+  const t = useT();
   const setView = useUiStore((s) => s.setView);
   const hint = errorHint(error);
   return (
@@ -352,7 +358,7 @@ function ErrorCard({ error }: { error: UserFacingErrorPayload }): React.JSX.Elem
           onClick={() => setView('settings')}
           className="mt-1.5 cursor-pointer text-[12.5px] font-semibold text-clay-deep underline decoration-dotted underline-offset-2"
         >
-          Open Settings →
+          {t('aidock.openSettingsArrow')}
         </button>
       )}
     </div>
@@ -362,6 +368,7 @@ function ErrorCard({ error }: { error: UserFacingErrorPayload }): React.JSX.Elem
 // ─── Footer controls ──────────────────────────────────────────────────────
 
 function TonePills({ running }: { running: boolean }): React.JSX.Element {
+  const t = useT();
   const settings = useSettings();
   const toneOverride = useAiStore((s) => s.toneOverride);
   const active = toneOverride ?? settings.data?.defaultReplyTone ?? 'casual';
@@ -374,10 +381,10 @@ function TonePills({ running }: { running: boolean }): React.JSX.Element {
           disabled={running}
           title={
             running
-              ? 'Tone applies to the next generation'
+              ? t('aidock.toneRunningTip')
               : active === tone
-                ? 'Click to deselect (no tone)'
-                : `Use ${tone} tone on the next generation`
+                ? t('aidock.toneDeselectTip')
+                : t('aidock.toneUseTip', { tone })
           }
           onClick={() => {
             if (!running) setDockTone(toggleTone(active, tone));
@@ -398,6 +405,7 @@ function TonePills({ running }: { running: boolean }): React.JSX.Element {
 }
 
 function SplitToggle({ running }: { running: boolean }): React.JSX.Element {
+  const t = useT();
   const preferSplit = useAiStore((s) => s.preferSplit);
   return (
     <button
@@ -406,7 +414,7 @@ function SplitToggle({ running }: { running: boolean }): React.JSX.Element {
       onClick={() => {
         if (!running) togglePreferSplit();
       }}
-      title="Prefer splitting the reply into multiple messages (applies to the next generation)"
+      title={t('aidock.splitTip')}
       className={cx(
         'ml-1.5 cursor-pointer rounded-full border px-[11px] py-[3px] text-[12px] font-medium transition-colors duration-150',
         'disabled:cursor-default disabled:opacity-60',
@@ -415,7 +423,7 @@ function SplitToggle({ running }: { running: boolean }): React.JSX.Element {
           : 'border-transparent text-ink-low hover:text-ink-mid',
       )}
     >
-      ⫶ split
+      {t('aidock.split')}
     </button>
   );
 }

@@ -15,7 +15,9 @@ import { COMPOSER_TEXTAREA_ID } from './composerDom';
 import { useAiStore, setDraftText } from '../ai/aiStore';
 import { useVaultStore } from '../vault/vaultStore';
 import { sendCurrentDraft } from './sendController';
-import { activeSequence, createTypingThrottle, CANNOT_SEND_FALLBACK } from './sendLogic';
+import { activeSequence, createTypingThrottle } from './sendLogic';
+import { useLocale, useT } from '../../lib/i18n';
+import { pluralWord } from '@chatgoose/shared/i18n/index';
 
 export function ComposerBar({
   accountId,
@@ -26,6 +28,8 @@ export function ComposerBar({
   chat: ChatListItemVM;
   personaName: string;
 }): React.JSX.Element {
+  const t = useT();
+  const locale = useLocale();
   const draft = useAiStore((s) => s.draftText);
   const outbox = useOutbox(accountId, chat.chatId);
   const outboxItems = outbox.data;
@@ -40,7 +44,7 @@ export function ComposerBar({
   // parked so the caption can't accidentally go out as a bare text message;
   // the PPV summary strip owns the explicit confirm (PRD F7 misprice guard).
   const ppvComposeActive = attachedCount > 0;
-  const cannotReason = chat.canNotSendReason ?? CANNOT_SEND_FALLBACK;
+  const cannotReason = chat.canNotSendReason ?? t('conv.cannotSendFallback');
 
   // typing-out beacon: ≤1 cmd:chat.typingActive / 3 s, session ends after 4 s idle (SPEC §7.8)
   const throttleRef = useRef(createTypingThrottle());
@@ -76,7 +80,7 @@ export function ComposerBar({
         disabled={!canSend}
         placeholder={
           canSend
-            ? `Reply as ${personaName}… (${modCombo('R')} fast reply · ${modCombo('I')} improve draft · [NEXT] splits parts)`
+            ? t('conv.composerPlaceholder', { persona: personaName, r: modCombo('R'), i: modCombo('I') })
             : cannotReason
         }
       />
@@ -85,7 +89,7 @@ export function ComposerBar({
           type="button"
           onClick={() => setVaultOpen(!vaultOpen)}
           disabled={!canSend}
-          title={canSend ? 'Attach vault media (PPV)' : cannotReason}
+          title={canSend ? t('conv.attachVault') : cannotReason}
           className={
             'flex cursor-pointer items-center gap-1 rounded-chip border px-2 py-0.5 text-[12.5px] transition-colors disabled:cursor-default disabled:opacity-45 ' +
             (vaultOpen || attachedCount > 0
@@ -99,17 +103,20 @@ export function ComposerBar({
           <span className="num text-micro tracking-[0.08em] text-warn">{cannotReason}</span>
         ) : ppvComposeActive ? (
           <span className="num text-micro tracking-[0.08em] text-ink-mid">
-            PPV compose — the draft is the caption · confirm in the vault strip above
+            {t('conv.ppvComposeHint')}
           </span>
         ) : sequence !== null ? (
           <span className="num flex items-baseline gap-2 text-micro tracking-[0.08em] text-ink-mid">
-            {sequence.totalParts} parts · sending with natural delays ·
+            {t('conv.sequenceSending', {
+              n: sequence.totalParts,
+              word: pluralWord(locale, sequence.totalParts, ['part', 'parts'], ['часть', 'части', 'частей']),
+            })}
             <button
               type="button"
               onClick={cancelSequence}
               className="cursor-pointer font-semibold text-bad underline decoration-dotted underline-offset-2"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
           </span>
         ) : null}
@@ -121,12 +128,12 @@ export function ComposerBar({
             !canSend
               ? cannotReason
               : ppvComposeActive
-                ? 'Vault media attached — use the PPV confirm button in the vault panel'
-                : `Send (${modCombo('↵')}) — [NEXT] splits into separate messages`
+                ? t('conv.ppvUseConfirmBtn')
+                : t('conv.sendTooltip', { combo: modCombo('↵') })
           }
           onClick={onSend}
         >
-          Send <Kbd>{modCombo('↵')}</Kbd>
+          {t('conv.send')} <Kbd>{modCombo('↵')}</Kbd>
         </Button>
       </div>
     </div>

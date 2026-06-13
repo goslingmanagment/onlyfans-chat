@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { makeTranslator } from '@chatgoose/shared/i18n/index';
 import {
   dayKey,
   formatAgeShort,
@@ -12,6 +13,9 @@ import {
 
 // local-time constructors keep tests TZ-independent
 const NOW = new Date(2026, 5, 10, 19, 30); // Jun 10 2026, 19:30 local
+// English translator stub: catalog en values are byte-identical to the labels
+// these functions used to hardcode, so the assertions below are unchanged.
+const t = makeTranslator('en');
 
 describe('formatClock', () => {
   it('renders 24h zero-padded', () => {
@@ -54,13 +58,13 @@ describe('formatListTime', () => {
 
 describe('formatDayLabel', () => {
   it('labels today and yesterday', () => {
-    expect(formatDayLabel(new Date(2026, 5, 10, 1, 0), NOW)).toBe('TODAY');
-    expect(formatDayLabel(new Date(2026, 5, 9, 23, 0), NOW)).toBe('YESTERDAY');
+    expect(formatDayLabel(new Date(2026, 5, 10, 1, 0), NOW, t)).toBe('TODAY');
+    expect(formatDayLabel(new Date(2026, 5, 9, 23, 0), NOW, t)).toBe('YESTERDAY');
   });
 
   it('labels older days with month + day', () => {
-    expect(formatDayLabel(new Date(2026, 5, 3), NOW)).toBe('JUN 3');
-    expect(formatDayLabel(new Date(2025, 5, 3), NOW)).toBe("JUN 3 '25");
+    expect(formatDayLabel(new Date(2026, 5, 3), NOW, t)).toBe('JUN 3');
+    expect(formatDayLabel(new Date(2025, 5, 3), NOW, t)).toBe("JUN 3 '25");
   });
 });
 
@@ -80,18 +84,18 @@ describe('formatAgeShort', () => {
 describe('formatLastSeen / isOnline', () => {
   it('reports online within 5 minutes', () => {
     const twoMinAgo = new Date(NOW.getTime() - 2 * 60_000).toISOString();
-    expect(formatLastSeen(twoMinAgo, NOW)).toBe('online now');
+    expect(formatLastSeen(twoMinAgo, NOW, t)).toBe('online now');
     expect(isOnline(twoMinAgo, NOW)).toBe(true);
   });
 
   it('reports age beyond 5 minutes', () => {
     const twoHoursAgo = new Date(NOW.getTime() - 2 * 3_600_000).toISOString();
-    expect(formatLastSeen(twoHoursAgo, NOW)).toBe('last seen 2h ago');
+    expect(formatLastSeen(twoHoursAgo, NOW, t)).toBe('last seen 2h ago');
     expect(isOnline(twoHoursAgo, NOW)).toBe(false);
   });
 
   it('handles null honestly', () => {
-    expect(formatLastSeen(null, NOW)).toBe('last seen unknown');
+    expect(formatLastSeen(null, NOW, t)).toBe('last seen unknown');
     expect(isOnline(null, NOW)).toBe(false);
   });
 });

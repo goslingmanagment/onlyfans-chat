@@ -14,9 +14,11 @@ import {
   type AiGate,
 } from './dockLogic';
 import { usePingGate } from './pingGate';
+import { gateText } from './gateText';
 import { Kbd } from '../../design/Kbd';
 import { cx } from '../../lib/cx';
 import { modCombo } from '../../lib/modKey';
+import { useT } from '../../lib/i18n';
 
 function PillButton({
   primary = false,
@@ -63,6 +65,7 @@ export function AiPillRow({
   accountId: string;
   chatId: string;
 }): React.JSX.Element {
+  const t = useT();
   const setView = useUiStore((s) => s.setView);
   const accounts = useAccounts();
   const settings = useSettings();
@@ -84,19 +87,17 @@ export function AiPillRow({
         hasLlmKey: settings.data.hasAnthropicKey || settings.data.hasOpenRouterKey,
       })
     : null;
-  const blockedMessage = gate !== null && !gate.ok ? gate.message : null;
+  const blockedMessage = gate !== null && !gate.ok ? gateText(t, gate.reason) : null;
   const rowDisabled = !ready || blockedMessage !== null;
 
   const pingPill = evaluatePingGate(gate, pingGate.data?.blocked ?? null);
   const hiPill = evaluateHiGate(gate, deriveHiLocked(pages));
 
+  const defaultTone = settings.data?.defaultReplyTone ?? 'casual';
+
   function start(feature: LiveAiFeature): void {
     if (settings.data === undefined) return;
-    startAiFeature(feature, {
-      accountId,
-      chatId,
-      defaultTone: settings.data.defaultReplyTone,
-    });
+    startAiFeature(feature, { accountId, chatId, defaultTone });
   }
 
   return (
@@ -104,7 +105,7 @@ export function AiPillRow({
       <PillButton
         primary
         disabled={rowDisabled}
-        title={blockedMessage ?? 'Generate a reply suggestion'}
+        title={blockedMessage ?? t('aidock.replyTip')}
         onClick={() => {
           if (!rowDisabled) start('fast-reply');
         }}
@@ -113,7 +114,7 @@ export function AiPillRow({
       </PillButton>
       <PillButton
         disabled={rowDisabled || draftEmpty}
-        title={blockedMessage ?? (draftEmpty ? 'Type a draft in the composer to improve' : 'Improve your draft')}
+        title={blockedMessage ?? (draftEmpty ? t('aidock.improveEmptyTip') : t('aidock.improveTip'))}
         onClick={() => {
           if (!rowDisabled) start('improve-draft');
         }}
@@ -122,7 +123,7 @@ export function AiPillRow({
       </PillButton>
       <PillButton
         disabled={rowDisabled}
-        title={blockedMessage ?? 'Coaching + two suggested directions'}
+        title={blockedMessage ?? t('aidock.helpTip')}
         onClick={() => {
           if (!rowDisabled) start('help-me');
         }}
@@ -132,7 +133,7 @@ export function AiPillRow({
       <PillButton
         dimmed={!pingPill.enabled}
         disabled={!pingPill.enabled}
-        title={pingPill.enabled ? 'Reactivation message for a silent fan' : pingPill.reason}
+        title={pingPill.enabled ? t('aidock.pingTip') : gateText(t, pingPill.code)}
         onClick={() => {
           if (pingPill.enabled) start('ping');
         }}
@@ -142,7 +143,7 @@ export function AiPillRow({
       <PillButton
         dimmed={!hiPill.enabled}
         disabled={!hiPill.enabled}
-        title={hiPill.enabled ? '3 opener variants for a fresh conversation' : hiPill.reason}
+        title={hiPill.enabled ? t('aidock.hiTip') : gateText(t, hiPill.code)}
         onClick={() => {
           if (hiPill.enabled) start('hi-greeting');
         }}

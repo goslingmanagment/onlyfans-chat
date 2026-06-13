@@ -53,10 +53,20 @@ export function selectionOrder(selection: VaultSelection, id: string): number | 
 
 // ─── Price input ──────────────────────────────────────────────────────────
 
+/**
+ * Locale-free reason descriptor: a catalog key + its interpolation params.
+ * The $dollar bound stays a NUMBER param (misprice guard) — only the
+ * surrounding words localize, at the render site via t(key, params).
+ */
+export interface PriceReason {
+  key: 'vault.priceErrWhole' | 'vault.priceErrInteger' | 'vault.priceErrMin' | 'vault.priceErrMax';
+  params?: { min?: number; max?: number };
+}
+
 export type PpvPrice =
   | { kind: 'free' }
   | { kind: 'paid'; dollars: number }
-  | { kind: 'invalid'; reason: string };
+  | { kind: 'invalid'; reason: PriceReason };
 
 /**
  * '' / '0' / 'free' ⇒ free media message; otherwise whole dollars 3–200.
@@ -68,22 +78,33 @@ export function parsePpvPrice(input: string): PpvPrice {
     return { kind: 'free' };
   }
   if (!/^\d+(\.\d+)?$/.test(trimmed)) {
-    return { kind: 'invalid', reason: 'Enter a whole-dollar amount' };
+    return { kind: 'invalid', reason: { key: 'vault.priceErrWhole' } };
   }
   const value = Number(trimmed);
   if (!Number.isInteger(value)) {
-    return { kind: 'invalid', reason: 'Whole dollars only (OnlyFans PPV prices)' };
+    return { kind: 'invalid', reason: { key: 'vault.priceErrInteger' } };
   }
   if (value < PPV_PRICE_MIN) {
-    return { kind: 'invalid', reason: `Minimum PPV price is $${PPV_PRICE_MIN} (or 0 = free)` };
+    return { kind: 'invalid', reason: { key: 'vault.priceErrMin', params: { min: PPV_PRICE_MIN } } };
   }
   if (value > PPV_PRICE_MAX) {
-    return { kind: 'invalid', reason: `Maximum PPV price is $${PPV_PRICE_MAX}` };
+    return { kind: 'invalid', reason: { key: 'vault.priceErrMax', params: { max: PPV_PRICE_MAX } } };
   }
   return { kind: 'paid', dollars: value };
 }
 
 // ─── Compose summary (mandatory misprice guard, PRD F7) ──────────────────
+
+/**
+ * Locale-free confirm descriptor — a catalog key + the values the render site
+ * interpolates. itemCount drives the plural noun ({items} fragment) and the
+ * $dollars NUMBER stays verbatim (misprice guard); only the words localize.
+ */
+export interface ConfirmLabel {
+  key: 'vault.confirmLabelPaid' | 'vault.confirmLabelFree';
+  itemCount: number;
+  dollars: number;
+}
 
 export interface ComposeSummary {
   itemCount: number;
@@ -92,8 +113,8 @@ export interface ComposeSummary {
   price: number;
   /** Caption state: 'locked' (priced), 'visible' (free send), 'none' (empty draft). */
   caption: 'locked' | 'visible' | 'none';
-  /** The explicit-confirm button text — price restated in words. */
-  confirmLabel: string;
+  /** The explicit-confirm button descriptor — price restated in words at render. */
+  confirmLabel: ConfirmLabel;
 }
 
 /**
@@ -110,14 +131,15 @@ export function deriveComposeSummary(
   }
   const itemCount = selection.ids.length;
   const dollars = price.kind === 'paid' ? price.dollars : 0;
-  const noun = itemCount === 1 ? 'item' : 'items';
   return {
     itemCount,
     previewCount: selection.previews.length,
     price: dollars,
     caption: draft.trim() === '' ? 'none' : dollars > 0 ? 'locked' : 'visible',
     confirmLabel:
-      dollars > 0 ? `Send ${itemCount} ${noun} for $${dollars}` : `Send ${itemCount} ${noun} free`,
+      dollars > 0
+        ? { key: 'vault.confirmLabelPaid', itemCount, dollars }
+        : { key: 'vault.confirmLabelFree', itemCount, dollars: 0 },
   };
 }
 
@@ -141,14 +163,21 @@ export function mergeGalleryPages(
 }
 
 /** PPV badge for a gallery cell (DESIGN §4: money green = purchased, pending
- *  money amber = unopened). Null for free media. */
+ *  money amber = unopened). Null for free media. Locale-free descriptor: the
+ *  $price NUMBER is a param, only the word localizes — rendered via t(key, …). */
+export interface GalleryBadge {
+  key: 'vault.badgePurchased' | 'vault.badgeUnopened';
+  tone: 'green' | 'amber';
+  price: number;
+}
+
 export function galleryBadge(
   item: Pick<GalleryItemVM, 'price' | 'isOpened'>,
-): { label: string; tone: 'green' | 'amber' } | null {
+): GalleryBadge | null {
   if (item.price <= 0) return null;
   return item.isOpened === true
-    ? { label: `$${item.price} PURCHASED`, tone: 'green' }
-    : { label: `$${item.price} UNOPENED`, tone: 'amber' };
+    ? { key: 'vault.badgePurchased', tone: 'green', price: item.price }
+    : { key: 'vault.badgeUnopened', tone: 'amber', price: item.price };
 }
 
 /** Rows of `columns` cells for the virtualized grids. */

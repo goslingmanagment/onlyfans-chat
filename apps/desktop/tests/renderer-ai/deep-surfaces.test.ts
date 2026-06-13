@@ -124,7 +124,11 @@ describe('deriveDockView · hi-greeting variants insert path', () => {
 
 describe('Ping / Hi pill gates (precedence: unmapped → no-key → feature gate)', () => {
   it('ping blocked → dimmed with the fan-active reason', () => {
-    expect(evaluatePingGate(OK_GATE, true)).toEqual({ enabled: false, reason: PING_BLOCKED_REASON });
+    expect(evaluatePingGate(OK_GATE, true)).toEqual({
+      enabled: false,
+      reason: PING_BLOCKED_REASON,
+      code: 'ping-blocked',
+    });
   });
 
   it('ping allowed when the gate says not blocked or is unknown', () => {
@@ -134,7 +138,11 @@ describe('Ping / Hi pill gates (precedence: unmapped → no-key → feature gate
   });
 
   it('hi locked → dimmed with the message-cap reason', () => {
-    expect(evaluateHiGate(OK_GATE, true)).toEqual({ enabled: false, reason: HI_LOCKED_REASON });
+    expect(evaluateHiGate(OK_GATE, true)).toEqual({
+      enabled: false,
+      reason: HI_LOCKED_REASON,
+      code: 'hi-locked',
+    });
     expect(evaluateHiGate(OK_GATE, false)).toEqual({ enabled: true });
     // unknown = allowed; coordinator CG-FLOW-09 is authoritative
     expect(evaluateHiGate(OK_GATE, null)).toEqual({ enabled: true });
@@ -144,10 +152,12 @@ describe('Ping / Hi pill gates (precedence: unmapped → no-key → feature gate
     expect(evaluatePingGate(UNMAPPED_GATE, true)).toEqual({
       enabled: false,
       reason: 'Map a personality in Settings',
+      code: 'unmapped',
     });
     expect(evaluateHiGate(UNMAPPED_GATE, true)).toEqual({
       enabled: false,
       reason: 'Map a personality in Settings',
+      code: 'unmapped',
     });
   });
 
@@ -155,10 +165,12 @@ describe('Ping / Hi pill gates (precedence: unmapped → no-key → feature gate
     expect(evaluatePingGate(NO_KEY_GATE, false)).toEqual({
       enabled: false,
       reason: 'Add an Anthropic or OpenRouter key in Settings',
+      code: 'no-key',
     });
     expect(evaluateHiGate(NO_KEY_GATE, true)).toEqual({
       enabled: false,
       reason: 'Add an Anthropic or OpenRouter key in Settings',
+      code: 'no-key',
     });
   });
 

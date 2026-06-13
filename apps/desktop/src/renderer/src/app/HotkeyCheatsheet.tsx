@@ -1,8 +1,10 @@
 import { useUiStore } from '../state/uiStore';
-import { CHEATSHEET_EXTRAS, KEY_BINDINGS, UPCOMING_BINDINGS } from './keymapBindings';
+import { CHEATSHEET_EXTRAS, CMD_DESC_KEY, KEY_BINDINGS, UPCOMING_BINDINGS } from './keymapBindings';
 import { Kbd } from '../design/Kbd';
+import { useT } from '../lib/i18n';
 
 export function HotkeyCheatsheet(): React.JSX.Element | null {
+  const t = useT();
   const open = useUiStore((s) => s.cheatsheetOpen);
   const setOpen = useUiStore((s) => s.setCheatsheetOpen);
   if (!open) return null;
@@ -17,28 +19,28 @@ export function HotkeyCheatsheet(): React.JSX.Element | null {
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-baseline justify-between">
-          <h2 className="font-serif text-[17px] font-semibold">Keyboard shortcuts</h2>
+          <h2 className="font-serif text-[17px] font-semibold">{t('cheat.title')}</h2>
           <span className="text-micro text-ink-low">
-            <Kbd>?</Kbd> or <Kbd>esc</Kbd> to close
+            <Kbd>?</Kbd>{t('cheat.orPre')}<Kbd>esc</Kbd>{t('cheat.toClose')}
           </span>
         </div>
         <div className="space-y-1.5">
           {KEY_BINDINGS.filter((b) => b.hideFromCheatsheet !== true).map((b) => (
             <div key={b.action} className="flex items-center justify-between py-[3px] text-[12.5px]">
-              <span className="text-ink-mid">{b.description}</span>
+              <span className="text-ink-mid">{CMD_DESC_KEY[b.action] ? t(CMD_DESC_KEY[b.action]!) : b.description}</span>
               <Kbd>{b.label}</Kbd>
             </div>
           ))}
-          {CHEATSHEET_EXTRAS.map((b) => (
+          {CHEATSHEET_EXTRAS.map((b, i) => (
             <div key={b.label} className="flex items-center justify-between py-[3px] text-[12.5px]">
-              <span className="text-ink-mid">{b.description}</span>
+              <span className="text-ink-mid">{i === 0 ? t('cheat.extraParts') : t('cheat.extraSpenders')}</span>
               <Kbd>{b.label}</Kbd>
             </div>
           ))}
         </div>
         {UPCOMING_BINDINGS.length > 0 && (
           <>
-            <div className="cap mt-4 mb-1.5 text-ink-low">Coming with later phases</div>
+            <div className="cap mt-4 mb-1.5 text-ink-low">{t('cheat.upcoming')}</div>
             <div className="space-y-1.5 opacity-50">
               {UPCOMING_BINDINGS.map((b) => (
                 <div key={b.label} className="flex items-center justify-between py-[3px] text-[12.5px]">

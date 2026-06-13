@@ -8,6 +8,7 @@ import type { GalleryItemVM, MessageMediaVM } from '../../../../preload/contract
 import { useChatGallery } from '../../bridge/queries';
 import { EmptyState } from '../../design/EmptyState';
 import { cx } from '../../lib/cx';
+import { useT } from '../../lib/i18n';
 import { formatClock } from '../../lib/time';
 import { chunkRows, galleryBadge, mergeGalleryPages } from './vaultLogic';
 
@@ -20,6 +21,7 @@ interface GalleryCellData {
 }
 
 function GalleryCell({ cell }: { cell: GalleryCellData }): React.JSX.Element {
+  const t = useT();
   const { item, media } = cell;
   const badge = galleryBadge(item);
   const showImage = media !== null && media.isReady && !media.locked && media.thumbUrl !== null;
@@ -51,7 +53,7 @@ function GalleryCell({ cell }: { cell: GalleryCellData }): React.JSX.Element {
       </div>
       <div className="num flex flex-none items-center gap-2 px-2 py-1 text-micro tracking-[0.05em] text-ink-low">
         <span>{item.createdAt !== null ? formatClock(new Date(item.createdAt)) : ''}</span>
-        <span>{item.isSentByMe ? 'SENT' : 'FROM FAN'}</span>
+        <span>{item.isSentByMe ? 'SENT' : t('vault.galFromFan')}</span>
         {badge !== null && (
           <span
             className={cx(
@@ -61,7 +63,7 @@ function GalleryCell({ cell }: { cell: GalleryCellData }): React.JSX.Element {
                 : 'border-amber-line bg-amber-bg text-amber',
             )}
           >
-            {badge.label}
+            {t(badge.key, { price: badge.price })}
           </span>
         )}
       </div>
@@ -76,6 +78,7 @@ export function GalleryTab({
   accountId: string;
   chatId: string;
 }): React.JSX.Element {
+  const t = useT();
   const query = useChatGallery(accountId, chatId, true);
   const cells = useMemo<GalleryCellData[]>(() => {
     const items = mergeGalleryPages(query.data?.pages ?? []);
@@ -106,14 +109,14 @@ export function GalleryTab({
   if (query.isPending) {
     return (
       <div className="num flex-1 py-10 text-center text-micro tracking-[0.1em] text-ink-low">
-        LOADING GALLERY…
+        {t('vault.loadingGallery')}
       </div>
     );
   }
   if (cells.length === 0) {
     return (
       <div className="flex-1">
-        <EmptyState glyph="▦" title="No media in this chat" hint="Sent and received media will appear here." />
+        <EmptyState glyph="▦" title={t('vault.galEmptyTitle')} hint={t('vault.galEmptyHint')} />
       </div>
     );
   }
@@ -141,7 +144,7 @@ export function GalleryTab({
         })}
       </div>
       {query.isFetchingNextPage && (
-        <div className="num py-2 text-center text-micro tracking-[0.1em] text-ink-low">LOADING MORE…</div>
+        <div className="num py-2 text-center text-micro tracking-[0.1em] text-ink-low">{t('vault.loadingMore')}</div>
       )}
     </div>
   );

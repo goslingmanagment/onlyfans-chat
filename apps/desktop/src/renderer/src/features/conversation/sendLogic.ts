@@ -59,8 +59,6 @@ export function createTypingThrottle(
 
 // ─── CG-OF-05 restricted-word highlighting ───────────────────────────────
 
-export const RESTRICTED_WORDS_BANNER = 'OnlyFans blocked this message — restricted words';
-
 export interface RestrictedSegment {
   text: string;
   restricted: boolean;
@@ -104,9 +102,6 @@ export function restrictedSegments(
 
 // ─── Outbox row → label / actions ────────────────────────────────────────
 
-export const UNCONFIRMED_EXPLAINER = 'Delivery unconfirmed — it may have reached the fan';
-export const CANNOT_SEND_FALLBACK = 'OnlyFans does not allow messaging this fan right now';
-
 export type OutboxAction = 'edit' | 'retry' | 'dismiss' | 'verify';
 
 export interface OutboxRowView {
@@ -115,7 +110,15 @@ export interface OutboxRowView {
   pulse: boolean;
   /** CG-OF-05: show the platform banner and keep the text (SPEC §7.4). */
   restrictedWords: boolean;
-  explainer: string | null;
+  /**
+   * Reason CODE for the explainer line; the component resolves it to localized
+   * copy. `'unconfirmed'` → conv.unconfirmedExplainer; null ⇒ either no
+   * explainer, or (for an uncoded FAILED) fall back to `explainerMessage`
+   * which carries the raw wire message verbatim (registry/provider wording).
+   */
+  explainerCode: 'unconfirmed' | null;
+  /** Verbatim wire message for an uncoded FAILED row (not authored English). */
+  explainerMessage: string | null;
   actions: readonly OutboxAction[];
 }
 
@@ -130,9 +133,9 @@ export function deriveOutboxRow(
 ): OutboxRowView | null {
   switch (item.state) {
     case 'queued':
-      return { label: 'QUEUED', tone: 'low', pulse: false, restrictedWords: false, explainer: null, actions: [] };
+      return { label: 'QUEUED', tone: 'low', pulse: false, restrictedWords: false, explainerCode: null, explainerMessage: null, actions: [] };
     case 'sending':
-      return { label: 'SENDING', tone: 'low', pulse: true, restrictedWords: false, explainer: null, actions: [] };
+      return { label: 'SENDING', tone: 'low', pulse: true, restrictedWords: false, explainerCode: null, explainerMessage: null, actions: [] };
     case 'failed': {
       const restricted = item.errorCode === 'CG-OF-05';
       return {
@@ -140,7 +143,8 @@ export function deriveOutboxRow(
         tone: 'bad',
         pulse: false,
         restrictedWords: restricted,
-        explainer: restricted ? RESTRICTED_WORDS_BANNER : item.errorMessage,
+        explainerCode: null,
+        explainerMessage: restricted ? null : item.errorMessage,
         actions: ['edit', 'retry', 'dismiss'],
       };
     }
@@ -150,7 +154,8 @@ export function deriveOutboxRow(
         tone: 'warn',
         pulse: false,
         restrictedWords: false,
-        explainer: UNCONFIRMED_EXPLAINER,
+        explainerCode: 'unconfirmed',
+        explainerMessage: null,
         actions: ['verify', 'dismiss'],
       };
     case 'sent':

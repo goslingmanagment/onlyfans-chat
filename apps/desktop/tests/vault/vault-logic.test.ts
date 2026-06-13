@@ -79,14 +79,35 @@ describe('parsePpvPrice (openapi: 0 or integer 3–200)', () => {
     expect(parsePpvPrice(String(PPV_PRICE_MAX))).toEqual({ kind: 'paid', dollars: 200 });
   });
 
-  it('rejects below-min, above-max, cents, and junk — with reasons', () => {
-    expect(parsePpvPrice('2')).toMatchObject({ kind: 'invalid' });
-    expect(parsePpvPrice('201')).toMatchObject({ kind: 'invalid' });
-    expect(parsePpvPrice('9.99')).toMatchObject({ kind: 'invalid' });
-    expect(parsePpvPrice('-5')).toMatchObject({ kind: 'invalid' });
-    expect(parsePpvPrice('abc')).toMatchObject({ kind: 'invalid' });
+  it('rejects below-min, above-max, cents, and junk — with reason descriptors', () => {
+    // Reasons are now locale-free descriptors { key, params? } resolved to text
+    // at the render site (i18n stage 2) — the $bound stays a NUMBER param.
+    expect(parsePpvPrice('2')).toEqual({
+      kind: 'invalid',
+      reason: { key: 'vault.priceErrMin', params: { min: 3 } },
+    });
+    expect(parsePpvPrice('201')).toEqual({
+      kind: 'invalid',
+      reason: { key: 'vault.priceErrMax', params: { max: 200 } },
+    });
+    expect(parsePpvPrice('9.99')).toEqual({
+      kind: 'invalid',
+      reason: { key: 'vault.priceErrInteger' },
+    });
+    expect(parsePpvPrice('-5')).toEqual({
+      kind: 'invalid',
+      reason: { key: 'vault.priceErrWhole' },
+    });
+    expect(parsePpvPrice('abc')).toEqual({
+      kind: 'invalid',
+      reason: { key: 'vault.priceErrWhole' },
+    });
     const below = parsePpvPrice('1');
-    expect(below.kind === 'invalid' && below.reason.includes('$3')).toBe(true);
+    // below-min carries the $3 bound as the {min} NUMBER param (misprice guard)
+    expect(below).toEqual({
+      kind: 'invalid',
+      reason: { key: 'vault.priceErrMin', params: { min: PPV_PRICE_MIN } },
+    });
   });
 });
 
@@ -98,22 +119,25 @@ describe('deriveComposeSummary (mandatory misprice guard)', () => {
     expect(deriveComposeSummary(twoItems, parsePpvPrice('2'), 'hi')).toBeNull();
   });
 
-  it('restates the price in words on the confirm label', () => {
+  it('restates the price as a locale-free confirm descriptor', () => {
+    // confirmLabel is now { key, itemCount, dollars } — the render site builds
+    // the plural {items} fragment + keeps the $dollars NUMBER verbatim.
     const paid = deriveComposeSummary(twoItems, { kind: 'paid', dollars: 25 }, 'caption');
     expect(paid).toEqual({
       itemCount: 2,
       previewCount: 1,
       price: 25,
       caption: 'locked',
-      confirmLabel: 'Send 2 items for $25',
+      confirmLabel: { key: 'vault.confirmLabelPaid', itemCount: 2, dollars: 25 },
     });
 
     const single = deriveComposeSummary({ ids: ['a'], previews: [] }, { kind: 'paid', dollars: 3 }, '');
-    expect(single?.confirmLabel).toBe('Send 1 item for $3'); // singular noun
+    // itemCount: 1 drives the singular noun at render
+    expect(single?.confirmLabel).toEqual({ key: 'vault.confirmLabelPaid', itemCount: 1, dollars: 3 });
     expect(single?.caption).toBe('none');
 
     const free = deriveComposeSummary(twoItems, { kind: 'free' }, 'caption');
-    expect(free?.confirmLabel).toBe('Send 2 items free');
+    expect(free?.confirmLabel).toEqual({ key: 'vault.confirmLabelFree', itemCount: 2, dollars: 0 });
     expect(free?.caption).toBe('visible'); // free send: the caption shows
   });
 });
@@ -129,17 +153,22 @@ describe('gallery merge + badges', () => {
   });
 
   it('badges PPV cells: green once purchased, amber while pending, none when free', () => {
+    // Badge is now a locale-free descriptor { key, tone, price } — the $price
+    // NUMBER stays a param, only PURCHASED/UNOPENED localizes at render.
     expect(galleryBadge(gallery({ price: 25, isOpened: true }))).toEqual({
-      label: '$25 PURCHASED',
+      key: 'vault.badgePurchased',
       tone: 'green',
+      price: 25,
     });
     expect(galleryBadge(gallery({ price: 25, isOpened: false }))).toEqual({
-      label: '$25 UNOPENED',
+      key: 'vault.badgeUnopened',
       tone: 'amber',
+      price: 25,
     });
     expect(galleryBadge(gallery({ price: 25, isOpened: null }))).toEqual({
-      label: '$25 UNOPENED',
+      key: 'vault.badgeUnopened',
       tone: 'amber',
+      price: 25,
     });
     expect(galleryBadge(gallery({ price: 0 }))).toBeNull();
   });

@@ -233,7 +233,13 @@ export function evaluateAiGate(input: AiGateInput): AiGate {
 
 // ─── Deep-feature gates (Ping / Hi pills, DESIGN §1 tier 1) ──────────────
 
-export type PillGate = { enabled: true } | { enabled: false; reason: string };
+/**
+ * Block-reason CODE for the pill gates — the renderer maps it to localized text
+ * via features/ai/gateText (the gate logic stays locale-free). `reason` keeps the
+ * English fallback wording (also the behavior fact pinned by the unit tests).
+ */
+export type PillGateReason = 'loading' | 'unmapped' | 'no-key' | 'ping-blocked' | 'hi-locked';
+export type PillGate = { enabled: true } | { enabled: false; reason: string; code: PillGateReason };
 
 export const PING_BLOCKED_REASON = 'Fan is active — use Reply';
 export const HI_LOCKED_REASON = `Conversation already has more than ${HI_GREETING_MAX_TRANSCRIPT} messages — use Reply`;
@@ -245,21 +251,30 @@ export const HI_LOCKED_REASON = `Conversation already has more than ${HI_GREETIN
  * unknown (query not loaded) — allowed, the coordinator stays authoritative
  * (CG-FLOW-05 / CG-FLOW-09).
  */
-function evaluateDeepPillGate(base: AiGate | null, featureBlockReason: string | null): PillGate {
-  if (base === null) return { enabled: false, reason: 'Loading…' };
-  if (!base.ok) return { enabled: false, reason: base.message };
-  if (featureBlockReason !== null) return { enabled: false, reason: featureBlockReason };
+function evaluateDeepPillGate(
+  base: AiGate | null,
+  feature: { reason: string; code: PillGateReason } | null,
+): PillGate {
+  if (base === null) return { enabled: false, reason: 'Loading…', code: 'loading' };
+  if (!base.ok) return { enabled: false, reason: base.message, code: base.reason };
+  if (feature !== null) return { enabled: false, reason: feature.reason, code: feature.code };
   return { enabled: true };
 }
 
 /** `blocked === true` = query:ai.pingGate said the fan texted within the ping window. */
 export function evaluatePingGate(base: AiGate | null, blocked: boolean | null): PillGate {
-  return evaluateDeepPillGate(base, blocked === true ? PING_BLOCKED_REASON : null);
+  return evaluateDeepPillGate(
+    base,
+    blocked === true ? { reason: PING_BLOCKED_REASON, code: 'ping-blocked' } : null,
+  );
 }
 
 /** `locked === true` = conversation already exceeds the hi-greeting message cap. */
 export function evaluateHiGate(base: AiGate | null, locked: boolean | null): PillGate {
-  return evaluateDeepPillGate(base, locked === true ? HI_LOCKED_REASON : null);
+  return evaluateDeepPillGate(
+    base,
+    locked === true ? { reason: HI_LOCKED_REASON, code: 'hi-locked' } : null,
+  );
 }
 
 /**

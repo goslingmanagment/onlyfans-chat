@@ -1,6 +1,7 @@
 // Thread shaping: day separators, tip ledger rows, PPV chips, send states.
 // Pure — unit tested in tests/renderer/messages.test.ts.
 
+import { pluralWord, type UiLocale, type UiTranslator } from '@chatgoose/shared/i18n/index';
 import type { MessageVM, OutboxItemVM, PpvStateVM } from '../../../preload/contract';
 import { dayKey, formatClock, formatDayLabel } from './time';
 import { formatDollars } from './money';
@@ -13,7 +14,11 @@ export type ThreadRow =
   | { kind: 'outbox'; key: string; item: OutboxItemVM };
 
 /** Input messages must be in ascending chronological order. */
-export function buildThreadRows(messages: readonly MessageVM[], now: Date): ThreadRow[] {
+export function buildThreadRows(
+  messages: readonly MessageVM[],
+  now: Date,
+  t: UiTranslator,
+): ThreadRow[] {
   const rows: ThreadRow[] = [];
   let currentDay: string | null = null;
   for (const message of messages) {
@@ -21,7 +26,7 @@ export function buildThreadRows(messages: readonly MessageVM[], now: Date): Thre
     const day = dayKey(date);
     if (day !== currentDay) {
       currentDay = day;
-      rows.push({ kind: 'day', key: `day:${day}`, label: formatDayLabel(date, now) });
+      rows.push({ kind: 'day', key: `day:${day}`, label: formatDayLabel(date, now, t) });
     }
     rows.push(
       message.isTip
@@ -39,14 +44,17 @@ export interface PpvChip {
 }
 
 /** PPV badge per task spec: purchased filled green, not purchased amber outline, unknown neutral. */
-export function ppvChip(message: Pick<MessageVM, 'price' | 'ppvState'>): PpvChip | null {
+export function ppvChip(
+  message: Pick<MessageVM, 'price' | 'ppvState'>,
+  t: UiTranslator,
+): PpvChip | null {
   if (message.price <= 0 || message.ppvState === null) return null;
   const price = formatDollars(message.price);
   switch (message.ppvState) {
     case 'purchased':
       return { tone: 'green', label: `${price} PPV ✓`, state: 'purchased' };
     case 'not_purchased':
-      return { tone: 'amber', label: `${price} PPV — not purchased`, state: 'not_purchased' };
+      return { tone: 'amber', label: t('conv.ppvNotPurchased', { price }), state: 'not_purchased' };
     case 'unknown':
       return { tone: 'neutral', label: `${price} PPV`, state: 'unknown' };
   }
@@ -86,14 +94,22 @@ export function canUnsend(
   return now.getTime() - Date.parse(message.createdAt) < UNSEND_WINDOW_MS;
 }
 
-/** '3 photos · 1 video' style media count label. */
-export function mediaCountLabel(media: readonly MessageVM['media'][number][]): string {
+/** '3 photos · 1 video' style media count label (ru фото/видео are indeclinable). */
+export function mediaCountLabel(
+  media: readonly MessageVM['media'][number][],
+  locale: UiLocale,
+): string {
   const counts = new Map<string, number>();
   for (const m of media) counts.set(m.type, (counts.get(m.type) ?? 0) + 1);
   const parts: string[] = [];
   for (const [type, count] of counts) {
-    const noun = type === 'photo' ? 'photo' : type === 'video' ? 'video' : type;
-    parts.push(`${count} ${noun}${count === 1 ? '' : 's'}`);
+    const noun =
+      type === 'photo'
+        ? pluralWord(locale, count, ['photo', 'photos'], ['фото', 'фото', 'фото'])
+        : type === 'video'
+          ? pluralWord(locale, count, ['video', 'videos'], ['видео', 'видео', 'видео'])
+          : type;
+    parts.push(`${count} ${noun}`);
   }
   return parts.join(' · ');
 }

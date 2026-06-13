@@ -9,6 +9,7 @@ import { useAccounts, useFan, useMessages, useSettings } from '../../bridge/quer
 import { useUiStore } from '../../state/uiStore';
 import { startAiFeature, useAiStore } from '../ai/aiStore';
 import { evaluateAiGate } from '../ai/dockLogic';
+import { gateText } from '../ai/gateText';
 import { isScanStale, splitSummaryParagraphs } from './scanLogic';
 import { Avatar } from '../../design/Avatar';
 import { Badge } from '../../design/Badge';
@@ -17,6 +18,7 @@ import { EmptyState } from '../../design/EmptyState';
 import { Kbd } from '../../design/Kbd';
 import { Skeleton } from '../../design/Skeleton';
 import { cx } from '../../lib/cx';
+import { useT, useLocale } from '../../lib/i18n';
 import { modCombo } from '../../lib/modKey';
 import { formatDollars } from '../../lib/money';
 import { formatLastSeen, isOnline } from '../../lib/time';
@@ -39,6 +41,7 @@ function useScanFlash(): boolean {
 }
 
 export function FanPanel(): React.JSX.Element {
+  const t = useT();
   const accountId = useUiStore((s) => s.selectedAccountId);
   const chatId = useUiStore((s) => s.selectedChatId);
   const tab = useUiStore((s) => s.fanPanelTab);
@@ -50,28 +53,28 @@ export function FanPanel(): React.JSX.Element {
   return (
     <aside className="flex min-h-0 w-[328px] flex-none flex-col border-l border-line bg-bg1">
       <div className="flex flex-none border-b border-line px-1.5">
-        {(['info', 'scan'] as const).map((t) => (
+        {(['info', 'scan'] as const).map((tabId) => (
           <button
-            key={t}
+            key={tabId}
             type="button"
-            onClick={() => setTab(t)}
+            onClick={() => setTab(tabId)}
             className={cx(
               'flex-1 cursor-pointer border-b-2 pt-3 pb-[10px] text-center text-[12.5px] font-semibold',
-              tab === t ? 'border-clay text-ink' : 'border-transparent text-ink-low hover:text-ink-mid',
-              t === 'scan' && scanFlashing && 'animate-pulse border-clay text-clay-deep',
+              tab === tabId ? 'border-clay text-ink' : 'border-transparent text-ink-low hover:text-ink-mid',
+              tabId === 'scan' && scanFlashing && 'animate-pulse border-clay text-clay-deep',
             )}
           >
-            {t === 'info' ? 'Info' : 'Scan'}
+            {tabId === 'info' ? t('fan.tabInfo') : 'Scan'}
           </button>
         ))}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {chatId === null ? (
-          <EmptyState title="No fan selected" hint="Pick a conversation to see fan context." />
+          <EmptyState title={t('fan.noneSelectedTitle')} hint={t('fan.noneSelectedHint')} />
         ) : fan.isPending ? (
           <PanelSkeleton />
         ) : fan.data == null ? (
-          <EmptyState title="No fan data yet" hint="Fan details load with the next sync." />
+          <EmptyState title={t('fan.noDataTitle')} hint={t('fan.noDataHint')} />
         ) : tab === 'info' ? (
           <InfoTab fan={fan.data} fetchedAt={fan.dataUpdatedAt} />
         ) : (
@@ -120,6 +123,8 @@ function Stat({ cap, value, money = false }: { cap: string; value: string; money
 }
 
 function InfoTab({ fan, fetchedAt }: { fan: FanPanelVM; fetchedAt: number }): React.JSX.Element {
+  const t = useT();
+  const locale = useLocale();
   const now = new Date();
   const sub = fan.subscription;
   return (
@@ -131,65 +136,68 @@ function InfoTab({ fan, fetchedAt }: { fan: FanPanelVM; fetchedAt: number }): Re
           <div className="num text-micro text-ink-low">@{fan.username}</div>
           {fan.customName !== null && (
             <div className="mt-[2px] text-[11.5px] text-ink-mid">
-              custom name:{' '}
+              {t('fan.customName')}{' '}
               <span className="border-b border-dashed border-line-strong">{fan.customName}</span>
             </div>
           )}
         </div>
       </div>
 
-      <div className="mt-2 text-[12px] text-ink-low">{formatLastSeen(fan.lastSeen, now)}</div>
+      <div className="mt-2 text-[12px] text-ink-low">{formatLastSeen(fan.lastSeen, now, t)}</div>
 
       {fan.spending !== null ? (
         <div className="mt-3.5 grid grid-cols-2 gap-2">
-          <Stat cap="lifetime" value={formatDollars(fan.spending.total)} money />
-          <Stat cap="tips" value={formatDollars(fan.spending.tips)} />
-          <Stat cap="messages·ppv" value={formatDollars(fan.spending.messages)} />
-          <Stat cap="subs" value={formatDollars(fan.spending.subscriptions)} />
+          <Stat cap={t('fan.statLifetime')} value={formatDollars(fan.spending.total)} money />
+          <Stat cap={t('fan.statTips')} value={formatDollars(fan.spending.tips)} />
+          <Stat cap={t('fan.statMessagesPpv')} value={formatDollars(fan.spending.messages)} />
+          <Stat cap={t('fan.statSubs')} value={formatDollars(fan.spending.subscriptions)} />
         </div>
       ) : (
         <div className="mt-3.5 rounded-chip border border-line bg-bg2 px-3 py-2.5 text-[12px] text-ink-low">
-          No spending data yet.
+          {t('fan.noSpending')}
         </div>
       )}
 
       {sub !== null && (
         <div className="mt-3 rounded-chip border border-line bg-bg1 px-3 py-[11px]">
           <div className="mb-2 flex items-center gap-2">
-            <span className="cap text-ink-low">Subscription</span>
+            <span className="cap text-ink-low">{t('fan.subscription')}</span>
             {sub.autoRenewOff && (
-              <Badge tone="bad" title="Auto-renew is off — churn risk">
-                CHURN RISK
+              <Badge tone="bad" title={t('fan.churnRiskTip')}>
+                {t('fan.churnRiskBadge')}
               </Badge>
             )}
           </div>
           <KV
-            label="Status"
+            label={t('fan.kvStatus')}
             value={
               sub.status === 'active'
-                ? `Active${sub.priceUsd !== null && sub.priceUsd > 0 ? ` · ${formatDollars(sub.priceUsd)}/mo` : ' · free'}`
+                ? `${t('fan.subActive')}${sub.priceUsd !== null && sub.priceUsd > 0 ? ` · ${t('fan.subPerMonth', { price: formatDollars(sub.priceUsd) })}` : ` · ${t('fan.subFree')}`}`
                 : sub.status === 'expired'
-                  ? 'Expired'
-                  : 'None'
+                  ? t('fan.subExpired')
+                  : t('fan.subNone')
             }
             ok={sub.status === 'active'}
           />
           {sub.renewsAt !== null && (
-            <KV label="Renews" value={new Date(sub.renewsAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} />
+            <KV
+              label={t('fan.kvRenews')}
+              value={new Date(sub.renewsAt).toLocaleDateString(locale === 'ru' ? 'ru-RU' : 'en-US', { month: 'short', day: 'numeric' })}
+            />
           )}
           <KV
-            label="Auto-renew"
+            label={t('fan.kvAutoRenew')}
             value={sub.autoRenewOff ? 'OFF' : 'ON'}
             ok={!sub.autoRenewOff}
             risk={sub.autoRenewOff}
           />
-          {sub.durationLabel !== null && <KV label="Duration" value={sub.durationLabel} />}
+          {sub.durationLabel !== null && <KV label={t('fan.kvDuration')} value={sub.durationLabel} />}
         </div>
       )}
 
       {fan.about !== null && (
         <div className="mt-3 rounded-chip border border-line bg-bg1 px-3 py-[11px]">
-          <div className="cap mb-1.5 text-ink-low">About</div>
+          <div className="cap mb-1.5 text-ink-low">{t('fan.about')}</div>
           <p className="text-[12.5px] leading-[1.6] text-ink-mid">{fan.about}</p>
         </div>
       )}
@@ -229,6 +237,7 @@ function ScanTab({
   chatId: string;
   fan: FanPanelVM;
 }): React.JSX.Element {
+  const t = useT();
   const accounts = useAccounts();
   const settings = useSettings();
   const scanRunning = useAiStore(
@@ -246,7 +255,7 @@ function ScanTab({
           hasLlmKey: settings.data.hasAnthropicKey || settings.data.hasOpenRouterKey,
         })
       : null;
-  const blockedReason = gate === null ? 'Loading…' : gate.ok ? null : gate.message;
+  const blockedReason = gate === null ? t('common.loading') : gate.ok ? null : gateText(t, gate.reason);
   const runnable = blockedReason === null && !scanRunning && accountId !== null;
 
   function runScan(forceRegenerate: boolean): void {
@@ -263,21 +272,21 @@ function ScanTab({
       <div className="flex h-full flex-col">
         <EmptyState
           glyph="◎"
-          title={scanRunning ? 'Scanning…' : 'No scan yet'}
+          title={scanRunning ? t('fan.scanningTitle') : t('fan.noScanTitle')}
           hint={
             scanRunning ? (
-              'Deep profile is generating — progress streams in the AI dock.'
+              t('fan.scanGenerating')
             ) : (
               <span className="flex flex-col items-center gap-2.5">
-                Run Scan to build the AI dossier for this fan.
+                {t('fan.runScanPrompt')}
                 <button
                   type="button"
                   disabled={!runnable}
-                  title={blockedReason ?? 'Deep fan profile (Scan)'}
+                  title={blockedReason ?? t('fan.runScanTip')}
                   onClick={() => runScan(false)}
                   className="flex cursor-pointer items-center gap-[7px] rounded-full border border-clay-line bg-clay-bg px-[13px] py-1 text-[12.5px] font-semibold text-clay-deep hover:border-clay hover:text-clay disabled:cursor-default disabled:opacity-45"
                 >
-                  ◎ Run Scan <Kbd>{modCombo('S')}</Kbd>
+                  ◎ {t('fan.runScanBtn')} <Kbd>{modCombo('S')}</Kbd>
                 </button>
               </span>
             )
@@ -293,22 +302,22 @@ function ScanTab({
     <div className="p-4">
       <div className="flex items-center gap-2">
         <span className="cap text-ink-low">Scan</span>
-        <DataAge at={fan.summary.generatedAt} prefix="GENERATED" />
+        <DataAge at={fan.summary.generatedAt} prefix={t('fan.generatedPrefix')} />
         <span className="num ml-auto text-micro text-ink-low">{fan.summary.modelLabel}</span>
         <button
           type="button"
           disabled={!runnable}
-          title={blockedReason ?? 'Regenerate the scan (drops the cached one)'}
+          title={blockedReason ?? t('fan.refreshTip')}
           onClick={() => runScan(true)}
           className="num cursor-pointer text-micro tracking-[0.08em] text-clay-deep hover:text-clay disabled:cursor-default disabled:opacity-45"
         >
-          {scanRunning ? 'SCANNING…' : '↻ REFRESH'}
+          {scanRunning ? t('fan.scanning') : t('fan.refresh')}
         </button>
       </div>
       {stale && !scanRunning && (
         // quiet hint, not an alarm — the scan is still useful, just behind the chat
         <div className="mt-1.5 text-[11.5px] text-ink-low">
-          New messages since this scan — refresh for a current read.
+          {t('fan.staleHint')}
         </div>
       )}
       {/* AI-authored text always renders in serif (DESIGN §4); Russian body per PRD F6.4 */}
