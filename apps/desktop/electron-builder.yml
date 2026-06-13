@@ -51,3 +51,12 @@ mac:
   identity: null
 
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+# Auto-update feed (generic = plain static files over HTTPS; nginx site
+# `chatgoose-updates` on the agency VPS, uploaded by the windows-build publish
+# job — ops in docs/RELEASE.md). Baked into the packaged app-update.yml; the
+# random path segment just keeps the feed off scanners — builds are unsigned,
+# so the feed host being ours is the trust anchor (SPEC §4).
+publish:
+  provider: generic
+  url: https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3/

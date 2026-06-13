@@ -512,6 +512,11 @@ export const UI_MESSAGES = {
     en: '{used} of {budget} credits used this shift.',
     ru: 'Потрачено {used} из {budget} кредитов за смену.',
   },
+  'notif.updateTitle': { en: 'Update ready', ru: 'Обновление готово' },
+  'notif.updateBody': {
+    en: 'ChatGoose {version} will install when you quit the app.',
+    ru: 'ChatGoose {version} установится при выходе из приложения.',
+  },
 } as const satisfies Record<string, { en: string; ru: string }>;
 
 export type UiMessageKey = keyof typeof UI_MESSAGES;

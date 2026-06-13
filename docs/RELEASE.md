@@ -73,6 +73,33 @@ packaged smoke run caught as a failed `dbKey` decrypt (different binary ⇒
 Keychain/DPAPI refuses). Dev keeps the historical dir; packaged installs start
 clean.
 
+## Auto-update (Windows only; built 2026-06-13)
+
+Installed Windows apps update themselves: `electron-updater` checks the feed at
+launch and every 4 h, downloads in the background, installs **on quit** (never
+prompts mid-shift; a quiet "installs when you quit" toast is the only signal).
+Policy lives in `src/main/platform/updater.ts`; macOS has no auto-update —
+unsigned builds can't (Squirrel.Mac requirement), and the mac side runs dev.
+
+**Release ritual:**
+
+1. Bump `version` in `apps/desktop/package.json`, commit.
+2. `git tag v<version> && git push origin main --tags`.
+3. The `windows-build` workflow builds the installer and its `publish` job
+   uploads `ChatGoose-Setup-<version>.exe` + `.blockmap` + `latest.yml` to the
+   feed (blockmaps make updates differential — clients download only changed
+   chunks). Done — apps pick it up within 4 h or on next launch.
+
+**Feed infrastructure:** static nginx site `chatgoose-updates` on the agency
+VPS `45.8.230.111`, serving `/srv/chatgoose-updates` at
+`https://45-8-230-111.sslip.io/u/<token>/` (the URL is baked into builds via
+`electron-builder.yml` → `publish`; sslip.io is wildcard DNS over the IP, the
+cert is a normal Let's Encrypt one auto-renewed by certbot). Files are owned by
+the unprivileged `cgupdates` user; CI uploads over scp with the
+`UPDATES_SSH_KEY` repo secret (set 2026-06-13) and a pinned host key. Builds
+are unsigned, so the feed host being ours is the trust anchor — rotate the
+token path (nginx dir + `publish.url`) if it ever leaks somewhere noisy.
+
 ## Smoke checklist for a new build (any platform)
 
 1. Install/launch from the artifact (not `pnpm dev`).

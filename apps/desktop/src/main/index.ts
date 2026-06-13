@@ -43,6 +43,7 @@ import { createHubModule, type HubModule } from './hub/index';
 import { attachEventForwarding } from './ipc/events';
 import { focusExistingWindow } from './platform/single-instance';
 import { badgePng } from './platform/badge';
+import { shouldAutoUpdate, startAutoUpdater, type AppUpdaterLike } from './platform/updater';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 
@@ -636,6 +637,32 @@ if (!app.requestSingleInstanceLock()) {
   // shortcut's; electron-builder stamps shortcuts with the appId, so use it
   // verbatim (electron-builder.yml). No-op outside Windows.
   app.setAppUserModelId('com.chatgoose.desktop');
+
+  // Auto-update (platform/updater.ts policy: win32 packaged only, install on
+  // quit, silent failures). electron-updater drags Electron in at import time,
+  // so it is dynamic-imported here rather than in the testable policy module.
+  if (shouldAutoUpdate(process.platform, app.isPackaged)) {
+    void import('electron-updater').then((mod) => {
+      // CJS↔ESM interop: under Node ESM the CJS module surfaces as `default`.
+      const interop = mod as unknown as { default?: { autoUpdater: AppUpdaterLike }; autoUpdater?: AppUpdaterLike };
+      const autoUpdater = interop.default?.autoUpdater ?? interop.autoUpdater;
+      if (autoUpdater === undefined) {
+        return;
+      }
+      startAutoUpdater({
+        updater: autoUpdater,
+        onUpdateReady: (version) => {
+          if (Notification.isSupported()) {
+            new Notification({
+              title: uiMessage(uiLocale, 'notif.updateTitle'),
+              body: uiMessage(uiLocale, 'notif.updateBody', { version }),
+              silent: true,
+            }).show();
+          }
+        },
+      });
+    });
+  }
 
   app.whenReady().then(() => {
     buildAppMenu();
