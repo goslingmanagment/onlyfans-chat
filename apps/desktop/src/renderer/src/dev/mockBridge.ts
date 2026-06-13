@@ -763,6 +763,14 @@ export function createMockBridge(): ChatGooseBridge {
   const outboxTimers = new Map<string, Array<ReturnType<typeof setTimeout>>>(); // localId →
   const draftStore = new Map<string, string>(); // `${accountId}/${chatId}` → text
   let localSeq = 0;
+  // Spenders freshness (PLAN item 13): per-scope stamps + a simulated queue.
+  const mockRefreshStamps: Record<string, string> = {};
+  let mockRefreshActive: {
+    scope: string;
+    state: 'running' | 'paused';
+    done: number;
+    total: number;
+  } | null = null;
 
   function outboxChanged(accountId: string, chatId: string): void {
     emit('db:changed', { scope: 'outbox', accountId, chatId });
@@ -1282,6 +1290,61 @@ export function createMockBridge(): ChatGooseBridge {
     },
     'cmd:spenders.hydrate': () => {
       // mock data is always "complete" — nothing to fetch
+    },
+    // ── Spenders freshness (PLAN item 13): simulated queue with live frames ──
+    'query:spenders.freshness': () => ({
+      scopes: { ...mockRefreshStamps },
+      active: mockRefreshActive === null ? null : { ...mockRefreshActive },
+    }),
+    'cmd:spenders.refreshScope': ({ accountId, scope }) => {
+      if (mockRefreshActive !== null) return;
+      const total = scope === 'all' ? 19 : scope === '9001' ? 3 : 4;
+      mockRefreshActive = { scope, state: 'running', done: 0, total };
+      const tick = (): void => {
+        if (mockRefreshActive === null) return; // stopped
+        mockRefreshActive.done += 1;
+        const finished = mockRefreshActive.done >= mockRefreshActive.total;
+        emit('sync:event', {
+          type: 'spendersRefresh',
+          accountId,
+          scope,
+          state: finished ? 'done' : 'running',
+          done: mockRefreshActive.done,
+          total: mockRefreshActive.total,
+        });
+        if (finished) {
+          mockRefreshStamps[scope] = new Date().toISOString();
+          if (scope === 'all') {
+            mockRefreshStamps['9001'] = mockRefreshStamps[scope];
+            mockRefreshStamps['9002'] = mockRefreshStamps[scope];
+          }
+          mockRefreshActive = null;
+          return;
+        }
+        setTimeout(tick, 250);
+      };
+      emit('sync:event', {
+        type: 'spendersRefresh',
+        accountId,
+        scope,
+        state: 'running',
+        done: 0,
+        total,
+      });
+      setTimeout(tick, 250);
+    },
+    'cmd:spenders.refreshStop': ({ accountId }) => {
+      if (mockRefreshActive === null) return;
+      const { scope, done, total } = mockRefreshActive;
+      mockRefreshActive = null;
+      emit('sync:event', {
+        type: 'spendersRefresh',
+        accountId,
+        scope,
+        state: 'stopped',
+        done,
+        total,
+      });
     },
     'query:spenders.stats': ({ accountId }) => {
       const all = store.chats.get(accountId) ?? [];

@@ -7,6 +7,7 @@ import type { CreditBalanceEvent } from '../../preload/contract';
 import type { DbChangeBus } from '../db/change-bus';
 import type { CreditMeter } from '../ofapi/credit-meter';
 import type { SyncProvider } from '../sync/provider';
+import type { SpendersRefreshFrame } from '../spenders/refresh';
 
 export interface EventForwarderDeps {
   window: () => BrowserWindow | null;
@@ -14,6 +15,10 @@ export interface EventForwarderDeps {
   sync: SyncProvider | null;
   creditMeter: CreditMeter | null;
   coordinator: { subscribe(listener: (event: OperationEvent) => void): () => void } | null;
+  /** Spenders refresh queue progress frames (PLAN item 13), additive on sync:event. */
+  spendersRefresh?: {
+    subscribe(listener: (frame: SpendersRefreshFrame) => void): () => void;
+  } | null;
   onSyncEvent?: (event: SyncEvent) => void;
 }
 
@@ -56,6 +61,10 @@ export function attachEventForwarding(deps: EventForwarderDeps): () => void {
         send('sync:event', frame);
       }),
     );
+  }
+
+  if (deps.spendersRefresh) {
+    disposers.push(deps.spendersRefresh.subscribe((frame) => send('sync:event', frame)));
   }
 
   if (deps.coordinator) {

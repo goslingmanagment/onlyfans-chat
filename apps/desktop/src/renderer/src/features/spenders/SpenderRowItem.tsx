@@ -60,8 +60,16 @@ export const SpenderRowItem = memo(function SpenderRowItem({
           )}
         </div>
         <div className="mt-[2px] truncate text-[13px] text-ink-mid">
-          {row.lastMessageIsSentByMe && <span className="text-ink-low">{t('sp.you')} </span>}
-          {row.lastMessagePreview}
+          {row.lastMessagePreview === '' ? (
+            // thread never fetched: honest italic hint, cured by the first
+            // refresh / quick-look open (freshness mockup — no per-row marks)
+            <span className="text-ink-low italic">{t('sp.noThreadYet')}</span>
+          ) : (
+            <>
+              {row.lastMessageIsSentByMe && <span className="text-ink-low">{t('sp.you')} </span>}
+              {row.lastMessagePreview}
+            </>
+          )}
         </div>
       </div>
       <div className="flex flex-col items-end gap-1 whitespace-nowrap">

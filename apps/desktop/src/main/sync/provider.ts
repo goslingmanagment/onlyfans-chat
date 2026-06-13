@@ -1,6 +1,7 @@
 // SyncProvider seam (SPEC §6): PollingSync now, HubSync (core SSE) at P3 swaps in
 // behind the same surface — renderer code unchanged.
 
+import type { OfApiPurpose } from '@chatgoose/shared';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 
 export type SyncListener = (event: SyncEvent) => void;
@@ -18,7 +19,9 @@ export interface SyncProvider {
   start(accountIds: readonly string[]): void;
   stop(): void;
   subscribe(listener: SyncListener): () => void;
-  refreshChat(accountId: string, chatId: string): Promise<void>;
+  /** One read-only tail fetch (limit=100, ONE page). Default ledger purpose is
+   *  'message-tail'; the spenders refresh queue passes its own distinct one. */
+  refreshChat(accountId: string, chatId: string, purpose?: OfApiPurpose): Promise<void>;
   /** Conversation focus drives the read-state sweep + immediate refresh. */
   openConversation(accountId: string, chatId: string): Promise<void>;
   closeConversation(accountId: string, chatId: string): void;

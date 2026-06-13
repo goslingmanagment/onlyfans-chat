@@ -229,3 +229,71 @@ export function isNewSpender(lifetimeSpend: number | null, windowSpend: number):
   if (lifetimeSpend === null) return false;
   return lifetimeSpend - windowSpend < NEW_SPENDER_EPSILON_USD;
 }
+
+// ─── Data freshness (PLAN item 13; binding experiment page ────────────────
+// mockups/experiments/spenders-freshness.html). The board's counters/previews
+// drift while the app is closed; freshness is owner-controlled: a scoped
+// refresh button (cost visible BEFORE the click) + one per-scope «последний
+// апдейт» line. Internally every thread-fetch path stamps a per-fan
+// fetched-at; the TTL below is the spend ceiling shared by the quick-look
+// hydrate and the refresh queue (per-fan stamps are never rendered).
+
+/** One per-fan tail fetch at most this often — quick-look hydrate AND the
+ *  scoped refresh queue both skip fans fetched within the window. */
+export const THREAD_FETCH_TTL_MS = 5 * 60_000;
+
+/** OFAPI Basic plan: $69 / 20,000 credits (research doc §credits). The board
+ *  prices a refresh at 1 credit = 1 fan; this turns credits into the ≈$ hint. */
+export const OFAPI_USD_PER_CREDIT = 69 / 20_000;
+
+export function refreshCostUsd(credits: number): number {
+  if (!Number.isFinite(credits) || credits <= 0) return 0;
+  return credits * OFAPI_USD_PER_CREDIT;
+}
+
+/** Fans whose thread would actually be fetched by a refresh right now: stamp
+ *  missing or older than the TTL (the button's «~» honesty — the printed scope
+ *  count is the ceiling, TTL skips only make it cheaper). */
+export function countPendingRefresh(
+  stampsMs: ReadonlyArray<number | null>,
+  nowMs: number,
+  ttlMs: number = THREAD_FETCH_TTL_MS,
+): number {
+  let pending = 0;
+  for (const stamp of stampsMs) {
+    if (stamp === null || !Number.isFinite(stamp) || nowMs - stamp >= ttlMs) pending += 1;
+  }
+  return pending;
+}
+
+export function isWithinFetchTtl(
+  stampMs: number | null,
+  nowMs: number,
+  ttlMs: number = THREAD_FETCH_TTL_MS,
+): boolean {
+  return stampMs !== null && Number.isFinite(stampMs) && nowMs - stampMs < ttlMs;
+}
+
+/** «последний апдейт — вчера 18:40»: day word vs explicit date, decided in the
+ *  user's LOCAL calendar (same convention as the stats panel's local days).
+ *  The renderer supplies the localized «сегодня»/«вчера» words. */
+export type UpdateStampParts =
+  | { kind: 'today'; time: string }
+  | { kind: 'yesterday'; time: string }
+  | { kind: 'date'; date: string; time: string };
+
+function two(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+export function splitUpdateStamp(stampMs: number, nowMs: number): UpdateStampParts {
+  const stamp = new Date(stampMs);
+  const now = new Date(nowMs);
+  const time = `${two(stamp.getHours())}:${two(stamp.getMinutes())}`;
+  const stampDay = new Date(stamp.getFullYear(), stamp.getMonth(), stamp.getDate());
+  const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const daysApart = Math.round((nowDay.getTime() - stampDay.getTime()) / DAY_MS);
+  if (daysApart === 0) return { kind: 'today', time };
+  if (daysApart === 1) return { kind: 'yesterday', time };
+  return { kind: 'date', date: `${two(stamp.getDate())}.${two(stamp.getMonth() + 1)}`, time };
+}

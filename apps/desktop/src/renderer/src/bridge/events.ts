@@ -10,6 +10,7 @@ import { getBridge } from './bridge';
 import { qk } from './queries';
 import { useUiStore } from '../state/uiStore';
 import { useSettingsCache } from '../state/settingsCache';
+import { useSpendersStore } from '../features/spenders/spendersStore';
 import { playNotificationBlip } from '../lib/sound';
 import { uiMessage } from '@chatgoose/shared/i18n/index';
 import { currentLocale } from '../lib/i18n';
@@ -118,12 +119,52 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
 
   const creditBalanceSchema = z.object({ type: z.literal('creditBalance') });
 
+  // Additive frame (contract.ts SpendersRefreshEvent): scoped-refresh queue
+  // progress. Live counts drive the spenders store (button N/M + hairline
+  // bar); terminal states refetch the per-scope «последний апдейт» stamps.
+  const spendersRefreshSchema = z.object({
+    type: z.literal('spendersRefresh'),
+    accountId: z.string(),
+    scope: z.string(),
+    state: z.enum(['running', 'paused', 'done', 'stopped']),
+    done: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative(),
+  });
+
   const offSync = bridge.on('sync:event', (payload) => {
     // Additive status frame (contract.ts CreditBalanceEvent): not part of the
     // shared SyncEvent union — refresh the credit figures and move on.
     if (creditBalanceSchema.safeParse(payload).success) {
       queueInvalidate(qk.syncStatus);
       queueInvalidate(qk.activity);
+      return;
+    }
+    const refreshFrame = spendersRefreshSchema.safeParse(payload);
+    if (refreshFrame.success) {
+      const frame = refreshFrame.data;
+      useSpendersStore
+        .getState()
+        .setRefresh(
+          frame.state === 'running' || frame.state === 'paused'
+            ? {
+                accountId: frame.accountId,
+                scope: frame.scope,
+                state: frame.state,
+                done: frame.done,
+                total: frame.total,
+              }
+            : null,
+        );
+      if (frame.state === 'done' || frame.state === 'stopped') {
+        // Clear the cached active-queue synchronously (the invalidate flush is
+        // batched 50 ms — a stale 'running' must not flicker the button back).
+        queryClient.setQueryData(
+          qk.spendersFreshness(frame.accountId),
+          (old: { scopes: Record<string, string>; active: unknown } | undefined) =>
+            old === undefined ? old : { ...old, active: null },
+        );
+        queueInvalidate(qk.spendersFreshness(frame.accountId));
+      }
       return;
     }
     const event = parseSyncEvent(payload);

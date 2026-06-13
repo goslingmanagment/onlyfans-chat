@@ -437,6 +437,21 @@ export interface SpenderStatsVM {
   newSpenders: Array<{ row: SpenderRowVM; txCount: number }>;
 }
 
+/** Spenders data freshness (PLAN item 13). Per-fan stamps stay internal —
+ *  the UI renders ONE per-scope line («последний апдейт — вчера 18:40» /
+ *  «апдейта ещё не было») plus the live queue progress. */
+export interface SpendersFreshnessVM {
+  /** scope ('all' | mapped list id) → ISO stamp of the last COMPLETED refresh
+   *  of that scope (a completed «Все» run stamps every chip). */
+  scopes: Record<string, string>;
+  active: {
+    scope: string;
+    state: 'running' | 'paused';
+    done: number;
+    total: number;
+  } | null;
+}
+
 // ─── Vault & PPV (PRD F7) ────────────────────────────────────────────────
 
 export interface VaultItemVM {
@@ -608,11 +623,27 @@ export interface InvokeChannels {
   };
   /**
    * Tail-fetch the newest thread page into the local DB (ONE read-only GET).
-   * Fired when the quick-look opens on a fan with incomplete local history —
-   * fills both МОДЕЛЬ/ФАН counters and the preview thread; works without a
-   * cached chat row (there is no single-chat GET upstream — live 405).
+   * Fired on EVERY quick-look open (PLAN item 13) — fills both МОДЕЛЬ/ФАН
+   * counters and the preview thread; works without a cached chat row (there is
+   * no single-chat GET upstream — live 405). Main TTL-guards via the per-fan
+   * thread-fetch stamp (5 min), so J/K walking never re-spends.
    */
   'cmd:spenders.hydrate': { args: { accountId: string; chatId: string }; result: void };
+  /** Per-scope «последний апдейт» stamps + the in-flight refresh queue, if any. */
+  'query:spenders.freshness': {
+    args: { accountId: string };
+    result: SpendersFreshnessVM;
+  };
+  /**
+   * Start the scoped refresh queue (PLAN item 13): one read-only tail GET per
+   * roster fan of the scope ('all' | mapped list id), skipping fans fetched
+   * within the 5-min TTL. Lowest-priority OFAPI consumer — pauses first when
+   * the budget guard trips; survives restarts; progress arrives as
+   * spendersRefresh frames on sync:event; credits land under the distinct
+   * 'spenders-refresh' ledger purpose.
+   */
+  'cmd:spenders.refreshScope': { args: { accountId: string; scope: string }; result: void };
+  'cmd:spenders.refreshStop': { args: { accountId: string }; result: void };
   // ── Vault & PPV (PRD F7, P5 — additive) ──
   /** Offset-paginated (OFAPI vault pagination is limit/offset + hasMore). */
   'query:vault.list': {
@@ -661,8 +692,23 @@ export interface CreditBalanceEvent {
   rpmRemaining: number | null;
 }
 
+/**
+ * Additive status frame on the sync:event channel (same contract as
+ * CreditBalanceEvent): live progress of the spenders refresh queue — rows fill
+ * via db:changed as each tail lands; this frame drives the button counter,
+ * the hairline progress bar and the «последний апдейт» refetch on completion.
+ */
+export interface SpendersRefreshEvent {
+  type: 'spendersRefresh';
+  accountId: string;
+  scope: string;
+  state: 'running' | 'paused' | 'done' | 'stopped';
+  done: number;
+  total: number;
+}
+
 export interface EventChannels {
-  'sync:event': SyncEvent | CreditBalanceEvent;
+  'sync:event': SyncEvent | CreditBalanceEvent | SpendersRefreshEvent;
   'ai:event': OperationEvent;
   'db:changed': DbChangedEvent;
 }
@@ -737,6 +783,9 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:spenders.untiered': true,
   'query:spenders.stats': true,
   'cmd:spenders.hydrate': true,
+  'query:spenders.freshness': true,
+  'cmd:spenders.refreshScope': true,
+  'cmd:spenders.refreshStop': true,
   'query:vault.list': true,
   'query:vault.albums': true,
   'query:chat.gallery': true,

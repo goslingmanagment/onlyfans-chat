@@ -67,7 +67,7 @@ interface StubClient {
   client: OfApiClient;
   listChatsCalls: number;
   listChatsParams: { limit?: number; offset?: number }[];
-  listMessagesCalls: { lastId?: string; order?: string }[];
+  listMessagesCalls: { lastId?: string; order?: string; limit?: number; purpose?: string }[];
   setChats(chats: OfApiChat[]): void;
   setMessages(messages: OfApiMessage[]): void;
 }
@@ -105,13 +105,17 @@ function makeStubClient(): StubClient {
           nextPageUrl: offset + chats.length < all.length ? `https://stub/chats?offset=${offset + chats.length}` : null,
         };
       }),
-      listMessages: vi.fn(async (params: { lastId?: string; order?: string }) => {
-        state.listMessagesCalls.push({
-          ...(params.lastId != null ? { lastId: params.lastId } : {}),
-          ...(params.order != null ? { order: params.order } : {}),
-        });
-        return { messages, nextPageUrl: null };
-      }),
+      listMessages: vi.fn(
+        async (params: { lastId?: string; order?: string; limit?: number; purpose?: string }) => {
+          state.listMessagesCalls.push({
+            ...(params.lastId != null ? { lastId: params.lastId } : {}),
+            ...(params.order != null ? { order: params.order } : {}),
+            ...(params.limit != null ? { limit: params.limit } : {}),
+            ...(params.purpose != null ? { purpose: params.purpose } : {}),
+          });
+          return { messages, nextPageUrl: null };
+        },
+      ),
       getMessage: vi.fn(async () => messages[0]),
       getUserByUsername: vi.fn(async () => {
         throw new Error('404');
@@ -231,7 +235,7 @@ describe('PollingSync', () => {
     await vi.advanceTimersByTimeAsync(60_000);
 
     const tailCall = stub.listMessagesCalls.at(-1);
-    expect(tailCall).toEqual({ lastId: '5', order: 'asc' });
+    expect(tailCall).toEqual({ lastId: '5', order: 'asc', limit: 100, purpose: 'message-tail' });
     expect(data.messages.count(ACCT, '101')).toBe(2);
     // only the genuinely new message emits (boundary dedupe)
     expect(events.filter((e) => e.type === 'messageReceived')).toHaveLength(1);
@@ -554,6 +558,92 @@ describe('PollingSync', () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(stub.listMessagesCalls.length).toBe(calls);
     sync.stop();
+  });
+
+  // ── Per-fan thread-fetch stamps (PLAN item 13: spenders freshness) ──────
+  // Every tail-fetch path writes thread_fetch_log — including EMPTY threads,
+  // so the hydrate/refresh TTL skip never re-spends on fans who never wrote.
+
+  describe('thread-fetch freshness stamps', () => {
+    it('conversation open stamps the fan — even when the thread is empty', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: null as unknown as number })]);
+      stub.setMessages([]); // fan never wrote, model never wrote
+      const sync = makeSync();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      expect(data.threadFetchLog.get(ACCT, '101')).toBeNull();
+
+      await sync.openConversation(ACCT, '101');
+      expect(data.messages.count(ACCT, '101')).toBe(0);
+      expect(data.threadFetchLog.get(ACCT, '101')).toBe(new Date(Date.now()).toISOString());
+      sync.stop();
+    });
+
+    it('poll-delta tail fetch stamps the fan', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      stub.setMessages([makeMessage({ id: 5 })]);
+      const sync = makeSync();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      expect(data.threadFetchLog.get(ACCT, '101')).toBeNull(); // hydration is list-only
+
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 6, unread: 1 })]);
+      stub.setMessages([makeMessage({ id: 6 })]);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(data.threadFetchLog.get(ACCT, '101')).not.toBeNull();
+      sync.stop();
+    });
+
+    it('refreshChat (quick-look hydrate path) stamps and defaults to the message-tail purpose', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      stub.setMessages([makeMessage({ id: 5 })]);
+      const sync = makeSync();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      await sync.refreshChat(ACCT, '101');
+      expect(data.threadFetchLog.get(ACCT, '101')).not.toBeNull();
+      expect(stub.listMessagesCalls.at(-1)?.purpose).toBe('message-tail');
+      sync.stop();
+    });
+
+    it('refreshChat with an explicit purpose (refresh queue) is ONE page of limit 100', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      stub.setMessages([makeMessage({ id: 5 })]);
+      const sync = makeSync();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      const callsBefore = stub.listMessagesCalls.length;
+
+      await sync.refreshChat(ACCT, '101', 'spenders-refresh');
+      // never paginate deeper — a side absent from the newest 100 renders «—»
+      expect(stub.listMessagesCalls.length).toBe(callsBefore + 1);
+      expect(stub.listMessagesCalls.at(-1)).toEqual({
+        order: 'desc',
+        limit: 100,
+        purpose: 'spenders-refresh',
+      });
+      expect(data.threadFetchLog.get(ACCT, '101')).not.toBeNull();
+      sync.stop();
+    });
+
+    it('a later fetch overwrites the stamp (latest fetch wins)', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      stub.setMessages([makeMessage({ id: 5 })]);
+      const sync = makeSync();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      await sync.refreshChat(ACCT, '101');
+      const first = data.threadFetchLog.get(ACCT, '101');
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      await sync.refreshChat(ACCT, '101');
+      const second = data.threadFetchLog.get(ACCT, '101');
+      expect(first).not.toBeNull();
+      expect(second).not.toBeNull();
+      expect(Date.parse(second ?? '')).toBeGreaterThan(Date.parse(first ?? ''));
+      sync.stop();
+    });
   });
 });
 

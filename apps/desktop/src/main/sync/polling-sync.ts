@@ -158,10 +158,17 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }, delayMs);
   }
 
-  /** Tail fetch from the newest cached id (last_id+asc is boundary-inclusive — dedupe by id). */
+  /** Tail fetch from the newest cached id (last_id+asc is boundary-inclusive — dedupe by id).
+   *  ONE page max (limit=100) — never paginate deeper; a side absent from the
+   *  newest 100 renders «—» honestly (PLAN item 13). Every caller is one of the
+   *  four thread-fetch paths (poll-delta, conversation open, quick-look
+   *  hydrate, scoped refresh), so the per-fan freshness stamp is written HERE —
+   *  including for empty threads, so automatic paths never re-spend on fans
+   *  who never wrote. */
   async function fetchChatTail(
     accountId: string,
     chatId: string,
+    purpose: OfApiPurpose = 'message-tail',
   ): Promise<{ freshIds: string[]; hadCachedMessages: boolean }> {
     const cachedPage = data.messages.page({ accountId, chatId, limit: 1 });
     const newestCached = cachedPage.items.at(-1)?.messageId;
@@ -172,9 +179,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           lastId: newestCached,
           order: 'asc',
           limit: 100,
-          purpose: 'message-tail',
+          purpose,
         })
-      : await client.listMessages({ accountId, chatId, order: 'desc', limit: 100, purpose: 'message-tail' });
+      : await client.listMessages({ accountId, chatId, order: 'desc', limit: 100, purpose });
+    data.threadFetchLog.stamp(accountId, chatId, new Date(now()).toISOString());
 
     const fresh = messages.filter(
       (message) => data.messages.get(accountId, chatId, String(message.id)) === null,
@@ -613,8 +621,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    async refreshChat(accountId, chatId) {
-      await fetchChatTail(accountId, chatId);
+    async refreshChat(accountId, chatId, purpose) {
+      await fetchChatTail(accountId, chatId, purpose);
       emit({ type: 'chatListUpdated', accountId });
     },
     async openConversation(accountId, chatId) {

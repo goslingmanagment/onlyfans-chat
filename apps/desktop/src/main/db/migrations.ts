@@ -13,6 +13,7 @@ import {
   SCHEMA_V7,
   SCHEMA_V8,
   SCHEMA_V9,
+  SCHEMA_V10,
 } from './schema';
 
 export interface Migration {
@@ -20,7 +21,7 @@ export interface Migration {
   up(db: SqliteDatabase): void;
 }
 
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -75,6 +76,12 @@ export const MIGRATIONS: readonly Migration[] = [
     toVersion: 9,
     up(db) {
       db.exec(SCHEMA_V9);
+    },
+  },
+  {
+    toVersion: 10,
+    up(db) {
+      db.exec(SCHEMA_V10);
     },
   },
 ];

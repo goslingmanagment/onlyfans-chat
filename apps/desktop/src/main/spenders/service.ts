@@ -64,6 +64,10 @@ export interface SpendersService {
   /** Stats panel aggregates — local joins over the cached rosters (0 extra
    *  credits once the rosters are warm). */
   stats(accountId: string): Promise<SpenderStatsVM>;
+  /** Fan ids of one refresh scope (PLAN item 13): a mapped list id = that
+   *  shelf's deduped roster; 'all' = every mapped roster + «Без тира». Board
+   *  order preserved (top shelves refresh first — rows fill top-down). */
+  scopeChatIds(accountId: string, scope: 'all' | string): Promise<string[]>;
 }
 
 /** Sentinel for the «Без тира» pseudo-shelf (matches the renderer's UNTIERED_ID). */
@@ -331,6 +335,29 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
     async untiered(accountId) {
       const members = await untieredMembers(accountId);
       return { rows: buildRows(accountId, members), fetchedAt: new Date(now()).toISOString() };
+    },
+
+    async scopeChatIds(accountId, scope) {
+      const mapped = await getMappedListIds(accountId);
+      if (scope !== 'all' && !mapped.includes(scope)) {
+        throw new Error('Spenders refresh: scope list is not mapped to a board shelf');
+      }
+      // Same first-shelf dedup as roster(): a fan on a higher shelf belongs there.
+      const walk = scope === 'all' ? mapped : mapped.slice(0, mapped.indexOf(scope) + 1);
+      const claimed = new Set<string>();
+      const ids: string[] = [];
+      for (const listId of walk) {
+        const roster = await loadRoster(accountId, listId);
+        for (const member of roster.members) {
+          if (claimed.has(member.fanId)) continue;
+          claimed.add(member.fanId);
+          if (scope === 'all' || listId === scope) ids.push(member.fanId);
+        }
+      }
+      if (scope === 'all') {
+        ids.push(...(await untieredMembers(accountId)).map((member) => member.fanId));
+      }
+      return ids;
     },
 
     async stats(accountId) {

@@ -33,8 +33,10 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
-      expect(SCHEMA_VERSION).toBe(9);
+      expect(SCHEMA_VERSION).toBe(10);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
+      // v10: per-fan thread-fetch stamps (spenders freshness, PLAN item 13)
+      expect(names).toContain('thread_fetch_log');
       // v9: fan_transactions carries net alongside the gross amount
       const txCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('fan_transactions')")
@@ -249,6 +251,27 @@ describe('migration runner', () => {
       .prepare("SELECT amount, net FROM fan_transactions WHERE tx_id = 't2'")
       .get();
     expect(row).toEqual({ amount: 25, net: 20 });
+    db.close();
+  });
+
+  it('v9 → v10 is additive: thread_fetch_log appears, existing data untouched', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 9));
+    expect(readSchemaVersion(db)).toBe(9);
+
+    db.exec(
+      "INSERT INTO fan_transactions (account_id, tx_id, fan_id, amount, net, type, created_at) " +
+        "VALUES ('acct_1', 't1', '101', 25, 20, 'tips', '2026-06-12T00:00:00.000Z')",
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 9, to: SCHEMA_VERSION });
+
+    expect(db.prepare('SELECT COUNT(*) AS n FROM fan_transactions').get()).toEqual({ n: 1 });
+    db.exec(
+      "INSERT INTO thread_fetch_log (account_id, chat_id, fetched_at) " +
+        "VALUES ('acct_1', '101', '2026-06-13T12:00:00.000Z')",
+    );
+    expect(db.prepare('SELECT COUNT(*) AS n FROM thread_fetch_log').get()).toEqual({ n: 1 });
     db.close();
   });
 

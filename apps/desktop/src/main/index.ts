@@ -32,6 +32,7 @@ import { createOfApiClient, type OfApiClient } from './ofapi/client';
 import { createSendEngine, type SendEngine } from './send/engine';
 import { createVaultService, type VaultService } from './media/vault';
 import { createSpendersService, type SpendersService } from './spenders/service';
+import { createSpendersRefresh, type SpendersRefreshService } from './spenders/refresh';
 import { createPollingSync, syncAccounts } from './sync/polling-sync';
 import { createBudgetGuard } from './sync/budget-guard';
 import { createHubSync } from './sync/hub-sync';
@@ -55,6 +56,7 @@ let coordinator: AiCoordinator | null = null;
 let sendEngine: SendEngine | null = null;
 let vaultService: VaultService | null = null;
 let spendersService: SpendersService | null = null;
+let spendersRefresh: SpendersRefreshService | null = null;
 let hub: HubModule | null = null;
 /** Set by initOfapi; lets cmd:settings.update trigger a hub-config recheck. */
 let recheckHubConfig: (() => void) | null = null;
@@ -332,6 +334,20 @@ async function initOfapi(
     getMappedListIds: async (accountId) =>
       (await settingsStore.get()).spendersListMappings[accountId] ?? [],
   });
+  // Spenders freshness (PLAN item 13): quick-look hydrate TTL guard + the
+  // scoped refresh queue — the lowest-priority OFAPI consumer, pauses first
+  // on budget exhaustion, resumes persisted queues after sync starts.
+  const spendersSvc = spendersService;
+  const hubAwareSync = sync;
+  spendersRefresh = createSpendersRefresh({
+    data: dataLayer,
+    refreshChat: (accountId, chatId, purpose) =>
+      hubAwareSync.refreshChat(accountId, chatId, purpose),
+    scopeChatIds: (accountId, scope) => spendersSvc.scopeChatIds(accountId, scope),
+    getMappedListIds: async (accountId) =>
+      (await settingsStore.get()).spendersListMappings[accountId] ?? [],
+    isBudgetExhausted: () => budgetGuard.isExhausted(),
+  });
   sync.subscribe((event) => engine.handleSyncEvent(event));
   // Awaited on purpose (adversarial review 2026-06-11): the "reconciliation
   // before any send" guarantee must hold even for a fast first user action.
@@ -341,6 +357,9 @@ async function initOfapi(
 
   const accountIds = await syncAccounts(client, dataLayer, toMediaUrl);
   sync.start(accountIds);
+  // A refresh interrupted by quit/crash continues here; the per-fan TTL skip
+  // makes the replayed tail of the persisted queue free.
+  spendersRefresh.resume(accountIds);
 }
 
 async function boot(): Promise<void> {
@@ -461,6 +480,7 @@ async function boot(): Promise<void> {
     send: sendEngine,
     vault: vaultService,
     spenders: spendersService,
+    spendersRefresh,
     purge: async () => {
       // Re-entry guard: a double-fired cmd:data.purge would otherwise call
       // app.relaunch() twice before exit — Electron then spawns TWO instances
@@ -470,6 +490,7 @@ async function boot(): Promise<void> {
       }
       purging = true;
       sync?.stop();
+      spendersRefresh?.dispose();
       sendEngine?.dispose();
       hub?.dispose();
       data?.close();
@@ -556,6 +577,7 @@ async function boot(): Promise<void> {
     sync,
     creditMeter: client?.creditMeter ?? null,
     coordinator,
+    spendersRefresh,
     onSyncEvent: (event) => {
       if (event.type === 'chatListUpdated' && data) {
         const total = data.accounts.list().reduce((sum, account) => sum + account.unreadTotal, 0);

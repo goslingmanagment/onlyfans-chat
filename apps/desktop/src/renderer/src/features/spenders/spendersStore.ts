@@ -26,6 +26,15 @@ interface SpendersState {
    *  opened from there must resolve its VM even when the board hasn't loaded
    *  that fan's shelf (published by the stats panel). */
   statsRows: SpenderRowVM[];
+  /** Live scoped-refresh progress (PLAN item 13), fed by spendersRefresh
+   *  frames on sync:event; null when no queue is running. */
+  refresh: {
+    accountId: string;
+    scope: string;
+    state: 'running' | 'paused';
+    done: number;
+    total: number;
+  } | null;
 
   setChip: (chip: SpendersChip) => void;
   expandList: (listId: string) => void;
@@ -36,6 +45,7 @@ interface SpendersState {
   closePreview: () => void;
   setVisibleRows: (rows: SpenderRowVM[]) => void;
   setStatsRows: (rows: SpenderRowVM[]) => void;
+  setRefresh: (refresh: SpendersState['refresh']) => void;
   toggleStatsExpanded: () => void;
   /** Leaving the board resets transient state (cursor/preview), keeps the chip. */
   resetTransient: () => void;
@@ -50,6 +60,7 @@ export const useSpendersStore = create<SpendersState>((set) => ({
   visibleRows: [],
   statsExpanded: false,
   statsRows: [],
+  refresh: null,
 
   setChip: (chip) => set({ chip, cursorFanId: null, previewFanId: null }),
   expandList: (listId) => set((s) => ({ expanded: { ...s.expanded, [listId]: true } })),
@@ -82,6 +93,7 @@ export const useSpendersStore = create<SpendersState>((set) => ({
       return { visibleRows: rows, ...(cursorOk ? {} : { cursorFanId: null }) };
     }),
   setStatsRows: (rows) => set({ statsRows: rows }),
+  setRefresh: (refresh) => set({ refresh }),
   toggleStatsExpanded: () => set((s) => ({ statsExpanded: !s.statsExpanded })),
   resetTransient: () => set({ cursorFanId: null, previewFanId: null }),
 }));

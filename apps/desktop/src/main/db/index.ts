@@ -28,6 +28,8 @@ import { createAiSpendLogQueries } from './queries/ai-spend';
 import type { AiSpendLogQueries } from './queries/ai-spend';
 import { createMediaUrlsQueries } from './queries/media-urls';
 import type { MediaUrlsQueries } from './queries/media-urls';
+import { createThreadFetchLogQueries } from './queries/thread-fetch-log';
+import type { ThreadFetchLogQueries } from './queries/thread-fetch-log';
 
 export interface DataLayer {
   db: ChatGooseDb;
@@ -43,6 +45,7 @@ export interface DataLayer {
   creditLog: CreditLogQueries;
   aiSpendLog: AiSpendLogQueries;
   mediaUrls: MediaUrlsQueries;
+  threadFetchLog: ThreadFetchLogQueries;
   close(): void;
 }
 
@@ -63,6 +66,7 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     creditLog: createCreditLogQueries(db),
     aiSpendLog: createAiSpendLogQueries(db),
     mediaUrls: createMediaUrlsQueries(db),
+    threadFetchLog: createThreadFetchLogQueries(db),
     close() {
       bus.flushNow();
       bus.dispose();

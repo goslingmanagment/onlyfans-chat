@@ -276,6 +276,21 @@ CREATE INDEX idx_fan_tx_fan ON fan_transactions (account_id, fan_id, created_at)
 CREATE INDEX idx_fan_tx_created ON fan_transactions (account_id, created_at);
 `;
 
+// v10 — Spenders data freshness (PLAN item 13). Internal per-fan stamp of the
+// last thread tail fetch, written by EVERY fetch path (poll-delta, conversation
+// open, quick-look hydrate, scoped refresh) — including fans whose thread came
+// back EMPTY, so automatic paths never re-spend on fans who never wrote. The
+// stamp is TTL-consulted (5 min) by the hydrate command and the refresh queue;
+// it is never rendered per row (owner decision: one per-scope line only).
+export const SCHEMA_V10 = `
+CREATE TABLE thread_fetch_log (
+  account_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (account_id, chat_id)
+);
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',
@@ -290,4 +305,5 @@ export const ALL_TABLES = [
   'credit_log',
   'fan_transactions',
   'ai_spend_log',
+  'thread_fetch_log',
 ] as const;

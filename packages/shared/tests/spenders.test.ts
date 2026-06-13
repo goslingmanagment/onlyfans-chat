@@ -3,20 +3,26 @@ import {
   DAY_MS,
   FAN_SILENCE_HOT_MIN_DAYS,
   FAN_SILENCE_WARM_MIN_DAYS,
+  OFAPI_USD_PER_CREDIT,
   SHELF_COLLAPSED_MIN_COUNT,
   SHELF_PREVIEW_FIRST,
   SHELF_PREVIEW_REST,
+  THREAD_FETCH_TTL_MS,
   assignSpenderTiers,
   compareBySilence,
   buildDailySeries,
+  countPendingRefresh,
   daysSince,
   enumerateDays,
   isNewSpender,
+  isWithinFetchTtl,
   periodDelta,
   fanSilenceBucket,
+  refreshCostUsd,
   shelfPresentation,
   sortBySilence,
   splitTierLabel,
+  splitUpdateStamp,
 } from '../src/spenders/index';
 
 const NOW = new Date('2026-06-13T12:00:00Z').getTime();
@@ -329,5 +335,117 @@ describe('stats: isNewSpender', () => {
   it('false with no window spend or unknown lifetime', () => {
     expect(isNewSpender(0, 0)).toBe(false);
     expect(isNewSpender(null, 50)).toBe(false);
+  });
+});
+
+// ─── Data freshness (PLAN item 13) ─────────────────────────────────────────
+
+describe('freshness: constants', () => {
+  it('pins the 5-min per-fan fetch TTL (the spend ceiling of hydrate + refresh)', () => {
+    expect(THREAD_FETCH_TTL_MS).toBe(5 * 60_000);
+  });
+
+  it('pins the Basic-plan credit price ($69 / 20k — «Все 104 ≈ $0.35»)', () => {
+    expect(OFAPI_USD_PER_CREDIT).toBeCloseTo(0.00345, 5);
+    expect(refreshCostUsd(104)).toBeCloseTo(0.3588, 3);
+  });
+});
+
+describe('freshness: refreshCostUsd', () => {
+  it('zero and negative and non-finite credits cost nothing', () => {
+    expect(refreshCostUsd(0)).toBe(0);
+    expect(refreshCostUsd(-5)).toBe(0);
+    expect(refreshCostUsd(Number.NaN)).toBe(0);
+  });
+
+  it('scales linearly (1 credit = 1 fan)', () => {
+    expect(refreshCostUsd(3)).toBeCloseTo(3 * OFAPI_USD_PER_CREDIT, 10);
+  });
+});
+
+describe('freshness: countPendingRefresh / isWithinFetchTtl', () => {
+  const now = NOW;
+
+  it('null stamps (never fetched) are pending', () => {
+    expect(countPendingRefresh([null, null], now)).toBe(2);
+  });
+
+  it('a stamp inside the TTL is skipped, at/over the boundary is pending', () => {
+    const fresh = now - THREAD_FETCH_TTL_MS + 1;
+    const boundary = now - THREAD_FETCH_TTL_MS;
+    const stale = now - THREAD_FETCH_TTL_MS - 1;
+    expect(countPendingRefresh([fresh], now)).toBe(0);
+    expect(countPendingRefresh([boundary], now)).toBe(1);
+    expect(countPendingRefresh([stale], now)).toBe(1);
+    expect(isWithinFetchTtl(fresh, now)).toBe(true);
+    expect(isWithinFetchTtl(boundary, now)).toBe(false);
+    expect(isWithinFetchTtl(null, now)).toBe(false);
+  });
+
+  it('mixed list counts only the stale + missing', () => {
+    expect(countPendingRefresh([now - 1, null, now - THREAD_FETCH_TTL_MS * 2], now)).toBe(2);
+  });
+
+  it('empty scope has nothing pending', () => {
+    expect(countPendingRefresh([], now)).toBe(0);
+  });
+
+  it('non-finite stamps are treated as never fetched (defensive)', () => {
+    expect(countPendingRefresh([Number.NaN], now)).toBe(1);
+    expect(isWithinFetchTtl(Number.NaN, now)).toBe(false);
+  });
+
+  it('respects a custom TTL', () => {
+    expect(countPendingRefresh([now - 2_000], now, 1_000)).toBe(1);
+    expect(countPendingRefresh([now - 500], now, 1_000)).toBe(0);
+  });
+});
+
+describe('freshness: splitUpdateStamp (local calendar days)', () => {
+  // Construct times from LOCAL components so assertions hold in any timezone
+  // (the function deliberately works in the user's local calendar, matching
+  // the stats panel's local-day convention).
+  const local = (y: number, mo: number, d: number, h: number, mi: number): number =>
+    new Date(y, mo - 1, d, h, mi).getTime();
+
+  it('same local day → today + HH:MM', () => {
+    expect(splitUpdateStamp(local(2026, 6, 13, 9, 5), local(2026, 6, 13, 23, 59))).toEqual({
+      kind: 'today',
+      time: '09:05',
+    });
+  });
+
+  it('previous local day → yesterday, even across a few minutes after midnight', () => {
+    expect(splitUpdateStamp(local(2026, 6, 12, 18, 40), local(2026, 6, 13, 0, 5))).toEqual({
+      kind: 'yesterday',
+      time: '18:40',
+    });
+  });
+
+  it('two days back and older → DD.MM date', () => {
+    expect(splitUpdateStamp(local(2026, 6, 11, 7, 0), local(2026, 6, 13, 12, 0))).toEqual({
+      kind: 'date',
+      date: '11.06',
+      time: '07:00',
+    });
+    expect(splitUpdateStamp(local(2025, 12, 31, 23, 59), local(2026, 6, 13, 12, 0))).toEqual({
+      kind: 'date',
+      date: '31.12',
+      time: '23:59',
+    });
+  });
+
+  it('month boundary: last day of May vs June 1 is yesterday', () => {
+    expect(splitUpdateStamp(local(2026, 5, 31, 22, 0), local(2026, 6, 1, 8, 0))).toEqual({
+      kind: 'yesterday',
+      time: '22:00',
+    });
+  });
+
+  it('pads hours and minutes to two digits', () => {
+    expect(splitUpdateStamp(local(2026, 6, 13, 0, 0), local(2026, 6, 13, 1, 0))).toEqual({
+      kind: 'today',
+      time: '00:00',
+    });
   });
 });

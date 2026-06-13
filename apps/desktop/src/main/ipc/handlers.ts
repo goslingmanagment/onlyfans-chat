@@ -14,6 +14,7 @@ import type { SendEngine } from '../send/engine';
 import { auditOutbox } from '../send/audit';
 import type { VaultService } from '../media/vault';
 import type { SpendersService } from '../spenders/service';
+import type { SpendersRefreshService } from '../spenders/refresh';
 import type {
   AiStartRequest,
   KeyTestProvider,
@@ -132,6 +133,8 @@ const draftStoredSchema = z.string();
 const spendersListsSchema = z.object({ accountId: idSchema });
 const spendersRosterSchema = z.object({ accountId: idSchema, listId: idSchema });
 const spendersHydrateSchema = z.object({ accountId: idSchema, chatId: idSchema });
+// scope = 'all' | mapped OM list id (PLAN item 13 refresh queue)
+const spendersScopeSchema = z.object({ accountId: idSchema, scope: idSchema });
 
 // ── Vault & PPV (PRD F7) ──
 const vaultListSchema = z.object({
@@ -211,6 +214,8 @@ export interface IpcDeps {
   vault?: VaultService | null;
   /** Spenders board (PLAN item 12); null/absent until an OFAPI key exists. */
   spenders?: SpendersService | null;
+  /** Spenders freshness: hydrate TTL guard + scoped refresh queue (PLAN item 13). */
+  spendersRefresh?: SpendersRefreshService | null;
   purge: () => Promise<void>;
   /** Settings "Test" buttons; probes the STORED key. Optional like vault. */
   testKey?: (provider: KeyTestProvider) => Promise<KeyTestResultVM>;
@@ -602,8 +607,37 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('cmd:spenders.hydrate', async (_event, rawArgs: unknown) => {
     const args = spendersHydrateSchema.parse(rawArgs);
     // One read-only tail GET through the sync machinery (same path as a chat
-    // open) — fills counters/preview for never-opened chats. No sync → no-op.
-    await deps.sync?.refreshChat(args.accountId, args.chatId);
+    // open), fired on EVERY quick-look open — main's per-fan thread-fetch
+    // stamp TTL-guards the spend (PLAN item 13). No refresh service → no-op.
+    await deps.spendersRefresh?.hydrateIfStale(args.accountId, args.chatId);
+  });
+
+  // ── Spenders freshness (PLAN item 13; read-only tail GETs) ──
+
+  function requireSpendersRefresh(): SpendersRefreshService {
+    if (!deps.spendersRefresh) {
+      throw new Error('Spenders refresh is not available yet — configure the OFAPI key in Settings.');
+    }
+    return deps.spendersRefresh;
+  }
+
+  ipcMain.handle('query:spenders.freshness', (_event, rawArgs: unknown) => {
+    const args = spendersListsSchema.parse(rawArgs);
+    const service = deps.spendersRefresh;
+    if (!service) {
+      return { scopes: {}, active: null };
+    }
+    return { scopes: service.freshness(args.accountId), active: service.status(args.accountId) };
+  });
+
+  ipcMain.handle('cmd:spenders.refreshScope', async (_event, rawArgs: unknown) => {
+    const args = spendersScopeSchema.parse(rawArgs);
+    await requireSpendersRefresh().start(args.accountId, args.scope);
+  });
+
+  ipcMain.handle('cmd:spenders.refreshStop', (_event, rawArgs: unknown) => {
+    const args = spendersListsSchema.parse(rawArgs);
+    requireSpendersRefresh().stop(args.accountId);
   });
 
   // ── Vault & PPV (PRD F7) ──

@@ -47,7 +47,6 @@ import { dayCounter } from './SpenderRowItem';
 import {
   focusPreviewComposer,
   hydratePreviewFan,
-  previewNeedsHydration,
   startAiFromPreview,
   PREVIEW_TEXTAREA_ID,
   type PreviewAiFeature,
@@ -89,17 +88,13 @@ export function QuickLook({
     [],
   );
 
-  // One read-only tail GET when the local history is incomplete (one-sided
-  // counters / no chat row / empty thread) — same fetch a full chat open does;
-  // TTL-guarded in previewActions so J/K walking doesn't re-spend.
-  const threadProbe = useMessages(accountId, fanId);
-  const threadEmpty =
-    threadProbe.isSuccess &&
-    (threadProbe.data?.pages.every((page) => page.items.length === 0) ?? false);
+  // EVERY open hydrates (PLAN item 13): one read-only tail GET — the same
+  // fetch a full chat open does — so reactivation work self-refreshes the data
+  // fan by fan. Main's per-fan stamp (5-min TTL) is the spend ceiling, so J/K
+  // walking and reopening stay free.
   useEffect(() => {
-    if (row === null && !threadProbe.isSuccess) return; // nothing known yet
-    if (previewNeedsHydration(row, threadEmpty)) hydratePreviewFan(accountId, fanId);
-  }, [accountId, fanId, row, threadEmpty, threadProbe.isSuccess]);
+    hydratePreviewFan(accountId, fanId);
+  }, [accountId, fanId]);
 
   const name = row?.name ?? '';
   const canSend = row?.canSendMessage ?? false;

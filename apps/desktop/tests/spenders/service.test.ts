@@ -462,3 +462,50 @@ describe('chat-row-less preview fallback (hydrated thread, no chat row yet)', ()
     expect(rows[0]?.lastMessagePreview).toBe('list payload preview');
   });
 });
+
+// ─── scopeChatIds (PLAN item 13: the refresh queue's roster) ────────────────
+
+describe('scopeChatIds', () => {
+  it("a tier scope returns that shelf's roster deduped against higher shelves", async () => {
+    const service = makeService(
+      stubClient({
+        lists: [],
+        rosters: {
+          '100': [[{ id: 1 }, { id: 2 }]],
+          '200': [[{ id: 2 }, { id: 3 }]], // 2 belongs to the higher shelf
+        },
+        calls,
+      }),
+    );
+    expect(await service.scopeChatIds(ACCOUNT, '200')).toEqual(['3']);
+    expect(await service.scopeChatIds(ACCOUNT, '100')).toEqual(['1', '2']);
+  });
+
+  it("'all' walks every mapped roster in board order and appends «Без тира» spenders", async () => {
+    seedFan('1', 600); // tiered
+    seedFan('9', 233); // spender in no mapped list → «Без тира»
+    const service = makeService(
+      stubClient({
+        lists: [],
+        rosters: {
+          '100': [[{ id: 1 }]],
+          '200': [[{ id: 1 }, { id: 2 }]],
+        },
+        calls,
+      }),
+    );
+    expect(await service.scopeChatIds(ACCOUNT, 'all')).toEqual(['1', '2', '9']);
+  });
+
+  it('rejects an unmapped scope list', async () => {
+    const service = makeService(stubClient({ lists: [], rosters: {}, calls }));
+    await expect(service.scopeChatIds(ACCOUNT, '999')).rejects.toThrow(/not mapped/);
+  });
+
+  it('empty mapping: tier scopes reject, «all» is just the untiered spenders', async () => {
+    mapping = [];
+    seedFan('7', 50);
+    const service = makeService(stubClient({ lists: [], rosters: {}, calls }));
+    expect(await service.scopeChatIds(ACCOUNT, 'all')).toEqual(['7']);
+  });
+});

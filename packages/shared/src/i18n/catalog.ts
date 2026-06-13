@@ -384,6 +384,10 @@ export const UI_MESSAGES = {
   'purpose.vault': { en: 'Vault browsing & uploads', ru: 'Vault: просмотр и загрузка' },
   'purpose.spend-sweep': { en: 'Fan-spend sweeps', ru: 'Сбор трат фанов' },
   'purpose.spenders': { en: 'Spenders board (tier lists)', ru: 'Борд спендеров (тир-списки)' },
+  'purpose.spenders-refresh': {
+    en: 'Spenders refresh (thread backfill)',
+    ru: 'Спендеры: обновление (подтяжка переписок)',
+  },
   'purpose.untagged': {
     en: 'Untagged (recorded before this update)',
     ru: 'Без метки (записано до обновления)',
@@ -450,6 +454,21 @@ export const UI_MESSAGES = {
   },
   'sp.openSettings': { en: 'Open settings', ru: 'Открыть настройки' },
   'sp.loading': { en: 'LOADING…', ru: 'ЗАГРУЗКА…' },
+  // ── Data freshness (PLAN item 13; RU pinned to mockups/experiments/spenders-freshness.html) ──
+  'sp.refresh': { en: '↻ Refresh', ru: '↻ Обновить' },
+  'sp.refreshing': { en: '⟳ Refreshing', ru: '⟳ Обновление' },
+  'sp.stop': { en: 'STOP', ru: 'СТОП' },
+  'sp.creditsShort': { en: 'CR', ru: 'КР' },
+  'sp.lastUpdate': { en: 'LAST UPDATE — {when}', ru: 'ПОСЛЕДНИЙ АПДЕЙТ — {when}' },
+  'sp.neverUpdated': { en: 'NO UPDATE YET', ru: 'АПДЕЙТА ЕЩЁ НЕ БЫЛО' },
+  'sp.yesterdayCap': { en: 'YESTERDAY', ru: 'ВЧЕРА' },
+  'sp.rowsLeft': { en: '{n} ROWS LEFT', ru: 'ОСТАЛОСЬ {n} СТРОК' },
+  'sp.refreshPaused': { en: 'PAUSED — CREDIT BUDGET', ru: 'ПАУЗА — БЮДЖЕТ КРЕДИТОВ' },
+  'sp.noThreadYet': { en: 'thread not fetched yet', ru: 'переписка ещё не подтягивалась' },
+  'sp.refreshTip': {
+    en: 'Pull the latest messages for every fan of the current view · 1 credit per fan · read-only',
+    ru: 'Подтянуть последние сообщения по каждому фану текущего вида · 1 кредит на фана · только чтение',
+  },
   'sp.set.title': { en: 'Spenders', ru: 'Спендеры' },
   'sp.set.hint': {
     en: 'Map OnlyMonster user-lists to board shelves, top tier first. The lists themselves are managed in OnlyMonster — the board only reads them. Spenders outside mapped lists land in «No tier».',

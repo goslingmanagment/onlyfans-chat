@@ -27,6 +27,7 @@ import type {
   SpenderListVM,
   SpenderRowVM,
   SpenderStatsVM,
+  SpendersFreshnessVM,
   SyncStatusVM,
   VaultAlbumVM,
   VaultItemVM,
@@ -52,6 +53,7 @@ export const qk = {
     ['spenders-roster', accountId, listId] as const,
   spendersUntiered: (accountId: string) => ['spenders-untiered', accountId] as const,
   spendersStats: (accountId: string) => ['spenders-stats', accountId] as const,
+  spendersFreshness: (accountId: string) => ['spenders-freshness', accountId] as const,
   vault: (accountId: string, albumId: string | null, query: string) =>
     ['vault', accountId, albumId ?? 'all', query] as const,
   vaultAlbums: (accountId: string) => ['vault-albums', accountId] as const,
@@ -283,6 +285,17 @@ export function useSpenderStats(accountId: string | null, enabled: boolean) {
   return useQuery<SpenderStatsVM>({
     queryKey: accountId === null ? ['spenders-stats', 'none'] : qk.spendersStats(accountId),
     queryFn: () => getBridge().invoke('query:spenders.stats', { accountId: accountId ?? '' }),
+    enabled: enabled && accountId !== null,
+  });
+}
+
+/** Per-scope «последний апдейт» stamps + the in-flight refresh queue (PLAN
+ *  item 13). Refetched on spendersRefresh done/stopped frames (events.ts);
+ *  live progress flows through the spenders store, not this query. */
+export function useSpendersFreshness(accountId: string | null, enabled: boolean) {
+  return useQuery<SpendersFreshnessVM>({
+    queryKey: accountId === null ? ['spenders-freshness', 'none'] : qk.spendersFreshness(accountId),
+    queryFn: () => getBridge().invoke('query:spenders.freshness', { accountId: accountId ?? '' }),
     enabled: enabled && accountId !== null,
   });
 }
