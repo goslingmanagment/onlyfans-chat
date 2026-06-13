@@ -18,8 +18,12 @@ import { join } from 'node:path';
 import { readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { resolveUiLocale, uiMessage, type UiLocale } from '@chatgoose/shared/i18n/index';
-import { createKeychain, type Keychain } from './secrets/keychain';
-import { createDataLayer, type DataLayer } from './db/index';
+import { errorToFields } from '@chatgoose/shared/diagnostics/log';
+import { createKeychain, type Keychain, type SecretName } from './secrets/keychain';
+import { createDataLayer, readSchemaVersion, type DataLayer } from './db/index';
+import { createLogger, type Logger } from './diagnostics/logger';
+import { buildDiagnosticsReport } from './diagnostics/report';
+import { auditOutbox } from './send/audit';
 import { createSettingsStore, type SettingsStore } from './settings/store';
 import {
   createToMediaUrl,
@@ -57,6 +61,10 @@ import type { UpdateStatusVM } from '../preload/contract';
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 
 let mainWindow: BrowserWindow | null = null;
+/** Diagnostics logger — created first thing in boot() so even early failures land. */
+let logger: Logger | null = null;
+/** Live secret values, mirrored to the logger redactor and the export's final pass. */
+let redactionSecrets: string[] = [];
 let data: DataLayer | null = null;
 let sync: HubAwareSync | null = null;
 let client: OfApiClient | null = null;
@@ -208,7 +216,17 @@ async function initOfapi(
   if (!apiKey || client) {
     return;
   }
-  client = createOfApiClient({ apiKey });
+  client = createOfApiClient({
+    apiKey,
+    // Background sync/refresh loops swallow OFAPI failures; observe them here so
+    // "sync stopped / rate-limited / OFAPI down" leaves a trace in the export.
+    onError: (error, context) =>
+      logger?.warn('ofapi', `${context.purpose} ${error.code}`, {
+        code: error.code,
+        url: context.url,
+        ...errorToFields(error),
+      }),
+  });
   const utcDay = new Date().toISOString().slice(0, 10);
   client.creditMeter.hydrate({
     utcDay,
@@ -324,6 +342,7 @@ async function initOfapi(
         apiKey: hubKey,
         onEvent,
         onStatusChange,
+        onWarn: (message, fields) => logger?.warn('hub-sse', message, fields),
         // Resume checkpoint is global per chatter key (core fanout_seq).
         getLastEventId: () =>
           dataLayer.settings.getParsed('hubSync.lastEventId', lastEventIdSchema) ?? null,
@@ -334,7 +353,12 @@ async function initOfapi(
 
   // Hub REST cluster (SPEC §8.5/§8.6): summary prefetch/push + usage reporter.
   // Inert until hub config exists; rebuilt by recheckHubConfig on changes.
-  hub = createHubModule({ data: dataLayer, settingsStore, keychain });
+  hub = createHubModule({
+    data: dataLayer,
+    settingsStore,
+    keychain,
+    onWarn: (message, fields) => logger?.warn('hub', message, fields),
+  });
   void hub.reconfigure();
 
   // Send engine (SPEC §7): exists exactly when a client does. messageSent sync
@@ -395,6 +419,29 @@ async function initOfapi(
 
 async function boot(): Promise<void> {
   const userData = app.getPath('userData');
+
+  // Logger FIRST — so a failure anywhere in boot is captured (and rides along in
+  // the diagnostics export). Packaged builds keep info+; dev sees debug + console.
+  logger = createLogger({
+    dir: join(userData, 'logs'),
+    minLevel: app.isPackaged ? 'info' : 'debug',
+    mirrorConsole: !app.isPackaged,
+  });
+  logger.info('boot', 'starting', {
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    packaged: app.isPackaged,
+  });
+  // Catch-all nets: an uncaught throw / rejected promise that would otherwise
+  // vanish becomes a log record the user can send us.
+  process.on('uncaughtException', (error) =>
+    logger?.error('process', 'uncaughtException', errorToFields(error)),
+  );
+  process.on('unhandledRejection', (reason) =>
+    logger?.error('process', 'unhandledRejection', errorToFields(reason)),
+  );
+
   const keychain = createKeychain({
     safeStorage,
     secretsDir: join(userData, 'secrets'),
@@ -407,6 +454,17 @@ async function boot(): Promise<void> {
       await keychain.setSecret('ofapiKey', process.env['ONLYFANSAPI_API_KEY']);
     }
   }
+
+  // Mirror the live secret values into the log redactor + the export's final
+  // pass. Refreshed on every settings write (a key save also writes its keyMeta
+  // fingerprint, so it fires the settings bus event below).
+  const refreshRedactionSecrets = async (): Promise<void> => {
+    const names: SecretName[] = ['ofapiKey', 'anthropicKey', 'openRouterKey', 'hubApiKey'];
+    const values = await Promise.all(names.map((name) => keychain.getSecret(name)));
+    redactionSecrets = values.filter((value): value is string => typeof value === 'string' && value.length > 0);
+    logger?.setRedactionSecrets(redactionSecrets);
+  };
+  await refreshRedactionSecrets();
 
   const dbKey = await keychain.getOrCreateGeneratedKey('dbKey');
   const mediaKeyHex = await keychain.getOrCreateGeneratedKey('mediaCacheKey');
@@ -461,6 +519,9 @@ async function boot(): Promise<void> {
   data.bus.subscribe((events) => {
     if (events.some((event) => event.scope === 'settings')) {
       void refreshUiPrefs();
+      // A key save writes its keyMeta fingerprint to the settings table, so this
+      // fires on key changes too — keep the redactor's secret set current.
+      void refreshRedactionSecrets();
     }
   });
 
@@ -549,6 +610,7 @@ async function boot(): Promise<void> {
       }
     },
     onHubConfigChanged: () => recheckHubConfig?.(),
+    ...(logger !== null ? { logger } : {}),
     // Reads the update controller lazily — it is created asynchronously after
     // the electron-updater dynamic import, which may resolve after this call.
     updates: {
@@ -596,24 +658,93 @@ async function boot(): Promise<void> {
         // file is MEANT to leave the machine — so even the last4 fingerprints
         // are stripped (SPEC §15: no key material, partial included, exits main).
         const { keyMeta: _keyMeta, ...settingsForExport } = vm;
-        const report = {
-          generatedAt: new Date().toISOString(),
-          app: {
-            version: app.getVersion(),
-            electron: process.versions.electron,
-            chrome: process.versions.chrome,
-            node: process.versions.node,
-            platform: process.platform,
-          },
-          settings: settingsForExport,
-          sync: sync?.status() ?? null,
-          hub: sync?.hubStatus?.() ?? null,
-          hubActivity: sync?.hubActivity?.() ?? null,
-          credits: client?.creditMeter.snapshot() ?? null,
+
+        // Local DB shape — counts only (no message text / PII), plus schema version.
+        const countRows = (table: string): number => {
+          try {
+            const row = data?.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as
+              | { n?: number }
+              | undefined;
+            return typeof row?.n === 'number' ? row.n : 0;
+          } catch {
+            return 0;
+          }
         };
+        let schemaVersion: number | null;
+        try {
+          schemaVersion = data ? readSchemaVersion(data.db) : null;
+        } catch {
+          schemaVersion = null;
+        }
+        // Outbox audit: COUNTS of each anomaly class only — the audit arrays
+        // carry message text, which must not leave the machine. Guarded: a sick
+        // DB must not make the export (the thing you run WHEN sick) throw.
+        let audit: ReturnType<typeof auditOutbox> | null;
+        try {
+          audit = data ? auditOutbox(data) : null;
+        } catch {
+          audit = null;
+        }
+        // Flush then read the DURABLE on-disk log so a crash from a PRIOR
+        // session is in the export even though the in-memory ring restarted.
+        await logger?.flush();
+        const fileLog = logger ? await logger.readFileTail() : [];
+
+        const report = buildDiagnosticsReport(
+          {
+            generatedAt: new Date().toISOString(),
+            app: {
+              version: app.getVersion(),
+              electron: process.versions.electron,
+              chrome: process.versions.chrome,
+              node: process.versions.node,
+              platform: process.platform,
+              arch: process.arch,
+            },
+            runtime: {
+              uptimeMs: Math.round(process.uptime() * 1000),
+              locale: app.getLocale(),
+              uiLocale,
+            },
+            settings: settingsForExport,
+            sync: sync?.status() ?? null,
+            hub: sync?.hubStatus?.() ?? null,
+            hubActivity: sync?.hubActivity?.() ?? null,
+            credits: client?.creditMeter.snapshot() ?? null,
+            db: {
+              schemaVersion,
+              counts: {
+                accounts: countRows('accounts'),
+                chats: countRows('chats'),
+                messages: countRows('messages'),
+                summaries: countRows('summaries'),
+                outbox: countRows('outbox'),
+              },
+            },
+            outboxAudit: audit
+              ? {
+                  totals: audit.totals,
+                  cleanSends: audit.cleanSends,
+                  doubleClaims: audit.doubleClaims.length,
+                  suspectDuplicates: audit.suspectDuplicates.length,
+                  staleUnconfirmed: audit.staleUnconfirmed.length,
+                  sentMissingFromMessages: audit.sentMissingFromMessages.length,
+                }
+              : null,
+            errorCounts: logger?.errorCounts() ?? {},
+            logs: logger?.snapshot() ?? [],
+            fileLog,
+          },
+          redactionSecrets,
+        );
+
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
         const file = join(userData, `chatgoose-diagnostics-${stamp}.json`);
         await writeFile(file, JSON.stringify(report, null, 2), 'utf8');
+        logger?.info('diag', 'diagnostics exported', {
+          file,
+          logRecords: logger.snapshot().length,
+        });
         shell.showItemInFolder(file);
         return { path: file };
       },
@@ -712,6 +843,8 @@ if (!app.requestSingleInstanceLock()) {
   // Auto-update (platform/updater.ts policy: win32 packaged only, install on
   // quit, silent failures). electron-updater drags Electron in at import time,
   // so it is dynamic-imported here rather than in the testable policy module.
+  // The controller is shared by the background loop and the Settings → Updates
+  // "Check now / Restart & install" button (via the IPC updates delegate).
   if (shouldAutoUpdate(process.platform, app.isPackaged)) {
     void import('electron-updater').then((mod) => {
       // CJS↔ESM interop: under Node ESM the CJS module surfaces as `default`.
@@ -741,6 +874,8 @@ if (!app.requestSingleInstanceLock()) {
     // A failed boot used to die as an unhandled rejection behind a blank
     // window; surface it (PLAN item 11 — a non-developer runs verification).
     boot().catch((err: unknown) => {
+      logger?.error('boot', 'fatal startup error', errorToFields(err));
+      void logger?.flush();
       dialog.showErrorBox(
         'ChatGoose failed to start',
         err instanceof Error ? err.message : String(err),
@@ -761,6 +896,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('quit', () => {
+  logger?.info('app', 'quit');
+  void logger?.flush();
   sync?.stop();
   sendEngine?.dispose();
   coordinator?.dispose();

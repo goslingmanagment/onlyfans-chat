@@ -1095,6 +1095,7 @@ export function createMockBridge(): ChatGooseBridge {
     'cmd:localData.exportDiagnostics': () => ({
       path: '/Users/dev/Library/Application Support/chatgoose/chatgoose-diagnostics-mock.json',
     }),
+    'cmd:diag.logClient': () => undefined,
     'query:updates.status': () => {
       // Advance the simulated download a notch on each poll.
       if (mockUpdate.phase === 'downloading') {

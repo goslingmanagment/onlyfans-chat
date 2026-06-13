@@ -13,6 +13,7 @@ import type {
   Personality,
 } from '@chatgoose/shared/types';
 import type { OperationEvent, SyncEvent } from '@chatgoose/shared/protocol/index';
+import type { LogLevel } from '@chatgoose/shared/diagnostics/log';
 import type { UiLocaleSetting } from '@chatgoose/shared/i18n/index';
 import type { UiThemeSetting } from '@chatgoose/shared/theme';
 
@@ -567,8 +568,14 @@ export interface InvokeChannels {
   /** Danger zone: encrypted local cache footprint. */
   'query:localData.stats': { args: void; result: LocalDataStatsVM };
   'cmd:localData.openFolder': { args: void; result: void };
-  /** Writes a secrets-free JSON report under userData and reveals it. */
+  /** Writes a secrets-free JSON report (incl. the recent log) under userData and reveals it. */
   'cmd:localData.exportDiagnostics': { args: void; result: { path: string } };
+  /** Renderer → main log feed (errors, error-boundary, query/mutation failures)
+   *  so renderer-side problems land in the SAME exported log file. */
+  'cmd:diag.logClient': {
+    args: { level: LogLevel; scope: string; message: string; fields?: Record<string, unknown> };
+    result: void;
+  };
   /** Settings → Updates (PLAN item 11): manual auto-update control. */
   'query:updates.status': { args: void; result: UpdateStatusVM };
   /** Kicks a check; if a newer build exists it downloads in the background. */
@@ -788,6 +795,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:localData.stats': true,
   'cmd:localData.openFolder': true,
   'cmd:localData.exportDiagnostics': true,
+  'cmd:diag.logClient': true,
   'query:updates.status': true,
   'cmd:updates.check': true,
   'cmd:updates.install': true,

@@ -103,6 +103,12 @@ export interface OfApiClientOptions {
   /** Backoff sleep for 429/5xx retries (injectable for tests). */
   sleep?: SleepFn;
   fixtureCapture?: FixtureCapture;
+  /**
+   * Observe every mapped failure (network + non-2xx) for the diagnostics log —
+   * fired just BEFORE the error is thrown, so background callers that swallow it
+   * (sync/refresh loops) still leave a record. Never alters control flow.
+   */
+  onError?: (error: OfApiError, context: { url: string; purpose: OfApiPurpose }) => void;
 }
 
 /**
@@ -381,7 +387,9 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         { retry: spec.retry },
       );
     } catch (error) {
-      throw mapOfApiNetworkError(error, url);
+      const mapped = mapOfApiNetworkError(error, url);
+      options.onError?.(mapped, { url, purpose: spec.purpose });
+      throw mapped;
     }
 
     const text = await response.text();
@@ -415,12 +423,14 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
 
     if (!response.ok) {
       const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
-      throw mapOfApiHttpError({
+      const mapped = mapOfApiHttpError({
         status: response.status,
         url,
         body,
         ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
       });
+      options.onError?.(mapped, { url, purpose: spec.purpose });
+      throw mapped;
     }
     return body;
   }

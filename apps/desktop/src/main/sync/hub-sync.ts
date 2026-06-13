@@ -156,6 +156,8 @@ export interface HubSyncOptions {
   /** Awaited before the frame's id is persisted (handle-then-checkpoint). */
   onEvent: (event: SyncEvent) => void | Promise<void>;
   onStatusChange?: (status: HubSyncStatus) => void;
+  /** Diagnostics sink for connection trouble (degraded / auth-failed); no-op by default. */
+  onWarn?: (message: string, fields?: Record<string, unknown>) => void;
   getLastEventId: () => number | null;
   setLastEventId: (id: number) => void;
 }
@@ -189,6 +191,9 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     if (status !== next) {
       status = next;
       options.onStatusChange?.(next);
+      if (next === 'degraded' || next === 'auth-failed') {
+        options.onWarn?.(`hub SSE → ${next}`, { status: next });
+      }
     }
   }
 

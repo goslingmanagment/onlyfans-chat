@@ -236,7 +236,8 @@ Extend legacy `CG-*` registry (every error: code, user-facing message, recovery 
 
 - Status bar: credit balance/today, LLM per-op cost (ported spend summary), sync freshness, RPM headroom.
 - Debug mode: pipeline profiling per operation (ported stage profiler incl. `llm-ttfb`, `llm-stream`), prompt inspector (exact blocks + cache flags), OFAPI request log (sanitized), fixture capture toggle.
-- Local rotating file logs (main process, redacted), exportable for bug reports.
+- **Local rotating file logs (`apps/desktop/src/main/diagnostics/logger.ts`)** — main-process logger writing `userData/logs/app.log` (rotates to `app.1.log` at 2 MB) plus an in-memory ring (last 1000 records). Every record is passed through the shared secret redactor (`@chatgoose/shared/diagnostics/log`) before it is kept or written. Boot lifecycle, `uncaughtException`/`unhandledRejection`, hub telemetry failures and IPC handler failures are recorded; the renderer feeds its own failures (render crashes via an `ErrorBoundary`, `window.onerror`/`unhandledrejection`, and every failed `invoke` at the bridge chokepoint) over `cmd:diag.logClient` so one timeline covers both processes.
+- **Diagnostics export (`cmd:localData.exportDiagnostics`)** — ONE secrets-free `.json` file the user can send to support: app/runtime versions, settings (keyMeta stripped), sync/hub/credit status, DB counts + schema version, outbox-audit COUNTS (no message text), an error-code summary, and the recent log ring. The whole bundle is deep-redacted once more before write (`diagnostics/report.ts`), then revealed in the file manager. The crash `ErrorBoundary` exposes the same export as a one-click recovery action.
 
 ## 13. Performance budgets
 
@@ -270,3 +271,4 @@ Extend legacy `CG-*` registry (every error: code, user-facing message, recovery 
 7. Credits: every OFAPI call goes through the metered client; no ad-hoc fetches.
 8. AI never sends without explicit human action (PRD non-goal #1).
 9. Local DB and media cache are encrypted at rest; the key lives only in the OS keychain (§10).
+10. Logs and the diagnostics export carry no secrets: every log record passes the redactor at capture, and the export is deep-redacted once more before write (§12). Logs are plaintext by design (the user must be able to send them), so redaction — not encryption — is the guarantee. Logging never throws into a caller.

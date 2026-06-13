@@ -29,6 +29,8 @@ export interface HubModuleOptions {
   keychain: Pick<Keychain, 'getSecret'>;
   /** Test seam over createHubClient — no live network in tests. */
   createClient?: (args: { baseUrl: string; apiKey: string }) => HubClient;
+  /** Telemetry-failure sink (defaults to console.warn); wired to the logger in main. */
+  onWarn?: (message: string, fields?: Record<string, unknown>) => void;
 }
 
 export interface HubModule {
@@ -53,6 +55,7 @@ interface ActiveHub {
 export function createHubModule(options: HubModuleOptions): HubModule {
   const { data, settingsStore, keychain } = options;
   const createClient = options.createClient ?? ((args) => createHubClient(args));
+  const onWarn = options.onWarn ?? ((message: string) => console.warn(message));
   const store = createSqliteUsageEventStore(data.db);
 
   let active: ActiveHub | null = null;
@@ -109,9 +112,10 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         store,
         onError: (error, context) => {
           // Telemetry-only failures: log with the CG code, never interrupt.
-          console.warn(
-            `[hub] usage reporting ${context.kind} (${error.code}): ${context.clientEventIds.join(', ')}`,
-          );
+          onWarn(`[hub] usage reporting ${context.kind} (${error.code})`, {
+            code: error.code,
+            clientEventIds: context.clientEventIds,
+          });
         },
       });
       active = {

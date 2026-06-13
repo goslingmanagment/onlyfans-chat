@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from './app/AppShell';
+import { ErrorBoundary } from './app/ErrorBoundary';
 import { KeymapProvider } from './app/KeymapProvider';
 import { attachBridgeEvents } from './bridge/events';
 
@@ -23,10 +24,12 @@ export function App(): React.JSX.Element {
   useEffect(() => attachBridgeEvents(queryClient), [queryClient]);
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <KeymapProvider>
-        <AppShell />
-      </KeymapProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <KeymapProvider>
+          <AppShell />
+        </KeymapProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }

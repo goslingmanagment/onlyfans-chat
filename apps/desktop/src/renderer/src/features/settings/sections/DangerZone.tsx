@@ -32,6 +32,7 @@ export function DangerZone(): React.JSX.Element {
   const locale = useLocale();
   const [arming, setArming] = useState(false);
   const [typed, setTyped] = useState('');
+  const [copied, setCopied] = useState(false);
 
   const filesWord =
     stats.data !== undefined
@@ -60,10 +61,29 @@ export function DangerZone(): React.JSX.Element {
           </Button>
           <span className="text-[11px] text-ink-low">{t('danger.diagHint')}</span>
         </div>
+        <p className="text-[11.5px] text-ink-mid">{t('danger.diagSend')}</p>
         {exportDiag.data !== undefined && (
-          <p className="num text-[11px] text-green">
-            {t('danger.exported', { path: exportDiag.data.path })}
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="num text-[11px] text-green">
+              {t('danger.exported', { path: exportDiag.data.path })}
+            </p>
+            <button
+              type="button"
+              className="text-[11px] text-ink-low underline-offset-2 hover:underline"
+              onClick={() => {
+                const path = exportDiag.data?.path;
+                if (path === undefined) {
+                  return;
+                }
+                void navigator.clipboard.writeText(path).then(() => {
+                  setCopied(true);
+                  window.setTimeout(() => setCopied(false), 1500);
+                });
+              }}
+            >
+              {copied ? t('danger.copied') : t('danger.copyPath')}
+            </button>
+          </div>
         )}
 
         {arming ? (

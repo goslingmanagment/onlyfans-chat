@@ -247,10 +247,28 @@ export const UI_MESSAGES = {
   'danger.openFolder': { en: 'Open data folder', ru: 'Открыть папку данных' },
   'danger.exportDiagnostics': { en: 'Export diagnostics', ru: 'Выгрузить диагностику' },
   'danger.diagHint': {
-    en: 'Versions, sync status, settings — no secrets.',
-    ru: 'Версии, статус синка, настройки — без секретов.',
+    en: 'Versions, recent log, sync status — no secrets.',
+    ru: 'Версии, последний лог, статус синка — без секретов.',
+  },
+  'danger.diagSend': {
+    en: 'If something broke, export this file and send it to support.',
+    ru: 'Если что-то сломалось — выгрузите этот файл и пришлите мне.',
   },
   'danger.exported': { en: 'Saved: {path}', ru: 'Сохранено: {path}' },
+  'danger.copyPath': { en: 'Copy path', ru: 'Скопировать путь' },
+  'danger.copied': { en: 'Copied', ru: 'Скопировано' },
+
+  // ── Crash recovery (ErrorBoundary) ─────────────────────────────────────────
+  'crash.title': { en: 'Something went wrong', ru: 'Что-то пошло не так' },
+  'crash.body': {
+    en: 'ChatGoose hit an unexpected error. Your local data is safe.',
+    ru: 'ChatGoose столкнулся с неожиданной ошибкой. Локальные данные в сохранности.',
+  },
+  'crash.reload': { en: 'Reload', ru: 'Перезагрузить' },
+  'crash.exportHint': {
+    en: 'Export the diagnostics file and send it to support.',
+    ru: 'Выгрузите файл диагностики и пришлите мне.',
+  },
 
   // ── Activity panel ────────────────────────────────────────────────────────
   'activity.title': { en: 'Activity', ru: 'Активность' },

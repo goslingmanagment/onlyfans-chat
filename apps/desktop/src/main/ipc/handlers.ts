@@ -15,6 +15,7 @@ import { auditOutbox } from '../send/audit';
 import type { VaultService } from '../media/vault';
 import type { SpendersService } from '../spenders/service';
 import type { SpendersRefreshService } from '../spenders/refresh';
+import type { Logger } from '../diagnostics/logger';
 import type {
   AiStartRequest,
   KeyTestProvider,
@@ -42,6 +43,14 @@ import {
 const idSchema = z.string().min(1).max(64);
 const keysTestSchema = z.object({
   provider: z.enum(['ofapi', 'anthropic', 'openrouter', 'hub']),
+});
+
+// Renderer-controlled (trust boundary): bound the strings and accept opaque fields.
+const logClientSchema = z.object({
+  level: z.enum(['debug', 'info', 'warn', 'error']),
+  scope: z.string().min(1).max(120),
+  message: z.string().max(4000),
+  fields: z.record(z.string(), z.unknown()).optional(),
 });
 
 const chatsListSchema = z.object({
@@ -242,6 +251,8 @@ export interface IpcDeps {
    * hook is the only reconnect signal for key-only edits.
    */
   onHubConfigChanged?: () => void;
+  /** Diagnostics log sink (SPEC §11); absent in builds without a logger (tests). */
+  logger?: Logger;
 }
 
 function normalizePersonality(parsed: z.infer<typeof personalitySchema>): Personality {
@@ -375,6 +386,13 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('query:localData.stats', () => requireLocalData().stats());
   ipcMain.handle('cmd:localData.openFolder', () => requireLocalData().openFolder());
   ipcMain.handle('cmd:localData.exportDiagnostics', () => requireLocalData().exportDiagnostics());
+
+  // Renderer log feed: render crashes, unhandled rejections and failed IPC calls
+  // funnel here so renderer-side problems share the exported log file (SPEC §11).
+  ipcMain.handle('cmd:diag.logClient', (_event, rawArgs: unknown) => {
+    const args = logClientSchema.parse(rawArgs);
+    deps.logger?.log(args.level, `renderer:${args.scope}`, args.message, args.fields);
+  });
 
   function requireUpdates(): NonNullable<IpcDeps['updates']> {
     if (!deps.updates) {
