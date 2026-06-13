@@ -3,6 +3,9 @@
 Packaging pipeline built 2026-06-13 (PLAN item 11). Everything below runs from
 `apps/desktop` via root scripts; config lives in `apps/desktop/electron-builder.yml`.
 
+> Owner-facing walkthrough of the whole Windows flow (build → hand off → verify
+> → revoke), in Russian, sendable to the helper: **`docs/WINDOWS-GUIDE.html`**.
+
 ## Commands
 
 | Command (repo root) | What it does |

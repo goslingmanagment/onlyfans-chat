@@ -1,0 +1,555 @@
+<!doctype html>
+<!--
+  ChatGoose · Windows — гайд по сборке и проверке (PLAN item 11, runbook №7).
+  Самодостаточная страница: открывается с диска, без интернета (вебшрифты
+  деградируют в системные). Содержание зеркалит docs/WINDOWS-VERIFICATION.md
+  (часть помощника) + владельческие шаги из docs/RELEASE.md — при изменении
+  процесса обновлять ОБА файла. Галочки сохраняются в localStorage браузера;
+  страница печатается как бумажная форма (Ctrl+P).
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChatGoose · Windows — что делать: сборка и проверка</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><rect x="64" y="64" width="896" height="896" rx="200" fill="%23efece4"/><g fill="%23c2603f"><ellipse cx="570" cy="640" rx="250" ry="155"/><path d="M 720 560 L 892 488 L 780 680 Z"/><path d="M 318 330 C 318 470, 360 540, 480 590" stroke="%23c2603f" stroke-width="92" stroke-linecap="round" fill="none"/><circle cx="318" cy="322" r="64"/><path d="M 266 300 L 176 330 L 266 356 Z"/></g><circle cx="330" cy="306" r="13" fill="%23efece4"/></svg>'>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #efece4;
+    --card: #fbf9f4;
+    --line: #ddd7c9;
+    --line-strong: #c9c1af;
+    --ink: #1f1e1d;
+    --ink-mid: #5d5a52;
+    --ink-low: #97928a;
+    --clay: #d97757;
+    --clay-deep: #c2603f;
+    --clay-bg: #f7e8e1;
+    --clay-line: #e8c3b3;
+    --ok: #4c7a4c;
+    --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --sans: "Hanken Grotesk", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 16px/1.62 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 760px; margin: 0 auto; padding: 0 28px 96px; }
+
+  /* ── шапка ───────────────────────────────────────────────────────────── */
+  header.masthead {
+    padding: 56px 0 30px;
+    border-bottom: 2px solid var(--ink);
+    display: flex; align-items: flex-end; gap: 22px;
+  }
+  .goose { flex: none; width: 76px; height: 76px; }
+  .masthead h1 {
+    font: 700 clamp(30px, 5.4vw, 44px)/1.04 var(--serif);
+    letter-spacing: -0.015em; margin: 0;
+  }
+  .masthead h1 .clay { color: var(--clay-deep); }
+  .masthead .sub { margin: 10px 0 2px; color: var(--ink-mid); max-width: 52ch; }
+  .meta-line {
+    display: flex; flex-wrap: wrap; gap: 8px 22px;
+    padding: 12px 0 0; margin: 0 0 8px;
+    font: 500 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-low);
+  }
+  .meta-line b { color: var(--ink-mid); font-weight: 600; }
+
+  /* ── маршрут из четырёх шагов ────────────────────────────────────────── */
+  .route { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin: 34px 0 0; border: 1px solid var(--line-strong); background: var(--card); }
+  .route div { padding: 14px 14px 16px; border-left: 1px solid var(--line); }
+  .route div:first-child { border-left: 0; }
+  .route .n { font: 600 11px/1 var(--mono); color: var(--clay-deep); letter-spacing: .1em; }
+  .route p { margin: 7px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--ink-mid); }
+  .route p b { color: var(--ink); font-weight: 600; }
+  @media (max-width: 620px) {
+    .route { grid-template-columns: 1fr 1fr; }
+    .route div:nth-child(3) { border-left: 0; }
+    .route div:nth-child(n+3) { border-top: 1px solid var(--line); }
+  }
+
+  /* ── секции ──────────────────────────────────────────────────────────── */
+  .part-rule {
+    margin: 64px 0 0; padding: 0 0 10px;
+    border-bottom: 2px solid var(--ink);
+    display: flex; align-items: baseline; gap: 16px;
+  }
+  .part-rule .tag {
+    font: 600 12px/1 var(--mono); letter-spacing: .18em; text-transform: uppercase;
+    color: #fff; background: var(--ink); padding: 6px 10px 5px;
+  }
+  .part-rule .tag.clay { background: var(--clay-deep); }
+  .part-rule h2 { margin: 0; font: 700 26px/1.1 var(--serif); letter-spacing: -0.01em; }
+  .part-rule .who { margin-left: auto; font: 500 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-low); }
+
+  section.step { margin: 30px 0 0; background: var(--card); border: 1px solid var(--line-strong); }
+  section.step > .head {
+    display: flex; align-items: baseline; gap: 14px;
+    padding: 16px 22px 0;
+  }
+  section.step .num {
+    flex: none;
+    font: 600 13px/1 var(--mono); letter-spacing: .08em;
+    color: var(--clay-deep);
+    border: 1px solid var(--clay-line); background: var(--clay-bg);
+    padding: 5px 8px 4px;
+  }
+  section.step h3 { margin: 0; font: 600 19.5px/1.25 var(--serif); }
+  section.step .body { padding: 10px 22px 20px; }
+  section.step .body > p { margin: 8px 0; color: var(--ink-mid); }
+  section.step .body > p b, section.step li b { color: var(--ink); }
+
+  ol.steps { margin: 12px 0 4px; padding: 0; list-style: none; counter-reset: s; }
+  ol.steps li {
+    counter-increment: s;
+    position: relative; padding: 7px 0 7px 40px; margin: 0;
+    border-top: 1px dashed var(--line);
+  }
+  ol.steps li:first-child { border-top: 0; }
+  ol.steps li::before {
+    content: counter(s);
+    position: absolute; left: 0; top: 9px;
+    width: 24px; text-align: center;
+    font: 600 12px/20px var(--mono); color: var(--ink-low);
+    border: 1px solid var(--line-strong); background: #fff;
+  }
+
+  kbd {
+    font: 600 12px/1 var(--mono);
+    background: #fff; border: 1px solid var(--line-strong); border-bottom-width: 2px;
+    padding: 2px 6px 1px; border-radius: 3px; white-space: nowrap;
+  }
+  .path { font: 500 13.5px var(--mono); background: #fff; border: 1px solid var(--line); padding: 1px 6px; white-space: nowrap; }
+  .ui { font-weight: 600; }
+
+  .callout {
+    margin: 14px 0 4px; padding: 12px 16px;
+    border-left: 3px solid var(--clay-deep); background: var(--clay-bg);
+    font-size: 14.5px; line-height: 1.55;
+  }
+  .callout.plain { border-left-color: var(--ink-low); background: #f3f0e8; color: var(--ink-mid); }
+  .callout .cap { display: block; font: 600 10.5px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--clay-deep); margin: 0 0 6px; }
+  .callout.plain .cap { color: var(--ink-low); }
+
+  /* ── строка отметки в карточке проверки ──────────────────────────────── */
+  .check-row {
+    display: flex; align-items: center; gap: 12px;
+    border-top: 1px solid var(--line);
+    padding: 12px 22px; background: #f6f3ea;
+  }
+  .check-row label.box { display: flex; align-items: center; gap: 9px; cursor: pointer; flex: none; user-select: none; }
+  .check-row input[type=checkbox] {
+    appearance: none; -webkit-appearance: none;
+    width: 21px; height: 21px; margin: 0;
+    border: 2px solid var(--ink); background: #fff; cursor: pointer;
+    display: grid; place-content: center;
+  }
+  .check-row input[type=checkbox]::before {
+    content: ""; width: 11px; height: 11px; background: var(--clay-deep);
+    transform: scale(0); transition: transform .12s ease-in-out;
+  }
+  .check-row input[type=checkbox]:checked::before { transform: scale(1); }
+  .check-row .oklabel { font: 600 12px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-mid); }
+  .check-row input[type=text] {
+    flex: 1; min-width: 0;
+    font: 400 14px/1.4 var(--sans); color: var(--ink);
+    background: transparent; border: 0; border-bottom: 1px dashed var(--line-strong);
+    padding: 4px 2px; outline: none;
+  }
+  .check-row input[type=text]:focus { border-bottom-color: var(--clay-deep); }
+  .check-row input[type=text]::placeholder { color: var(--ink-low); }
+
+  /* ── счётчик и сброс ─────────────────────────────────────────────────── */
+  .tally {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 14px;
+    margin: 26px 0 0; padding: 10px 16px;
+    background: var(--ink); color: #efece4;
+  }
+  .tally .cap { font: 600 11px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+  .tally .bar { flex: 1; height: 3px; background: #4a4742; }
+  .tally .bar i { display: block; height: 100%; width: 0%; background: var(--clay); transition: width .25s; }
+  .tally button {
+    font: 600 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+    color: #b5b0a6; background: none; border: 1px solid #4a4742; padding: 6px 10px 5px; cursor: pointer;
+  }
+  .tally button:hover { color: #efece4; border-color: #efece4; }
+
+  table.send { width: 100%; border-collapse: collapse; margin: 12px 0 4px; font-size: 14.5px; }
+  table.send td { border: 1px solid var(--line); padding: 8px 12px; vertical-align: top; }
+  table.send td:first-child { width: 34px; text-align: center; font: 600 12px var(--mono); color: var(--clay-deep); background: #fff; }
+
+  footer.colophon {
+    margin: 70px 0 0; padding: 16px 0 0; border-top: 2px solid var(--ink);
+    display: flex; flex-wrap: wrap; gap: 6px 26px;
+    font: 500 11px/1.7 var(--mono); letter-spacing: .06em; color: var(--ink-low);
+  }
+  footer.colophon b { color: var(--ink-mid); font-weight: 600; }
+  a { color: var(--clay-deep); }
+
+  /* ── печать ──────────────────────────────────────────────────────────── */
+  @media print {
+    body { background: #fff; font-size: 12.5px; }
+    .page { max-width: none; padding: 0 4mm; }
+    .tally, .noprint { display: none !important; }
+    section.step { break-inside: avoid; background: #fff; }
+    .route, .check-row { background: #fff; }
+    .callout { background: #fff; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="masthead">
+  <svg class="goose" viewBox="0 0 1024 1024" aria-hidden="true">
+    <rect x="64" y="64" width="896" height="896" rx="200" fill="#fbf9f4" stroke="#c9c1af" stroke-width="8"/>
+    <g fill="#c2603f">
+      <ellipse cx="570" cy="640" rx="250" ry="155"/>
+      <path d="M 720 560 L 892 488 L 780 680 Z"/>
+      <path d="M 318 330 C 318 470, 360 540, 480 590" stroke="#c2603f" stroke-width="92" stroke-linecap="round" fill="none"/>
+      <circle cx="318" cy="322" r="64"/>
+      <path d="M 266 300 L 176 330 L 266 356 Z"/>
+    </g>
+    <circle cx="330" cy="306" r="13" fill="#fbf9f4"/>
+  </svg>
+  <div>
+    <h1>Chat<span class="clay">Goose</span> на Windows:<br>что делать, по шагам</h1>
+    <p class="sub">Две роли: <b>владелец</b> собирает установщик и даёт ключ, <b>помощник</b> ставит программу и проходит проверку. Никаких технических навыков от помощника не требуется.</p>
+  </div>
+</header>
+<div class="meta-line">
+  <span>инсталлер <b>ChatGoose-Setup-0.0.1.exe</b></span>
+  <span>сборка не подписана — <b>SmartScreen предупредит, это нормально</b></span>
+  <span>обновлено <b>2026-06-13</b></span>
+</div>
+
+<div class="route">
+  <div><span class="n">1 · ВЛАДЕЛЕЦ</span><p><b>Собрать установщик</b> кнопкой на GitHub — виндовый компьютер не нужен.</p></div>
+  <div><span class="n">2 · ВЛАДЕЛЕЦ</span><p><b>Передать другу</b> установщик и эту страницу. Часть А он делает сам.</p></div>
+  <div><span class="n">3 · ВМЕСТЕ</span><p><b>Созвон</b>: владелец даёт именной ключ, вместе проходите часть Б.</p></div>
+  <div><span class="n">4 · ВЛАДЕЛЕЦ</span><p><b>Отозвать ключ</b> сразу после созвона и забрать результаты.</p></div>
+</div>
+
+<!-- ═════════════════════════ ЧАСТЬ 1 · ВЛАДЕЛЕЦ ═════════════════════════ -->
+<div class="part-rule">
+  <span class="tag clay">Часть 1</span>
+  <h2>Владелец</h2>
+  <span class="who">≈ 20 минут + созвон</span>
+</div>
+
+<section class="step">
+  <div class="head"><span class="num">1.1</span><h3>Собрать установщик (через GitHub, без виндовой машины)</h3></div>
+  <div class="body">
+    <p>Установщик для Windows нельзя собрать на маке — внутри есть компонент, который компилируется только на Windows. Поэтому сборку делает облачная виндовая машина GitHub, по кнопке:</p>
+    <ol class="steps">
+      <li>Открой репозиторий <span class="path">github.com/goslingmanagment/chatgoose_desktop_2</span> и зайди во вкладку <span class="ui">Actions</span>.</li>
+      <li>В списке слева выбери <span class="path">windows-build</span>.</li>
+      <li>Справа нажми кнопку <span class="ui">Run workflow</span>, ветка <span class="path">main</span>, ещё раз <span class="ui">Run workflow</span>.</li>
+      <li>Подожди 10–15 минут, пока запуск не станет зелёным. Открой его.</li>
+      <li>Внизу страницы, в блоке <span class="ui">Artifacts</span>, скачай <span class="path">chatgoose-windows-installer</span> — это zip, внутри <span class="path">ChatGoose-Setup-0.0.1.exe</span>.</li>
+    </ol>
+    <div class="callout plain"><span class="cap">Запасной вариант</span>Если под рукой есть Windows-компьютер с окружением разработчика — установщик собирается командой <span class="path">pnpm dist:win</span>; что поставить заранее, расписано в <span class="path">docs/RELEASE.md</span>.</div>
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">1.2</span><h3>Выпустить именной ключ для проверки</h3></div>
+  <div class="body">
+    <p>В кабинете <span class="path">app.onlyfansapi.com</span> создай <b>отдельный ключ с именем</b> — например <span class="path">win-check-friend-2026-06</span>. Не используй основной.</p>
+    <div class="callout"><span class="cap">Почему отдельный</span>У ключей OFAPI <b>нет ограничений по правам</b>: любой ключ — это полный доступ ко всем подключённым аккаунтам. Именной ключ можно отозвать одной кнопкой сразу после проверки, не трогая остальные.</div>
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">1.3</span><h3>Передать другу</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li>Файл <span class="path">ChatGoose-Setup-0.0.1.exe</span> (из шага 1.1) — любым удобным способом.</li>
+      <li>Эту страницу (файл <span class="path">WINDOWS-GUIDE.html</span>) — его раздел начинается с «Часть 2».</li>
+      <li>Скажи: часть А он проходит сам, без ключей; для части Б договоритесь о созвоне.</li>
+    </ol>
+    <p><b>Ключ на этом шаге не передаётся.</b></p>
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">1.4</span><h3>Созвон — часть Б вместе</h3></div>
+  <div class="body">
+    <p>Твоя роль на созвоне:</p>
+    <ol class="steps">
+      <li>Продиктуй ключ из шага 1.2, когда помощник дойдёт до проверки Б1. Лучше голосом или одноразовым сообщением, которое потом удалишь.</li>
+      <li>Для проверки уведомлений (Б3): когда окно у помощника свёрнуто, отправь сообщение в один из чатов аккаунта со стороны фана — годится твой тестовый фан.</li>
+      <li>Для бейджа (Б4): проследи, чтобы в чатах были непрочитанные, потом отметь их прочитанными — кружок на иконке должен появиться и исчезнуть.</li>
+    </ol>
+    <div class="callout"><span class="cap">Жёсткое правило</span>Вся проверка — <b>только чтение</b>. Из приложения ничего не отправляется фанатам. Если захочется проверить отправку — только на тестового фана и только по твоей прямой команде, как в обычных правилах тест-фана.</div>
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">1.5</span><h3>После проверки</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li><b>Сразу отзови ключ</b> в кабинете OFAPI.</li>
+      <li>Забери у помощника: отмеченный чеклист (эту страницу можно распечатать в PDF: <kbd>Ctrl</kbd>+<kbd>P</kbd>), скриншоты странностей и файл диагностики.</li>
+      <li>Занеси итог в план (PLAN item 11): что прошло, что нет.</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ═════════════════════════ ЧАСТЬ 2 · ПОМОЩНИК ═════════════════════════ -->
+<div class="part-rule">
+  <span class="tag">Часть 2</span>
+  <h2>Помощник</h2>
+  <span class="who">30–60 минут · Windows 10/11</span>
+</div>
+
+<p style="margin:18px 0 0; color:var(--ink-mid)">Идём сверху вниз. После каждой проверки ставь галочку «работает» — или оставляй пустой и пиши в строке рядом, что пошло не так (галочки сохраняются на этом компьютере сами). Если что-то выглядит странно — скриншот.</p>
+
+<div class="tally noprint">
+  <span class="cap">Пройдено <b id="tally-n">0</b> из <b id="tally-total">11</b></span>
+  <span class="bar"><i id="tally-bar"></i></span>
+  <button type="button" id="tally-reset" title="Снять все галочки и очистить комментарии">сбросить</button>
+</div>
+
+<section class="step">
+  <div class="head"><span class="num">У</span><h3>Установка</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li>Запусти файл <span class="path">ChatGoose-Setup-0.0.1.exe</span>, который прислал владелец.</li>
+      <li>Windows покажет синее окно <span class="ui">«Система Windows защитила ваш компьютер»</span>. Это ожидаемо — программа пока без цифровой подписи. Нажми <span class="ui">«Подробнее»</span>, затем <span class="ui">«Выполнить в любом случае»</span>.</li>
+      <li>Установка пройдёт сама, без вопросов и без прав администратора; в конце ChatGoose запустится, появятся ярлыки.</li>
+    </ol>
+    <div class="callout plain"><span class="cap">Что должно быть</span>Установка дошла до конца, на ярлыке — гусь, а не серый квадрат.</div>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-setup"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-setup" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">А1</span><h3>Первый запуск и шрифты</h3></div>
+  <div class="body">
+    <p>Программа открывается «пустой» — без ключа так и должно быть, чаты появятся в части Б.</p>
+    <ol class="steps">
+      <li>Окно открылось: светлый интерфейс, сверху надпись ChatGoose.</li>
+      <li>Открой настройки: <kbd>Ctrl</kbd>+<kbd>,</kbd> (Ctrl и запятая). Слева — разделы: «Активность», «API-ключи»…</li>
+      <li>Посмотри на русский текст: буквы ровные, без «квадратиков», не похоже, что половина букв из другого шрифта.</li>
+    </ol>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-a1"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-a1" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">А2</span><h3>Горячие клавиши показывают Ctrl, а не ⌘</h3></div>
+  <div class="body">
+    <p>Программу делали на «маке»; проверяем, что на Windows нигде не вылезает маковский символ <b>⌘</b>.</p>
+    <ol class="steps">
+      <li>Нажми <kbd>Ctrl</kbd>+<kbd>K</kbd> — откроется строка поиска команд. В подсказках написано <span class="path">Ctrl+R</span>, <span class="path">Ctrl+S</span> и т.п.</li>
+      <li>Закрой её (<kbd>Esc</kbd>) и нажми <kbd>?</kbd> (Shift и /) — откроется шпаргалка клавиш. Пройдись глазами: всюду <span class="path">Ctrl+…</span>, символа ⌘ нет нигде.</li>
+      <li>Кнопка поиска наверху окна тоже показывает <span class="path">Ctrl+K</span>.</li>
+    </ol>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-a2"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-a2" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">А3</span><h3>Масштаб интерфейса</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li>Настройки → раздел <span class="ui">«Поведение»</span> → <span class="ui">«Масштаб интерфейса»</span>: поменяй значение — всё окно плавно увеличивается/уменьшается и остаётся чётким.</li>
+      <li>Если у монитора системный масштаб 125–150% (часто на ноутбуках) — глянь, не размыт ли текст программы в целом.</li>
+    </ol>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-a3"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-a3" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">А4</span><h3>Повторный запуск — важная проверка</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li>Не закрывая ChatGoose, запусти его ярлыком <b>ещё раз</b>. Правильно: <b>второе окно не открывается</b>, существующее выходит на передний план.</li>
+      <li>Теперь сверни окно и снова запусти ярлыком: окно разворачивается и оказывается сверху.</li>
+    </ol>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-a4"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-a4" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">А5</span><h3>Язык интерфейса</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li>Настройки → «Поведение» → <span class="ui">«Язык»</span>: переключи EN ↔ RU — подписи настроек меняются сразу.</li>
+    </ol>
+    <p>Рабочая область чатов пока частично на английском — так задумано на этом этапе, это не ошибка.</p>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-a5"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-a5" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<div class="callout" style="margin-top:30px"><span class="cap">Стоп — дальше только с владельцем</span>Проверки Б1–Б5 выполняются на созвоне с владельцем: он продиктует ключ доступа. Всё дальше — «только чтение»: <b>никому ничего не отправляем</b>.</div>
+
+<section class="step">
+  <div class="head"><span class="num">Б1</span><h3>Ключ переживает перезапуск — главная проверка Windows</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li>Настройки → <span class="ui">«API-ключи»</span> → поле <span class="ui">«Ключ OFAPI»</span>: вставь ключ, который продиктует владелец, сохрани.</li>
+      <li>Нажми <span class="ui">«Проверить»</span> рядом с ключом → должно появиться <span class="ui">«Ключ работает»</span>.</li>
+      <li><b>Полностью закрой программу</b> и запусти заново.</li>
+      <li>Снова открой «API-ключи»: ключ значится сохранённым (видны его последние 4 символа), <b>заново вводить не нужно</b>. Нажми «Проверить» ещё раз → снова «Ключ работает».</li>
+    </ol>
+    <div class="callout"><span class="cap">Если не сработало</span>Ключа после перезапуска нет или «Проверить» падает с ошибкой — это самая важная находка всей проверки (на языке разработчиков — не работает шифрование DPAPI). Сообщи владельцу сразу, со скриншотом.</div>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-b1"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-b1" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">Б2</span><h3>Чаты и картинки</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li>После подключения ключа слева появятся чаты аккаунта; открой несколько.</li>
+      <li>Аватарки фанатов и фото в переписке загружаются (с небольшой задержкой — нормально). Навсегда пустые серые прямоугольники вместо картинок — это проблема, отметь.</li>
+    </ol>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-b2"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-b2" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">Б3</span><h3>Уведомления</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li>Сверни окно ChatGoose.</li>
+      <li>Владелец отправит тестовое сообщение в один из чатов.</li>
+      <li>Должно всплыть обычное уведомление Windows (в правом нижнем углу) с именем фаната.</li>
+    </ol>
+    <p>Если уведомления нет: проверь, что они включены в настройках программы («Поведение» → «Уведомления») и что в Windows не включён режим «Не беспокоить»/фокусировка.</p>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-b3"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-b3" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">Б4</span><h3>Счётчик непрочитанных на панели задач</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li>Когда в чатах есть непрочитанные — поверх иконки ChatGoose на панели задач появляется <b>красный кружок с числом</b>.</li>
+      <li>Когда всё прочитано (владелец отметит) — кружок исчезает.</li>
+    </ol>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-b4"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-b4" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">Б5</span><h3>Живая смена «только чтение», 30–60 минут</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li>Подержи программу открытой 30–60 минут, пока аккаунт живёт обычной жизнью.</li>
+      <li>Сообщения появляются сами, без перезапуска; внизу в строке состояния обновляется время последнего обновления.</li>
+      <li>Отмечай любые странности: зависания, пустые списки, окна ошибок, «съехавшую» вёрстку — со скриншотами.</li>
+    </ol>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-b5"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-b5" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">→</span><h3>Что отправить владельцу</h3></div>
+  <div class="body">
+    <table class="send">
+      <tr><td>1</td><td>Эту страницу с галочками — распечатай в PDF: <kbd>Ctrl</kbd>+<kbd>P</kbd> → «Сохранить как PDF» (или просто скриншоты страницы).</td></tr>
+      <tr><td>2</td><td>Скриншоты всего, что выглядело неправильно.</td></tr>
+      <tr><td>3</td><td>Файл диагностики: Настройки → <span class="ui">«Локальные данные»</span> → <span class="ui">«Выгрузить диагностику»</span> — откроется папка с файлом <span class="path">chatgoose-diagnostics-….json</span>. Секретов и ключей в нём нет.</td></tr>
+      <tr><td>4</td><td>Версию Windows: Параметры → Система → О системе, строка «Версия».</td></tr>
+    </table>
+    <p>После этого владелец отключит проверочный ключ — программа на твоём компьютере перестанет подключаться, это нормально.</p>
+  </div>
+</section>
+
+<footer class="colophon">
+  <span>ChatGoose Desktop · проверка Windows · <b>PLAN item 11</b></span>
+  <span>текстовая версия чеклиста: <b>docs/WINDOWS-VERIFICATION.md</b></span>
+  <span>сборка и подпись: <b>docs/RELEASE.md</b></span>
+</footer>
+
+</div>
+
+<script>
+/* Галочки и комментарии живут в localStorage этого браузера — страница
+   работает и с диска (file://). Если хранилище недоступно, просто не сохраняем. */
+(function () {
+  var KEY = 'chatgoose-windows-guide-v1';
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { state = {}; }
+
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.check-row input[type=checkbox]'));
+  var texts = Array.prototype.slice.call(document.querySelectorAll('.check-row input[type=text]'));
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* приватный режим — ок */ }
+  }
+  function tally() {
+    var done = boxes.filter(function (b) { return b.checked; }).length;
+    document.getElementById('tally-n').textContent = String(done);
+    document.getElementById('tally-total').textContent = String(boxes.length);
+    document.getElementById('tally-bar').style.width = (done / boxes.length * 100) + '%';
+  }
+
+  boxes.forEach(function (box) {
+    box.checked = state[box.id] === true;
+    box.addEventListener('change', function () { state[box.id] = box.checked; save(); tally(); });
+  });
+  texts.forEach(function (input) {
+    if (typeof state[input.id] === 'string') input.value = state[input.id];
+    input.addEventListener('input', function () { state[input.id] = input.value; save(); });
+  });
+  document.getElementById('tally-reset').addEventListener('click', function () {
+    if (!confirm('Снять все галочки и очистить комментарии?')) return;
+    state = {}; save();
+    boxes.forEach(function (b) { b.checked = false; });
+    texts.forEach(function (t) { t.value = ''; });
+    tally();
+  });
+  tally();
+})();
+</script>
+</body>
+</html>
