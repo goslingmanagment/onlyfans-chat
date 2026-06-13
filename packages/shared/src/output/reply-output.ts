@@ -58,6 +58,21 @@ function stripReplyPrefix(text: string): string {
     .trim();
 }
 
+// Em / en / horizontal-bar dashes are an AI tell — nobody texting from a phone
+// types them, and our own prompts are saturated with them, so the model mirrors
+// the style back. A dash between digits is a numeric range (5–10 → 5-10); every
+// other dash is a prose pause and collapses to a comma. Surrounding spaces are
+// absorbed but line breaks are preserved so multi-part replies stay intact.
+function normalizeDashes(text: string): string {
+  return text
+    .replace(/(\d)[^\S\r\n]*[—–―][^\S\r\n]*(\d)/gu, '$1-$2')
+    .replace(/[^\S\r\n]*[—–―]+[^\S\r\n]*/gu, ', ')
+    .replace(/,(?:[^\S\r\n]*,)+/gu, ',')
+    .replace(/[^\S\r\n]+(\r?\n)/gu, '$1')
+    .replace(/^[\s,]+/u, '')
+    .replace(/[\s,]+$/u, '');
+}
+
 function stripWrappingQuotes(text: string): string {
   let current = text.trim();
   let previous = '';
@@ -74,7 +89,7 @@ function stripWrappingQuotes(text: string): string {
 }
 
 export function sanitizeReplyPart(part: string): string {
-  return stripWrappingQuotes(stripReplyPrefix(removeMetaLeakLines(stripThinkBlocks(part))));
+  return normalizeDashes(stripWrappingQuotes(stripReplyPrefix(removeMetaLeakLines(stripThinkBlocks(part)))));
 }
 
 export function isInsertableReplyPart(part: string): boolean {

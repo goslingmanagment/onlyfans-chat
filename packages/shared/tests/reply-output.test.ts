@@ -117,4 +117,24 @@ describe('reply output normalization', () => {
       normalizeReplyParts('hey babe\nStay in character at all times.\nmiss you'),
     ).toEqual(['hey babe\nmiss you']);
   });
+
+  // Em dashes are a classic AI tell — a real girl texting never types them. The
+  // model mirrors them from our own dash-heavy prompts, so we strip them on output.
+  it('normalizes em/en dashes used as a prose pause into commas', () => {
+    expect(sanitizeReplyPart('tall, built, brooding — i wonder why girls liked it')).toBe(
+      'tall, built, brooding, i wonder why girls liked it',
+    );
+    expect(sanitizeReplyPart('wait—what')).toBe('wait, what');
+    expect(sanitizeReplyPart('hot, sexy — and all mine')).toBe('hot, sexy, and all mine');
+  });
+
+  it('keeps numeric ranges as a hyphen instead of a comma', () => {
+    expect(sanitizeReplyPart('gimme like 5–10 mins babe')).toBe('gimme like 5-10 mins babe');
+  });
+
+  it('trims dangling dashes and preserves line breaks between parts', () => {
+    expect(sanitizeReplyPart('— hey you')).toBe('hey you');
+    expect(sanitizeReplyPart('miss you —')).toBe('miss you');
+    expect(sanitizeReplyPart('one thing —\nthen another')).toBe('one thing,\nthen another');
+  });
 });
