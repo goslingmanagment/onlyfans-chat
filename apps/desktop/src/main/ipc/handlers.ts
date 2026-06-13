@@ -35,6 +35,7 @@ import {
 } from './activity';
 import {
   accountToVM,
+  chatRowToVM,
   chatToVM,
   fanToVM,
   messageToVM,
@@ -60,6 +61,7 @@ const chatsListSchema = z.object({
   offset: z.number().int().min(0).optional(),
 });
 
+const chatGetSchema = z.object({ accountId: idSchema, chatId: idSchema });
 const chatsSearchSchema = z.object({ accountId: idSchema, query: z.string().max(200) });
 
 const messagesPageSchema = z.object({
@@ -142,7 +144,11 @@ const draftStoredSchema = z.string();
 // ── Spenders board (PLAN item 12) ──
 const spendersListsSchema = z.object({ accountId: idSchema });
 const spendersRosterSchema = z.object({ accountId: idSchema, listId: idSchema });
-const spendersHydrateSchema = z.object({ accountId: idSchema, chatId: idSchema });
+const spendersHydrateSchema = z.object({
+  accountId: idSchema,
+  chatId: idSchema,
+  username: z.string().min(1).max(128).nullable().optional(),
+});
 // scope = 'all' | mapped OM list id (PLAN item 13 refresh queue)
 const spendersScopeSchema = z.object({ accountId: idSchema, scope: idSchema });
 
@@ -299,6 +305,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       ...(args.offset !== undefined ? { offset: args.offset } : {}),
     });
     return { items: page.items.map((row) => chatToVM(row, row.avatar)), hasMore: page.hasMore };
+  });
+
+  ipcMain.handle('query:chats.get', (_event, rawArgs: unknown) => {
+    const args = chatGetSchema.parse(rawArgs);
+    const row = data.chats.get(args.accountId, args.chatId);
+    return row === null ? null : chatRowToVM(row, row.avatar);
   });
 
   ipcMain.handle('query:chats.search', (_event, rawArgs: unknown) => {
@@ -647,7 +659,11 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     // One read-only tail GET through the sync machinery (same path as a chat
     // open), fired on EVERY quick-look open — main's per-fan thread-fetch
     // stamp TTL-guards the spend (PLAN item 13). No refresh service → no-op.
-    await deps.spendersRefresh?.hydrateIfStale(args.accountId, args.chatId);
+    return (
+      (await deps.spendersRefresh?.hydrateIfStale(args.accountId, args.chatId, {
+        username: args.username ?? null,
+      })) ?? { hasChat: data.chats.get(args.accountId, args.chatId) !== null }
+    );
   });
 
   // ── Spenders freshness (PLAN item 13; read-only tail GETs) ──

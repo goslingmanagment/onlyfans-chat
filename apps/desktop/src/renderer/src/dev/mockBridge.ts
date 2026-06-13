@@ -981,6 +981,8 @@ export function createMockBridge(): ChatGooseBridge {
       const end = start + (limit ?? 200);
       return { items: filtered.slice(start, end).map((c) => ({ ...c })), hasMore: end < filtered.length };
     },
+    'query:chats.get': ({ accountId, chatId }) =>
+      (store.chats.get(accountId) ?? []).find((c) => c.chatId === chatId) ?? null,
     'query:chats.search': ({ accountId, query }) => {
       const all = store.chats.get(accountId) ?? [];
       return fuzzyFilter(all, query, (c) => `${c.fanName} ${c.lastMessagePreview}`, 12).map((c) => ({ ...c }));
@@ -1299,6 +1301,7 @@ export function createMockBridge(): ChatGooseBridge {
       const rows = slice.map((c, i) => ({
         fanId: c.chatId,
         name: c.fanName,
+        username: null,
         avatarUrl: c.avatarUrl,
         lifetimeSpend: c.lifetimeSpend,
         spend30d: c.spend30d,
@@ -1319,6 +1322,7 @@ export function createMockBridge(): ChatGooseBridge {
       const rows = all.slice(7, 9).map((c) => ({
         fanId: c.chatId,
         name: c.fanName,
+        username: null,
         avatarUrl: c.avatarUrl,
         lifetimeSpend: c.lifetimeSpend,
         spend30d: c.spend30d,
@@ -1334,8 +1338,9 @@ export function createMockBridge(): ChatGooseBridge {
       }));
       return { rows, fetchedAt: new Date().toISOString() };
     },
-    'cmd:spenders.hydrate': () => {
+    'cmd:spenders.hydrate': ({ accountId, chatId }) => {
       // mock data is always "complete" — nothing to fetch
+      return { hasChat: (store.chats.get(accountId) ?? []).some((c) => c.chatId === chatId) };
     },
     // ── Spenders freshness (PLAN item 13): simulated queue with live frames ──
     'query:spenders.freshness': () => ({
@@ -1404,6 +1409,7 @@ export function createMockBridge(): ChatGooseBridge {
       const rowOf = (c: (typeof all)[number], fanDays: number | null): SpenderRowVM => ({
         fanId: c.chatId,
         name: c.fanName,
+        username: null,
         avatarUrl: c.avatarUrl,
         lifetimeSpend: c.lifetimeSpend,
         spend30d: c.spend30d,

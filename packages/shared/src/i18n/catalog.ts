@@ -446,6 +446,11 @@ export const UI_MESSAGES = {
   'sp.footPreview': { en: 'preview', ru: 'превью' },
   'sp.footChat': { en: 'chat', ru: 'чат' },
   'sp.footReadOnly': { en: 'tiers — OM lists · read-only', ru: 'тиры — списки ОМ · только чтение' },
+  'sp.syncingChat': { en: 'Syncing…', ru: 'Синхронизируем…' },
+  'sp.openChatFailed': {
+    en: 'Could not sync this chat yet — preview stays read-only.',
+    ru: 'Не удалось синхронизировать чат — превью остаётся только для чтения.',
+  },
   'sp.earlier': { en: '↑ earlier', ru: '↑ раньше' },
   'sp.noHistory': {
     en: 'No local history for this fan yet — O opens the full chat.',

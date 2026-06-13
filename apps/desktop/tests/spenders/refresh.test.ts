@@ -21,6 +21,7 @@ interface Harness {
   service: SpendersRefreshService;
   frames: SpendersRefreshFrame[];
   fetched: Array<{ chatId: string; purpose: string }>;
+  ensured: Array<{ chatId: string; username: string | null }>;
   sleeps: number[];
   setNow(ms: number): void;
   advance(ms: number): void;
@@ -38,6 +39,7 @@ function makeHarness(opts: {
   let nowMs = new Date('2026-06-13T12:00:00.000Z').getTime();
   const frames: SpendersRefreshFrame[] = [];
   const fetched: Array<{ chatId: string; purpose: string }> = [];
+  const ensured: Array<{ chatId: string; username: string | null }> = [];
   const sleeps: number[] = [];
   const service = createSpendersRefresh({
     data,
@@ -48,6 +50,10 @@ function makeHarness(opts: {
       fetched.push({ chatId, purpose });
       // production fetchChatTail stamps even empty threads
       data.threadFetchLog.stamp(accountId, chatId, new Date(nowMs).toISOString());
+    },
+    ensureChat: async (_accountId, chatId, hint) => {
+      ensured.push({ chatId, username: hint?.username ?? null });
+      return true;
     },
     scopeChatIds: async (_accountId, scope) => {
       const ids = opts.scopes?.[scope];
@@ -67,6 +73,7 @@ function makeHarness(opts: {
     service,
     frames,
     fetched,
+    ensured,
     sleeps,
     setNow: (ms) => {
       nowMs = ms;
@@ -246,6 +253,7 @@ describe('scoped refresh queue', () => {
         fetched.push(chatId);
         await gate; // hold the first fetch so the queue stays running
       },
+      ensureChat: async () => true,
       scopeChatIds: async (_a, scope) => (scope === 'all' ? ['1', '2'] : ['9']),
       getMappedListIds: async () => ['100'],
       isBudgetExhausted: () => false,
@@ -267,6 +275,15 @@ describe('scoped refresh queue', () => {
 });
 
 describe('hydrateIfStale (quick-look on-open)', () => {
+  it('ensures the chat row before hydrating and returns the resolved state', async () => {
+    const h = makeHarness({ scopes: {} });
+    const result = await h.service.hydrateIfStale(ACCT, '7', { username: 'merritt' });
+
+    expect(result).toEqual({ hasChat: true });
+    expect(h.ensured).toEqual([{ chatId: '7', username: 'merritt' }]);
+    expect(h.fetched).toHaveLength(1);
+  });
+
   it('fetches when never stamped; skips within the TTL; refetches past it', async () => {
     const h = makeHarness({ scopes: {} });
     await h.service.hydrateIfStale(ACCT, '7');
@@ -294,6 +311,7 @@ describe('hydrateIfStale (quick-look on-open)', () => {
         await gate;
         data.threadFetchLog.stamp(accountId, chatId, new Date().toISOString());
       },
+      ensureChat: async () => true,
       scopeChatIds: async () => [],
       getMappedListIds: async () => [],
       isBudgetExhausted: () => false,

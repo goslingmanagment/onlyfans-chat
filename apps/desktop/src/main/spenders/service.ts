@@ -247,6 +247,12 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
         member.name ??
         member.username ??
         member.fanId;
+      const username =
+        fan?.username !== undefined && fan.username.length > 0
+          ? fan.username
+          : member.username !== null && member.username.length > 0
+            ? member.username
+            : null;
       const avatarUrl =
         chat?.avatar ??
         fan?.avatar ??
@@ -254,6 +260,7 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
       return {
         fanId: member.fanId,
         name,
+        username,
         avatarUrl,
         lifetimeSpend: lifetime ?? null,
         spend30d: spend30d.get(member.fanId) ?? null,

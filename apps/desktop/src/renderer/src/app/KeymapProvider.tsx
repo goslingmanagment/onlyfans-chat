@@ -22,6 +22,7 @@ import { sendCurrentDraft } from '../features/conversation/sendController';
 import { COMPOSER_TEXTAREA_ID } from '../features/conversation/composerDom';
 import { previewRow, useSpendersStore } from '../features/spenders/spendersStore';
 import {
+  ensureAndOpenPreviewChat,
   focusPreviewComposer,
   startAiFromPreview,
 } from '../features/spenders/previewActions';
@@ -136,8 +137,10 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
           }
           case 'board-open-chat': {
             e.preventDefault();
-            const fanId = spd.previewFanId ?? spd.cursorFanId;
-            if (fanId !== null) ui.selectChat(accountId, fanId);
+            const row = previewRow(spd) ?? spd.visibleRows.find((item) => item.fanId === spd.cursorFanId);
+            if (row !== undefined && row !== null) {
+              void ensureAndOpenPreviewChat(row).catch(() => undefined);
+            }
             return;
           }
           case 'board-back':

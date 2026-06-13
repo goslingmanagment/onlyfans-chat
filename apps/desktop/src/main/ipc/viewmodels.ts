@@ -103,6 +103,25 @@ export function chatToVM(row: ChatListRow, avatarUrl: string | null): ChatListIt
   };
 }
 
+export function chatRowToVM(row: ChatRow, avatarUrl: string | null): ChatListItemVM {
+  return {
+    chatId: row.chatId,
+    fanId: row.chatId,
+    fanName: row.fanName,
+    avatarUrl,
+    lastMessageAt: row.lastMessageAt,
+    lastMessagePreview: row.lastMessagePreview,
+    lastMessageIsSentByMe: row.lastMessageIsSentByMe,
+    unreadCount: row.unreadCount,
+    hasUnreadTips: row.hasUnreadTips,
+    fanWaiting: deriveFanWaiting(row),
+    canSendMessage: row.canSendMessage,
+    canNotSendReason: row.canNotSendReason,
+    lifetimeSpend: null,
+    spend30d: null,
+  };
+}
+
 export function accountToVM(
   row: AccountListRow,
   avatarUrl: string | null,

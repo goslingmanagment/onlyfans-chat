@@ -416,6 +416,7 @@ export interface SpenderRowVM {
   /** Raw OF numeric id as string — fan id === chat id. */
   fanId: string;
   name: string;
+  username: string | null;
   avatarUrl: string | null; // media:// URL
   /** Both in creator-net dollars — same basis as the chat-list figures. */
   lifetimeSpend: number | null;
@@ -551,6 +552,10 @@ export interface InvokeChannels {
     args: { accountId: string; filter: ChatFilter; limit?: number; offset?: number };
     result: { items: ChatListItemVM[]; hasMore: boolean };
   };
+  'query:chats.get': {
+    args: { accountId: string; chatId: string };
+    result: ChatListItemVM | null;
+  };
   'query:chats.search': {
     args: { accountId: string; query: string };
     result: ChatListItemVM[];
@@ -674,7 +679,10 @@ export interface InvokeChannels {
    * no single-chat GET upstream — live 405). Main TTL-guards via the per-fan
    * thread-fetch stamp (5 min), so J/K walking never re-spends.
    */
-  'cmd:spenders.hydrate': { args: { accountId: string; chatId: string }; result: void };
+  'cmd:spenders.hydrate': {
+    args: { accountId: string; chatId: string; username?: string | null };
+    result: { hasChat: boolean };
+  };
   /** Per-scope «последний апдейт» stamps + the in-flight refresh queue, if any. */
   'query:spenders.freshness': {
     args: { accountId: string };
@@ -788,6 +796,7 @@ export interface ChatGooseBridge {
 const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:accounts.list': true,
   'query:chats.list': true,
+  'query:chats.get': true,
   'query:chats.search': true,
   'query:messages.page': true,
   'query:fan.get': true,

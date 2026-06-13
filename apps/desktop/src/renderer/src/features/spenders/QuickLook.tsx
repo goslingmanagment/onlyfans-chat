@@ -4,12 +4,11 @@
 // engine (SPEC §7 — cmd:send.message; never auto-retry an indeterminate send).
 // AI runs only on explicit click/hotkey — no prefetch, no auto-drafts.
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { SpenderRowVM } from '../../../../preload/contract';
 import { useAccounts, useFlatMessages, useMessages, useOutbox, useSettings } from '../../bridge/queries';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useUiStore } from '../../state/uiStore';
 import { useT } from '../../lib/i18n';
 import { modCombo } from '../../lib/modKey';
 import { formatWholeDollars } from '../../lib/money';
@@ -47,6 +46,7 @@ import { dayCounter } from './SpenderRowItem';
 import {
   focusPreviewComposer,
   hydratePreviewFan,
+  ensureAndOpenPreviewChat,
   startAiFromPreview,
   PREVIEW_TEXTAREA_ID,
   type PreviewAiFeature,
@@ -74,7 +74,10 @@ export function QuickLook({
 }): React.JSX.Element {
   const t = useT();
   const closePreview = useSpendersStore((s) => s.closePreview);
-  const selectChat = useUiStore((s) => s.selectChat);
+  const [openingChat, setOpeningChat] = useState(false);
+  const [openFailedFor, setOpenFailedFor] = useState<string | null>(null);
+  const previewKey = `${accountId}/${fanId}`;
+  const openFailed = openFailedFor === previewKey;
 
   // The preview IS the active conversation while open: per-chat draft
   // load/persist + dock discard-on-switch ride the existing machinery.
@@ -93,8 +96,8 @@ export function QuickLook({
   // fan by fan. Main's per-fan stamp (5-min TTL) is the spend ceiling, so J/K
   // walking and reopening stay free.
   useEffect(() => {
-    hydratePreviewFan(accountId, fanId);
-  }, [accountId, fanId]);
+    hydratePreviewFan(accountId, fanId, row?.username ?? null);
+  }, [accountId, fanId, row?.username]);
 
   const name = row?.name ?? '';
   const canSend = row?.canSendMessage ?? false;
@@ -154,12 +157,30 @@ export function QuickLook({
           <span className="flex-1" />
           <button
             type="button"
-            onClick={() => selectChat(accountId, fanId)}
-            className="flex cursor-pointer items-center gap-[7px] rounded-[7px] border border-line-strong bg-bg1 px-3 py-[6px] text-[12px] font-semibold text-ink-mid hover:bg-bg2"
+            disabled={openingChat || row === null}
+            onClick={() => {
+              if (row === null) return;
+              setOpeningChat(true);
+              setOpenFailedFor(null);
+              ensureAndOpenPreviewChat(row)
+                .then((opened) => {
+                  if (!opened) setOpenFailedFor(previewKey);
+                })
+                .catch(() => setOpenFailedFor(previewKey))
+                .finally(() => setOpeningChat(false));
+            }}
+            className={`flex items-center gap-[7px] rounded-[7px] border border-line-strong bg-bg1 px-3 py-[6px] text-[12px] font-semibold text-ink-mid ${
+              openingChat || row === null ? 'cursor-default opacity-70' : 'cursor-pointer hover:bg-bg2'
+            }`}
           >
-            {t('sp.openChat')} <Kbd>O</Kbd>
+            {openingChat ? t('sp.syncingChat') : t('sp.openChat')} <Kbd>O</Kbd>
           </button>
         </div>
+        {openFailed && (
+          <div className="border-t border-line bg-bg1 px-4 pb-2 text-right text-[11px] text-warn">
+            {t('sp.openChatFailed')}
+          </div>
+        )}
       </div>
     </>
   );
@@ -409,9 +430,12 @@ function PreviewComposer({
       })
     : null;
   const blockedMessage = gate !== null && !gate.ok ? gate.message : null;
-  const rowDisabled = !ready || blockedMessage !== null;
+  const sendBlockedMessage = canSend ? null : cannotReason;
+  const rowDisabled = !ready || blockedMessage !== null || sendBlockedMessage !== null;
   const pingPill = evaluatePingGate(gate, pingGate.data?.blocked ?? null);
   const hiPill = evaluateHiGate(gate, deriveHiLocked(pages));
+  const pingEnabled = pingPill.enabled && sendBlockedMessage === null;
+  const hiEnabled = hiPill.enabled && sendBlockedMessage === null;
 
   const throttleRef = useRef(createTypingThrottle());
   useEffect(() => {
@@ -443,11 +467,13 @@ function PreviewComposer({
       <div className="mt-1.5 flex items-center gap-[9px]">
         <PreviewPill
           primary
-          dimmed={!pingPill.enabled}
-          disabled={!pingPill.enabled}
-          title={pingPill.enabled ? 'Reactivation message for a silent fan' : pingPill.reason}
+          dimmed={!pingEnabled}
+          disabled={!pingEnabled}
+          title={
+            sendBlockedMessage ?? (pingPill.enabled ? 'Reactivation message for a silent fan' : pingPill.reason)
+          }
           onClick={() => {
-            if (pingPill.enabled) start('ping');
+            if (pingEnabled) start('ping');
           }}
         >
           <i className="text-clay not-italic">✳</i> Ping <Kbd>{modCombo('P')}</Kbd>
@@ -455,7 +481,7 @@ function PreviewComposer({
         <PreviewPill
           dimmed={rowDisabled}
           disabled={rowDisabled}
-          title={blockedMessage ?? 'Generate a reply suggestion'}
+          title={sendBlockedMessage ?? blockedMessage ?? 'Generate a reply suggestion'}
           onClick={() => {
             if (!rowDisabled) start('fast-reply');
           }}
@@ -463,11 +489,11 @@ function PreviewComposer({
           Reply
         </PreviewPill>
         <PreviewPill
-          dimmed={!hiPill.enabled}
-          disabled={!hiPill.enabled}
-          title={hiPill.enabled ? '3 opener variants for a fresh conversation' : hiPill.reason}
+          dimmed={!hiEnabled}
+          disabled={!hiEnabled}
+          title={sendBlockedMessage ?? (hiPill.enabled ? '3 opener variants for a fresh conversation' : hiPill.reason)}
           onClick={() => {
-            if (hiPill.enabled) start('hi-greeting');
+            if (hiEnabled) start('hi-greeting');
           }}
         >
           Hi

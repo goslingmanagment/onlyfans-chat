@@ -8,6 +8,7 @@ import type {
   AccountVM,
   MessageVM,
   PingGateVM,
+  SpenderRowVM,
   SettingsVM,
 } from '../../../../preload/contract';
 import { getBridge } from '../../bridge/bridge';
@@ -16,7 +17,7 @@ import { useUiStore } from '../../state/uiStore';
 import { startAiFeature } from '../ai/aiStore';
 import { deriveHiLocked, evaluateAiGate, evaluateHiGate, evaluatePingGate } from '../ai/dockLogic';
 import { pingGateKey } from '../ai/pingGate';
-import { useSpendersStore } from './spendersStore';
+import { previewRow, useSpendersStore } from './spendersStore';
 
 export const PREVIEW_TEXTAREA_ID = 'spenders-preview-composer';
 
@@ -26,11 +27,29 @@ export const PREVIEW_TEXTAREA_ID = 'spenders-preview-composer';
 // by fan. Main owns the spend ceiling: the per-fan thread-fetch stamp (5-min
 // TTL, persisted, shared with the refresh queue) makes repeat opens and J/K
 // walking free.
-export function hydratePreviewFan(accountId: string, fanId: string): void {
+export function hydratePreviewFan(accountId: string, fanId: string, username?: string | null): void {
   // Fire-and-forget: db:changed events refresh the thread and board queries.
   void getBridge()
-    .invoke('cmd:spenders.hydrate', { accountId, chatId: fanId })
+    .invoke('cmd:spenders.hydrate', {
+      accountId,
+      chatId: fanId,
+      ...(username !== undefined ? { username } : {}),
+    })
     .catch(() => undefined); // transient failure → the next open retries
+}
+
+export async function ensureAndOpenPreviewChat(row: SpenderRowVM): Promise<boolean> {
+  const ui = useUiStore.getState();
+  if (ui.view !== 'spenders' || ui.selectedAccountId === null) return false;
+  const accountId = ui.selectedAccountId;
+  const result = await getBridge().invoke('cmd:spenders.hydrate', {
+    accountId,
+    chatId: row.fanId,
+    username: row.username,
+  });
+  if (!result.hasChat) return false;
+  ui.selectChat(accountId, row.fanId);
+  return true;
 }
 
 export function focusPreviewComposer(): void {
@@ -43,9 +62,11 @@ export type PreviewAiFeature = 'ping' | 'fast-reply' | 'hi-greeting';
 
 export function startAiFromPreview(feature: PreviewAiFeature, queryClient: QueryClient): void {
   const ui = useUiStore.getState();
-  const fanId = useSpendersStore.getState().previewFanId;
-  if (ui.view !== 'spenders' || ui.selectedAccountId === null || fanId === null) return;
+  const row = previewRow(useSpendersStore.getState());
+  if (ui.view !== 'spenders' || ui.selectedAccountId === null || row === null) return;
+  if (!row.canSendMessage) return;
   const accountId = ui.selectedAccountId;
+  const fanId = row.fanId;
 
   const settings = queryClient.getQueryData<SettingsVM>(qk.settings);
   const account = queryClient

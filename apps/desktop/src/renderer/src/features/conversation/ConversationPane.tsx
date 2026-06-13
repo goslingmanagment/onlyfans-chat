@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useAccounts, useChats, useFan } from '../../bridge/queries';
+import { useAccounts, useChat, useFan } from '../../bridge/queries';
 import { getBridge } from '../../bridge/bridge';
 import { useUiStore } from '../../state/uiStore';
 import { modCombo } from '../../lib/modKey';
@@ -38,7 +38,7 @@ export function ConversationPane(): React.JSX.Element {
   }, [typing, setTyping]);
 
   const accounts = useAccounts();
-  const chats = useChats(accountId, 'all');
+  const selectedChat = useChat(accountId, chatId);
   const fan = useFan(accountId, chatId);
 
   // conversation switch dismisses the AI dock (the discarded frame confirms),
@@ -70,7 +70,15 @@ export function ConversationPane(): React.JSX.Element {
   }, [accountId, chatId]);
 
   const account = accounts.data?.find((a) => a.id === accountId) ?? null;
-  const chat = chats.data?.items.find((c) => c.chatId === chatId) ?? null;
+  const chat = selectedChat.data ?? null;
+
+  if (accountId !== null && chatId !== null && selectedChat.isPending) {
+    return (
+      <section className="flex min-w-0 flex-1 flex-col bg-bg0">
+        <EmptyState glyph="✉" title="Loading conversation" />
+      </section>
+    );
+  }
 
   if (accountId === null || chatId === null || chat === null) {
     return (

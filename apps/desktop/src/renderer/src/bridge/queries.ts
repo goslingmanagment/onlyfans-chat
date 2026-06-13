@@ -39,6 +39,7 @@ import { getBridge } from './bridge';
 export const qk = {
   accounts: ['accounts'] as const,
   chats: (accountId: string, filter: ChatFilter) => ['chats', accountId, filter] as const,
+  chat: (accountId: string, chatId: string) => ['chat', accountId, chatId] as const,
   chatsSearch: (accountId: string, query: string) => ['chats-search', accountId, query] as const,
   messages: (accountId: string, chatId: string) => ['messages', accountId, chatId] as const,
   outbox: (accountId: string, chatId: string) => ['outbox', accountId, chatId] as const,
@@ -79,6 +80,16 @@ export function useChats(accountId: string | null, filter: ChatFilter) {
         limit: 500,
       }),
     enabled: accountId !== null,
+  });
+}
+
+export function useChat(accountId: string | null, chatId: string | null) {
+  return useQuery<ChatListItemVM | null>({
+    queryKey:
+      accountId === null || chatId === null ? ['chat', 'none', 'none'] : qk.chat(accountId, chatId),
+    queryFn: () =>
+      getBridge().invoke('query:chats.get', { accountId: accountId ?? '', chatId: chatId ?? '' }),
+    enabled: accountId !== null && chatId !== null,
   });
 }
 
@@ -151,17 +162,16 @@ export interface ChatSendability {
 
 /** Narrow per-chat slice of the chat list (AI dock insert-vs-copy degrade, SPEC §7.0). */
 export function useChatSendability(accountId: string | null, chatId: string | null) {
-  return useQuery<{ items: ChatListItemVM[]; hasMore: boolean }, Error, ChatSendability | null>({
-    queryKey: accountId === null ? ['chats', 'none', 'all'] : qk.chats(accountId, 'all'),
+  return useQuery<ChatListItemVM | null, Error, ChatSendability | null>({
+    queryKey:
+      accountId === null || chatId === null ? ['chat', 'none', 'none'] : qk.chat(accountId, chatId),
     queryFn: () =>
-      getBridge().invoke('query:chats.list', { accountId: accountId ?? '', filter: 'all', limit: 500 }),
-    enabled: accountId !== null,
-    select: (data) => {
-      const chat = data.items.find((c) => c.chatId === chatId);
-      return chat === undefined
+      getBridge().invoke('query:chats.get', { accountId: accountId ?? '', chatId: chatId ?? '' }),
+    enabled: accountId !== null && chatId !== null,
+    select: (chat) =>
+      chat === null
         ? null
-        : { canSendMessage: chat.canSendMessage, canNotSendReason: chat.canNotSendReason };
-    },
+        : { canSendMessage: chat.canSendMessage, canNotSendReason: chat.canNotSendReason },
   });
 }
 

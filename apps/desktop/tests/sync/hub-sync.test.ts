@@ -499,6 +499,7 @@ function makeFakePolling(): FakePolling {
       polling.emit({ type: 'chatListUpdated', accountId });
       return Promise.resolve();
     },
+    ensureChat: () => Promise.resolve(true),
     openConversation: () => Promise.resolve(),
     closeConversation: () => undefined,
     setFocusedAccount: () => undefined,

@@ -322,6 +322,34 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     data.chats.upsertMany(chatUpserts);
   }
 
+  async function ensureChat(
+    accountId: string,
+    chatId: string,
+    hint?: { username?: string | null },
+  ): Promise<boolean> {
+    if (data.chats.get(accountId, chatId) !== null) {
+      return true;
+    }
+    const username = hint?.username ?? data.fans.get(accountId, chatId)?.username ?? null;
+    if (username === null || username.trim().length === 0) {
+      return false;
+    }
+    const { chats } = await client.listChats({
+      accountId,
+      query: username.trim(),
+      limit: CHATS_PAGE_LIMIT,
+      order: 'recent',
+      skipUsers: 'none',
+      purpose: 'spenders',
+    });
+    const match = chats.find((chat) => chat.fan?.id != null && String(chat.fan.id) === chatId);
+    if (match === undefined) {
+      return false;
+    }
+    upsertChatRows(accountId, [match]);
+    return data.chats.get(accountId, chatId) !== null;
+  }
+
   async function pollAccount(accountId: string, depth: PollDepth = 'hot'): Promise<void> {
     const loop = loops.get(accountId);
     if (!loop || loop.inFlight) {
@@ -625,6 +653,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       await fetchChatTail(accountId, chatId, purpose);
       emit({ type: 'chatListUpdated', accountId });
     },
+    ensureChat,
     async openConversation(accountId, chatId) {
       openConversation = { accountId, chatId };
       sweepLastChangeAt = now(); // re-arm the idle window on every open

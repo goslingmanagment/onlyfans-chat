@@ -66,7 +66,14 @@ function makeMessage(overrides: {
 interface StubClient {
   client: OfApiClient;
   listChatsCalls: number;
-  listChatsParams: { limit?: number; offset?: number }[];
+  listChatsParams: {
+    limit?: number;
+    offset?: number;
+    query?: string;
+    order?: string;
+    skipUsers?: string;
+    purpose?: string;
+  }[];
   listMessagesCalls: { lastId?: string; order?: string; limit?: number; purpose?: string }[];
   setChats(chats: OfApiChat[]): void;
   setMessages(messages: OfApiMessage[]): void;
@@ -91,20 +98,44 @@ function makeStubClient(): StubClient {
       messages = next;
     },
     client: {
-      listChats: vi.fn(async (params: { limit?: number; offset?: number }) => {
+      listChats: vi.fn(
+        async (params: {
+          limit?: number;
+          offset?: number;
+          query?: string;
+          order?: string;
+          skipUsers?: string;
+          purpose?: string;
+        }) => {
         state.listChatsCalls += 1;
         state.listChatsParams.push({
           ...(params.limit != null ? { limit: params.limit } : {}),
           ...(params.offset != null ? { offset: params.offset } : {}),
+          ...(params.query != null ? { query: params.query } : {}),
+          ...(params.order != null ? { order: params.order } : {}),
+          ...(params.skipUsers != null ? { skipUsers: params.skipUsers } : {}),
+          ...(params.purpose != null ? { purpose: params.purpose } : {}),
         });
         const offset = params.offset ?? 0;
         const limit = Math.min(params.limit ?? 10, 10);
-        const chats = all.slice(offset, offset + limit);
+        const source =
+          params.query == null || params.query.trim().length === 0
+            ? all
+            : all.filter((chat) => {
+                const q = params.query?.trim().toLowerCase() ?? '';
+                return (
+                  chat.fan?.username?.toLowerCase().includes(q) === true ||
+                  chat.fan?.name?.toLowerCase().includes(q) === true
+                );
+              });
+        const chats = source.slice(offset, offset + limit);
         return {
           chats,
-          nextPageUrl: offset + chats.length < all.length ? `https://stub/chats?offset=${offset + chats.length}` : null,
+          nextPageUrl:
+            offset + chats.length < source.length ? `https://stub/chats?offset=${offset + chats.length}` : null,
         };
-      }),
+      },
+      ),
       listMessages: vi.fn(
         async (params: { lastId?: string; order?: string; limit?: number; purpose?: string }) => {
           state.listMessagesCalls.push({
@@ -182,6 +213,66 @@ describe('PollingSync', () => {
   function hydrationState(): z.infer<typeof hydrationSchema> | null {
     return data.settings.getParsed(`sync.chatHydration.${ACCT}`, hydrationSchema) ?? null;
   }
+
+  it('ensureChat is a no-op when the chat row already exists', async () => {
+    data.chats.upsert({
+      accountId: ACCT,
+      chatId: '101',
+      fanName: 'Cached',
+      avatar: null,
+      unreadCount: 0,
+      hasUnreadTips: false,
+      lastMessageAt: null,
+      lastMessagePreview: '',
+      lastMessageIsSentByMe: false,
+      lastMessageId: null,
+      lastReadMessageId: null,
+      pinned: false,
+      canSendMessage: true,
+      canNotSendReason: null,
+      raw: {},
+    });
+
+    const sync = makeSync();
+
+    await expect(sync.ensureChat(ACCT, '101', { username: 'fan101' })).resolves.toBe(true);
+    expect(stub.listChatsCalls).toBe(0);
+  });
+
+  it('ensureChat resolves a missing Spenders chat by username search and exact fan id', async () => {
+    stub.setChats([
+      makeChat({ fanId: 202, name: 'Merritt' }),
+      makeChat({ fanId: 101, name: 'Merritt' }),
+    ]);
+    const sync = makeSync();
+
+    await expect(sync.ensureChat(ACCT, '101', { username: 'Merritt' })).resolves.toBe(true);
+
+    expect(stub.listChatsParams).toEqual([
+      {
+        limit: 10,
+        query: 'Merritt',
+        order: 'recent',
+        skipUsers: 'none',
+        purpose: 'spenders',
+      },
+    ]);
+    expect(data.chats.get(ACCT, '101')?.fanName).toBe('Merritt');
+    expect(data.chats.get(ACCT, '202')).toBeNull();
+    expect(data.fans.get(ACCT, '101')?.username).toBe('fan101');
+  });
+
+  it('ensureChat does not synthesize a row when username is absent or search misses the fan id', async () => {
+    const sync = makeSync();
+
+    await expect(sync.ensureChat(ACCT, '101')).resolves.toBe(false);
+    expect(stub.listChatsCalls).toBe(0);
+
+    stub.setChats([makeChat({ fanId: 202, name: 'Merritt' })]);
+    await expect(sync.ensureChat(ACCT, '101', { username: 'Merritt' })).resolves.toBe(false);
+    expect(stub.listChatsCalls).toBe(1);
+    expect(data.chats.get(ACCT, '101')).toBeNull();
+  });
 
   it('initial poll hydrates chat + fan rows LIST-ONLY; history loads on conversation open', async () => {
     stub.setChats([makeChat({ fanId: 101, lastMessageId: 5, unread: 2 })]);
@@ -293,7 +384,13 @@ describe('PollingSync', () => {
     await vi.runOnlyPendingTimersAsync();
 
     await vi.advanceTimersByTimeAsync(60_000); // post-hydration hot tick
-    expect(stub.listChatsParams.at(-1)).toEqual({ limit: 10, offset: 0 });
+    expect(stub.listChatsParams.at(-1)).toEqual({
+      limit: 10,
+      offset: 0,
+      order: 'recent',
+      skipUsers: 'none',
+      purpose: 'hot-poll',
+    });
     expect(stub.listChatsParams.every((p) => p.limit === 10)).toBe(true);
     sync.stop();
   });

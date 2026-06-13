@@ -57,7 +57,7 @@ export interface SpendersRefreshService {
   /** Quick-look on-open hydrate: ONE tail GET unless the fan was fetched
    *  within the TTL (any path). Replaces the renderer-side guard — main's
    *  stamp is authoritative and survives restarts. */
-  hydrateIfStale(accountId: string, chatId: string): Promise<void>;
+  hydrateIfStale(accountId: string, chatId: string, hint?: { username?: string | null }): Promise<{ hasChat: boolean }>;
   /** Start the scoped queue (replaces a queue already running on the account
    *  unless it is the same scope, which is a no-op). Returns once started;
    *  processing continues in the background. */
@@ -76,6 +76,8 @@ export interface SpendersRefreshOptions {
   data: DataLayer;
   /** The sync engine's tail fetch (SPEC §6.1) — ONE page, limit 100. */
   refreshChat: (accountId: string, chatId: string, purpose: OfApiPurpose) => Promise<void>;
+  /** Lazy chat-list metadata resolution for deep Spenders rows. */
+  ensureChat: (accountId: string, chatId: string, hint?: { username?: string | null }) => Promise<boolean>;
   /** Roster fan ids of a scope (spenders service; board order). */
   scopeChatIds: (accountId: string, scope: string) => Promise<string[]>;
   /** Owner-ordered mapped list ids — an «Все» completion stamps every chip. */
@@ -116,7 +118,7 @@ interface ActiveQueue {
 }
 
 export function createSpendersRefresh(options: SpendersRefreshOptions): SpendersRefreshService {
-  const { data, refreshChat, scopeChatIds, getMappedListIds, isBudgetExhausted } = options;
+  const { data, refreshChat, ensureChat, scopeChatIds, getMappedListIds, isBudgetExhausted } = options;
   const now = options.now ?? Date.now;
   const sleep: SleepFn =
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -246,9 +248,10 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
   }
 
   return {
-    async hydrateIfStale(accountId, chatId) {
+    async hydrateIfStale(accountId, chatId, hint) {
+      const hasChat = await ensureChat(accountId, chatId, hint);
       if (isWithinFetchTtl(stampMsOf(accountId, chatId), now(), ttlMs)) {
-        return;
+        return { hasChat };
       }
       // Single-flight: J/K walking + reopen must not double-spend before the
       // stamp lands.
@@ -261,6 +264,7 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
         hydrateInFlight.set(key, pending);
       }
       await pending;
+      return { hasChat };
     },
 
     async start(accountId, scope) {

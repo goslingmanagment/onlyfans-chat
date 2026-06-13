@@ -22,6 +22,9 @@ export interface SyncProvider {
   /** One read-only tail fetch (limit=100, ONE page). Default ledger purpose is
    *  'message-tail'; the spenders refresh queue passes its own distinct one. */
   refreshChat(accountId: string, chatId: string, purpose?: OfApiPurpose): Promise<void>;
+  /** Lazily resolve the chat-list metadata row (canSendMessage, lastMessage)
+   *  for deep Spenders rows that are outside the initial inbox hydration. */
+  ensureChat(accountId: string, chatId: string, hint?: { username?: string | null }): Promise<boolean>;
   /** Conversation focus drives the read-state sweep + immediate refresh. */
   openConversation(accountId: string, chatId: string): Promise<void>;
   closeConversation(accountId: string, chatId: string): void;

@@ -217,6 +217,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       return () => listeners.delete(listener);
     },
     refreshChat: (accountId, chatId, purpose) => polling.refreshChat(accountId, chatId, purpose),
+    ensureChat: (accountId, chatId, hint) => polling.ensureChat(accountId, chatId, hint),
     openConversation: (accountId, chatId) => polling.openConversation(accountId, chatId),
     closeConversation: (accountId, chatId) => polling.closeConversation(accountId, chatId),
     setFocusedAccount: (accountId) => polling.setFocusedAccount(accountId),
