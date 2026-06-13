@@ -128,6 +128,8 @@ Gaps: no fan language-preference field; no per-fan purchase-history endpoint.
 
 No single per-fan financial ledger endpoint; per-fan totals come from `*Summ` fields, detailed rows from `/transactions` joined on fan id.
 
+**Money-basis gotcha (verified live 2026-06-13):** transaction `amount` is GROSS (what the fan paid, before the platform cut; VAT rides separately in `vatAmount`), `net` is creator earnings — in live data `net ≈ 0.8 × amount`. The fan-profile `*Summ` spending fields (`totalSumm`, `subscribesSumm`, …) are already NET: a $4.99/mo subscription shows `subscribesSumm = 3.99`. Never sum `amount` next to a `*Summ` figure — for a fan younger than the window the gross sum will EXCEED the "lifetime" and read as a bug. The app shows net everywhere (owner decision 2026-06-13). Also: `*Summ` snapshots lag fresh purchases by up to the fan-detail refresh, so a just-bought PPV appears in `/transactions` before it appears in `totalSumm`.
+
 ### Media / vault
 | Method | Path | Notes |
 |---|---|---|

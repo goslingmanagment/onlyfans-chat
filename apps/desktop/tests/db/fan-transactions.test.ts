@@ -17,6 +17,7 @@ function tx(overrides: Partial<FanTransactionUpsert> = {}): FanTransactionUpsert
     txId: 't1',
     fanId: '101',
     amount: 25,
+    net: 20,
     type: 'tips',
     createdAt: isoDaysAgo(1),
     ...overrides,
@@ -88,18 +89,19 @@ describe('chat list fan-value join (DESIGN §1)', () => {
     });
   });
 
-  it('exposes lifetime from fans.spending and a rolling 30-day sum', () => {
+  it('exposes lifetime from fans.spending and a rolling 30-day NET sum', () => {
     layer.fanTransactions.upsertMany([
-      tx({ txId: 'in-window-1', amount: 100, createdAt: isoDaysAgo(2) }),
-      tx({ txId: 'in-window-2', amount: 20.5, createdAt: isoDaysAgo(29) }),
-      tx({ txId: 'out-of-window', amount: 500, createdAt: isoDaysAgo(31) }),
-      tx({ txId: 'other-fan', fanId: '999', amount: 77, createdAt: isoDaysAgo(1) }),
+      tx({ txId: 'in-window-1', amount: 100, net: 80, createdAt: isoDaysAgo(2) }),
+      tx({ txId: 'in-window-2', amount: 20.5, net: 16.4, createdAt: isoDaysAgo(29) }),
+      tx({ txId: 'out-of-window', amount: 500, net: 400, createdAt: isoDaysAgo(31) }),
+      tx({ txId: 'other-fan', fanId: '999', amount: 77, net: 61.6, createdAt: isoDaysAgo(1) }),
     ]);
 
     const items = layer.chats.list({ accountId: 'acct_1', filter: 'all' }).items;
     const marcus = items.find((c) => c.chatId === '101');
     expect(marcus?.lifetimeSpend).toBeCloseTo(1284.4);
-    expect(marcus?.spend30d).toBeCloseTo(120.5);
+    // 80 + 16.4 — the join sums net, never the gross amount column
+    expect(marcus?.spend30d).toBeCloseTo(96.4);
   });
 
   it('renders silence honestly: no fan row / no transactions → nulls', () => {
@@ -110,10 +112,10 @@ describe('chat list fan-value join (DESIGN §1)', () => {
   });
 
   it('search carries the same fan-value figures', () => {
-    layer.fanTransactions.upsertMany([tx({ txId: 's1', amount: 12 })]);
+    layer.fanTransactions.upsertMany([tx({ txId: 's1', amount: 12, net: 9.6 })]);
     const [hit] = layer.chats.search({ accountId: 'acct_1', query: 'marc' });
     expect(hit?.lifetimeSpend).toBeCloseTo(1284.4);
-    expect(hit?.spend30d).toBe(12);
+    expect(hit?.spend30d).toBeCloseTo(9.6);
   });
 
   it('corrupt fans.spending JSON degrades to null, not a crash', () => {

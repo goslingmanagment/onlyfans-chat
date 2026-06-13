@@ -253,6 +253,29 @@ INSERT INTO credit_log (day, purpose, used, requests)
 DELETE FROM credit_log WHERE purpose = 'supporters';
 `;
 
+// v9 — 30-day spend figures switch to creator NET (owner decision 2026-06-13).
+// fans.spending.total (OnlyFans totalSumm) is already net of the platform 20%
+// cut, while transaction `amount` is the gross fan payment — summing gross next
+// to a net lifetime made the green figure exceed the total for young fans.
+// New `net` column: OFAPI tx.net, fallback 0.8 × amount (mappers). The rebuild
+// intentionally discards cached rows (they lack net): latestCreatedAt() turns
+// null, so the next sweep's first-run path refetches the full -30days window.
+export const SCHEMA_V9 = `
+DROP TABLE fan_transactions;
+CREATE TABLE fan_transactions (
+  account_id TEXT NOT NULL,
+  tx_id TEXT NOT NULL,
+  fan_id TEXT NOT NULL,
+  amount REAL NOT NULL,
+  net REAL NOT NULL,
+  type TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (account_id, tx_id)
+);
+CREATE INDEX idx_fan_tx_fan ON fan_transactions (account_id, fan_id, created_at);
+CREATE INDEX idx_fan_tx_created ON fan_transactions (account_id, created_at);
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',

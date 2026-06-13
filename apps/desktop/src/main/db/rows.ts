@@ -156,6 +156,9 @@ export interface FanTransactionRow {
   fanId: string;
   /** Gross fan payment in dollars (OFAPI is USD-denominated; never mills). */
   amount: number;
+  /** Creator net in dollars (OFAPI tx.net, fallback 0.8 × amount) — the value
+   *  every 30-day figure sums, matching the net basis of fans.spending. */
+  net: number;
   /** OFAPI computed type: subs / tips / post / chat_messages / stream. */
   type: string | null;
   /** Normalized ISO-UTC on write so lexicographic comparisons are sound. */

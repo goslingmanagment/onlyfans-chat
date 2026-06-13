@@ -54,7 +54,7 @@ export const SpenderRowItem = memo(function SpenderRowItem({
             <span title="Fan waiting" className="h-[7px] w-[7px] flex-none rounded-full bg-clay" />
           )}
           {lifetime !== null && (
-            <span title="Lifetime spend" className="num flex-none text-[10.5px] text-ink-mid">
+            <span title="Lifetime spend (net)" className="num flex-none text-[10.5px] text-ink-mid">
               {lifetime}
             </span>
           )}

@@ -2,7 +2,9 @@
 // (DESIGN §1). The sync sweep walks GET /{account}/transactions incrementally
 // (newest cached created_at minus an overlap); reads aggregate at query time
 // in chats.list, so the 30-day window rolls without re-fetching. Rows older
-// than the retention horizon are pruned by the same sweep.
+// than the retention horizon are pruned by the same sweep. All aggregates sum
+// `net` (creator earnings) — the same basis as the fans.spending lifetime
+// figures (owner decision 2026-06-13: every money figure shows net).
 
 import { z } from 'zod';
 import type { ChatGooseDb } from '../database';
@@ -10,11 +12,12 @@ import type { DbChangeBus } from '../change-bus';
 import type { FanTransactionUpsert } from '../rows';
 
 const UPSERT_SQL = `
-INSERT INTO fan_transactions (account_id, tx_id, fan_id, amount, type, created_at)
-VALUES (@account_id, @tx_id, @fan_id, @amount, @type, @created_at)
+INSERT INTO fan_transactions (account_id, tx_id, fan_id, amount, net, type, created_at)
+VALUES (@account_id, @tx_id, @fan_id, @amount, @net, @type, @created_at)
 ON CONFLICT (account_id, tx_id) DO UPDATE SET
   fan_id = excluded.fan_id,
   amount = excluded.amount,
+  net = excluded.net,
   type = excluded.type,
   created_at = excluded.created_at`;
 
@@ -61,6 +64,7 @@ export function createFanTransactionsQueries(
             tx_id: row.txId,
             fan_id: row.fanId,
             amount: row.amount,
+            net: row.net,
             type: row.type,
             created_at: row.createdAt,
           });
@@ -84,7 +88,7 @@ export function createFanTransactionsQueries(
       const rowSchema = z.object({ fan_id: z.string(), total: z.number() });
       const rows: unknown[] = db
         .prepare(
-          `SELECT fan_id, SUM(amount) AS total FROM fan_transactions
+          `SELECT fan_id, SUM(net) AS total FROM fan_transactions
            WHERE account_id = @account_id AND created_at >= @cutoff
            GROUP BY fan_id`,
         )
@@ -101,7 +105,7 @@ export function createFanTransactionsQueries(
       const rowSchema = z.object({ fan_id: z.string(), total: z.number(), tx_count: z.number() });
       const rows: unknown[] = db
         .prepare(
-          `SELECT fan_id, SUM(amount) AS total, COUNT(*) AS tx_count FROM fan_transactions
+          `SELECT fan_id, SUM(net) AS total, COUNT(*) AS tx_count FROM fan_transactions
            WHERE account_id = @account_id AND created_at >= @cutoff
            GROUP BY fan_id`,
         )
@@ -119,7 +123,7 @@ export function createFanTransactionsQueries(
       const rows: unknown[] = db
         .prepare(
           `SELECT date(created_at, 'localtime') AS day,
-                  SUM(amount) AS amount, COUNT(*) AS tx_count
+                  SUM(net) AS amount, COUNT(*) AS tx_count
            FROM fan_transactions
            WHERE account_id = @account_id AND created_at >= @cutoff
            GROUP BY day ORDER BY day`,

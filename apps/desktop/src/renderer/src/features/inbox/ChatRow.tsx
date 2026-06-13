@@ -7,9 +7,10 @@ import { formatListTime } from '../../lib/time';
 
 /** Memoized 64px chat row per mockup .row — virtualized parent positions it.
  *  Fan value per DESIGN §1: lifetime beside the name (figure or chip per the
- *  spendStyle setting), 30-day inflow bottom-right in green — the row's single
- *  colour accent. $0/unknown renders nothing; the unread badge is always clay
- *  (no tip pill — tips read via the Tips filter and the preview line). */
+ *  spendStyle setting), 30-day net inflow bottom-right in green — the row's
+ *  single colour accent; both figures share the creator-net basis. $0/unknown
+ *  renders nothing; the unread badge is always clay (no tip pill — tips read
+ *  via the Tips filter and the preview line). */
 export const ChatRow = memo(function ChatRow({
   chat,
   selected,
@@ -52,7 +53,7 @@ export const ChatRow = memo(function ChatRow({
           )}
           {lifetime !== null && (
             <span
-              title="Lifetime spend"
+              title="Lifetime spend (net)"
               className={cx(
                 'num flex-none text-ink-mid',
                 spendStyle === 'chip'
@@ -75,7 +76,7 @@ export const ChatRow = memo(function ChatRow({
         </span>
         <span className="flex items-center gap-1.5">
           {flow30d !== null && (
-            <span title="Spent in the last 30 days" className="num text-[10px] font-semibold text-green">
+            <span title="Spent in the last 30 days (net)" className="num text-[10px] font-semibold text-green">
               {flow30d}
             </span>
           )}

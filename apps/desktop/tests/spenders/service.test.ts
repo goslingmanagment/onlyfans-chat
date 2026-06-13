@@ -151,7 +151,7 @@ describe('roster', () => {
       sampleMessage({ chatId: '1', messageId: 'm1', isSentByMe: true, createdAt: isoDaysAgo(34) }),
     ]);
     data.fanTransactions.upsertMany([
-      { accountId: ACCOUNT, txId: 't1', fanId: '1', amount: 50, type: 'tips', createdAt: isoDaysAgo(2) },
+      { accountId: ACCOUNT, txId: 't1', fanId: '1', amount: 62.5, net: 50, type: 'tips', createdAt: isoDaysAgo(2) },
     ]);
 
     const service = makeService(
@@ -300,9 +300,9 @@ describe('stats (page right panel — local joins, 0 extra credits)', () => {
   it('30-day daily series with totals: dense, local days, 7-to-7 delta', async () => {
     seedFan('1', 5000);
     data.fanTransactions.upsertMany([
-      { accountId: ACCOUNT, txId: 't0', fanId: '1', amount: 30, type: 'tips', createdAt: isoDaysAgo(0) },
-      { accountId: ACCOUNT, txId: 't2', fanId: '1', amount: 50, type: 'tips', createdAt: isoDaysAgo(2) },
-      { accountId: ACCOUNT, txId: 't10', fanId: '1', amount: 20, type: 'tips', createdAt: isoDaysAgo(10) },
+      { accountId: ACCOUNT, txId: 't0', fanId: '1', amount: 37.5, net: 30, type: 'tips', createdAt: isoDaysAgo(0) },
+      { accountId: ACCOUNT, txId: 't2', fanId: '1', amount: 62.5, net: 50, type: 'tips', createdAt: isoDaysAgo(2) },
+      { accountId: ACCOUNT, txId: 't10', fanId: '1', amount: 25, net: 20, type: 'tips', createdAt: isoDaysAgo(10) },
     ]);
     const service = makeService(stubClient({ lists: [], rosters: { '100': [[]], '200': [[]] }, calls }));
     const stats = await service.stats(ACCOUNT);
@@ -326,10 +326,10 @@ describe('stats (page right panel — local joins, 0 extra credits)', () => {
     seedFan('1', 600);
     seedFan('2', 300);
     data.fanTransactions.upsertMany([
-      { accountId: ACCOUNT, txId: 'a', fanId: '1', amount: 60, type: 'tips', createdAt: isoDaysAgo(1) },
-      { accountId: ACCOUNT, txId: 'b', fanId: '2', amount: 25, type: 'tips', createdAt: isoDaysAgo(1) },
+      { accountId: ACCOUNT, txId: 'a', fanId: '1', amount: 75, net: 60, type: 'tips', createdAt: isoDaysAgo(1) },
+      { accountId: ACCOUNT, txId: 'b', fanId: '2', amount: 31.25, net: 25, type: 'tips', createdAt: isoDaysAgo(1) },
       // a window payer with NO fan row and NO roster membership
-      { accountId: ACCOUNT, txId: 'c', fanId: '9', amount: 15, type: 'tips', createdAt: isoDaysAgo(1) },
+      { accountId: ACCOUNT, txId: 'c', fanId: '9', amount: 18.75, net: 15, type: 'tips', createdAt: isoDaysAgo(1) },
     ]);
     const service = makeService(
       stubClient({
@@ -402,9 +402,9 @@ describe('stats (page right panel — local joins, 0 extra credits)', () => {
     seedFan('1', 120); // new: lifetime == window spend
     seedFan('2', 2756); // whale: long history
     data.fanTransactions.upsertMany([
-      { accountId: ACCOUNT, txId: 'n1', fanId: '1', amount: 80, type: 'tips', createdAt: isoDaysAgo(3) },
-      { accountId: ACCOUNT, txId: 'n2', fanId: '1', amount: 40, type: 'tips', createdAt: isoDaysAgo(1) },
-      { accountId: ACCOUNT, txId: 'w1', fanId: '2', amount: 79, type: 'tips', createdAt: isoDaysAgo(2) },
+      { accountId: ACCOUNT, txId: 'n1', fanId: '1', amount: 100, net: 80, type: 'tips', createdAt: isoDaysAgo(3) },
+      { accountId: ACCOUNT, txId: 'n2', fanId: '1', amount: 50, net: 40, type: 'tips', createdAt: isoDaysAgo(1) },
+      { accountId: ACCOUNT, txId: 'w1', fanId: '2', amount: 98.75, net: 79, type: 'tips', createdAt: isoDaysAgo(2) },
     ]);
     const service = makeService(
       stubClient({ lists: [], rosters: { '100': [[{ id: 1 }, { id: 2 }]], '200': [[]] }, calls }),
@@ -419,7 +419,7 @@ describe('stats (page right panel — local joins, 0 extra credits)', () => {
     mapping = [];
     seedFan('1', 50);
     data.fanTransactions.upsertMany([
-      { accountId: ACCOUNT, txId: 'x', fanId: '1', amount: 50, type: 'tips', createdAt: isoDaysAgo(1) },
+      { accountId: ACCOUNT, txId: 'x', fanId: '1', amount: 62.5, net: 50, type: 'tips', createdAt: isoDaysAgo(1) },
     ]);
     const service = makeService(stubClient({ lists: [], rosters: {}, calls }));
     const stats = await service.stats(ACCOUNT);

@@ -76,6 +76,7 @@ describe('mapFanTransaction', () => {
   const base = {
     id: 'tx1',
     amount: 19.99,
+    net: 15.99,
     type: 'tips',
     createdAt: '2026-06-10T12:00:00+00:00',
     user: { id: 438953032 },
@@ -87,9 +88,23 @@ describe('mapFanTransaction', () => {
       txId: 'tx1',
       fanId: '438953032',
       amount: 19.99,
+      net: 15.99,
       type: 'tips',
       createdAt: '2026-06-10T12:00:00.000Z',
     });
+  });
+
+  it('falls back to 0.8 × amount when net is missing or implausible', () => {
+    const cases: Record<string, unknown>[] = [
+      { ...base, net: null },
+      { ...base, net: 0 },
+      { ...base, net: -1 },
+      { ...base, net: 25 }, // net above gross — OnlyFans never pays out more than the fan paid
+    ];
+    for (const tx of cases) {
+      // round(19.99 × 0.8) to cents — the universal 20% platform cut
+      expect(mapFanTransaction('acct_test', tx as OfApiTransaction)?.net).toBe(15.99);
+    }
   });
 
   it('stringifies numeric tx ids and tolerates a missing type', () => {

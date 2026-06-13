@@ -2,7 +2,9 @@
 // to feed ChatListItemVM (preload contract). Ordering matches the chat-list
 // index: pinned first, then last_message_at DESC (NULLs last). list/search
 // join the fan-value figures (DESIGN §1): lifetime from fans.spending JSON,
-// 30-day sum from fan_transactions with a read-time rolling cutoff.
+// 30-day NET sum from fan_transactions with a read-time rolling cutoff —
+// both figures share the creator-net basis (OnlyFans reports spending net of
+// its 20% cut; owner decision 2026-06-13).
 
 import type { ChatFilter } from '../../../preload/contract';
 import type { ChatGooseDb } from '../database';
@@ -34,7 +36,7 @@ const LIST_JOINS = `
 FROM chats c
 LEFT JOIN fans f ON f.account_id = c.account_id AND f.fan_id = c.chat_id
 LEFT JOIN (
-  SELECT account_id, fan_id, SUM(amount) AS spend_30d
+  SELECT account_id, fan_id, SUM(net) AS spend_30d
   FROM fan_transactions
   WHERE created_at >= @spend_cutoff
   GROUP BY account_id, fan_id

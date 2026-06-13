@@ -83,6 +83,7 @@ function tx(id: string, fanId: number, amount: number, daysAgo: number): OfApiTr
   return {
     id,
     amount,
+    net: Math.round(amount * 80) / 100, // live payloads carry net (80% after the platform cut)
     type: 'tips',
     createdAt: new Date(Date.now() - daysAgo * DAY_MS).toISOString(),
     user: { id: fanId },
@@ -153,7 +154,8 @@ describe('fan-spend sweep', () => {
     expect(stub.txCalls[1]?.marker).toBe(10);
 
     const marcus = spendOf('101');
-    expect(marcus.spend30d).toBeCloseTo(12 + 100 + 20.5);
+    // net sums: 12 × 0.8 + 80 + 16.4 — the figure is creator net, not gross
+    expect(marcus.spend30d).toBeCloseTo(9.6 + 80 + 16.4);
     expect(marcus.lifetimeSpend).toBeCloseTo(1284.4); // from the list-poll fan payload
     sync.stop();
   });
@@ -176,7 +178,7 @@ describe('fan-spend sweep', () => {
       .slice(0, 19)
       .replace('T', ' ');
     expect(stub.txCalls[1]?.startDate).toBe(expectedStart);
-    expect(spendOf('101').spend30d).toBeCloseTo(75); // t1 re-upsert is idempotent
+    expect(spendOf('101').spend30d).toBeCloseTo(60); // net of 50 + 25; t1 re-upsert is idempotent
     sync.stop();
   });
 

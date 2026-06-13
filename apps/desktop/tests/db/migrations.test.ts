@@ -33,8 +33,14 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
-      expect(SCHEMA_VERSION).toBe(8);
+      expect(SCHEMA_VERSION).toBe(9);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
+      // v9: fan_transactions carries net alongside the gross amount
+      const txCols = layer.db
+        .prepare("SELECT name FROM pragma_table_info('fan_transactions')")
+        .all()
+        .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
+      expect(txCols).toContain('net');
       expect(names).toContain('media_urls');
       // v7: per-purpose credit ledger + the durable AI spend ledger
       const creditCols = layer.db
@@ -217,6 +223,32 @@ describe('migration runner', () => {
 
     const ledger = db.prepare('SELECT day, purpose, used, requests FROM credit_log').all();
     expect(ledger).toEqual([{ day: '2026-06-13', purpose: 'spenders', used: 9, requests: 9 }]);
+    db.close();
+  });
+
+  it('v8 → v9 rebuilds fan_transactions with the net column; cached gross rows are discarded', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 8));
+    expect(readSchemaVersion(db)).toBe(8);
+
+    db.exec(
+      "INSERT INTO fan_transactions (account_id, tx_id, fan_id, amount, type, created_at) " +
+        "VALUES ('acct_1', 't1', '101', 25, 'tips', '2026-06-12T00:00:00.000Z')",
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 8, to: SCHEMA_VERSION });
+
+    // gross-only rows are gone — the next sweep refetches the full -30days window
+    expect(db.prepare('SELECT COUNT(*) AS n FROM fan_transactions').get()).toEqual({ n: 0 });
+
+    db.exec(
+      "INSERT INTO fan_transactions (account_id, tx_id, fan_id, amount, net, type, created_at) " +
+        "VALUES ('acct_1', 't2', '101', 25, 20, 'tips', '2026-06-12T00:00:00.000Z')",
+    );
+    const row: unknown = db
+      .prepare("SELECT amount, net FROM fan_transactions WHERE tx_id = 't2'")
+      .get();
+    expect(row).toEqual({ amount: 25, net: 20 });
     db.close();
   });
 

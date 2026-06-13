@@ -44,9 +44,11 @@ export interface ChatListItemVM {
   canSendMessage: boolean;
   /** Platform-provided reason when canSendMessage=false (SPEC §7.0 composer state). */
   canNotSendReason: string | null;
-  /** DESIGN §1 fan value: lifetime spend in dollars; null/0 renders nothing. */
+  /** DESIGN §1 fan value: lifetime spend in dollars, creator NET (OnlyFans
+   *  reports fan spending net of its 20% cut); null/0 renders nothing. */
   lifetimeSpend: number | null;
-  /** Rolling 30-day spend in dollars (local transactions aggregate). */
+  /** Rolling 30-day spend in dollars, creator NET (local transactions
+   *  aggregate over tx.net) — same basis as lifetimeSpend. */
   spend30d: number | null;
 }
 
@@ -381,6 +383,7 @@ export interface SpenderRowVM {
   fanId: string;
   name: string;
   avatarUrl: string | null; // media:// URL
+  /** Both in creator-net dollars — same basis as the chat-list figures. */
   lifetimeSpend: number | null;
   spend30d: number | null;
   /** '' when the fan has no local chat history. */
