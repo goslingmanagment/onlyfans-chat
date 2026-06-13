@@ -44,7 +44,14 @@ import { createHubModule, type HubModule } from './hub/index';
 import { attachEventForwarding } from './ipc/events';
 import { focusExistingWindow } from './platform/single-instance';
 import { badgePng } from './platform/badge';
-import { shouldAutoUpdate, startAutoUpdater, type AppUpdaterLike } from './platform/updater';
+import {
+  createUpdateController,
+  shouldAutoUpdate,
+  startAutoUpdater,
+  type AppUpdaterLike,
+  type UpdateController,
+} from './platform/updater';
+import type { UpdateStatusVM } from '../preload/contract';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 
@@ -58,12 +65,25 @@ let vaultService: VaultService | null = null;
 let spendersService: SpendersService | null = null;
 let spendersRefresh: SpendersRefreshService | null = null;
 let hub: HubModule | null = null;
+/** Set once electron-updater is dynamic-imported (win32 packaged only); null
+ *  everywhere else — the IPC layer then reports phase 'unsupported'. */
+let updateController: UpdateController | null = null;
 /** Set by initOfapi; lets cmd:settings.update trigger a hub-config recheck. */
 let recheckHubConfig: (() => void) | null = null;
 /** UI prefs mirrored from settings by boot()'s bus watcher — read by window
  *  creation (zoom) and main-side notifications (locale). */
 let uiScale = 1;
 let uiLocale: UiLocale = 'en';
+
+/** Stamp the running app version onto a controller snapshot (or report
+ *  `unsupported` when there is no controller — macOS / dev). */
+function updateStatusVM(status: ReturnType<UpdateController['status']> | null): UpdateStatusVM {
+  const currentVersion = app.getVersion();
+  if (status === null) {
+    return { phase: 'unsupported', version: null, percent: null, message: null, currentVersion };
+  }
+  return { ...status, currentVersion };
+}
 
 /**
  * Custom application menu. Electron's DEFAULT menu shadows three product
@@ -508,6 +528,14 @@ async function boot(): Promise<void> {
       }
     },
     onHubConfigChanged: () => recheckHubConfig?.(),
+    // Reads the update controller lazily — it is created asynchronously after
+    // the electron-updater dynamic import, which may resolve after this call.
+    updates: {
+      status: () => updateStatusVM(updateController?.status() ?? null),
+      check: async () =>
+        updateStatusVM(updateController ? await updateController.check() : null),
+      install: () => updateController?.install(),
+    },
     testKey: (provider) => runKeyTest(provider, { keychain, settingsStore }),
     localData: {
       stats: async () => {
@@ -671,9 +699,9 @@ if (!app.requestSingleInstanceLock()) {
       if (autoUpdater === undefined) {
         return;
       }
-      startAutoUpdater({
+      updateController = createUpdateController({
         updater: autoUpdater,
-        onUpdateReady: (version) => {
+        onReady: (version) => {
           if (Notification.isSupported()) {
             new Notification({
               title: uiMessage(uiLocale, 'notif.updateTitle'),
@@ -683,6 +711,7 @@ if (!app.requestSingleInstanceLock()) {
           }
         },
       });
+      startAutoUpdater({ controller: updateController });
     });
   }
 

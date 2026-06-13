@@ -81,6 +81,15 @@ prompts mid-shift; a quiet "installs when you quit" toast is the only signal).
 Policy lives in `src/main/platform/updater.ts`; macOS has no auto-update —
 unsigned builds can't (Squirrel.Mac requirement), and the mac side runs dev.
 
+**Manual control — Settings → Updates (added 2026-06-13):** a "Check for
+updates" button drives the same controller on demand (`createUpdateController`
++ the `query:updates.status` / `cmd:updates.check` / `cmd:updates.install`
+IPC). It shows live download progress and, once a build is downloaded, a
+**Restart & install** button (`quitAndInstall`). Off win32-packaged builds the
+section renders an "auto-update runs in the installed Windows app" note (phase
+`unsupported`); in plain-vite dev the mock bridge simulates the whole
+check → download → install flow so the UX is demoable without a real feed.
+
 **Release ritual:**
 
 1. Bump `version` in `apps/desktop/package.json`, commit.

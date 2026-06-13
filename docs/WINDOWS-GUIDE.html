@@ -318,7 +318,7 @@
 <p style="margin:18px 0 0; color:var(--ink-mid)">Идём сверху вниз. После каждой проверки ставь галочку «работает» — или оставляй пустой и пиши в строке рядом, что пошло не так (галочки сохраняются на этом компьютере сами). Если что-то выглядит странно — скриншот.</p>
 
 <div class="tally noprint">
-  <span class="cap">Пройдено <b id="tally-n">0</b> из <b id="tally-total">11</b></span>
+  <span class="cap">Пройдено <b id="tally-n">0</b> из <b id="tally-total">12</b></span>
   <span class="bar"><i id="tally-bar"></i></span>
   <button type="button" id="tally-reset" title="Снять все галочки и очистить комментарии">сбросить</button>
 </div>
@@ -410,6 +410,22 @@
   <div class="check-row">
     <label class="box"><input type="checkbox" id="chk-a5"><span class="oklabel">работает</span></label>
     <input type="text" id="cmt-a5" placeholder="комментарий, если что-то не так">
+  </div>
+</section>
+
+<section class="step">
+  <div class="head"><span class="num">А6</span><h3>Проверка обновлений</h3></div>
+  <div class="body">
+    <ol class="steps">
+      <li>Настройки → раздел <span class="ui">«Обновления»</span> → кнопка <span class="ui">«Проверить обновления»</span>.</li>
+      <li>Если новой версии нет — появится <span class="ui">«Установлена последняя версия»</span>.</li>
+      <li>Если владелец специально выложил новую версию для проверки — приложение само её скачает (видно проценты), затем появится кнопка <span class="ui">«Перезапустить и установить»</span>. Нажми — приложение закроется, обновится и откроется уже новой версии (номер версии вверху раздела изменится).</li>
+    </ol>
+    <p>Приложение обновляется и само, в фоне, и ставит обновление при выходе — кнопка нужна, только когда хочется обновиться прямо сейчас.</p>
+  </div>
+  <div class="check-row">
+    <label class="box"><input type="checkbox" id="chk-a6"><span class="oklabel">работает</span></label>
+    <input type="text" id="cmt-a6" placeholder="комментарий, если что-то не так">
   </div>
 </section>
 

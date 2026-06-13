@@ -536,6 +536,35 @@ export const UI_MESSAGES = {
     en: 'ChatGoose {version} will install when you quit the app.',
     ru: 'ChatGoose {version} установится при выходе из приложения.',
   },
+
+  // ── Settings → Updates (PLAN item 11) ──────────────────────────────────────
+  'update.title': { en: 'Updates', ru: 'Обновления' },
+  'update.hint': {
+    en: 'The app updates itself in the background and installs when you quit; check here to update right now.',
+    ru: 'Приложение обновляется само в фоне и ставит обновление при выходе; здесь можно обновиться прямо сейчас.',
+  },
+  'update.current': { en: 'Current version {version}', ru: 'Текущая версия {version}' },
+  'update.check': { en: 'Check for updates', ru: 'Проверить обновления' },
+  'update.checking': { en: 'Checking…', ru: 'Проверяю…' },
+  'update.upToDate': { en: 'You have the latest version.', ru: 'Установлена последняя версия.' },
+  'update.downloading': {
+    en: 'Downloading {version}… {percent}%',
+    ru: 'Скачиваю {version}… {percent}%',
+  },
+  'update.preparing': { en: 'Preparing update {version}…', ru: 'Готовлю обновление {version}…' },
+  'update.ready': {
+    en: 'Update {version} is downloaded — restart to install.',
+    ru: 'Обновление {version} скачано — перезапустите, чтобы установить.',
+  },
+  'update.install': { en: 'Restart & install', ru: 'Перезапустить и установить' },
+  'update.error': {
+    en: "Couldn't check for updates: {message}",
+    ru: 'Не удалось проверить обновления: {message}',
+  },
+  'update.unsupported': {
+    en: 'Auto-update runs in the installed Windows app.',
+    ru: 'Автообновление работает в установленном приложении на Windows.',
+  },
 } as const satisfies Record<string, { en: string; ru: string }>;
 
 export type UiMessageKey = keyof typeof UI_MESSAGES;

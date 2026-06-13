@@ -286,6 +286,30 @@ export interface LocalDataStatsVM {
   mediaFiles: number;
 }
 
+/** Auto-update state for Settings → Updates (PLAN item 11; main/platform/updater.ts).
+ *  `unsupported` = not a win32 packaged build (macOS / dev), so no feed exists. */
+export type UpdatePhaseVM =
+  | 'unsupported'
+  | 'idle'
+  | 'checking'
+  | 'up-to-date'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error';
+
+export interface UpdateStatusVM {
+  phase: UpdatePhaseVM;
+  /** Target version (available / downloaded); null otherwise. */
+  version: string | null;
+  /** Download progress 0–100 while `downloading`; null otherwise. */
+  percent: number | null;
+  /** Error message while `error`; null otherwise. */
+  message: string | null;
+  /** The running app version (always present — shown as "current version"). */
+  currentVersion: string;
+}
+
 /** Per-feature trailing-7-day AI spend (Settings → Models cost hints). */
 export interface AiFeatureCostsVM {
   sinceDay: string;
@@ -542,6 +566,12 @@ export interface InvokeChannels {
   'cmd:localData.openFolder': { args: void; result: void };
   /** Writes a secrets-free JSON report under userData and reveals it. */
   'cmd:localData.exportDiagnostics': { args: void; result: { path: string } };
+  /** Settings → Updates (PLAN item 11): manual auto-update control. */
+  'query:updates.status': { args: void; result: UpdateStatusVM };
+  /** Kicks a check; if a newer build exists it downloads in the background. */
+  'cmd:updates.check': { args: void; result: UpdateStatusVM };
+  /** Quit and install a downloaded update now. */
+  'cmd:updates.install': { args: void; result: void };
   'query:ai.pingGate': { args: { accountId: string; chatId: string }; result: PingGateVM };
   'cmd:conversation.open': {
     args: { accountId: string; chatId: string };
@@ -755,6 +785,9 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:localData.stats': true,
   'cmd:localData.openFolder': true,
   'cmd:localData.exportDiagnostics': true,
+  'query:updates.status': true,
+  'cmd:updates.check': true,
+  'cmd:updates.install': true,
   'query:ai.pingGate': true,
   'cmd:conversation.open': true,
   'cmd:conversation.close': true,

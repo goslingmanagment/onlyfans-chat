@@ -20,6 +20,7 @@ import type {
   SettingsVM,
   SpenderRowVM,
   SyncStatusVM,
+  UpdateStatusVM,
   VaultAlbumVM,
   VaultItemVM,
 } from '../../../preload/contract';
@@ -958,6 +959,17 @@ export function createMockBridge(): ChatGooseBridge {
     setTimeout(syntheticIncoming, 2_500);
   }, 30_000);
 
+  // Settings → Updates demo state machine: check → download (advances on each
+  // status poll) → downloaded → install resets to up-to-date. Lets the owner
+  // see the full flow in plain-vite dev where no electron-updater exists.
+  let mockUpdate: UpdateStatusVM = {
+    phase: 'idle',
+    version: null,
+    percent: null,
+    message: null,
+    currentVersion: '0.0.1',
+  };
+
   const handlers: InvokeHandlers = {
     'query:accounts.list': () => store.accounts.map((a) => ({ ...a })),
     'query:chats.list': ({ accountId, filter, limit, offset }) => {
@@ -1082,6 +1094,37 @@ export function createMockBridge(): ChatGooseBridge {
     'cmd:localData.exportDiagnostics': () => ({
       path: '/Users/dev/Library/Application Support/chatgoose/chatgoose-diagnostics-mock.json',
     }),
+    'query:updates.status': () => {
+      // Advance the simulated download a notch on each poll.
+      if (mockUpdate.phase === 'downloading') {
+        const percent = Math.min(100, (mockUpdate.percent ?? 0) + 25);
+        mockUpdate =
+          percent >= 100
+            ? { ...mockUpdate, phase: 'downloaded', percent: 100 }
+            : { ...mockUpdate, percent };
+      }
+      return { ...mockUpdate };
+    },
+    'cmd:updates.check': () => {
+      // Pretend a newer build exists and start the download.
+      mockUpdate = {
+        phase: 'downloading',
+        version: '0.0.2',
+        percent: 0,
+        message: null,
+        currentVersion: '0.0.1',
+      };
+      return { ...mockUpdate };
+    },
+    'cmd:updates.install': () => {
+      mockUpdate = {
+        phase: 'up-to-date',
+        version: null,
+        percent: null,
+        message: null,
+        currentVersion: '0.0.2',
+      };
+    },
     'query:ai.pingGate': () => ({ segment: 'active', blocked: true }),
     'cmd:conversation.open': () => undefined,
     'cmd:conversation.close': () => undefined,

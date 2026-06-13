@@ -32,6 +32,7 @@ import { ModelSettings } from './sections/ModelSettings';
 import { PersonalitySettings } from './sections/PersonalitySettings';
 import { BehaviorSettings } from './sections/BehaviorSettings';
 import { SpendersSettings } from './sections/SpendersSettings';
+import { UpdateSettings } from './sections/UpdateSettings';
 import { DangerZone } from './sections/DangerZone';
 
 export type Feature = ModelSelectableFeature;
@@ -79,6 +80,7 @@ const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; titleKey: UiMessageKey }> =
   { id: 'behavior', titleKey: 'behavior.title' },
   { id: 'spenders', titleKey: 'sp.set.title' },
   { id: 'data', titleKey: 'danger.title' },
+  { id: 'updates', titleKey: 'update.title' },
 ];
 
 function sectionDomId(id: string): string {
@@ -275,6 +277,9 @@ function SettingsBody({
       </div>
       <div id={sectionDomId('data')} className="scroll-mt-4">
         <DangerZone />
+      </div>
+      <div id={sectionDomId('updates')} className="scroll-mt-4">
+        <UpdateSettings />
       </div>
     </div>
   );

@@ -29,6 +29,7 @@ import type {
   SpenderStatsVM,
   SpendersFreshnessVM,
   SyncStatusVM,
+  UpdateStatusVM,
   VaultAlbumVM,
   VaultItemVM,
 } from '../../../preload/contract';
@@ -48,6 +49,7 @@ export const qk = {
   activity: ['activity'] as const,
   aiFeatureCosts: ['ai-feature-costs'] as const,
   localDataStats: ['local-data-stats'] as const,
+  updateStatus: ['update-status'] as const,
   spendersLists: (accountId: string) => ['spenders-lists', accountId] as const,
   spendersRoster: (accountId: string, listId: string) =>
     ['spenders-roster', accountId, listId] as const,
@@ -240,6 +242,36 @@ export function useExportDiagnostics() {
   });
 }
 
+// ─── Settings → Updates (PLAN item 11) ─────────────────────────────────────
+// No db:changed signal drives update state, so this query self-polls while a
+// check/download is in flight (downloading/checking) and idles otherwise.
+
+const UPDATE_ACTIVE_PHASES = new Set(['checking', 'available', 'downloading']);
+
+export function useUpdateStatus(enabled: boolean) {
+  return useQuery<UpdateStatusVM>({
+    queryKey: qk.updateStatus,
+    queryFn: () => getBridge().invoke('query:updates.status', undefined),
+    enabled,
+    refetchInterval: (query) =>
+      query.state.data && UPDATE_ACTIVE_PHASES.has(query.state.data.phase) ? 1_000 : false,
+  });
+}
+
+export function useCheckUpdates() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => getBridge().invoke('cmd:updates.check', undefined),
+    onSuccess: (status) => queryClient.setQueryData(qk.updateStatus, status),
+  });
+}
+
+export function useInstallUpdate() {
+  return useMutation({
+    mutationFn: () => getBridge().invoke('cmd:updates.install', undefined),
+  });
+}
+
 // ─── spenders board (PLAN item 12) ─────────────────────────────────────
 // Roster/untiered joins recompute from the local DB on db:changed events; the
 // OM roster ids behind them TTL-cache in main (5 min) so invalidations stay
@@ -383,6 +415,8 @@ export function useUpdateSettings() {
     mutationFn: (patch: SettingsPatch) => getBridge().invoke('cmd:settings.update', patch),
     onSuccess: (settings) => {
       queryClient.setQueryData(qk.settings, settings);
+      void queryClient.invalidateQueries({ queryKey: qk.syncStatus });
+      void queryClient.invalidateQueries({ queryKey: qk.activity });
     },
   });
 }

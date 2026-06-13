@@ -22,6 +22,7 @@ import type {
   LocalDataStatsVM,
   OutboxItemVM,
   SyncStatusVM,
+  UpdateStatusVM,
 } from '../../preload/contract';
 import {
   aiTodayUsd,
@@ -225,6 +226,14 @@ export interface IpcDeps {
     openFolder: () => Promise<void>;
     exportDiagnostics: () => Promise<{ path: string }>;
   } | null;
+  /** Settings → Updates (PLAN item 11). Always present; returns `unsupported`
+   *  off win32-packaged builds. status/check/install read the lazily-created
+   *  update controller in the composition root. */
+  updates?: {
+    status: () => UpdateStatusVM;
+    check: () => Promise<UpdateStatusVM>;
+    install: () => void;
+  } | null;
   /** Called when settings.update sets an OFAPI key while sync is offline. */
   onOfapiKeyConfigured?: () => void;
   /**
@@ -366,6 +375,17 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('query:localData.stats', () => requireLocalData().stats());
   ipcMain.handle('cmd:localData.openFolder', () => requireLocalData().openFolder());
   ipcMain.handle('cmd:localData.exportDiagnostics', () => requireLocalData().exportDiagnostics());
+
+  function requireUpdates(): NonNullable<IpcDeps['updates']> {
+    if (!deps.updates) {
+      throw new Error('Auto-update is not available in this build.');
+    }
+    return deps.updates;
+  }
+
+  ipcMain.handle('query:updates.status', () => requireUpdates().status());
+  ipcMain.handle('cmd:updates.check', () => requireUpdates().check());
+  ipcMain.handle('cmd:updates.install', () => requireUpdates().install());
 
   ipcMain.handle('query:ai.pingGate', (_event, rawArgs: unknown) => {
     const args = convSchema.parse(rawArgs);
