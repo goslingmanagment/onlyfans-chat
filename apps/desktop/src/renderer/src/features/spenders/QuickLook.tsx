@@ -4,20 +4,17 @@
 // engine (SPEC §7 — cmd:send.message; never auto-retry an indeterminate send).
 // AI runs only on explicit click/hotkey — no prefetch, no auto-drafts.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { SpenderRowVM } from '../../../../preload/contract';
-import { useAccounts, useFlatMessages, useMessages, useOutbox, useSettings } from '../../bridge/queries';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { useAccounts, useMessages, useSettings } from '../../bridge/queries';
 import { useT } from '../../lib/i18n';
 import { modCombo } from '../../lib/modKey';
 import { formatWholeDollars } from '../../lib/money';
 import { Avatar } from '../../design/Avatar';
 import { Kbd } from '../../design/Kbd';
-import { buildThreadRows, type ThreadRow } from '../../lib/messages';
-import { mergeOutboxRows, createTypingThrottle } from '../conversation/sendLogic';
-import { DayDivider, MessageRow, TipLedgerRow } from '../conversation/ThreadRows';
-import { OutboxRow } from '../conversation/OutboxRows';
+import { createTypingThrottle } from '../conversation/sendLogic';
+import { Thread } from '../conversation/Thread';
 import { DraftTextarea } from '../conversation/DraftTextarea';
 import { sendCurrentDraft } from '../conversation/sendController';
 import { getBridge } from '../../bridge/bridge';
@@ -52,17 +49,6 @@ import {
   PREVIEW_TEXTAREA_ID,
   type PreviewAiFeature,
 } from './previewActions';
-
-function estimateRow(row: ThreadRow | undefined): number {
-  if (row === undefined) return 64;
-  if (row.kind === 'day') return 40;
-  if (row.kind === 'tip') return 44;
-  if (row.kind === 'outbox') return 90;
-  const m = row.message;
-  let h = 54 + Math.ceil(m.text.length / 52) * 21;
-  if (m.media.length > 0 || m.price > 0) h += 140;
-  return h;
-}
 
 export function QuickLook({
   accountId,
@@ -145,7 +131,13 @@ export function QuickLook({
             <b className="font-semibold text-ink-mid">{dayCounter(t, row?.fanDays ?? null)}</b>
           </span>
         </div>
-        <PreviewThread accountId={accountId} fanId={fanId} fanName={name} />
+        <Thread
+          accountId={accountId}
+          chatId={fanId}
+          fanName={name}
+          scrollMode="paged"
+          density="compact"
+        />
         <PreviewDock accountId={accountId} fanId={fanId} canSend={canSend} />
         <PreviewComposer
           accountId={accountId}
@@ -184,111 +176,6 @@ export function QuickLook({
         )}
       </div>
     </>
-  );
-}
-
-function PreviewThread({
-  accountId,
-  fanId,
-  fanName,
-}: {
-  accountId: string;
-  fanId: string;
-  fanName: string;
-}): React.JSX.Element {
-  const t = useT();
-  const query = useMessages(accountId, fanId);
-  const messages = useFlatMessages(query);
-  const outbox = useOutbox(accountId, fanId);
-  const rows = useMemo(
-    () => mergeOutboxRows(buildThreadRows(messages, new Date(), t), outbox.data ?? []),
-    [messages, outbox.data, t],
-  );
-
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const initialFanRef = useRef<string | null>(null);
-  const anchorKeyRef = useRef<string | null>(null);
-
-  const virtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: (i) => estimateRow(rows[i]),
-    overscan: 8,
-    getItemKey: (i) => rows[i]?.key ?? i,
-  });
-
-  useLayoutEffect(() => {
-    if (rows.length === 0) return;
-    if (initialFanRef.current !== fanId) {
-      initialFanRef.current = fanId;
-      anchorKeyRef.current = null;
-      virtualizer.scrollToIndex(rows.length - 1, { align: 'end' });
-    }
-  }, [fanId, rows.length, virtualizer]);
-
-  // «↑ раньше» prepends an older local page; keep the previous top row anchored
-  useLayoutEffect(() => {
-    const anchor = anchorKeyRef.current;
-    if (anchor === null) return;
-    const index = rows.findIndex((r) => r.key === anchor);
-    if (index > 0) {
-      anchorKeyRef.current = null;
-      virtualizer.scrollToIndex(index, { align: 'start' });
-    }
-  }, [rows, virtualizer]);
-
-  function loadEarlier(): void {
-    if (!query.hasNextPage || query.isFetchingNextPage) return;
-    anchorKeyRef.current = rows[0]?.key ?? null;
-    void query.fetchNextPage();
-  }
-
-  return (
-    <div data-density="compact" className="flex min-h-0 flex-1 flex-col bg-bg0">
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-[18px] pt-3 pb-1.5">
-        {query.hasNextPage === true && (
-          <div className="pb-1.5 text-center">
-            <button
-              type="button"
-              onClick={loadEarlier}
-              className="cursor-pointer text-[10.5px] text-ink-low underline decoration-dotted underline-offset-3 hover:text-ink-mid"
-            >
-              {query.isFetchingNextPage ? t('sp.loading') : t('sp.earlier')}
-            </button>
-          </div>
-        )}
-        {rows.length === 0 && !query.isPending && (
-          <div className="flex h-full items-center justify-center text-[12.5px] text-ink-low">
-            {t('sp.noHistory')}
-          </div>
-        )}
-        <div className="relative mx-auto w-full" style={{ height: virtualizer.getTotalSize() }}>
-          {virtualizer.getVirtualItems().map((vi) => {
-            const row = rows[vi.index];
-            if (row === undefined) return null;
-            return (
-              <div
-                key={vi.key}
-                data-index={vi.index}
-                ref={virtualizer.measureElement}
-                className="absolute top-0 left-0 w-full"
-                style={{ transform: `translateY(${vi.start}px)` }}
-              >
-                {row.kind === 'day' ? (
-                  <DayDivider label={row.label} />
-                ) : row.kind === 'tip' ? (
-                  <TipLedgerRow message={row.message} fanName={fanName} />
-                ) : row.kind === 'outbox' ? (
-                  <OutboxRow accountId={accountId} item={row.item} />
-                ) : (
-                  <MessageRow message={row.message} accountId={accountId} />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
   );
 }
 
