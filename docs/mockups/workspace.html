@@ -246,6 +246,23 @@
   .aibtn.dim{opacity:.45; cursor:default}
   .aibtn.dim:hover{color:var(--t-mid); border-color:var(--line); background:var(--bg2)}
   .aibtn i{font-style:normal}
+  /* Reply split control: body + ▾ tone caret read as one pill (variant C) */
+  .replysplit{position:relative; display:flex}
+  .replysplit .aibtn.body{border-radius:999px 0 0 999px; padding-right:10px}
+  .replysplit .aibtn.caret{border-radius:0 999px 0 0 999px; border-left:0; padding:4px 12px;
+    font-size:10px; box-shadow:inset 1px 0 0 0 var(--clay-line)}
+  /* upward tone popover — pill row sits near the window bottom, so it opens UP */
+  .tone-menu{position:absolute; bottom:calc(100% + 8px); left:0; width:148px; background:var(--bg1);
+    border:1px solid var(--line-strong); border-radius:11px; padding:6px; z-index:50;
+    box-shadow:0 10px 28px rgba(31,30,29,.14)}
+  .tone-menu .hd{font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--t-low); padding:2px 8px 4px}
+  .tone-menu .ti{display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:7px;
+    font-size:13px; font-weight:500; color:var(--t-mid); cursor:pointer}
+  .tone-menu .ti:hover{background:var(--clay-bg); color:var(--clay-deep)}
+  .tone-menu .ti .ck{width:12px; text-align:center; font-size:11px; color:transparent}
+  .tone-menu .ti.on{color:var(--clay-deep)}
+  .tone-menu .ti.on .ck{color:var(--clay)}
   .send{margin-left:auto; display:flex; align-items:center; gap:8px; background:var(--clay);
     color:#fff; font-weight:700; font-size:13.5px; border:1px solid var(--clay); border-radius:var(--rs);
     padding:8px 16px; cursor:pointer}
@@ -527,7 +544,19 @@
           <span class="cicon">☺</span>
           <span class="cicon off" title="Vault — P5">▣</span>
           <div class="aigroup">
-            <span class="aibtn primary"><i>✳</i> Reply <kbd>⌘R</kbd></span>
+            <!-- variant C: Reply is a split control — body replies in the active
+                 tone (⌘R), ▾ caret opens the upward tone menu (pick = generate). -->
+            <span class="replysplit">
+              <span class="aibtn primary body"><i>✳</i> Reply <kbd>⌘R</kbd></span>
+              <span class="aibtn primary caret" aria-haspopup="menu" aria-expanded="true">▾</span>
+              <div class="tone-menu" role="menu" aria-label="Reply tone">
+                <div class="hd">Tone</div>
+                <div class="ti on" role="menuitemradio" aria-checked="true"><span class="ck">✓</span>casual</div>
+                <div class="ti" role="menuitemradio" aria-checked="false"><span class="ck">✓</span>flirty</div>
+                <div class="ti" role="menuitemradio" aria-checked="false"><span class="ck">✓</span>upsell</div>
+                <div class="ti" role="menuitemradio" aria-checked="false"><span class="ck">✓</span>spicy</div>
+              </div>
+            </span>
             <span class="aibtn">Improve <kbd>⌘I</kbd></span>
             <span class="aibtn">Help <kbd>⌘H</kbd></span>
             <span class="aibtn dim" title="Fan is active right now">Ping <kbd>⌘P</kbd></span>

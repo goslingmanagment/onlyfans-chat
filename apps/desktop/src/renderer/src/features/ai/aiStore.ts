@@ -29,6 +29,7 @@ import {
   isFrameForOperation,
   resolveDockPartAction,
   type ChunkBatcher,
+  type DockTone,
   type DockView,
   type StreamRenderOp,
 } from './dockLogic';
@@ -61,6 +62,8 @@ interface AiDockState {
   debugPrompt: Record<string, unknown> | null;
   /** null = follow settings.defaultReplyTone. */
   toneOverride: ReplyTone | null;
+  /** Reply split-menu (the ▾ tone picker on the pill row) open state. */
+  toneMenuOpen: boolean;
   preferSplit: boolean;
   /** Bubble feedback chip ('INSERTED'/'COPIED'): partIndex 0 = all, 1..N = part N. */
   partFeedback: { partIndex: number; kind: 'copied' | 'inserted' } | null;
@@ -87,6 +90,7 @@ const CLEARED = {
 export const useAiStore = create<AiDockState>(() => ({
   ...CLEARED,
   toneOverride: null,
+  toneMenuOpen: false,
   preferSplit: false,
   draftText: '',
   scanFlashSeq: 0,
@@ -261,6 +265,14 @@ export function handleConversationChange(accountId: string | null, chatId: strin
   const key = `${accountId ?? ''}/${chatId ?? ''}`;
   if (lastConversationKey === key) return;
   lastConversationKey = key;
+  // Reset the active tone back to default (toneOverride → null) when the active
+  // chat changes, so a "spicy" pick does not leak to the next fan (legacy was
+  // non-sticky; sticky-within-chat is a deliberate, owner-flagged default). Runs
+  // AFTER dismissDock so the outgoing dock's fade-out still reads the old tone;
+  // also closes the Reply split-menu so it never lingers across a switch.
+  if (useAiStore.getState().toneOverride !== null || useAiStore.getState().toneMenuOpen) {
+    useAiStore.setState({ toneOverride: null, toneMenuOpen: false });
+  }
   persistDraftNow();
   draftConversation = accountId !== null && chatId !== null ? { accountId, chatId } : null;
   draftDirty = false;
@@ -292,6 +304,23 @@ export function setDockTone(tone: ReplyTone): void {
 export function cycleDockTone(defaultTone: ReplyTone): void {
   const state = useAiStore.getState();
   useAiStore.setState({ toneOverride: cycleTone(state.toneOverride ?? defaultTone) });
+}
+
+export function setToneMenuOpen(open: boolean): void {
+  useAiStore.setState({ toneMenuOpen: open });
+}
+
+/**
+ * Reply split-menu pick (variant C): set the active tone AND immediately start a
+ * fast-reply in it — one click = one toned generation, no wasted "normal" run.
+ * Closes the menu first; startAiFeature reads params.tone from toneOverride
+ * (line in startAiFeature), so no new tone wiring reaches IPC/main. The single-
+ * flight guard inside startAiFeature cancels any in-flight op for this chat.
+ */
+export function activateToneFromMenu(tone: DockTone, ctx: AiStartContext): void {
+  setDockTone(tone);
+  setToneMenuOpen(false);
+  startAiFeature('fast-reply', ctx);
 }
 
 export function togglePreferSplit(): void {

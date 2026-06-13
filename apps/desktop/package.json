@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "start": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.test-web.json",
     "test": "vitest run",
     "build": "electron-vite build",
     "rebuild:native": "electron-rebuild -f -w better-sqlite3-multiple-ciphers",

@@ -28,6 +28,9 @@ import { appPlatform, modCombo, type LabelPlatform } from '../../lib/modKey';
 
 export const DOCK_TONES = ['casual', 'flirty', 'upsell', 'spicy'] as const satisfies readonly ReplyTone[];
 
+/** Selectable tone — the Reply split-menu and the dock pills never offer 'none'. */
+export type DockTone = (typeof DOCK_TONES)[number];
+
 /** ⌘T order: none → casual → flirty → upsell → spicy → none (deselect closes the loop). */
 export function cycleTone(current: ReplyTone): ReplyTone {
   const idx = DOCK_TONES.findIndex((tone) => tone === current);
@@ -38,6 +41,35 @@ export function cycleTone(current: ReplyTone): ReplyTone {
 /** Pill click: clicking the active tone deselects to none (legacy selectTone behavior). */
 export function toggleTone(current: ReplyTone, clicked: ReplyTone): ReplyTone {
   return current === clicked ? 'none' : clicked;
+}
+
+/**
+ * Effective tone the Reply body / ⌘R generate in: the override when set,
+ * otherwise settings.defaultReplyTone — falling back to the first dock tone
+ * when neither resolves to a real tone ('none' is never an active dock tone).
+ * The Reply split-menu mark and the dock footer pills both read through this so
+ * the two UIs (and ⌘T cycling) stay in sync.
+ */
+export function effectiveReplyTone(
+  override: ReplyTone | null,
+  defaultTone: ReplyTone | undefined,
+): DockTone {
+  const candidate = override ?? defaultTone ?? DOCK_TONES[0];
+  return candidate === 'none' ? DOCK_TONES[0] : candidate;
+}
+
+export interface ToneMenuItem {
+  tone: DockTone;
+  active: boolean;
+}
+
+/**
+ * The Reply split-menu rows: every selectable dock tone, with exactly the
+ * effective tone marked active. Pure so the menu list + mark are unit-tested
+ * without mounting the popover (DESIGN §1 keeps React components thin).
+ */
+export function buildToneMenuItems(active: DockTone): ToneMenuItem[] {
+  return DOCK_TONES.map((tone) => ({ tone, active: tone === active }));
 }
 
 // ─── Copy payload selection (secondary affordance + the §7.0 degrade path) ─

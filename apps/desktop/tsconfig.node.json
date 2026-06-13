@@ -15,5 +15,8 @@
     "tests",
     "vitest.config.ts",
     "../../packages/shared/src"
+  ],
+  "exclude": [
+    "tests/renderer-ai/ai-store.test.ts"
   ]
 }

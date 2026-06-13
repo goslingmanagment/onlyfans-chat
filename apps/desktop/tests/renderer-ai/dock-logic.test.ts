@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DOCK_TONES,
+  buildToneMenuItems,
   copyChipLabel,
   copyPayload,
   copyablePartsOf,
   cycleTone,
   deriveDockView,
+  effectiveReplyTone,
   errorHint,
   evaluateAiGate,
   extractPromptBlocks,
@@ -37,6 +40,43 @@ describe('toggleTone (pill click)', () => {
   it('clicking another tone selects it', () => {
     expect(toggleTone('casual', 'upsell')).toBe('upsell');
     expect(toggleTone('none', 'flirty')).toBe('flirty');
+  });
+});
+
+describe('effectiveReplyTone (Reply split-menu mark + ⌘R / footer-pill sync)', () => {
+  it('the override wins when set', () => {
+    expect(effectiveReplyTone('spicy', 'casual')).toBe('spicy');
+  });
+
+  it('falls back to the settings default when there is no override', () => {
+    expect(effectiveReplyTone(null, 'upsell')).toBe('upsell');
+  });
+
+  it("coerces 'none' to the first dock tone — the menu always marks a real tone", () => {
+    // a default of 'none' (valid generation setting) must still mark one menu row
+    expect(effectiveReplyTone(null, 'none')).toBe('casual');
+    expect(effectiveReplyTone('none', 'flirty')).toBe('casual');
+  });
+
+  it('falls back to the first dock tone when neither resolves (settings not loaded)', () => {
+    expect(effectiveReplyTone(null, undefined)).toBe('casual');
+  });
+});
+
+describe('buildToneMenuItems (the four split-menu rows, one marked active)', () => {
+  it('lists every dock tone in order with exactly the active one marked', () => {
+    expect(buildToneMenuItems('flirty')).toEqual([
+      { tone: 'casual', active: false },
+      { tone: 'flirty', active: true },
+      { tone: 'upsell', active: false },
+      { tone: 'spicy', active: false },
+    ]);
+  });
+
+  it('covers all four dock tones, never offering "none"', () => {
+    const items = buildToneMenuItems('casual');
+    expect(items.map((i) => i.tone)).toEqual([...DOCK_TONES]);
+    expect(items.filter((i) => i.active)).toHaveLength(1);
   });
 });
 

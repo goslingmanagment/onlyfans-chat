@@ -774,6 +774,7 @@ export const UI_MESSAGES = {
   'aidock.menuCompareSub': { en: 'one reply, several personas side-by-side', ru: 'один ответ, несколько персон рядом' },
   'aidock.compareP4': { en: 'Arrives as a P4 stretch goal', ru: 'Появится как stretch-цель P4' },
   'aidock.replyTip': { en: 'Generate a reply suggestion', ru: 'Сгенерировать вариант ответа' },
+  'aidock.toneMenuTip': { en: 'Pick a tone and generate', ru: 'Выбрать тон и сгенерировать' },
   'aidock.improveEmptyTip': { en: 'Type a draft in the composer to improve', ru: 'Введите черновик в композере, чтобы улучшить' },
   'aidock.improveTip': { en: 'Improve your draft', ru: 'Улучшить ваш черновик' },
   'aidock.helpTip': { en: 'Coaching + two suggested directions', ru: 'Подсказка + два предложенных направления' },

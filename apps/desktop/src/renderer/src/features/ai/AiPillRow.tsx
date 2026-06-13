@@ -3,16 +3,26 @@
 // inapplicable (fan-active for Ping, >10 msgs for Hi — legacy gates); the
 // coordinator's CG-FLOW-05/09 checks stay authoritative for unknowns.
 
+import { useEffect, useRef } from 'react';
 import { useAccounts, useMessages, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
-import { useAiStore, startAiFeature, type LiveAiFeature } from './aiStore';
+import {
+  useAiStore,
+  activateToneFromMenu,
+  setToneMenuOpen,
+  startAiFeature,
+  type AiStartContext,
+  type LiveAiFeature,
+} from './aiStore';
 import {
   deriveHiLocked,
+  effectiveReplyTone,
   evaluateAiGate,
   evaluateHiGate,
   evaluatePingGate,
   type AiGate,
 } from './dockLogic';
+import { TonePopover } from './TonePopover';
 import { usePingGate } from './pingGate';
 import { gateText } from './gateText';
 import { Kbd } from '../../design/Kbd';
@@ -55,6 +65,108 @@ function PillButton({
     >
       {children}
     </button>
+  );
+}
+
+// The primary-pill shape, split between the Reply body and its ▾ tone caret so
+// the two segments read as one pill. Both branches mirror PillButton's `primary`
+// classes exactly; only the corner rounding differs (body rounds the left, caret
+// the right) and a hairline separates them.
+const SPLIT_PILL_BASE =
+  'flex cursor-pointer items-center border text-[12.5px] font-semibold transition-colors duration-150 ' +
+  'disabled:cursor-default disabled:opacity-45 ' +
+  'border-clay-line bg-clay-bg text-clay-deep hover:border-clay hover:text-clay ' +
+  'disabled:hover:border-clay-line disabled:hover:bg-clay-bg disabled:hover:text-clay-deep';
+
+/**
+ * Variant C: Reply is a split control. The body generates a fast-reply in the
+ * ACTIVE tone (same as ⌘R — unchanged); the ▾ caret opens the upward TonePopover
+ * where picking a tone immediately generates in it (one click = one generation).
+ * The menu mark reflects the effective active tone (toneOverride ?? default), so
+ * it stays in sync with ⌘T cycling and the dock footer pills. Outside-click
+ * closes via a ref that wraps the WHOLE control (body + caret), so toggling the
+ * caret never self-closes.
+ */
+function ReplySplitPill({
+  disabled,
+  bodyTitle,
+  ctx,
+  onGenerate,
+}: {
+  disabled: boolean;
+  bodyTitle: string;
+  ctx: AiStartContext;
+  onGenerate: () => void;
+}): React.JSX.Element {
+  const t = useT();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const menuOpen = useAiStore((s) => s.toneMenuOpen);
+  const toneOverride = useAiStore((s) => s.toneOverride);
+  const activeTone = effectiveReplyTone(toneOverride, ctx.defaultTone);
+
+  // Outside-click closes the menu; the ref boundary includes the caret, so a
+  // caret click toggles instead of dismissing (Esc handling lives in TonePopover).
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onMouseDown(e: MouseEvent): void {
+      if (rootRef.current !== null && e.target instanceof Node && !rootRef.current.contains(e.target)) {
+        setToneMenuOpen(false);
+      }
+    }
+    window.addEventListener('mousedown', onMouseDown);
+    return () => window.removeEventListener('mousedown', onMouseDown);
+  }, [menuOpen]);
+
+  // A disabled row must not leave a menu hanging open.
+  useEffect(() => {
+    if (disabled && menuOpen) setToneMenuOpen(false);
+  }, [disabled, menuOpen]);
+
+  return (
+    <div ref={rootRef} className="relative flex">
+      <button
+        type="button"
+        disabled={disabled}
+        title={bodyTitle}
+        onClick={() => {
+          if (!disabled) {
+            // One Reply click = one generation: close the menu so an open
+            // tone picker can't linger and chain a second (toned) op on top.
+            setToneMenuOpen(false);
+            onGenerate();
+          }
+        }}
+        className={cx(SPLIT_PILL_BASE, 'gap-[7px] rounded-l-full py-1 pr-2.5 pl-[13px]')}
+      >
+        <i className="not-italic">✳</i> Reply <Kbd>{modCombo('R')}</Kbd>
+      </button>
+      <button
+        type="button"
+        disabled={disabled}
+        title={t('aidock.toneMenuTip')}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-label={t('aidock.toneMenuTip')}
+        onClick={() => {
+          if (!disabled) setToneMenuOpen(!menuOpen);
+        }}
+        // border-l-0 drops the shared edge so it doesn't double with the body's
+        // right border; the hairline below is the visible split separator.
+        className={cx(
+          SPLIT_PILL_BASE,
+          'justify-center rounded-r-full border-l-0 py-1 pr-3 pl-2.5 text-[10px]',
+          'shadow-[inset_1px_0_0_0_var(--color-clay-line)]',
+        )}
+      >
+        ▾
+      </button>
+      <TonePopover
+        isOpen={menuOpen && !disabled}
+        activeTone={activeTone}
+        onSelectTone={(tone) => activateToneFromMenu(tone, ctx)}
+        onClose={() => setToneMenuOpen(false)}
+      />
+    </div>
   );
 }
 
@@ -102,16 +214,12 @@ export function AiPillRow({
 
   return (
     <div className="mx-[18px] mt-[9px] flex flex-none items-center gap-1.5">
-      <PillButton
-        primary
+      <ReplySplitPill
         disabled={rowDisabled}
-        title={blockedMessage ?? t('aidock.replyTip')}
-        onClick={() => {
-          if (!rowDisabled) start('fast-reply');
-        }}
-      >
-        <i className="not-italic">✳</i> Reply <Kbd>{modCombo('R')}</Kbd>
-      </PillButton>
+        bodyTitle={blockedMessage ?? t('aidock.replyTip')}
+        ctx={{ accountId, chatId, defaultTone }}
+        onGenerate={() => start('fast-reply')}
+      />
       <PillButton
         disabled={rowDisabled || draftEmpty}
         title={blockedMessage ?? (draftEmpty ? t('aidock.improveEmptyTip') : t('aidock.improveTip'))}

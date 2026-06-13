@@ -234,3 +234,16 @@
     opacity: 0;
   }
 }
+
+/* Reply split-menu (TonePopover) entry — transform/opacity only, opens upward;
+   applied via motion-safe: so reduced-motion skips it (DESIGN §3.8). */
+@keyframes tone-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
