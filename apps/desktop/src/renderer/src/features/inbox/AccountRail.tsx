@@ -1,17 +1,85 @@
-import { memo } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountVM } from '../../../../preload/contract';
-import { useAccounts } from '../../bridge/queries';
+import { useAccounts, useSettings, useUpdateSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { initialsOf } from '../../lib/messages';
+import { applyOrder, computeReorder } from '../../lib/order';
 import { cx } from '../../lib/cx';
 import { Skeleton } from '../../design/Skeleton';
 
+type DropPos = 'before' | 'after';
+interface DropTarget {
+  id: string;
+  pos: DropPos;
+}
+
+function dropPosFromEvent(e: React.DragEvent): DropPos {
+  const rect = e.currentTarget.getBoundingClientRect();
+  return e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+}
+
 export function AccountRail(): React.JSX.Element {
   const accounts = useAccounts();
+  const accountOrder = useSettings().data?.accountOrder;
+  const { mutate: saveSettings } = useUpdateSettings();
   const selectedAccountId = useUiStore((s) => s.selectedAccountId);
   const selectAccount = useUiStore((s) => s.selectAccount);
   const view = useUiStore((s) => s.view);
   const setView = useUiStore((s) => s.setView);
+
+  // Owner-chosen order (drag-sorted); unlisted accounts keep alpha order after.
+  const ordered = useMemo(
+    () => applyOrder(accounts.data ?? [], (a) => a.id, accountOrder ?? []),
+    [accounts.data, accountOrder],
+  );
+  const draggable = ordered.length > 1;
+
+  // Refs let the drag handlers stay stable so AccountTile memoization holds; the
+  // mirrored state only drives the drag/drop visuals.
+  const dragIdRef = useRef<string | null>(null);
+  const orderedRef = useRef<AccountVM[]>(ordered);
+  useEffect(() => {
+    orderedRef.current = ordered;
+  }, [ordered]);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+
+  const onDragStart = useCallback((id: string, e: React.DragEvent) => {
+    dragIdRef.current = id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+    setDragId(id);
+  }, []);
+
+  const onDragEnd = useCallback(() => {
+    dragIdRef.current = null;
+    setDragId(null);
+    setDropTarget(null);
+  }, []);
+
+  const onDragOver = useCallback((id: string, e: React.DragEvent) => {
+    if (dragIdRef.current === null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const pos = dropPosFromEvent(e);
+    setDropTarget((prev) => (prev !== null && prev.id === id && prev.pos === pos ? prev : { id, pos }));
+  }, []);
+
+  const onDrop = useCallback(
+    (targetId: string, e: React.DragEvent) => {
+      e.preventDefault();
+      const sourceId = dragIdRef.current;
+      dragIdRef.current = null;
+      setDragId(null);
+      setDropTarget(null);
+      if (sourceId === null) return;
+      const ids = orderedRef.current.map((a) => a.id);
+      const next = computeReorder(ids, sourceId, targetId, dropPosFromEvent(e));
+      if (next.length === ids.length && next.every((v, i) => v === ids[i])) return;
+      saveSettings({ accountOrder: next });
+    },
+    [saveSettings],
+  );
 
   return (
     <nav className="flex w-16 flex-none flex-col items-center gap-2.5 border-r border-line bg-bg1 py-3">
@@ -21,12 +89,19 @@ export function AccountRail(): React.JSX.Element {
           <Skeleton className="h-9 w-9 rounded-[10px]" />
         </>
       )}
-      {accounts.data?.map((account) => (
+      {ordered.map((account) => (
         <AccountTile
           key={account.id}
           account={account}
           active={view === 'workspace' && account.id === selectedAccountId}
           onSelect={selectAccount}
+          draggable={draggable}
+          dragging={account.id === dragId}
+          dropPos={dropTarget !== null && dropTarget.id === account.id && account.id !== dragId ? dropTarget.pos : null}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
         />
       ))}
       <button
@@ -68,22 +143,50 @@ const AccountTile = memo(function AccountTile({
   account,
   active,
   onSelect,
+  draggable,
+  dragging,
+  dropPos,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop,
 }: {
   account: AccountVM;
   active: boolean;
   onSelect: (id: string) => void;
+  draggable: boolean;
+  dragging: boolean;
+  dropPos: DropPos | null;
+  onDragStart: (id: string, e: React.DragEvent) => void;
+  onDragEnd: () => void;
+  onDragOver: (id: string, e: React.DragEvent) => void;
+  onDrop: (id: string, e: React.DragEvent) => void;
 }): React.JSX.Element {
   return (
-    <div className="relative flex w-full justify-center">
-      {active && (
-        <span className="absolute top-1 bottom-1 left-0 w-[3px] rounded-r-[3px] bg-clay" />
+    <div
+      className="relative flex w-full justify-center"
+      onDragOver={(e) => onDragOver(account.id, e)}
+      onDrop={(e) => onDrop(account.id, e)}
+    >
+      {active && <span className="absolute top-1 bottom-1 left-0 w-[3px] rounded-r-[3px] bg-clay" />}
+      {/* Drop indicator: clay bar in the gap above/below the hovered tile. */}
+      {dropPos === 'before' && (
+        <span className="pointer-events-none absolute -top-[6px] right-2 left-2 h-[2.5px] rounded-full bg-clay" />
+      )}
+      {dropPos === 'after' && (
+        <span className="pointer-events-none absolute -bottom-[6px] right-2 left-2 h-[2.5px] rounded-full bg-clay" />
       )}
       <button
         type="button"
+        draggable={draggable}
+        onDragStart={(e) => onDragStart(account.id, e)}
+        onDragEnd={onDragEnd}
         onClick={() => onSelect(account.id)}
         title={`${account.displayName} (@${account.username})${account.isAuthenticated ? '' : ' — re-auth needed, ping admin'}`}
         className={cx(
-          'relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] text-[12.5px] font-bold',
+          'relative flex h-9 w-9 items-center justify-center rounded-[10px] text-[12.5px] font-bold transition-opacity',
+          draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
+          dragging && 'opacity-40',
           active ? 'bg-clay text-white' : 'bg-bg3 text-ink-mid hover:bg-bg2',
         )}
       >
@@ -93,6 +196,7 @@ const AccountTile = memo(function AccountTile({
             alt=""
             loading="lazy"
             decoding="async"
+            draggable={false}
             className="h-full w-full rounded-[10px] object-cover"
           />
         ) : (

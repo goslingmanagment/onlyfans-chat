@@ -72,6 +72,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'defaultReplyTone',
   'creditBudgetPerShift',
   'accountMappings',
+  'accountOrder',
   'hubBaseUrl',
   'accountPageLabels',
   'spendStyle',
@@ -100,6 +101,8 @@ const persistedFieldSchemas = {
   defaultReplyTone: z.enum(REPLY_TONE_VALUES),
   creditBudgetPerShift: z.number().positive().nullable(),
   accountMappings: z.record(z.string(), z.string()),
+  // Owner-chosen left-rail account order (account ids, top→bottom); drag-sorted.
+  accountOrder: z.array(z.string().min(1)).max(200),
   // Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off.
   hubBaseUrl: z.string().min(1).nullable(),
   // Manual OFAPI accountId → core page-label overrides (SPEC §8.5).
@@ -141,6 +144,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   defaultReplyTone: DEFAULT_SETTINGS.defaultReplyTone,
   creditBudgetPerShift: null,
   accountMappings: {},
+  accountOrder: [],
   hubBaseUrl: null,
   accountPageLabels: {},
   spendStyle: 'figure',
@@ -168,6 +172,7 @@ export const settingsPatchSchema = z.strictObject({
   defaultReplyTone: persistedFieldSchemas.defaultReplyTone.optional(),
   creditBudgetPerShift: persistedFieldSchemas.creditBudgetPerShift.optional(),
   accountMappings: persistedFieldSchemas.accountMappings.optional(),
+  accountOrder: persistedFieldSchemas.accountOrder.optional(),
   hubBaseUrl: persistedFieldSchemas.hubBaseUrl.optional(),
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
   spendStyle: persistedFieldSchemas.spendStyle.optional(),
@@ -276,6 +281,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       defaultReplyTone: readField('defaultReplyTone'),
       creditBudgetPerShift: readField('creditBudgetPerShift'),
       accountMappings: readField('accountMappings'),
+      accountOrder: readField('accountOrder'),
       hubBaseUrl: readField('hubBaseUrl'),
       accountPageLabels: readField('accountPageLabels'),
       spendStyle: readField('spendStyle'),

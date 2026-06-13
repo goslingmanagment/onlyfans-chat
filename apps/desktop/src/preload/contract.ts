@@ -226,6 +226,12 @@ export interface SettingsVM {
   defaultReplyTone: ReplyTone;
   creditBudgetPerShift: number | null;
   accountMappings: Record<string, string>;
+  /**
+   * Owner-chosen left-rail account order (account ids, top→bottom). Accounts not
+   * listed here sort alphabetically after the ordered ones; stale ids are
+   * ignored. Reordered by drag in the account rail.
+   */
+  accountOrder: string[];
   /** Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off. */
   hubBaseUrl: string | null;
   /**

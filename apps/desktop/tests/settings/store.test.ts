@@ -75,6 +75,7 @@ describe('settings store', () => {
     expect(vm.markAsReadOnOpen).toBe(false);
     expect(vm.creditBudgetPerShift).toBeNull();
     expect(vm.accountMappings).toEqual({});
+    expect(vm.accountOrder).toEqual([]);
     expect(vm.accountPageLabels).toEqual({});
     expect(vm.spendStyle).toBe('figure');
     expect(vm.uiLocale).toBe('system');
@@ -137,6 +138,7 @@ describe('settings store', () => {
       debugMode: true,
       defaultReplyTone: 'flirty',
       accountMappings: { acct_1: 'personality-a' },
+      accountOrder: ['acct_2', 'acct_1'],
       creditBudgetPerShift: 1500,
       spendStyle: 'chip',
     });
@@ -144,6 +146,7 @@ describe('settings store', () => {
     expect(vm.debugMode).toBe(true);
     expect(vm.defaultReplyTone).toBe('flirty');
     expect(vm.accountMappings).toEqual({ acct_1: 'personality-a' });
+    expect(vm.accountOrder).toEqual(['acct_2', 'acct_1']);
     expect(vm.creditBudgetPerShift).toBe(1500);
     expect(vm.spendStyle).toBe('chip');
     // untouched fields keep defaults

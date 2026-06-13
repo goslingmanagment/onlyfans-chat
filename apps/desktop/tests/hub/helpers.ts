@@ -74,6 +74,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     defaultReplyTone: 'casual',
     creditBudgetPerShift: null,
     accountMappings: {},
+    accountOrder: [],
     accountPageLabels: {},
     ...overrides,
   };

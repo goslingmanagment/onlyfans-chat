@@ -443,6 +443,7 @@ function buildStore(): MockStore {
     defaultReplyTone: 'casual',
     creditBudgetPerShift: null,
     accountMappings: { acct_lora: 'builtin:lora' },
+    accountOrder: [],
     accountPageLabels: {},
     spendersListMappings: { acct_lora: ['9001', '9002'] },
   };
