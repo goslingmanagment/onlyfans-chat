@@ -75,22 +75,71 @@ export function redactSecrets(text: string, secrets: readonly string[] = []): st
   return out;
 }
 
-/** Deep-redact every string leaf of a structured value (objects, arrays). */
-export function redactValue(value: unknown, secrets: readonly string[] = []): unknown {
+const REDACT_MAX_DEPTH = 8;
+const REDACT_MAX_ARRAY_ITEMS = 100;
+const REDACT_MAX_OBJECT_KEYS = 100;
+const REDACT_MAX_STRING_CHARS = 20_000;
+
+function boundedString(value: string): string {
+  if (value.length <= REDACT_MAX_STRING_CHARS) {
+    return value;
+  }
+  return `${value.slice(0, REDACT_MAX_STRING_CHARS)}...[truncated]`;
+}
+
+function redactValueInner(
+  value: unknown,
+  secrets: readonly string[],
+  seen: WeakSet<object>,
+  depth: number,
+): unknown {
   if (typeof value === 'string') {
-    return redactSecrets(value, secrets);
+    return boundedString(redactSecrets(value, secrets));
   }
-  if (Array.isArray(value)) {
-    return value.map((item) => redactValue(item, secrets));
+  if (value === null || typeof value !== 'object') {
+    return value;
   }
-  if (value !== null && typeof value === 'object') {
+  if (seen.has(value)) {
+    return '[circular]';
+  }
+  if (depth >= REDACT_MAX_DEPTH) {
+    return '[max-depth]';
+  }
+
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const items = value
+        .slice(0, REDACT_MAX_ARRAY_ITEMS)
+        .map((item) => redactValueInner(item, secrets, seen, depth + 1));
+      if (value.length > REDACT_MAX_ARRAY_ITEMS) {
+        items.push(`[${value.length - REDACT_MAX_ARRAY_ITEMS} items truncated]`);
+      }
+      return items;
+    }
+
     const out: Record<string, unknown> = {};
-    for (const [key, inner] of Object.entries(value)) {
-      out[key] = redactValue(inner, secrets);
+    const entries = Object.entries(value);
+    for (const [key, inner] of entries.slice(0, REDACT_MAX_OBJECT_KEYS)) {
+      out[boundedString(redactSecrets(key, secrets))] = redactValueInner(
+        inner,
+        secrets,
+        seen,
+        depth + 1,
+      );
+    }
+    if (entries.length > REDACT_MAX_OBJECT_KEYS) {
+      out['__truncatedKeys'] = entries.length - REDACT_MAX_OBJECT_KEYS;
     }
     return out;
+  } finally {
+    seen.delete(value);
   }
-  return value;
+}
+
+/** Deep-redact every string leaf of a structured value (objects, arrays). */
+export function redactValue(value: unknown, secrets: readonly string[] = []): unknown {
+  return redactValueInner(value, secrets, new WeakSet<object>(), 0);
 }
 
 /** Redact a log entry's message and fields. Returns a new entry. */

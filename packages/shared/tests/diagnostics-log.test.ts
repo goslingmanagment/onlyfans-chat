@@ -78,6 +78,37 @@ describe('redactValue (deep)', () => {
     expect(out['n']).toBe(5);
     expect(out['ok']).toBe(true);
   });
+
+  it('survives cyclic values', () => {
+    const circular: Record<string, unknown> = { label: 'root' };
+    circular['self'] = circular;
+    const out = redactValue(circular) as Record<string, unknown>;
+    expect(out['label']).toBe('root');
+    expect(out['self']).toBe('[circular]');
+  });
+
+  it('bounds very deep and very large values', () => {
+    let deep: Record<string, unknown> = { secret: 'sk-ant-api03-AbCdEfGhIjKlMnOpQr' };
+    for (let i = 0; i < 20; i += 1) {
+      deep = { child: deep };
+    }
+    const out = redactValue({
+      deep,
+      many: Array.from({ length: 105 }, (_, i) => i),
+      long: `x${'a'.repeat(21_000)}`,
+    }) as Record<string, unknown>;
+    expect(JSON.stringify(out)).toContain('[max-depth]');
+    expect(JSON.stringify(out)).toContain('5 items truncated');
+    expect(JSON.stringify(out)).toContain('...[truncated]');
+  });
+
+  it('redacts before bounding long strings', () => {
+    const secret = 'SECRET_VALUE_THAT_CROSSES_THE_BOUNDARY';
+    const out = redactValue(`${'x'.repeat(19_990)}${secret}${'y'.repeat(2_000)}`, [secret]);
+    expect(out).not.toContain(secret);
+    expect(out).toContain(REDACTED);
+    expect(out).toContain('...[truncated]');
+  });
 });
 
 describe('redactEntry', () => {

@@ -104,6 +104,63 @@ function updateStatusVM(status: ReturnType<UpdateController['status']> | null): 
   return { ...status, currentVersion };
 }
 
+function flushLogger(): Promise<void> {
+  return logger?.flush() ?? Promise.resolve();
+}
+
+let exitingAfterFatal = false;
+
+function exitAfterFatalException(error: unknown): void {
+  logger?.error('process', 'uncaughtException', errorToFields(error));
+  if (exitingAfterFatal) {
+    return;
+  }
+  exitingAfterFatal = true;
+  const timer = setTimeout(() => app.exit(1), 1_000);
+  timer.unref();
+  void flushLogger().finally(() => app.exit(1));
+}
+
+function startPackagedAutoUpdater(): void {
+  // Auto-update (platform/updater.ts policy: win32 packaged only, install on
+  // quit, silent failures). electron-updater drags Electron in at import time,
+  // so it is dynamic-imported after the boot logger exists.
+  // The controller is shared by the background loop and the Settings -> Updates
+  // "Check now / Restart & install" button (via the IPC updates delegate).
+  if (!shouldAutoUpdate(process.platform, app.isPackaged) || updateController !== null) {
+    return;
+  }
+  void import('electron-updater')
+    .then((mod) => {
+      // CJS<->ESM interop: under Node ESM the CJS module surfaces as `default`.
+      const interop = mod as unknown as {
+        default?: { autoUpdater: AppUpdaterLike };
+        autoUpdater?: AppUpdaterLike;
+      };
+      const autoUpdater = interop.default?.autoUpdater ?? interop.autoUpdater;
+      if (autoUpdater === undefined) {
+        logger?.warn('updates', 'electron-updater did not expose autoUpdater');
+        return;
+      }
+      updateController = createUpdateController({
+        updater: autoUpdater,
+        onReady: (version) => {
+          if (Notification.isSupported()) {
+            new Notification({
+              title: uiMessage(uiLocale, 'notif.updateTitle'),
+              body: uiMessage(uiLocale, 'notif.updateBody', { version }),
+              silent: true,
+            }).show();
+          }
+        },
+      });
+      startAutoUpdater({ controller: updateController });
+    })
+    .catch((error: unknown) => {
+      logger?.warn('updates', 'failed to initialize auto-updater', errorToFields(error));
+    });
+}
+
 /**
  * Custom application menu. Electron's DEFAULT menu shadows three product
  * hotkeys (DESIGN §2) with higher-priority accelerators: ⌘R (View → Reload vs
@@ -435,12 +492,12 @@ async function boot(): Promise<void> {
   });
   // Catch-all nets: an uncaught throw / rejected promise that would otherwise
   // vanish becomes a log record the user can send us.
-  process.on('uncaughtException', (error) =>
-    logger?.error('process', 'uncaughtException', errorToFields(error)),
-  );
-  process.on('unhandledRejection', (reason) =>
-    logger?.error('process', 'unhandledRejection', errorToFields(reason)),
-  );
+  process.on('uncaughtException', exitAfterFatalException);
+  process.on('unhandledRejection', (reason) => {
+    logger?.error('process', 'unhandledRejection', errorToFields(reason));
+    void flushLogger();
+  });
+  startPackagedAutoUpdater();
 
   const keychain = createKeychain({
     safeStorage,
@@ -839,35 +896,6 @@ if (!app.requestSingleInstanceLock()) {
   // shortcut's; electron-builder stamps shortcuts with the appId, so use it
   // verbatim (electron-builder.yml). No-op outside Windows.
   app.setAppUserModelId('com.chatgoose.desktop');
-
-  // Auto-update (platform/updater.ts policy: win32 packaged only, install on
-  // quit, silent failures). electron-updater drags Electron in at import time,
-  // so it is dynamic-imported here rather than in the testable policy module.
-  // The controller is shared by the background loop and the Settings → Updates
-  // "Check now / Restart & install" button (via the IPC updates delegate).
-  if (shouldAutoUpdate(process.platform, app.isPackaged)) {
-    void import('electron-updater').then((mod) => {
-      // CJS↔ESM interop: under Node ESM the CJS module surfaces as `default`.
-      const interop = mod as unknown as { default?: { autoUpdater: AppUpdaterLike }; autoUpdater?: AppUpdaterLike };
-      const autoUpdater = interop.default?.autoUpdater ?? interop.autoUpdater;
-      if (autoUpdater === undefined) {
-        return;
-      }
-      updateController = createUpdateController({
-        updater: autoUpdater,
-        onReady: (version) => {
-          if (Notification.isSupported()) {
-            new Notification({
-              title: uiMessage(uiLocale, 'notif.updateTitle'),
-              body: uiMessage(uiLocale, 'notif.updateBody', { version }),
-              silent: true,
-            }).show();
-          }
-        },
-      });
-      startAutoUpdater({ controller: updateController });
-    });
-  }
 
   app.whenReady().then(() => {
     buildAppMenu();
