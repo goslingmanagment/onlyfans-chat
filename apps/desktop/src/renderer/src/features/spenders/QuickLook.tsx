@@ -244,7 +244,7 @@ function PreviewThread({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-bg0">
+    <div data-density="compact" className="flex min-h-0 flex-1 flex-col bg-bg0">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-[18px] pt-3 pb-1.5">
         {query.hasNextPage === true && (
           <div className="pb-1.5 text-center">

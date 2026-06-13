@@ -15,7 +15,7 @@ import { useLocale, useT } from '../../lib/i18n';
 
 export const DayDivider = memo(function DayDivider({ label }: { label: string }): React.JSX.Element {
   return (
-    <div className="my-2 flex items-center gap-3 py-2">
+    <div className="my-[var(--cv-day-my)] flex items-center gap-3 py-2">
       <span className="h-px flex-1 bg-line-strong" />
       <span className="num text-micro tracking-[0.12em] text-ink-low">{label}</span>
       <span className="h-px flex-1 bg-line-strong" />
@@ -77,16 +77,18 @@ export const MessageRow = memo(function MessageRow({
   }
 
   return (
-    <div className={cx('group flex py-1', me ? 'justify-end' : 'justify-start')}>
+    <div className={cx('group flex py-[var(--cv-row-py)]', me ? 'justify-end' : 'justify-start')}>
       <div className={cx('max-w-[68%]', me && 'flex flex-col items-end')}>
         <div
           className={cx(
             // max-w-full: a long nowrap reply-quote must not inflate the bubble past its wrapper
-            'max-w-full rounded-bubble border text-msg',
+            'max-w-full rounded-bubble border text-[length:var(--cv-bubble-fs)]',
             me
               ? 'rounded-br-flat border-bubble-me-line bg-bubble-me'
               : 'rounded-bl-flat border-line bg-bg1',
-            isPpv ? 'w-[312px] overflow-hidden p-0' : 'px-[14px] py-[10px]',
+            isPpv
+              ? 'w-[312px] overflow-hidden p-0'
+              : 'px-[var(--cv-bubble-px)] py-[var(--cv-bubble-py)]',
           )}
         >
           {message.deleted ? (
@@ -104,7 +106,7 @@ export const MessageRow = memo(function MessageRow({
                   </span>
                 </div>
               )}
-              <div className={cx(isPpv && 'px-[14px] py-[10px]')}>
+              <div className={cx(isPpv && 'px-[var(--cv-bubble-px)] py-[var(--cv-bubble-py)]')}>
                 {message.replyTo !== null && (
                   <div className="mb-1.5 flex items-baseline gap-1.5 border-l-2 border-clay-line pl-2 text-[12px] text-ink-low">
                     <span className="cap">{message.replyTo.sender}</span>
@@ -133,7 +135,7 @@ export const MessageRow = memo(function MessageRow({
         </div>
         <div
           className={cx(
-            'num mt-1 flex items-baseline gap-2 text-micro tracking-[0.07em] text-ink-low',
+            'num mt-[var(--cv-meta-mt)] flex items-baseline gap-2 text-micro tracking-[0.07em] text-ink-low',
             me && 'justify-end',
           )}
         >

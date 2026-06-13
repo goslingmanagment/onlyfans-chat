@@ -151,6 +151,30 @@
     color-scheme: light;
   }
 
+  /* Conversation density tokens — comfortable by default; a `data-density`
+     subtree (the compact quick-look preview) overrides them. Same pure-variable
+     approach as the .dark theme: markup stays identical, only the values change.
+     Comfortable values MUST mirror the prior hard-coded numbers so the full
+     chat is pixel-identical. */
+  :root {
+    --cv-pad-x: 24px;
+    --cv-row-py: 4px;
+    --cv-bubble-px: 14px;
+    --cv-bubble-py: 10px;
+    --cv-bubble-fs: var(--text-msg);
+    --cv-day-my: 8px;
+    --cv-meta-mt: 4px;
+  }
+  [data-density='compact'] {
+    --cv-pad-x: 16px;
+    --cv-row-py: 2px;
+    --cv-bubble-px: 11px;
+    --cv-bubble-py: 7px;
+    --cv-bubble-fs: 13px;
+    --cv-day-my: 4px;
+    --cv-meta-mt: 2px;
+  }
+
   body {
     background: var(--color-bg0);
     color: var(--color-ink);
