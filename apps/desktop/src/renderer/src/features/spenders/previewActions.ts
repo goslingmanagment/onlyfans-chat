@@ -17,9 +17,8 @@ import { useUiStore } from '../../state/uiStore';
 import { startAiFeature } from '../ai/aiStore';
 import { deriveHiLocked, evaluateAiGate, evaluateHiGate, evaluatePingGate } from '../ai/dockLogic';
 import { pingGateKey } from '../ai/pingGate';
+import { COMPOSER_TEXTAREA_ID } from '../conversation/composerDom';
 import { previewRow, useSpendersStore } from './spendersStore';
-
-export const PREVIEW_TEXTAREA_ID = 'spenders-preview-composer';
 
 // ── On-open thread hydration (PLAN item 13: EVERY open hydrates). One
 // read-only tail GET per quick-look open — the same fetch a full chat open
@@ -52,19 +51,25 @@ export async function ensureAndOpenPreviewChat(row: SpenderRowVM): Promise<boole
   return true;
 }
 
+// The preview now renders the SHARED <ComposerBar> (via <ConversationView>), so
+// focus targets the one composer textarea id — the dedicated preview textarea is
+// gone. Same seam the workspace focus-composer key uses (KeymapProvider).
 export function focusPreviewComposer(): void {
-  const el = document.getElementById(PREVIEW_TEXTAREA_ID);
+  const el = document.getElementById(COMPOSER_TEXTAREA_ID);
   if (el instanceof HTMLTextAreaElement && !el.disabled) el.focus();
 }
 
-/** The three pill features the preview exposes (mockup: Ping primary, Reply, Hi). */
-export type PreviewAiFeature = 'ping' | 'fast-reply' | 'hi-greeting';
+/** The preview's AI pill features (mockup: Ping, Reply, Hi, Improve). */
+export type PreviewAiFeature = 'ping' | 'fast-reply' | 'hi-greeting' | 'improve-draft';
 
 export function startAiFromPreview(feature: PreviewAiFeature, queryClient: QueryClient): void {
   const ui = useUiStore.getState();
   const row = previewRow(useSpendersStore.getState());
   if (ui.view !== 'spenders' || ui.selectedAccountId === null || row === null) return;
-  if (!row.canSendMessage) return;
+  // Generation is NOT gated on canSendMessage — matching the shared pills and
+  // the full chat: you can draft for an un-messageable fan (the dock copy-
+  // degrades, the composer blocks the actual send). Only the AI / ping / hi
+  // feature gates below apply, so the hotkey path and the pill path agree.
   const accountId = ui.selectedAccountId;
   const fanId = row.fanId;
 

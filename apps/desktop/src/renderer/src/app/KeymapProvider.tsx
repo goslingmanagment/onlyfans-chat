@@ -176,6 +176,12 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
             e.preventDefault();
             startAiFromPreview('hi-greeting', queryClient);
             return;
+          // ⌘I — Improve rewrites the shared composer draft (preview gained the
+          // Improve pill); routes through the same gated path as the other pills.
+          case 'ai-improve':
+            e.preventDefault();
+            startAiFromPreview('improve-draft', queryClient);
+            return;
           case 'ai-cancel':
             e.preventDefault();
             cancelActiveOperation();
