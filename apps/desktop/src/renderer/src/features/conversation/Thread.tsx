@@ -133,6 +133,38 @@ export function Thread({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastKey]);
 
+  // Re-pin to bottom on VIEWPORT resize. The new-tail effect above only fires on
+  // message changes, so it misses the case that bites users: opening/growing the
+  // AI dock (also vault panel, composer auto-grow, window resize) shrinks this
+  // flex-1 thread, and without a re-stick the newest messages slide under the
+  // dock — ConversationView mounts the dock as a flex-none sibling below us, so a
+  // taller footer eats the thread's height while scrollTop/content stay put.
+  //   • Predicate is the REMEMBERED intent (stickToBottomRef), NOT a freshly
+  //     computed distance: the instant the dock opens clientHeight drops, so a
+  //     live distance-to-bottom would falsely read "not at bottom". A resize
+  //     emits no scroll event, so the flag still reflects the user's intent here.
+  //   • scrollToIndex(options.count - 1) matches the two effects above (its
+  //     measure-retry lands precisely on dynamic row heights); options.count is
+  //     the LIVE row count (setOptions runs each render) — the observer is
+  //     attached once per viewport, never per message, so no stale rows.length.
+  //   • Gated on hasViewport: the scroll div exists only after data loads (the
+  //     early returns below render Skeleton/empty with no scrollRef), so an
+  //     effect keyed on [paged] alone would run once with scrollRef.current null
+  //     and never re-attach. hasViewport is a boolean → stable across new tail
+  //     messages, re-running only when the viewport appears/disappears.
+  const hasViewport = !paged && !query.isPending && rows.length > 0;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el === null || !hasViewport) return;
+    const ro = new ResizeObserver(() => {
+      if (stickToBottomRef.current) {
+        virtualizer.scrollToIndex(virtualizer.options.count - 1, { align: 'end' });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasViewport, virtualizer]);
+
   const onScroll = useCallback(() => {
     if (paged) return;
     const el = scrollRef.current;
