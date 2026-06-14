@@ -17,6 +17,8 @@ import { Kbd } from '../../design/Kbd';
 import { ConversationView } from '../conversation/ConversationView';
 import { PREVIEW_FEATURES } from '../conversation/conversationFeatures';
 import { handleConversationChange } from '../ai/aiStore';
+import { resetVaultForConversation } from '../vault/vaultStore';
+import { presenceKey, useUiStore } from '../../state/uiStore';
 import { useSpendersStore } from './spendersStore';
 import { dayCounter } from './SpenderRowItem';
 import { hydratePreviewFan, ensureAndOpenPreviewChat } from './previewActions';
@@ -41,10 +43,15 @@ export function QuickLook({
   // load/persist + dock discard-on-switch ride the existing machinery.
   useEffect(() => {
     handleConversationChange(accountId, fanId);
+    // The vault selection is a GLOBAL in-progress compose for ONE fan; J/K
+    // retargets this still-mounted preview, so reset it on every fan change
+    // (mirrors ConversationPane) — never send fan A's media/price to fan B.
+    resetVaultForConversation();
   }, [accountId, fanId]);
   useEffect(
     () => () => {
       handleConversationChange(null, null);
+      resetVaultForConversation();
     },
     [],
   );
@@ -82,7 +89,7 @@ export function QuickLook({
               +{formatWholeDollars(row.spend30d)}
             </span>
           )}
-          <PreviewStatusChips fan={fan} />
+          <PreviewStatusChips accountId={accountId} fanId={fanId} fan={fan} />
           {/* no staleness dot in the preview header (owner decision V-a) */}
           <span className="num ml-auto text-[9.5px] tracking-[0.06em] text-ink-low">
             {t('sp.model')}{' '}
@@ -140,11 +147,26 @@ export function QuickLook({
  * Subscription wording reuses the FanPanel keys (fan.subActive/subPerMonth/
  * subFree/subExpired).
  */
-function PreviewStatusChips({ fan }: { fan: FanPanelVM | null }): React.JSX.Element | null {
+function PreviewStatusChips({
+  accountId,
+  fanId,
+  fan,
+}: {
+  accountId: string;
+  fanId: string;
+  fan: FanPanelVM | null;
+}): React.JSX.Element | null {
   const t = useT();
+  // Live hub-SSE presence wins while fresh; fan.lastSeen is the polling-only
+  // fallback — same precedence as the full ConversationHeader, so a fan can't
+  // read online in the chat and offline in the preview.
+  const presence = useUiStore((s) => s.presence[presenceKey(accountId, fanId)]);
   if (fan === null) return null;
   const now = new Date();
-  const online = isOnline(fan.lastSeen, now);
+  const presenceFresh = presence !== undefined && presence.expiresAt > now.getTime();
+  const online = presenceFresh ? presence.online : isOnline(fan.lastSeen, now);
+  const lastSeenLabel =
+    presenceFresh && presence.online ? t('conv.onlineNow') : formatLastSeen(fan.lastSeen, now, t);
   const sub = fan.subscription;
   return (
     <>
@@ -167,7 +189,7 @@ function PreviewStatusChips({ fan }: { fan: FanPanelVM | null }): React.JSX.Elem
         }
       >
         {online && <span className="h-[6px] w-[6px] rounded-full bg-online" />}
-        {online ? t('conv.onlineNow') : formatLastSeen(fan.lastSeen, now, t)}
+        {lastSeenLabel}
       </span>
     </>
   );
