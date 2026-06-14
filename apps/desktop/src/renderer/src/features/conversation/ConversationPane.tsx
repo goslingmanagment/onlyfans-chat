@@ -6,15 +6,10 @@ import { modCombo } from '../../lib/modKey';
 import { EmptyState } from '../../design/EmptyState';
 import { Kbd } from '../../design/Kbd';
 import { ConversationHeader } from './ConversationHeader';
-import { MessageList } from './MessageList';
-import { ComposerBar } from './ComposerBar';
-import { AiDockMount } from '../ai/AiDock';
-import { AiPillRow } from '../ai/AiPillRow';
+import { ConversationView } from './ConversationView';
+import { FULL_CHAT_FEATURES } from './conversationFeatures';
 import { handleConversationChange } from '../ai/aiStore';
-import { GalleryTab } from '../vault/GalleryTab';
-import { VaultPanel } from '../vault/VaultPanel';
 import { resetVaultForConversation } from '../vault/vaultStore';
-import { cx } from '../../lib/cx';
 import { useT } from '../../lib/i18n';
 
 export function ConversationPane(): React.JSX.Element {
@@ -24,8 +19,6 @@ export function ConversationPane(): React.JSX.Element {
   const typing = useUiStore((s) => s.typing);
   const setTyping = useUiStore((s) => s.setTyping);
   const setView = useUiStore((s) => s.setView);
-  const conversationTab = useUiStore((s) => s.conversationTab);
-  const setConversationTab = useUiStore((s) => s.setConversationTab);
 
   // expire the typing indicator client-side
   useEffect(() => {
@@ -101,7 +94,6 @@ export function ConversationPane(): React.JSX.Element {
 
   const unmapped = account !== null && account.personalityId === null;
   // expiry is handled by the effect above clearing the store
-  const typingHere = typing !== null && typing.accountId === accountId && typing.chatId === chatId;
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg0">
@@ -119,40 +111,13 @@ export function ConversationPane(): React.JSX.Element {
           </button>
         </div>
       )}
-      <div className="flex flex-none items-center gap-1 border-b border-line bg-bg1 px-[18px] py-1">
-        {(['thread', 'gallery'] as const).map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            onClick={() => setConversationTab(tab)}
-            className={cx(
-              'num cursor-pointer rounded-full px-2.5 py-0.5 text-micro font-semibold tracking-[0.08em] transition-colors',
-              conversationTab === tab ? 'bg-ink text-bg1' : 'text-ink-low hover:bg-bg2',
-            )}
-          >
-            {tab === 'thread' ? 'THREAD' : 'GALLERY'}
-          </button>
-        ))}
-      </div>
-      {conversationTab === 'gallery' ? (
-        <GalleryTab accountId={accountId} chatId={chatId} />
-      ) : (
-        <MessageList accountId={accountId} chatId={chatId} fanName={chat.fanName} />
-      )}
-      {typingHere && (
-        <div className="flex flex-none items-center gap-2 px-6 pb-1 text-[12px] text-ink-low">
-          {t('conv.isTyping', { name: chat.fanName })}
-          <span className="inline-flex gap-[3px]">
-            <i className="h-1 w-1 animate-pulse rounded-full bg-ink-low" />
-            <i className="h-1 w-1 animate-pulse rounded-full bg-ink-low [animation-delay:200ms]" />
-            <i className="h-1 w-1 animate-pulse rounded-full bg-ink-low [animation-delay:400ms]" />
-          </span>
-        </div>
-      )}
-      <VaultPanel accountId={accountId} chatId={chatId} canSend={chat.canSendMessage} />
-      <AiDockMount />
-      <AiPillRow accountId={accountId} chatId={chatId} />
-      <ComposerBar accountId={accountId} chat={chat} personaName={account?.displayName ?? 'model'} />
+      <ConversationView
+        accountId={accountId}
+        chatId={chatId}
+        features={FULL_CHAT_FEATURES}
+        density="comfortable"
+        scrollMode="stick"
+      />
     </section>
   );
 }

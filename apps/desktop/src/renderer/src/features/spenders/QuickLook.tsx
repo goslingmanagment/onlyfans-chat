@@ -1,54 +1,25 @@
-// Quick-look mini-chat (P1 overlay per the binding mockup): thread from the
-// LOCAL DB only (0 credits — «↑ раньше» pages local history), AI pills reusing
-// the composer gates (Ping primary), own composer wired into the ONE send
-// engine (SPEC §7 — cmd:send.message; never auto-retry an indeterminate send).
-// AI runs only on explicit click/hotkey — no prefetch, no auto-drafts.
+// Quick-look mini-chat (P1 overlay per the binding mockup): the conversation
+// body is the SHARED <ConversationView> (PREVIEW_FEATURES — vault + ping/reply/
+// hi/improve, compact dock + compact density, paged read-only thread). This
+// shell owns ONLY the modal chrome (scrim, card, compact header with sub/online
+// chips, footer) and the read-only lifecycle: the preview IS the active
+// conversation while open (draft load/persist + dock discard-on-switch), but it
+// runs NO aggressive poll and NO mark-read (0 credits — the full chat owns those).
 
-import { useEffect, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import type { SpenderRowVM } from '../../../../preload/contract';
-import { useAccounts, useMessages, useSettings } from '../../bridge/queries';
+import { useEffect, useState } from 'react';
+import type { FanPanelVM, SpenderRowVM } from '../../../../preload/contract';
+import { useFan } from '../../bridge/queries';
 import { useT } from '../../lib/i18n';
-import { modCombo } from '../../lib/modKey';
 import { formatWholeDollars } from '../../lib/money';
+import { formatLastSeen, isOnline } from '../../lib/time';
 import { Avatar } from '../../design/Avatar';
 import { Kbd } from '../../design/Kbd';
-import { createTypingThrottle } from '../conversation/sendLogic';
-import { Thread } from '../conversation/Thread';
-import { DraftTextarea } from '../conversation/DraftTextarea';
-import { sendCurrentDraft } from '../conversation/sendController';
-import { getBridge } from '../../bridge/bridge';
-import {
-  activateDockPart,
-  handleConversationChange,
-  regenerateActiveOperation,
-  setDraftText,
-  useAiStore,
-} from '../ai/aiStore';
-import {
-  copyablePartsOf,
-  deriveHiLocked,
-  evaluateAiGate,
-  evaluateHiGate,
-  evaluatePingGate,
-  errorHint,
-  formatOpCost,
-  progressLabel,
-  DOCK_FEATURE_LABELS,
-  type AiGate,
-} from '../ai/dockLogic';
-import { gateText } from '../ai/gateText';
-import { usePingGate } from '../ai/pingGate';
+import { ConversationView } from '../conversation/ConversationView';
+import { PREVIEW_FEATURES } from '../conversation/conversationFeatures';
+import { handleConversationChange } from '../ai/aiStore';
 import { useSpendersStore } from './spendersStore';
 import { dayCounter } from './SpenderRowItem';
-import {
-  focusPreviewComposer,
-  hydratePreviewFan,
-  ensureAndOpenPreviewChat,
-  startAiFromPreview,
-  PREVIEW_TEXTAREA_ID,
-  type PreviewAiFeature,
-} from './previewActions';
+import { hydratePreviewFan, ensureAndOpenPreviewChat } from './previewActions';
 
 export function QuickLook({
   accountId,
@@ -86,19 +57,8 @@ export function QuickLook({
     hydratePreviewFan(accountId, fanId, row?.username ?? null);
   }, [accountId, fanId, row?.username]);
 
+  const fan = useFan(accountId, fanId).data ?? null;
   const name = row?.name ?? '';
-  const canSend = row?.canSendMessage ?? false;
-  // Platform block tokens → human-readable (live-verified 2026-06-13:
-  // expired fans arrive as canSendMessage=false + 'unsubscribed').
-  const rawReason = row?.canNotSendReason ?? null;
-  const cannotReason =
-    row !== null && !row.hasChat
-      ? t('sp.noChatSend')
-      : rawReason === 'unsubscribed'
-        ? t('sp.reason.unsubscribed')
-        : rawReason === 'chat_unavailable'
-          ? t('sp.reason.chat_unavailable')
-          : (rawReason ?? t('conv.cannotSendFallback'));
 
   return (
     <>
@@ -122,6 +82,7 @@ export function QuickLook({
               +{formatWholeDollars(row.spend30d)}
             </span>
           )}
+          <PreviewStatusChips fan={fan} />
           {/* no staleness dot in the preview header (owner decision V-a) */}
           <span className="num ml-auto text-[9.5px] tracking-[0.06em] text-ink-low">
             {t('sp.model')}{' '}
@@ -131,19 +92,12 @@ export function QuickLook({
             <b className="font-semibold text-ink-mid">{dayCounter(t, row?.fanDays ?? null)}</b>
           </span>
         </div>
-        <Thread
+        <ConversationView
           accountId={accountId}
           chatId={fanId}
-          fanName={name}
-          scrollMode="paged"
+          features={PREVIEW_FEATURES}
           density="compact"
-        />
-        <PreviewDock accountId={accountId} fanId={fanId} canSend={canSend} />
-        <PreviewComposer
-          accountId={accountId}
-          fanId={fanId}
-          canSend={canSend}
-          cannotReason={cannotReason}
+          scrollMode="paged"
         />
         <div className="flex flex-none items-center gap-2 border-t border-line bg-bg1 px-4 py-[9px]">
           <span className="num text-[9.5px] tracking-[0.06em] text-ink-low">{t('sp.previewHint')}</span>
@@ -180,258 +134,41 @@ export function QuickLook({
 }
 
 /**
- * Compact dock line (mockup .pvdock): while running — feature + phase; on
- * completion of an insertable draft it lands in the composer (the explicit
- * human action was the hotkey/click that started it; inserting never sends).
- * Hi-greeting variants and copy-degraded results render as chips instead.
+ * Compact subscription + online chips for the preview header (owner 2026-06-14):
+ * same source fields the full ConversationHeader reads (fan.subscription /
+ * fan.lastSeen, isOnline/formatLastSeen), shrunk to fit the slim preview bar.
+ * Subscription wording reuses the FanPanel keys (fan.subActive/subPerMonth/
+ * subFree/subExpired).
  */
-function PreviewDock({
-  accountId,
-  fanId,
-  canSend,
-}: {
-  accountId: string;
-  fanId: string;
-  canSend: boolean;
-}): React.JSX.Element | null {
+function PreviewStatusChips({ fan }: { fan: FanPanelVM | null }): React.JSX.Element | null {
   const t = useT();
-  const op = useAiStore((s) => s.op);
-  const status = useAiStore((s) => s.status);
-  const phase = useAiStore((s) => s.phase);
-  const view = useAiStore((s) => s.view);
-  const spend = useAiStore((s) => s.spend);
-  const error = useAiStore((s) => s.error);
-  const partFeedback = useAiStore((s) => s.partFeedback);
-  const pingGate = usePingGate(accountId, fanId, null);
-  const insertedOpRef = useRef<string | null>(null);
-
-  const isOurs = op !== null && op.accountId === accountId && op.chatId === fanId;
-  const parts = copyablePartsOf(view);
-  const autoInsertable =
-    isOurs &&
-    status === 'completed' &&
-    view?.kind === 'drafts' &&
-    op.feature !== 'hi-greeting' &&
-    canSend &&
-    parts.length > 0;
-
-  useEffect(() => {
-    if (!autoInsertable || op === null) return;
-    if (insertedOpRef.current === op.operationId) return;
-    insertedOpRef.current = op.operationId;
-    activateDockPart(0, { canSend: true });
-    focusPreviewComposer();
-  }, [autoInsertable, op]);
-
-  if (!isOurs) return null;
-
-  const featureLabel = DOCK_FEATURE_LABELS[op.feature];
-  const segment =
-    op.feature === 'ping' && pingGate.data !== undefined && pingGate.data.segment !== 'active'
-      ? t('sp.segment', { s: pingGate.data.segment === 'segment-a' ? 'A' : 'B' })
-      : null;
-
+  if (fan === null) return null;
+  const now = new Date();
+  const online = isOnline(fan.lastSeen, now);
+  const sub = fan.subscription;
   return (
-    <div className="flex flex-none items-center gap-2.5 border-t border-line bg-bg1 px-4 py-2">
-      <span className="text-[12px] font-semibold text-ink-mid">
-        <i className="mr-[5px] text-clay not-italic">✳</i>
-        {featureLabel}
-        {segment !== null && <span className="font-normal text-ink-low"> · {segment}</span>}
+    <>
+      {sub !== null && sub.status === 'active' && (
+        <span className="num rounded-full border border-green-line bg-green-bg px-1.5 py-0.5 text-[9px] font-semibold text-green">
+          {t('fan.subActive')}
+          {sub.priceUsd != null && sub.priceUsd > 0
+            ? ` · ${t('fan.subPerMonth', { price: formatWholeDollars(sub.priceUsd) })}`
+            : ` · ${t('fan.subFree')}`}
+        </span>
+      )}
+      {sub !== null && sub.status === 'expired' && (
+        <span className="num rounded-full border border-line bg-bg2 px-1.5 py-0.5 text-[9px] font-semibold text-ink-low">
+          {t('fan.subExpired')}
+        </span>
+      )}
+      <span
+        className={
+          'flex items-center gap-[4px] text-[9px] ' + (online ? 'text-green' : 'text-ink-low')
+        }
+      >
+        {online && <span className="h-[6px] w-[6px] rounded-full bg-online" />}
+        {online ? t('conv.onlineNow') : formatLastSeen(fan.lastSeen, now, t)}
       </span>
-      {status === 'running' && (
-        <span className="num text-micro tracking-[0.08em] text-ink-low">{progressLabel(phase)}</span>
-      )}
-      {status === 'error' && error !== null && (
-        <span className="min-w-0 truncate text-[11px] text-bad">
-          {error.message}
-          {errorHint(error) !== null ? ` — ${errorHint(error)}` : ''}
-        </span>
-      )}
-      {status === 'completed' && autoInsertable && (
-        <span className="text-[11px] text-ink-low">{t('sp.inserted')}</span>
-      )}
-      {status === 'completed' && !autoInsertable && parts.length > 0 && (
-        <span className="flex items-center gap-1.5">
-          {parts.map((_, index) => (
-            <button
-              key={index}
-              type="button"
-              onClick={() => {
-                activateDockPart(index + 1, { canSend });
-                if (canSend) focusPreviewComposer();
-              }}
-              className="num cursor-pointer rounded-[5px] border border-clay-line bg-clay-bg px-1.5 py-0.5 text-micro font-semibold text-clay-deep hover:border-clay"
-            >
-              {partFeedback?.partIndex === index + 1
-                ? partFeedback.kind === 'inserted'
-                  ? 'INSERTED'
-                  : 'COPIED'
-                : t('sp.variant', { n: index + 1 })}
-            </button>
-          ))}
-        </span>
-      )}
-      {(status === 'completed' || status === 'error') && (
-        <button
-          type="button"
-          onClick={regenerateActiveOperation}
-          className="cursor-pointer text-[11px] text-ink-low underline decoration-dotted underline-offset-3 hover:text-ink-mid"
-        >
-          {t('sp.anotherVariant')}
-        </button>
-      )}
-      <span className="flex-1" />
-      {spend !== null && (
-        <span className="num text-[9.5px] text-ink-low">{formatOpCost(spend.totalUsd)}</span>
-      )}
-    </div>
-  );
-}
-
-function PreviewComposer({
-  accountId,
-  fanId,
-  canSend,
-  cannotReason,
-}: {
-  accountId: string;
-  fanId: string;
-  canSend: boolean;
-  cannotReason: string;
-}): React.JSX.Element {
-  const t = useT();
-  const queryClient = useQueryClient();
-  const draft = useAiStore((s) => s.draftText);
-  const accounts = useAccounts();
-  const settings = useSettings();
-
-  // Same gates as the workspace pill row (PLAN item 12: reuse, same tooltips).
-  const messages = useMessages(accountId, fanId);
-  const pages = messages.data?.pages;
-  const lastMessageId = pages?.[0]?.items.at(-1)?.id ?? null;
-  const pingGate = usePingGate(accountId, fanId, lastMessageId);
-  const account = accounts.data?.find((a) => a.id === accountId) ?? null;
-  const ready = account !== null && settings.data !== undefined;
-  const gate: AiGate | null = ready
-    ? evaluateAiGate({
-        mapped: account.personalityId !== null,
-        hasLlmKey: settings.data.hasAnthropicKey || settings.data.hasOpenRouterKey,
-      })
-    : null;
-  const blockedMessage = gate !== null && !gate.ok ? gateText(t, gate.reason) : null;
-  const sendBlockedMessage = canSend ? null : cannotReason;
-  const rowDisabled = !ready || blockedMessage !== null || sendBlockedMessage !== null;
-  const pingPill = evaluatePingGate(gate, pingGate.data?.blocked ?? null);
-  const hiPill = evaluateHiGate(gate, deriveHiLocked(pages));
-  const pingEnabled = pingPill.enabled && sendBlockedMessage === null;
-  const hiEnabled = hiPill.enabled && sendBlockedMessage === null;
-
-  const throttleRef = useRef(createTypingThrottle());
-  useEffect(() => {
-    throttleRef.current.reset();
-  }, [accountId, fanId]);
-
-  function onDraftChange(text: string): void {
-    setDraftText(text);
-    if (canSend && throttleRef.current.activity(Date.now())) {
-      void getBridge().invoke('cmd:chat.typingActive', { accountId, chatId: fanId });
-    }
-  }
-
-  function start(feature: PreviewAiFeature): void {
-    startAiFromPreview(feature, queryClient);
-  }
-
-  const blank = draft.trim().length === 0;
-
-  return (
-    <div className="flex-none border-t border-line bg-bg1 px-4 pt-2.5 pb-[11px]">
-      <DraftTextarea
-        id={PREVIEW_TEXTAREA_ID}
-        value={draft}
-        onChange={onDraftChange}
-        disabled={!canSend}
-        placeholder={canSend ? `${modCombo('P')} ping · ${modCombo('↵')} send` : cannotReason}
-      />
-      <div className="mt-1.5 flex items-center gap-[9px]">
-        <PreviewPill
-          primary
-          dimmed={!pingEnabled}
-          disabled={!pingEnabled}
-          title={
-            sendBlockedMessage ?? (pingPill.enabled ? t('aidock.pingTip') : gateText(t, pingPill.code))
-          }
-          onClick={() => {
-            if (pingEnabled) start('ping');
-          }}
-        >
-          <i className="text-clay not-italic">✳</i> Ping <Kbd>{modCombo('P')}</Kbd>
-        </PreviewPill>
-        <PreviewPill
-          dimmed={rowDisabled}
-          disabled={rowDisabled}
-          title={sendBlockedMessage ?? blockedMessage ?? t('aidock.replyTip')}
-          onClick={() => {
-            if (!rowDisabled) start('fast-reply');
-          }}
-        >
-          Reply
-        </PreviewPill>
-        <PreviewPill
-          dimmed={!hiEnabled}
-          disabled={!hiEnabled}
-          title={sendBlockedMessage ?? (hiPill.enabled ? t('aidock.hiTip') : gateText(t, hiPill.code))}
-          onClick={() => {
-            if (hiEnabled) start('hi-greeting');
-          }}
-        >
-          Hi
-        </PreviewPill>
-        <span className="flex-1" />
-        <button
-          type="button"
-          disabled={!canSend || blank}
-          title={canSend ? `Send (${modCombo('↵')})` : cannotReason}
-          onClick={() => sendCurrentDraft({ accountId, chatId: fanId, canSend })}
-          className="flex cursor-pointer items-center gap-2 rounded-[7px] border border-clay bg-clay px-[15px] py-[7px] text-[13px] font-bold text-white transition-colors hover:bg-clay-deep disabled:cursor-default disabled:opacity-45 disabled:hover:bg-clay"
-        >
-          Send <Kbd>{modCombo('↵')}</Kbd>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function PreviewPill({
-  primary = false,
-  dimmed,
-  disabled,
-  title,
-  onClick,
-  children,
-}: {
-  primary?: boolean;
-  dimmed: boolean;
-  disabled: boolean;
-  title: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      title={title}
-      onClick={onClick}
-      className={
-        'flex cursor-pointer items-center gap-1.5 rounded-full border px-[11px] py-[3px] text-[12px] font-semibold transition-colors disabled:cursor-default ' +
-        (primary
-          ? 'border-clay-line bg-clay-bg text-clay-deep hover:border-clay'
-          : 'border-line bg-bg2 text-ink-mid hover:border-clay-line hover:text-clay-deep') +
-        (dimmed ? ' opacity-45 hover:border-line hover:text-ink-mid' : '')
-      }
-    >
-      {children}
-    </button>
+    </>
   );
 }
