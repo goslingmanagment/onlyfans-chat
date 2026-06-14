@@ -23,10 +23,12 @@ export function ComposerBar({
   accountId,
   chat,
   personaName,
+  showVault = true,
 }: {
   accountId: string;
   chat: ChatListItemVM;
   personaName: string;
+  showVault?: boolean;
 }): React.JSX.Element {
   const t = useT();
   const locale = useLocale();
@@ -85,20 +87,22 @@ export function ComposerBar({
         }
       />
       <div className="mt-[7px] flex items-center gap-[11px]">
-        <button
-          type="button"
-          onClick={() => setVaultOpen(!vaultOpen)}
-          disabled={!canSend}
-          title={canSend ? t('conv.attachVault') : cannotReason}
-          className={
-            'flex cursor-pointer items-center gap-1 rounded-chip border px-2 py-0.5 text-[12.5px] transition-colors disabled:cursor-default disabled:opacity-45 ' +
-            (vaultOpen || attachedCount > 0
-              ? 'border-clay-line bg-clay-bg text-clay-deep'
-              : 'border-line bg-bg2 text-ink-mid hover:border-clay-line hover:text-clay-deep')
-          }
-        >
-          📎{attachedCount > 0 && <span className="num font-bold">{attachedCount}</span>}
-        </button>
+        {showVault && (
+          <button
+            type="button"
+            onClick={() => setVaultOpen(!vaultOpen)}
+            disabled={!canSend}
+            title={canSend ? t('conv.attachVault') : cannotReason}
+            className={
+              'flex cursor-pointer items-center gap-1 rounded-chip border px-2 py-0.5 text-[12.5px] transition-colors disabled:cursor-default disabled:opacity-45 ' +
+              (vaultOpen || attachedCount > 0
+                ? 'border-clay-line bg-clay-bg text-clay-deep'
+                : 'border-line bg-bg2 text-ink-mid hover:border-clay-line hover:text-clay-deep')
+            }
+          >
+            📎{attachedCount > 0 && <span className="num font-bold">{attachedCount}</span>}
+          </button>
+        )}
         {!canSend ? (
           <span className="num text-micro tracking-[0.08em] text-warn">{cannotReason}</span>
         ) : ppvComposeActive ? (

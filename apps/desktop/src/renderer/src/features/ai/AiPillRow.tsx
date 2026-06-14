@@ -29,6 +29,11 @@ import { Kbd } from '../../design/Kbd';
 import { cx } from '../../lib/cx';
 import { modCombo } from '../../lib/modKey';
 import { useT } from '../../lib/i18n';
+import type { AiPill } from '../conversation/conversationFeatures';
+
+// Default full set + order (today's full chat). Kept as a module constant so the
+// default-prop path is a stable reference and renders byte-for-byte as before.
+const DEFAULT_PILLS: readonly AiPill[] = ['reply', 'improve', 'help', 'ping', 'hi'];
 
 function PillButton({
   primary = false,
@@ -173,9 +178,13 @@ function ReplySplitPill({
 export function AiPillRow({
   accountId,
   chatId,
+  pills = DEFAULT_PILLS,
+  replyTone = true,
 }: {
   accountId: string;
   chatId: string;
+  pills?: readonly AiPill[];
+  replyTone?: boolean;
 }): React.JSX.Element {
   const t = useT();
   const setView = useUiStore((s) => s.setView);
@@ -212,15 +221,35 @@ export function AiPillRow({
     startAiFeature(feature, { accountId, chatId, defaultTone });
   }
 
-  return (
-    <div className="mx-[18px] mt-[9px] flex flex-none items-center gap-1.5">
+  // One renderer per pill, keyed by AiPill. <ConversationView> chooses which to
+  // show (and their order) via `pills`; the full chat passes the default set so
+  // this renders byte-for-byte as before. Reply swaps its split-menu (tone caret)
+  // for a plain ⌘R fast-reply when `replyTone` is false (e.g. the preview).
+  const pillNodes: Record<AiPill, React.JSX.Element> = {
+    reply: replyTone ? (
       <ReplySplitPill
+        key="reply"
         disabled={rowDisabled}
         bodyTitle={blockedMessage ?? t('aidock.replyTip')}
         ctx={{ accountId, chatId, defaultTone }}
         onGenerate={() => start('fast-reply')}
       />
+    ) : (
       <PillButton
+        key="reply"
+        primary
+        disabled={rowDisabled}
+        title={blockedMessage ?? t('aidock.replyTip')}
+        onClick={() => {
+          if (!rowDisabled) start('fast-reply');
+        }}
+      >
+        <i className="not-italic">✳</i> Reply <Kbd>{modCombo('R')}</Kbd>
+      </PillButton>
+    ),
+    improve: (
+      <PillButton
+        key="improve"
         disabled={rowDisabled || draftEmpty}
         title={blockedMessage ?? (draftEmpty ? t('aidock.improveEmptyTip') : t('aidock.improveTip'))}
         onClick={() => {
@@ -229,7 +258,10 @@ export function AiPillRow({
       >
         Improve <Kbd>{modCombo('I')}</Kbd>
       </PillButton>
+    ),
+    help: (
       <PillButton
+        key="help"
         disabled={rowDisabled}
         title={blockedMessage ?? t('aidock.helpTip')}
         onClick={() => {
@@ -238,7 +270,10 @@ export function AiPillRow({
       >
         Help <Kbd>{modCombo('H')}</Kbd>
       </PillButton>
+    ),
+    ping: (
       <PillButton
+        key="ping"
         dimmed={!pingPill.enabled}
         disabled={!pingPill.enabled}
         title={pingPill.enabled ? t('aidock.pingTip') : gateText(t, pingPill.code)}
@@ -248,7 +283,10 @@ export function AiPillRow({
       >
         Ping <Kbd>{modCombo('P')}</Kbd>
       </PillButton>
+    ),
+    hi: (
       <PillButton
+        key="hi"
         dimmed={!hiPill.enabled}
         disabled={!hiPill.enabled}
         title={hiPill.enabled ? t('aidock.hiTip') : gateText(t, hiPill.code)}
@@ -258,6 +296,12 @@ export function AiPillRow({
       >
         Hi <Kbd>{modCombo('G')}</Kbd>
       </PillButton>
+    ),
+  };
+
+  return (
+    <div className="mx-[18px] mt-[9px] flex flex-none items-center gap-1.5">
+      {pills.map((pill) => pillNodes[pill])}
       {blockedMessage !== null && (
         <button
           type="button"

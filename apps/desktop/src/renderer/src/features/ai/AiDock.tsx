@@ -4,7 +4,7 @@
 // sequence. Copy is the secondary chip and the canSendMessage=false degrade
 // (SPEC §7.0).
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   ProfilingSnapshotPayload,
   UserFacingErrorPayload,
@@ -17,6 +17,7 @@ import { modCombo } from '../../lib/modKey';
 import { useT } from '../../lib/i18n';
 import { Kbd } from '../../design/Kbd';
 import { AiDockSlot } from '../conversation/AiDockSlot';
+import { focusComposer } from '../conversation/composerDom';
 import { StreamingDrafts, DRAFT_BUBBLE_BASE_CLASS } from './StreamingDrafts';
 import {
   useAiStore,
@@ -29,6 +30,7 @@ import {
   setDockTone,
   togglePreferSplit,
 } from './aiStore';
+import { usePingGate } from './pingGate';
 import {
   DOCK_FEATURE_LABELS,
   DOCK_TONES,
@@ -44,10 +46,17 @@ import {
 } from './dockLogic';
 import { getFeaturePolicy } from '@chatgoose/shared/features';
 
-/** Mounts the dock only while an operation is active — the pane never re-renders. */
-export function AiDockMount(): React.JSX.Element | null {
+/**
+ * Mounts the dock only while an operation is active — the pane never re-renders.
+ * `compact` mounts the same dock as a single in-line strip (the Spenders
+ * preview): same aiStore fields, same dockLogic helpers, no header/footer chrome.
+ */
+export function AiDockMount({ compact = false }: { compact?: boolean } = {}): React.JSX.Element | null {
   const hasOp = useAiStore((s) => s.op !== null);
   if (!hasOp) return null;
+  // The compact strip is edge-to-edge (its own border-t/px-4 chrome); only the
+  // full floating-card dock wants AiDockSlot's inset margins.
+  if (compact) return <AiDock compact />;
   return (
     <AiDockSlot>
       <AiDock />
@@ -55,7 +64,12 @@ export function AiDockMount(): React.JSX.Element | null {
   );
 }
 
-function AiDock(): React.JSX.Element | null {
+function AiDock({ compact = false }: { compact?: boolean }): React.JSX.Element | null {
+  if (compact) return <CompactDock />;
+  return <FullDock />;
+}
+
+function FullDock(): React.JSX.Element | null {
   const t = useT();
   const op = useAiStore((s) => s.op);
   const status = useAiStore((s) => s.status);
@@ -157,6 +171,116 @@ function AiDock(): React.JSX.Element | null {
 
       {debugMode && !running && (
         <DebugSection debugPrompt={debugPrompt} profiling={profiling} />
+      )}
+    </div>
+  );
+}
+
+// ─── Compact dock (Spenders preview, mockup .pvdock) ────────────────────────
+
+/**
+ * One-line dock strip: while running — feature label (+ ping segment) + phase;
+ * on completion of an insertable draft it AUTO-INSERTS into the composer and
+ * focuses it (the explicit human action was the pill click/hotkey that started
+ * the op; inserting never sends — SPEC §15). Hi-greeting variants, multi-part,
+ * and copy-degraded results render as clickable variant chips instead. Reads
+ * the same aiStore fields + dockLogic helpers as the full dock.
+ */
+function CompactDock(): React.JSX.Element | null {
+  const t = useT();
+  const op = useAiStore((s) => s.op);
+  const status = useAiStore((s) => s.status);
+  const phase = useAiStore((s) => s.phase);
+  const view = useAiStore((s) => s.view);
+  const spend = useAiStore((s) => s.spend);
+  const error = useAiStore((s) => s.error);
+  const partFeedback = useAiStore((s) => s.partFeedback);
+  // canSend from the op's own chat — same canSendMessage source PreviewDock
+  // received as a prop (unknown chat defaults to insertable; inserting never sends).
+  const sendability = useChatSendability(op?.accountId ?? null, op?.chatId ?? null);
+  const pingGate = usePingGate(op?.accountId ?? null, op?.chatId ?? null, null);
+  const insertedOpRef = useRef<string | null>(null);
+
+  const canSend = sendability.data?.canSendMessage ?? true;
+  const parts = copyablePartsOf(view);
+  const autoInsertable =
+    op !== null &&
+    status === 'completed' &&
+    view?.kind === 'drafts' &&
+    op.feature !== 'hi-greeting' &&
+    canSend &&
+    parts.length > 0;
+
+  useEffect(() => {
+    if (!autoInsertable || op === null) return;
+    if (insertedOpRef.current === op.operationId) return;
+    insertedOpRef.current = op.operationId;
+    // Insert part 0 (the whole draft) into the composer, then focus it. canSend
+    // is true here, so this only INSERTS — it never sends (SPEC §15).
+    activateDockPart(0, { canSend: true });
+    focusComposer();
+  }, [autoInsertable, op]);
+
+  if (op === null) return null;
+
+  const featureLabel = DOCK_FEATURE_LABELS[op.feature];
+  const segment =
+    op.feature === 'ping' && pingGate.data !== undefined && pingGate.data.segment !== 'active'
+      ? t('sp.segment', { s: pingGate.data.segment === 'segment-a' ? 'A' : 'B' })
+      : null;
+
+  return (
+    <div className="flex flex-none items-center gap-2.5 border-t border-line bg-bg1 px-4 py-2">
+      <span className="text-[12px] font-semibold text-ink-mid">
+        <i className="mr-[5px] text-clay not-italic">✳</i>
+        {featureLabel}
+        {segment !== null && <span className="font-normal text-ink-low"> · {segment}</span>}
+      </span>
+      {status === 'running' && (
+        <span className="num text-micro tracking-[0.08em] text-ink-low">{progressLabel(phase)}</span>
+      )}
+      {status === 'error' && error !== null && (
+        <span className="min-w-0 truncate text-[11px] text-bad">
+          {error.message}
+          {errorHint(error) !== null ? ` — ${errorHint(error)}` : ''}
+        </span>
+      )}
+      {status === 'completed' && autoInsertable && (
+        <span className="text-[11px] text-ink-low">{t('sp.inserted')}</span>
+      )}
+      {status === 'completed' && !autoInsertable && parts.length > 0 && (
+        <span className="flex items-center gap-1.5">
+          {parts.map((_, index) => (
+            <button
+              key={index}
+              type="button"
+              onClick={() => {
+                activateDockPart(index + 1, { canSend });
+                if (canSend) focusComposer();
+              }}
+              className="num cursor-pointer rounded-[5px] border border-clay-line bg-clay-bg px-1.5 py-0.5 text-micro font-semibold text-clay-deep hover:border-clay"
+            >
+              {partFeedback?.partIndex === index + 1
+                ? partFeedback.kind === 'inserted'
+                  ? 'INSERTED'
+                  : 'COPIED'
+                : t('sp.variant', { n: index + 1 })}
+            </button>
+          ))}
+        </span>
+      )}
+      {(status === 'completed' || status === 'error') && (
+        <button
+          type="button"
+          onClick={regenerateActiveOperation}
+          className="cursor-pointer text-[11px] text-ink-low underline decoration-dotted underline-offset-3 hover:text-ink-mid"
+        >
+          {t('sp.anotherVariant')}
+        </button>
+      )}
+      <span className="flex-1" />
+      {spend !== null && (
+        <span className="num text-[9.5px] text-ink-low">{formatOpCost(spend.totalUsd)}</span>
       )}
     </div>
   );
