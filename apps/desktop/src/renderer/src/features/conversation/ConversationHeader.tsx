@@ -13,17 +13,24 @@ function ValueChip({
   value,
   money = false,
   warn = false,
+  className,
 }: {
   cap: string;
   value: string;
   money?: boolean;
   warn?: boolean;
+  /** container-query hide class (e.g. `@max-[520px]:hidden`) — drop priority. */
+  className?: string;
 }): React.JSX.Element {
   return (
     <div
       className={cx(
-        'flex items-baseline gap-1.5 rounded-full border px-3 py-1',
+        // shrink-0 + whitespace-nowrap keep the chip a single fixed-height line:
+        // it can only ever be hidden (via className) or overflow horizontally,
+        // never wrap its multi-word RU label vertically past the 60px bar.
+        'flex shrink-0 items-baseline gap-1.5 rounded-full border px-3 py-1 whitespace-nowrap',
         money ? 'border-green-line bg-green-bg' : warn ? 'border-amber-line bg-amber-bg' : 'border-line bg-bg1',
+        className,
       )}
     >
       <span className="cap text-[9.5px] text-ink-low">{cap}</span>
@@ -58,39 +65,63 @@ export function ConversationHeader({
     presenceFresh && presence.online ? t('conv.onlineNow') : formatLastSeen(lastSeen, now, t);
   const sub = fan?.subscription ?? null;
 
+  // Responsive bar (@container = self-width queries): the identity block is the
+  // ONLY shrinkable flex item (min-w-0, truncates first); chips and the AI/Kbd
+  // actions are shrink-0 so they never compress or wrap. The value chips drop
+  // progressively as the bar narrows — priority lifetime > sub > fan-for.
+  //   Safe-to-hide invariant: with the FanPanel CLOSED the centre column is
+  //   always ≥ ~696px (window minWidth 1100 − rail 64 − list 340), and every
+  //   chip breakpoint here is below that, so a chip only ever hides while the
+  //   FanPanel is OPEN — where the same lifetime/subscription figures are shown.
+  //   Data is never lost, only de-duplicated when space is tight.
   return (
-    <header className="flex h-[60px] flex-none items-center gap-3 border-b border-line bg-bg1 px-[18px]">
+    <header className="@container flex h-[60px] flex-none items-center gap-3 border-b border-line bg-bg1 px-[18px]">
       <div className="flex min-w-0 items-center gap-[11px]">
         <Avatar name={chat.fanName} url={fan?.avatarUrl ?? chat.avatarUrl} online={online} size={38} />
         <div className="min-w-0">
           <div className="truncate font-serif text-[17px] font-semibold">{chat.fanName}</div>
           <div
             className={cx(
-              'flex items-center gap-[5px] text-[12px]',
+              'flex min-w-0 items-center gap-[5px] text-[12px]',
               online ? 'text-green' : 'text-ink-low',
             )}
           >
-            {online && <span className="h-[7px] w-[7px] rounded-full bg-online" />}
-            {lastSeenLabel}
+            {online && <span className="h-[7px] w-[7px] flex-none rounded-full bg-online" />}
+            <span className="truncate">{lastSeenLabel}</span>
           </div>
         </div>
       </div>
-      <div className="ml-3.5 flex gap-[7px]">
+      <div className="ml-3.5 flex shrink-0 gap-[7px]">
         {fan?.spending != null && (
-          <ValueChip cap={t('conv.capLifetime')} value={formatDollars(fan.spending.total)} money />
+          <ValueChip
+            cap={t('conv.capLifetime')}
+            value={formatDollars(fan.spending.total)}
+            money
+            className="@max-[520px]:hidden"
+          />
         )}
         {sub !== null && sub.status === 'active' && !sub.autoRenewOff && sub.renewsAt !== null && (
-          <ValueChip cap={t('conv.capSub')} value={t('conv.subRenews', { days: formatRenewDays(sub.renewsAt, now) })} />
+          <ValueChip
+            cap={t('conv.capSub')}
+            value={t('conv.subRenews', { days: formatRenewDays(sub.renewsAt, now) })}
+            className="@max-[600px]:hidden"
+          />
         )}
         {sub !== null && sub.status === 'active' && sub.autoRenewOff && (
-          <ValueChip cap={t('conv.capSub')} value={t('conv.subAutoRenewOff')} warn />
+          <ValueChip cap={t('conv.capSub')} value={t('conv.subAutoRenewOff')} warn className="@max-[600px]:hidden" />
         )}
-        {sub !== null && sub.status === 'expired' && <ValueChip cap={t('conv.capSub')} value={t('conv.subExpired')} />}
+        {sub !== null && sub.status === 'expired' && (
+          <ValueChip cap={t('conv.capSub')} value={t('conv.subExpired')} className="@max-[600px]:hidden" />
+        )}
         {sub?.durationLabel != null && (
-          <ValueChip cap={t('conv.capFanFor')} value={sub.durationLabel.replace(' months', ' mo')} />
+          <ValueChip
+            cap={t('conv.capFanFor')}
+            value={sub.durationLabel.replace(' months', ' mo')}
+            className="@max-[680px]:hidden"
+          />
         )}
       </div>
-      <div className="ml-auto flex items-center gap-2.5 text-ink-low">
+      <div className="ml-auto flex shrink-0 items-center gap-2.5 text-ink-low">
         <AiHeaderMenu />
         <Kbd>]</Kbd>
       </div>

@@ -57,7 +57,9 @@ function PillButton({
       title={title}
       {...(onClick !== undefined ? { onClick } : {})}
       className={cx(
-        'flex cursor-pointer items-center gap-[7px] rounded-full border px-[13px] py-1 text-[12.5px] font-semibold transition-colors duration-150',
+        // shrink-0 + whitespace-nowrap: a pill stays one atomic line — the ROW
+        // wraps (flex-wrap below), the pill's label↔Kbd never break internally.
+        'flex shrink-0 cursor-pointer items-center gap-[7px] rounded-full border px-[13px] py-1 text-[12.5px] font-semibold whitespace-nowrap transition-colors duration-150',
         'disabled:cursor-default',
         primary
           ? 'border-clay-line bg-clay-bg text-clay-deep hover:border-clay hover:text-clay'
@@ -78,7 +80,7 @@ function PillButton({
 // classes exactly; only the corner rounding differs (body rounds the left, caret
 // the right) and a hairline separates them.
 const SPLIT_PILL_BASE =
-  'flex cursor-pointer items-center border text-[12.5px] font-semibold transition-colors duration-150 ' +
+  'flex shrink-0 cursor-pointer items-center border text-[12.5px] font-semibold whitespace-nowrap transition-colors duration-150 ' +
   'disabled:cursor-default disabled:opacity-45 ' +
   'border-clay-line bg-clay-bg text-clay-deep hover:border-clay hover:text-clay ' +
   'disabled:hover:border-clay-line disabled:hover:bg-clay-bg disabled:hover:text-clay-deep';
@@ -128,7 +130,7 @@ function ReplySplitPill({
   }, [disabled, menuOpen]);
 
   return (
-    <div ref={rootRef} className="relative flex">
+    <div ref={rootRef} className="relative flex shrink-0">
       <button
         type="button"
         disabled={disabled}
@@ -300,13 +302,16 @@ export function AiPillRow({
   };
 
   return (
-    <div className="mx-[18px] mt-[9px] flex flex-none items-center gap-1.5">
+    // flex-wrap: at the narrow (~332px) centre worst-case the pills spill to a
+    // 2nd line instead of compressing/overflowing onto the FanPanel. The gated
+    // settings CTA gets basis-full so it always drops to its own line below.
+    <div className="mx-[18px] mt-[9px] flex flex-none flex-wrap items-center gap-1.5">
       {pills.map((pill) => pillNodes[pill])}
       {blockedMessage !== null && (
         <button
           type="button"
           onClick={() => setView('settings')}
-          className="ml-1.5 cursor-pointer text-[12px] font-semibold text-clay-deep underline decoration-dotted underline-offset-2"
+          className="ml-1.5 basis-full cursor-pointer text-left text-[12px] font-semibold text-clay-deep underline decoration-dotted underline-offset-2"
         >
           {blockedMessage} →
         </button>

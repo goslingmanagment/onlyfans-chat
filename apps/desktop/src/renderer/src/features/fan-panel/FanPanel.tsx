@@ -133,9 +133,9 @@ function InfoTab({ fan, fetchedAt }: { fan: FanPanelVM; fetchedAt: number }): Re
         <Avatar name={fan.name} url={fan.avatarUrl} online={isOnline(fan.lastSeen, now)} size={48} radius={13} />
         <div className="min-w-0">
           <div className="truncate font-serif text-[17px] font-semibold">{fan.name}</div>
-          <div className="num text-micro text-ink-low">@{fan.username}</div>
+          <div className="num truncate text-micro text-ink-low">@{fan.username}</div>
           {fan.customName !== null && (
-            <div className="mt-[2px] text-[11.5px] text-ink-mid">
+            <div className="mt-[2px] truncate text-[11.5px] text-ink-mid">
               {t('fan.customName')}{' '}
               <span className="border-b border-dashed border-line-strong">{fan.customName}</span>
             </div>
@@ -301,15 +301,22 @@ function ScanTab({
   return (
     <div className="p-4">
       <div className="flex items-center gap-2">
-        <span className="cap text-ink-low">Scan</span>
-        <DataAge at={fan.summary.generatedAt} prefix={t('fan.generatedPrefix')} />
-        <span className="num ml-auto text-micro text-ink-low">{fan.summary.modelLabel}</span>
+        <span className="cap shrink-0 text-ink-low">Scan</span>
+        {/* DataAge is the elastic member (flex-1 + truncate): the long RU
+            "СГЕНЕРИРОВАНО …" clips with an ellipsis instead of wrapping the row,
+            while the model label + refresh action stay fixed on the baseline. */}
+        <DataAge
+          at={fan.summary.generatedAt}
+          prefix={t('fan.generatedPrefix')}
+          className="min-w-0 flex-1 truncate"
+        />
+        <span className="num shrink-0 whitespace-nowrap text-micro text-ink-low">{fan.summary.modelLabel}</span>
         <button
           type="button"
           disabled={!runnable}
           title={blockedReason ?? t('fan.refreshTip')}
           onClick={() => runScan(true)}
-          className="num cursor-pointer text-micro tracking-[0.08em] text-clay-deep hover:text-clay disabled:cursor-default disabled:opacity-45"
+          className="num shrink-0 cursor-pointer whitespace-nowrap text-micro tracking-[0.08em] text-clay-deep hover:text-clay disabled:cursor-default disabled:opacity-45"
         >
           {scanRunning ? t('fan.scanning') : t('fan.refresh')}
         </button>

@@ -13,25 +13,28 @@ export function Titlebar(): React.JSX.Element {
 
   return (
     <header className="flex h-[46px] flex-none items-center gap-3.5 border-b border-line bg-bg1 px-4">
-      <div className="font-serif text-[17px] font-semibold tracking-[-0.01em]">
+      <div className="shrink-0 font-serif text-[17px] font-semibold tracking-[-0.01em]">
         Chat<span className="text-clay">Goose</span>
       </div>
+      {/* Search is the elastic member: flex-1 capped at 400px keeps its resting
+          size at wide widths but lets it SHRINK (min-w-0 + truncated placeholder)
+          under pressure instead of shoving the right-side badges off the edge. */}
       <button
         type="button"
         onClick={() => setPaletteOpen(true)}
-        className="ml-[18px] flex h-[30px] w-[400px] flex-none cursor-pointer items-center gap-2 rounded-full border border-line-strong bg-bg1 px-3 text-[13px] text-ink-low hover:border-clay-line"
+        className="ml-[18px] flex h-[30px] min-w-0 max-w-[400px] flex-1 cursor-pointer items-center gap-2 rounded-full border border-line-strong bg-bg1 px-3 text-[13px] text-ink-low hover:border-clay-line"
       >
-        ⌕<span className="flex-1 text-left">{t('palette.searchPh')}</span>
+        ⌕<span className="min-w-0 flex-1 truncate text-left">{t('palette.searchPh')}</span>
         <Kbd>{modCombo('K')}</Kbd>
       </button>
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex shrink-0 items-center gap-3">
         {account !== null && (
-          <span className="num rounded-full border border-line-strong bg-bg1 px-[10px] py-[3px] text-micro tracking-[0.1em] text-ink-mid uppercase">
+          <span className="num shrink-0 rounded-full border border-line-strong bg-bg1 px-[10px] py-[3px] text-micro tracking-[0.1em] whitespace-nowrap text-ink-mid uppercase">
             {account.displayName}
             {!account.isAuthenticated && <span className="ml-1.5 text-bad">· RE-AUTH</span>}
           </span>
         )}
-        <span className="cap text-ink-low">{t('titlebar.companionMode')}</span>
+        <span className="cap shrink-0 whitespace-nowrap text-ink-low">{t('titlebar.companionMode')}</span>
       </div>
     </header>
   );

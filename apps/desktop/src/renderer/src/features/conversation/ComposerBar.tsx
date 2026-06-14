@@ -94,7 +94,7 @@ export function ComposerBar({
             disabled={!canSend}
             title={canSend ? t('conv.attachVault') : cannotReason}
             className={
-              'flex cursor-pointer items-center gap-1 rounded-chip border px-2 py-0.5 text-[12.5px] transition-colors disabled:cursor-default disabled:opacity-45 ' +
+              'flex shrink-0 cursor-pointer items-center gap-1 rounded-chip border px-2 py-0.5 text-[12.5px] transition-colors disabled:cursor-default disabled:opacity-45 ' +
               (vaultOpen || attachedCount > 0
                 ? 'border-clay-line bg-clay-bg text-clay-deep'
                 : 'border-line bg-bg2 text-ink-mid hover:border-clay-line hover:text-clay-deep')
@@ -104,13 +104,13 @@ export function ComposerBar({
           </button>
         )}
         {!canSend ? (
-          <span className="num text-micro tracking-[0.08em] text-warn">{cannotReason}</span>
+          <span className="num min-w-0 truncate text-micro tracking-[0.08em] text-warn">{cannotReason}</span>
         ) : ppvComposeActive ? (
-          <span className="num text-micro tracking-[0.08em] text-ink-mid">
+          <span className="num min-w-0 truncate text-micro tracking-[0.08em] text-ink-mid">
             {t('conv.ppvComposeHint')}
           </span>
         ) : sequence !== null ? (
-          <span className="num flex items-baseline gap-2 text-micro tracking-[0.08em] text-ink-mid">
+          <span className="num flex min-w-0 items-baseline gap-2 text-micro tracking-[0.08em] text-ink-mid">
             {t('conv.sequenceSending', {
               n: sequence.totalParts,
               word: pluralWord(locale, sequence.totalParts, ['part', 'parts'], ['часть', 'части', 'частей']),
@@ -127,6 +127,7 @@ export function ComposerBar({
         <span className="ml-auto" />
         <Button
           variant="primary"
+          className="shrink-0"
           disabled={!canSend || blank || ppvComposeActive}
           title={
             !canSend
