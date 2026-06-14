@@ -43,10 +43,37 @@ export function ConversationView({
   const typing = useUiStore((s) => s.typing);
 
   // The chat row may not be loaded yet (preview opens before the lazy sync
-  // lands). Show just the thread so history paints immediately; the full body
-  // (dock/pills/composer) needs `chat` for sendability + the PPV machinery.
+  // lands), or a reactivation-queue fan has no local chat row at all. Still
+  // mount the AI dock + pills so a started/running op stays VISIBLE and the
+  // footer is never empty; only the live composer + vault need `chat` for
+  // sendability/PPV, so show a disabled placeholder (the old "composer
+  // disabled" contract) rather than dropping the whole footer.
   if (chat === null) {
-    return <Thread accountId={accountId} chatId={chatId} fanName="" density={density} scrollMode={scrollMode} />;
+    return (
+      <>
+        <Thread
+          accountId={accountId}
+          chatId={chatId}
+          fanName=""
+          density={density}
+          scrollMode={scrollMode}
+        />
+        <div data-density={density} className="flex flex-none flex-col">
+          <AiDockMount compact={features.dock === 'compact'} />
+          <AiPillRow
+            accountId={accountId}
+            chatId={chatId}
+            pills={features.pills}
+            replyTone={features.replyTone}
+          />
+          <div className="flex-none border-t border-line bg-bg1 px-4 py-3">
+            <div className="rounded-[8px] border border-line bg-bg2 px-3 py-2.5 text-[13px] text-ink-low">
+              {t('conv.loadingTitle')}
+            </div>
+          </div>
+        </div>
+      </>
+    );
   }
 
   const showGallery = features.galleryTab && conversationTab === 'gallery';
