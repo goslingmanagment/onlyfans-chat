@@ -75,7 +75,7 @@ export function QuickLook({
         onClick={closePreview}
         className="absolute inset-0 z-30 cursor-default bg-scrim"
       />
-      <div className="absolute top-1/2 left-1/2 z-40 flex h-[88%] w-[min(900px,92vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line-strong bg-bg1 shadow-pop">
+      <div className="absolute top-1/2 left-1/2 z-40 flex h-[92%] w-[min(1180px,95vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line-strong bg-bg1 shadow-pop">
         <div className="flex flex-none items-center gap-2.5 border-b border-line px-4 py-3">
           <Avatar name={name} url={row?.avatarUrl ?? null} size={28} radius={8} />
           <span className="font-serif text-[15.5px] font-semibold">{name}</span>
