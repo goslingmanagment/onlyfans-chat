@@ -108,7 +108,14 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
         const aiOp = useAiStore.getState().op;
         if (aiOp === null) return; // let the default through
         e.preventDefault();
-        const chat = findChat(aiOp.accountId, aiOp.chatId);
+        // Resolve canSend from the DB-backed singular chat cache (qk.chat,
+        // populated by ConversationView's useChat) — the SAME source the dock
+        // chip + composer use — not the chat-LIST cache, which usually lacks the
+        // Spenders-preview fan. Keeps ⌘1..0 copy-degrading exactly when the dock
+        // chip does for un-messageable fans (SPEC §7.0).
+        const chat = queryClient.getQueryData<ChatListItemVM | null>(
+          qk.chat(aiOp.accountId, aiOp.chatId),
+        );
         // unknown chat defaults to insert — inserting never sends by itself
         activateDockPart(Number(action.slice('ai-part-'.length)), {
           canSend: chat?.canSendMessage ?? true,
