@@ -77,6 +77,15 @@ export interface PollingSyncOptions {
   toMediaUrl: ToMediaUrl;
   /** ×4 polling slowdown when the shift credit budget is exhausted (never stops). */
   isBudgetExhausted?: () => boolean;
+  /**
+   * Gate for AUTOMATIC OFAPI message-body reads (settings.autoReadChats).
+   * Default OFF: poll-delta tail fetches, the read-state sweep and background
+   * media polling are skipped because each such GET marks the chat read on
+   * OnlyFans. The chat-list poll (listChats) and openConversation are NOT
+   * gated — the list never marks read, and an explicit open is the one
+   * sanctioned read.
+   */
+  autoReadEnabled?: () => boolean;
   now?: () => number;
   /** Inter-page pacing during multi-page chat walks (injectable for tests). */
   sleep?: SleepFn;
@@ -116,6 +125,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   const { client, data, toMediaUrl } = options;
   const now = options.now ?? Date.now;
   const isBudgetExhausted = options.isBudgetExhausted ?? ((): boolean => false);
+  const autoReadEnabled = options.autoReadEnabled ?? ((): boolean => false);
   const sleep: SleepFn =
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
@@ -169,6 +179,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     accountId: string,
     chatId: string,
     purpose: OfApiPurpose = 'message-tail',
+    // `force` = this read was triggered by an explicit user open (the sanctioned
+    // read when autoRead is OFF), so the follow-up media polling must run even
+    // when background reads are gated off.
+    force = false,
   ): Promise<{ freshIds: string[]; hadCachedMessages: boolean }> {
     const cachedPage = data.messages.page({ accountId, chatId, limit: 1 });
     const newestCached = cachedPage.items.at(-1)?.messageId;
@@ -190,7 +204,11 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     const upserts = messages.map((message) => mapMessage(accountId, chatId, message, toMediaUrl));
     data.messages.upsertMany(upserts);
     data.messages.prune(accountId, chatId); // retention (SPEC §10: 5,000/chat default)
-    trackUnreadyMedia(accountId, chatId, upserts);
+    // Media polling (client.getMessage) is itself a message-body read — only
+    // enroll it for an explicit open (force) or when auto-read is enabled.
+    if (force || autoReadEnabled()) {
+      trackUnreadyMedia(accountId, chatId, upserts);
+    }
     return {
       freshIds: fresh.map((message) => String(message.id)),
       hadCachedMessages: newestCached !== undefined,
@@ -395,35 +413,41 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       }
       upsertChatRows(accountId, head.chats);
 
-      for (const delta of deltas) {
-        const { freshIds, hadCachedMessages } = await fetchChatTail(accountId, delta.chatId);
-        if (prevSuccessAt === null) {
-          continue; // baseline: history is not news (notifications hang off these)
-        }
-        for (const messageId of freshIds) {
-          const row = data.messages.get(accountId, delta.chatId, messageId);
-          if (!row) {
-            continue;
+      // Tail fetches are AUTOMATIC message-body reads → gated on autoReadChats.
+      // The chat list, unread counts and previews above came from listChats
+      // (no read marked) and update in BOTH modes; only the per-delta body
+      // fetch + the live message/tip events it drives are skipped when OFF.
+      if (autoReadEnabled()) {
+        for (const delta of deltas) {
+          const { freshIds, hadCachedMessages } = await fetchChatTail(accountId, delta.chatId);
+          if (prevSuccessAt === null) {
+            continue; // baseline: history is not news (notifications hang off these)
           }
-          // No cached boundary (chat never opened / just discovered): the tail
-          // is mostly backlog — only messages newer than the previous successful
-          // poll are live. With a boundary, fresh-by-id is exact.
-          if (!hadCachedMessages && Date.parse(row.createdAt) <= prevSuccessAt) {
-            continue;
-          }
-          emit(
-            row.isSentByMe
-              ? { type: 'messageSent', accountId, chatId: delta.chatId, messageId }
-              : { type: 'messageReceived', accountId, chatId: delta.chatId, messageId },
-          );
-          if (row.isTip) {
-            emit({
-              type: 'tipReceived',
-              accountId,
-              chatId: delta.chatId,
-              messageId,
-              ...(row.tipAmount != null ? { amountUsd: row.tipAmount } : {}),
-            });
+          for (const messageId of freshIds) {
+            const row = data.messages.get(accountId, delta.chatId, messageId);
+            if (!row) {
+              continue;
+            }
+            // No cached boundary (chat never opened / just discovered): the tail
+            // is mostly backlog — only messages newer than the previous successful
+            // poll are live. With a boundary, fresh-by-id is exact.
+            if (!hadCachedMessages && Date.parse(row.createdAt) <= prevSuccessAt) {
+              continue;
+            }
+            emit(
+              row.isSentByMe
+                ? { type: 'messageSent', accountId, chatId: delta.chatId, messageId }
+                : { type: 'messageReceived', accountId, chatId: delta.chatId, messageId },
+            );
+            if (row.isTip) {
+              emit({
+                type: 'tipReceived',
+                accountId,
+                chatId: delta.chatId,
+                messageId,
+                ...(row.tipAmount != null ? { amountUsd: row.tipAmount } : {}),
+              });
+            }
           }
         }
       }
@@ -502,7 +526,9 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       clearTimeout(sweepTimer);
       sweepTimer = null;
     }
-    if (!running || !openConversation) {
+    // The read-state sweep calls listMessages (a message-body read) — never arm
+    // its timer when automatic reads are off.
+    if (!running || !openConversation || !autoReadEnabled()) {
       return;
     }
     sweepTimer = setTimeout(() => {
@@ -511,7 +537,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   }
 
   async function runSweep(): Promise<void> {
-    if (!openConversation || !sweepEligible()) {
+    // listMessages here marks the open chat read on OnlyFans — gated off.
+    if (!autoReadEnabled() || !openConversation || !sweepEligible()) {
       return;
     }
     if (now() - sweepLastChangeAt > READ_STATE_SWEEP_IDLE_STOP_MS) {
@@ -650,6 +677,14 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       return () => listeners.delete(listener);
     },
     async refreshChat(accountId, chatId, purpose) {
+      // refreshChat is the shared body-read seam for Spenders preview/refresh
+      // AND the hub messageReceived reaction — all AUTOMATIC. When auto-read is
+      // off, skip the tail GET (which would mark the chat read) and just nudge
+      // the list; listChats-driven rows stay fresh through the poll.
+      if (!autoReadEnabled()) {
+        emit({ type: 'chatListUpdated', accountId });
+        return;
+      }
       await fetchChatTail(accountId, chatId, purpose);
       emit({ type: 'chatListUpdated', accountId });
     },
@@ -658,7 +693,40 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       openConversation = { accountId, chatId };
       sweepLastChangeAt = now(); // re-arm the idle window on every open
       scheduleSweep();
-      await Promise.all([fetchChatTail(accountId, chatId), refreshFanDetail(accountId, chatId)]);
+      // Optimistic local unread-clear (body-free; runs in BOTH modes). Fixes the
+      // stuck-unread bug: reading a chat in OnlyMonster does not change its
+      // lastMessage, so the hot poll never re-surfaces it and the cached
+      // unread_count stays stale. Clearing on open repaints the badge without a
+      // POST mark-as-read or any body read — and keeps the account-rail
+      // SUM(unread_count) honest. We re-upsert the existing row with the unread
+      // fields zeroed and every other list field preserved. (OnlyMonster-side
+      // reads still reconcile fully via the deep sweep's listChats walk.)
+      const cached = data.chats.get(accountId, chatId);
+      if (cached !== null && (cached.unreadCount > 0 || cached.hasUnreadTips)) {
+        data.chats.upsert({
+          accountId: cached.accountId,
+          chatId: cached.chatId,
+          fanName: cached.fanName,
+          avatar: cached.avatar,
+          unreadCount: 0,
+          hasUnreadTips: false,
+          lastMessageAt: cached.lastMessageAt,
+          lastMessagePreview: cached.lastMessagePreview,
+          lastMessageIsSentByMe: cached.lastMessageIsSentByMe,
+          lastMessageId: cached.lastMessageId,
+          lastReadMessageId: cached.lastReadMessageId,
+          pinned: cached.pinned,
+          canSendMessage: cached.canSendMessage,
+          canNotSendReason: cached.canNotSendReason,
+          raw: null, // write-only column; chats reads never select it
+        });
+      }
+      // openConversation is the ONE sanctioned message-body read when auto-read
+      // is OFF — force the tail fetch (and its media polling) unconditionally.
+      await Promise.all([
+        fetchChatTail(accountId, chatId, 'message-tail', /* force */ true),
+        refreshFanDetail(accountId, chatId),
+      ]);
     },
     closeConversation(accountId, chatId) {
       if (

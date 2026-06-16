@@ -440,6 +440,7 @@ function buildStore(): MockStore {
     notificationsEnabled: true,
     soundEnabled: true,
     markAsReadOnOpen: true,
+    autoReadChats: false,
     defaultReplyTone: 'casual',
     creditBudgetPerShift: null,
     accountMappings: { acct_lora: 'builtin:lora' },

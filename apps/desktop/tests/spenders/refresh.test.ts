@@ -62,6 +62,9 @@ function makeHarness(opts: {
     },
     getMappedListIds: async () => opts.mapped ?? ['100', '200'],
     isBudgetExhausted: opts.budgetExhausted ?? ((): boolean => false),
+    // Auto-read ON so the queue/hydrate paths still exercise the tail GET; the
+    // default-OFF gate is covered by its own describe block below.
+    getAutoRead: () => true,
     now: () => nowMs,
     sleep: async (ms) => {
       sleeps.push(ms);
@@ -257,6 +260,7 @@ describe('scoped refresh queue', () => {
       scopeChatIds: async (_a, scope) => (scope === 'all' ? ['1', '2'] : ['9']),
       getMappedListIds: async () => ['100'],
       isBudgetExhausted: () => false,
+      getAutoRead: () => true,
       sleep: async () => undefined,
     });
     service.subscribe((frame) => frames.push(frame));
@@ -315,6 +319,7 @@ describe('hydrateIfStale (quick-look on-open)', () => {
       scopeChatIds: async () => [],
       getMappedListIds: async () => [],
       isBudgetExhausted: () => false,
+      getAutoRead: () => true,
       sleep: async () => undefined,
     });
     const first = service.hydrateIfStale(ACCT, '7');
@@ -332,5 +337,77 @@ describe('hydrateIfStale (quick-look on-open)', () => {
 
     await h.service.hydrateIfStale(ACCT, '7');
     expect(h.fetched).toHaveLength(1); // no second spend
+  });
+});
+
+// ── auto-read OFF (default) ─────────────────────────────────────────────────
+// The per-fan tail GET marks each fan read on OnlyFans, so when autoReadChats
+// is off the queue drains WITHOUT fetching and hydrateIfStale ensures the row
+// (listChats — safe) but never tail-fetches.
+describe('auto-read OFF (default)', () => {
+  function makeOffHarness(scopes: Record<string, string[]>): Harness {
+    let nowMs = new Date('2026-06-13T12:00:00.000Z').getTime();
+    const frames: SpendersRefreshFrame[] = [];
+    const fetched: Array<{ chatId: string; purpose: string }> = [];
+    const ensured: Array<{ chatId: string; username: string | null }> = [];
+    const sleeps: number[] = [];
+    const service = createSpendersRefresh({
+      data,
+      refreshChat: async (accountId, chatId, purpose) => {
+        fetched.push({ chatId, purpose });
+        data.threadFetchLog.stamp(accountId, chatId, new Date(nowMs).toISOString());
+      },
+      ensureChat: async (_accountId, chatId, hint) => {
+        ensured.push({ chatId, username: hint?.username ?? null });
+        return true;
+      },
+      scopeChatIds: async (_accountId, scope) => {
+        const ids = scopes[scope];
+        if (ids === undefined) throw new Error(`unknown scope ${scope}`);
+        return ids;
+      },
+      getMappedListIds: async () => ['100', '200'],
+      isBudgetExhausted: () => false,
+      getAutoRead: () => false,
+      now: () => nowMs,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+    service.subscribe((frame) => frames.push(frame));
+    return {
+      service,
+      frames,
+      fetched,
+      ensured,
+      sleeps,
+      setNow: (ms) => {
+        nowMs = ms;
+      },
+      advance: (ms) => {
+        nowMs += ms;
+      },
+    };
+  }
+
+  it('the queue drains and stamps the scope WITHOUT any tail fetch', async () => {
+    const h = makeOffHarness({ all: ['1', '2', '3'] });
+    await h.service.start(ACCT, 'all');
+    await until(() => h.frames.some((f) => f.state === 'done'));
+
+    expect(h.fetched).toHaveLength(0); // no fan read on OnlyFans
+    expect(data.threadFetchLog.get(ACCT, '1')).toBeNull();
+    expect(h.frames.at(-1)).toMatchObject({ state: 'done', done: 3, total: 3 });
+    expect(h.service.freshness(ACCT)['all']).toBeDefined();
+  });
+
+  it('hydrateIfStale ensures the row but skips the tail fetch', async () => {
+    const h = makeOffHarness({});
+    const result = await h.service.hydrateIfStale(ACCT, '7', { username: 'merritt' });
+
+    expect(result).toEqual({ hasChat: true });
+    expect(h.ensured).toEqual([{ chatId: '7', username: 'merritt' }]); // listChats: safe
+    expect(h.fetched).toHaveLength(0); // no message-body read
+    expect(data.threadFetchLog.get(ACCT, '7')).toBeNull();
   });
 });

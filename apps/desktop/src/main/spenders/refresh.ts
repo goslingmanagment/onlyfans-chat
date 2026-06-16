@@ -84,6 +84,13 @@ export interface SpendersRefreshOptions {
   getMappedListIds: (accountId: string) => Promise<string[]>;
   /** The queue pauses FIRST when the shift budget trips (SPEC §6.1). */
   isBudgetExhausted: () => boolean;
+  /**
+   * Gate for AUTOMATIC message-body reads (settings.autoReadChats). Default
+   * OFF: the per-fan refreshChat tail GET marks each fan read on OnlyFans, so
+   * the hydrate + the refresh queue skip it. ensureChat (listChats) is safe
+   * and still runs. Default () => false.
+   */
+  getAutoRead?: () => boolean;
   now?: () => number;
   sleep?: SleepFn;
   ttlMs?: number;
@@ -119,6 +126,7 @@ interface ActiveQueue {
 
 export function createSpendersRefresh(options: SpendersRefreshOptions): SpendersRefreshService {
   const { data, refreshChat, ensureChat, scopeChatIds, getMappedListIds, isBudgetExhausted } = options;
+  const getAutoRead = options.getAutoRead ?? ((): boolean => false);
   const now = options.now ?? Date.now;
   const sleep: SleepFn =
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -191,7 +199,10 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
       }
       const chatId = queue.pending[0];
       if (chatId === undefined) break;
-      if (!isWithinFetchTtl(stampMsOf(accountId, chatId), now(), ttlMs)) {
+      // Auto-read OFF: the per-fan tail GET marks the fan read on OnlyFans, so
+      // skip it. We still drain the queue (no body reads happen) so the run
+      // completes and stamps «последний апдейт» honestly for the cached view.
+      if (getAutoRead() && !isWithinFetchTtl(stampMsOf(accountId, chatId), now(), ttlMs)) {
         try {
           await refreshChat(accountId, chatId, SPENDERS_REFRESH_PURPOSE);
           consecutiveFailures = 0;
@@ -249,7 +260,13 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
 
   return {
     async hydrateIfStale(accountId, chatId, hint) {
+      // ensureChat is listChats-backed (no read marked) — always safe.
       const hasChat = await ensureChat(accountId, chatId, hint);
+      // The tail GET below marks the fan read on OnlyFans — skip it when
+      // auto-read is OFF (the quick-look thread then shows cached rows only).
+      if (!getAutoRead()) {
+        return { hasChat };
+      }
       if (isWithinFetchTtl(stampMsOf(accountId, chatId), now(), ttlMs)) {
         return { hasChat };
       }

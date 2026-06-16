@@ -106,6 +106,12 @@ export function BehaviorSettings({
           onChange={(v) => patch({ markAsReadOnOpen: v })}
         />
         <Toggle
+          label={t('behavior.autoRead')}
+          hint={t('behavior.autoReadHint')}
+          on={settings.autoReadChats}
+          onChange={(v) => patch({ autoReadChats: v })}
+        />
+        <Toggle
           label={t('behavior.promptCaching')}
           hint={t('behavior.promptCachingHint')}
           on={settings.promptCachingEnabled}

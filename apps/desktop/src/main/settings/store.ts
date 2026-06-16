@@ -69,6 +69,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'notificationsEnabled',
   'soundEnabled',
   'markAsReadOnOpen',
+  'autoReadChats',
   'defaultReplyTone',
   'creditBudgetPerShift',
   'accountMappings',
@@ -98,6 +99,7 @@ const persistedFieldSchemas = {
   notificationsEnabled: z.boolean(),
   soundEnabled: z.boolean(),
   markAsReadOnOpen: z.boolean(),
+  autoReadChats: z.boolean(),
   defaultReplyTone: z.enum(REPLY_TONE_VALUES),
   creditBudgetPerShift: z.number().positive().nullable(),
   accountMappings: z.record(z.string(), z.string()),
@@ -141,6 +143,9 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   soundEnabled: true,
   // P3 is strictly read-only toward OFAPI — mark-as-read stays off by default.
   markAsReadOnOpen: false,
+  // Default OFF = no automatic OFAPI message-body reads (every such GET marks
+  // the chat read on OnlyFans, which the fan sees instantly).
+  autoReadChats: false,
   defaultReplyTone: DEFAULT_SETTINGS.defaultReplyTone,
   creditBudgetPerShift: null,
   accountMappings: {},
@@ -169,6 +174,7 @@ export const settingsPatchSchema = z.strictObject({
   notificationsEnabled: persistedFieldSchemas.notificationsEnabled.optional(),
   soundEnabled: persistedFieldSchemas.soundEnabled.optional(),
   markAsReadOnOpen: persistedFieldSchemas.markAsReadOnOpen.optional(),
+  autoReadChats: persistedFieldSchemas.autoReadChats.optional(),
   defaultReplyTone: persistedFieldSchemas.defaultReplyTone.optional(),
   creditBudgetPerShift: persistedFieldSchemas.creditBudgetPerShift.optional(),
   accountMappings: persistedFieldSchemas.accountMappings.optional(),
@@ -278,6 +284,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       notificationsEnabled: readField('notificationsEnabled'),
       soundEnabled: readField('soundEnabled'),
       markAsReadOnOpen: readField('markAsReadOnOpen'),
+      autoReadChats: readField('autoReadChats'),
       defaultReplyTone: readField('defaultReplyTone'),
       creditBudgetPerShift: readField('creditBudgetPerShift'),
       accountMappings: readField('accountMappings'),

@@ -223,6 +223,15 @@ export interface SettingsVM {
   notificationsEnabled: boolean;
   soundEnabled: boolean;
   markAsReadOnOpen: boolean;
+  /**
+   * When on, the app may issue automatic OFAPI message-body reads (background
+   * poll deltas, read-state sweeps, Spenders/hub refreshes, AI fetch-through) —
+   * each such GET marks the chat READ on OnlyFans and the fan instantly sees
+   * "read". Off (default): the ONLY message-body read is when the user opens a
+   * conversation. The chat list / unread counts / previews come from listChats
+   * (which does NOT mark read) and keep working in both modes.
+   */
+  autoReadChats: boolean;
   defaultReplyTone: ReplyTone;
   creditBudgetPerShift: number | null;
   accountMappings: Record<string, string>;

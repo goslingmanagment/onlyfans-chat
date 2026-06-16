@@ -59,6 +59,14 @@ export interface LoadTranscriptArgs {
    * fetched. Quick features re-fetch the whole window from the top instead.
    */
   deep?: boolean;
+  /**
+   * When false/omitted, the OFAPI fetch-through (listMessages paging when the
+   * db window is short) is suppressed and the transcript is served purely from
+   * already-cached db rows. The fetch-through is a message-body read that marks
+   * the fan read on OnlyFans, so it is allowed only when settings.autoReadChats
+   * is on (passed by the coordinator). True restores legacy fetch-through.
+   */
+  allowFetchThrough?: boolean;
   signal?: AbortSignal;
   onPage?: (currentPage: number, targetPages: number) => void;
 }
@@ -379,7 +387,7 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
   }
 
   return {
-    async loadTranscript({ accountId, chatId, count, deep, signal, onPage }) {
+    async loadTranscript({ accountId, chatId, count, deep, signal, onPage, allowFetchThrough }) {
       const page = data.messages.page({ accountId, chatId, limit: count });
       const rows = page.items.filter((row) => !row.deleted);
 
@@ -389,7 +397,17 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
       // fetch only the gap of older history, cursoring from the oldest cached
       // row (first_id is boundary-inclusive; the dedupe collapses the overlap).
       const fetched: OfapiChatMessage[] = [];
-      const needed = deep === true ? count - rows.length : rows.length < count ? count : 0;
+      // Fetch-through is an AUTOMATIC OFAPI message-body read (the GET marks the
+      // chat read on OnlyFans). Run it only when auto-read is enabled; otherwise
+      // serve the transcript purely from locally-cached rows (needed = 0), so AI
+      // never marks a fan read.
+      const needed = allowFetchThrough
+        ? deep === true
+          ? count - rows.length
+          : rows.length < count
+            ? count
+            : 0
+        : 0;
       if (needed > 0) {
         const targetPages = Math.min(estimateTargetPages(needed), DEEP_FETCH_MAX_PAGES);
         let cursor: string | undefined = deep === true ? rows[0]?.messageId : undefined;

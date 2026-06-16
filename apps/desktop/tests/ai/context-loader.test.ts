@@ -65,7 +65,12 @@ describe('createContextLoader', () => {
 
   it('serves the transcript from the db without OFAPI calls when the window is full', async () => {
     seedMessages(data, 5);
-    const messages = await loader.loadTranscript({ accountId: ACCT, chatId: CHAT, count: 5 });
+    const messages = await loader.loadTranscript({
+      accountId: ACCT,
+      chatId: CHAT,
+      count: 5,
+      allowFetchThrough: true,
+    });
     expect(messages).toHaveLength(5);
     expect(stub.listMessagesCalls).toHaveLength(0);
     expect(messages.map((m) => m.id)).toEqual([1, 2, 3, 4, 5]);
@@ -79,7 +84,12 @@ describe('createContextLoader', () => {
       { messages: page2, nextPageUrl: null },
     ]);
 
-    const messages = await loader.loadTranscript({ accountId: ACCT, chatId: CHAT, count: 150 });
+    const messages = await loader.loadTranscript({
+      accountId: ACCT,
+      chatId: CHAT,
+      count: 150,
+      allowFetchThrough: true,
+    });
 
     expect(stub.listMessagesCalls).toHaveLength(2);
     expect(stub.listMessagesCalls[0]).toMatchObject({ order: 'desc', limit: 100 });
@@ -96,7 +106,12 @@ describe('createContextLoader', () => {
     stub.setMessagePages([
       { messages: [fetchedMessage(900), fetchedMessage(901)], nextPageUrl: null },
     ]);
-    const messages = await loader.loadTranscript({ accountId: ACCT, chatId: CHAT, count: 4 });
+    const messages = await loader.loadTranscript({
+      accountId: ACCT,
+      chatId: CHAT,
+      count: 4,
+      allowFetchThrough: true,
+    });
     expect(messages).toHaveLength(4);
   });
 
@@ -122,7 +137,12 @@ describe('createContextLoader', () => {
         raw: {},
       },
     ]);
-    const messages = await loader.loadTranscript({ accountId: ACCT, chatId: CHAT, count: 1 });
+    const messages = await loader.loadTranscript({
+      accountId: ACCT,
+      chatId: CHAT,
+      count: 1,
+      allowFetchThrough: true,
+    });
     const line = formatTranscript(messages);
     expect(line).toBe('[08:30] Fan: [Tip: $5.00] thanks babe');
   });
@@ -131,7 +151,12 @@ describe('createContextLoader', () => {
     seedMessages(data, 3);
     data.messages.markDeleted(ACCT, CHAT, ['2']);
     stub.setMessagePages([{ messages: [], nextPageUrl: null }]);
-    const messages = await loader.loadTranscript({ accountId: ACCT, chatId: CHAT, count: 3 });
+    const messages = await loader.loadTranscript({
+      accountId: ACCT,
+      chatId: CHAT,
+      count: 3,
+      allowFetchThrough: true,
+    });
     expect(messages.map((m) => m.id)).toEqual([1, 3]);
   });
 
@@ -277,6 +302,7 @@ describe('createContextLoader', () => {
       chatId: CHAT,
       count: 250,
       deep: true,
+      allowFetchThrough: true,
       onPage: (currentPage, targetPages) => pages.push([currentPage, targetPages]),
     });
 
@@ -302,6 +328,7 @@ describe('createContextLoader', () => {
       chatId: CHAT,
       count: 30,
       deep: true,
+      allowFetchThrough: true,
     });
     expect(stub.listMessagesCalls).toHaveLength(0);
     expect(messages).toHaveLength(30);
@@ -317,6 +344,7 @@ describe('createContextLoader', () => {
       chatId: CHAT,
       count: 150,
       deep: true,
+      allowFetchThrough: true,
     });
     expect(stub.listMessagesCalls[0]?.firstId).toBeUndefined();
     expect(messages).toHaveLength(150);
@@ -345,6 +373,7 @@ describe('createContextLoader', () => {
       chatId: CHAT,
       count: 300,
       deep: true,
+      allowFetchThrough: true,
     });
     expect(messages).toHaveLength(120);
   });

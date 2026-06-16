@@ -73,6 +73,7 @@ describe('settings store', () => {
     expect(vm.notificationsEnabled).toBe(true);
     expect(vm.soundEnabled).toBe(true);
     expect(vm.markAsReadOnOpen).toBe(false);
+    expect(vm.autoReadChats).toBe(false);
     expect(vm.creditBudgetPerShift).toBeNull();
     expect(vm.accountMappings).toEqual({});
     expect(vm.accountOrder).toEqual([]);

@@ -57,6 +57,11 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     notificationsEnabled: true,
     soundEnabled: true,
     markAsReadOnOpen: false,
+    // AI coordinator tests rely on fetch-through (coordinator passes
+    // allowFetchThrough: settings.autoReadChats); default ON here so the deep
+    // features exercise the legacy fetch path. No AI test asserts the OFF/no-fetch
+    // behavior, so a true default is safe (override per-test if one ever does).
+    autoReadChats: true,
     defaultReplyTone: 'casual',
     creditBudgetPerShift: null,
     accountMappings: { [ACCT]: 'builtin:lora' },

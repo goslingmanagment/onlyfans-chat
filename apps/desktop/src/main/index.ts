@@ -338,7 +338,8 @@ async function initOfapi(
     budgetGuard.check();
   });
 
-  let settingsCache: { creditBudgetPerShift: number | null } | null = await settingsStore.get();
+  let settingsCache: { creditBudgetPerShift: number | null; autoReadChats: boolean } | null =
+    await settingsStore.get();
 
   // Hub config fingerprint: reconfigure the SSE connection only when the base
   // URL or the chatter key actually changed — NOT on every settings write
@@ -380,6 +381,9 @@ async function initOfapi(
     data: dataLayer,
     toMediaUrl,
     isBudgetExhausted: () => budgetGuard.isExhausted(),
+    // Default OFF: no automatic message-body reads (poll deltas, sweeps, media
+    // polling) so OnlyFans never marks a chat read without an explicit open.
+    autoReadEnabled: () => settingsCache?.autoReadChats ?? false,
   });
 
   const lastEventIdSchema = z.number().int().nonnegative();
@@ -460,6 +464,9 @@ async function initOfapi(
     getMappedListIds: async (accountId) =>
       (await settingsStore.get()).spendersListMappings[accountId] ?? [],
     isBudgetExhausted: () => budgetGuard.isExhausted(),
+    // Default OFF: skip the per-fan refreshChat body read so a Spenders refresh
+    // never marks fans read on OnlyFans (ensureChat/listChats stay, they don't).
+    getAutoRead: () => settingsCache?.autoReadChats ?? false,
   });
   sync.subscribe((event) => engine.handleSyncEvent(event));
   // Awaited on purpose (adversarial review 2026-06-11): the "reconciliation

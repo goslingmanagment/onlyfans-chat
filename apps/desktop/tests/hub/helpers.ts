@@ -71,6 +71,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     notificationsEnabled: true,
     soundEnabled: true,
     markAsReadOnOpen: false,
+    autoReadChats: false,
     defaultReplyTone: 'casual',
     creditBudgetPerShift: null,
     accountMappings: {},

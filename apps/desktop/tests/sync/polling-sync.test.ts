@@ -201,6 +201,10 @@ describe('PollingSync', () => {
       data,
       toMediaUrl: (url) => `media://${Buffer.from(url).toString('base64url')}`,
       isBudgetExhausted: budgetExhausted,
+      // Auto-read ON so the existing tests keep exercising the legacy auto-read
+      // paths (poll-delta tail fetch, read-state sweep, media polling). The
+      // default-OFF gate is covered by its own describe block below.
+      autoReadEnabled: () => true,
       // No-op sleep so multi-page walks resolve under fake timers; pacing asserted via `sleeps`.
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -739,6 +743,86 @@ describe('PollingSync', () => {
       expect(first).not.toBeNull();
       expect(second).not.toBeNull();
       expect(Date.parse(second ?? '')).toBeGreaterThan(Date.parse(first ?? ''));
+      sync.stop();
+    });
+  });
+
+  // ── auto-read OFF (default) ───────────────────────────────────────────────
+  // With autoReadChats off the app does ZERO automatic message-body reads: a
+  // poll delta and refreshChat must NOT call listMessages (no thread_fetch_log
+  // stamp). The chat list still updates via listChats. openConversation is the
+  // one sanctioned read and STILL fetches.
+  describe('auto-read OFF (default)', () => {
+    function makeSyncOff() {
+      const sync = createPollingSync({
+        client: stub.client,
+        data,
+        toMediaUrl: (url) => `media://${Buffer.from(url).toString('base64url')}`,
+        isBudgetExhausted: () => false,
+        autoReadEnabled: () => false,
+        sleep: async (ms) => {
+          sleeps.push(ms);
+        },
+      });
+      sync.subscribe((event) => events.push(event));
+      return sync;
+    }
+
+    it('a poll delta does NOT tail-fetch (no listMessages, no stamp); the list still updates', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      stub.setMessages([makeMessage({ id: 5 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      const callsAfterBaseline = stub.listMessagesCalls.length;
+      events = [];
+
+      // a new message lands — normally this tail-fetches; OFF it must not
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 6, unread: 1 })]);
+      stub.setMessages([makeMessage({ id: 5 }), makeMessage({ id: 6 })]);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(stub.listMessagesCalls.length).toBe(callsAfterBaseline);
+      expect(data.threadFetchLog.get(ACCT, '101')).toBeNull();
+      expect(data.messages.count(ACCT, '101')).toBe(0); // no bodies read
+      // the listChats-driven list still repaints, with the fresh unread count
+      expect(events.some((e) => e.type === 'chatListUpdated')).toBe(true);
+      expect(data.chats.get(ACCT, '101')?.unreadCount).toBe(1);
+      // no live message/tip events without a body read
+      expect(
+        events.filter((e) => e.type === 'messageReceived' || e.type === 'messageSent'),
+      ).toHaveLength(0);
+      sync.stop();
+    });
+
+    it('refreshChat does NOT call listMessages (no stamp); it only nudges the list', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      stub.setMessages([makeMessage({ id: 5 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      const callsBefore = stub.listMessagesCalls.length;
+      events = [];
+
+      await sync.refreshChat(ACCT, '101', 'spenders-refresh');
+      expect(stub.listMessagesCalls.length).toBe(callsBefore);
+      expect(data.threadFetchLog.get(ACCT, '101')).toBeNull();
+      expect(events.some((e) => e.type === 'chatListUpdated')).toBe(true);
+      sync.stop();
+    });
+
+    it('openConversation STILL reads (the one sanctioned read) and stamps the fan', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5, unread: 2 })]);
+      stub.setMessages([makeMessage({ id: 4 }), makeMessage({ id: 5, fromMe: true })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      const callsBefore = stub.listMessagesCalls.length;
+
+      await sync.openConversation(ACCT, '101');
+      expect(stub.listMessagesCalls.length).toBe(callsBefore + 1);
+      expect(data.messages.count(ACCT, '101')).toBe(2);
+      expect(data.threadFetchLog.get(ACCT, '101')).not.toBeNull();
       sync.stop();
     });
   });

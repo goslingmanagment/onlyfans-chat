@@ -782,6 +782,8 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       count: resolveMessageCount(op.feature, settings),
       deep,
       signal: op.abort.signal,
+      // Auto-read OFF ⇒ AI works from cached transcript only (never marks a fan read).
+      allowFetchThrough: settings.autoReadChats,
       onPage: (currentPage, targetPages) =>
         emitProgress(op, 'loading-messages', {
           currentPage,

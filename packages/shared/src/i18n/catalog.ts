@@ -197,6 +197,11 @@ export const UI_MESSAGES = {
     en: 'Marks the chat read on OnlyFans when you open it',
     ru: 'Отмечает чат прочитанным в OnlyFans при открытии',
   },
+  'behavior.autoRead': { en: 'Auto-read chats', ru: 'Авточтение' },
+  'behavior.autoReadHint': {
+    en: 'When on, the app auto-loads chats in the background — OnlyFans marks them read and the fan instantly sees “read”. Off (default): nothing is read until you open a chat yourself.',
+    ru: 'Когда включено, приложение само подгружает чаты в фоне — OnlyFans помечает их прочитанными, и фанат сразу видит «прочитано». Выключено (по умолчанию): ничего не читается, пока вы сами не откроете чат.',
+  },
   'behavior.promptCaching': { en: 'Prompt caching', ru: 'Кэш промптов' },
   'behavior.promptCachingHint': {
     en: 'Reuse prompt prefixes to cut LLM cost',
