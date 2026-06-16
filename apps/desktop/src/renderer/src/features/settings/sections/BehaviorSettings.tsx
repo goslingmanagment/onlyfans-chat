@@ -100,12 +100,6 @@ export function BehaviorSettings({
           onChange={(v) => patch({ soundEnabled: v })}
         />
         <Toggle
-          label={t('behavior.markRead')}
-          hint={t('behavior.markReadHint')}
-          on={settings.markAsReadOnOpen}
-          onChange={(v) => patch({ markAsReadOnOpen: v })}
-        />
-        <Toggle
           label={t('behavior.autoRead')}
           hint={t('behavior.autoReadHint')}
           on={settings.autoReadChats}

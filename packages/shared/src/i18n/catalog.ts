@@ -192,11 +192,6 @@ export const UI_MESSAGES = {
   'behavior.notificationsHint': { en: 'Toast on incoming messages', ru: 'Всплывашка при входящем сообщении' },
   'behavior.sound': { en: 'Sound', ru: 'Звук' },
   'behavior.soundHint': { en: 'Blip with each notification', ru: 'Сигнал при каждом уведомлении' },
-  'behavior.markRead': { en: 'Mark as read on open', ru: 'Прочитано при открытии' },
-  'behavior.markReadHint': {
-    en: 'Marks the chat read on OnlyFans when you open it',
-    ru: 'Отмечает чат прочитанным в OnlyFans при открытии',
-  },
   'behavior.autoRead': { en: 'Auto-read chats', ru: 'Авточтение' },
   'behavior.autoReadHint': {
     en: 'When on, the app auto-loads chats in the background — OnlyFans marks them read and the fan instantly sees “read”. Off (default): nothing is read until you open a chat yourself.',
