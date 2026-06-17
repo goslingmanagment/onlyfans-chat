@@ -8,10 +8,11 @@
 
 import { useEffect, useState } from 'react';
 import type { FanPanelVM, SpenderRowVM } from '../../../../preload/contract';
-import { useFan, useMessages } from '../../bridge/queries';
+import { useFan, useMessages, useRefreshConversation } from '../../bridge/queries';
 import { useT } from '../../lib/i18n';
 import { formatWholeDollars } from '../../lib/money';
 import { formatLastSeen, isOnline } from '../../lib/time';
+import { cx } from '../../lib/cx';
 import { Avatar } from '../../design/Avatar';
 import { Kbd } from '../../design/Kbd';
 import { SkeletonThread } from '../../design/Skeleton';
@@ -54,6 +55,8 @@ export function QuickLook({
   const closePreview = useSpendersStore((s) => s.closePreview);
   const setPreviewAiBlocked = useSpendersStore((s) => s.setPreviewAiBlocked);
   const clearPreviewAiBlocked = useSpendersStore((s) => s.clearPreviewAiBlocked);
+  const pushToast = useUiStore((s) => s.pushToast);
+  const refresh = useRefreshConversation();
   const [openingChat, setOpeningChat] = useState(false);
   const [openFailedFor, setOpenFailedFor] = useState<string | null>(null);
   const [hydrate, setHydrate] = useState<HydrateState | null>(null);
@@ -99,6 +102,17 @@ export function QuickLook({
       : !hasLocalHistory && hydratePhase === 'error'
         ? t('sp.historyFetchFailed')
         : null;
+  const refreshPending =
+    refresh.isPending &&
+    refresh.variables?.accountId === accountId &&
+    refresh.variables?.chatId === fanId;
+  function handleRefresh(): void {
+    if (refreshPending) return;
+    refresh.mutate(
+      { accountId, chatId: fanId },
+      { onError: () => pushToast({ title: t('conv.refreshFailed'), body: row?.name ?? fanId }) },
+    );
+  }
 
   // The preview IS the active conversation while open: per-chat draft
   // load/persist + dock discard-on-switch ride the existing machinery.
@@ -205,6 +219,19 @@ export function QuickLook({
             {t('sp.fan')}{' '}
             <b className="font-semibold text-ink-mid">{dayCounter(t, row?.fanDays ?? null)}</b>
           </span>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={refreshPending}
+            title={t('conv.refreshTip')}
+            aria-label={refreshPending ? t('conv.refreshing') : t('conv.refresh')}
+            aria-busy={refreshPending}
+            className="flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-full border border-line bg-bg2 text-ink-mid transition-colors duration-150 hover:border-clay-line hover:bg-clay-bg hover:text-clay-deep disabled:cursor-default disabled:opacity-50"
+          >
+            <span className={cx('text-[15px] leading-none', refreshPending && 'inline-block animate-spin')}>
+              ↻
+            </span>
+          </button>
         </div>
         <ConversationView
           accountId={accountId}
