@@ -8,12 +8,13 @@
 
 import { useEffect, useState } from 'react';
 import type { FanPanelVM, SpenderRowVM } from '../../../../preload/contract';
-import { useFan } from '../../bridge/queries';
+import { useFan, useMessages } from '../../bridge/queries';
 import { useT } from '../../lib/i18n';
 import { formatWholeDollars } from '../../lib/money';
 import { formatLastSeen, isOnline } from '../../lib/time';
 import { Avatar } from '../../design/Avatar';
 import { Kbd } from '../../design/Kbd';
+import { SkeletonThread } from '../../design/Skeleton';
 import { ConversationView } from '../conversation/ConversationView';
 import { PREVIEW_FEATURES } from '../conversation/conversationFeatures';
 import { handleConversationChange } from '../ai/aiStore';
@@ -22,6 +23,23 @@ import { presenceKey, useUiStore } from '../../state/uiStore';
 import { useSpendersStore } from './spendersStore';
 import { dayCounter } from './SpenderRowItem';
 import { hydratePreviewFan, ensureAndOpenPreviewChat } from './previewActions';
+import { deriveHydrateStatus, type PreviewHydratePhase } from './previewHydrateStatus';
+
+type HydrateState =
+  | { key: string; phase: Extract<PreviewHydratePhase, 'loading'> }
+  | {
+      key: string;
+      phase: Extract<PreviewHydratePhase, 'done'>;
+      messageCount: number;
+      skippedByTtl: boolean;
+    }
+  | { key: string; phase: Extract<PreviewHydratePhase, 'error'> };
+
+interface HydrateClock {
+  key: string;
+  startedAt: number;
+  now: number;
+}
 
 export function QuickLook({
   accountId,
@@ -36,13 +54,43 @@ export function QuickLook({
   const closePreview = useSpendersStore((s) => s.closePreview);
   const [openingChat, setOpeningChat] = useState(false);
   const [openFailedFor, setOpenFailedFor] = useState<string | null>(null);
-  const [hydrateFailedFor, setHydrateFailedFor] = useState<string | null>(null);
+  const [hydrate, setHydrate] = useState<HydrateState | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const previewKey = `${accountId}/${fanId}`;
+  const hydrateRequestKey = `${previewKey}/${retryNonce}`;
+  const [hydrateClock, setHydrateClock] = useState<HydrateClock | null>(null);
   const openFailed = openFailedFor === previewKey;
-  // Derived (not setState-in-effect): switching fans clears the banner instantly
-  // because previewKey changes, before the next hydrate even resolves.
-  const hydrateError = hydrateFailedFor === previewKey;
+  const messagesQuery = useMessages(accountId, fanId);
+  const hasLocalHistory = messagesQuery.data?.pages.some((page) => page.items.length > 0) ?? false;
+  // Derived by key: switching fans clears stale banners/status instantly before
+  // the next hydrate resolves.
+  const liveHydrate = hydrate?.key === hydrateRequestKey ? hydrate : null;
+  const hydratePhase = liveHydrate?.phase ?? 'loading';
+  const hydrateStatus = deriveHydrateStatus(
+    hydratePhase,
+    liveHydrate?.phase === 'done' ? liveHydrate.messageCount : 0,
+    liveHydrate?.phase === 'done' ? liveHydrate.skippedByTtl : false,
+    hasLocalHistory,
+    messagesQuery.isPending,
+  );
+  const hydrateError = hydratePhase === 'error';
+  const jumpToLatestKey =
+    liveHydrate?.phase === 'done' && liveHydrate.messageCount > 0 && hasLocalHistory
+      ? hydrateRequestKey
+      : null;
+  const hydrateStatusText =
+    hydrateStatus.logKey === 'sp.historyLoaded'
+      ? t(hydrateStatus.logKey, { count: hydrateStatus.count ?? 0 })
+      : t(hydrateStatus.logKey);
+  const liveClock = hydrateClock?.key === hydrateRequestKey ? hydrateClock : null;
+  const hydrateElapsedSeconds =
+    liveClock === null ? 0 : Math.max(0, Math.floor((liveClock.now - liveClock.startedAt) / 1000));
+  const hydrateTraceText = t(hydrateStatus.traceKey, hydrateStatus.traceParams);
+  const hydrateSlowText =
+    hydratePhase === 'loading' && !hasLocalHistory && hydrateElapsedSeconds >= 5
+      ? t('sp.historyTraceSlow')
+      : null;
+  const hydrateElapsedText = t('sp.historyTraceElapsed', { seconds: hydrateElapsedSeconds });
 
   // The preview IS the active conversation while open: per-chat draft
   // load/persist + dock discard-on-switch ride the existing machinery.
@@ -70,17 +118,41 @@ export function QuickLook({
   const username = row?.username ?? null;
   useEffect(() => {
     let active = true;
+    const startedAt = Date.now();
+    queueMicrotask(() => {
+      if (active) setHydrateClock({ key: hydrateRequestKey, startedAt, now: startedAt });
+    });
     hydratePreviewFan(accountId, fanId, username)
       .then((result) => {
-        if (active) setHydrateFailedFor(result.error !== undefined ? previewKey : null);
+        if (!active) return;
+        if (result.error !== undefined) {
+          setHydrate({ key: hydrateRequestKey, phase: 'error' });
+          return;
+        }
+        setHydrate({
+          key: hydrateRequestKey,
+          phase: 'done',
+          messageCount: result.messageCount,
+          skippedByTtl: result.skippedByTtl,
+        });
       })
       .catch(() => {
-        if (active) setHydrateFailedFor(previewKey);
+        if (active) setHydrate({ key: hydrateRequestKey, phase: 'error' });
       });
     return () => {
       active = false;
     };
-  }, [accountId, fanId, username, previewKey, retryNonce]);
+  }, [accountId, fanId, username, hydrateRequestKey]);
+
+  useEffect(() => {
+    if (!hydrateStatus.showOverlay) return;
+    const id = window.setInterval(() => {
+      setHydrateClock((clock) =>
+        clock?.key === hydrateRequestKey ? { ...clock, now: Date.now() } : clock,
+      );
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [hydrateRequestKey, hydrateStatus.showOverlay]);
 
   const fan = useFan(accountId, fanId).data ?? null;
   const name = row?.name ?? '';
@@ -123,9 +195,26 @@ export function QuickLook({
           features={PREVIEW_FEATURES}
           density="compact"
           scrollMode="paged"
+          jumpToLatestKey={jumpToLatestKey}
+          threadOverlay={
+            hydrateStatus.showOverlay ? (
+              <PreviewHydrateOverlay
+                traceText={hydrateTraceText}
+                slowText={hydrateSlowText}
+                elapsedText={hydrateElapsedText}
+              />
+            ) : null
+          }
         />
         <div className="flex flex-none items-center gap-2 border-t border-line bg-bg1 px-4 py-[9px]">
           <span className="num text-[9.5px] tracking-[0.06em] text-ink-low">{t('sp.previewHint')}</span>
+          <span
+            className={
+              'num text-[9.5px] tracking-[0.06em] ' + (hydrateError ? 'text-warn' : 'text-ink-low')
+            }
+          >
+            {hydrateStatusText}
+          </span>
           <span className="flex-1" />
           <button
             type="button"
@@ -167,6 +256,40 @@ export function QuickLook({
         )}
       </div>
     </>
+  );
+}
+
+function PreviewHydrateOverlay({
+  traceText,
+  slowText,
+  elapsedText,
+}: {
+  traceText: string;
+  slowText: string | null;
+  elapsedText: string;
+}): React.JSX.Element {
+  const t = useT();
+  return (
+    <div data-density="compact" className="flex min-h-0 flex-1 flex-col bg-bg0">
+      <div className="flex flex-none flex-col gap-1.5 border-b border-line bg-bg1/95 px-4 py-2">
+        <div className="flex items-center gap-2">
+          <span className="h-[7px] w-[7px] flex-none animate-pulse rounded-full bg-clay" />
+          <span className="num flex-none text-micro font-semibold tracking-[0.08em] text-ink-mid">
+            {t('sp.historyLoading')}
+          </span>
+          <span className="h-[3px] flex-1 overflow-hidden rounded-full bg-bg3">
+            <span className="block h-full w-full animate-pulse bg-clay" />
+          </span>
+          <span className="num flex-none text-micro tracking-[0.08em] text-ink-low">{elapsedText}</span>
+        </div>
+        <div className="num pl-[15px] text-[10px] tracking-[0.06em] text-ink-low">
+          {slowText ?? traceText}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 opacity-70">
+        <SkeletonThread />
+      </div>
+    </div>
   );
 }
 

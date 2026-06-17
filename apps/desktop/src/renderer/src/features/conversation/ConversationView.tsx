@@ -25,12 +25,16 @@ export function ConversationView({
   features,
   density = 'comfortable',
   scrollMode = 'stick',
+  threadOverlay = null,
+  jumpToLatestKey = null,
 }: {
   accountId: string;
   chatId: string;
   features: ConversationFeatures;
   density?: ThreadDensity;
   scrollMode?: ThreadScrollMode;
+  threadOverlay?: React.ReactNode;
+  jumpToLatestKey?: string | null;
 }): React.JSX.Element {
   const t = useT();
   const chat = useChat(accountId, chatId).data ?? null;
@@ -51,13 +55,16 @@ export function ConversationView({
   if (chat === null) {
     return (
       <>
-        <Thread
-          accountId={accountId}
-          chatId={chatId}
-          fanName=""
-          density={density}
-          scrollMode={scrollMode}
-        />
+        <ThreadRegion overlay={threadOverlay}>
+          <Thread
+            accountId={accountId}
+            chatId={chatId}
+            fanName=""
+            density={density}
+            scrollMode={scrollMode}
+            jumpToLatestKey={jumpToLatestKey}
+          />
+        </ThreadRegion>
         <div data-density={density} className="flex flex-none flex-col">
           <AiDockMount compact={features.dock === 'compact'} />
           <AiPillRow
@@ -105,13 +112,16 @@ export function ConversationView({
       {showGallery ? (
         <GalleryTab accountId={accountId} chatId={chatId} />
       ) : (
-        <Thread
-          accountId={accountId}
-          chatId={chatId}
-          fanName={chat.fanName}
-          density={density}
-          scrollMode={scrollMode}
-        />
+        <ThreadRegion overlay={threadOverlay}>
+          <Thread
+            accountId={accountId}
+            chatId={chatId}
+            fanName={chat.fanName}
+            density={density}
+            scrollMode={scrollMode}
+            jumpToLatestKey={jumpToLatestKey}
+          />
+        </ThreadRegion>
       )}
       {typingHere && (
         <div className="flex flex-none items-center gap-2 px-6 pb-1 text-[12px] text-ink-low">
@@ -145,5 +155,21 @@ export function ConversationView({
         />
       </div>
     </>
+  );
+}
+
+function ThreadRegion({
+  children,
+  overlay,
+}: {
+  children: React.ReactElement;
+  overlay: React.ReactNode;
+}): React.JSX.Element {
+  if (overlay === null || overlay === undefined) return children;
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {children}
+      <div className="absolute inset-0 z-10 flex min-h-0 flex-col">{overlay}</div>
+    </div>
   );
 }

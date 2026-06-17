@@ -77,12 +77,14 @@ export function Thread({
   fanName,
   density = 'comfortable',
   scrollMode = 'stick',
+  jumpToLatestKey = null,
 }: {
   accountId: string;
   chatId: string;
   fanName: string;
   density?: ThreadDensity;
   scrollMode?: ThreadScrollMode;
+  jumpToLatestKey?: string | null;
 }): React.JSX.Element {
   const t = useT();
   const { query, rows } = useConversationThread(accountId, chatId);
@@ -90,9 +92,12 @@ export function Thread({
   const paged = scrollMode === 'paged';
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
   const initialChatRef = useRef<string | null>(null);
   const anchorKeyRef = useRef<string | null>(null);
+  const jumpToLatestKeyRef = useRef<string | null>(null);
+  const snapTokenRef = useRef(0);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -102,6 +107,33 @@ export function Thread({
     getItemKey: (i) => rows[i]?.key ?? i,
   });
 
+  const snapToLatest = useCallback(() => {
+    if (rows.length === 0) return;
+    snapTokenRef.current += 1;
+    const token = snapTokenRef.current;
+
+    const snap = (): void => {
+      if (snapTokenRef.current !== token) return;
+      const totalSize = virtualizer.getTotalSize();
+      virtualizer.scrollToIndex(virtualizer.options.count - 1, { align: 'end' });
+      virtualizer.scrollToOffset(totalSize);
+      const el = scrollRef.current;
+      if (el !== null) {
+        el.scrollTop = el.scrollHeight;
+      }
+      bottomRef.current?.scrollIntoView({ block: 'end' });
+    };
+
+    snap();
+    window.requestAnimationFrame(() => {
+      snap();
+      window.requestAnimationFrame(snap);
+    });
+    for (const delay of [50, 150, 300, 600]) {
+      window.setTimeout(snap, delay);
+    }
+  }, [rows.length, virtualizer]);
+
   // initial paint of a chat: jump to the newest message
   useLayoutEffect(() => {
     if (rows.length === 0) return;
@@ -109,9 +141,22 @@ export function Thread({
       initialChatRef.current = chatId;
       stickToBottomRef.current = true;
       anchorKeyRef.current = null;
-      virtualizer.scrollToIndex(rows.length - 1, { align: 'end' });
+      snapToLatest();
     }
-  }, [chatId, rows.length, virtualizer]);
+  }, [chatId, rows.length, snapToLatest]);
+
+  // Preview hydrate can land rows after the thread has already mounted behind
+  // an overlay. When the local rows are finally visible, snap to the freshest
+  // message once so the user does not land in the middle of the newly loaded
+  // page.
+  useLayoutEffect(() => {
+    if (jumpToLatestKey === null || rows.length === 0) return;
+    if (jumpToLatestKeyRef.current === jumpToLatestKey) return;
+    jumpToLatestKeyRef.current = jumpToLatestKey;
+    anchorKeyRef.current = null;
+    stickToBottomRef.current = true;
+    snapToLatest();
+  }, [jumpToLatestKey, rows.length, snapToLatest]);
 
   // scrollback: keep the previous top row anchored after older pages prepend
   useLayoutEffect(() => {
@@ -251,6 +296,12 @@ export function Thread({
             </div>
           );
         })}
+        <div
+          ref={bottomRef}
+          aria-hidden="true"
+          className="absolute left-0 h-px w-px"
+          style={{ transform: `translateY(${Math.max(0, virtualizer.getTotalSize() - 1)}px)` }}
+        />
       </div>
     </div>
   );

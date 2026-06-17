@@ -460,6 +460,41 @@ export const UI_MESSAGES = {
     en: 'Could not load history yet.',
     ru: 'Не удалось загрузить историю.',
   },
+  'sp.historyLoading': { en: 'Loading history...', ru: 'Загрузка истории...' },
+  'sp.historyLoaded': { en: '{count} messages', ru: '{count} сообщений' },
+  'sp.historyLogEmpty': { en: 'No history', ru: 'Истории нет' },
+  'sp.historyLogFresh': { en: 'Up to date', ru: 'Актуально' },
+  'sp.historyLogError': { en: 'History failed to load', ru: 'История не загрузилась' },
+  'sp.historyTraceLocal': { en: 'Checking local messages...', ru: 'Проверяем локальные сообщения...' },
+  'sp.historyTraceRequest': {
+    en: 'Requesting the latest thread tail from OFAPI...',
+    ru: 'Запрашиваем свежий хвост переписки в OFAPI...',
+  },
+  'sp.historyTraceSlow': {
+    en: 'Still waiting for OFAPI; long responses are normal here.',
+    ru: 'Всё ещё ждём OFAPI; здесь долгие ответы бывают нормой.',
+  },
+  'sp.historyTraceWaitingRows': {
+    en: 'Tail returned {count} messages; waiting for local rows...',
+    ru: 'Хвост вернулся: {count} сообщений; ждём строки из локальной базы...',
+  },
+  'sp.historyTraceDone': {
+    en: 'Local rows are visible; thread is ready.',
+    ru: 'Локальные строки видны; переписка готова.',
+  },
+  'sp.historyTraceTtl': {
+    en: 'Fresh TTL stamp; using local cache.',
+    ru: 'Свежий TTL-штамп; используем локальный кэш.',
+  },
+  'sp.historyTraceEmpty': {
+    en: 'Hydrate finished; no messages returned.',
+    ru: 'Гидрация завершена; сообщений нет.',
+  },
+  'sp.historyTraceError': {
+    en: 'Hydrate failed; retry is available.',
+    ru: 'Гидрация упала; можно повторить.',
+  },
+  'sp.historyTraceElapsed': { en: '{seconds}s elapsed', ru: '{seconds} с' },
   'sp.retry': { en: 'Retry', ru: 'Повторить' },
   'sp.noChatSend': {
     en: 'Chat not synced yet — sending unavailable from the preview.',
