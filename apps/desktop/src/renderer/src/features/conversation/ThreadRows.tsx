@@ -10,7 +10,6 @@ import { formatLedgerAmount } from '../../lib/money';
 import { canUnsend, mediaCountLabel, ppvChip, sendState } from '../../lib/messages';
 import { Badge } from '../../design/Badge';
 import { getBridge } from '../../bridge/bridge';
-import { MediaThumb } from './MediaThumb';
 import { useLocale, useT } from '../../lib/i18n';
 
 export const DayDivider = memo(function DayDivider({ label }: { label: string }): React.JSX.Element {
@@ -63,8 +62,7 @@ export const MessageRow = memo(function MessageRow({
   const state = sendState(message);
   const chip = ppvChip(message, t);
   const isPpv = chip !== null;
-  const lockedMedia = message.media.filter((m) => m.locked);
-  const visibleMedia = message.media.filter((m) => !m.locked);
+  const hasMedia = message.media.length > 0;
   const unsendable = canUnsend(message, new Date());
 
   function unsend(): void {
@@ -95,17 +93,6 @@ export const MessageRow = memo(function MessageRow({
             <span className="text-[13px] text-ink-low italic">{t('conv.messageDeleted')}</span>
           ) : (
             <>
-              {/* PPV locked-media strip */}
-              {isPpv && lockedMedia.length > 0 && (
-                <div className="media-stripes relative flex h-[124px] items-center justify-center border-b border-line">
-                  <span className="text-[17px] opacity-50">
-                    {chip.state === 'purchased' ? '🔓' : '🔒'}
-                  </span>
-                  <span className="num absolute right-[9px] bottom-2 rounded-[5px] border border-line bg-bg1/90 px-[7px] py-[2px] text-micro text-ink-mid">
-                    {mediaCountLabel(message.media, locale)}
-                  </span>
-                </div>
-              )}
               <div className={cx(isPpv && 'px-[var(--cv-bubble-px)] py-[var(--cv-bubble-py)]')}>
                 {message.replyTo !== null && (
                   <div className="mb-1.5 flex items-baseline gap-1.5 border-l-2 border-clay-line pl-2 text-[12px] text-ink-low">
@@ -113,11 +100,17 @@ export const MessageRow = memo(function MessageRow({
                     <span className="min-w-0 truncate">{message.replyTo.textPreview}</span>
                   </div>
                 )}
-                {visibleMedia.length > 0 && (
-                  <div className={cx('flex flex-wrap gap-1.5', message.text !== '' && 'mb-2')}>
-                    {visibleMedia.map((m) => (
-                      <MediaThumb key={m.id} media={m} />
-                    ))}
+                {hasMedia && (
+                  <div
+                    className={cx(
+                      'flex w-fit max-w-full items-center rounded-chip border border-line bg-bg2 px-2.5 py-1',
+                      message.text !== '' && 'mb-2',
+                    )}
+                    aria-label={mediaCountLabel(message.media, locale)}
+                  >
+                    <span className="num truncate text-micro tracking-[0.08em] text-ink-mid">
+                      {mediaCountLabel(message.media, locale)}
+                    </span>
                   </div>
                 )}
                 {message.text !== '' && <span className="break-words whitespace-pre-wrap">{message.text}</span>}

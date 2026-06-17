@@ -49,7 +49,8 @@ function estimateRow(row: ThreadRow | undefined, m: RowMetrics): number {
   if (row.kind === 'outbox') return m.outbox;
   const msg = row.message;
   let h = m.base + Math.ceil(msg.text.length / m.chars) * m.perLine;
-  if (msg.media.length > 0 || msg.price > 0) h += 140;
+  if (msg.media.length > 0) h += 30;
+  if (msg.price > 0) h += 32;
   return h;
 }
 
