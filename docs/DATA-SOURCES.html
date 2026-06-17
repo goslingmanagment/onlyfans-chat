@@ -1,0 +1,647 @@
+<!doctype html>
+<!--
+  ChatGoose Desktop · Откуда берутся данные — карта источников + инфографика.
+  Самодостаточная страница: открывается с диска, без интернета (вебшрифты
+  деградируют в системные). Содержимое — результат аудита кода (20-агентный
+  workflow, 2026-06-15), выверенного критиком против файлов на уровне file:line.
+  Источник правды по поведению — сам код (apps/desktop/src/main, .../renderer)
+  и docs/SPEC.md §6/§9; при изменении синка/контракта обновлять эту страницу.
+  Тема — фирменная «бумага/глина» из docs/WINDOWS-GUIDE.html.
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChatGoose · Откуда берутся данные</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><rect x="64" y="64" width="896" height="896" rx="200" fill="%23efece4"/><g fill="%23c2603f"><ellipse cx="570" cy="640" rx="250" ry="155"/><path d="M 720 560 L 892 488 L 780 680 Z"/><path d="M 318 330 C 318 470, 360 540, 480 590" stroke="%23c2603f" stroke-width="92" stroke-linecap="round" fill="none"/><circle cx="318" cy="322" r="64"/><path d="M 266 300 L 176 330 L 266 356 Z"/></g><circle cx="330" cy="306" r="13" fill="%23efece4"/></svg>'>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #efece4;
+    --paper-2: #e9e5db;
+    --card: #fbf9f4;
+    --line: #ddd7c9;
+    --line-strong: #c9c1af;
+    --ink: #1f1e1d;
+    --ink-mid: #5d5a52;
+    --ink-low: #97928a;
+    --clay: #d97757;
+    --clay-deep: #c2603f;
+    --clay-bg: #f7e8e1;
+    --clay-line: #e8c3b3;
+
+    /* источники данных — приглушённая землистая палитра, кодируем цветом */
+    --ofapi: #c2603f;       --ofapi-bg: #f7e8e1;   --ofapi-line: #e6bba8;
+    --db: #3d6b66;          --db-bg: #e2edeb;       --db-line: #b9d3cf;
+    --hub: #4a5a8a;         --hub-bg: #e7e9f3;      --hub-line: #c2c8e0;
+    --ai: #7a5285;          --ai-bg: #efe5f1;       --ai-line: #d6c0db;
+    --derived: #9a7a36;     --derived-bg: #efe7d2;  --derived-line: #ddca9e;
+    --mock: #8a857c;        --mock-bg: #ebe8e1;     --mock-line: #cfcabf;
+
+    --ok: #4c7a4c;
+    --warn: #b5852a;
+    --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --sans: "Hanken Grotesk", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1100px 600px at 78% -8%, #f4f1ea 0%, transparent 60%),
+      var(--paper);
+    color: var(--ink);
+    font: 400 16px/1.62 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1000px; margin: 0 auto; padding: 0 28px 110px; }
+  a { color: var(--clay-deep); }
+  code, .mono { font-family: var(--mono); font-size: .86em; }
+  h2 { font: 700 clamp(21px, 2.6vw, 27px)/1.15 var(--serif); letter-spacing: -.01em; margin: 64px 0 4px; }
+  h2 .num { color: var(--clay-deep); font-family: var(--mono); font-size: .62em; font-weight: 600; vertical-align: middle; margin-right: 12px; letter-spacing: .04em; }
+  h3 { font: 600 17px/1.3 var(--serif); margin: 0 0 6px; }
+  .lead-sub { color: var(--ink-mid); margin: 6px 0 0; max-width: 74ch; }
+
+  /* ── шапка ───────────────────────────────────────────────────────────── */
+  header.masthead {
+    padding: 58px 0 26px;
+    border-bottom: 2px solid var(--ink);
+    display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap;
+  }
+  .goose { flex: none; width: 78px; height: 78px; }
+  .masthead h1 { font: 700 clamp(31px, 5.2vw, 47px)/1.03 var(--serif); letter-spacing: -.018em; margin: 0; }
+  .masthead h1 .clay { color: var(--clay-deep); }
+  .masthead .sub { margin: 12px 0 2px; color: var(--ink-mid); max-width: 60ch; font-size: 17px; }
+  .meta-line {
+    flex-basis: 100%;
+    display: flex; flex-wrap: wrap; gap: 8px 22px;
+    padding: 18px 0 0; margin: 4px 0 0;
+    font: 500 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-low);
+  }
+  .meta-line b { color: var(--ink-mid); font-weight: 600; }
+
+  /* ── оглавление-чипы ─────────────────────────────────────────────────── */
+  nav.toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 26px 0 0; }
+  nav.toc a {
+    font: 600 12px/1 var(--mono); letter-spacing: .04em; text-decoration: none;
+    color: var(--ink-mid); background: var(--card); border: 1px solid var(--line-strong);
+    padding: 9px 13px; border-radius: 999px; transition: .14s;
+  }
+  nav.toc a:hover { border-color: var(--clay); color: var(--clay-deep); background: var(--clay-bg); }
+
+  /* ── общая «легенда источников» ──────────────────────────────────────── */
+  .legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 22px 0 0; }
+  .src {
+    background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--c);
+    border-radius: 10px; padding: 14px 16px 15px;
+  }
+  .src .tag {
+    display: inline-flex; align-items: center; gap: 7px;
+    font: 600 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+    color: var(--c); background: var(--cb); border: 1px solid var(--cl);
+    padding: 5px 9px; border-radius: 6px; margin-bottom: 9px;
+  }
+  .src .tag::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+  .src h3 { font-family: var(--sans); font-weight: 700; font-size: 14.5px; margin: 0 0 4px; }
+  .src p { margin: 0; font-size: 13.5px; color: var(--ink-mid); line-height: 1.5; }
+  .src .where { display: block; margin-top: 8px; font: 500 11px/1.4 var(--mono); color: var(--ink-low); }
+
+  .s-ofapi   { --c: var(--ofapi);   --cb: var(--ofapi-bg);   --cl: var(--ofapi-line); }
+  .s-db      { --c: var(--db);      --cb: var(--db-bg);      --cl: var(--db-line); }
+  .s-hub     { --c: var(--hub);     --cb: var(--hub-bg);     --cl: var(--hub-line); }
+  .s-ai      { --c: var(--ai);      --cb: var(--ai-bg);      --cl: var(--ai-line); }
+  .s-derived { --c: var(--derived); --cb: var(--derived-bg); --cl: var(--derived-line); }
+  .s-mock    { --c: var(--mock);    --cb: var(--mock-bg);    --cl: var(--mock-line); border-left-style: dashed; }
+
+  /* ── инфографика потока ──────────────────────────────────────────────── */
+  .flow {
+    margin: 26px 0 0; background: var(--card); border: 1px solid var(--line-strong);
+    border-radius: 14px; padding: 26px 24px 22px; overflow-x: auto;
+  }
+  .flow-grid {
+    display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr));
+    align-items: stretch; gap: 0; min-width: 760px;
+  }
+  .stage { position: relative; padding: 0 11px; display: flex; flex-direction: column; gap: 10px; }
+  .stage + .stage::before {
+    content: "›"; position: absolute; left: -7px; top: 30px;
+    font: 700 26px/1 var(--serif); color: var(--clay); z-index: 2;
+  }
+  .stage-h { font: 600 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-low); text-align: center; }
+  .node {
+    border: 1px solid var(--c, var(--line-strong)); border-radius: 10px;
+    background: var(--cb, var(--card)); padding: 11px 12px; text-align: center;
+  }
+  .node b { display: block; font: 700 14px/1.2 var(--sans); color: var(--ink); }
+  .node b .glyph { color: var(--c); }
+  .node small { display: block; margin-top: 3px; font-size: 11.5px; line-height: 1.35; color: var(--ink-mid); }
+  .node.tall { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .node.dim { opacity: .9; border-style: dashed; }
+  .flow-note { margin: 18px 0 0; font-size: 13px; color: var(--ink-mid); display: grid; gap: 7px; }
+  .flow-note .b { display: inline-flex; align-items: baseline; gap: 8px; }
+  .flow-note .b::before {
+    content: attr(data-k); flex: none; font: 600 10px/1.4 var(--mono); letter-spacing: .04em;
+    text-transform: uppercase; color: #fff; background: var(--clay-deep);
+    padding: 2px 7px; border-radius: 5px; position: relative; top: -1px;
+  }
+  .flow-note .b.hub::before  { background: var(--hub); }
+  .flow-note .b.ai::before   { background: var(--ai); }
+  .flow-note .b.live::before { background: var(--ofapi); }
+
+  /* ── таблица поверхностей ────────────────────────────────────────────── */
+  .surfaces { display: grid; gap: 12px; margin: 22px 0 0; }
+  .surf {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px 17px; display: grid; grid-template-columns: 210px 1fr; gap: 18px;
+  }
+  .surf > .head { border-right: 1px solid var(--line); padding-right: 16px; }
+  .surf h3 { font: 700 16px/1.25 var(--serif); margin: 0 0 5px; }
+  .surf .shows { font-size: 12.8px; color: var(--ink-low); line-height: 1.45; }
+  .surf .body p { margin: 0 0 8px; font-size: 14px; color: var(--ink-mid); line-height: 1.52; }
+  .surf .body p:last-child { margin-bottom: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 11px; }
+  .chip {
+    font: 600 10.5px/1 var(--mono); letter-spacing: .03em; text-transform: uppercase;
+    padding: 5px 8px; border-radius: 6px; border: 1px solid var(--cl); color: var(--c); background: var(--cb);
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+  .chip.c-ofapi   { --c: var(--ofapi);   --cb: var(--ofapi-bg);   --cl: var(--ofapi-line); }
+  .chip.c-db      { --c: var(--db);      --cb: var(--db-bg);      --cl: var(--db-line); }
+  .chip.c-hub     { --c: var(--hub);     --cb: var(--hub-bg);     --cl: var(--hub-line); }
+  .chip.c-ai      { --c: var(--ai);      --cb: var(--ai-bg);      --cl: var(--ai-line); }
+  .chip.c-derived { --c: var(--derived); --cb: var(--derived-bg); --cl: var(--derived-line); }
+  .chip.c-mock    { --c: var(--mock);    --cb: var(--mock-bg);    --cl: var(--mock-line); }
+  .fresh {
+    display: inline-block; font: 600 10.5px/1 var(--mono); letter-spacing: .03em;
+    padding: 4px 7px; border-radius: 5px; border: 1px dashed var(--line-strong);
+    color: var(--ink-mid); background: var(--paper-2); margin: 0 0 11px;
+  }
+  .fresh.live { color: var(--ofapi); border-color: var(--ofapi-line); }
+  .surf .note-line { font-size: 12.5px; color: var(--ink-low); margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--line); }
+
+  /* ── находки / коллауты ──────────────────────────────────────────────── */
+  .callout {
+    border: 1px solid var(--clay-line); background: var(--clay-bg);
+    border-left: 5px solid var(--clay-deep); border-radius: 12px;
+    padding: 18px 22px 20px; margin: 20px 0 0;
+  }
+  .callout.big { padding: 22px 26px 24px; }
+  .callout h3 { font: 700 19px/1.25 var(--serif); margin: 0 0 8px; display: flex; align-items: center; gap: 10px; }
+  .callout h3 .pin { font-size: 22px; }
+  .callout p { margin: 0 0 10px; font-size: 14.5px; line-height: 1.58; color: #4a3a32; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .quote {
+    font-family: var(--serif); font-style: italic; font-size: 14.5px; color: #6a4a3c;
+    border-left: 3px solid var(--clay); padding: 4px 0 4px 14px; margin: 4px 0 12px;
+  }
+  .callout ol { margin: 4px 0 12px; padding-left: 22px; }
+  .callout ol li { font-size: 14px; line-height: 1.55; margin-bottom: 6px; color: #4a3a32; }
+  .verdict {
+    display: inline-flex; align-items: center; gap: 9px; margin: 2px 0 14px;
+    font: 600 12px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase;
+    color: #fff; background: var(--warn); padding: 7px 12px; border-radius: 7px;
+  }
+  .minor { border-color: var(--line-strong); background: var(--card); border-left-color: var(--ink-low); }
+  .minor p, .minor li { color: var(--ink-mid); }
+  .minor h3 { font-size: 16px; color: var(--ink); }
+
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  hr.rule { border: 0; border-top: 1px solid var(--line); margin: 44px 0 0; }
+  footer { margin-top: 40px; padding-top: 20px; border-top: 2px solid var(--ink); color: var(--ink-low); font-size: 13px; }
+  footer b { color: var(--ink-mid); }
+  .kbd { font: 600 11px/1 var(--mono); border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; padding: 3px 6px; background: var(--card); color: var(--ink-mid); }
+
+  @media (max-width: 720px) {
+    .legend { grid-template-columns: 1fr; }
+    .surf { grid-template-columns: 1fr; }
+    .surf > .head { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 12px; }
+    .twocol { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <svg class="goose" viewBox="0 0 1024 1024" aria-hidden="true">
+      <rect x="40" y="40" width="944" height="944" rx="210" fill="#fbf9f4" stroke="#c9c1af" stroke-width="6"/>
+      <g fill="#c2603f">
+        <ellipse cx="570" cy="640" rx="250" ry="155"/>
+        <path d="M 720 560 L 892 488 L 780 680 Z"/>
+        <path d="M 318 330 C 318 470, 360 540, 480 590" stroke="#c2603f" stroke-width="92" stroke-linecap="round" fill="none"/>
+        <circle cx="318" cy="322" r="64"/>
+        <path d="M 266 300 L 176 330 L 266 356 Z"/>
+      </g>
+      <circle cx="330" cy="306" r="13" fill="#fbf9f4"/>
+    </svg>
+    <div>
+      <h1>Откуда берутся <span class="clay">данные</span></h1>
+      <p class="sub">Карта источников для каждого куска приложения: что грузится вживую, что отдаётся из локального кэша, что вычисляется на месте — и где в этой схеме мы нашли проблему.</p>
+    </div>
+    <div class="meta-line">
+      <span>ChatGoose Desktop</span>
+      <span>Аудит: <b>2026-06-15</b></span>
+      <span>Метод: <b>20-агентный разбор кода + сверка критиком</b></span>
+      <span>Истина: <b>код · SPEC §6/§9</b></span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <a href="#tldr">Коротко</a>
+    <a href="#sources">6 источников</a>
+    <a href="#flow">Поток данных</a>
+    <a href="#surfaces">По поверхностям</a>
+    <a href="#autoread">⚠ Авто-прочтение</a>
+    <a href="#findings">Прочие находки</a>
+    <a href="#cost">Что это стоит</a>
+  </nav>
+
+  <!-- ─────────────────────────────── TL;DR ─────────────────────────────── -->
+  <h2 id="tldr"><span class="num">01</span>Коротко, в одном абзаце</h2>
+  <p class="lead-sub">
+    Почти весь экран — это <b>локальный зашифрованный кэш</b> (SQLite на диске). Живьём из сети
+    данные тянет ровно один компонент — <b>фоновый сборщик</b> (polling-sync), который ходит в
+    OnlyFans через шлюз <b>OFAPI</b> и складывает ответы в кэш; интерфейс читает уже из кэша.
+    Поверх этого: <b>ИИ-провайдеры</b> генерят тексты ответов по запросу, <b>хаб «ядра» (ChatMuse)</b>
+    по желанию шлёт поток событий (только идентификаторы, без текстов), а <b>Волт и галерея</b> —
+    единственное место, что лезет в сеть на каждый показ. Money-цифры (спенд за 30 дней, чеки,
+    счётчики) нигде не хранятся — они <b>пересчитываются на лету</b> из локальных таблиц.
+    Главная находка по пути: пока приложение просто запущено, фоновый сборщик, похоже,
+    <b>помечает диалоги прочитанными</b> на OnlyFans — без открытия чата (раздел ниже).
+  </p>
+
+  <!-- ─────────────────────────── ИСТОЧНИКИ ─────────────────────────────── -->
+  <h2 id="sources"><span class="num">02</span>Шесть источников данных</h2>
+  <p class="lead-sub">Любое значение в приложении приходит из одного (или комбинации) этих шести мест. Цвет каждого используется дальше во всей карте.</p>
+  <div class="legend">
+
+    <div class="src s-ofapi">
+      <span class="tag">OFAPI · live</span>
+      <h3>Живой OnlyFans через шлюз</h3>
+      <p>Третья сторона <code>onlyfansapi.com</code> — единственный путь к реальным данным OnlyFans. Каждый вызов = 1 кредит ($), ответы никогда не кэшируются на стороне шлюза. Это «земля» — первоисточник всего.</p>
+      <span class="where">main/ofapi/client.ts</span>
+    </div>
+
+    <div class="src s-db">
+      <span class="tag">Локальная БД · кэш</span>
+      <h3>Зашифрованный SQLite на диске</h3>
+      <p>Файл <code>chatgoose.db</code>, 14 таблиц (чаты, сообщения, фаны, транзакции, саммари, outbox…). <b>Основной источник чтения почти для всего UI.</b> Заполняется сборщиком из OFAPI; сеть здесь не трогается.</p>
+      <span class="where">main/db/* · 0 кредитов</span>
+    </div>
+
+    <div class="src s-hub">
+      <span class="tag">Хаб ядра · SSE</span>
+      <h3>Бэкенд «ядра» / ChatMuse</h3>
+      <p>Наш собственный сервер (репозиторий <code>core</code>). Шлёт поток событий — <b>только id</b> (счёт, чат, сообщение), без текстов; присутствие и «печатает…». По умолчанию <b>выключен</b> (P6 отложен) — тогда работает поллинг.</p>
+      <span class="where">main/hub/* · main/sync/hub-*</span>
+    </div>
+
+    <div class="src s-ai">
+      <span class="tag">ИИ · LLM</span>
+      <h3>Языковые модели</h3>
+      <p>Anthropic (Claude) и OpenRouter (Gemini/Grok) — генерят тексты ответов, коучинг, саммари. Свежий сетевой вызов на <b>каждый прогон</b>. Промпты и контекст собираются локально; вывод чистится санитайзером.</p>
+      <span class="where">main/ai/* · packages/shared/prompts</span>
+    </div>
+
+    <div class="src s-derived">
+      <span class="tag">Вычисляется</span>
+      <h3>Производные значения</h3>
+      <p>Не хранятся — считаются <b>в момент чтения</b>: спенд за 30 дней (SQL-сумма по локальным транзакциям), фильтры, состояние PPV, «ждёт ответа», форматы денег и времени, модель доски спендеров.</p>
+      <span class="where">main/ipc/viewmodels.ts · renderer/lib/*</span>
+    </div>
+
+    <div class="src s-mock">
+      <span class="tag">Mock · только dev</span>
+      <h3>Поддельный мост (для разработки)</h3>
+      <p>Когда приложение открыто в браузере (без Electron), рендер подсовывает выдуманные данные из памяти. <b>В проде неактивен.</b> Важно знать, чтобы не спутать демо-данные с настоящими.</p>
+      <span class="where">renderer/src/dev/mockBridge.ts</span>
+    </div>
+
+  </div>
+
+  <!-- ─────────────────────────── ПОТОК ─────────────────────────────────── -->
+  <h2 id="flow"><span class="num">03</span>Как данные текут — за один взгляд</h2>
+  <p class="lead-sub">Главная магистраль идёт слева направо. ИИ, хаб и Волт подключаются сбоку.</p>
+
+  <div class="flow">
+    <div class="flow-grid">
+
+      <div class="stage">
+        <div class="stage-h">Первоисточник</div>
+        <div class="node tall" style="--c:var(--ofapi);--cb:var(--ofapi-bg)">
+          <b><span class="glyph">◆</span> OnlyFans</b>
+          <small>Платформа. Аккаунты ведутся через OnlyMonster — мы туда не инжектимся.</small>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-h">Шлюз</div>
+        <div class="node tall" style="--c:var(--ofapi);--cb:var(--ofapi-bg)">
+          <b><span class="glyph">◆</span> OFAPI</b>
+          <small><code>onlyfansapi.com</code><br>1 кредит/вызов. Только здесь — реальные данные.</small>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-h">Сборщик</div>
+        <div class="node tall" style="--c:var(--ofapi);--cb:var(--ofapi-bg)">
+          <b><span class="glyph">◆</span> polling-sync</b>
+          <small>Фоном опрашивает список чатов каждые 20–60с, тянет дельты, пишет в кэш.</small>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-h">Хранилище</div>
+        <div class="node tall" style="--c:var(--db);--cb:var(--db-bg)">
+          <b><span class="glyph">●</span> Локальная БД</b>
+          <small>Зашифрованный SQLite. 14 таблиц. 0 кредитов на чтение.</small>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-h">Экран</div>
+        <div class="node tall" style="--c:var(--derived);--cb:var(--derived-bg)">
+          <b><span class="glyph">▣</span> Интерфейс</b>
+          <small>Читает из кэша, money-цифры пересчитывает на лету.</small>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="flow-note">
+      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра (SSE): шлёт <b>id</b> событий, демотит поллинг; тело сообщения всё равно дотягивается через OFAPI в БД. По умолчанию выключен.</span>
+      <span class="b ai" data-k="сбоку → экран">ИИ-провайдеры: тексты ответов/коучинга идут <b>прямо в ИИ-док</b>, минуя БД (кроме саммари — оно кэшируется).</span>
+      <span class="b live" data-k="в обход кэша">Волт и галерея: <b>единственная</b> поверхность, что ходит в OFAPI <b>вживую на каждый показ</b> (1 кредит/вызов), без слоя БД.</span>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────── ПОВЕРХНОСТИ ───────────────────────────── -->
+  <h2 id="surfaces"><span class="num">04</span>Куда что течёт — по каждому куску</h2>
+  <p class="lead-sub">Для каждой поверхности: чем питается (чипы-цвета), насколько свежо, и важные нюансы. Файлы указаны на уровне модулей.</p>
+
+  <div class="surfaces">
+
+    <!-- 1 -->
+    <div class="surf">
+      <div class="head">
+        <h3>Рейл аккаунтов</h3>
+        <div class="shows">Колонка моделей слева: аватар, точка авторизации, бейдж непрочитанных, кнопки <span class="mono">$</span> / <span class="mono">⚙</span>.</div>
+      </div>
+      <div class="body">
+        <div class="chips">
+          <span class="chip c-db">кэш БД</span>
+          <span class="chip c-derived">вычисляется</span>
+          <span class="chip c-ofapi">OFAPI · 1 раз при старте</span>
+        </div>
+        <p>Имя, @ник, аватар читаются из таблицы <code>accounts</code> при каждом рендере. Бейдж непрочитанных — это <b>сумма</b> <code>SUM(chats.unread_count)</code>, считается в SQL на лету. Первоисточник — единственный вызов <code>GET /accounts</code> при запуске.</p>
+        <div class="note-line">⚠ Зелёная/красная точка авторизации — <b>снимок на момент запуска</b>: метод обновления статуса в коде ни разу не вызывается, так что до перезапуска точка «застывшая». См. находку №2.</div>
+      </div>
+    </div>
+
+    <!-- 2 -->
+    <div class="surf">
+      <div class="head">
+        <h3>Список чатов / инбокс</h3>
+        <div class="shows">340px-колонка: фан, превью последнего сообщения, непрочитано, типсы, спенд за 30 дней, фильтры, поиск.</div>
+      </div>
+      <div class="body">
+        <div class="chips">
+          <span class="chip c-db">кэш БД</span>
+          <span class="chip c-derived">вычисляется</span>
+        </div>
+        <span class="fresh">Свежесть: всё из кэша — ни одного сетевого вызова на рендер</span>
+        <p>100% локально. Строки, lifetime-спенд (JSON в <code>fans</code>), <b>спенд за 30 дней</b> (SQL-сумма <code>net</code> по локальным транзакциям с плавающим отсечением), превью, непрочитано, «ждёт ответа» — всё из таблиц <code>chats</code> / <code>fans</code> / <code>fan_transactions</code>, которые наполняет сборщик.</p>
+      </div>
+    </div>
+
+    <!-- 3 -->
+    <div class="surf">
+      <div class="head">
+        <h3>Тред переписки</h3>
+        <div class="shows">Сообщения, медиа, PPV (закрыто/куплено), типсы, статус SENT/SEEN, «печатает…», присутствие.</div>
+      </div>
+      <div class="body">
+        <div class="chips">
+          <span class="chip c-db">кэш БД</span>
+          <span class="chip c-derived">вычисляется</span>
+          <span class="chip c-hub">хаб: typing/присутствие</span>
+        </div>
+        <p>Каждый пузырь (текст, статус PPV/<code>isOpened</code>, медиа, типсы, тумбстоны) — из кэшированной таблицы <code>messages</code>. PPV-чип и статус отправки выводятся производно. Единственное настоящее real-time — <b>«печатает…» и присутствие</b>, приходят пушем по хаб-SSE с коротким TTL (last-seen в шапке — кэш).</p>
+      </div>
+    </div>
+
+    <!-- 4 -->
+    <div class="surf">
+      <div class="head">
+        <h3>Композер · отправка · outbox</h3>
+        <div class="shows">Черновик, оптимистичные строки, [NEXT]-цепочки, запрещённые слова, unsend, подтверждение отправки.</div>
+      </div>
+      <div class="body">
+        <div class="chips">
+          <span class="chip c-db">кэш БД</span>
+          <span class="chip c-derived">вычисляется</span>
+          <span class="chip c-ofapi">OFAPI · по действию человека</span>
+        </div>
+        <p>Видимый UI (оптимистичные строки, черновики, гейт «можно отправлять») — из кэша + производно. Единственная сеть — <b>явные действия человека</b> в <code>send/engine.ts</code>: отправка (POST), read-only верификатор, unsend, «печатает», mark-read; каждое срабатывает раз и пишется обратно в кэш. Send никогда не ретраится автоматически (инвариант SPEC §15).</p>
+      </div>
+    </div>
+
+    <!-- 5 -->
+    <div class="surf">
+      <div class="head">
+        <h3>ИИ-док</h3>
+        <div class="shows">Reply / Improve / Deep / Ping / Hi: сгенерированные ответы, стриминг, тон, коучинг.</div>
+      </div>
+      <div class="body">
+        <div class="chips">
+          <span class="chip c-ai">ИИ · live на прогон</span>
+          <span class="chip c-db">контекст: кэш</span>
+          <span class="chip c-ofapi">контекст: live при нехватке</span>
+        </div>
+        <p>Любой текст — <b>свежий live-вызов LLM</b> на каждый прогон. Исключение — «саммари фана»: берётся из локального кэша <code>summaries</code> или из префетча хаба. Контекст (транскрипт, спенд, имя/био) — сначала из кэша, при коротком окне дотягивается live из OFAPI. Расход токенов пишется локально (<code>ai_spend_log</code>).</p>
+        <div class="note-line">Модели по фичам настраиваемы: Claude (Sonnet/Opus/Haiku) и через OpenRouter — Gemini/Grok. Промпты заморожены byte-for-byte.</div>
+      </div>
+    </div>
+
+    <!-- 6 -->
+    <div class="surf">
+      <div class="head">
+        <h3>Панель фана</h3>
+        <div class="shows">Инфо (профиль, подписка, био) и Скан (ИИ-саммари переписки).</div>
+      </div>
+      <div class="body">
+        <div class="chips">
+          <span class="chip c-db">кэш БД</span>
+          <span class="chip c-ofapi">OFAPI · ≤1 при открытии, если устарело</span>
+          <span class="chip c-ai">скан: ИИ</span>
+          <span class="chip c-hub">хаб: синк саммари</span>
+        </div>
+        <p>Вкладка <b>Инфо</b> — OFAPI-происхождение, отдаётся из кэша <code>fans</code>; максимум один near-live <code>getUserByUsername</code> при открытии чата, если строка старше 5 минут. Вкладка <b>Скан</b> — вывод LLM в кэше <code>summaries</code>; хаб только best-effort синхронизирует тело саммари между устройствами — <b>не источник</b> профиля или денег.</p>
+      </div>
+    </div>
+
+    <!-- 7 -->
+    <div class="surf">
+      <div class="head">
+        <h3>Доска спендеров + статистика</h3>
+        <div class="shows">Полки тиров (списки OnlyMonster), $-цифры, счётчики, бары выручки, радар реактивации, очередь «ждут ответа».</div>
+      </div>
+      <div class="body">
+        <div class="chips">
+          <span class="chip c-ofapi">OFAPI · тиры live (мемо 5 мин)</span>
+          <span class="chip c-derived">вся статистика вычисляется</span>
+          <span class="chip c-db">кэш БД</span>
+        </div>
+        <p>Полки и ростеры тиров — <b>live OFAPI user-lists</b> по запросу, мемоизируются в памяти на 5 минут. А вот <b>каждая</b> $-цифра, счётчик, точка тишины и вся колонка статистики — <b>0 кредитов</b>, считается SQL-джойном по локальным таблицам <code>fans</code> / <code>chats</code> / <code>messages</code> / <code>fan_transactions</code>. Хаб не участвует.</p>
+      </div>
+    </div>
+
+    <!-- 8 -->
+    <div class="surf">
+      <div class="head">
+        <h3>Волт · галерея · выбор PPV</h3>
+        <div class="shows">Медиатека модели, альбомы, галерея чата, прикрепление PPV с ценой.</div>
+      </div>
+      <div class="body">
+        <div class="chips">
+          <span class="chip c-ofapi">OFAPI · live на каждый показ</span>
+          <span class="chip c-db">только пиксели превью: кэш</span>
+        </div>
+        <span class="fresh live">Свежесть: вживую — единственная поверхность без слоя БД</span>
+        <p>Уникально среди всех: <code>query:vault.*</code> и <code>chat.gallery</code> идут <b>прямо в OFAPI</b> на каждый рендер, <b>1 кредит/вызов</b>, тормозятся только <code>staleTime</code> React Query (30/60/15с). В БД эти списки не кэшируются. Кэшируются лишь пиксели тумбов — через протокол <code>media://</code>.</p>
+      </div>
+    </div>
+
+    <!-- 9 -->
+    <div class="surf">
+      <div class="head">
+        <h3>Настройки</h3>
+        <div class="shows">Все тумблеры, маппинги аккаунт→страница, URL хаба, API-ключи, язык/масштаб/тема, бюджет кредитов.</div>
+      </div>
+      <div class="body">
+        <div class="chips">
+          <span class="chip c-db">кэш БД (таблица settings)</span>
+          <span class="chip c-ofapi">live: только тест/список</span>
+        </div>
+        <p>Синхронные чтения из зашифрованной таблицы <code>settings</code>. Четыре API-ключа лежат <b>только в keychain ОС</b> (наружу отдаётся лишь «есть/нет»). Единственные live/кредитные пути — выбор списка для спендеров (TTL 5 мин) и явные кнопки <b>«Тест ключей / хаба»</b>.</p>
+      </div>
+    </div>
+
+    <!-- 10 -->
+    <div class="surf">
+      <div class="head">
+        <h3>Кредит-метр · Активность · статус-бар</h3>
+        <div class="shows">Сколько потрачено кредитов/ИИ, режим (POLLING / HUB LIVE), сенды/неподтверждённые, свежесть.</div>
+      </div>
+      <div class="body">
+        <div class="chips">
+          <span class="chip c-derived">вычисляется в памяти</span>
+          <span class="chip c-db">кэш БД (логи)</span>
+          <span class="chip c-hub">liveness: SSE (off по умолч.)</span>
+        </div>
+        <p>Ни одного live-вызова на открытие. Цифры — <b>снимок счётчика кредитов в памяти</b> (снимается как побочка любых других OFAPI-вызовов) плюс локальные агрегаты (<code>credit_log</code>, <code>ai_spend_log</code>, <code>outbox</code>). Состояние синка/свежесть считаются на лету; liveness хаба — это live-SSE, но по умолчанию выключено (P6 отложен). Обновляется реактивно по событиям, не по таймеру.</p>
+      </div>
+    </div>
+
+    <!-- 11 -->
+    <div class="surf">
+      <div class="head">
+        <h3>Mock-мост (только dev)</h3>
+        <div class="shows">Поддельная реализация всего контракта для запуска рендера вне Electron.</div>
+      </div>
+      <div class="body">
+        <div class="chips">
+          <span class="chip c-mock">mock · ноль сети</span>
+        </div>
+        <p>Когда <code>window.chatgoose</code> отсутствует (браузер / standalone vite на :5199), всё подделывается из памяти детерминированным RNG: 0 кредитов, 0 реальных сообщений, 0 чтений с побочками. Бандлится в прод-рендер, но <b>в проде неактивен</b>. Полезно помнить при отладке UI — это не настоящие данные.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ─────────────────────── АВТО-ПРОЧТЕНИЕ ────────────────────────────── -->
+  <h2 id="autoread"><span class="num">05</span>Находка №1 — диалоги читаются сами</h2>
+
+  <div class="callout big">
+    <h3><span class="pin">⚠</span> Пока приложение запущено, чаты помечаются прочитанными — без открытия</h3>
+    <div class="verdict">Вердикт: очень вероятно · нужен 2-минутный тест, чтобы добить до 100%</div>
+
+    <p><b>Симптом (наблюдение владельца):</b> диалоги становятся прочитанными сами по себе, просто пока приложение работает — фан видит «просмотрено», счётчик непрочитанных обнуляется, хотя чат никто не открывал.</p>
+
+    <p><b>Механизм — две связки:</b></p>
+    <ol>
+      <li><b>Сторона OFAPI.</b> По вендоренной доке, <b>сам запрос «получить сообщения» помечает чат прочитанным</b> как побочный эффект. Прямая цитата из описания эндпоинта <code>mark-as-read</code> в <code>openapi.json</code>:</li>
+    </ol>
+    <div class="quote">«Mark a specific chat as read. <b>Alternative to List Chat Messages endpoint, if you just want to mark the chat as read without fetching messages.»</b></div>
+    <p style="margin-top:-2px">То есть отдельный <code>mark-as-read</code> существует ровно для случая «пометить прочитанным <b>без</b> фетча» — а значит обычный фетч сообщений помечает читанным заодно.</p>
+    <ol start="2">
+      <li><b>Наша сторона.</b> Фоновый сборщик сам зовёт <code>listMessages</code> (GET) по <b>неоткрытым</b> чатам: tail-fetch на каждой дельте каждые 20–60с (<code>polling-sync.ts</code>), поллер недогруженного медиа, и — самый крупный путь — <b>backfill спендеров</b> (один GET на каждого фана ростера, <code>spenders/refresh.ts</code>). Фан написал → через минуту сборщик «прочитал» тред.</li>
+    </ol>
+
+    <p><b>Галочка «помечать прочитанным при открытии» тут ни при чём.</b> Она по умолчанию <b>выключена</b> и гейтит только явный POST <code>mark-as-read</code> для открытого чата. Фоновые GET её вообще не смотрят — поэтому даже с выключенной галочкой, если связка №1 верна, чаты всё равно помечаются читанными. Это тихо ломает заявленную в коде инвариант <span class="mono">«STRICTLY READ-ONLY toward OFAPI»</span>: наш код сам <code>mark-as-read</code> не зовёт, но GET читает за нас.</p>
+
+    <p><b>Почему «вероятно», а не «точно»:</b> код-половина доказана полностью; OFAPI-половина следует из формулировки доки <b>косвенно</b> (у самого GET в описании про read-state молчок). Наблюдение владельца сильно это подтверждает, но решающим будет изоляционный тест.</p>
+
+    <p><b>Решающий тест (~2 мин, ~3 кредита):</b> при <b>закрытых</b> приложении и OnlyMonster (чтобы исключить, что читает OM) взять фана с непрочитанным входящим → дёрнуть только <code>GET .../messages?limit=10</code> → через 5с глянуть <code>GET /chats</code>: упал ли <code>unreadMessagesCount</code> в 0 / сдвинулся ли <code>lastReadMessageId</code>. Упало после одного GET → <b>подтверждено</b>. Нет → опровергнуто (читает только явный POST).</p>
+
+    <p><b>Как чинить, если подтвердится:</b> детектить «новое сообщение» по полезной нагрузке <code>GET /chats</code> (там уже есть <code>lastMessage</code>, <code>unreadMessagesCount</code>, <code>lastReadMessageId</code>) и <b>не тянуть тело</b> до реального открытия чата. Минус — текст и медиа неоткрытых чатов будут недоступны до открытия; backfill спендеров сделать строго opt-in с предупреждением. Это архитектурное решение и требует пере-проверки на живом аккаунте — занесено в <code>TODO.md</code>.</p>
+  </div>
+
+  <!-- ─────────────────────── ПРОЧИЕ НАХОДКИ ────────────────────────────── -->
+  <h2 id="findings"><span class="num">06</span>Прочие находки по пути</h2>
+  <div class="twocol">
+
+    <div class="callout minor">
+      <h3>№2 · Точка авторизации «застывает»</h3>
+      <p>Зелёная/красная точка у аккаунта в рейле — снимок на момент <b>запуска</b>. Метод обновления статуса (<code>accounts.setAuthState</code>) в рантайме ни разу не вызывается, а событие хаба только запускает перечитывание той же неизменной строки. Итог: если аккаунт разлогинится во время работы, точка останется зелёной до перезапуска.</p>
+    </div>
+
+    <div class="callout minor">
+      <h3>№3 · Волт стоит кредитов на каждый показ</h3>
+      <p>Волт и галерея — единственная поверхность без слоя БД: каждый показ = реальные OFAPI-вызовы (1 кредит каждый), тормозятся только <code>staleTime</code>. Не баг, но стоит держать в голове при оценке расхода кредитов — частое открытие Волта это прямые деньги.</p>
+    </div>
+
+    <div class="callout minor">
+      <h3>№4 · Рассинхрон SPEC ↔ код</h3>
+      <p>SPEC §3 говорит про <code>markAsReadOnOpen</code> «default <b>ON</b> (decided 2026-06-10)», а код ставит <b><code>false</code></b> («P3 strictly read-only»). Поведение определяет код (безопаснее), но доку надо поправить, чтобы не путать.</p>
+    </div>
+
+    <div class="callout minor">
+      <h3>№5 · Money считается, а не хранится</h3>
+      <p>Спенд за 30 дней, чеки, доли по тирам, бары выручки нигде не лежат готовыми — это SQL-агрегаты по локальной таблице <code>fan_transactions</code> (rolling-окно 30 дней). Дёшево (0 кредитов), но значит: точность money завязана на полноту локального кэша транзакций.</p>
+    </div>
+
+  </div>
+
+  <!-- ─────────────────────── СТОИМОСТЬ ─────────────────────────────────── -->
+  <h2 id="cost"><span class="num">07</span>Что и сколько стоит кредитов</h2>
+  <p class="lead-sub">Кредиты OFAPI тратятся только на сетевые вызовы к OnlyFans (≈ $0.0034 за кредит). Всё остальное — бесплатно.</p>
+  <div class="surfaces">
+    <div class="surf">
+      <div class="head"><h3>Бесплатно · 0 кредитов</h3><div class="shows">Чтение из локального кэша и любые вычисления.</div></div>
+      <div class="body"><p>Список чатов, тред, панель фана (если не устарела), <b>вся статистика спендеров и money-цифры</b>, кредит-метр, настройки, mock. Это ~весь экран в обычной работе.</p></div>
+    </div>
+    <div class="surf">
+      <div class="head"><h3>Фоновый расход · постоянно</h3><div class="shows">Сборщик, пока приложение запущено.</div></div>
+      <div class="body"><p>Опрос списка чатов: 1 кредит/тик (20–60с на аккаунт). Глубокие свипы ~5 кр/5 мин. Tail-fetch на каждое изменение чата. <b>Здесь же сидит побочка авто-прочтения</b> (находка №1).</p></div>
+    </div>
+    <div class="surf">
+      <div class="head"><h3>По действию · видимый расход</h3><div class="shows">Когда человек что-то делает.</div></div>
+      <div class="body"><p>Открытие Волта/галереи (1 кр/вызов, на каждый показ), отправка/unsend, refresh спендеров (≈ по 1 кр на фана ростера), live-обновление профиля фана, прогон ИИ (токены LLM — отдельный счёт, не кредиты OFAPI).</p></div>
+    </div>
+  </div>
+
+  <hr class="rule">
+  <footer>
+    <p><b>Как читать эту страницу.</b> Цвета чипов = шесть источников из раздела 02. «кэш» — данные уже на диске, читаются мгновенно и бесплатно. «вживую» — сетевой вызов с кредитом. «вычисляется» — считается из локальных данных на лету.</p>
+    <p>Страница самодостаточна — открывается с диска без интернета (вебшрифты деградируют в системные). Содержимое отражает код на <b>2026-06-15</b>; при изменении синка (<code>main/sync</code>) или контракта хаба (SPEC §9) — обновить. Сгенерировано Claude Opus 4.8 по аудиту репозитория. Печать: <span class="kbd">Ctrl/⌘ + P</span>.</p>
+  </footer>
+
+</div>
+</body>
+</html>

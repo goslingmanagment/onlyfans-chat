@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChatGoose Desktop — карта потоков данных (11.06.2026)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg0:#efece4; --bg1:#faf9f5; --bg2:#f2f0e9; --bg3:#e8e5da;
+    --line:#e2dfd3; --line-strong:#cfcaba;
+    --t-hi:#1f1e1d; --t-mid:#5d5a52; --t-low:#97928a;
+    --clay:#d97757; --clay-deep:#c2603f; --clay-bg:#f7e8e1; --clay-line:#e8c3b3;
+    --green:#3a7d44; --green-bg:#e9f1e5; --green-line:#c9dcc2;
+    --amber:#96691c; --amber-bg:#f6efdc; --amber-line:#e4d4a8;
+    --warn:#b45309; --bad:#bb4430;
+    --sans:"Hanken Grotesk",-apple-system,sans-serif;
+    --serif:"Source Serif 4",Georgia,serif;
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+    --r:9px; --rs:7px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:var(--bg0); color:var(--t-hi); font-family:var(--sans);
+    font-size:15px; line-height:1.55;
+    background-image:repeating-linear-gradient(0deg, rgba(31,30,29,.014) 0 1px, transparent 1px 3px);
+  }
+  .page{max-width:1000px; margin:0 auto; padding:48px 28px 80px}
+
+  /* ── header ─────────────────────────────────────────────── */
+  .eyebrow{font-family:var(--mono); font-size:11px; letter-spacing:.18em; color:var(--clay-deep); text-transform:uppercase}
+  h1{font-family:var(--serif); font-size:42px; font-weight:600; letter-spacing:-.015em; line-height:1.12; margin:10px 0 14px}
+  h1 i{font-style:normal; color:var(--clay)}
+  .lede{max-width:640px; color:var(--t-mid); font-size:16px}
+  .datebadge{font-family:var(--mono); font-size:10px; letter-spacing:.12em; color:var(--t-mid);
+    border:1px solid var(--line-strong); padding:4px 12px; border-radius:999px; background:var(--bg1); white-space:nowrap}
+  .hero{display:flex; justify-content:space-between; align-items:flex-start; gap:24px; margin-bottom:40px}
+
+  /* ── section headers ────────────────────────────────────── */
+  section{margin-top:64px}
+  .sechead{display:flex; align-items:baseline; gap:16px; margin-bottom:8px}
+  .secnum{font-family:var(--serif); font-size:34px; font-weight:600; color:var(--clay); font-variant-numeric:tabular-nums}
+  .sechead h2{font-family:var(--serif); font-size:26px; font-weight:600; letter-spacing:-.01em}
+  .secsub{color:var(--t-mid); margin:0 0 22px 50px; max-width:700px}
+
+  /* ── big map ────────────────────────────────────────────── */
+  .mapwrap{overflow-x:auto; border:1px solid var(--line); border-radius:14px; background:var(--bg1);
+    box-shadow:0 1px 0 rgba(31,30,29,.03), 0 12px 32px -24px rgba(31,30,29,.25)}
+  .map{position:relative; width:940px; height:704px; margin:0 auto;
+    background-image:radial-gradient(rgba(31,30,29,.05) 1px, transparent 1px); background-size:22px 22px}
+  .map svg{position:absolute; inset:0; width:100%; height:100%}
+  .node{position:absolute; background:var(--bg1); border:1px solid var(--line-strong); border-radius:var(--r); padding:12px 14px}
+  .node h3{font-family:var(--serif); font-size:16px; font-weight:600; margin-bottom:4px}
+  .node p{font-size:12.5px; color:var(--t-mid); line-height:1.45}
+  .node .tag{font-family:var(--mono); font-size:9px; letter-spacing:.14em; color:var(--t-low); text-transform:uppercase; display:block; margin-bottom:4px}
+  .node.ours{border-color:var(--clay-line); box-shadow:0 0 0 3px var(--clay-bg)}
+  .node.ours h3 b{color:var(--clay-deep)}
+  .pillnode{position:absolute; font-family:var(--mono); font-size:11px; color:var(--t-mid);
+    border:1px dashed var(--line-strong); border-radius:999px; padding:7px 16px; background:var(--bg2)}
+  .inner{margin-top:8px; display:flex; flex-direction:column; gap:6px}
+  .inner div{border:1px solid var(--line); border-radius:var(--rs); padding:7px 10px; font-size:12px; background:var(--bg2)}
+  .inner div b{font-weight:600}
+  .inner div span{color:var(--t-mid)}
+  .chiprow{display:flex; flex-wrap:wrap; gap:5px; margin-top:8px}
+  .chip{font-family:var(--mono); font-size:9.5px; border:1px solid var(--line); border-radius:5px; padding:2px 7px; color:var(--t-mid); background:var(--bg2)}
+  .chip.warn{color:var(--warn); border-color:var(--amber-line); background:var(--amber-bg)}
+  .lbl{position:absolute; transform:translate(-50%,-50%); font-family:var(--mono); font-size:10px;
+    color:var(--t-mid); background:var(--bg1); border:1px solid var(--line); border-radius:6px;
+    padding:3px 9px; white-space:nowrap; z-index:2}
+  .lbl.clay{color:var(--clay-deep); border-color:var(--clay-line); background:var(--clay-bg)}
+  .lbl.green{color:var(--green); border-color:var(--green-line); background:var(--green-bg)}
+
+  .legend{display:flex; flex-wrap:wrap; gap:22px; padding:14px 20px; border-top:1px solid var(--line); font-size:12.5px; color:var(--t-mid)}
+  .legend span{display:inline-flex; align-items:center; gap:8px}
+  .sw{display:inline-block; width:34px; height:0; border-top:2.5px solid var(--clay)}
+  .sw.green{border-top:2.5px dashed var(--green)}
+  .sw.greensolid{border-top:2.5px solid var(--green)}
+  .sw.amber{border-top:2.5px solid var(--amber)}
+  .sw.gray{border-top:2px solid var(--line-strong)}
+
+  /* ── step flows ─────────────────────────────────────────── */
+  .flow{display:flex; align-items:stretch; gap:10px; flex-wrap:wrap}
+  .step{flex:1 1 0; min-width:140px; background:var(--bg1); border:1px solid var(--line); border-radius:var(--r); padding:12px 14px 13px;
+    box-shadow:0 1px 0 rgba(31,30,29,.03)}
+  .step .n{font-family:var(--mono); font-size:10px; color:var(--clay-deep); letter-spacing:.1em; display:block; margin-bottom:5px}
+  .step b{font-size:13.5px; font-weight:600; display:block; line-height:1.35}
+  .step span{font-size:12px; color:var(--t-mid); display:block; margin-top:3px; line-height:1.45}
+  .arr{align-self:center; font-family:var(--mono); color:var(--clay); font-size:15px; flex:0 0 auto}
+  .branch{border:1px solid var(--line); border-radius:12px; background:var(--bg2); padding:16px; margin:14px 0; position:relative}
+  .branch .bt{position:absolute; top:-9px; left:16px; font-family:var(--mono); font-size:9.5px; letter-spacing:.14em;
+    background:var(--bg2); border:1px solid var(--line); border-radius:5px; padding:1px 8px; color:var(--t-mid); text-transform:uppercase}
+  .lane{display:flex; align-items:stretch; gap:10px; flex-wrap:wrap}
+  .lane + .lane{margin-top:12px}
+  .lanebadge{flex:0 0 118px; align-self:stretch; display:flex; flex-direction:column; justify-content:center; gap:2px;
+    border-radius:var(--rs); padding:8px 11px; font-family:var(--mono)}
+  .lanebadge b{font-size:10.5px; letter-spacing:.1em}
+  .lanebadge span{font-size:9.5px; opacity:.8}
+  .lanebadge.green{background:var(--green-bg); border:1px solid var(--green-line); color:var(--green)}
+  .lanebadge.clay{background:var(--clay-bg); border:1px solid var(--clay-line); color:var(--clay-deep)}
+
+  .callout{margin-top:16px; border:1px solid var(--amber-line); background:var(--amber-bg); border-radius:var(--r);
+    padding:13px 16px; font-size:13.5px; color:var(--t-hi)}
+  .callout b{color:var(--amber)}
+  .callout.green{border-color:var(--green-line); background:var(--green-bg)}
+  .callout.green b{color:var(--green)}
+  .callout p+p{margin-top:6px}
+
+  /* ── notes grid ─────────────────────────────────────────── */
+  .notes{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  @media (max-width:720px){ .notes{grid-template-columns:1fr} }
+  .note{background:var(--bg1); border:1px solid var(--line); border-radius:var(--r); padding:16px 18px}
+  .note .tag{font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--clay-deep); display:block; margin-bottom:7px}
+  .note p{font-size:13.5px; color:var(--t-mid)}
+  .note p b{color:var(--t-hi); font-weight:600}
+  .note.warn{border-color:var(--amber-line)}
+  .note.warn .tag{color:var(--warn)}
+
+  footer{margin-top:70px; padding-top:18px; border-top:1px solid var(--line);
+    font-family:var(--mono); font-size:11px; color:var(--t-low); display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="hero">
+    <div>
+      <div class="eyebrow">ChatGoose Desktop · карта потоков данных</div>
+      <h1>Откуда что летит <i>и куда</i></h1>
+      <p class="lede">Как приложение узнаёт о новых сообщениях, как отправляет свои и куда ходит ИИ — состояние на сегодня. Без кода, на пальцах.</p>
+    </div>
+    <div class="datebadge">11 ИЮН 2026 · ФАЗЫ 0–5 СОБРАНЫ</div>
+  </div>
+
+  <!-- ════════════════ 1 · общая карта ════════════════ -->
+  <section>
+    <div class="sechead"><span class="secnum">1</span><h2>Общая карта</h2></div>
+    <p class="secsub">Пять участников. Приложение <b>никогда не ходит на OnlyFans напрямую</b> — единственная дверь туда это OFAPI (платный API-посредник). Терракотовое — наше.</p>
+
+    <div class="mapwrap">
+      <div class="map">
+        <svg viewBox="0 0 940 704" fill="none">
+          <defs>
+            <marker id="mGray" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#cfcaba"/>
+            </marker>
+            <marker id="mClay" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#d97757"/>
+            </marker>
+            <marker id="mGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#3a7d44"/>
+            </marker>
+            <marker id="mAmber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#96691c"/>
+            </marker>
+          </defs>
+          <!-- фаны → OnlyFans -->
+          <path d="M115,52 V76" stroke="#cfcaba" stroke-width="2" marker-end="url(#mGray)"/>
+          <!-- OnlyFans ↔ OFAPI -->
+          <path d="M115,207 V244" stroke="#cfcaba" stroke-width="2" marker-start="url(#mGray)" marker-end="url(#mGray)"/>
+          <!-- опрос: desktop ↔ OFAPI -->
+          <path d="M206,282 H348" stroke="#d97757" stroke-width="2.5" marker-start="url(#mClay)" marker-end="url(#mClay)"/>
+          <!-- отправка: desktop → OFAPI -->
+          <path d="M350,352 H206" stroke="#d97757" stroke-width="2.5" marker-end="url(#mClay)"/>
+          <!-- вебхуки: OFAPI → core -->
+          <path d="M115,444 V588 H344" stroke="#3a7d44" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#mGreen)"/>
+          <!-- SSE: core → desktop -->
+          <path d="M400,522 V393" stroke="#3a7d44" stroke-width="2.5" marker-end="url(#mGreen)"/>
+          <!-- сводки/статистика: desktop ↔ core -->
+          <path d="M590,393 V522" stroke="#cfcaba" stroke-width="2" marker-start="url(#mGray)" marker-end="url(#mGray)"/>
+          <!-- ИИ: desktop ↔ провайдеры -->
+          <path d="M646,196 H704" stroke="#96691c" stroke-width="2.5" marker-start="url(#mAmber)" marker-end="url(#mAmber)"/>
+        </svg>
+
+        <div class="pillnode" style="left:40px; top:16px; width:150px; text-align:center">фаны · 900+ чатов</div>
+
+        <div class="node" style="left:30px; top:78px; width:170px">
+          <span class="tag">платформа</span>
+          <h3>OnlyFans</h3>
+          <p>Сайт, где сидят фаны. Напрямую мы туда не ходим.</p>
+        </div>
+
+        <div class="node" style="left:30px; top:246px; width:176px">
+          <span class="tag">посредник · onlyfansapi.com</span>
+          <h3>OFAPI</h3>
+          <p>Единственная дверь к OnlyFans. Каждый запрос стоит кредитов.</p>
+          <div class="chiprow">
+            <span class="chip">REST</span><span class="chip">вебхуки</span><span class="chip warn">ключ = полный доступ</span>
+          </div>
+        </div>
+
+        <div class="node ours" style="left:350px; top:120px; width:296px">
+          <span class="tag">у каждого чаттера</span>
+          <h3><b>Приложение</b> (Electron)</h3>
+          <div class="inner">
+            <div><b>Интерфейс</b> <span>— то, что видит чаттер (React)</span></div>
+            <div><b>Main-процесс</b> <span>— вся сеть и все ключи живут только здесь: опрос, журнал отправки, сборка контекста для ИИ</span></div>
+            <div><b>Локальная база</b> <span>— SQLite, зашифрована: чаты, сообщения, траты, кэш медиа. Экран рисуется из неё</span></div>
+          </div>
+        </div>
+
+        <div class="node" style="left:710px; top:128px; width:186px">
+          <span class="tag">ИИ-провайдеры</span>
+          <h3>Anthropic / OpenRouter</h3>
+          <p>Запрос улетает → текст стримится обратно в карточку.</p>
+          <div class="chiprow"><span class="chip">ключи локально</span><span class="chip">P6 отложен</span></div>
+        </div>
+
+        <div class="node ours" style="left:350px; top:524px; width:296px">
+          <span class="tag">сервер агентства · ~/code/core</span>
+          <h3><b>Хаб «core»</b></h3>
+          <p>Принимает вебхуки, ведёт журнал событий и раздаёт их приложениям. Хранит сводки по фанам и статистику ИИ.</p>
+          <div class="chiprow"><span class="chip warn">⚠ пока ноутбук + временный туннель</span></div>
+        </div>
+
+        <!-- подписи на стрелках -->
+        <div class="lbl clay" style="left:277px; top:262px">опрос «что нового?» · 20 c</div>
+        <div class="lbl clay" style="left:277px; top:372px">отправка сообщений · PPV</div>
+        <div class="lbl green" style="left:230px; top:610px">вебхуки · события сразу</div>
+        <div class="lbl green" style="left:400px; top:458px">SSE · секунды</div>
+        <div class="lbl" style="left:590px; top:458px">сводки · статистика ИИ</div>
+        <div class="lbl" style="left:678px; top:170px">ИИ-запрос</div>
+        <div class="lbl" style="left:115px; top:226px">официальный сайт ↔ его API</div>
+      </div>
+
+      <div class="legend">
+        <span><i class="sw"></i> запрос-ответ: приложение спрашивает само</span>
+        <span><i class="sw green"></i> вебхук: событие прилетает само</span>
+        <span><i class="sw greensolid"></i> SSE: живой поток в приложение</span>
+        <span><i class="sw amber"></i> ИИ</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ 2 · входящие ════════════════ -->
+  <section>
+    <div class="sechead"><span class="secnum">2</span><h2>Откуда в приложении появляется сообщение фана</h2></div>
+    <p class="secsub">Два пути работают <b>одновременно</b>: быстрый (вебхук → core → SSE) и фоновый (опрос). Дубли отсекаются по id сообщения — задвоиться не может.</p>
+
+    <div class="flow">
+      <div class="step"><span class="n">01</span><b>Фан пишет</b><span>сообщение уходит на OnlyFans</span></div>
+      <div class="arr">→</div>
+      <div class="step"><span class="n">02</span><b>OFAPI узнаёт</b><span>посредник видит новое сообщение на аккаунте</span></div>
+    </div>
+
+    <div class="branch">
+      <div class="bt">дальше — два пути одновременно</div>
+      <div class="lane">
+        <div class="lanebadge green"><b>ПУТЬ Б</b><span>вебхук · секунды</span></div>
+        <div class="step"><b>OFAPI шлёт вебхук в core</b><span>«пришло сообщение», «фан печатает», «купил PPV», «чаевые»…</span></div>
+        <div class="arr">→</div>
+        <div class="step"><b>core пишет в журнал</b><span>и раздаёт событие всем подключённым приложениям по SSE</span></div>
+        <div class="arr">→</div>
+        <div class="step"><b>Приложение получило</b><span>задержка — секунды</span></div>
+      </div>
+      <div class="lane">
+        <div class="lanebadge clay"><b>ПУТЬ А</b><span>опрос · до 20 c</span></div>
+        <div class="step"><b>Очередной опрос</b><span>раз в 20 с (активный аккаунт) приложение запрашивает 1-ю страницу списка чатов</span></div>
+        <div class="arr">→</div>
+        <div class="step"><b>Видит сдвиг в чате</b><span>изменился последний message id / счётчик непрочитанных</span></div>
+        <div class="arr">→</div>
+        <div class="step"><b>Догружает только новое</b><span>хвост сообщений именно этого чата — экономия кредитов</span></div>
+      </div>
+    </div>
+
+    <div class="flow">
+      <div class="step"><span class="n">03</span><b>Запись в локальную базу</b><span>событие из любого пути попадает в SQLite, дубли отбрасываются</span></div>
+      <div class="arr">→</div>
+      <div class="step"><span class="n">04</span><b>На экране</b><span>чат всплывает в списке, бейдж, тост/звук</span></div>
+    </div>
+
+    <div class="callout green">
+      <p><b>Кто главный:</b> когда SSE живой — он главный, а опрос замедляется (экономит кредиты). Упал туннель или core — приложение само это замечает (сторожевой таймер 45 с), возвращает частый опрос и делает сверку списка чатов, чтобы закрыть пропуск. Плюс «глубокая проверка» раз в 5 минут ловит изменения в старых чатах.</p>
+    </div>
+  </section>
+
+  <!-- ════════════════ 3 · отправка ════════════════ -->
+  <section>
+    <div class="sechead"><span class="secnum">3</span><h2>Как уходит наше сообщение</h2></div>
+    <p class="secsub">Каждая отправка сначала записывается в журнал на диске — поэтому ни обрыв сети, ни перезапуск приложения не теряют сообщение и не задваивают его.</p>
+
+    <div class="flow">
+      <div class="step"><span class="n">01</span><b>Чаттер жмёт ⏎</b><span>текст или PPV из хранилища</span></div>
+      <div class="arr">→</div>
+      <div class="step"><span class="n">02</span><b>Запись в журнал</b><span>outbox в локальной базе: статус «отправляется»</span></div>
+      <div class="arr">→</div>
+      <div class="step"><span class="n">03</span><b>Запрос в OFAPI</b><span>тот передаёт в OnlyFans</span></div>
+      <div class="arr">→</div>
+      <div class="step"><span class="n">04</span><b>Фан получил</b><span>сообщение в его чате</span></div>
+      <div class="arr">→</div>
+      <div class="step"><span class="n">05</span><b>Подтверждение</b><span>событие «messages.sent» по SSE или контрольная догрузка чата</span></div>
+      <div class="arr">→</div>
+      <div class="step"><span class="n">06</span><b>✓ Доставлено</b><span>галочка в интерфейсе, запись в журнале закрыта</span></div>
+    </div>
+
+    <div class="callout">
+      <p><b>Почему так строго:</b> у OnlyFans нет защиты от повторов — если отправить «ещё раз на всякий случай», фан получит сообщение дважды. Поэтому при любом неясном исходе (сеть оборвалась на шаге 03–05) статус становится <b>«не подтверждено»</b>, и решение принимает человек: кнопка «Проверить» или «Скрыть». Автоповторов нет вообще.</p>
+      <p>Для закрытия гейта P3 этот журнал и проверяет <b>auditOutbox</b>: после 500+ реальных отправок — ноль потерянных, ноль задвоенных.</p>
+    </div>
+  </section>
+
+  <!-- ════════════════ 4 · ИИ ════════════════ -->
+  <section>
+    <div class="sechead"><span class="secnum">4</span><h2>Куда ходит ИИ</h2></div>
+    <p class="secsub">Все вызовы идут с машины чаттера напрямую к провайдеру. Центральный ИИ-шлюз через core (фаза P6) отложен решением от 11.06.2026.</p>
+
+    <div class="flow">
+      <div class="step"><span class="n">01</span><b>Кнопка / хоткей</b><span>Reply ⌘R · Improve ⌘I · Help ⌘H · Ping ⌘P · Hi ⌘G · Scan ⌘S</span></div>
+      <div class="arr">→</div>
+      <div class="step"><span class="n">02</span><b>Сборка контекста</b><span>переписка, траты, подписка — из локальной базы. Только глубокий Scan догружает историю из OFAPI (с прогресс-баром)</span></div>
+      <div class="arr">→</div>
+      <div class="step"><span class="n">03</span><b>Запрос провайдеру</b><span>Anthropic или OpenRouter, ключ — в системном хранилище macOS</span></div>
+      <div class="arr">→</div>
+      <div class="step"><span class="n">04</span><b>Стрим в карточку</b><span>текст печатается живьём, видна цена операции</span></div>
+      <div class="arr">→</div>
+      <div class="step"><span class="n">05</span><b>Человек вставляет</b><span>клик по черновику → текст в композер → обычная отправка (раздел 3)</span></div>
+    </div>
+
+    <div class="callout">
+      <p><b>Железное правило:</b> ИИ никогда не отправляет сам — только готовит черновик. Отправка всегда руками человека.</p>
+      <p>Сводка по фану (Scan) после генерации <b>уезжает в core</b> — там она видна в дашборде и автоматически подтягивается у другого чаттера, открывшего того же фана. Туда же батчами уходит статистика использования ИИ.</p>
+    </div>
+  </section>
+
+  <!-- ════════════════ 5 · оговорки ════════════════ -->
+  <section>
+    <div class="sechead"><span class="secnum">5</span><h2>Что важно помнить прямо сейчас</h2></div>
+    <div class="notes" style="margin-top:22px">
+      <div class="note warn">
+        <span class="tag">⚠ хостинг core</span>
+        <p>core пока крутится <b>на ноутбуке за временным туннелем</b>. Ноутбук уснул или туннель перезапустился — события теряются (опрос подстрахует, но с задержкой), а адрес туннеля меняется. <b>До пилота core нужно перенести на постоянный сервер.</b></p>
+      </div>
+      <div class="note">
+        <span class="tag">кредиты OFAPI</span>
+        <p>Опрос — ~1 кредит за тик, со всеми проверками <b>≈500 кредитов за смену</b> на аккаунт. Вебхуки в ~100 раз дешевле: 1 кредит за 100 событий. Баланс виден в статус-баре приложения. Сейчас на ключе ~99 тыс. кредитов.</p>
+      </div>
+      <div class="note">
+        <span class="tag">ключи</span>
+        <p>У ключа OFAPI <b>нет ограничений по правам</b> — любой ключ открывает все подключённые аккаунты. Поэтому: по именному ключу на машину чаттера (можно мгновенно отозвать), а перед масштабированием — прокси-шлюз в core, чтобы ключи вообще не лежали у чаттеров.</p>
+      </div>
+      <div class="note">
+        <span class="tag">OnlyMonster</span>
+        <p>Чаттеры пока работают в OnlyMonster — наше приложение идёт <b>параллельно, как компаньон</b>, данные нигде не пересекаются. Правило на переходный период: одна поверхность на аккаунт в смену, чтобы не путать прочитанность и ответы.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Источники: docs/SPEC.md §1 · §6–§9 · docs/PLAN.md (статусы на 11.06.2026)</span>
+    <span>при изменении архитектуры обновлять вместе со SPEC</span>
+  </footer>
+</div>
+</body>
+</html>
