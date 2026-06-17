@@ -309,11 +309,11 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
       const fresh = isWithinFetchTtl(stampMs, now(), ttlMs);
       const localCount = data.messages.count(accountId, chatId);
 
-      // The tail GET below marks the fan read on OnlyFans — skip it when
-      // auto-read is OFF (the quick-look thread then shows cached rows only).
-      if (!getAutoRead()) {
-        return { hasChat, fetched: false, messageCount: localCount, skippedByTtl: false };
-      }
+      // NOTE: opening a quick-look is a DELIBERATE read of THIS chat (exactly
+      // like opening the full chat), so it ALWAYS hydrates — it is NOT gated on
+      // auto-read. The auto-read=OFF setting only suppresses BACKGROUND
+      // read-marking (the polling sweep + the bulk scoped-refresh queue), never
+      // a single chat the chatter explicitly opened.
 
       // Skip the GET only when the stamp is fresh AND we either already have
       // local history (the 0-credit ceiling) or already probed this exact stamp

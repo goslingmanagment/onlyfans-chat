@@ -426,8 +426,9 @@ describe('hydrateIfStale (quick-look on-open)', () => {
 
 // ── auto-read OFF (default) ─────────────────────────────────────────────────
 // The per-fan tail GET marks each fan read on OnlyFans, so when autoReadChats
-// is off the queue drains WITHOUT fetching and hydrateIfStale ensures the row
-// (listChats — safe) but never tail-fetches.
+// is off the BACKGROUND scoped-refresh queue drains WITHOUT fetching. But
+// hydrateIfStale (opening ONE chat's quick-look) is a deliberate read and still
+// tail-fetches regardless of the setting.
 describe('auto-read OFF (default)', () => {
   function makeOffHarness(scopes: Record<string, string[]>): Harness {
     let nowMs = new Date('2026-06-13T12:00:00.000Z').getTime();
@@ -485,15 +486,15 @@ describe('auto-read OFF (default)', () => {
     expect(h.service.freshness(ACCT)['all']).toBeDefined();
   });
 
-  it('hydrateIfStale ensures the row but skips the tail fetch', async () => {
+  it('hydrateIfStale STILL fetches when auto-read is OFF (a deliberate per-chat open)', async () => {
     const h = makeOffHarness({});
     const result = await h.service.hydrateIfStale(ACCT, '7', { username: 'merritt' });
 
-    // Auto-read OFF: no tail GET, so the discriminated status reports the
-    // local-only state (fetched:false, count 0, not a TTL skip).
-    expect(result).toEqual({ hasChat: true, fetched: false, messageCount: 0, skippedByTtl: false });
-    expect(h.ensured).toEqual([{ chatId: '7', username: 'merritt' }]); // listChats: safe
-    expect(h.fetched).toHaveLength(0); // no message-body read
-    expect(data.threadFetchLog.get(ACCT, '7')).toBeNull();
+    // Opening a quick-look is a deliberate read of THIS chat — it always
+    // hydrates; auto-read=OFF only suppresses BACKGROUND read-marking.
+    expect(result).toMatchObject({ hasChat: true, fetched: true, skippedByTtl: false });
+    expect(h.ensured).toEqual([{ chatId: '7', username: 'merritt' }]);
+    expect(h.fetched).toHaveLength(1); // the tail GET ran
+    expect(data.threadFetchLog.get(ACCT, '7')).not.toBeNull();
   });
 });
