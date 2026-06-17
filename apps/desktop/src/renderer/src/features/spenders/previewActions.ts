@@ -6,6 +6,7 @@
 import type { InfiniteData, QueryClient } from '@tanstack/react-query';
 import type {
   AccountVM,
+  InvokeChannels,
   MessageVM,
   PingGateVM,
   SpenderRowVM,
@@ -26,15 +27,23 @@ import { previewRow, useSpendersStore } from './spendersStore';
 // by fan. Main owns the spend ceiling: the per-fan thread-fetch stamp (5-min
 // TTL, persisted, shared with the refresh queue) makes repeat opens and J/K
 // walking free.
-export function hydratePreviewFan(accountId: string, fanId: string, username?: string | null): void {
-  // Fire-and-forget: db:changed events refresh the thread and board queries.
-  void getBridge()
-    .invoke('cmd:spenders.hydrate', {
-      accountId,
-      chatId: fanId,
-      ...(username !== undefined ? { username } : {}),
-    })
-    .catch(() => undefined); // transient failure → the next open retries
+/** Discriminated hydrate status (mirrors main's SpendersHydrateResult). */
+export type PreviewHydrateResult = InvokeChannels['cmd:spenders.hydrate']['result'];
+
+export function hydratePreviewFan(
+  accountId: string,
+  fanId: string,
+  username?: string | null,
+): Promise<PreviewHydrateResult> {
+  // One read-only tail GET. The result is OBSERVABLE (no blanket swallow): the
+  // caller distinguishes a genuinely-empty fan (→ sp.noHistory in the thread)
+  // from a transient fetch error (→ a quiet, retriable banner). When rows
+  // actually land, db:changed events refresh the thread and board queries.
+  return getBridge().invoke('cmd:spenders.hydrate', {
+    accountId,
+    chatId: fanId,
+    ...(username !== undefined ? { username } : {}),
+  });
 }
 
 export async function ensureAndOpenPreviewChat(row: SpenderRowVM): Promise<boolean> {

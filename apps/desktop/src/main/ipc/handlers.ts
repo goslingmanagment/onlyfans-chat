@@ -657,13 +657,23 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('cmd:spenders.hydrate', async (_event, rawArgs: unknown) => {
     const args = spendersHydrateSchema.parse(rawArgs);
     // One read-only tail GET through the sync machinery (same path as a chat
-    // open), fired on EVERY quick-look open — main's per-fan thread-fetch
-    // stamp TTL-guards the spend (PLAN item 13). No refresh service → no-op.
-    return (
-      (await deps.spendersRefresh?.hydrateIfStale(args.accountId, args.chatId, {
-        username: args.username ?? null,
-      })) ?? { hasChat: data.chats.get(args.accountId, args.chatId) !== null }
-    );
+    // open), fired on EVERY quick-look open — main's per-fan thread-fetch stamp
+    // TTL-guards the spend (PLAN item 13). Read deps.spendersRefresh fresh (it
+    // is a live getter — see index.ts) so a key configured AFTER boot is seen.
+    const service = deps.spendersRefresh;
+    if (!service) {
+      // No OFAPI key yet → no tail GET is possible; report the local-only state
+      // in the same shape so the renderer never has to special-case it.
+      return {
+        hasChat: data.chats.get(args.accountId, args.chatId) !== null,
+        fetched: false,
+        messageCount: data.messages.count(args.accountId, args.chatId),
+        skippedByTtl: false,
+      };
+    }
+    return service.hydrateIfStale(args.accountId, args.chatId, {
+      username: args.username ?? null,
+    });
   });
 
   // ── Spenders freshness (PLAN item 13; read-only tail GETs) ──

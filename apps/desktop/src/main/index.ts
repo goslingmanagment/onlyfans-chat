@@ -641,13 +641,34 @@ async function boot(): Promise<void> {
   registerIpcHandlers({
     data,
     settingsStore,
-    sync,
-    creditMeter: client?.creditMeter ?? null,
-    coordinator,
-    send: sendEngine,
-    vault: vaultService,
-    spenders: spendersService,
-    spendersRefresh,
+    // OFAPI-lifecycle services are built lazily by initOfapi, which can run
+    // AFTER this registration — a key configured on a keyless boot routes
+    // cmd:settings.update → onOfapiKeyConfigured → initOfapi and reassigns the
+    // module-level bindings below. Pass them as getters over those bindings so
+    // handlers always read the LIVE instance, not the null captured at boot
+    // (otherwise cmd:spenders.hydrate, send, vault, … silently no-op until the
+    // app is restarted).
+    get sync() {
+      return sync;
+    },
+    get creditMeter() {
+      return client?.creditMeter ?? null;
+    },
+    get coordinator() {
+      return coordinator;
+    },
+    get send() {
+      return sendEngine;
+    },
+    get vault() {
+      return vaultService;
+    },
+    get spenders() {
+      return spendersService;
+    },
+    get spendersRefresh() {
+      return spendersRefresh;
+    },
     purge: async () => {
       // Re-entry guard: a double-fired cmd:data.purge would otherwise call
       // app.relaunch() twice before exit — Electron then spawns TWO instances

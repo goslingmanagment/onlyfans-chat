@@ -343,9 +343,14 @@ function buildStore(): MockStore {
       const fanId = String(fanSeq);
       const name = FAN_NAMES[nameIdx % FAN_NAMES.length] ?? `Fan ${fanSeq}`;
       nameIdx += 1;
+      // One fan per account has spend but NO seeded local history — reproduces
+      // the Spenders noHistory → hydrate → history path (the mock
+      // cmd:spenders.hydrate below seeds a tail on demand, like the real
+      // read-only tail GET).
+      const noHistory = i === 1;
       const msgCount = i === 0 ? 220 : 18 + Math.floor(rng() * 45);
       const endMs = Date.now() - Math.floor(rng() * (i === 0 ? 1 : 36)) * 3_600_000;
-      const msgs = buildMessages(fanId, msgCount, endMs);
+      const msgs = noHistory ? [] : buildMessages(fanId, msgCount, endMs);
       messages.set(`${account.id}/${fanId}`, msgs);
       const last = msgs[msgs.length - 1];
       const unread = last !== undefined && !last.isSentByMe && chance(0.5) ? 1 + Math.floor(rng() * 4) : 0;
@@ -373,7 +378,8 @@ function buildStore(): MockStore {
         canSendMessage: i !== 3,
         canNotSendReason: i !== 3 ? null : 'You cannot message this user — they unsubscribed.',
         // fan-value spread (DESIGN §1): whales, mid, small, and the silent $0 case
-        lifetimeSpend: chance(0.2) ? null : Math.floor(rng() * 6000),
+        // (the noHistory fan keeps real spend so it surfaces in the Spenders shelf)
+        lifetimeSpend: noHistory ? 4200 : chance(0.2) ? null : Math.floor(rng() * 6000),
         spend30d: chance(0.4) ? null : Math.floor(rng() * 600),
       };
       list.push(item);
@@ -1340,8 +1346,32 @@ export function createMockBridge(): ChatGooseBridge {
       return { rows, fetchedAt: new Date().toISOString() };
     },
     'cmd:spenders.hydrate': ({ accountId, chatId }) => {
-      // mock data is always "complete" — nothing to fetch
-      return { hasChat: (store.chats.get(accountId) ?? []).some((c) => c.chatId === chatId) };
+      // Mirror the real read-only tail GET: a fan with NO local history gets a
+      // short tail seeded ONCE (then db:changed refreshes the thread), so dev
+      // reproduces noHistory → hydrate → history. Already-seeded fans are a
+      // 0-credit no-op (TTL-skipped), like production.
+      const key = `${accountId}/${chatId}`;
+      const existing = store.messages.get(key) ?? [];
+      const hasChat = (store.chats.get(accountId) ?? []).some((c) => c.chatId === chatId);
+      if (existing.length > 0) {
+        return { hasChat, fetched: false, messageCount: existing.length, skippedByTtl: true };
+      }
+      const tail = buildMessages(chatId, 12, Date.now());
+      store.messages.set(key, tail);
+      const last = tail[tail.length - 1];
+      const chats = store.chats.get(accountId) ?? [];
+      const row = chats.find((c) => c.chatId === chatId);
+      if (row !== undefined && last !== undefined) {
+        row.lastMessageAt = last.createdAt;
+        row.lastMessagePreview = last.isTip
+          ? `[Tip $${last.tipAmount ?? 0}] ${last.tipText ?? ''}`.trim()
+          : last.text;
+        row.lastMessageIsSentByMe = last.isSentByMe;
+        store.chats.set(accountId, sortChatsByRecency(chats));
+      }
+      emit('db:changed', { scope: 'messages', accountId, chatId });
+      emit('db:changed', { scope: 'chats', accountId });
+      return { hasChat, fetched: true, messageCount: tail.length, skippedByTtl: false };
     },
     // ── Spenders freshness (PLAN item 13): simulated queue with live frames ──
     'query:spenders.freshness': () => ({

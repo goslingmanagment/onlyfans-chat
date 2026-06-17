@@ -4,7 +4,7 @@
 // the real in-memory SQLite layer.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { DataLayer } from '@main/db/index';
+import type { DataLayer, DbChangedEvent } from '@main/db/index';
 import {
   createSpendersRefresh,
   REFRESH_FAILURE_PAUSE_THRESHOLD,
@@ -12,7 +12,7 @@ import {
   type SpendersRefreshFrame,
   type SpendersRefreshService,
 } from '@main/spenders/refresh';
-import { memoryDataLayer } from '../db/helpers';
+import { memoryDataLayer, sampleMessage } from '../db/helpers';
 
 const ACCT = 'acct_1';
 const TTL_MS = 5 * 60_000;
@@ -34,6 +34,8 @@ function makeHarness(opts: {
   mapped?: string[];
   budgetExhausted?: () => boolean;
   failFor?: Set<string>;
+  /** Fans whose tail GET succeeds but returns NO messages (genuinely empty). */
+  emptyFor?: Set<string>;
   onSleep?: (ms: number) => void;
 } = {}): Harness {
   let nowMs = new Date('2026-06-13T12:00:00.000Z').getTime();
@@ -41,14 +43,24 @@ function makeHarness(opts: {
   const fetched: Array<{ chatId: string; purpose: string }> = [];
   const ensured: Array<{ chatId: string; username: string | null }> = [];
   const sleeps: number[] = [];
+  let msgSeq = 0;
   const service = createSpendersRefresh({
     data,
     refreshChat: async (accountId, chatId, purpose) => {
       if (opts.failFor?.has(chatId)) {
+        // A failed GET throws before fetchChatTail's stamp — no rows, no stamp.
         throw new Error('boom');
       }
       fetched.push({ chatId, purpose });
-      // production fetchChatTail stamps even empty threads
+      // Mirror fixed-production fetchChatTail: a successful NON-EMPTY tail
+      // upserts rows (→ db:changed) AND stamps; a successful EMPTY tail stamps
+      // only (the genuinely-empty fan, e.g. tips-only).
+      if (!opts.emptyFor?.has(chatId)) {
+        msgSeq += 1;
+        data.messages.upsertMany([
+          sampleMessage({ accountId, chatId, messageId: `${chatId}-${msgSeq}` }),
+        ]);
+      }
       data.threadFetchLog.stamp(accountId, chatId, new Date(nowMs).toISOString());
     },
     ensureChat: async (_accountId, chatId, hint) => {
@@ -279,27 +291,97 @@ describe('scoped refresh queue', () => {
 });
 
 describe('hydrateIfStale (quick-look on-open)', () => {
-  it('ensures the chat row before hydrating and returns the resolved state', async () => {
+  it('ensures the chat row before hydrating and returns the resolved status', async () => {
     const h = makeHarness({ scopes: {} });
     const result = await h.service.hydrateIfStale(ACCT, '7', { username: 'merritt' });
 
-    expect(result).toEqual({ hasChat: true });
+    expect(result).toEqual({ hasChat: true, fetched: true, messageCount: 1, skippedByTtl: false });
     expect(h.ensured).toEqual([{ chatId: '7', username: 'merritt' }]);
     expect(h.fetched).toHaveLength(1);
   });
 
-  it('fetches when never stamped; skips within the TTL; refetches past it', async () => {
+  it('a fan with history: the tail GET writes rows AND emits a messages db:changed', async () => {
     const h = makeHarness({ scopes: {} });
-    await h.service.hydrateIfStale(ACCT, '7');
+    const flushed: DbChangedEvent[] = [];
+    data.bus.subscribe((events) => flushed.push(...events));
+
+    const result = await h.service.hydrateIfStale(ACCT, '7');
+    data.bus.flushNow();
+
+    expect(result).toMatchObject({ fetched: true, messageCount: 1, skippedByTtl: false });
+    expect(data.messages.count(ACCT, '7')).toBe(1);
+    expect(flushed).toContainEqual({ scope: 'messages', accountId: ACCT, chatId: '7' });
+  });
+
+  it('fetches when never stamped; skips within the TTL once history exists; refetches past it', async () => {
+    const h = makeHarness({ scopes: {} });
+    const first = await h.service.hydrateIfStale(ACCT, '7');
+    expect(first).toMatchObject({ fetched: true, messageCount: 1, skippedByTtl: false });
     expect(h.fetched).toHaveLength(1);
     expect(h.fetched[0]).toMatchObject({ chatId: '7', purpose: 'message-tail' });
 
-    await h.service.hydrateIfStale(ACCT, '7'); // stamped just now → skip
+    const second = await h.service.hydrateIfStale(ACCT, '7'); // fresh stamp + history → skip
+    expect(second).toMatchObject({ fetched: false, skippedByTtl: true, messageCount: 1 });
     expect(h.fetched).toHaveLength(1);
 
     h.advance(TTL_MS + 1);
     await h.service.hydrateIfStale(ACCT, '7');
     expect(h.fetched).toHaveLength(2);
+  });
+
+  it('an empty first fetch does not wedge: a reopen probes once while count===0, then bounds to ≤1/TTL', async () => {
+    const h = makeHarness({ scopes: {}, emptyFor: new Set(['7']) });
+
+    // 1st open: never stamped → fetch; genuinely empty (stamps, writes no rows).
+    const first = await h.service.hydrateIfStale(ACCT, '7');
+    expect(first).toMatchObject({ fetched: true, messageCount: 0, skippedByTtl: false });
+    expect(h.fetched).toHaveLength(1);
+    expect(data.messages.count(ACCT, '7')).toBe(0);
+
+    // 2nd open within the TTL: a fresh stamp over an EMPTY thread is a poisoned
+    // stamp → exactly ONE more probe GET (no permanent noHistory wedge).
+    const second = await h.service.hydrateIfStale(ACCT, '7');
+    expect(second).toMatchObject({ fetched: true, messageCount: 0 });
+    expect(h.fetched).toHaveLength(2);
+
+    // 3rd open within the TTL: the probe confirmed empty → bounded (skip).
+    const third = await h.service.hydrateIfStale(ACCT, '7');
+    expect(third).toMatchObject({ fetched: false, skippedByTtl: true });
+    expect(h.fetched).toHaveLength(2); // ≤1 extra GET per TTL window — no loop
+
+    // Past the TTL: a fresh attempt is allowed again (one probe per window).
+    h.advance(TTL_MS + 1);
+    await h.service.hydrateIfStale(ACCT, '7');
+    expect(h.fetched).toHaveLength(3);
+  });
+
+  it('a poisoned stamp over a fan that HAS history loads it on the next open (the bug)', async () => {
+    // The refresh queue stamped the fan but no rows landed locally (empty/failed
+    // write) — the exact production poison-pill. Pre-seed only the stamp.
+    data.threadFetchLog.stamp(ACCT, '7', new Date('2026-06-13T12:00:00.000Z').toISOString());
+    const h = makeHarness({ scopes: {} });
+    expect(data.messages.count(ACCT, '7')).toBe(0);
+
+    const result = await h.service.hydrateIfStale(ACCT, '7');
+
+    expect(result).toMatchObject({ fetched: true, messageCount: 1, skippedByTtl: false });
+    expect(h.fetched).toHaveLength(1); // the fresh-but-empty stamp did NOT wedge it
+    expect(data.messages.count(ACCT, '7')).toBe(1);
+  });
+
+  it('a thrown tail GET leaves no stamp and the next open retries (no wedge)', async () => {
+    const h = makeHarness({ scopes: {}, failFor: new Set(['7']) });
+
+    const first = await h.service.hydrateIfStale(ACCT, '7');
+    expect(first.fetched).toBe(false);
+    expect(first.error).toBeDefined();
+    expect(data.threadFetchLog.get(ACCT, '7')).toBeNull(); // fetchChatTail stamps only on success
+    expect(data.messages.count(ACCT, '7')).toBe(0);
+
+    // No stamp ⇒ NOT TTL-skipped: the next open re-attempts (errors again here)
+    // instead of wedging on a stale error.
+    const second = await h.service.hydrateIfStale(ACCT, '7');
+    expect(second.error).toBeDefined();
   });
 
   it('single-flight: concurrent opens of one fan spend one credit', async () => {
@@ -329,13 +411,15 @@ describe('hydrateIfStale (quick-look on-open)', () => {
     expect(calls).toBe(1);
   });
 
-  it('a TTL-stamped fan from the REFRESH queue also skips the hydrate (one shared stamp)', async () => {
+  it('a fan the REFRESH queue already loaded skips the hydrate (one shared stamp, ceiling preserved)', async () => {
     const h = makeHarness({ scopes: { '100': ['7'] } });
     await h.service.start(ACCT, '100');
     await until(() => h.frames.some((f) => f.state === 'done'));
     expect(h.fetched).toHaveLength(1);
+    expect(data.messages.count(ACCT, '7')).toBe(1); // queue loaded history
 
-    await h.service.hydrateIfStale(ACCT, '7');
+    const result = await h.service.hydrateIfStale(ACCT, '7');
+    expect(result).toMatchObject({ fetched: false, skippedByTtl: true });
     expect(h.fetched).toHaveLength(1); // no second spend
   });
 });
@@ -405,7 +489,9 @@ describe('auto-read OFF (default)', () => {
     const h = makeOffHarness({});
     const result = await h.service.hydrateIfStale(ACCT, '7', { username: 'merritt' });
 
-    expect(result).toEqual({ hasChat: true });
+    // Auto-read OFF: no tail GET, so the discriminated status reports the
+    // local-only state (fetched:false, count 0, not a TTL skip).
+    expect(result).toEqual({ hasChat: true, fetched: false, messageCount: 0, skippedByTtl: false });
     expect(h.ensured).toEqual([{ chatId: '7', username: 'merritt' }]); // listChats: safe
     expect(h.fetched).toHaveLength(0); // no message-body read
     expect(data.threadFetchLog.get(ACCT, '7')).toBeNull();

@@ -456,6 +456,11 @@ export const UI_MESSAGES = {
     en: 'No local history for this fan yet — O opens the full chat.',
     ru: 'Локальной истории пока нет — O откроет полный чат.',
   },
+  'sp.historyFetchFailed': {
+    en: 'Could not load history yet.',
+    ru: 'Не удалось загрузить историю.',
+  },
+  'sp.retry': { en: 'Retry', ru: 'Повторить' },
   'sp.noChatSend': {
     en: 'Chat not synced yet — sending unavailable from the preview.',
     ru: 'Чат не синхронизирован — отправка из превью недоступна.',

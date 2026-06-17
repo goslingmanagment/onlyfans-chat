@@ -53,11 +53,36 @@ export interface SpendersRefreshStatus {
   total: number;
 }
 
+/** Discriminated quick-look hydrate outcome (the cmd:spenders.hydrate result).
+ *  The renderer needs to tell a genuinely-empty fan (show «нет истории») from a
+ *  transient fetch error (quiet, retriable) instead of swallowing both. */
+export interface SpendersHydrateResult {
+  /** The chat-list ROW resolved. A deep fan we couldn't resolve is `false`, but
+   *  the tail GET is keyed by chatId so history can still load anyway. */
+  hasChat: boolean;
+  /** A tail GET actually ran this call (false ⇒ skipped — see skippedByTtl). */
+  fetched: boolean;
+  /** Local message count after the call (>0 ⇒ history is present). */
+  messageCount: number;
+  /** The GET was skipped because the per-fan fetch stamp is still fresh. */
+  skippedByTtl: boolean;
+  /** Set iff the tail GET threw — the renderer shows a quiet, retriable state
+   *  (no stamp was written, so the next open retries). */
+  error?: string;
+}
+
 export interface SpendersRefreshService {
-  /** Quick-look on-open hydrate: ONE tail GET unless the fan was fetched
-   *  within the TTL (any path). Replaces the renderer-side guard — main's
-   *  stamp is authoritative and survives restarts. */
-  hydrateIfStale(accountId: string, chatId: string, hint?: { username?: string | null }): Promise<{ hasChat: boolean }>;
+  /** Quick-look on-open hydrate: ONE tail GET unless the fan was fetched within
+   *  the TTL AND already has local history. A fresh stamp over an EMPTY local
+   *  thread (a poisoned stamp — a fetch stamped without landing messages, or a
+   *  row-less ensureChat aborted) gets exactly one more probe GET; a genuinely-
+   *  empty fan is then not re-probed until that stamp expires. Main's stamp is
+   *  authoritative and survives restarts. */
+  hydrateIfStale(
+    accountId: string,
+    chatId: string,
+    hint?: { username?: string | null },
+  ): Promise<SpendersHydrateResult>;
   /** Start the scoped queue (replaces a queue already running on the account
    *  unless it is the same scope, which is a no-op). Returns once started;
    *  processing continues in the background. */
@@ -135,6 +160,13 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
   const listeners = new Set<(frame: SpendersRefreshFrame) => void>();
   const queues = new Map<string, ActiveQueue>();
   const hydrateInFlight = new Map<string, Promise<void>>();
+  // Per-fan freshness stamp a quick-look hydrate already probed and found
+  // genuinely EMPTY. Lets a poisoned stamp get exactly ONE more tail GET, while
+  // a truly-empty fan is not re-probed until that stamp expires — net ≤1 extra
+  // GET / fan / TTL, no loop. Preview path ONLY: the scoped queue (runQueue)
+  // never consults it, so 'spenders-refresh' stamping is untouched. In-memory by
+  // design — a restart costs at most one extra probe.
+  const emptyProbedStampMs = new Map<string, number>();
   let disposed = false;
 
   function emit(accountId: string, queue: Pick<ActiveQueue, 'scope' | 'done' | 'total'>, state: SpendersRefreshState): void {
@@ -260,19 +292,40 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
 
   return {
     async hydrateIfStale(accountId, chatId, hint) {
-      // ensureChat is listChats-backed (no read marked) — always safe.
-      const hasChat = await ensureChat(accountId, chatId, hint);
+      // ensureChat resolves the chat-list ROW for deep Spenders fans (it is
+      // listChats-backed — no read marked — so it is always safe), but its
+      // failure must NOT block the tail GET: the message fetch is keyed by
+      // chatId alone (same as openConversation, which never gates on it).
+      let hasChat = false;
+      try {
+        hasChat = await ensureChat(accountId, chatId, hint);
+      } catch {
+        // A deep fan we couldn't resolve — hasChat stays false; the tail GET
+        // (keyed by chatId alone) still proceeds below.
+      }
+
+      const key = `${accountId}|${chatId}`;
+      const stampMs = stampMsOf(accountId, chatId);
+      const fresh = isWithinFetchTtl(stampMs, now(), ttlMs);
+      const localCount = data.messages.count(accountId, chatId);
+
       // The tail GET below marks the fan read on OnlyFans — skip it when
       // auto-read is OFF (the quick-look thread then shows cached rows only).
       if (!getAutoRead()) {
-        return { hasChat };
+        return { hasChat, fetched: false, messageCount: localCount, skippedByTtl: false };
       }
-      if (isWithinFetchTtl(stampMsOf(accountId, chatId), now(), ttlMs)) {
-        return { hasChat };
+
+      // Skip the GET only when the stamp is fresh AND we either already have
+      // local history (the 0-credit ceiling) or already probed this exact stamp
+      // and found the fan genuinely empty. A fresh stamp + empty thread + no
+      // prior probe is a poisoned stamp → fall through for one more tail GET.
+      if (fresh && (localCount > 0 || emptyProbedStampMs.get(key) === stampMs)) {
+        return { hasChat, fetched: false, messageCount: localCount, skippedByTtl: true };
       }
+      const probingFreshEmpty = fresh && localCount === 0;
+
       // Single-flight: J/K walking + reopen must not double-spend before the
       // stamp lands.
-      const key = `${accountId}|${chatId}`;
       let pending = hydrateInFlight.get(key);
       if (pending === undefined) {
         pending = refreshChat(accountId, chatId, 'message-tail').finally(() =>
@@ -280,8 +333,35 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
         );
         hydrateInFlight.set(key, pending);
       }
-      await pending;
-      return { hasChat };
+      try {
+        await pending;
+      } catch (error) {
+        // The tail GET threw — fetchChatTail stamps only after a successful GET,
+        // so no stamp was written and the next open retries. Surface a quiet,
+        // retriable error (no auto-retry loop).
+        return {
+          hasChat,
+          fetched: false,
+          messageCount: data.messages.count(accountId, chatId),
+          skippedByTtl: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+
+      const messageCount = data.messages.count(accountId, chatId);
+      if (probingFreshEmpty && messageCount === 0) {
+        // Confirmed genuinely empty against the (now-refreshed) stamp — don't
+        // probe again until it expires. Bounds empty fans to one extra GET.
+        const probedStamp = stampMsOf(accountId, chatId);
+        if (probedStamp !== null) {
+          emptyProbedStampMs.set(key, probedStamp);
+        }
+      } else {
+        // History landed (or this was a normal stale fetch): drop any stale
+        // probe marker so a later emptying never wedges.
+        emptyProbedStampMs.delete(key);
+      }
+      return { hasChat, fetched: true, messageCount, skippedByTtl: false };
     },
 
     async start(accountId, scope) {

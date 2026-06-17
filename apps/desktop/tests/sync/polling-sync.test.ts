@@ -745,6 +745,55 @@ describe('PollingSync', () => {
       expect(Date.parse(second ?? '')).toBeGreaterThan(Date.parse(first ?? ''));
       sync.stop();
     });
+
+    it('preview refreshChat writes the tail rows and is ONE limit-100 GET (non-empty page)', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: null as unknown as number })]);
+      stub.setMessages([makeMessage({ id: 5 }), makeMessage({ id: 6 })]);
+      const sync = makeSync();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      expect(data.messages.count(ACCT, '101')).toBe(0); // hydration is list-only
+      const callsBefore = stub.listMessagesCalls.length;
+
+      await sync.refreshChat(ACCT, '101'); // quick-look hydrate purpose
+      expect(stub.listMessagesCalls.length).toBe(callsBefore + 1);
+      expect(stub.listMessagesCalls.at(-1)).toEqual({
+        order: 'desc',
+        limit: 100,
+        purpose: 'message-tail',
+      });
+      expect(data.messages.count(ACCT, '101')).toBe(2); // rows landed → history appears
+      expect(data.threadFetchLog.get(ACCT, '101')).not.toBeNull();
+      sync.stop();
+    });
+
+    it('preview refreshChat on an empty page stamps but writes no rows', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: null as unknown as number })]);
+      stub.setMessages([]);
+      const sync = makeSync();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      await sync.refreshChat(ACCT, '101');
+      expect(data.messages.count(ACCT, '101')).toBe(0);
+      expect(data.threadFetchLog.get(ACCT, '101')).toBe(new Date(Date.now()).toISOString());
+      sync.stop();
+    });
+
+    it('preview refreshChat that throws leaves NO stamp (stamps only on success)', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: null as unknown as number })]);
+      stub.setMessages([]);
+      const sync = makeSync();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      expect(data.threadFetchLog.get(ACCT, '101')).toBeNull();
+
+      vi.mocked(stub.client.listMessages).mockRejectedValueOnce(new Error('5xx'));
+      await expect(sync.refreshChat(ACCT, '101')).rejects.toThrow();
+      expect(data.threadFetchLog.get(ACCT, '101')).toBeNull(); // failure must not stamp
+      expect(data.messages.count(ACCT, '101')).toBe(0);
+      sync.stop();
+    });
   });
 
   // ── auto-read OFF (default) ───────────────────────────────────────────────

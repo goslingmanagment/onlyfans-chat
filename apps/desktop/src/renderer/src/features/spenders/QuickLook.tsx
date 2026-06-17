@@ -36,8 +36,13 @@ export function QuickLook({
   const closePreview = useSpendersStore((s) => s.closePreview);
   const [openingChat, setOpeningChat] = useState(false);
   const [openFailedFor, setOpenFailedFor] = useState<string | null>(null);
+  const [hydrateFailedFor, setHydrateFailedFor] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const previewKey = `${accountId}/${fanId}`;
   const openFailed = openFailedFor === previewKey;
+  // Derived (not setState-in-effect): switching fans clears the banner instantly
+  // because previewKey changes, before the next hydrate even resolves.
+  const hydrateError = hydrateFailedFor === previewKey;
 
   // The preview IS the active conversation while open: per-chat draft
   // load/persist + dock discard-on-switch ride the existing machinery.
@@ -59,10 +64,23 @@ export function QuickLook({
   // EVERY open hydrates (PLAN item 13): one read-only tail GET — the same
   // fetch a full chat open does — so reactivation work self-refreshes the data
   // fan by fan. Main's per-fan stamp (5-min TTL) is the spend ceiling, so J/K
-  // walking and reopening stay free.
+  // walking and reopening stay free. We observe the result instead of swallowing
+  // it: a genuinely-empty fan falls through to sp.noHistory in the thread, while
+  // a transient fetch error raises a quiet, retriable banner (no auto-retry).
+  const username = row?.username ?? null;
   useEffect(() => {
-    hydratePreviewFan(accountId, fanId, row?.username ?? null);
-  }, [accountId, fanId, row?.username]);
+    let active = true;
+    hydratePreviewFan(accountId, fanId, username)
+      .then((result) => {
+        if (active) setHydrateFailedFor(result.error !== undefined ? previewKey : null);
+      })
+      .catch(() => {
+        if (active) setHydrateFailedFor(previewKey);
+      });
+    return () => {
+      active = false;
+    };
+  }, [accountId, fanId, username, previewKey, retryNonce]);
 
   const fan = useFan(accountId, fanId).data ?? null;
   const name = row?.name ?? '';
@@ -133,6 +151,18 @@ export function QuickLook({
         {openFailed && (
           <div className="border-t border-line bg-bg1 px-4 pb-2 text-right text-[11px] text-warn">
             {t('sp.openChatFailed')}
+          </div>
+        )}
+        {hydrateError && (
+          <div className="flex items-center justify-end gap-2 border-t border-line bg-bg1 px-4 pb-2 text-[11px] text-warn">
+            <span>{t('sp.historyFetchFailed')}</span>
+            <button
+              type="button"
+              onClick={() => setRetryNonce((n) => n + 1)}
+              className="cursor-pointer font-semibold underline decoration-dotted underline-offset-2 hover:text-ink-mid"
+            >
+              {t('sp.retry')}
+            </button>
           </div>
         )}
       </div>

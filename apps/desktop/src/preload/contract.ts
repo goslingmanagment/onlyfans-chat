@@ -690,7 +690,16 @@ export interface InvokeChannels {
    */
   'cmd:spenders.hydrate': {
     args: { accountId: string; chatId: string; username?: string | null };
-    result: { hasChat: boolean };
+    /** Discriminated status (mirrors SpendersHydrateResult in main): the
+     *  renderer tells a genuinely-empty fan from a transient fetch error
+     *  (quiet, retriable) instead of swallowing both. */
+    result: {
+      hasChat: boolean;
+      fetched: boolean;
+      messageCount: number;
+      skippedByTtl: boolean;
+      error?: string;
+    };
   };
   /** Per-scope «последний апдейт» stamps + the in-flight refresh queue, if any. */
   'query:spenders.freshness': {
