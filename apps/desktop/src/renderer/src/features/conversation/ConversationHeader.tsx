@@ -6,6 +6,7 @@ import { formatDollars } from '../../lib/money';
 import { formatLastSeen, isOnline } from '../../lib/time';
 import { cx } from '../../lib/cx';
 import { presenceKey, useUiStore } from '../../state/uiStore';
+import { useRefreshConversation } from '../../bridge/queries';
 import { useT } from '../../lib/i18n';
 
 function ValueChip({
@@ -42,13 +43,30 @@ function ValueChip({
 }
 
 export function ConversationHeader({
+  accountId,
   chat,
   fan,
 }: {
+  accountId: string;
   chat: ChatListItemVM;
   fan: FanPanelVM | null;
 }): React.JSX.Element {
   const t = useT();
+  const pushToast = useUiStore((s) => s.pushToast);
+  const refresh = useRefreshConversation();
+  // Pending is scoped to THIS chat: a refresh still in flight for a chat the
+  // user has since navigated away from must not disable the new chat's button.
+  const refreshPending =
+    refresh.isPending &&
+    refresh.variables?.accountId === accountId &&
+    refresh.variables?.chatId === chat.chatId;
+  function handleRefresh(): void {
+    if (refreshPending) return; // in-flight guard for THIS chat (matches disabled state)
+    refresh.mutate(
+      { accountId, chatId: chat.chatId },
+      { onError: () => pushToast({ title: t('conv.refreshFailed'), body: chat.fanName }) },
+    );
+  }
   const now = new Date();
   const lastSeen = fan?.lastSeen ?? null;
   // Live presence (hub SSE) wins while fresh; the cached fan.lastSeen heuristic
@@ -122,6 +140,19 @@ export function ConversationHeader({
         )}
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-2.5 text-ink-low">
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={refreshPending}
+          title={t('conv.refreshTip')}
+          aria-label={refreshPending ? t('conv.refreshing') : t('conv.refresh')}
+          aria-busy={refreshPending}
+          className="flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-full border border-line bg-bg2 text-ink-mid transition-colors duration-150 hover:border-clay-line hover:bg-clay-bg hover:text-clay-deep disabled:cursor-default disabled:opacity-50"
+        >
+          <span className={cx('text-[15px] leading-none', refreshPending && 'inline-block animate-spin')}>
+            ↻
+          </span>
+        </button>
         <AiHeaderMenu />
         <Kbd>]</Kbd>
       </div>

@@ -1140,6 +1140,42 @@ export function createMockBridge(): ChatGooseBridge {
     'query:ai.pingGate': () => ({ segment: 'active', blocked: true }),
     'cmd:conversation.open': () => undefined,
     'cmd:conversation.close': () => undefined,
+    'cmd:conversation.refresh': ({ accountId, chatId }) => {
+      // Dev stand-in for the real tail GET: append one fresh fan line to this
+      // chat and fire the same events main would, so the in-chat ↻ button is
+      // verifiable in the browser UI without Electron main.
+      const chats = store.chats.get(accountId) ?? [];
+      const chat = chats.find((c) => c.chatId === chatId);
+      if (chat === undefined) return;
+      const key = `${accountId}/${chatId}`;
+      const msgs = store.messages.get(key) ?? [];
+      messageSeq += 1;
+      const incoming: MessageVM = {
+        id: String(messageSeq),
+        chatId,
+        createdAt: new Date().toISOString(),
+        isSentByMe: false,
+        text: pick(FAN_LINES),
+        media: [],
+        price: 0,
+        ppvState: null,
+        isTip: false,
+        tipAmount: null,
+        tipText: null,
+        isNew: true,
+        replyTo: null,
+        deleted: false,
+      };
+      msgs.push(incoming);
+      store.messages.set(key, msgs);
+      chat.lastMessageAt = incoming.createdAt;
+      chat.lastMessagePreview = incoming.text;
+      chat.lastMessageIsSentByMe = false;
+      store.chats.set(accountId, sortChatsByRecency(chats));
+      emit('sync:event', { type: 'messageReceived', accountId, chatId, messageId: incoming.id });
+      emit('db:changed', { scope: 'messages', accountId, chatId });
+      emit('db:changed', { scope: 'chats', accountId });
+    },
     'cmd:sync.forceRefresh': () => {
       pollTick();
     },

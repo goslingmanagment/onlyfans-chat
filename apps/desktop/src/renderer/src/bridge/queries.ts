@@ -480,3 +480,12 @@ export function useForceRefresh() {
       getBridge().invoke('cmd:sync.forceRefresh', accountId === undefined ? {} : { accountId }),
   });
 }
+
+/** Manual in-chat ↻: pull this one chat's message tail now. New rows arrive via
+ *  the db:changed → qk.messages invalidation path, so no manual cache poke. */
+export function useRefreshConversation() {
+  return useMutation({
+    mutationFn: (vars: { accountId: string; chatId: string }) =>
+      getBridge().invoke('cmd:conversation.refresh', vars),
+  });
+}

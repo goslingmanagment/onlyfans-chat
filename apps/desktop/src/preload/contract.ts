@@ -608,6 +608,9 @@ export interface InvokeChannels {
     result: void;
   };
   'cmd:conversation.close': { args: { accountId: string; chatId: string }; result: void };
+  /** Manual single-chat refresh (in-chat ↻ button): deliberate user read of the
+   *  open chat's message tail. Maps to SyncProvider.readChatTailForUserOpen. */
+  'cmd:conversation.refresh': { args: { accountId: string; chatId: string }; result: void };
   'cmd:sync.forceRefresh': { args: { accountId?: string }; result: void };
   'cmd:settings.update': { args: SettingsPatch; result: SettingsVM };
   'cmd:personalities.save': { args: Personality; result: Personality[] };
@@ -835,6 +838,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:ai.pingGate': true,
   'cmd:conversation.open': true,
   'cmd:conversation.close': true,
+  'cmd:conversation.refresh': true,
   'cmd:sync.forceRefresh': true,
   'cmd:settings.update': true,
   'cmd:personalities.save': true,

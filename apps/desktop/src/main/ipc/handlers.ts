@@ -443,6 +443,15 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     deps.sync?.closeConversation(args.accountId, args.chatId);
   });
 
+  // Manual in-chat ↻: a deliberate single-chat user read. Uses the same force
+  // path as opening the chat (bypasses the auto-read gate), but does NOT touch
+  // openConversation focus, the read-state sweep, or the AI coordinator — it
+  // only pulls this chat's message tail now instead of waiting for the poll.
+  ipcMain.handle('cmd:conversation.refresh', async (_event, rawArgs: unknown) => {
+    const args = convSchema.parse(rawArgs);
+    await deps.sync?.readChatTailForUserOpen(args.accountId, args.chatId, 'chat-refresh');
+  });
+
   ipcMain.handle('cmd:sync.forceRefresh', async (_event, rawArgs: unknown) => {
     const args = forceRefreshSchema.parse(rawArgs ?? {});
     await deps.sync?.forceRefresh(args.accountId);

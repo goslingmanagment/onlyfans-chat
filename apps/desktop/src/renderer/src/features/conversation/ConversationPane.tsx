@@ -97,7 +97,7 @@ export function ConversationPane(): React.JSX.Element {
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg0">
-      <ConversationHeader chat={chat} fan={fan.data ?? null} />
+      <ConversationHeader accountId={accountId} chat={chat} fan={fan.data ?? null} />
       {unmapped && (
         <div className="flex flex-none items-center gap-3 border-b border-amber-line bg-amber-bg px-[18px] py-2 text-[12.5px] text-amber">
           <span className="font-semibold">{t('conv.gateMapTitle')}</span>
