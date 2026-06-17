@@ -52,6 +52,7 @@ describe('createLogger', () => {
     const snap = logger.snapshot();
     expect(snap).toHaveLength(3);
     expect(snap.map((entry) => entry.msg)).toEqual(['msg 3', 'msg 4', 'msg 5']);
+    await logger.flush();
   });
 
   it('drops records below the minimum level', async () => {
@@ -65,6 +66,7 @@ describe('createLogger', () => {
     logger.setMinLevel('debug');
     logger.debug('s', 'now kept');
     expect(logger.snapshot().map((entry) => entry.msg)).toContain('now kept');
+    await logger.flush();
   });
 
   it('lifts a CG-* code from fields into the dedicated column', async () => {
@@ -75,6 +77,7 @@ describe('createLogger', () => {
     expect(entry?.code).toBe('CG-OF-03');
     expect(entry?.fields).toEqual({ channel: 'cmd:send.message' });
     expect(logger.errorCounts()).toEqual({ 'CG-OF-03': 1 });
+    await logger.flush();
   });
 
   it('rotates app.log → app.1.log once the size cap is exceeded', async () => {
@@ -135,6 +138,7 @@ describe('createLogger', () => {
     const logger = createLogger({ dir });
     logger.child('ipc').child('cmd:x').warn('nope');
     expect(logger.snapshot()[0]?.scope).toBe('ipc:cmd:x');
+    await logger.flush();
   });
 
   it('never throws into the caller even when the dir cannot be created', async () => {
