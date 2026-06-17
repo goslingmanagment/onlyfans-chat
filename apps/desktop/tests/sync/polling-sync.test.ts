@@ -695,7 +695,7 @@ describe('PollingSync', () => {
       sync.stop();
     });
 
-    it('refreshChat (quick-look hydrate path) stamps and defaults to the message-tail purpose', async () => {
+    it('refreshChat (automatic path) stamps and defaults to the message-tail purpose', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
       stub.setMessages([makeMessage({ id: 5 })]);
       const sync = makeSync();
@@ -746,7 +746,7 @@ describe('PollingSync', () => {
       sync.stop();
     });
 
-    it('preview refreshChat writes the tail rows and is ONE limit-100 GET (non-empty page)', async () => {
+    it('readChatTailForUserOpen writes the tail rows and is ONE limit-100 GET (non-empty page)', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: null as unknown as number })]);
       stub.setMessages([makeMessage({ id: 5 }), makeMessage({ id: 6 })]);
       const sync = makeSync();
@@ -755,7 +755,7 @@ describe('PollingSync', () => {
       expect(data.messages.count(ACCT, '101')).toBe(0); // hydration is list-only
       const callsBefore = stub.listMessagesCalls.length;
 
-      await sync.refreshChat(ACCT, '101'); // quick-look hydrate purpose
+      await sync.readChatTailForUserOpen(ACCT, '101');
       expect(stub.listMessagesCalls.length).toBe(callsBefore + 1);
       expect(stub.listMessagesCalls.at(-1)).toEqual({
         order: 'desc',
@@ -767,20 +767,20 @@ describe('PollingSync', () => {
       sync.stop();
     });
 
-    it('preview refreshChat on an empty page stamps but writes no rows', async () => {
+    it('readChatTailForUserOpen on an empty page stamps but writes no rows', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: null as unknown as number })]);
       stub.setMessages([]);
       const sync = makeSync();
       sync.start([ACCT]);
       await vi.runOnlyPendingTimersAsync();
 
-      await sync.refreshChat(ACCT, '101');
+      await sync.readChatTailForUserOpen(ACCT, '101');
       expect(data.messages.count(ACCT, '101')).toBe(0);
       expect(data.threadFetchLog.get(ACCT, '101')).toBe(new Date(Date.now()).toISOString());
       sync.stop();
     });
 
-    it('preview refreshChat that throws leaves NO stamp (stamps only on success)', async () => {
+    it('readChatTailForUserOpen that throws leaves NO stamp (stamps only on success)', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: null as unknown as number })]);
       stub.setMessages([]);
       const sync = makeSync();
@@ -789,7 +789,7 @@ describe('PollingSync', () => {
       expect(data.threadFetchLog.get(ACCT, '101')).toBeNull();
 
       vi.mocked(stub.client.listMessages).mockRejectedValueOnce(new Error('5xx'));
-      await expect(sync.refreshChat(ACCT, '101')).rejects.toThrow();
+      await expect(sync.readChatTailForUserOpen(ACCT, '101')).rejects.toThrow();
       expect(data.threadFetchLog.get(ACCT, '101')).toBeNull(); // failure must not stamp
       expect(data.messages.count(ACCT, '101')).toBe(0);
       sync.stop();
@@ -856,6 +856,28 @@ describe('PollingSync', () => {
       await sync.refreshChat(ACCT, '101', 'spenders-refresh');
       expect(stub.listMessagesCalls.length).toBe(callsBefore);
       expect(data.threadFetchLog.get(ACCT, '101')).toBeNull();
+      expect(events.some((e) => e.type === 'chatListUpdated')).toBe(true);
+      sync.stop();
+    });
+
+    it('readChatTailForUserOpen STILL reads and stamps with auto-read OFF', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      stub.setMessages([makeMessage({ id: 5 }), makeMessage({ id: 6, fromMe: true })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      const callsBefore = stub.listMessagesCalls.length;
+      events = [];
+
+      await sync.readChatTailForUserOpen(ACCT, '101');
+      expect(stub.listMessagesCalls.length).toBe(callsBefore + 1);
+      expect(stub.listMessagesCalls.at(-1)).toEqual({
+        order: 'desc',
+        limit: 100,
+        purpose: 'message-tail',
+      });
+      expect(data.messages.count(ACCT, '101')).toBe(2);
+      expect(data.threadFetchLog.get(ACCT, '101')).not.toBeNull();
       expect(events.some((e) => e.type === 'chatListUpdated')).toBe(true);
       sync.stop();
     });

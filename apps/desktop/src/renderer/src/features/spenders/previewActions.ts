@@ -73,7 +73,8 @@ export type PreviewAiFeature = 'ping' | 'fast-reply' | 'hi-greeting' | 'improve-
 
 export function startAiFromPreview(feature: PreviewAiFeature, queryClient: QueryClient): void {
   const ui = useUiStore.getState();
-  const row = previewRow(useSpendersStore.getState());
+  const spenders = useSpendersStore.getState();
+  const row = previewRow(spenders);
   if (ui.view !== 'spenders' || ui.selectedAccountId === null || row === null) return;
   // Generation is NOT gated on canSendMessage — matching the shared pills and
   // the full chat: you can draft for an un-messageable fan (the dock copy-
@@ -81,6 +82,7 @@ export function startAiFromPreview(feature: PreviewAiFeature, queryClient: Query
   // feature gates below apply, so the hotkey path and the pill path agree.
   const accountId = ui.selectedAccountId;
   const fanId = row.fanId;
+  if (spenders.previewAiBlocked?.fanId === fanId) return;
 
   const settings = queryClient.getQueryData<SettingsVM>(qk.settings);
   const account = queryClient
@@ -94,15 +96,17 @@ export function startAiFromPreview(feature: PreviewAiFeature, queryClient: Query
   });
   if (!gate.ok) return;
 
+  const messagesData = queryClient.getQueryData<InfiniteData<{ items: MessageVM[]; hasMore: boolean }>>(
+    qk.messages(accountId, fanId),
+  );
+  if (messagesData === undefined) return;
+
   if (feature === 'ping') {
     const pingGate = queryClient.getQueryData<PingGateVM>(pingGateKey(accountId, fanId));
     if (!evaluatePingGate(gate, pingGate?.blocked ?? null).enabled) return;
   }
   if (feature === 'hi-greeting') {
-    const pages = queryClient.getQueryData<InfiniteData<{ items: MessageVM[]; hasMore: boolean }>>(
-      qk.messages(accountId, fanId),
-    )?.pages;
-    if (!evaluateHiGate(gate, deriveHiLocked(pages)).enabled) return;
+    if (!evaluateHiGate(gate, deriveHiLocked(messagesData.pages)).enabled) return;
   }
 
   startAiFeature(feature, { accountId, chatId: fanId, defaultTone: settings.defaultReplyTone });

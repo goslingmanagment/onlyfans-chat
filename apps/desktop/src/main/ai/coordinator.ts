@@ -817,6 +817,8 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     }
 
     const transcript = formatTranscript(transcriptMessages);
+    const transcriptPreview =
+      transcript.length > 2000 ? `${transcript.slice(0, 2000)}\n...` : transcript;
     const fanDisplayName = loader.resolveFanDisplayName(op.accountId, op.chatId);
 
     let fanBio: string | undefined;
@@ -905,6 +907,11 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
           modelId,
           reasoningEffort,
           promptCachingEnabled: settings.promptCachingEnabled,
+          transcript: {
+            messageCount: transcriptMessages.length,
+            charCount: transcript.length,
+            preview: transcriptPreview,
+          },
           systemBlocks,
           userBlocks,
         },

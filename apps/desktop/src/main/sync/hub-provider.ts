@@ -1,10 +1,11 @@
 // Hub-aware sync composition (SPEC §6.2): PollingSync keeps running and keeps
-// owning hydration, read-state sweeps, media polling, refreshChat and
-// openConversation; HubSync only changes WHEN bodies are fetched. Hub frames
-// carry ids, not bodies — message-bearing events trigger a tail fetch through
-// the polling provider before re-emitting, so SQLite stays the single source
-// of truth. Both providers' events flow through ONE listener set: the send
-// engine's messageSent subscription works identically in either mode.
+// owning hydration, read-state sweeps, media polling, refreshChat,
+// readChatTailForUserOpen and openConversation; HubSync only changes WHEN
+// bodies are fetched. Hub frames carry ids, not bodies — message-bearing events
+// trigger a tail fetch through the polling provider before re-emitting, so
+// SQLite stays the single source of truth. Both providers' events flow through
+// ONE listener set: the send engine's messageSent subscription works
+// identically in either mode.
 
 import { z } from 'zod';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
@@ -217,6 +218,8 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       return () => listeners.delete(listener);
     },
     refreshChat: (accountId, chatId, purpose) => polling.refreshChat(accountId, chatId, purpose),
+    readChatTailForUserOpen: (accountId, chatId, purpose) =>
+      polling.readChatTailForUserOpen(accountId, chatId, purpose),
     ensureChat: (accountId, chatId, hint) => polling.ensureChat(accountId, chatId, hint),
     openConversation: (accountId, chatId) => polling.openConversation(accountId, chatId),
     closeConversation: (accountId, chatId) => polling.closeConversation(accountId, chatId),

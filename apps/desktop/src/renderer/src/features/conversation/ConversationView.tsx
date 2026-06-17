@@ -27,6 +27,7 @@ export function ConversationView({
   scrollMode = 'stick',
   threadOverlay = null,
   jumpToLatestKey = null,
+  aiDisabledReason = null,
 }: {
   accountId: string;
   chatId: string;
@@ -35,6 +36,7 @@ export function ConversationView({
   scrollMode?: ThreadScrollMode;
   threadOverlay?: React.ReactNode;
   jumpToLatestKey?: string | null;
+  aiDisabledReason?: string | null;
 }): React.JSX.Element {
   const t = useT();
   const chat = useChat(accountId, chatId).data ?? null;
@@ -72,6 +74,7 @@ export function ConversationView({
             chatId={chatId}
             pills={features.pills}
             replyTone={features.replyTone}
+            disabledReason={aiDisabledReason}
           />
           <div className="flex-none border-t border-line bg-bg1 px-4 py-3">
             <div className="rounded-[8px] border border-line bg-bg2 px-3 py-2.5 text-[13px] text-ink-low">
@@ -146,6 +149,7 @@ export function ConversationView({
           chatId={chatId}
           pills={features.pills}
           replyTone={features.replyTone}
+          disabledReason={aiDisabledReason}
         />
         <ComposerBar
           accountId={accountId}

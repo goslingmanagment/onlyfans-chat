@@ -17,6 +17,6 @@
     "../../packages/shared/src"
   ],
   "exclude": [
-    "tests/renderer-ai/ai-store.test.ts"
+    "tests/renderer-ai/*.test.ts"
   ]
 }

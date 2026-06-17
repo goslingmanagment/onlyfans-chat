@@ -182,11 +182,13 @@ export function AiPillRow({
   chatId,
   pills = DEFAULT_PILLS,
   replyTone = true,
+  disabledReason = null,
 }: {
   accountId: string;
   chatId: string;
   pills?: readonly AiPill[];
   replyTone?: boolean;
+  disabledReason?: string | null;
 }): React.JSX.Element {
   const t = useT();
   const setView = useUiStore((s) => s.setView);
@@ -198,6 +200,7 @@ export function AiPillRow({
   // extra fetch): hi gate heuristic + the ping gate's refetch trigger.
   const messages = useMessages(accountId, chatId);
   const pages = messages.data?.pages;
+  const messagesLoaded = messages.data !== undefined;
   // pages[0] = newest page, items ascending — last item is the newest message
   const lastMessageId = pages?.[0]?.items.at(-1)?.id ?? null;
   const pingGate = usePingGate(accountId, chatId, lastMessageId);
@@ -211,7 +214,10 @@ export function AiPillRow({
       })
     : null;
   const blockedMessage = gate !== null && !gate.ok ? gateText(t, gate.reason) : null;
-  const rowDisabled = !ready || blockedMessage !== null;
+  const externalBlockedMessage = disabledReason?.trim() ? disabledReason : null;
+  const loadingBlockedMessage = messagesLoaded ? null : t('conv.loadingTitle');
+  const disabledMessage = externalBlockedMessage ?? loadingBlockedMessage ?? blockedMessage;
+  const rowDisabled = !ready || disabledMessage !== null;
 
   const pingPill = evaluatePingGate(gate, pingGate.data?.blocked ?? null);
   const hiPill = evaluateHiGate(gate, deriveHiLocked(pages));
@@ -232,7 +238,7 @@ export function AiPillRow({
       <ReplySplitPill
         key="reply"
         disabled={rowDisabled}
-        bodyTitle={blockedMessage ?? t('aidock.replyTip')}
+        bodyTitle={disabledMessage ?? t('aidock.replyTip')}
         ctx={{ accountId, chatId, defaultTone }}
         onGenerate={() => start('fast-reply')}
       />
@@ -241,7 +247,7 @@ export function AiPillRow({
         key="reply"
         primary
         disabled={rowDisabled}
-        title={blockedMessage ?? t('aidock.replyTip')}
+        title={disabledMessage ?? t('aidock.replyTip')}
         onClick={() => {
           if (!rowDisabled) start('fast-reply');
         }}
@@ -253,7 +259,7 @@ export function AiPillRow({
       <PillButton
         key="improve"
         disabled={rowDisabled || draftEmpty}
-        title={blockedMessage ?? (draftEmpty ? t('aidock.improveEmptyTip') : t('aidock.improveTip'))}
+        title={disabledMessage ?? (draftEmpty ? t('aidock.improveEmptyTip') : t('aidock.improveTip'))}
         onClick={() => {
           if (!rowDisabled) start('improve-draft');
         }}
@@ -265,7 +271,7 @@ export function AiPillRow({
       <PillButton
         key="help"
         disabled={rowDisabled}
-        title={blockedMessage ?? t('aidock.helpTip')}
+        title={disabledMessage ?? t('aidock.helpTip')}
         onClick={() => {
           if (!rowDisabled) start('help-me');
         }}
@@ -276,11 +282,11 @@ export function AiPillRow({
     ping: (
       <PillButton
         key="ping"
-        dimmed={!pingPill.enabled}
-        disabled={!pingPill.enabled}
-        title={pingPill.enabled ? t('aidock.pingTip') : gateText(t, pingPill.code)}
+        dimmed={rowDisabled || !pingPill.enabled}
+        disabled={rowDisabled || !pingPill.enabled}
+        title={disabledMessage ?? (pingPill.enabled ? t('aidock.pingTip') : gateText(t, pingPill.code))}
         onClick={() => {
-          if (pingPill.enabled) start('ping');
+          if (!rowDisabled && pingPill.enabled) start('ping');
         }}
       >
         Ping <Kbd>{modCombo('P')}</Kbd>
@@ -289,11 +295,11 @@ export function AiPillRow({
     hi: (
       <PillButton
         key="hi"
-        dimmed={!hiPill.enabled}
-        disabled={!hiPill.enabled}
-        title={hiPill.enabled ? t('aidock.hiTip') : gateText(t, hiPill.code)}
+        dimmed={rowDisabled || !hiPill.enabled}
+        disabled={rowDisabled || !hiPill.enabled}
+        title={disabledMessage ?? (hiPill.enabled ? t('aidock.hiTip') : gateText(t, hiPill.code))}
         onClick={() => {
-          if (hiPill.enabled) start('hi-greeting');
+          if (!rowDisabled && hiPill.enabled) start('hi-greeting');
         }}
       >
         Hi <Kbd>{modCombo('G')}</Kbd>

@@ -3,7 +3,7 @@
 // per-fan thread_fetch_log stamp. Persistence/TTL/budget behavior runs against
 // the real in-memory SQLite layer.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DataLayer, DbChangedEvent } from '@main/db/index';
 import {
   createSpendersRefresh,
@@ -12,10 +12,14 @@ import {
   type SpendersRefreshFrame,
   type SpendersRefreshService,
 } from '@main/spenders/refresh';
+import { createPollingSync } from '@main/sync/polling-sync';
+import type { OfApiClient } from '@main/ofapi/client';
+import type { OfApiChat, OfApiMessage } from '@main/ofapi/schemas';
 import { memoryDataLayer, sampleMessage } from '../db/helpers';
 
 const ACCT = 'acct_1';
 const TTL_MS = 5 * 60_000;
+const REAL_SYNC_NOW = new Date('2026-06-13T12:00:00.000Z').getTime();
 
 interface Harness {
   service: SpendersRefreshService;
@@ -44,25 +48,27 @@ function makeHarness(opts: {
   const ensured: Array<{ chatId: string; username: string | null }> = [];
   const sleeps: number[] = [];
   let msgSeq = 0;
+  const tailFetch = async (accountId: string, chatId: string, purpose: string): Promise<void> => {
+    if (opts.failFor?.has(chatId)) {
+      // A failed GET throws before fetchChatTail's stamp — no rows, no stamp.
+      throw new Error('boom');
+    }
+    fetched.push({ chatId, purpose });
+    // Mirror fixed-production fetchChatTail: a successful NON-EMPTY tail
+    // upserts rows (→ db:changed) AND stamps; a successful EMPTY tail stamps
+    // only (the genuinely-empty fan, e.g. tips-only).
+    if (!opts.emptyFor?.has(chatId)) {
+      msgSeq += 1;
+      data.messages.upsertMany([
+        sampleMessage({ accountId, chatId, messageId: `${chatId}-${msgSeq}` }),
+      ]);
+    }
+    data.threadFetchLog.stamp(accountId, chatId, new Date(nowMs).toISOString());
+  };
   const service = createSpendersRefresh({
     data,
-    refreshChat: async (accountId, chatId, purpose) => {
-      if (opts.failFor?.has(chatId)) {
-        // A failed GET throws before fetchChatTail's stamp — no rows, no stamp.
-        throw new Error('boom');
-      }
-      fetched.push({ chatId, purpose });
-      // Mirror fixed-production fetchChatTail: a successful NON-EMPTY tail
-      // upserts rows (→ db:changed) AND stamps; a successful EMPTY tail stamps
-      // only (the genuinely-empty fan, e.g. tips-only).
-      if (!opts.emptyFor?.has(chatId)) {
-        msgSeq += 1;
-        data.messages.upsertMany([
-          sampleMessage({ accountId, chatId, messageId: `${chatId}-${msgSeq}` }),
-        ]);
-      }
-      data.threadFetchLog.stamp(accountId, chatId, new Date(nowMs).toISOString());
-    },
+    refreshChat: tailFetch,
+    readChatTailForUserOpen: tailFetch,
     ensureChat: async (_accountId, chatId, hint) => {
       ensured.push({ chatId, username: hint?.username ?? null });
       return true;
@@ -111,6 +117,57 @@ async function until(predicate: () => boolean): Promise<void> {
 beforeEach(() => {
   data = memoryDataLayer();
 });
+
+function realSyncChat(chatId: string, username: string): OfApiChat {
+  return {
+    unreadMessagesCount: 0,
+    hasUnreadTips: false,
+    canSendMessage: true,
+    lastReadMessageId: null,
+    lastMessage: null,
+    fan: {
+      id: Number(chatId),
+      name: username,
+      username,
+    },
+  } as OfApiChat;
+}
+
+function realSyncMessage(id: number, text: string, fromMe = false): OfApiMessage {
+  return {
+    id,
+    text,
+    isSentByMe: fromMe,
+    createdAt: '2026-06-13T11:59:00+00:00',
+    isNew: false,
+    isTip: false,
+  } as OfApiMessage;
+}
+
+function makeRealPollingClient(opts: {
+  chats?: OfApiChat[];
+  messages?: OfApiMessage[];
+} = {}): { client: OfApiClient; listMessages: ReturnType<typeof vi.fn>; listChats: ReturnType<typeof vi.fn> } {
+  const listMessages = vi.fn(async () => ({
+    messages:
+      opts.messages ?? [
+        realSyncMessage(7001, '<p>hey</p>'),
+        realSyncMessage(7002, '<p>reply</p>', true),
+      ],
+    nextPageUrl: null,
+  }));
+  const listChats = vi.fn(async () => ({
+    chats: opts.chats ?? [realSyncChat('7', 'merritt')],
+    nextPageUrl: null,
+  }));
+  const client = {
+    listMessages,
+    listChats,
+    getMessage: vi.fn(),
+    getUserByUsername: vi.fn(),
+  } as unknown as OfApiClient;
+  return { client, listMessages, listChats };
+}
 
 describe('scoped refresh queue', () => {
   it('fetches every scope fan once with the distinct ledger purpose, then stamps the scope', async () => {
@@ -268,6 +325,7 @@ describe('scoped refresh queue', () => {
         fetched.push(chatId);
         await gate; // hold the first fetch so the queue stays running
       },
+      readChatTailForUserOpen: async () => undefined,
       ensureChat: async () => true,
       scopeChatIds: async (_a, scope) => (scope === 'all' ? ['1', '2'] : ['9']),
       getMappedListIds: async () => ['100'],
@@ -397,6 +455,11 @@ describe('hydrateIfStale (quick-look on-open)', () => {
         await gate;
         data.threadFetchLog.stamp(accountId, chatId, new Date().toISOString());
       },
+      readChatTailForUserOpen: async (accountId, chatId) => {
+        calls += 1;
+        await gate;
+        data.threadFetchLog.stamp(accountId, chatId, new Date().toISOString());
+      },
       ensureChat: async () => true,
       scopeChatIds: async () => [],
       getMappedListIds: async () => [],
@@ -439,6 +502,10 @@ describe('auto-read OFF (default)', () => {
     const service = createSpendersRefresh({
       data,
       refreshChat: async (accountId, chatId, purpose) => {
+        fetched.push({ chatId, purpose });
+        data.threadFetchLog.stamp(accountId, chatId, new Date(nowMs).toISOString());
+      },
+      readChatTailForUserOpen: async (accountId, chatId, purpose) => {
         fetched.push({ chatId, purpose });
         data.threadFetchLog.stamp(accountId, chatId, new Date(nowMs).toISOString());
       },
@@ -496,5 +563,82 @@ describe('auto-read OFF (default)', () => {
     expect(h.ensured).toEqual([{ chatId: '7', username: 'merritt' }]);
     expect(h.fetched).toHaveLength(1); // the tail GET ran
     expect(data.threadFetchLog.get(ACCT, '7')).not.toBeNull();
+  });
+
+  it('hydrateIfStale uses REAL PollingSync to fetch/write/stamp with auto-read OFF', async () => {
+    const { client, listMessages, listChats } = makeRealPollingClient();
+    const sync = createPollingSync({
+      client,
+      data,
+      toMediaUrl: (url) => `media://${url}`,
+      autoReadEnabled: () => false,
+      now: () => REAL_SYNC_NOW,
+      sleep: async () => undefined,
+    });
+    const service = createSpendersRefresh({
+      data,
+      refreshChat: (accountId, chatId, purpose) => sync.refreshChat(accountId, chatId, purpose),
+      readChatTailForUserOpen: (accountId, chatId, purpose) =>
+        sync.readChatTailForUserOpen(accountId, chatId, purpose),
+      ensureChat: (accountId, chatId, hint) => sync.ensureChat(accountId, chatId, hint),
+      scopeChatIds: async () => [],
+      getMappedListIds: async () => [],
+      isBudgetExhausted: () => false,
+      getAutoRead: () => false,
+      now: () => REAL_SYNC_NOW,
+      sleep: async () => undefined,
+    });
+
+    const result = await service.hydrateIfStale(ACCT, '7', { username: 'merritt' });
+
+    expect(result).toEqual({ hasChat: true, fetched: true, messageCount: 2, skippedByTtl: false });
+    expect(listChats).toHaveBeenCalledTimes(1);
+    expect(listMessages).toHaveBeenCalledTimes(1);
+    expect(listMessages).toHaveBeenCalledWith({
+      accountId: ACCT,
+      chatId: '7',
+      order: 'desc',
+      limit: 100,
+      purpose: 'message-tail',
+    });
+    expect(data.messages.count(ACCT, '7')).toBeGreaterThan(0);
+    expect(data.threadFetchLog.get(ACCT, '7')).toBe('2026-06-13T12:00:00.000Z');
+  });
+
+  it('scoped queue composed with REAL PollingSync performs ZERO message fetches with auto-read OFF', async () => {
+    const { client, listMessages } = makeRealPollingClient({
+      chats: [realSyncChat('7', 'merritt'), realSyncChat('8', 'avery')],
+    });
+    const sync = createPollingSync({
+      client,
+      data,
+      toMediaUrl: (url) => `media://${url}`,
+      autoReadEnabled: () => false,
+      now: () => REAL_SYNC_NOW,
+      sleep: async () => undefined,
+    });
+    const frames: SpendersRefreshFrame[] = [];
+    const service = createSpendersRefresh({
+      data,
+      refreshChat: (accountId, chatId, purpose) => sync.refreshChat(accountId, chatId, purpose),
+      readChatTailForUserOpen: (accountId, chatId, purpose) =>
+        sync.readChatTailForUserOpen(accountId, chatId, purpose),
+      ensureChat: (accountId, chatId, hint) => sync.ensureChat(accountId, chatId, hint),
+      scopeChatIds: async () => ['7', '8'],
+      getMappedListIds: async () => [],
+      isBudgetExhausted: () => false,
+      getAutoRead: () => false,
+      now: () => REAL_SYNC_NOW,
+      sleep: async () => undefined,
+    });
+    service.subscribe((frame) => frames.push(frame));
+
+    await service.start(ACCT, 'all');
+    await until(() => frames.some((frame) => frame.state === 'done'));
+
+    expect(listMessages).not.toHaveBeenCalled();
+    expect(data.threadFetchLog.get(ACCT, '7')).toBeNull();
+    expect(data.threadFetchLog.get(ACCT, '8')).toBeNull();
+    expect(frames.at(-1)).toMatchObject({ state: 'done', done: 2, total: 2 });
   });
 });

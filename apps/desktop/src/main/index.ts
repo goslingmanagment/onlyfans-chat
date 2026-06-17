@@ -459,6 +459,8 @@ async function initOfapi(
     data: dataLayer,
     refreshChat: (accountId, chatId, purpose) =>
       hubAwareSync.refreshChat(accountId, chatId, purpose),
+    readChatTailForUserOpen: (accountId, chatId, purpose) =>
+      hubAwareSync.readChatTailForUserOpen(accountId, chatId, purpose),
     ensureChat: (accountId, chatId, hint) => hubAwareSync.ensureChat(accountId, chatId, hint),
     scopeChatIds: (accountId, scope) => spendersSvc.scopeChatIds(accountId, scope),
     getMappedListIds: async (accountId) =>

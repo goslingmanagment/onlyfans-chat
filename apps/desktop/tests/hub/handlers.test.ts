@@ -40,6 +40,7 @@ function makeSyncStub(hubState: HubSyncStatus | null): IpcDeps['sync'] {
     stop: () => undefined,
     subscribe: () => () => undefined,
     refreshChat: async () => undefined,
+    readChatTailForUserOpen: async () => undefined,
     ensureChat: async () => true,
     openConversation: async () => undefined,
     closeConversation: () => undefined,

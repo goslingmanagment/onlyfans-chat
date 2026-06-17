@@ -99,8 +99,16 @@ export interface SpendersRefreshService {
 
 export interface SpendersRefreshOptions {
   data: DataLayer;
-  /** The sync engine's tail fetch (SPEC §6.1) — ONE page, limit 100. */
+  /** Automatic/background sync tail fetch (SPEC §6.1) — ONE page, limit 100.
+   *  Gated by auto-read in the sync provider; used by the scoped queue only. */
   refreshChat: (accountId: string, chatId: string, purpose: OfApiPurpose) => Promise<void>;
+  /** Deliberate single-chat user read for QuickLook. Same tail write/stamp path
+   *  as full chat open, but without openConversation/sweep side effects. */
+  readChatTailForUserOpen: (
+    accountId: string,
+    chatId: string,
+    purpose: OfApiPurpose,
+  ) => Promise<void>;
   /** Lazy chat-list metadata resolution for deep Spenders rows. */
   ensureChat: (accountId: string, chatId: string, hint?: { username?: string | null }) => Promise<boolean>;
   /** Roster fan ids of a scope (spenders service; board order). */
@@ -112,8 +120,9 @@ export interface SpendersRefreshOptions {
   /**
    * Gate for AUTOMATIC message-body reads (settings.autoReadChats). Default
    * OFF: the per-fan refreshChat tail GET marks each fan read on OnlyFans, so
-   * the hydrate + the refresh queue skip it. ensureChat (listChats) is safe
-   * and still runs. Default () => false.
+   * the refresh queue skips it. QuickLook hydrate uses
+   * readChatTailForUserOpen because it is a deliberate single-chat read.
+   * ensureChat (listChats) is safe and still runs. Default () => false.
    */
   getAutoRead?: () => boolean;
   now?: () => number;
@@ -150,7 +159,15 @@ interface ActiveQueue {
 }
 
 export function createSpendersRefresh(options: SpendersRefreshOptions): SpendersRefreshService {
-  const { data, refreshChat, ensureChat, scopeChatIds, getMappedListIds, isBudgetExhausted } = options;
+  const {
+    data,
+    refreshChat,
+    readChatTailForUserOpen,
+    ensureChat,
+    scopeChatIds,
+    getMappedListIds,
+    isBudgetExhausted,
+  } = options;
   const getAutoRead = options.getAutoRead ?? ((): boolean => false);
   const now = options.now ?? Date.now;
   const sleep: SleepFn =
@@ -328,7 +345,7 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
       // stamp lands.
       let pending = hydrateInFlight.get(key);
       if (pending === undefined) {
-        pending = refreshChat(accountId, chatId, 'message-tail').finally(() =>
+        pending = readChatTailForUserOpen(accountId, chatId, 'message-tail').finally(() =>
           hydrateInFlight.delete(key),
         );
         hydrateInFlight.set(key, pending);

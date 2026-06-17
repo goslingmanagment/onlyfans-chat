@@ -19,9 +19,16 @@ export interface SyncProvider {
   start(accountIds: readonly string[]): void;
   stop(): void;
   subscribe(listener: SyncListener): () => void;
-  /** One read-only tail fetch (limit=100, ONE page). Default ledger purpose is
-   *  'message-tail'; the spenders refresh queue passes its own distinct one. */
+  /** Automatic/background tail fetch (limit=100, ONE page). Gated by
+   *  settings.autoReadChats because the OFAPI body read marks the chat read. */
   refreshChat(accountId: string, chatId: string, purpose?: OfApiPurpose): Promise<void>;
+  /** Deliberate single-chat user read (QuickLook/open-like). Bypasses the
+   *  automatic auto-read gate but does NOT set openConversation or arm sweeps. */
+  readChatTailForUserOpen(
+    accountId: string,
+    chatId: string,
+    purpose?: OfApiPurpose,
+  ): Promise<void>;
   /** Lazily resolve the chat-list metadata row (canSendMessage, lastMessage)
    *  for deep Spenders rows that are outside the initial inbox hydration. */
   ensureChat(accountId: string, chatId: string, hint?: { username?: string | null }): Promise<boolean>;

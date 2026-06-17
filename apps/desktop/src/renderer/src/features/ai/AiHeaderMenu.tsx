@@ -5,7 +5,7 @@
 // dock as coded cards.
 
 import { useEffect, useRef, useState } from 'react';
-import { useAccounts, useSettings } from '../../bridge/queries';
+import { useAccounts, useMessages, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { Kbd } from '../../design/Kbd';
 import { cx } from '../../lib/cx';
@@ -73,6 +73,8 @@ export function AiHeaderMenu(): React.JSX.Element {
   const chatId = useUiStore((s) => s.selectedChatId);
   const accounts = useAccounts();
   const settings = useSettings();
+  const messages = useMessages(accountId, chatId);
+  const messagesLoaded = messages.data !== undefined;
 
   const account = accounts.data?.find((a) => a.id === accountId) ?? null;
   const ready = account !== null && settings.data !== undefined && chatId !== null;
@@ -82,7 +84,14 @@ export function AiHeaderMenu(): React.JSX.Element {
         hasLlmKey: settings.data.hasAnthropicKey || settings.data.hasOpenRouterKey,
       })
     : null;
-  const blockedReason = gate === null ? t('common.loading') : gate.ok ? null : gateText(t, gate.reason);
+  const blockedReason =
+    gate === null
+      ? t('common.loading')
+      : !messagesLoaded
+        ? t('conv.loadingTitle')
+        : gate.ok
+          ? null
+          : gateText(t, gate.reason);
 
   useEffect(() => {
     if (!open) return;
@@ -103,7 +112,7 @@ export function AiHeaderMenu(): React.JSX.Element {
   }, [open]);
 
   function run(feature: LiveAiFeature): void {
-    if (accountId === null || chatId === null || settings.data === undefined) return;
+    if (accountId === null || chatId === null || settings.data === undefined || !messagesLoaded) return;
     setOpen(false);
     startAiFeature(feature, {
       accountId,

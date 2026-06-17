@@ -108,7 +108,8 @@ interface SyncProvider {
   events: Emitter<SyncEvent> // chatListUpdated | messageReceived | messageSent |
                              // ppvUnlocked | tipReceived | presence | typing |
                              // accountAuthChanged | readStateChanged
-  refreshChat(account: AccountId, chatId: ChatId, purpose?: OfApiPurpose): Promise<void> // on-demand (purpose: spenders refresh queue tags its credits)
+  refreshChat(account: AccountId, chatId: ChatId, purpose?: OfApiPurpose): Promise<void> // automatic/background tail fetch, gated by auto-read
+  readChatTailForUserOpen(account: AccountId, chatId: ChatId, purpose?: OfApiPurpose): Promise<void> // deliberate single-chat user read, no openConversation side effects
 }
 ```
 

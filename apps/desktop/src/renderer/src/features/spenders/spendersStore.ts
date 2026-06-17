@@ -17,6 +17,9 @@ interface SpendersState {
   cursorFanId: string | null;
   /** Quick-look overlay target; J/K retargets it without closing. */
   previewFanId: string | null;
+  /** Blocks preview AI hotkeys while the selected fan has no local history and
+   *  the on-open hydrate is still resolving (or failed). */
+  previewAiBlocked: { fanId: string; reason: string } | null;
   /** Flat ordered fan rows currently visible (published by the surface). */
   visibleRows: SpenderRowVM[];
   /** Stats panel: false = compact 300px column (default — the board owns the
@@ -43,6 +46,8 @@ interface SpendersState {
   moveCursor: (delta: 1 | -1) => void;
   openPreview: (fanId: string) => void;
   closePreview: () => void;
+  setPreviewAiBlocked: (fanId: string, reason: string) => void;
+  clearPreviewAiBlocked: (fanId?: string) => void;
   setVisibleRows: (rows: SpenderRowVM[]) => void;
   setStatsRows: (rows: SpenderRowVM[]) => void;
   setRefresh: (refresh: SpendersState['refresh']) => void;
@@ -57,6 +62,7 @@ export const useSpendersStore = create<SpendersState>((set) => ({
   untieredOpen: false,
   cursorFanId: null,
   previewFanId: null,
+  previewAiBlocked: null,
   visibleRows: [],
   statsExpanded: false,
   statsRows: [],
@@ -84,7 +90,14 @@ export const useSpendersStore = create<SpendersState>((set) => ({
       };
     }),
   openPreview: (fanId) => set({ previewFanId: fanId, cursorFanId: fanId }),
-  closePreview: () => set({ previewFanId: null }),
+  closePreview: () => set({ previewFanId: null, previewAiBlocked: null }),
+  setPreviewAiBlocked: (fanId, reason) => set({ previewAiBlocked: { fanId, reason } }),
+  clearPreviewAiBlocked: (fanId) =>
+    set((s) =>
+      fanId === undefined || s.previewAiBlocked?.fanId === fanId
+        ? { previewAiBlocked: null }
+        : s,
+    ),
   setVisibleRows: (rows) =>
     set((s) => {
       // keep cursor valid as data refreshes; drop it if the fan left the view
@@ -95,7 +108,7 @@ export const useSpendersStore = create<SpendersState>((set) => ({
   setStatsRows: (rows) => set({ statsRows: rows }),
   setRefresh: (refresh) => set({ refresh }),
   toggleStatsExpanded: () => set((s) => ({ statsExpanded: !s.statsExpanded })),
-  resetTransient: () => set({ cursorFanId: null, previewFanId: null }),
+  resetTransient: () => set({ cursorFanId: null, previewFanId: null, previewAiBlocked: null }),
 }));
 
 /** Row VM of the open preview — board rows first, then the stats queues

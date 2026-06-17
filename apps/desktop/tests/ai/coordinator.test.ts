@@ -360,10 +360,18 @@ describe('AiCoordinator', () => {
       .object({
         modelId: z.string(),
         promptCachingEnabled: z.boolean(),
+        transcript: z.object({
+          messageCount: z.number(),
+          charCount: z.number(),
+          preview: z.string(),
+        }),
         systemBlocks: z.array(z.object({ text: z.string(), cache: z.enum(['1h', '5m', 'none']) })),
         userBlocks: z.array(z.object({ text: z.string(), cache: z.enum(['1h', '5m', 'none']) })),
       })
       .parse(debugFrames[0]?.snapshot);
+    expect(snapshot.transcript.messageCount).toBe(5);
+    expect(snapshot.transcript.charCount).toBeGreaterThan(0);
+    expect(snapshot.transcript.preview).toContain('message 5');
     expect(snapshot.userBlocks.some((block) => block.cache === '5m')).toBe(true);
 
     // debug mode also attaches profiling to the terminal frame

@@ -52,6 +52,8 @@ export function QuickLook({
 }): React.JSX.Element {
   const t = useT();
   const closePreview = useSpendersStore((s) => s.closePreview);
+  const setPreviewAiBlocked = useSpendersStore((s) => s.setPreviewAiBlocked);
+  const clearPreviewAiBlocked = useSpendersStore((s) => s.clearPreviewAiBlocked);
   const [openingChat, setOpeningChat] = useState(false);
   const [openFailedFor, setOpenFailedFor] = useState<string | null>(null);
   const [hydrate, setHydrate] = useState<HydrateState | null>(null);
@@ -91,6 +93,12 @@ export function QuickLook({
       ? t('sp.historyTraceSlow')
       : null;
   const hydrateElapsedText = t('sp.historyTraceElapsed', { seconds: hydrateElapsedSeconds });
+  const previewAiBlockedReason =
+    !hasLocalHistory && hydratePhase === 'loading'
+      ? hydrateTraceText
+      : !hasLocalHistory && hydratePhase === 'error'
+        ? t('sp.historyFetchFailed')
+        : null;
 
   // The preview IS the active conversation while open: per-chat draft
   // load/persist + dock discard-on-switch ride the existing machinery.
@@ -154,6 +162,15 @@ export function QuickLook({
     return () => window.clearInterval(id);
   }, [hydrateRequestKey, hydrateStatus.showOverlay]);
 
+  useEffect(() => {
+    if (previewAiBlockedReason !== null) {
+      setPreviewAiBlocked(fanId, previewAiBlockedReason);
+    } else {
+      clearPreviewAiBlocked(fanId);
+    }
+    return () => clearPreviewAiBlocked(fanId);
+  }, [clearPreviewAiBlocked, fanId, previewAiBlockedReason, setPreviewAiBlocked]);
+
   const fan = useFan(accountId, fanId).data ?? null;
   const name = row?.name ?? '';
 
@@ -196,6 +213,7 @@ export function QuickLook({
           density="compact"
           scrollMode="paged"
           jumpToLatestKey={jumpToLatestKey}
+          aiDisabledReason={previewAiBlockedReason}
           threadOverlay={
             hydrateStatus.showOverlay ? (
               <PreviewHydrateOverlay

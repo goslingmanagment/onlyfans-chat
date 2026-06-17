@@ -38,13 +38,15 @@ export function startAiFromGlobal(feature: LiveAiFeature, queryClient: QueryClie
   });
   if (!gate.ok) return;
 
+  const messagesData = queryClient.getQueryData<MessagesData>(qk.messages(accountId, chatId));
+  if (messagesData === undefined) return;
+
   if (feature === 'ping') {
     const pingGate = queryClient.getQueryData<PingGateVM>(pingGateKey(accountId, chatId));
     if (!evaluatePingGate(gate, pingGate?.blocked ?? null).enabled) return;
   }
   if (feature === 'hi-greeting') {
-    const pages = queryClient.getQueryData<MessagesData>(qk.messages(accountId, chatId))?.pages;
-    if (!evaluateHiGate(gate, deriveHiLocked(pages)).enabled) return;
+    if (!evaluateHiGate(gate, deriveHiLocked(messagesData.pages)).enabled) return;
   }
 
   startAiFeature(feature, { accountId, chatId, defaultTone: settings.defaultReplyTone });

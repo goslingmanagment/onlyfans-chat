@@ -5,6 +5,7 @@
 // (SPEC §7.0).
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type {
   ProfilingSnapshotPayload,
   UserFacingErrorPayload,
@@ -43,6 +44,7 @@ import {
   progressLabel,
   toggleTone,
   type DockView,
+  type PromptInspectorBlock,
 } from './dockLogic';
 import { getFeaturePolicy } from '@chatgoose/shared/features';
 
@@ -194,6 +196,9 @@ function CompactDock(): React.JSX.Element | null {
   const view = useAiStore((s) => s.view);
   const spend = useAiStore((s) => s.spend);
   const error = useAiStore((s) => s.error);
+  const profiling = useAiStore((s) => s.profiling);
+  const debugPrompt = useAiStore((s) => s.debugPrompt);
+  const debugMode = useSettingsCache((s) => s.debugMode);
   const partFeedback = useAiStore((s) => s.partFeedback);
   // canSend from the op's own chat — same canSendMessage source PreviewDock
   // received as a prop (unknown chat defaults to insertable; inserting never sends).
@@ -230,57 +235,62 @@ function CompactDock(): React.JSX.Element | null {
       : null;
 
   return (
-    <div className="flex flex-none items-center gap-2.5 border-t border-line bg-bg1 px-4 py-2">
-      <span className="text-[12px] font-semibold text-ink-mid">
-        <i className="mr-[5px] text-clay not-italic">✳</i>
-        {featureLabel}
-        {segment !== null && <span className="font-normal text-ink-low"> · {segment}</span>}
-      </span>
-      {status === 'running' && (
-        <span className="num text-micro tracking-[0.08em] text-ink-low">{progressLabel(phase)}</span>
-      )}
-      {status === 'error' && error !== null && (
-        <span className="min-w-0 truncate text-[11px] text-bad">
-          {error.message}
-          {errorHint(error) !== null ? ` — ${errorHint(error)}` : ''}
+    <div className="flex flex-none flex-col border-t border-line bg-bg1">
+      <div className="flex items-center gap-2.5 px-4 py-2">
+        <span className="text-[12px] font-semibold text-ink-mid">
+          <i className="mr-[5px] text-clay not-italic">✳</i>
+          {featureLabel}
+          {segment !== null && <span className="font-normal text-ink-low"> · {segment}</span>}
         </span>
-      )}
-      {status === 'completed' && autoInsertable && (
-        <span className="text-[11px] text-ink-low">{t('sp.inserted')}</span>
-      )}
-      {status === 'completed' && !autoInsertable && parts.length > 0 && (
-        <span className="flex items-center gap-1.5">
-          {parts.map((_, index) => (
-            <button
-              key={index}
-              type="button"
-              onClick={() => {
-                activateDockPart(index + 1, { canSend });
-                if (canSend) focusComposer();
-              }}
-              className="num cursor-pointer rounded-[5px] border border-clay-line bg-clay-bg px-1.5 py-0.5 text-micro font-semibold text-clay-deep hover:border-clay"
-            >
-              {partFeedback?.partIndex === index + 1
-                ? partFeedback.kind === 'inserted'
-                  ? 'INSERTED'
-                  : 'COPIED'
-                : t('sp.variant', { n: index + 1 })}
-            </button>
-          ))}
-        </span>
-      )}
-      {(status === 'completed' || status === 'error') && (
-        <button
-          type="button"
-          onClick={regenerateActiveOperation}
-          className="cursor-pointer text-[11px] text-ink-low underline decoration-dotted underline-offset-3 hover:text-ink-mid"
-        >
-          {t('sp.anotherVariant')}
-        </button>
-      )}
-      <span className="flex-1" />
-      {spend !== null && (
-        <span className="num text-[9.5px] text-ink-low">{formatOpCost(spend.totalUsd)}</span>
+        {status === 'running' && (
+          <span className="num text-micro tracking-[0.08em] text-ink-low">{progressLabel(phase)}</span>
+        )}
+        {status === 'error' && error !== null && (
+          <span className="min-w-0 truncate text-[11px] text-bad">
+            {error.message}
+            {errorHint(error) !== null ? ` — ${errorHint(error)}` : ''}
+          </span>
+        )}
+        {status === 'completed' && autoInsertable && (
+          <span className="text-[11px] text-ink-low">{t('sp.inserted')}</span>
+        )}
+        {status === 'completed' && !autoInsertable && parts.length > 0 && (
+          <span className="flex items-center gap-1.5">
+            {parts.map((_, index) => (
+              <button
+                key={index}
+                type="button"
+                onClick={() => {
+                  activateDockPart(index + 1, { canSend });
+                  if (canSend) focusComposer();
+                }}
+                className="num cursor-pointer rounded-[5px] border border-clay-line bg-clay-bg px-1.5 py-0.5 text-micro font-semibold text-clay-deep hover:border-clay"
+              >
+                {partFeedback?.partIndex === index + 1
+                  ? partFeedback.kind === 'inserted'
+                    ? 'INSERTED'
+                    : 'COPIED'
+                  : t('sp.variant', { n: index + 1 })}
+              </button>
+            ))}
+          </span>
+        )}
+        {(status === 'completed' || status === 'error') && (
+          <button
+            type="button"
+            onClick={regenerateActiveOperation}
+            className="cursor-pointer text-[11px] text-ink-low underline decoration-dotted underline-offset-3 hover:text-ink-mid"
+          >
+            {t('sp.anotherVariant')}
+          </button>
+        )}
+        <span className="flex-1" />
+        {spend !== null && (
+          <span className="num text-[9.5px] text-ink-low">{formatOpCost(spend.totalUsd)}</span>
+        )}
+      </div>
+      {debugMode && status !== 'running' && (
+        <DebugSection debugPrompt={debugPrompt} profiling={profiling} compact />
       )}
     </div>
   );
@@ -557,13 +567,27 @@ function SplitToggle({ running }: { running: boolean }): React.JSX.Element {
 function DebugSection({
   debugPrompt,
   profiling,
+  compact = false,
 }: {
   debugPrompt: Record<string, unknown> | null;
   profiling: ProfilingSnapshotPayload | null;
+  compact?: boolean;
 }): React.JSX.Element | null {
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!compact || !open) return;
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [compact, open]);
+
   if (debugPrompt === null && profiling === null) return null;
   const blocks = debugPrompt !== null ? extractPromptBlocks(debugPrompt) : null;
+  const transcriptDebug = debugPrompt !== null ? readTranscriptDebug(debugPrompt) : null;
+  const promptSummary =
+    blocks !== null ? `${blocks.length} blocks` : debugPrompt !== null ? 'raw' : 'profiling';
 
   function copyPromptText(): void {
     const text =
@@ -571,6 +595,84 @@ function DebugSection({
         ? blocks.map((b) => `── ${b.role.toUpperCase()} · cache ${b.cache} ──\n${b.text}`).join('\n\n')
         : JSON.stringify(debugPrompt, null, 2);
     void navigator.clipboard.writeText(text);
+  }
+
+  if (compact) {
+    const overlay =
+      open && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[70] flex items-center justify-center bg-transparent px-[max(18px,4vw)] py-[max(44px,7vh)]"
+              role="dialog"
+              aria-label="Prompt debug inspector"
+              onMouseDown={() => setOpen(false)}
+            >
+              <div
+                className="flex max-h-full w-[min(1180px,92vw)] flex-col overflow-hidden rounded-card border border-line-strong bg-bg1 shadow-pop"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="flex flex-none items-center gap-2 border-b border-line bg-bg1 px-3.5 py-2">
+                  <span className="cap text-ink-mid">Prompt</span>
+                  <span className="num text-micro text-ink-low">{promptSummary}</span>
+                  <span className="flex-1" />
+                  {debugPrompt !== null && (
+                    <button
+                      type="button"
+                      onClick={copyPromptText}
+                      className="num cursor-pointer text-micro tracking-[0.08em] text-ink-low hover:text-ink-mid"
+                    >
+                      COPY
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setOpen(false)}
+                    className="num cursor-pointer text-micro tracking-[0.08em] text-ink-low hover:text-ink-mid"
+                  >
+                    CLOSE
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3.5 py-3">
+                  <PromptDebugBody
+                    blocks={blocks}
+                    debugPrompt={debugPrompt}
+                    transcriptDebug={transcriptDebug}
+                    profiling={profiling}
+                    compact
+                  />
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null;
+
+    return (
+      <>
+        <div className="border-t border-line bg-bg2/60 px-3.5 py-1.5">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setOpen((o) => !o)}
+              className="cap flex cursor-pointer items-center gap-1.5 text-ink-low hover:text-ink-mid"
+            >
+              {open ? '▾' : '▸'} Prompt
+            </button>
+            <span className="num text-micro text-ink-low">{promptSummary}</span>
+            {debugPrompt !== null && (
+              <button
+                type="button"
+                onClick={copyPromptText}
+                className="num ml-auto cursor-pointer text-micro tracking-[0.08em] text-ink-low hover:text-ink-mid"
+              >
+                COPY
+              </button>
+            )}
+          </div>
+        </div>
+        {overlay}
+      </>
+    );
   }
 
   return (
@@ -594,38 +696,128 @@ function DebugSection({
         )}
       </div>
       {open && (
-        <div className="mt-2 space-y-2">
-          {blocks !== null ? (
-            blocks.map((block, i) => (
-              <div key={i} className="rounded-chip border border-line bg-bg1">
-                <div className="flex items-center gap-2 border-b border-line px-2.5 py-1">
-                  <span className="cap text-ink-mid">{block.role}</span>
-                  <span
-                    className={cx(
-                      'num rounded-full border px-1.5 text-micro',
-                      block.cache === 'none'
-                        ? 'border-line text-ink-low'
-                        : 'border-green-line bg-green-bg text-green',
-                    )}
-                  >
-                    cache {block.cache}
-                  </span>
-                </div>
-                <pre className="max-h-44 overflow-auto px-2.5 py-1.5 font-mono text-[11px] leading-[1.5] whitespace-pre-wrap text-ink-mid select-text">
-                  {block.text}
-                </pre>
-              </div>
-            ))
-          ) : debugPrompt !== null ? (
-            <pre className="max-h-44 overflow-auto rounded-chip border border-line bg-bg1 px-2.5 py-1.5 font-mono text-[11px] leading-[1.5] whitespace-pre-wrap text-ink-mid select-text">
-              {JSON.stringify(debugPrompt, null, 2)}
-            </pre>
-          ) : null}
-          {profiling !== null && profiling.stages.length > 0 && (
-            <StageTable profiling={profiling} />
-          )}
+        <div className="mt-2">
+          <PromptDebugBody
+            blocks={blocks}
+            debugPrompt={debugPrompt}
+            transcriptDebug={transcriptDebug}
+            profiling={profiling}
+            compact={false}
+          />
         </div>
       )}
+    </div>
+  );
+}
+
+function PromptDebugBody({
+  blocks,
+  debugPrompt,
+  transcriptDebug,
+  profiling,
+  compact,
+}: {
+  blocks: PromptInspectorBlock[] | null;
+  debugPrompt: Record<string, unknown> | null;
+  transcriptDebug?: TranscriptDebug | null;
+  profiling: ProfilingSnapshotPayload | null;
+  compact: boolean;
+}): React.JSX.Element {
+  return (
+    <div className="space-y-2">
+      {transcriptDebug !== null && transcriptDebug !== undefined && (
+        <TranscriptDebugCard transcriptDebug={transcriptDebug} />
+      )}
+      {blocks !== null ? (
+        blocks.map((block, i) => (
+          <div key={i} className="rounded-chip border border-line bg-bg1">
+            <div className="flex items-center gap-2 border-b border-line px-2.5 py-1">
+              <span className="cap text-ink-mid">{block.role}</span>
+              <span
+                className={cx(
+                  'num rounded-full border px-1.5 text-micro',
+                  block.cache === 'none'
+                    ? 'border-line text-ink-low'
+                    : 'border-green-line bg-green-bg text-green',
+                )}
+              >
+                cache {block.cache}
+              </span>
+            </div>
+            <pre
+              className={cx(
+                'px-2.5 py-1.5 font-mono text-[11px] leading-[1.5] whitespace-pre-wrap text-ink-mid select-text',
+                compact ? 'overflow-visible' : 'max-h-44 overflow-auto',
+              )}
+            >
+              {block.text}
+            </pre>
+          </div>
+        ))
+      ) : debugPrompt !== null ? (
+        <pre
+          className={cx(
+            'rounded-chip border border-line bg-bg1 px-2.5 py-1.5 font-mono text-[11px] leading-[1.5] whitespace-pre-wrap text-ink-mid select-text',
+            compact ? 'overflow-visible' : 'max-h-44 overflow-auto',
+          )}
+        >
+          {JSON.stringify(debugPrompt, null, 2)}
+        </pre>
+      ) : null}
+      {profiling !== null && profiling.stages.length > 0 && (
+        <StageTable profiling={profiling} />
+      )}
+    </div>
+  );
+}
+
+interface TranscriptDebug {
+  messageCount: number;
+  charCount: number;
+  preview: string;
+}
+
+function readTranscriptDebug(snapshot: Record<string, unknown>): TranscriptDebug | null {
+  const value = snapshot['transcript'];
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record['messageCount'] !== 'number' ||
+    typeof record['charCount'] !== 'number' ||
+    typeof record['preview'] !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    messageCount: record['messageCount'],
+    charCount: record['charCount'],
+    preview: record['preview'],
+  };
+}
+
+function TranscriptDebugCard({
+  transcriptDebug,
+}: {
+  transcriptDebug: TranscriptDebug;
+}): React.JSX.Element {
+  const empty = transcriptDebug.messageCount === 0;
+  return (
+    <div className="rounded-chip border border-line bg-bg1">
+      <div className="flex items-center gap-2 border-b border-line px-2.5 py-1">
+        <span className="cap text-ink-mid">transcript</span>
+        <span
+          className={cx(
+            'num rounded-full border px-1.5 text-micro',
+            empty ? 'border-amber-line bg-amber-bg text-amber' : 'border-green-line bg-green-bg text-green',
+          )}
+        >
+          {transcriptDebug.messageCount} messages
+        </span>
+        <span className="num text-micro text-ink-low">{transcriptDebug.charCount} chars</span>
+      </div>
+      <pre className="max-h-36 overflow-auto px-2.5 py-1.5 font-mono text-[11px] leading-[1.5] whitespace-pre-wrap text-ink-mid select-text">
+        {transcriptDebug.preview}
+      </pre>
     </div>
   );
 }

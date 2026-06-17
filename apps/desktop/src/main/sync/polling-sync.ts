@@ -677,15 +677,22 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       return () => listeners.delete(listener);
     },
     async refreshChat(accountId, chatId, purpose) {
-      // refreshChat is the shared body-read seam for Spenders preview/refresh
-      // AND the hub messageReceived reaction — all AUTOMATIC. When auto-read is
-      // off, skip the tail GET (which would mark the chat read) and just nudge
-      // the list; listChats-driven rows stay fresh through the poll.
+      // refreshChat is the AUTOMATIC/background body-read seam (hub message
+      // reactions, scoped Spenders refresh). When auto-read is off, skip the
+      // tail GET (which would mark the chat read) and just nudge the list;
+      // listChats-driven rows stay fresh through the poll.
       if (!autoReadEnabled()) {
         emit({ type: 'chatListUpdated', accountId });
         return;
       }
       await fetchChatTail(accountId, chatId, purpose);
+      emit({ type: 'chatListUpdated', accountId });
+    },
+    async readChatTailForUserOpen(accountId, chatId, purpose) {
+      // Deliberate single-chat user read (QuickLook/open-like): use the same
+      // force path as openConversation so history loads even with auto-read
+      // OFF, without setting openConversation or arming the read-state sweep.
+      await fetchChatTail(accountId, chatId, purpose, /* force */ true);
       emit({ type: 'chatListUpdated', accountId });
     },
     ensureChat,
