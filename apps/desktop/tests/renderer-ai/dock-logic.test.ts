@@ -12,6 +12,7 @@ import {
   evaluateAiGate,
   extractPromptBlocks,
   isFrameForOperation,
+  shouldAutoInsertCompactDraft,
   toggleTone,
 } from '../../src/renderer/src/features/ai/dockLogic';
 
@@ -180,6 +181,68 @@ describe('deriveDockView', () => {
     expect(copyablePartsOf({ kind: 'raw', text: 'x' })).toEqual([]);
     expect(copyablePartsOf(null)).toEqual([]);
     expect(copyablePartsOf({ kind: 'drafts', parts: ['a'] })).toEqual(['a']);
+  });
+});
+
+describe('shouldAutoInsertCompactDraft', () => {
+  it('auto-inserts only one-part drafts in compact mode', () => {
+    expect(
+      shouldAutoInsertCompactDraft({
+        feature: 'ping',
+        viewKind: 'drafts',
+        canSend: true,
+        partCount: 1,
+      }),
+    ).toBe(true);
+  });
+
+  it('does not auto-insert multi-part drafts as a visible [NEXT] sequence', () => {
+    expect(
+      shouldAutoInsertCompactDraft({
+        feature: 'ping',
+        viewKind: 'drafts',
+        canSend: true,
+        partCount: 2,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoInsertCompactDraft({
+        feature: 'fast-reply',
+        viewKind: 'drafts',
+        canSend: true,
+        partCount: 3,
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps hi-greeting variants and copy-degraded drafts manual', () => {
+    expect(
+      shouldAutoInsertCompactDraft({
+        feature: 'hi-greeting',
+        viewKind: 'drafts',
+        canSend: true,
+        partCount: 1,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoInsertCompactDraft({
+        feature: 'ping',
+        viewKind: 'drafts',
+        canSend: false,
+        partCount: 1,
+      }),
+    ).toBe(false);
+  });
+
+  it('ignores non-draft views', () => {
+    expect(
+      shouldAutoInsertCompactDraft({
+        feature: 'fan-summary',
+        viewKind: 'scan-pointer',
+        canSend: true,
+        partCount: 1,
+      }),
+    ).toBe(false);
   });
 });
 

@@ -42,6 +42,7 @@ import {
   formatOpCost,
   insertChipLabel,
   progressLabel,
+  shouldAutoInsertCompactDraft,
   toggleTone,
   type DockView,
   type PromptInspectorBlock,
@@ -211,10 +212,12 @@ function CompactDock(): React.JSX.Element | null {
   const autoInsertable =
     op !== null &&
     status === 'completed' &&
-    view?.kind === 'drafts' &&
-    op.feature !== 'hi-greeting' &&
-    canSend &&
-    parts.length > 0;
+    shouldAutoInsertCompactDraft({
+      feature: op.feature,
+      viewKind: view?.kind ?? null,
+      canSend,
+      partCount: parts.length,
+    });
 
   useEffect(() => {
     if (!autoInsertable || op === null) return;

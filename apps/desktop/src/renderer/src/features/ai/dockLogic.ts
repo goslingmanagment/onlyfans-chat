@@ -231,6 +231,20 @@ export function copyablePartsOf(view: DockView | null): string[] {
   return view.parts;
 }
 
+export function shouldAutoInsertCompactDraft(input: {
+  feature: OperationFeature;
+  viewKind: DockView['kind'] | null;
+  canSend: boolean;
+  partCount: number;
+}): boolean {
+  return (
+    input.viewKind === 'drafts' &&
+    input.feature !== 'hi-greeting' &&
+    input.canSend &&
+    input.partCount === 1
+  );
+}
+
 // ─── Errors ──────────────────────────────────────────────────────────────
 
 /** Recovery hint: protocol `description`, else the error module's `recovery`. */
