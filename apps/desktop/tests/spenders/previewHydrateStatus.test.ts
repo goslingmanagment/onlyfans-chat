@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { UI_MESSAGES } from '@chatgoose/shared/i18n/index';
-import { deriveHydrateStatus } from '../../src/renderer/src/features/spenders/previewHydrateStatus';
+import {
+  deriveHydrateStatus,
+  derivePreviewAiBlockReason,
+} from '../../src/renderer/src/features/spenders/previewHydrateStatus';
 
 describe('deriveHydrateStatus', () => {
   it('covers the quick-look hydrate lifecycle mapping', () => {
@@ -50,8 +53,39 @@ describe('deriveHydrateStatus', () => {
   });
 });
 
+describe('derivePreviewAiBlockReason', () => {
+  it('blocks preview AI while hydrate or manual refresh freshness is unresolved', () => {
+    expect(
+      derivePreviewAiBlockReason('loading', 'sp.historyTraceRequest', undefined, false, false),
+    ).toEqual({ key: 'sp.historyTraceRequest' });
+    expect(
+      derivePreviewAiBlockReason(
+        'loading',
+        'sp.historyTraceWaitingRows',
+        { count: 12 },
+        false,
+        false,
+      ),
+    ).toEqual({ key: 'sp.historyTraceWaitingRows', params: { count: 12 } });
+    expect(
+      derivePreviewAiBlockReason('error', 'sp.historyTraceError', undefined, false, false),
+    ).toEqual({ key: 'sp.historyFetchFailed' });
+    expect(
+      derivePreviewAiBlockReason('done', 'sp.historyTraceDone', undefined, true, false),
+    ).toEqual({ key: 'conv.refreshing' });
+    expect(
+      derivePreviewAiBlockReason('done', 'sp.historyTraceDone', undefined, false, true),
+    ).toEqual({ key: 'conv.refreshFailed' });
+    expect(
+      derivePreviewAiBlockReason('done', 'sp.historyTraceDone', undefined, false, false),
+    ).toBeNull();
+  });
+});
+
 describe('quick-look hydrate i18n keys', () => {
   const keys = [
+    'conv.refreshFailed',
+    'conv.refreshing',
     'sp.historyLoading',
     'sp.historyLoaded',
     'sp.historyLogEmpty',

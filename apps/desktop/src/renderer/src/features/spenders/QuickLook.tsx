@@ -24,7 +24,11 @@ import { presenceKey, useUiStore } from '../../state/uiStore';
 import { useSpendersStore } from './spendersStore';
 import { dayCounter } from './SpenderRowItem';
 import { hydratePreviewFan, ensureAndOpenPreviewChat } from './previewActions';
-import { deriveHydrateStatus, type PreviewHydratePhase } from './previewHydrateStatus';
+import {
+  deriveHydrateStatus,
+  derivePreviewAiBlockReason,
+  type PreviewHydratePhase,
+} from './previewHydrateStatus';
 
 type HydrateState =
   | { key: string; phase: Extract<PreviewHydratePhase, 'loading'> }
@@ -60,6 +64,7 @@ export function QuickLook({
   const [openingChat, setOpeningChat] = useState(false);
   const [openFailedFor, setOpenFailedFor] = useState<string | null>(null);
   const [hydrate, setHydrate] = useState<HydrateState | null>(null);
+  const [refreshFailedFor, setRefreshFailedFor] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const previewKey = `${accountId}/${fanId}`;
   const hydrateRequestKey = `${previewKey}/${retryNonce}`;
@@ -96,21 +101,40 @@ export function QuickLook({
       ? t('sp.historyTraceSlow')
       : null;
   const hydrateElapsedText = t('sp.historyTraceElapsed', { seconds: hydrateElapsedSeconds });
-  const previewAiBlockedReason =
-    !hasLocalHistory && hydratePhase === 'loading'
-      ? hydrateTraceText
-      : !hasLocalHistory && hydratePhase === 'error'
-        ? t('sp.historyFetchFailed')
-        : null;
   const refreshPending =
     refresh.isPending &&
     refresh.variables?.accountId === accountId &&
     refresh.variables?.chatId === fanId;
+  const refreshFailed = refreshFailedFor === previewKey;
+  const refreshBusy = refreshPending || hydratePhase === 'loading';
+  const previewAiBlock = derivePreviewAiBlockReason(
+    hydratePhase,
+    hydrateStatus.traceKey,
+    hydrateStatus.traceParams,
+    refreshPending,
+    refreshFailed,
+  );
+  const previewAiBlockedReason =
+    previewAiBlock === null ? null : t(previewAiBlock.key, previewAiBlock.params);
   function handleRefresh(): void {
-    if (refreshPending) return;
+    if (refreshBusy) return;
+    setRefreshFailedFor(null);
+    if (hydrateError) {
+      setRetryNonce((n) => n + 1);
+      return;
+    }
     refresh.mutate(
       { accountId, chatId: fanId },
-      { onError: () => pushToast({ title: t('conv.refreshFailed'), body: row?.name ?? fanId }) },
+      {
+        onSuccess: () => {
+          setRefreshFailedFor(null);
+          return messagesQuery.refetch();
+        },
+        onError: () => {
+          setRefreshFailedFor(previewKey);
+          pushToast({ title: t('conv.refreshFailed'), body: row?.name ?? fanId });
+        },
+      },
     );
   }
 
@@ -222,13 +246,13 @@ export function QuickLook({
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={refreshPending}
+            disabled={refreshBusy}
             title={t('conv.refreshTip')}
-            aria-label={refreshPending ? t('conv.refreshing') : t('conv.refresh')}
-            aria-busy={refreshPending}
+            aria-label={refreshBusy ? t('conv.refreshing') : t('conv.refresh')}
+            aria-busy={refreshBusy}
             className="flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-full border border-line bg-bg2 text-ink-mid transition-colors duration-150 hover:border-clay-line hover:bg-clay-bg hover:text-clay-deep disabled:cursor-default disabled:opacity-50"
           >
-            <span className={cx('text-[15px] leading-none', refreshPending && 'inline-block animate-spin')}>
+            <span className={cx('text-[15px] leading-none', refreshBusy && 'inline-block animate-spin')}>
               ↻
             </span>
           </button>

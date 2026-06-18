@@ -10,6 +10,35 @@ export interface PreviewHydrateStatus {
   traceParams?: UiMessageParams;
 }
 
+export interface PreviewAiBlockReason {
+  key: UiMessageKey;
+  params?: UiMessageParams;
+}
+
+export function derivePreviewAiBlockReason(
+  phase: PreviewHydratePhase,
+  hydrateTraceKey: UiMessageKey,
+  hydrateTraceParams: UiMessageParams | undefined,
+  refreshPending: boolean,
+  refreshFailed: boolean,
+): PreviewAiBlockReason | null {
+  if (phase === 'loading') {
+    return hydrateTraceParams === undefined
+      ? { key: hydrateTraceKey }
+      : { key: hydrateTraceKey, params: hydrateTraceParams };
+  }
+  if (phase === 'error') {
+    return { key: 'sp.historyFetchFailed' };
+  }
+  if (refreshPending) {
+    return { key: 'conv.refreshing' };
+  }
+  if (refreshFailed) {
+    return { key: 'conv.refreshFailed' };
+  }
+  return null;
+}
+
 export function deriveHydrateStatus(
   phase: PreviewHydratePhase,
   messageCount: number,

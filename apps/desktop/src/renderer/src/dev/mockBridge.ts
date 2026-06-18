@@ -1142,8 +1142,8 @@ export function createMockBridge(): ChatGooseBridge {
     'cmd:conversation.close': () => undefined,
     'cmd:conversation.refresh': ({ accountId, chatId }) => {
       // Dev stand-in for the real tail GET: append one fresh fan line to this
-      // chat and fire the same events main would, so the in-chat ↻ button is
-      // verifiable in the browser UI without Electron main.
+      // chat and fire the same invalidations main would, so the in-chat ↻
+      // button is verifiable in the browser UI without Electron main.
       const chats = store.chats.get(accountId) ?? [];
       const chat = chats.find((c) => c.chatId === chatId);
       if (chat === undefined) return;
@@ -1172,9 +1172,9 @@ export function createMockBridge(): ChatGooseBridge {
       chat.lastMessagePreview = incoming.text;
       chat.lastMessageIsSentByMe = false;
       store.chats.set(accountId, sortChatsByRecency(chats));
-      emit('sync:event', { type: 'messageReceived', accountId, chatId, messageId: incoming.id });
       emit('db:changed', { scope: 'messages', accountId, chatId });
       emit('db:changed', { scope: 'chats', accountId });
+      emit('sync:event', { type: 'chatListUpdated', accountId });
     },
     'cmd:sync.forceRefresh': () => {
       pollTick();
