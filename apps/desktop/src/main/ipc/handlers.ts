@@ -23,6 +23,7 @@ import type {
   KeyTestResultVM,
   LocalDataStatsVM,
   OutboxItemVM,
+  HubTelemetryVM,
   SyncStatusVM,
   UpdateStatusVM,
 } from '../../preload/contract';
@@ -46,6 +47,14 @@ const idSchema = z.string().min(1).max(64);
 const keysTestSchema = z.object({
   provider: z.enum(['ofapi', 'anthropic', 'openrouter', 'hub']),
 });
+
+const EMPTY_HUB_TELEMETRY: HubTelemetryVM = {
+  received: { total: 0, byType: {} },
+  applied: { total: 0, byType: {} },
+  fallback: { total: 0, byType: {} },
+  dropped: { total: 0, byType: {} },
+  fallbackByReason: {},
+};
 
 // Renderer-controlled (trust boundary): bound the strings and accept opaque fields.
 const logClientSchema = z.object({
@@ -368,6 +377,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       hubDroppedEventsToday:
         (hubActivity?.droppedEventsToday ?? 0) + (hubActivity?.droppedFrames ?? 0),
       hubFallbackEventsToday: hubActivity?.fallbackEventsToday ?? 0,
+      hubEventsByTypeToday: hubActivity?.eventsByTypeToday ?? {},
+      hubAppliedByTypeToday: hubActivity?.appliedByTypeToday ?? {},
+      hubFallbackByTypeToday: hubActivity?.fallbackByTypeToday ?? {},
+      hubDroppedByTypeToday: hubActivity?.droppedByTypeToday ?? {},
+      hubFallbackByReasonToday: hubActivity?.fallbackByReasonToday ?? {},
+      hubLifetime: hubActivity?.lifetime ?? EMPTY_HUB_TELEMETRY,
       hubLastFallbackReason: hubActivity?.lastFallbackReason ?? null,
       aiTodayUsd: aiTodayUsd(data, today),
       sendsToday: sendsToday(data, today),

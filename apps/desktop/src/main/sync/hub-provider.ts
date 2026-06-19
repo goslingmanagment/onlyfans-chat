@@ -19,14 +19,30 @@ import type { HubSync, HubSyncStatus } from './hub-sync';
 import type { SyncListener, SyncProvider, SyncStatusSnapshot } from './provider';
 
 export type HubMode = 'live' | 'degraded' | 'off';
-export type HubFallbackReason =
-  | 'hub-id-only-fallback'
-  | 'hub-mismatched-message-fallback'
-  | 'hub-malformed-message-fallback'
-  | 'hub-notification-fallback'
-  | 'hub-ingest-error-fallback'
-  | 'hub-replay-gap-snapshot'
-  | 'unknown-delete-head-refresh';
+const HUB_FALLBACK_REASONS = [
+  'hub-id-only-fallback',
+  'hub-mismatched-message-fallback',
+  'hub-malformed-message-fallback',
+  'hub-notification-fallback',
+  'hub-ingest-error-fallback',
+  'hub-replay-gap-snapshot',
+  'unknown-delete-head-refresh',
+] as const;
+
+export type HubFallbackReason = (typeof HUB_FALLBACK_REASONS)[number];
+
+export interface HubTelemetryCounter {
+  total: number;
+  byType: Record<string, number>;
+}
+
+export interface HubTelemetrySnapshot {
+  received: HubTelemetryCounter;
+  applied: HubTelemetryCounter;
+  fallback: HubTelemetryCounter;
+  dropped: HubTelemetryCounter;
+  fallbackByReason: Record<string, number>;
+}
 
 type PollingLike = SyncProvider & {
   pollAccount(accountId: string): Promise<void>;
@@ -82,6 +98,11 @@ export interface HubActivitySnapshot {
   /** Hub events dropped after parse/lookup today; parser drops are counted separately by HubSync. */
   droppedEventsToday: number;
   eventsByTypeToday: Record<string, number>;
+  appliedByTypeToday: Record<string, number>;
+  fallbackByTypeToday: Record<string, number>;
+  droppedByTypeToday: Record<string, number>;
+  fallbackByReasonToday: Record<string, number>;
+  lifetime: HubTelemetrySnapshot;
   lastFallbackReason: HubFallbackReason | null;
   /** Epoch ms the stream went live; null while not live. */
   liveSinceMs: number | null;
@@ -92,27 +113,42 @@ export interface HubActivitySnapshot {
 
 const HUB_EVENT_STATS_KEY = 'hubSync.eventStats';
 
+const countByTypeSchema = z.record(z.string(), z.number().int().nonnegative());
+const telemetryCounterSchema = z.object({
+  total: z.number().int().nonnegative().default(0),
+  byType: countByTypeSchema.default({}),
+});
+const emptyTelemetryCounter = { total: 0, byType: {} };
+const emptyTelemetrySnapshot = {
+  received: emptyTelemetryCounter,
+  applied: emptyTelemetryCounter,
+  fallback: emptyTelemetryCounter,
+  dropped: emptyTelemetryCounter,
+  fallbackByReason: {},
+};
+const telemetrySnapshotSchema = z.object({
+  received: telemetryCounterSchema.default(emptyTelemetryCounter),
+  applied: telemetryCounterSchema.default(emptyTelemetryCounter),
+  fallback: telemetryCounterSchema.default(emptyTelemetryCounter),
+  dropped: telemetryCounterSchema.default(emptyTelemetryCounter),
+  fallbackByReason: countByTypeSchema.default({}),
+});
+
 const eventStatsSchema = z.object({
   day: z.string(),
   count: z.number().int().nonnegative(),
   applied: z.number().int().nonnegative().default(0),
   fallback: z.number().int().nonnegative().default(0),
   dropped: z.number().int().nonnegative().default(0),
-  byType: z.record(z.string(), z.number().int().nonnegative()).default({}),
+  byType: countByTypeSchema.default({}),
+  appliedByType: countByTypeSchema.default({}),
+  fallbackByType: countByTypeSchema.default({}),
+  droppedByType: countByTypeSchema.default({}),
+  fallbackByReason: countByTypeSchema.default({}),
+  lifetime: telemetrySnapshotSchema.default(emptyTelemetrySnapshot),
   lastEventAt: z.number().nullable(),
   lastEventType: z.string().nullable(),
-  lastFallbackReason: z
-    .enum([
-      'hub-id-only-fallback',
-      'hub-mismatched-message-fallback',
-      'hub-malformed-message-fallback',
-      'hub-notification-fallback',
-      'hub-ingest-error-fallback',
-      'hub-replay-gap-snapshot',
-      'unknown-delete-head-refresh',
-    ])
-    .nullable()
-    .default(null),
+  lastFallbackReason: z.enum(HUB_FALLBACK_REASONS).nullable().default(null),
 });
 type EventStats = z.infer<typeof eventStatsSchema>;
 
@@ -148,32 +184,159 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     return new Date(epochMs).toISOString().slice(0, 10);
   }
 
-  // Daily event counter persists in the settings KV (same home as
-  // hubSync.lastEventId) so a mid-shift restart keeps the day's count.
-  let eventStats: EventStats = data.settings.getParsed(HUB_EVENT_STATS_KEY, eventStatsSchema) ?? {
-    day: utcDayOf(now()),
-    count: 0,
-    applied: 0,
-    fallback: 0,
-    dropped: 0,
-    byType: {},
-    lastEventAt: null,
-    lastEventType: null,
-    lastFallbackReason: null,
-  };
+  function emptyCounter(): HubTelemetryCounter {
+    return { total: 0, byType: {} };
+  }
 
-  function resetStatsFor(day: string): void {
-    eventStats = {
+  function emptyLifetime(): HubTelemetrySnapshot {
+    return {
+      received: emptyCounter(),
+      applied: emptyCounter(),
+      fallback: emptyCounter(),
+      dropped: emptyCounter(),
+      fallbackByReason: {},
+    };
+  }
+
+  function emptyStats(day: string): EventStats {
+    return {
       day,
       count: 0,
       applied: 0,
       fallback: 0,
       dropped: 0,
       byType: {},
+      appliedByType: {},
+      fallbackByType: {},
+      droppedByType: {},
+      fallbackByReason: {},
+      lifetime: emptyLifetime(),
       lastEventAt: null,
       lastEventType: null,
       lastFallbackReason: null,
     };
+  }
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  }
+
+  function readInitialEventStats(): EventStats {
+    const currentDay = utcDayOf(now());
+    const raw = data.settings.get(HUB_EVENT_STATS_KEY);
+    const parsed = eventStatsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return emptyStats(currentDay);
+    }
+    if (isRecord(raw) && raw['lifetime'] === undefined) {
+      const migrated = parsed.data;
+      migrated.lifetime = {
+        received: { total: migrated.count, byType: { ...migrated.byType } },
+        applied: { total: migrated.applied, byType: { ...migrated.appliedByType } },
+        fallback: { total: migrated.fallback, byType: { ...migrated.fallbackByType } },
+        dropped: { total: migrated.dropped, byType: { ...migrated.droppedByType } },
+        fallbackByReason:
+          migrated.lastFallbackReason === null || migrated.fallback === 0
+            ? {}
+            : { [migrated.lastFallbackReason]: migrated.fallback },
+      };
+      return migrated;
+    }
+    return parsed.data;
+  }
+
+  function bumpMap(map: Record<string, number>, key: string): Record<string, number> {
+    return { ...map, [key]: (map[key] ?? 0) + 1 };
+  }
+
+  function bumpCounter(counter: HubTelemetryCounter, eventType: string): HubTelemetryCounter {
+    return {
+      total: counter.total + 1,
+      byType: bumpMap(counter.byType, eventType),
+    };
+  }
+
+  // Daily event counter persists in the settings KV (same home as
+  // hubSync.lastEventId) so a mid-shift restart keeps the day's count.
+  let eventStats: EventStats = readInitialEventStats();
+
+  function resetStatsFor(day: string): void {
+    eventStats = {
+      ...emptyStats(day),
+      lifetime: eventStats.lifetime,
+    };
+  }
+
+  function ensureStatsForToday(): void {
+    const day = utcDayOf(now());
+    if (eventStats.day !== day) {
+      resetStatsFor(day);
+    }
+  }
+
+  function recordLifetime(
+    kind: 'received' | 'applied' | 'fallback' | 'dropped',
+    eventType: string,
+  ): void {
+    eventStats = {
+      ...eventStats,
+      lifetime: {
+        ...eventStats.lifetime,
+        [kind]: bumpCounter(eventStats.lifetime[kind], eventType),
+      },
+    };
+  }
+
+  function recordDailyFallbackReason(reason: HubFallbackReason): void {
+    eventStats = {
+      ...eventStats,
+      fallbackByReason: bumpMap(eventStats.fallbackByReason, reason),
+      lifetime: {
+        ...eventStats.lifetime,
+        fallbackByReason: bumpMap(eventStats.lifetime.fallbackByReason, reason),
+      },
+    };
+  }
+
+  function recordDailyFallback(reason: HubFallbackReason, eventType: string): void {
+    eventStats = {
+      ...eventStats,
+      fallback: eventStats.fallback + 1,
+      fallbackByType: bumpMap(eventStats.fallbackByType, eventType),
+      lastFallbackReason: reason,
+    };
+    recordLifetime('fallback', eventType);
+    recordDailyFallbackReason(reason);
+  }
+
+  function recordDailyDropped(reason: HubFallbackReason, eventType: string): void {
+    eventStats = {
+      ...eventStats,
+      dropped: eventStats.dropped + 1,
+      droppedByType: bumpMap(eventStats.droppedByType, eventType),
+      lastFallbackReason: reason,
+    };
+    recordLifetime('dropped', eventType);
+  }
+
+  function recordDailyApplied(eventType: string): void {
+    eventStats = {
+      ...eventStats,
+      applied: eventStats.applied + 1,
+      appliedByType: bumpMap(eventStats.appliedByType, eventType),
+    };
+    recordLifetime('applied', eventType);
+  }
+
+  function recordDailyReceived(event: SyncEvent): void {
+    eventStats = {
+      ...eventStats,
+      count: eventStats.count + 1,
+      byType: bumpMap(eventStats.byType, event.type),
+      lastEventAt: now(),
+      lastEventType: event.type,
+    };
+    recordLifetime('received', event.type);
   }
 
   function persistEventStats(): void {
@@ -185,41 +348,35 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   }
 
   function recordHubEvent(event: SyncEvent): void {
-    const day = utcDayOf(now());
-    if (eventStats.day !== day) {
-      resetStatsFor(day);
-    }
-    eventStats = {
-      ...eventStats,
-      count: eventStats.count + 1,
-      byType: { ...eventStats.byType, [event.type]: (eventStats.byType[event.type] ?? 0) + 1 },
-      lastEventAt: now(),
-      lastEventType: event.type,
-    };
+    ensureStatsForToday();
+    recordDailyReceived(event);
     persistEventStats();
   }
 
-  function recordApplied(): void {
-    eventStats = { ...eventStats, applied: eventStats.applied + 1 };
+  function recordApplied(eventType: string): void {
+    ensureStatsForToday();
+    recordDailyApplied(eventType);
     persistEventStats();
   }
 
-  function recordFallback(reason: HubFallbackReason, fields?: Record<string, unknown>): void {
-    eventStats = {
-      ...eventStats,
-      fallback: eventStats.fallback + 1,
-      lastFallbackReason: reason,
-    };
+  function recordFallback(
+    reason: HubFallbackReason,
+    eventType: string,
+    fields?: Record<string, unknown>,
+  ): void {
+    ensureStatsForToday();
+    recordDailyFallback(reason, eventType);
     persistEventStats();
     onLog('info', `hub fallback: ${reason}`, { reason, ...fields });
   }
 
-  function recordDropped(reason: HubFallbackReason, fields?: Record<string, unknown>): void {
-    eventStats = {
-      ...eventStats,
-      dropped: eventStats.dropped + 1,
-      lastFallbackReason: reason,
-    };
+  function recordDropped(
+    reason: HubFallbackReason,
+    eventType: string,
+    fields?: Record<string, unknown>,
+  ): void {
+    ensureStatsForToday();
+    recordDailyDropped(reason, eventType);
     persistEventStats();
     onLog('warn', `hub event dropped: ${reason}`, { reason, ...fields });
   }
@@ -398,17 +555,17 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
                 messageId: event.messageId,
               });
               emit(event);
-              recordApplied();
+              recordApplied(event.type);
               break;
             }
-            recordFallback('hub-malformed-message-fallback', {
+            recordFallback('hub-malformed-message-fallback', event.type, {
               type: event.type,
               accountId: event.accountId,
               chatId: event.chatId,
               messageId: event.messageId,
             });
           } catch {
-            recordFallback('hub-ingest-error-fallback', {
+            recordFallback('hub-ingest-error-fallback', event.type, {
               type: event.type,
               accountId: event.accountId,
               chatId: event.chatId,
@@ -419,6 +576,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         } else {
           recordFallback(
             event.message ? 'hub-mismatched-message-fallback' : 'hub-id-only-fallback',
+            event.type,
             {
               type: event.type,
               accountId: event.accountId,
@@ -437,14 +595,14 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
           // transient fetch failure: still emit — polling reconciles later
         }
         emit(event);
-        recordApplied();
+        recordApplied(event.type);
         break;
       }
       case 'ppvUnlocked':
       case 'tipReceived':
         // Notification-shaped events are not full messages. Keep the existing
         // reconciliation path; with auto-read off, refreshChat is list-only.
-        recordFallback('hub-notification-fallback', {
+        recordFallback('hub-notification-fallback', event.type, {
           type: event.type,
           accountId: event.accountId,
           chatId: event.chatId,
@@ -456,12 +614,12 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
           // transient fetch failure: still emit — polling reconciles later
         }
         emit(event);
-        recordApplied();
+        recordApplied(event.type);
         break;
       case 'messageDeleted': {
         const chatId = event.chatId ?? lookupChatId(event.accountId, event.messageId);
         if (chatId === null) {
-          recordFallback('unknown-delete-head-refresh', {
+          recordFallback('unknown-delete-head-refresh', event.type, {
             accountId: event.accountId,
             messageId: event.messageId,
           });
@@ -470,7 +628,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
           } catch {
             // transient fetch failure: the next hub activity/degrade refresh reconciles
           }
-          recordDropped('unknown-delete-head-refresh', {
+          recordDropped('unknown-delete-head-refresh', event.type, {
             accountId: event.accountId,
             messageId: event.messageId,
           });
@@ -484,7 +642,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
           // transient fetch failure: still emit the tombstone
         }
         emit({ ...event, chatId });
-        recordApplied();
+        recordApplied(event.type);
         break;
       }
       case 'chatListUpdated':
@@ -493,11 +651,11 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         } catch {
           emit(event);
         }
-        recordApplied();
+        recordApplied(event.type);
         break;
       default:
         emit(event); // typing/presence/accountAuthChanged/…
-        recordApplied();
+        recordApplied(event.type);
     }
   }
 
@@ -565,7 +723,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         onStatusChange: handleHubStatus,
         onSnapshot: applyHubSnapshot,
         onSnapshotRequired: (input) => {
-          recordFallback('hub-replay-gap-snapshot', input);
+          recordFallback('hub-replay-gap-snapshot', 'syncSnapshotRequired', input);
         },
       },
       handledAccountIds,
@@ -662,6 +820,11 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         fallbackEventsToday: sameDay ? eventStats.fallback : 0,
         droppedEventsToday: sameDay ? eventStats.dropped : 0,
         eventsByTypeToday: sameDay ? eventStats.byType : {},
+        appliedByTypeToday: sameDay ? eventStats.appliedByType : {},
+        fallbackByTypeToday: sameDay ? eventStats.fallbackByType : {},
+        droppedByTypeToday: sameDay ? eventStats.droppedByType : {},
+        fallbackByReasonToday: sameDay ? eventStats.fallbackByReason : {},
+        lifetime: eventStats.lifetime,
         lastFallbackReason: sameDay ? eventStats.lastFallbackReason : null,
         liveSinceMs,
         statusChangedAtMs,

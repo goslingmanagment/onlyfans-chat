@@ -63,6 +63,46 @@ describe('buildDiagnosticsReport', () => {
     expect(JSON.stringify(report)).not.toContain('agency_hub_core_abcdef123456');
   });
 
+  it('exports durable hub telemetry while redacting lifecycle fields', () => {
+    const report = buildDiagnosticsReport(
+      inputs({
+        hubActivity: {
+          lastEventAt: Date.parse('2026-06-13T00:00:00Z'),
+          lastEventType: 'messageReceived',
+          lastFallbackReason: 'hub-id-only-fallback agency_hub_core_abcdef123456',
+          eventsToday: 2,
+          appliedEventsToday: 1,
+          fallbackEventsToday: 1,
+          droppedEventsToday: 0,
+          eventsByTypeToday: { messageReceived: 2 },
+          appliedByTypeToday: { messageReceived: 1 },
+          fallbackByTypeToday: { messageReceived: 1 },
+          droppedByTypeToday: {},
+          fallbackByReasonToday: { 'hub-id-only-fallback': 1 },
+          lifetime: {
+            received: { total: 10, byType: { messageReceived: 10 } },
+            applied: { total: 8, byType: { messageReceived: 8 } },
+            fallback: { total: 2, byType: { messageReceived: 2 } },
+            dropped: { total: 0, byType: {} },
+            fallbackByReason: { 'hub-id-only-fallback': 2 },
+          },
+        },
+      }),
+      [],
+    );
+
+    expect(report['hubActivity']).toMatchObject({
+      eventsToday: 2,
+      eventsByTypeToday: { messageReceived: 2 },
+      fallbackByReasonToday: { 'hub-id-only-fallback': 1 },
+      lifetime: {
+        received: { total: 10, byType: { messageReceived: 10 } },
+        fallbackByReason: { 'hub-id-only-fallback': 2 },
+      },
+    });
+    expect(JSON.stringify(report)).not.toContain('agency_hub_core_abcdef123456');
+  });
+
   it('is a plain JSON-serializable object', () => {
     expect(() => JSON.stringify(buildDiagnosticsReport(inputs()))).not.toThrow();
   });

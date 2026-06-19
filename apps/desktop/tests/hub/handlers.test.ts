@@ -61,6 +61,17 @@ function makeSyncStub(hubState: HubSyncStatus | null): IpcDeps['sync'] {
       fallbackEventsToday: 1,
       droppedEventsToday: 0,
       eventsByTypeToday: { messageReceived: 7 },
+      appliedByTypeToday: { messageReceived: 6 },
+      fallbackByTypeToday: { messageReceived: 1 },
+      droppedByTypeToday: {},
+      fallbackByReasonToday: { 'hub-id-only-fallback': 1 },
+      lifetime: {
+        received: { total: 70, byType: { messageReceived: 70 } },
+        applied: { total: 63, byType: { messageReceived: 63 } },
+        fallback: { total: 7, byType: { messageReceived: 7 } },
+        dropped: { total: 0, byType: {} },
+        fallbackByReason: { 'hub-id-only-fallback': 7 },
+      },
       lastFallbackReason: 'hub-id-only-fallback',
       liveSinceMs: Date.parse('2026-06-11T11:00:00Z'),
       statusChangedAtMs: Date.parse('2026-06-11T11:00:00Z'),
@@ -129,6 +140,17 @@ describe('hub IPC wiring', () => {
     expect(status.hubAppliedEventsToday).toBe(6);
     expect(status.hubFallbackEventsToday).toBe(1);
     expect(status.hubDroppedEventsToday).toBe(2);
+    expect(status.hubEventsByTypeToday).toEqual({ messageReceived: 7 });
+    expect(status.hubAppliedByTypeToday).toEqual({ messageReceived: 6 });
+    expect(status.hubFallbackByTypeToday).toEqual({ messageReceived: 1 });
+    expect(status.hubFallbackByReasonToday).toEqual({ 'hub-id-only-fallback': 1 });
+    expect(status.hubLifetime).toMatchObject({
+      received: { total: 70, byType: { messageReceived: 70 } },
+      applied: { total: 63, byType: { messageReceived: 63 } },
+      fallback: { total: 7, byType: { messageReceived: 7 } },
+      dropped: { total: 0, byType: {} },
+      fallbackByReason: { 'hub-id-only-fallback': 7 },
+    });
     expect(status.hubLastFallbackReason).toBe('hub-id-only-fallback');
 
     register(data, { sync: makeSyncStub('auth-failed') });

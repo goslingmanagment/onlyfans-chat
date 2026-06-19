@@ -196,6 +196,17 @@ export function buildActivitySummary(deps: ActivityDeps): ActivityVM {
       droppedEventsToday:
         (hubActivity?.droppedEventsToday ?? 0) + (hubActivity?.droppedFrames ?? 0),
       eventsByTypeToday: hubActivity?.eventsByTypeToday ?? {},
+      appliedByTypeToday: hubActivity?.appliedByTypeToday ?? {},
+      fallbackByTypeToday: hubActivity?.fallbackByTypeToday ?? {},
+      droppedByTypeToday: hubActivity?.droppedByTypeToday ?? {},
+      fallbackByReasonToday: hubActivity?.fallbackByReasonToday ?? {},
+      lifetime: hubActivity?.lifetime ?? {
+        received: { total: 0, byType: {} },
+        applied: { total: 0, byType: {} },
+        fallback: { total: 0, byType: {} },
+        dropped: { total: 0, byType: {} },
+        fallbackByReason: {},
+      },
       lastFallbackReason: hubActivity?.lastFallbackReason ?? null,
       pendingUsageEvents,
       quarantinedUsageEvents,

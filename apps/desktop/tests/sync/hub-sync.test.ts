@@ -920,6 +920,18 @@ describe('createHubAwareSync (provider composition)', () => {
       appliedEventsToday: 1,
       fallbackEventsToday: 0,
       droppedEventsToday: 0,
+      eventsByTypeToday: { messageReceived: 1 },
+      appliedByTypeToday: { messageReceived: 1 },
+      fallbackByTypeToday: {},
+      droppedByTypeToday: {},
+      fallbackByReasonToday: {},
+      lifetime: {
+        received: { total: 1, byType: { messageReceived: 1 } },
+        applied: { total: 1, byType: { messageReceived: 1 } },
+        fallback: { total: 0, byType: {} },
+        dropped: { total: 0, byType: {} },
+        fallbackByReason: {},
+      },
       lastFallbackReason: null,
     });
     provider.stop();
@@ -1096,6 +1108,17 @@ describe('createHubAwareSync (provider composition)', () => {
       appliedEventsToday: 1,
       fallbackEventsToday: 1,
       droppedEventsToday: 0,
+      eventsByTypeToday: { messageReceived: 1 },
+      appliedByTypeToday: { messageReceived: 1 },
+      fallbackByTypeToday: { messageReceived: 1 },
+      fallbackByReasonToday: { 'hub-id-only-fallback': 1 },
+      lifetime: {
+        received: { total: 1, byType: { messageReceived: 1 } },
+        applied: { total: 1, byType: { messageReceived: 1 } },
+        fallback: { total: 1, byType: { messageReceived: 1 } },
+        dropped: { total: 0, byType: {} },
+        fallbackByReason: { 'hub-id-only-fallback': 1 },
+      },
       lastFallbackReason: 'hub-id-only-fallback',
     });
     expect(logs.some((log) => log.message === 'hub fallback: hub-id-only-fallback')).toBe(true);
@@ -1120,6 +1143,14 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(polling.ingestCalls).toEqual([]);
     expect(polling.refreshCalls).toEqual([{ accountId: ACCT, chatId: '101' }]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
+    expect(provider.hubActivity()).toMatchObject({
+      fallbackByTypeToday: { messageReceived: 1 },
+      fallbackByReasonToday: { 'hub-mismatched-message-fallback': 1 },
+      lifetime: {
+        fallback: { total: 1, byType: { messageReceived: 1 } },
+        fallbackByReason: { 'hub-mismatched-message-fallback': 1 },
+      },
+    });
     provider.stop();
   });
 
@@ -1152,6 +1183,16 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(polling.ingestCalls).toEqual([]);
     expect(polling.refreshCalls).toEqual([{ accountId: ACCT, chatId: '101' }]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
+    expect(provider.hubActivity()).toMatchObject({
+      fallbackByTypeToday: { messageReceived: 1 },
+      fallbackByReasonToday: { 'hub-id-only-fallback': 1 },
+      lifetime: {
+        received: { total: 1, byType: { messageReceived: 1 } },
+        applied: { total: 1, byType: { messageReceived: 1 } },
+        fallback: { total: 1, byType: { messageReceived: 1 } },
+        fallbackByReason: { 'hub-id-only-fallback': 1 },
+      },
+    });
     provider.stop();
   });
 
@@ -1171,6 +1212,18 @@ describe('createHubAwareSync (provider composition)', () => {
     await callbacks().onEvent({ type: 'ppvUnlocked', accountId: ACCT, chatId: '5', messageId: '2' });
     expect(polling.refreshCalls).toHaveLength(2);
     expect(events.filter((e) => e.type === 'tipReceived' || e.type === 'ppvUnlocked')).toHaveLength(2);
+    expect(provider.hubActivity()).toMatchObject({
+      eventsByTypeToday: { tipReceived: 1, ppvUnlocked: 1 },
+      appliedByTypeToday: { tipReceived: 1, ppvUnlocked: 1 },
+      fallbackByTypeToday: { tipReceived: 1, ppvUnlocked: 1 },
+      fallbackByReasonToday: { 'hub-notification-fallback': 2 },
+      lifetime: {
+        received: { total: 2, byType: { tipReceived: 1, ppvUnlocked: 1 } },
+        applied: { total: 2, byType: { tipReceived: 1, ppvUnlocked: 1 } },
+        fallback: { total: 2, byType: { tipReceived: 1, ppvUnlocked: 1 } },
+        fallbackByReason: { 'hub-notification-fallback': 2 },
+      },
+    });
     provider.stop();
   });
 
@@ -1240,6 +1293,16 @@ describe('createHubAwareSync (provider composition)', () => {
       appliedEventsToday: 0,
       fallbackEventsToday: 1,
       droppedEventsToday: 1,
+      eventsByTypeToday: { messageDeleted: 1 },
+      fallbackByTypeToday: { messageDeleted: 1 },
+      droppedByTypeToday: { messageDeleted: 1 },
+      fallbackByReasonToday: { 'unknown-delete-head-refresh': 1 },
+      lifetime: {
+        received: { total: 1, byType: { messageDeleted: 1 } },
+        fallback: { total: 1, byType: { messageDeleted: 1 } },
+        dropped: { total: 1, byType: { messageDeleted: 1 } },
+        fallbackByReason: { 'unknown-delete-head-refresh': 1 },
+      },
       lastFallbackReason: 'unknown-delete-head-refresh',
     });
     provider.stop();
@@ -1484,11 +1547,25 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(activity.eventsToday).toBe(2);
     expect(activity.lastEventType).toBe('chatListUpdated');
     expect(activity.lastEventAt).toBe(Date.parse('2026-06-11T12:00:03Z'));
+    expect(activity.eventsByTypeToday).toEqual({ typing: 1, chatListUpdated: 1 });
+    expect(activity.appliedByTypeToday).toEqual({ typing: 1, chatListUpdated: 1 });
+    expect(activity.lifetime).toMatchObject({
+      received: { total: 2, byType: { typing: 1, chatListUpdated: 1 } },
+      applied: { total: 2, byType: { typing: 1, chatListUpdated: 1 } },
+      fallback: { total: 0, byType: {} },
+      dropped: { total: 0, byType: {} },
+      fallbackByReason: {},
+    });
     provider.stop();
 
     // The counter survives a provider rebuild (persisted in the settings KV).
     const { provider: rebuilt } = buildWithClock();
     expect(rebuilt.hubActivity().eventsToday).toBe(2);
+    expect(rebuilt.hubActivity().lifetime.received.total).toBe(2);
+    expect(rebuilt.hubActivity().lifetime.received.byType).toEqual({
+      typing: 1,
+      chatListUpdated: 1,
+    });
   });
 
   it('hubActivity resets the daily counter on UTC day flip', async () => {
@@ -1502,8 +1579,11 @@ describe('createHubAwareSync (provider composition)', () => {
 
     tick(24 * 60 * 60_000);
     expect(provider.hubActivity().eventsToday).toBe(0);
+    expect(provider.hubActivity().eventsByTypeToday).toEqual({});
+    expect(provider.hubActivity().lifetime.received.total).toBe(1);
     await callbacks().onEvent({ type: 'typing', accountId: ACCT, chatId: '7' });
     expect(provider.hubActivity().eventsToday).toBe(1);
+    expect(provider.hubActivity().lifetime.received.total).toBe(2);
     provider.stop();
   });
 

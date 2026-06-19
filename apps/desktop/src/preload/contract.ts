@@ -116,6 +116,19 @@ export interface FanPanelVM {
   summary: { body: string; generatedAt: string; modelLabel: string } | null;
 }
 
+export interface HubTelemetryCounterVM {
+  total: number;
+  byType: Record<string, number>;
+}
+
+export interface HubTelemetryVM {
+  received: HubTelemetryCounterVM;
+  applied: HubTelemetryCounterVM;
+  fallback: HubTelemetryCounterVM;
+  dropped: HubTelemetryCounterVM;
+  fallbackByReason: Record<string, number>;
+}
+
 export interface SyncStatusVM {
   creditsBalance: number | null;
   creditsUsedToday: number;
@@ -137,6 +150,12 @@ export interface SyncStatusVM {
   hubAppliedEventsToday: number;
   hubDroppedEventsToday: number;
   hubFallbackEventsToday: number;
+  hubEventsByTypeToday: Record<string, number>;
+  hubAppliedByTypeToday: Record<string, number>;
+  hubFallbackByTypeToday: Record<string, number>;
+  hubDroppedByTypeToday: Record<string, number>;
+  hubFallbackByReasonToday: Record<string, number>;
+  hubLifetime: HubTelemetryVM;
   hubLastFallbackReason: string | null;
   /** Status bar "AI TODAY" aggregate (UTC day, ai_spend_log total). */
   aiTodayUsd: number;
@@ -174,6 +193,11 @@ export interface ActivityVM {
     fallbackEventsToday: number;
     droppedEventsToday: number;
     eventsByTypeToday: Record<string, number>;
+    appliedByTypeToday: Record<string, number>;
+    fallbackByTypeToday: Record<string, number>;
+    droppedByTypeToday: Record<string, number>;
+    fallbackByReasonToday: Record<string, number>;
+    lifetime: HubTelemetryVM;
     lastFallbackReason: string | null;
     /** usage_events rows awaiting upload to core (parked when hub is off). */
     pendingUsageEvents: number;
