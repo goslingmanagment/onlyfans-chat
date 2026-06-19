@@ -35,7 +35,9 @@ Ownership matrix:
 
 ## Gate 2: Transaction/Spend Projection
 
-This gate blocks C3 and desktop D6.
+This gate blocks settled `tips.received` money mapping and desktop D6. Because a controlled tip
+fixture is not available yet, the first C3 shadow implementation may proceed without tips only if
+`tips.received` rows are explicitly recorded as blocked/excluded and never counted as settled spend.
 
 Required fixture state:
 
@@ -43,7 +45,8 @@ Required fixture state:
 - `tests/fixtures/webhooks/messages_ppv_unlocked.json`: live-captured and anonymized.
 - `tests/fixtures/webhooks/unverified_tips_received.json`: documented example only. This is not
   enough to ship a money mapper. A live `tips.received` production or controlled-test fixture must
-  be captured before `tips.received` contributes to settled spend.
+  be captured before `tips.received` contributes to settled spend; until then, shadow projection
+  must mark the event blocked/excluded with `tips_received_live_fixture_required`.
 
 Canonical domain event:
 
@@ -98,7 +101,8 @@ Idempotency and duplicate policy:
 Shadow projection plan:
 
 1. Add a core feature flag for shadow-only spend projection. The first PR writes projection rows
-   but does not change desktop behavior or reduce the desktop spend sweep.
+   but does not change desktop behavior or reduce the desktop spend sweep. If the live tip fixture
+   is still unavailable, `tips.received` must be blocked/excluded rather than parsed from docs.
 2. Compare the shadow projection to the existing core `transactions` table and desktop
    `fan_transactions` rollups over sampled production windows.
 3. Required comparison dimensions: page, fan, UTC day, category, gross mills, creator-net mills,
