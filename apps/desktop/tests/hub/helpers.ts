@@ -49,6 +49,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hasOpenRouterKey: false,
     hasHubKey: false,
     hubBaseUrl: null,
+    hubModeOverride: 'auto',
     spendStyle: 'figure',
     spendersListMappings: {},
     uiLocale: 'system',

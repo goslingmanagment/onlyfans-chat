@@ -14,6 +14,7 @@ import {
   QUICK_MAX_MESSAGE_COUNT,
   QUICK_MIN_MESSAGE_COUNT,
 } from '@chatgoose/shared';
+import { HUB_MODE_OVERRIDE_SETTINGS } from '@chatgoose/shared/hub/mode';
 import type {
   ModelSelectableFeature,
   ReasoningEffort,
@@ -75,6 +76,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'accountMappings',
   'accountOrder',
   'hubBaseUrl',
+  'hubModeOverride',
   'accountPageLabels',
   'spendStyle',
   'spendersListMappings',
@@ -107,6 +109,8 @@ const persistedFieldSchemas = {
   accountOrder: z.array(z.string().min(1)).max(200),
   // Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off.
   hubBaseUrl: z.string().min(1).nullable(),
+  // Dev/support-only override for D3 diagnostics. Default auto.
+  hubModeOverride: z.enum(HUB_MODE_OVERRIDE_SETTINGS),
   // Manual OFAPI accountId → core page-label overrides (SPEC §8.5).
   accountPageLabels: z.record(z.string(), z.string()),
   // Chat-list lifetime-spend style (DESIGN §1): bare figure (default) or chip.
@@ -151,6 +155,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   accountMappings: {},
   accountOrder: [],
   hubBaseUrl: null,
+  hubModeOverride: 'auto',
   accountPageLabels: {},
   spendStyle: 'figure',
   spendersListMappings: {},
@@ -180,6 +185,7 @@ export const settingsPatchSchema = z.strictObject({
   accountMappings: persistedFieldSchemas.accountMappings.optional(),
   accountOrder: persistedFieldSchemas.accountOrder.optional(),
   hubBaseUrl: persistedFieldSchemas.hubBaseUrl.optional(),
+  hubModeOverride: persistedFieldSchemas.hubModeOverride.optional(),
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
   spendStyle: persistedFieldSchemas.spendStyle.optional(),
   spendersListMappings: persistedFieldSchemas.spendersListMappings.optional(),
@@ -290,6 +296,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       accountMappings: readField('accountMappings'),
       accountOrder: readField('accountOrder'),
       hubBaseUrl: readField('hubBaseUrl'),
+      hubModeOverride: readField('hubModeOverride'),
       accountPageLabels: readField('accountPageLabels'),
       spendStyle: readField('spendStyle'),
       spendersListMappings: readField('spendersListMappings'),

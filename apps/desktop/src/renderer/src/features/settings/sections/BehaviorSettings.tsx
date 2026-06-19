@@ -185,6 +185,31 @@ export function BehaviorSettings({
           on={settings.debugMode}
           onChange={(v) => patch({ debugMode: v })}
         />
+        {(settings.debugMode || settings.hubModeOverride !== 'auto') && (
+          <>
+            <OptionRow
+              label={t('behavior.hubModeOverride')}
+              hint={t('behavior.hubModeOverrideHint')}
+            >
+              {(['auto', 'polling', 'hub'] as const).map((mode) => (
+                <Chip
+                  key={mode}
+                  selected={settings.hubModeOverride === mode}
+                  onClick={() => patch({ hubModeOverride: mode })}
+                >
+                  {t(`behavior.hubModeOverride.${mode}`)}
+                </Chip>
+              ))}
+            </OptionRow>
+            {settings.hubModeOverride !== 'auto' && (
+              <p className="pb-1 text-[11.5px] text-warn">
+                {settings.hubModeOverride === 'polling'
+                  ? t('behavior.hubModeOverridePollingWarn')
+                  : t('behavior.hubModeOverrideHubWarn')}
+              </p>
+            )}
+          </>
+        )}
       </div>
     </Section>
   );

@@ -14,6 +14,7 @@ import type {
 } from '@chatgoose/shared/types';
 import type { OperationEvent, SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { LogLevel } from '@chatgoose/shared/diagnostics/log';
+import type { HubModeOverrideSetting } from '@chatgoose/shared/hub/mode';
 import type { UiLocaleSetting } from '@chatgoose/shared/i18n/index';
 import type { UiThemeSetting } from '@chatgoose/shared/theme';
 
@@ -128,6 +129,8 @@ export interface SyncStatusVM {
   hub: 'off' | 'connecting' | 'live' | 'degraded' | 'auth-failed' | 'stopped';
   /** Coarse operator mode: live push, degraded configured push, or no hub. */
   hubMode: 'live' | 'degraded' | 'off';
+  /** Dev/support-only override for comparing polling vs hub behavior. */
+  hubModeOverride: HubModeOverrideSetting;
   hubLastEventAt: string | null;
   hubLastEventType: string | null;
   hubEventsToday: number;
@@ -275,6 +278,8 @@ export interface SettingsVM {
   accountOrder: string[];
   /** Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off. */
   hubBaseUrl: string | null;
+  /** Dev/support-only sync override. Default 'auto'; non-auto persists across restarts. */
+  hubModeOverride: HubModeOverrideSetting;
   /**
    * Manual OFAPI accountId → core page-label overrides (SPEC §8.5). Accounts
    * not listed here auto-match by normalized username in main.

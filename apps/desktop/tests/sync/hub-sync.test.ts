@@ -992,6 +992,85 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
+  it('force-polling skips hub creation and leaves polling events flowing', async () => {
+    const polling = makeFakePolling();
+    const createHub = vi.fn(() => Promise.resolve(makeFakeHub()));
+    const logs: Array<{ level: string; message: string }> = [];
+    const provider = createHubAwareSync({
+      polling,
+      data,
+      createHub,
+      hubModeOverride: () => 'polling',
+      onLog: (level, message) => logs.push({ level, message }),
+    });
+    const events: SyncEvent[] = [];
+    provider.subscribe((event) => events.push(event));
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(createHub).not.toHaveBeenCalled();
+    expect(provider.hubModeOverride()).toBe('polling');
+    expect(provider.hubStatus()).toBeNull();
+    expect(polling.suspensions).toEqual([]);
+    expect(logs).toContainEqual({
+      level: 'warn',
+      message: 'hub forced to polling; SSE connection skipped',
+    });
+
+    polling.emit({ type: 'chatListUpdated', accountId: ACCT });
+    expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }]);
+    provider.stop();
+  });
+
+  it('force-hub suspends polling while configured hub connects and does not resume on degrade', async () => {
+    const polling = makeFakePolling();
+    const hub = makeFakeHub();
+    let captured: HubFactoryCallbacks | null = null;
+    const logs: Array<{ level: string; message: string }> = [];
+    const provider = createHubAwareSync({
+      polling,
+      data,
+      createHub: (callbacks) => {
+        captured = callbacks;
+        return Promise.resolve(hub);
+      },
+      hubModeOverride: () => 'hub',
+      onLog: (level, message) => logs.push({ level, message }),
+    });
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    const callbacks = (): HubFactoryCallbacks => {
+      if (captured === null) throw new Error('hub not created');
+      return captured;
+    };
+
+    expect(provider.hubModeOverride()).toBe('hub');
+    expect(hub.startCalls).toBe(1);
+    expect(polling.suspensions).toEqual([true]);
+    expect(logs).toContainEqual({
+      level: 'warn',
+      message: 'hub forced; polling fallback suspended while SSE connects',
+    });
+
+    callbacks().onStatusChange('degraded');
+    expect(polling.suspensions).toEqual([true]);
+    expect(polling.forceRefreshCalls).toBe(0);
+    expect(logs.map((log) => log.message)).toContain('SSE degraded');
+
+    callbacks().onStatusChange('live');
+    callbacks().onStatusChange('auth-failed');
+    expect(polling.suspensions).toEqual([true]);
+    expect(polling.forceRefreshCalls).toBe(0);
+    expect(logs.map((log) => log.message)).toContain(
+      'SSE not live; force-hub keeps polling suspended',
+    );
+
+    provider.stop();
+    expect(polling.suspensions).toEqual([true, false]);
+  });
+
   it('reconfigureHub stops the old hub, restores cadence, and starts a fresh one', async () => {
     const polling = makeFakePolling();
     const hubs = [makeFakeHub(), makeFakeHub()];

@@ -57,16 +57,34 @@ export function StatusBar(): React.JSX.Element {
   const setCheatsheetOpen = useUiStore((s) => s.setCheatsheetOpen);
 
   const status = sync.data ?? null;
-  const mode = statusBarMode(status?.state ?? 'offline', status?.hub ?? 'off');
+  const override = status?.hubModeOverride ?? 'auto';
+  const mode = statusBarMode(status?.state ?? 'offline', status?.hub ?? 'off', override);
   const age = selectStatusAge(status, selectedAccountId);
   const openActivity = (): void => setView('settings');
 
   return (
     <footer className="num flex h-[30px] flex-none items-center gap-[18px] border-t border-line bg-bg1 px-4 text-micro tracking-[0.05em] text-ink-low">
-      <Segment tip={mode.tip} onClick={openActivity} className={TONE_TEXT[mode.tone]}>
+      <Segment
+        tip={mode.tip}
+        onClick={openActivity}
+        className={cx(
+          'rounded-full border border-line-strong bg-bg2 px-2 py-[3px]',
+          TONE_TEXT[mode.tone],
+        )}
+      >
         <span className={cx('h-[6px] w-[6px] rounded-full', TONE_DOT[mode.tone])} />
         <Key>{mode.word}</Key>
       </Segment>
+      {override !== 'auto' && (
+        <Segment
+          tip={override === 'polling' ? STATUS_BAR_TIPS.forcedPolling : STATUS_BAR_TIPS.forcedHub}
+          onClick={openActivity}
+          className="rounded-full border border-warn/40 bg-warn/10 px-2 py-[3px] text-warn"
+        >
+          <span className="h-[6px] w-[6px] rounded-full bg-warn" />
+          <Key>{override === 'polling' ? 'FORCED POLL' : 'FORCED HUB'}</Key>
+        </Segment>
+      )}
       {status?.hub === 'auth-failed' && (
         <Segment tip={STATUS_BAR_TIPS.hubAuth} onClick={openActivity} className="text-bad">
           <span className="h-[6px] w-[6px] rounded-full bg-bad" />

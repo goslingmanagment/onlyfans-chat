@@ -7,6 +7,7 @@
 // engine's messageSent subscription works identically in either mode.
 
 import { z } from 'zod';
+import type { HubModeOverrideSetting } from '@chatgoose/shared/hub/mode';
 import type { NormalizedSyncMessage, SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { DataLayer } from '../db/index';
 import type { HubSync, HubSyncStatus } from './hub-sync';
@@ -42,6 +43,8 @@ export interface HubAwareSyncOptions {
   data: DataLayer;
   /** Resolves null when hub settings (base URL + chatter key) are absent. */
   createHub: (callbacks: HubFactoryCallbacks) => Promise<HubSync | null>;
+  /** Dev/support-only D3 override. Auto keeps production behavior. */
+  hubModeOverride?: () => HubModeOverrideSetting;
   now?: () => number;
   onLog?: (
     level: 'debug' | 'info' | 'warn' | 'error',
@@ -104,6 +107,7 @@ export interface HubAwareSync extends SyncProvider {
   reconfigureHub(): Promise<void>;
   hubStatus(): HubSyncStatus | null;
   hubMode(): HubMode;
+  hubModeOverride(): HubModeOverrideSetting;
   hubActivity(): HubActivitySnapshot;
 }
 
@@ -111,10 +115,12 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   const { polling, data, createHub } = options;
   const now = options.now ?? Date.now;
   const onLog = options.onLog ?? (() => undefined);
+  const modeOverride = options.hubModeOverride ?? (() => 'auto' as const);
 
   const listeners = new Set<SyncListener>();
   let hub: HubSync | null = null;
   let hubLive = false;
+  let forceHubSuspended = false;
   let running = false;
   /** Invalidates in-flight async hub creation on stop/reconfigure (no leaks). */
   let hubGeneration = 0;
@@ -350,8 +356,28 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
 
   function handleHubStatus(status: HubSyncStatus): void {
     const isLive = status === 'live';
+    const override = modeOverride();
     statusChangedAtMs = now();
     liveSinceMs = isLive ? (liveSinceMs ?? now()) : null;
+    if (override === 'hub') {
+      if (isLive && !hubLive) {
+        onLog('info', 'SSE live; force-hub keeps polling suspended', { status, override });
+        if (!forceHubSuspended) {
+          polling.setHubPollingSuspended(true);
+          forceHubSuspended = true;
+        }
+      } else if (!isLive && hubLive) {
+        onLog('warn', 'SSE not live; force-hub keeps polling suspended', { status, override });
+      } else {
+        onLog(
+          status === 'degraded' || status === 'auth-failed' ? 'warn' : 'info',
+          `SSE ${status}`,
+          { status, override },
+        );
+      }
+      hubLive = isLive;
+      return;
+    }
     if (isLive && !hubLive) {
       onLog('info', 'SSE live; polling suspended', { status });
       polling.setHubPollingSuspended(true);
@@ -374,6 +400,17 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   async function startHub(): Promise<void> {
     hubGeneration += 1;
     const generation = hubGeneration;
+    const override = modeOverride();
+    if (override === 'polling') {
+      onLog('warn', 'hub forced to polling; SSE connection skipped', { override });
+      if (forceHubSuspended || hubLive) {
+        polling.setHubPollingSuspended(false);
+      }
+      hubLive = false;
+      forceHubSuspended = false;
+      hub = null;
+      return;
+    }
     onLog('info', 'hub configure check started');
     const next = await createHub({ onEvent: handleHubEvent, onStatusChange: handleHubStatus });
     if (!running || generation !== hubGeneration) {
@@ -382,8 +419,16 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     }
     hub = next;
     if (hub === null) {
+      if (override === 'hub') {
+        onLog('warn', 'hub forced but not configured; using polling only', { override });
+      }
       onLog('info', 'hub not configured; using polling only');
       return;
+    }
+    if (override === 'hub' && !forceHubSuspended) {
+      onLog('warn', 'hub forced; polling fallback suspended while SSE connects', { override });
+      polling.setHubPollingSuspended(true);
+      forceHubSuspended = true;
     }
     onLog('info', 'hub configured; starting SSE');
     hub.start();
@@ -394,11 +439,12 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     onLog('info', 'hub stopped');
     hub?.stop();
     hub = null;
-    if (hubLive) {
-      hubLive = false;
+    if (hubLive || forceHubSuspended) {
       onLog('info', 'polling resumed after hub stop');
       polling.setHubPollingSuspended(false);
     }
+    hubLive = false;
+    forceHubSuspended = false;
   }
 
   function hubMode(): HubMode {
@@ -446,6 +492,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     },
     hubStatus: () => hub?.status() ?? null,
     hubMode,
+    hubModeOverride: () => modeOverride(),
     hubActivity: (): HubActivitySnapshot => {
       const day = utcDayOf(now());
       const sameDay = eventStats.day === day;

@@ -26,6 +26,10 @@ export const STATUS_BAR_TIPS = {
     'Нет связи с OFAPI — данные не обновляются. Проверьте интернет и ключ OFAPI в настройках.',
   hubAuth:
     'Хаб отклонил ключ чаттера — живые события не приходят. Проверьте ключ в настройках Agency Hub.',
+  forcedPolling:
+    'Отладочный режим: хаб отключён вручную, приложение работает через обычный опрос. autoReadChats не меняется.',
+  forcedHub:
+    'Отладочный режим: polling-fallback удерживается выключенным, пока проверяется hub. autoReadChats и ручное открытие чата не меняются.',
 } as const;
 
 export interface StatusBarMode {
@@ -39,9 +43,13 @@ export interface StatusBarMode {
 export function statusBarMode(
   state: SyncStatusVM['state'],
   hub: SyncStatusVM['hub'],
+  override: SyncStatusVM['hubModeOverride'] = 'auto',
 ): StatusBarMode {
   if (state === 'offline') {
     return { word: 'OFFLINE', tone: 'bad', tip: STATUS_BAR_TIPS.offline };
+  }
+  if (override === 'hub' && hub !== 'live') {
+    return { word: 'DEGRADED', tone: 'warn', tip: STATUS_BAR_TIPS.forcedHub };
   }
   if (state === 'degraded') {
     return { word: 'DEGRADED', tone: 'warn', tip: STATUS_BAR_TIPS.degraded };

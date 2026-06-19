@@ -413,6 +413,7 @@ function buildStore(): MockStore {
     hasOpenRouterKey: false,
     hasHubKey: false,
     hubBaseUrl: null,
+    hubModeOverride: 'auto',
     spendStyle: 'figure',
     uiLocale: 'system',
     uiScale: 1,
@@ -474,6 +475,7 @@ function buildStore(): MockStore {
       state: 'live',
       hub: 'off',
       hubMode: 'off',
+      hubModeOverride: 'auto',
       hubLastEventAt: null,
       hubLastEventType: null,
       hubEventsToday: 0,
@@ -1223,7 +1225,18 @@ export function createMockBridge(): ChatGooseBridge {
       if (hubApiKey !== undefined) store.settings.hasHubKey = hubApiKey.trim().length > 0;
       // Mock hub: configured = instantly live (exercises the status chip).
       store.sync.hub =
-        store.settings.hubBaseUrl !== null && store.settings.hasHubKey ? 'live' : 'off';
+        store.settings.hubModeOverride === 'polling'
+          ? 'off'
+          : store.settings.hubBaseUrl !== null && store.settings.hasHubKey
+            ? 'live'
+            : 'off';
+      store.sync.hubMode =
+        store.sync.hub === 'live'
+          ? 'live'
+          : store.sync.hub === 'off' || store.sync.hub === 'stopped'
+            ? 'off'
+            : 'degraded';
+      store.sync.hubModeOverride = store.settings.hubModeOverride;
       emit('db:changed', { scope: 'settings' });
       return { ...store.settings };
     },

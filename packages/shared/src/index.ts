@@ -21,6 +21,7 @@ export * from './context/subscription';
 export * from './protocol/index';
 export * from './summary/validity';
 export * from './spenders/index';
+export * from './hub/mode';
 // hub/client + hub/usage-reporter are main-only (network/persistence — SPEC §15)
 // and deliberately not in this barrel; import them via '@chatgoose/shared/hub'.
 // The pure account→page mapping helper is safe everywhere (settings UI preview).

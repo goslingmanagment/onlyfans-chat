@@ -78,6 +78,7 @@ describe('settings store', () => {
     expect(vm.accountMappings).toEqual({});
     expect(vm.accountOrder).toEqual([]);
     expect(vm.accountPageLabels).toEqual({});
+    expect(vm.hubModeOverride).toBe('auto');
     expect(vm.spendStyle).toBe('figure');
     expect(vm.uiLocale).toBe('system');
     expect(vm.uiScale).toBe(1);
@@ -88,23 +89,31 @@ describe('settings store', () => {
     expect(vm.hasOpenRouterKey).toBe(false);
   });
 
-  it('persists uiLocale, uiScale and uiTheme (round-trip) and zod-rejects bad values', async () => {
+  it('persists uiLocale, uiScale, uiTheme and hubModeOverride (round-trip) and zod-rejects bad values', async () => {
     const { store, queries, secrets } = createStore();
-    const vm = await store.update({ uiLocale: 'ru', uiScale: 1.25, uiTheme: 'dark' });
+    const vm = await store.update({
+      uiLocale: 'ru',
+      uiScale: 1.25,
+      uiTheme: 'dark',
+      hubModeOverride: 'hub',
+    });
     expect(vm.uiLocale).toBe('ru');
     expect(vm.uiScale).toBe(1.25);
     expect(vm.uiTheme).toBe('dark');
+    expect(vm.hubModeOverride).toBe('hub');
 
     const reread = createSettingsStore({ queries, secrets });
     const again = await reread.get();
     expect(again.uiLocale).toBe('ru');
     expect(again.uiScale).toBe(1.25);
     expect(again.uiTheme).toBe('dark');
+    expect(again.hubModeOverride).toBe('hub');
 
     await expect(store.update({ uiLocale: 'de' })).rejects.toThrow();
     await expect(store.update({ uiScale: 2 })).rejects.toThrow();
     await expect(store.update({ uiScale: 0.95 })).rejects.toThrow();
     await expect(store.update({ uiTheme: 'sepia' })).rejects.toThrow();
+    await expect(store.update({ hubModeOverride: 'both' })).rejects.toThrow();
   });
 
   it('records non-secret key metadata (last4 + setAt) on save and clears it on delete', async () => {
@@ -166,6 +175,7 @@ describe('settings store', () => {
     await expect(store.update({ defaultReplyTone: 'angry' })).rejects.toThrow();
     await expect(store.update({ debugMode: 'yes' })).rejects.toThrow();
     await expect(store.update({ spendStyle: 'badge' })).rejects.toThrow();
+    await expect(store.update({ hubModeOverride: 'fallback' })).rejects.toThrow();
     await expect(store.update({ nonsense: 1 })).rejects.toThrow(); // unknown key
     await expect(store.update('not-an-object')).rejects.toThrow();
     // partial feature record is rejected (enum-keyed records are exhaustive)
@@ -275,10 +285,12 @@ describe('settings store', () => {
     queries.rows.set('quickMessageCount', 'not-json{');
     queries.rows.set('debugMode', JSON.stringify('yes'));
     queries.rows.set('defaultReplyTone', JSON.stringify('angry'));
+    queries.rows.set('hubModeOverride', JSON.stringify('fallback'));
     const vm = await store.get();
     expect(vm.quickMessageCount).toBe(DEFAULT_SETTINGS.quickMessageCount);
     expect(vm.debugMode).toBe(DEFAULT_SETTINGS.debugMode);
     expect(vm.defaultReplyTone).toBe(DEFAULT_SETTINGS.defaultReplyTone);
+    expect(vm.hubModeOverride).toBe('auto');
   });
 
   it('returns fresh default objects (no shared mutable state across reads)', async () => {

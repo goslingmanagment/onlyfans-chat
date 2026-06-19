@@ -338,7 +338,11 @@ async function initOfapi(
     budgetGuard.check();
   });
 
-  let settingsCache: { creditBudgetPerShift: number | null; autoReadChats: boolean } | null =
+  let settingsCache: {
+    creditBudgetPerShift: number | null;
+    autoReadChats: boolean;
+    hubModeOverride: 'auto' | 'polling' | 'hub';
+  } | null =
     await settingsStore.get();
 
   // Hub config fingerprint: reconfigure the SSE connection only when the base
@@ -347,8 +351,9 @@ async function initOfapi(
   // naive resubscribe-on-settings-change would loop the stream forever).
   async function hubConfigFingerprint(): Promise<string> {
     const vm = await settingsStore.get();
+    settingsCache = vm;
     const hubKey = await keychain.getSecret('hubApiKey');
-    return `${vm.hubBaseUrl ?? ''}\n${hubKey ?? ''}`;
+    return `${vm.hubBaseUrl ?? ''}\n${hubKey ?? ''}\n${vm.hubModeOverride}`;
   }
   let hubFingerprint = await hubConfigFingerprint();
 
@@ -391,6 +396,7 @@ async function initOfapi(
     polling,
     data: dataLayer,
     onLog: (level, message, fields) => logger?.log(level, 'sync', message, fields),
+    hubModeOverride: () => settingsCache?.hubModeOverride ?? 'auto',
     // Resolved per (re)connect attempt so settings edits take effect on
     // reconfigureHub without re-running OFAPI init. Null = hub mode off.
     createHub: async ({ onEvent, onStatusChange }) => {

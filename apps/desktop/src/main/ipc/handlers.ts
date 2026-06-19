@@ -359,6 +359,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       state: syncStatus.state,
       hub: deps.sync?.hubStatus?.() ?? 'off',
       hubMode: deps.sync?.hubMode?.() ?? 'off',
+      hubModeOverride: deps.sync?.hubModeOverride?.() ?? 'auto',
       hubLastEventAt:
         hubActivity?.lastEventAt == null ? null : new Date(hubActivity.lastEventAt).toISOString(),
       hubLastEventType: hubActivity?.lastEventType ?? null,
@@ -489,7 +490,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     const touchedHub =
       typeof rawPatch === 'object' &&
       rawPatch !== null &&
-      ('hubApiKey' in rawPatch || 'hubBaseUrl' in rawPatch);
+      ('hubApiKey' in rawPatch || 'hubBaseUrl' in rawPatch || 'hubModeOverride' in rawPatch);
     if (touchedHub) {
       deps.onHubConfigChanged?.();
     }

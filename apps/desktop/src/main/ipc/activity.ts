@@ -24,6 +24,7 @@ const TRAILING_DAYS = 7;
 export type ActivitySync = SyncProvider & {
   hubStatus?: () => HubSyncStatus | null;
   hubMode?: () => 'live' | 'degraded' | 'off';
+  hubModeOverride?: () => SyncStatusVM['hubModeOverride'];
   hubActivity?: () => HubActivitySnapshot;
 };
 

@@ -207,6 +207,25 @@ export const UI_MESSAGES = {
     en: 'Raw payloads, prompt snapshots, profiling',
     ru: 'Сырые данные, снимки промптов, профилирование',
   },
+  'behavior.hubModeOverride': {
+    en: 'Sync mode override',
+    ru: 'Принудительный режим синка',
+  },
+  'behavior.hubModeOverrideHint': {
+    en: 'Support-only. Persists across restart; auto keeps normal fallback behavior.',
+    ru: 'Только для поддержки. Сохраняется после перезапуска; auto оставляет обычный fallback.',
+  },
+  'behavior.hubModeOverride.auto': { en: 'Auto', ru: 'Auto' },
+  'behavior.hubModeOverride.polling': { en: 'Polling', ru: 'Опрос' },
+  'behavior.hubModeOverride.hub': { en: 'Hub', ru: 'Hub' },
+  'behavior.hubModeOverridePollingWarn': {
+    en: 'Hub is disabled manually; the app uses polling. autoReadChats is unchanged.',
+    ru: 'Хаб отключён вручную; приложение работает опросом. autoReadChats не меняется.',
+  },
+  'behavior.hubModeOverrideHubWarn': {
+    en: 'Polling fallback is suspended while a configured hub is tested. User-open reads and autoReadChats are unchanged.',
+    ru: 'Polling fallback удерживается выключенным для проверки hub. Ручное открытие чата и autoReadChats не меняются.',
+  },
   'behavior.advanced': { en: 'Advanced', ru: 'Дополнительно' },
   'behavior.language': { en: 'Language', ru: 'Язык' },
   'behavior.languageHint': { en: 'Interface language', ru: 'Язык интерфейса' },

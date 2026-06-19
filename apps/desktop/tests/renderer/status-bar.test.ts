@@ -69,6 +69,14 @@ describe('statusBarMode (mode word matches the panel badge)', () => {
     expect(statusBarMode('degraded', 'live')).toMatchObject({ word: 'DEGRADED', tone: 'warn' });
     expect(statusBarMode('offline', 'live')).toMatchObject({ word: 'OFFLINE', tone: 'bad' });
   });
+
+  it('force-hub shows degraded while the hub is not live', () => {
+    expect(statusBarMode('live', 'connecting', 'hub')).toMatchObject({
+      word: 'DEGRADED',
+      tone: 'warn',
+      tip: STATUS_BAR_TIPS.forcedHub,
+    });
+  });
 });
 
 describe('selectStatusAge', () => {
@@ -81,6 +89,7 @@ describe('selectStatusAge', () => {
     state: 'live',
     hub: 'live',
     hubMode: 'live',
+    hubModeOverride: 'auto',
     hubLastEventAt: '2026-06-11T10:14:00.000Z',
     hubLastEventType: 'messageReceived',
     hubEventsToday: 1,

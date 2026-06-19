@@ -6,3 +6,4 @@
 export * from './client';
 export * from './usage-reporter';
 export * from './page-mapping';
+export * from './mode';
