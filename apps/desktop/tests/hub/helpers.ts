@@ -11,6 +11,7 @@ import type {
   HubPage,
   HubAiGatewayStreamCallbacks,
   HubAiGatewayStreamRequest,
+  HubOfapiCommand,
   HubUsageBatchResult,
   HubUsageEvent,
 } from '@chatgoose/shared/hub/index';
@@ -210,12 +211,35 @@ export function makeFakeHubClient(
         return Promise.resolve('hub reply');
       }),
   );
+  const commandResponse: HubOfapiCommand = {
+    commandId: '22222222-2222-4222-8222-222222222222',
+    clientCommandId: '11111111-1111-4111-8111-111111111111',
+    kind: 'send_text_message_v1',
+    accountId: ACCT,
+    conversationId: FAN,
+    state: 'queued',
+    payloadHash: 'a'.repeat(64),
+    retryOfCommandId: null,
+    attemptCount: 0,
+    lastErrorCode: null,
+    lastErrorClass: null,
+    verifierResult: null,
+    platformMessageId: null,
+    attemptStartedAt: null,
+    attemptFinishedAt: null,
+    createdAt: '2026-06-19T22:00:00.000Z',
+    updatedAt: '2026-06-19T22:00:00.000Z',
+    deduplicated: false,
+  };
   return {
     listPages: listPagesMock,
     getFanProfile: getFanProfileMock,
     putFanProfile: putFanProfileMock,
     postUsageBatch: postUsageBatchMock,
     getOfapiCreditsSummary: getOfapiCreditsSummaryMock,
+    createOfapiCommand: vi.fn(() => Promise.resolve(commandResponse)),
+    getOfapiCommand: vi.fn(() => Promise.resolve(commandResponse)),
+    cancelOfapiCommand: vi.fn(() => Promise.resolve({ ...commandResponse, state: 'cancelled' })),
     streamAiGateway: streamAiGatewayMock,
     getServerTimeOffsetMs: () => null,
     listPagesMock,

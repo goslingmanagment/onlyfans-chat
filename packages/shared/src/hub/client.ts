@@ -28,6 +28,8 @@ export const HUB_USAGE_BATCH_TIMEOUT_MS = 15_000;
 export const HUB_LIST_PAGES_TIMEOUT_MS = 10_000;
 /** C2 desktop spend read-model: small DB-only response, keep Activity snappy. */
 export const HUB_OFAPI_CREDITS_TIMEOUT_MS = 5_000;
+/** C6b command outbox calls are DB-only while execution is default-off. */
+export const HUB_OFAPI_COMMAND_TIMEOUT_MS = 10_000;
 
 /**
  * Core's zod cap on PUT profile body (string length, matching core's check).
@@ -204,6 +206,57 @@ const hubOfapiCreditsSummarySchema = z.object({
 
 export type HubOfapiCreditsSummary = z.infer<typeof hubOfapiCreditsSummarySchema>;
 
+// ─── OFAPI command outbox (core C6b; default-off desktop transport) ──────
+
+export const HUB_OFAPI_COMMAND_STATES = [
+  'queued',
+  'in_flight',
+  'confirmed',
+  'failed_retryable',
+  'failed_terminal',
+  'indeterminate',
+  'cancelled',
+] as const;
+
+const hubOfapiCommandStateSchema = z.enum(HUB_OFAPI_COMMAND_STATES);
+
+const hubOfapiCommandCreateRequestSchema = z.strictObject({
+  clientCommandId: z.string().uuid(),
+  kind: z.literal('send_text_message_v1'),
+  accountId: z.string().regex(/^acct_[A-Za-z0-9]+$/),
+  conversationId: z.string().regex(/^[0-9]{1,30}$/),
+  payload: z.strictObject({
+    text: z.string().min(1).max(10_000).refine((text) => text.trim().length > 0, {
+      message: 'Message text must not be blank',
+    }),
+  }),
+  retryOfCommandId: z.string().uuid().nullable().optional(),
+});
+
+const hubOfapiCommandResponseSchema = z.strictObject({
+  commandId: z.string().uuid(),
+  clientCommandId: z.string().uuid(),
+  kind: z.literal('send_text_message_v1'),
+  accountId: z.string(),
+  conversationId: z.string(),
+  state: hubOfapiCommandStateSchema,
+  payloadHash: z.string().regex(/^[0-9a-f]{64}$/),
+  retryOfCommandId: z.string().uuid().nullable(),
+  attemptCount: z.number().int().min(0),
+  lastErrorCode: z.string().nullable(),
+  lastErrorClass: z.string().nullable(),
+  verifierResult: z.record(z.string(), z.unknown()).nullable(),
+  platformMessageId: z.string().nullable(),
+  attemptStartedAt: z.string().nullable(),
+  attemptFinishedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  deduplicated: z.boolean(),
+});
+
+export type HubOfapiCommandCreateRequest = z.infer<typeof hubOfapiCommandCreateRequestSchema>;
+export type HubOfapiCommand = z.infer<typeof hubOfapiCommandResponseSchema>;
+
 // ─── Usage event (outbound; mirrors core's closed contract) ───────────────
 
 /** Core's closed aiUsageFeatures enum — extending it requires a core change first (SPEC §8.6). */
@@ -378,6 +431,12 @@ export interface HubClient {
   }): Promise<HubProfileVersion>;
   postUsageBatch(args: { events: HubUsageEvent[]; timeoutMs?: number }): Promise<HubUsageBatchResult>;
   getOfapiCreditsSummary(options?: { timeoutMs?: number }): Promise<HubOfapiCreditsSummary>;
+  createOfapiCommand(args: {
+    command: HubOfapiCommandCreateRequest;
+    timeoutMs?: number;
+  }): Promise<HubOfapiCommand>;
+  getOfapiCommand(args: { commandId: string; timeoutMs?: number }): Promise<HubOfapiCommand>;
+  cancelOfapiCommand(args: { commandId: string; timeoutMs?: number }): Promise<HubOfapiCommand>;
   streamAiGateway(
     args: { request: HubAiGatewayStreamRequest; signal?: HubAbortSignalLike },
     callbacks: HubAiGatewayStreamCallbacks,
@@ -638,6 +697,55 @@ export function createHubClient(options: HubClientOptions): HubClient {
         timeoutMs: summaryOptions?.timeoutMs ?? HUB_OFAPI_CREDITS_TIMEOUT_MS,
       });
       return parseBody(hubOfapiCreditsSummarySchema, raw);
+    },
+
+    async createOfapiCommand({ command, timeoutMs }) {
+      const requestBody = hubOfapiCommandCreateRequestSchema.safeParse(command);
+      if (!requestBody.success) {
+        throw new HubError('bad-request', {
+          message: 'OFAPI command request failed contract validation',
+          detail: { providerMessage: requestBody.error.message.slice(0, 400) },
+        });
+      }
+      const raw = await request({
+        method: 'POST',
+        path: '/api/v1/ofapi/commands',
+        timeoutMs: timeoutMs ?? HUB_OFAPI_COMMAND_TIMEOUT_MS,
+        body: requestBody.data,
+      });
+      return parseBody(hubOfapiCommandResponseSchema, raw);
+    },
+
+    async getOfapiCommand({ commandId, timeoutMs }) {
+      const commandIdResult = z.string().uuid().safeParse(commandId);
+      if (!commandIdResult.success) {
+        throw new HubError('bad-request', {
+          message: 'OFAPI command id failed contract validation',
+          detail: { providerMessage: commandIdResult.error.message.slice(0, 400) },
+        });
+      }
+      const raw = await request({
+        method: 'GET',
+        path: `/api/v1/ofapi/commands/${encodeURIComponent(commandIdResult.data)}`,
+        timeoutMs: timeoutMs ?? HUB_OFAPI_COMMAND_TIMEOUT_MS,
+      });
+      return parseBody(hubOfapiCommandResponseSchema, raw);
+    },
+
+    async cancelOfapiCommand({ commandId, timeoutMs }) {
+      const commandIdResult = z.string().uuid().safeParse(commandId);
+      if (!commandIdResult.success) {
+        throw new HubError('bad-request', {
+          message: 'OFAPI command id failed contract validation',
+          detail: { providerMessage: commandIdResult.error.message.slice(0, 400) },
+        });
+      }
+      const raw = await request({
+        method: 'POST',
+        path: `/api/v1/ofapi/commands/${encodeURIComponent(commandIdResult.data)}/cancel`,
+        timeoutMs: timeoutMs ?? HUB_OFAPI_COMMAND_TIMEOUT_MS,
+      });
+      return parseBody(hubOfapiCommandResponseSchema, raw);
     },
 
     async streamAiGateway({ request: streamRequest, signal }, callbacks) {

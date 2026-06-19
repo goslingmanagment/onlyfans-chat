@@ -297,7 +297,7 @@
     <div class="src s-hub">
       <span class="tag">Хаб ядра · SSE + REST</span>
       <h3>Бэкенд «ядра» / ChatMuse</h3>
-      <p>Наш собственный сервер (репозиторий <code>core</code>). SSE шлёт события; snapshot закрывает разрыв старого курсора. Отдельный chatter-scoped REST-шлюз может выполнять разрешённые OFAPI GET от имени desktop и писать расход в центральный ledger. Command outbox/executor для текстовых send-команд развернут default-off: intake можно проверять без отправки, execution выключен до контролируемого live-gate. Режим чтения через Hub opt-in и применяется после перезапуска; без него остаётся прямой транспорт.</p>
+      <p>Наш собственный сервер (репозиторий <code>core</code>). SSE шлёт события; snapshot закрывает разрыв старого курсора. Отдельный chatter-scoped REST-шлюз может выполнять разрешённые OFAPI GET от имени desktop и писать расход в центральный ledger. Command outbox/executor для текстовых send-команд развернут default-off: intake/read/cancel уже имеют strict client contract без текста в ответах, но execution выключен до контролируемого live-gate. Режим чтения через Hub opt-in и применяется после перезапуска; без него остаётся прямой транспорт.</p>
       <span class="where">main/hub/* · main/sync/hub-*</span>
     </div>
 
