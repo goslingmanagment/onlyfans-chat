@@ -109,6 +109,67 @@ describe('createHubModule', () => {
     module.dispose();
   });
 
+  it('returns the chatter-scoped OFAPI credit summary when configured', async () => {
+    const data = memoryDataLayer();
+    const client = makeFakeHubClient();
+    const module = createHubModule({
+      data,
+      settingsStore: makeSettingsStore(
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+      ),
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient: () => client,
+    });
+    await module.reconfigure();
+
+    const summary = await module.getOfapiCreditsSummary();
+
+    expect(summary?.today).toMatchObject({
+      restCredits: 1,
+      webhook: { eventCount: 125, estimatedCredits: 2 },
+      totalEstimatedCredits: 3,
+    });
+    expect(client.getOfapiCreditsSummaryMock).toHaveBeenCalledTimes(1);
+    module.dispose();
+  });
+
+  it('keeps the OFAPI credit summary inert when hub is off or unavailable', async () => {
+    const data = memoryDataLayer();
+    const warn = vi.fn();
+    const client = makeFakeHubClient({
+      getOfapiCreditsSummary: () => Promise.reject(new Error('hub down')),
+    });
+    const module = createHubModule({
+      data,
+      settingsStore: makeSettingsStore(makeSettingsVM()),
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient: () => client,
+      onWarn: warn,
+    });
+    await module.reconfigure();
+
+    await expect(module.getOfapiCreditsSummary()).resolves.toBeNull();
+    expect(client.getOfapiCreditsSummaryMock).not.toHaveBeenCalled();
+
+    const configured = createHubModule({
+      data,
+      settingsStore: makeSettingsStore(
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+      ),
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient: () => client,
+      onWarn: warn,
+    });
+    await configured.reconfigure();
+    await expect(configured.getOfapiCreditsSummary()).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      '[hub] OFAPI credit summary unavailable',
+      expect.objectContaining({ code: undefined, reason: undefined }),
+    );
+    configured.dispose();
+    module.dispose();
+  });
+
   it('reconfiguring to an empty config tears the reporter down (events park again)', async () => {
     vi.useFakeTimers();
     const data = memoryDataLayer();

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createHubClient,
   HUB_LIST_PAGES_TIMEOUT_MS,
+  HUB_OFAPI_CREDITS_TIMEOUT_MS,
   HUB_PROFILE_GET_TIMEOUT_MS,
   HUB_PROFILE_MAX_CHARS,
   HUB_PROFILE_PUT_TIMEOUT_MS,
@@ -60,6 +61,27 @@ const USAGE_EVENT: HubUsageEvent = {
 };
 
 const BATCH_RESPONSE = { receivedCount: 1, insertedCount: 1, invalidCount: 0, dedupedCount: 0 };
+
+const OFAPI_CREDITS_RESPONSE = {
+  enabled: true,
+  scope: { pageIds: [1, 2], pageCount: 2 },
+  today: {
+    day: '2026-06-19',
+    from: '2026-06-19T00:00:00.000Z',
+    to: '2026-06-20T00:00:00.000Z',
+    restCredits: 1,
+    webhook: { eventCount: 4688, estimatedCredits: 47 },
+    totalEstimatedCredits: 48,
+  },
+  last7d: {
+    from: '2026-06-14T00:00:00.000Z',
+    to: '2026-06-21T00:00:00.000Z',
+    restCredits: 2,
+    webhook: { eventCount: 8545, estimatedCredits: 86 },
+    totalEstimatedCredits: 88,
+  },
+  limitations: ['owner-only balance omitted'],
+};
 
 interface RecordedCall {
   url: string;
@@ -312,6 +334,32 @@ describe('createHubClient', () => {
       );
       expect(error.reason).toBe('bad-request');
       expect(calls).toHaveLength(0);
+    });
+  });
+
+  describe('getOfapiCreditsSummary', () => {
+    it('issues GET /api/v1/ofapi/credits/summary with bearer auth and parses the scoped summary', async () => {
+      const { calls, fetchImpl } = stubFetch(jsonResponse(200, OFAPI_CREDITS_RESPONSE));
+      const { client, timeouts } = makeClient(fetchImpl);
+
+      const result = await client.getOfapiCreditsSummary();
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/ofapi/credits/summary');
+      expect(calls[0]?.init.method).toBe('GET');
+      expect(calls[0]?.init.headers['authorization']).toBe('Bearer agency_hub_core_testkey');
+      expect(calls[0]?.init.body).toBeUndefined();
+      expect(timeouts).toEqual([HUB_OFAPI_CREDITS_TIMEOUT_MS]);
+      expect(result.today.totalEstimatedCredits).toBe(48);
+      expect(result.last7d.webhook.estimatedCredits).toBe(86);
+    });
+
+    it('rejects a drifted summary shape as invalid-response', async () => {
+      const { fetchImpl } = stubFetch(jsonResponse(200, { ...OFAPI_CREDITS_RESPONSE, today: {} }));
+      const { client } = makeClient(fetchImpl);
+
+      const error = await captureHubError(client.getOfapiCreditsSummary());
+      expect(error.reason).toBe('invalid-response');
     });
   });
 

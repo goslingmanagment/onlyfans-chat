@@ -544,7 +544,7 @@
           <span class="chip c-db">кэш БД (логи)</span>
           <span class="chip c-hub">liveness: SSE (off по умолч.)</span>
         </div>
-        <p>Ни одного live-вызова на открытие. Цифры — <b>снимок счётчика кредитов в памяти</b> (снимается как побочка любых других OFAPI-вызовов) плюс локальные агрегаты (<code>credit_log</code>, <code>ai_spend_log</code>, <code>outbox</code>). Состояние синка разделяет push-свежесть (последнее SSE-событие) и REST-сверку списка; Activity/диагностика считают hub events received/applied/fallback/dropped и последнюю причину fallback. Обновляется реактивно по событиям, не по таймеру.</p>
+        <p>Ни одного live-вызова OFAPI на открытие. Цифры — <b>снимок локального счётчика кредитов в памяти</b> (снимается как побочка любых других OFAPI-вызовов), локальные агрегаты (<code>credit_log</code>, <code>ai_spend_log</code>, <code>outbox</code>) и, если hub настроен, chatter-scoped сводка core <code>/api/v1/ofapi/credits/summary</code> по назначенным страницам. Состояние синка разделяет push-свежесть (последнее SSE-событие) и REST-сверку списка; Activity/диагностика считают hub events received/applied/fallback/dropped и последнюю причину fallback. Обновляется реактивно по событиям, не по таймеру.</p>
       </div>
     </div>
 

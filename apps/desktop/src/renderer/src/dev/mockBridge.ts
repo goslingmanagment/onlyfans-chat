@@ -1058,6 +1058,22 @@ export function createMockBridge(): ChatGooseBridge {
       ai: { hasAnthropicKey: true, hasOpenRouterKey: false },
       sends: { ...store.sync.sendsToday },
       credits: {
+        core: {
+          enabled: true,
+          scope: { pageCount: 2 },
+          today: {
+            day: new Date().toISOString().slice(0, 10),
+            restCredits: 14,
+            webhook: { eventCount: 4688, estimatedCredits: 47 },
+            totalEstimatedCredits: 61,
+          },
+          last7d: {
+            restCredits: 44,
+            webhook: { eventCount: 8545, estimatedCredits: 86 },
+            totalEstimatedCredits: 130,
+          },
+          limitations: ['mock data'],
+        },
         rows: [
           { purpose: 'hot-poll', requests: 612, credits: 612 },
           { purpose: 'deep-sweep', requests: 36, credits: 180 },

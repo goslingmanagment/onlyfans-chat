@@ -31,6 +31,7 @@ export interface DiagnosticsInputs {
   hub: unknown;
   hubActivity: unknown;
   credits: unknown;
+  coreCredits: unknown;
   db: { schemaVersion: number | null; counts: Record<string, number> };
   outboxAudit: unknown;
   /** error-level CG-* code → count over the in-memory log ring. */

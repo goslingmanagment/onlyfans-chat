@@ -380,6 +380,39 @@ const TH_NUM = `${TH} text-right`;
 const TD = 'border-b border-line py-1.5 text-[13px]';
 const TD_NUM = `${TD} num whitespace-nowrap text-right`;
 
+function CoreCreditsLine({ vm, t }: { vm: ActivityVM; t: UiTranslator }): React.JSX.Element | null {
+  const core = vm.credits.core;
+  if (core === null) {
+    return null;
+  }
+  const body = core.enabled
+    ? t('activity.coreCreditsToday', {
+      total: core.today.totalEstimatedCredits.toLocaleString('en-US'),
+      rest: core.today.restCredits.toLocaleString('en-US'),
+      webhook: core.today.webhook.estimatedCredits.toLocaleString('en-US'),
+    })
+    : t('activity.coreCreditsDisabled');
+  const detail = core.enabled
+    ? t('activity.coreCreditsEvents', {
+      events: core.today.webhook.eventCount.toLocaleString('en-US'),
+      sevenDay: core.last7d.totalEstimatedCredits.toLocaleString('en-US'),
+    })
+    : core.limitations[0] ?? '';
+
+  return (
+    <div className="mb-3 border-b border-line pb-2.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[12.5px] font-semibold text-ink">{t('activity.coreCreditsTitle')}</span>
+        <span className="num text-[11.5px] text-ink-low">
+          {t('activity.coreCreditsPages', { n: core.scope.pageCount.toLocaleString('en-US') })}
+        </span>
+      </div>
+      <div className="num mt-1 text-[12.5px] text-ink-mid">{body}</div>
+      {detail !== '' && <div className="mt-1 text-[11.5px] text-ink-low">{detail}</div>}
+    </div>
+  );
+}
+
 function CreditsLedger({ vm, t }: { vm: ActivityVM; t: UiTranslator }): React.JSX.Element {
   const { credits } = vm;
   const footer: string[] = [];
@@ -396,6 +429,7 @@ function CreditsLedger({ vm, t }: { vm: ActivityVM; t: UiTranslator }): React.JS
   return (
     <div className="border-b border-line px-4 pb-4 pt-3.5">
       <div className="cap mb-2.5 block text-ink-low">{t('activity.capCredits')}</div>
+      <CoreCreditsLine vm={vm} t={t} />
       {credits.rows.length === 0 ? (
         <p className="text-[12.5px] text-ink-low">{t('activity.creditsEmpty')}</p>
       ) : (

@@ -379,6 +379,26 @@ export const UI_MESSAGES = {
   'activity.staleUnconfirmed': { en: 'stale unconfirmed: ', ru: 'зависшие без подтверждения: ' },
   'activity.sentMissing': { en: 'sent but missing locally: ', ru: 'отправлено, но нет локально: ' },
   'activity.capCredits': { en: 'OFAPI credits · today', ru: 'Кредиты OFAPI · сегодня' },
+  'activity.coreCreditsTitle': {
+    en: 'Core assigned pages',
+    ru: 'Core · назначенные страницы',
+  },
+  'activity.coreCreditsPages': {
+    en: '{n} pages',
+    ru: 'страниц: {n}',
+  },
+  'activity.coreCreditsToday': {
+    en: '{total} credits today · REST {rest} + webhooks {webhook}',
+    ru: 'сегодня {total} кредитов · REST {rest} + вебхуки {webhook}',
+  },
+  'activity.coreCreditsEvents': {
+    en: '{events} webhook events today · 7d estimate {sevenDay} credits',
+    ru: 'вебхук-событий сегодня: {events} · оценка за 7 дней {sevenDay} кредитов',
+  },
+  'activity.coreCreditsDisabled': {
+    en: 'Core ledger disabled.',
+    ru: 'Леджер core выключен.',
+  },
   'activity.creditsEmpty': {
     en: 'No OFAPI traffic recorded yet today.',
     ru: 'Сегодня запросов к OFAPI ещё не было.',

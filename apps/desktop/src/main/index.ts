@@ -711,6 +711,7 @@ async function boot(): Promise<void> {
       }
     },
     onHubConfigChanged: () => recheckHubConfig?.(),
+    getCoreCreditsSummary: () => hub?.getOfapiCreditsSummary() ?? Promise.resolve(null),
     ...(logger !== null ? { logger } : {}),
     // Reads the update controller lazily — it is created asynchronously after
     // the electron-updater dynamic import, which may resolve after this call.
@@ -790,6 +791,12 @@ async function boot(): Promise<void> {
         // session is in the export even though the in-memory ring restarted.
         await logger?.flush();
         const fileLog = logger ? await logger.readFileTail() : [];
+        const coreCredits = await hub?.getOfapiCreditsSummary().catch((error) => {
+          logger?.warn('diag', 'core OFAPI credit summary unavailable for diagnostics', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        }) ?? null;
 
         const report = buildDiagnosticsReport(
           {
@@ -812,6 +819,7 @@ async function boot(): Promise<void> {
             hub: sync?.hubStatus?.() ?? null,
             hubActivity: sync?.hubActivity?.() ?? null,
             credits: client?.creditMeter.snapshot() ?? null,
+            coreCredits,
             db: {
               schemaVersion,
               counts: {

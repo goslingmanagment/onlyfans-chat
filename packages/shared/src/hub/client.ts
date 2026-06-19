@@ -19,6 +19,8 @@ export const HUB_PROFILE_PUT_TIMEOUT_MS = 10_000;
 export const HUB_USAGE_BATCH_TIMEOUT_MS = 15_000;
 /** No legacy constant; bounded by the 10 s sync window the call used to run inside. */
 export const HUB_LIST_PAGES_TIMEOUT_MS = 10_000;
+/** C2 desktop spend read-model: small DB-only response, keep Activity snappy. */
+export const HUB_OFAPI_CREDITS_TIMEOUT_MS = 5_000;
 
 /**
  * Core's zod cap on PUT profile body (string length, matching core's check).
@@ -158,6 +160,30 @@ const hubUsageBatchResponseSchema = z.object({
 
 export type HubUsageBatchResult = z.infer<typeof hubUsageBatchResponseSchema>;
 
+const hubOfapiCreditsWindowSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  restCredits: z.number().int().nonnegative(),
+  webhook: z.object({
+    eventCount: z.number().int().nonnegative(),
+    estimatedCredits: z.number().int().nonnegative(),
+  }),
+  totalEstimatedCredits: z.number().int().nonnegative(),
+});
+
+const hubOfapiCreditsSummarySchema = z.object({
+  enabled: z.boolean(),
+  scope: z.object({
+    pageIds: z.array(z.number().int().positive()),
+    pageCount: z.number().int().nonnegative(),
+  }),
+  today: z.object({ day: z.string() }).merge(hubOfapiCreditsWindowSchema),
+  last7d: hubOfapiCreditsWindowSchema,
+  limitations: z.array(z.string()),
+});
+
+export type HubOfapiCreditsSummary = z.infer<typeof hubOfapiCreditsSummarySchema>;
+
 // ─── Usage event (outbound; mirrors core's closed contract) ───────────────
 
 /** Core's closed aiUsageFeatures enum — extending it requires a core change first (SPEC §8.6). */
@@ -234,6 +260,7 @@ export interface HubClient {
     timeoutMs?: number;
   }): Promise<HubProfileVersion>;
   postUsageBatch(args: { events: HubUsageEvent[]; timeoutMs?: number }): Promise<HubUsageBatchResult>;
+  getOfapiCreditsSummary(options?: { timeoutMs?: number }): Promise<HubOfapiCreditsSummary>;
   /**
    * Last observed server-minus-local clock offset in ms, derived from the
    * Date header of any core response (SPEC §8.6 clock-skew guard; also feeds
@@ -407,6 +434,15 @@ export function createHubClient(options: HubClientOptions): HubClient {
         body: requestBody.data,
       });
       return parseBody(hubUsageBatchResponseSchema, raw);
+    },
+
+    async getOfapiCreditsSummary(summaryOptions) {
+      const raw = await request({
+        method: 'GET',
+        path: '/api/v1/ofapi/credits/summary',
+        timeoutMs: summaryOptions?.timeoutMs ?? HUB_OFAPI_CREDITS_TIMEOUT_MS,
+      });
+      return parseBody(hubOfapiCreditsSummarySchema, raw);
     },
 
     getServerTimeOffsetMs() {

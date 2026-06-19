@@ -31,6 +31,7 @@ export interface ActivityDeps {
   data: DataLayer;
   sync: ActivitySync | null;
   creditMeter: CreditMeter | null;
+  coreCredits?: ActivityVM['credits']['core'] | null;
   aiKeys: { hasAnthropicKey: boolean; hasOpenRouterKey: boolean };
   now?: () => number;
 }
@@ -203,6 +204,7 @@ export function buildActivitySummary(deps: ActivityDeps): ActivityVM {
     ai: deps.aiKeys,
     sends: sendsToday(data, today),
     credits: {
+      core: deps.coreCredits ?? null,
       rows: ledger.rows,
       totalRequests: ledger.totalRequests,
       totalCredits: ledger.totalCredits,

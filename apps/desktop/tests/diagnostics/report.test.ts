@@ -18,6 +18,7 @@ function inputs(overrides: Partial<DiagnosticsInputs> = {}): DiagnosticsInputs {
     hub: 'live',
     hubActivity: null,
     credits: { balance: 100, usedToday: 3 },
+    coreCredits: null,
     db: { schemaVersion: 7, counts: { accounts: 2, chats: 40, messages: 1200 } },
     outboxAudit: { cleanSends: 10 },
     errorCounts: { 'CG-OF-03': 2 },

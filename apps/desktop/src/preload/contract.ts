@@ -183,6 +183,22 @@ export interface ActivityVM {
   /** Today's outbox transitions (UTC). */
   sends: { sent: number; failed: number; unconfirmed: number };
   credits: {
+    core: {
+      enabled: boolean;
+      scope: { pageCount: number };
+      today: {
+        day: string;
+        restCredits: number;
+        webhook: { eventCount: number; estimatedCredits: number };
+        totalEstimatedCredits: number;
+      };
+      last7d: {
+        restCredits: number;
+        webhook: { eventCount: number; estimatedCredits: number };
+        totalEstimatedCredits: number;
+      };
+      limitations: string[];
+    } | null;
     rows: { purpose: string; requests: number; credits: number }[];
     totalRequests: number;
     totalCredits: number;

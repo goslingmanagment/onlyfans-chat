@@ -4,7 +4,14 @@
 // to usage_events (src/main/ai/coordinator.ts recordUsageEvent).
 
 import { vi } from 'vitest';
-import type { HubClient, HubFanProfile, HubPage, HubUsageBatchResult, HubUsageEvent } from '@chatgoose/shared/hub/index';
+import type {
+  HubClient,
+  HubFanProfile,
+  HubOfapiCreditsSummary,
+  HubPage,
+  HubUsageBatchResult,
+  HubUsageEvent,
+} from '@chatgoose/shared/hub/index';
 import { createChangeBus, createDataLayer } from '@main/db/index';
 import type { DataLayer } from '@main/db/index';
 import type { SettingsStore } from '@main/settings/store';
@@ -113,6 +120,7 @@ export interface FakeHubClient extends HubClient {
   getFanProfileMock: ReturnType<typeof vi.fn>;
   putFanProfileMock: ReturnType<typeof vi.fn>;
   postUsageBatchMock: ReturnType<typeof vi.fn>;
+  getOfapiCreditsSummaryMock: ReturnType<typeof vi.fn>;
   batches: HubUsageEvent[][];
 }
 
@@ -122,6 +130,7 @@ export function makeFakeHubClient(
     getFanProfile: (args: { pageLabel: string; fanId: string }) => Promise<HubFanProfile | null>;
     putFanProfile: () => Promise<unknown>;
     postUsageBatch: (args: { events: HubUsageEvent[] }) => Promise<HubUsageBatchResult>;
+    getOfapiCreditsSummary: () => Promise<HubOfapiCreditsSummary>;
   }> = {},
 ): FakeHubClient {
   const batches: HubUsageEvent[][] = [];
@@ -149,16 +158,42 @@ export function makeFakeHubClient(
         });
       }),
   );
+  const getOfapiCreditsSummaryMock = vi.fn(
+    overrides.getOfapiCreditsSummary ??
+      (() =>
+        Promise.resolve({
+          enabled: true,
+          scope: { pageIds: [1], pageCount: 1 },
+          today: {
+            day: '2026-06-19',
+            from: '2026-06-19T00:00:00.000Z',
+            to: '2026-06-20T00:00:00.000Z',
+            restCredits: 1,
+            webhook: { eventCount: 125, estimatedCredits: 2 },
+            totalEstimatedCredits: 3,
+          },
+          last7d: {
+            from: '2026-06-14T00:00:00.000Z',
+            to: '2026-06-21T00:00:00.000Z',
+            restCredits: 4,
+            webhook: { eventCount: 325, estimatedCredits: 4 },
+            totalEstimatedCredits: 8,
+          },
+          limitations: [],
+        })),
+  );
   return {
     listPages: listPagesMock,
     getFanProfile: getFanProfileMock,
     putFanProfile: putFanProfileMock,
     postUsageBatch: postUsageBatchMock,
+    getOfapiCreditsSummary: getOfapiCreditsSummaryMock,
     getServerTimeOffsetMs: () => null,
     listPagesMock,
     getFanProfileMock,
     putFanProfileMock,
     postUsageBatchMock,
+    getOfapiCreditsSummaryMock,
     batches,
   } as FakeHubClient;
 }

@@ -17,6 +17,7 @@ import type { SpendersService } from '../spenders/service';
 import type { SpendersRefreshService } from '../spenders/refresh';
 import type { Logger } from '../diagnostics/logger';
 import type {
+  ActivityVM,
   AiStartRequest,
   KeyTestProvider,
   KeyTestResultVM,
@@ -259,6 +260,7 @@ export interface IpcDeps {
   onHubConfigChanged?: () => void;
   /** Diagnostics log sink (SPEC §11); absent in builds without a logger (tests). */
   logger?: Logger;
+  getCoreCreditsSummary?: () => Promise<ActivityVM['credits']['core'] | null>;
 }
 
 function normalizePersonality(parsed: z.infer<typeof personalitySchema>): Personality {
@@ -374,10 +376,17 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   // ── Settings → Activity panel (PLAN item 9; read-only) ──
   ipcMain.handle('query:activity.summary', async () => {
     const settings = await settingsStore.get();
+    const coreCredits = await deps.getCoreCreditsSummary?.().catch((error) => {
+      deps.logger?.warn('hub', 'core OFAPI credit summary unavailable', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }) ?? null;
     return buildActivitySummary({
       data,
       sync: deps.sync,
       creditMeter: deps.creditMeter,
+      coreCredits,
       aiKeys: {
         hasAnthropicKey: settings.hasAnthropicKey,
         hasOpenRouterKey: settings.hasOpenRouterKey,

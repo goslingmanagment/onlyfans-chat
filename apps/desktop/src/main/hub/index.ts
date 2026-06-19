@@ -5,7 +5,8 @@
 // parked in usage_events for a later configured session (today's behavior).
 
 import { createHubClient, createUsageReporter } from '@chatgoose/shared/hub/index';
-import type { HubClient, UsageReporter } from '@chatgoose/shared/hub/index';
+import { HubError } from '@chatgoose/shared/hub/index';
+import type { HubClient, HubOfapiCreditsSummary, UsageReporter } from '@chatgoose/shared/hub/index';
 import type { SummaryHubHooks, UsageEventRecord } from '../ai/index';
 import type { DataLayer } from '../db/index';
 import type { SettingsStore } from '../settings/store';
@@ -41,6 +42,8 @@ export interface HubModule {
   summaryHub: SummaryHubHooks;
   /** Coordinator onUsageEvent target: raw payload → wire event → reporter. */
   onUsageEvent: (event: UsageEventRecord) => void;
+  /** Page-scoped core OFAPI spend summary for Activity/diagnostics; null when hub is off/unreachable. */
+  getOfapiCreditsSummary(): Promise<HubOfapiCreditsSummary | null>;
   /** Rebuilds client/reporter/hooks from current settings + keychain. */
   reconfigure(): Promise<void>;
   dispose(): void;
@@ -85,6 +88,21 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         return; // malformed payload must never reach the wire (SPEC §8.6)
       }
       active.reporter.enqueue(mapped);
+    },
+
+    async getOfapiCreditsSummary() {
+      if (active === null) {
+        return null;
+      }
+      try {
+        return await active.client.getOfapiCreditsSummary();
+      } catch (error) {
+        onWarn('[hub] OFAPI credit summary unavailable', {
+          code: error instanceof HubError ? error.code : undefined,
+          reason: error instanceof HubError ? error.reason : undefined,
+        });
+        return null;
+      }
     },
 
     async reconfigure() {
