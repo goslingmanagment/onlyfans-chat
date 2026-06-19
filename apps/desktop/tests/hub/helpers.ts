@@ -51,6 +51,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hubBaseUrl: null,
     ofapiReadTransport: 'direct',
     hubModeOverride: 'auto',
+    spendSweepRollbackToLegacy: true,
     spendStyle: 'figure',
     spendersListMappings: {},
     uiLocale: 'system',

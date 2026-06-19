@@ -64,7 +64,7 @@ const OFFLINE_AFTER_FAILURES = 3;
 // limit 10 = the documented recommendation (vendored openapi.json); larger
 // values are unverified upstream. Runs only after hydration completes — the
 // initial walk must not compete with the chat-list hydration for credits.
-const SPEND_SWEEP_INTERVAL_MS = 10 * 60_000;
+const LEGACY_SPEND_SWEEP_INTERVAL_MS = 10 * 60_000;
 const SPEND_TX_PAGE_LIMIT = 10;
 const SPEND_SWEEP_MAX_PAGES = 100;
 const SPEND_SWEEP_OVERLAP_MS = 60 * 60_000;
@@ -86,6 +86,11 @@ export interface PollingSyncOptions {
    * sanctioned read.
    */
   autoReadEnabled?: () => boolean;
+  /**
+   * D6 rollback guard. True keeps the legacy 10-minute fan-spend sweep.
+   * The future reduced-cadence branch must be gated behind false.
+   */
+  spendSweepRollbackToLegacy?: () => boolean;
   now?: () => number;
   /** Inter-page pacing during multi-page chat walks (injectable for tests). */
   sleep?: SleepFn;
@@ -143,6 +148,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   const now = options.now ?? Date.now;
   const isBudgetExhausted = options.isBudgetExhausted ?? ((): boolean => false);
   const autoReadEnabled = options.autoReadEnabled ?? ((): boolean => false);
+  const spendSweepRollbackToLegacy =
+    options.spendSweepRollbackToLegacy ?? ((): boolean => true);
   const sleep: SleepFn =
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
@@ -177,6 +184,16 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     const hidden = windowVisible ? 1 : HIDDEN_FACTOR;
     const budget = isBudgetExhausted() ? BUDGET_FACTOR : 1;
     return base * hidden * budget;
+  }
+
+  function spendSweepIntervalMs(): number {
+    if (spendSweepRollbackToLegacy()) {
+      return LEGACY_SPEND_SWEEP_INTERVAL_MS;
+    }
+    // D6 has not reduced the desktop sweep yet. Keep the non-rollback branch on
+    // the old cadence until core shadow comparison, PPV/tips policy, and rollout
+    // acceptance are complete.
+    return LEGACY_SPEND_SWEEP_INTERVAL_MS;
   }
 
   function schedule(accountId: string, delayMs: number | null): void {
@@ -816,13 +833,14 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       return;
     }
     if (isBudgetExhausted()) {
-      scheduleSpendSweep(accountId, SPEND_SWEEP_INTERVAL_MS);
+      scheduleSpendSweep(accountId, spendSweepIntervalMs());
       return;
     }
+    const intervalMs = spendSweepIntervalMs();
     const dueIn =
       loop.lastSpendSweepAt === null
         ? 0
-        : SPEND_SWEEP_INTERVAL_MS - (now() - loop.lastSpendSweepAt);
+        : intervalMs - (now() - loop.lastSpendSweepAt);
     if (dueIn > 0) {
       scheduleSpendSweep(accountId, dueIn);
       return;
@@ -836,7 +854,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     } finally {
       loop.lastSpendSweepAt = now();
       loop.spendInFlight = false;
-      scheduleSpendSweep(accountId, SPEND_SWEEP_INTERVAL_MS);
+      scheduleSpendSweep(accountId, spendSweepIntervalMs());
     }
   }
 

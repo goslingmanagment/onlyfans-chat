@@ -237,6 +237,14 @@ export const UI_MESSAGES = {
     en: 'Polling fallback is suspended while a configured hub is tested. User-open reads and autoReadChats are unchanged.',
     ru: 'Polling fallback удерживается выключенным для проверки hub. Ручное открытие чата и autoReadChats не меняются.',
   },
+  'behavior.spendSweepRollback': {
+    en: 'Legacy spend sweep',
+    ru: 'Старый sweep спенда',
+  },
+  'behavior.spendSweepRollbackHint': {
+    en: 'Support rollback for D6: keep the desktop fan-spend sweep at 10 minutes.',
+    ru: 'Rollback для D6: держит desktop sweep спенда на старых 10 минутах.',
+  },
   'behavior.advanced': { en: 'Advanced', ru: 'Дополнительно' },
   'behavior.language': { en: 'Language', ru: 'Язык' },
   'behavior.languageHint': { en: 'Interface language', ru: 'Язык интерфейса' },

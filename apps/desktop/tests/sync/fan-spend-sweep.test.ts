@@ -105,12 +105,15 @@ describe('fan-spend sweep', () => {
     data.close();
   });
 
-  function makeSync() {
+  function makeSync(options: { spendSweepRollbackToLegacy?: () => boolean } = {}) {
     return createPollingSync({
       client: stub.client,
       data,
       toMediaUrl: () => null,
       sleep: async () => {},
+      ...(options.spendSweepRollbackToLegacy === undefined
+        ? {}
+        : { spendSweepRollbackToLegacy: options.spendSweepRollbackToLegacy }),
     });
   }
 
@@ -185,6 +188,27 @@ describe('fan-spend sweep', () => {
   it('a sweep is not re-run before its cadence elapses', async () => {
     stub.setTransactions([tx('t1', 101, 50, 2)]);
     const sync = makeSync();
+    await bootAndSweep(sync);
+    await vi.advanceTimersByTimeAsync(SPEND_SWEEP_INTERVAL_MS - 1);
+    expect(stub.txCalls).toHaveLength(1);
+    sync.stop();
+  });
+
+  it('the D6 rollback flag preserves the legacy 10-minute spend sweep cadence', async () => {
+    stub.setTransactions([tx('t1', 101, 50, 2)]);
+    const sync = makeSync({ spendSweepRollbackToLegacy: () => true });
+    await bootAndSweep(sync);
+    await vi.advanceTimersByTimeAsync(SPEND_SWEEP_INTERVAL_MS - 1);
+    expect(stub.txCalls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await drainPoll();
+    expect(stub.txCalls).toHaveLength(2);
+    sync.stop();
+  });
+
+  it('disabling the rollback flag does not reduce spend-sweep cadence before D6 acceptance', async () => {
+    stub.setTransactions([tx('t1', 101, 50, 2)]);
+    const sync = makeSync({ spendSweepRollbackToLegacy: () => false });
     await bootAndSweep(sync);
     await vi.advanceTimersByTimeAsync(SPEND_SWEEP_INTERVAL_MS - 1);
     expect(stub.txCalls).toHaveLength(1);

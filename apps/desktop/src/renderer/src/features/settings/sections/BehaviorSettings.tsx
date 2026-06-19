@@ -185,7 +185,9 @@ export function BehaviorSettings({
           on={settings.debugMode}
           onChange={(v) => patch({ debugMode: v })}
         />
-        {(settings.debugMode || settings.hubModeOverride !== 'auto') && (
+        {(settings.debugMode
+          || settings.hubModeOverride !== 'auto'
+          || !settings.spendSweepRollbackToLegacy) && (
           <>
             <OptionRow
               label={t('behavior.hubModeOverride')}
@@ -208,6 +210,12 @@ export function BehaviorSettings({
                   : t('behavior.hubModeOverrideHubWarn')}
               </p>
             )}
+            <Toggle
+              label={t('behavior.spendSweepRollback')}
+              hint={t('behavior.spendSweepRollbackHint')}
+              on={settings.spendSweepRollbackToLegacy}
+              onChange={(v) => patch({ spendSweepRollbackToLegacy: v })}
+            />
           </>
         )}
       </div>

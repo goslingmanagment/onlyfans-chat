@@ -79,6 +79,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'hubBaseUrl',
   'ofapiReadTransport',
   'hubModeOverride',
+  'spendSweepRollbackToLegacy',
   'accountPageLabels',
   'spendStyle',
   'spendersListMappings',
@@ -115,6 +116,8 @@ const persistedFieldSchemas = {
   ofapiReadTransport: z.enum(OFAPI_READ_TRANSPORTS),
   // Dev/support-only override for D3 diagnostics. Default auto.
   hubModeOverride: z.enum(HUB_MODE_OVERRIDE_SETTINGS),
+  // D6 rollback guard: true forces the old 10-minute fan-spend sweep.
+  spendSweepRollbackToLegacy: z.boolean(),
   // Manual OFAPI accountId → core page-label overrides (SPEC §8.5).
   accountPageLabels: z.record(z.string(), z.string()),
   // Chat-list lifetime-spend style (DESIGN §1): bare figure (default) or chip.
@@ -161,6 +164,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   hubBaseUrl: null,
   ofapiReadTransport: 'direct',
   hubModeOverride: 'auto',
+  spendSweepRollbackToLegacy: true,
   accountPageLabels: {},
   spendStyle: 'figure',
   spendersListMappings: {},
@@ -192,6 +196,7 @@ export const settingsPatchSchema = z.strictObject({
   hubBaseUrl: persistedFieldSchemas.hubBaseUrl.optional(),
   ofapiReadTransport: persistedFieldSchemas.ofapiReadTransport.optional(),
   hubModeOverride: persistedFieldSchemas.hubModeOverride.optional(),
+  spendSweepRollbackToLegacy: persistedFieldSchemas.spendSweepRollbackToLegacy.optional(),
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
   spendStyle: persistedFieldSchemas.spendStyle.optional(),
   spendersListMappings: persistedFieldSchemas.spendersListMappings.optional(),
@@ -304,6 +309,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       hubBaseUrl: readField('hubBaseUrl'),
       ofapiReadTransport: readField('ofapiReadTransport'),
       hubModeOverride: readField('hubModeOverride'),
+      spendSweepRollbackToLegacy: readField('spendSweepRollbackToLegacy'),
       accountPageLabels: readField('accountPageLabels'),
       spendStyle: readField('spendStyle'),
       spendersListMappings: readField('spendersListMappings'),

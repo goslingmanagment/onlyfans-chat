@@ -404,6 +404,7 @@ async function initOfapi(
     creditBudgetPerShift: number | null;
     autoReadChats: boolean;
     hubModeOverride: 'auto' | 'polling' | 'hub';
+    spendSweepRollbackToLegacy: boolean;
   } | null = initialSettings;
 
   // Hub config fingerprint: reconfigure the SSE connection only when the base
@@ -450,6 +451,7 @@ async function initOfapi(
     // Default OFF: no automatic message-body reads (poll deltas, sweeps, media
     // polling) so OnlyFans never marks a chat read without an explicit open.
     autoReadEnabled: () => settingsCache?.autoReadChats ?? false,
+    spendSweepRollbackToLegacy: () => settingsCache?.spendSweepRollbackToLegacy ?? true,
   });
 
   const lastEventIdSchema = z.number().int().nonnegative();

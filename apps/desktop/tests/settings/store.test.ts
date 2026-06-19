@@ -80,6 +80,7 @@ describe('settings store', () => {
     expect(vm.accountPageLabels).toEqual({});
     expect(vm.ofapiReadTransport).toBe('direct');
     expect(vm.hubModeOverride).toBe('auto');
+    expect(vm.spendSweepRollbackToLegacy).toBe(true);
     expect(vm.spendStyle).toBe('figure');
     expect(vm.uiLocale).toBe('system');
     expect(vm.uiScale).toBe(1);
@@ -98,12 +99,14 @@ describe('settings store', () => {
       uiTheme: 'dark',
       ofapiReadTransport: 'hub',
       hubModeOverride: 'hub',
+      spendSweepRollbackToLegacy: false,
     });
     expect(vm.uiLocale).toBe('ru');
     expect(vm.uiScale).toBe(1.25);
     expect(vm.uiTheme).toBe('dark');
     expect(vm.ofapiReadTransport).toBe('hub');
     expect(vm.hubModeOverride).toBe('hub');
+    expect(vm.spendSweepRollbackToLegacy).toBe(false);
 
     const reread = createSettingsStore({ queries, secrets });
     const again = await reread.get();
@@ -112,6 +115,7 @@ describe('settings store', () => {
     expect(again.uiTheme).toBe('dark');
     expect(again.ofapiReadTransport).toBe('hub');
     expect(again.hubModeOverride).toBe('hub');
+    expect(again.spendSweepRollbackToLegacy).toBe(false);
 
     await expect(store.update({ uiLocale: 'de' })).rejects.toThrow();
     await expect(store.update({ uiScale: 2 })).rejects.toThrow();
@@ -119,6 +123,7 @@ describe('settings store', () => {
     await expect(store.update({ uiTheme: 'sepia' })).rejects.toThrow();
     await expect(store.update({ ofapiReadTransport: 'proxy' })).rejects.toThrow();
     await expect(store.update({ hubModeOverride: 'both' })).rejects.toThrow();
+    await expect(store.update({ spendSweepRollbackToLegacy: 'yes' })).rejects.toThrow();
   });
 
   it('records non-secret key metadata (last4 + setAt) on save and clears it on delete', async () => {
