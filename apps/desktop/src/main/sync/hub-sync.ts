@@ -9,10 +9,18 @@
 // The shared MessagesSseParser is LLM-shaped (no id/retry fields), so frame
 // parsing is a small dedicated SSE-spec parser below, unit-tested directly.
 
-import { parseSyncEvent, type SyncEvent } from '@chatgoose/shared/protocol/index';
+import {
+  parseSyncEvent,
+  syncSnapshotRequiredSchema,
+  syncSnapshotResponseSchema,
+  type SyncEvent,
+  type SyncSnapshotRequired,
+  type SyncSnapshotResponse,
+} from '@chatgoose/shared/protocol/index';
 import type { SleepFn } from '../ofapi/rate-limiter';
 
 export const HUB_SSE_PATH = '/api/v1/events/stream';
+export const HUB_SNAPSHOT_PATH = '/api/v1/events/snapshot';
 /** Server announces `retry: 3000` on connect; floor until it does. */
 export const HUB_DEFAULT_RETRY_MS = 3_000;
 export const HUB_RECONNECT_CAP_MS = 30_000;
@@ -143,6 +151,7 @@ export type HubSseFetch = (
 ) => Promise<{
   status: number;
   body: HubSseBody | null;
+  json?: () => Promise<unknown>;
 }>;
 
 export interface HubSyncOptions {
@@ -155,6 +164,11 @@ export interface HubSyncOptions {
   sleep?: SleepFn;
   /** Awaited before the frame's id is persisted (handle-then-checkpoint). */
   onEvent: (event: SyncEvent) => void | Promise<void>;
+  /** Local OFAPI accounts this client is allowed to apply. Omit only in isolated tests. */
+  accountIds?: readonly string[];
+  /** Idempotently applies one validated snapshot page before its cursor is persisted. */
+  onSnapshot?: (snapshot: SyncSnapshotResponse) => void | Promise<void>;
+  onSnapshotRequired?: (requirement: SyncSnapshotRequired) => void;
   onStatusChange?: (status: HubSyncStatus) => void;
   /** Diagnostics sink for connection trouble (degraded / auth-failed); no-op by default. */
   onWarn?: (message: string, fields?: Record<string, unknown>) => void;
@@ -170,7 +184,12 @@ export interface HubSync {
   droppedFrameCount(): number;
 }
 
-type ConnectionOutcome = 'clean-close' | 'error' | 'auth' | 'stopped';
+type ConnectionOutcome =
+  | { kind: 'clean-close' }
+  | { kind: 'error' }
+  | { kind: 'auth' }
+  | { kind: 'stopped' }
+  | { kind: 'snapshot'; requirement: SyncSnapshotRequired };
 
 export function createHubSync(options: HubSyncOptions): HubSync {
   const baseUrl = options.baseUrl.trim().replace(/\/+$/, '');
@@ -186,6 +205,9 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   /** Consecutive failed connections since the last byte received. */
   let failures = 0;
   let retryFloorMs = HUB_DEFAULT_RETRY_MS;
+  const allowedAccountIds = options.accountIds === undefined
+    ? null
+    : new Set(options.accountIds);
 
   function setStatus(next: HubSyncStatus): void {
     if (status !== next) {
@@ -219,10 +241,95 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       dropped += 1;
       return;
     }
+    if (allowedAccountIds !== null && !allowedAccountIds.has(event.accountId)) {
+      dropped += 1;
+      return;
+    }
     await options.onEvent(event);
     // Checkpoint AFTER handling so a crash mid-handle replays, never skips.
     if (frame.id !== null && /^\d+$/.test(frame.id)) {
       options.setLastEventId(Number(frame.id));
+    }
+  }
+
+  async function recoverSnapshots(requirement: SyncSnapshotRequired): Promise<void> {
+    if (allowedAccountIds === null || options.onSnapshot === undefined) {
+      throw new Error('hub snapshot recovery is not configured');
+    }
+    let snapshotCursor: number | null = null;
+    for (const accountId of allowedAccountIds) {
+      let pageCursor = 0;
+      for (;;) {
+        if (!running) {
+          throw new Error('hub snapshot recovery stopped');
+        }
+        const url = new URL(`${baseUrl}${HUB_SNAPSHOT_PATH}`);
+        url.searchParams.set('accountId', accountId);
+        url.searchParams.set('afterSeq', String(requirement.requestedSeq));
+        url.searchParams.set('pageCursor', String(pageCursor));
+        url.searchParams.set('limit', '50');
+        if (snapshotCursor !== null) {
+          url.searchParams.set('snapshotCursor', String(snapshotCursor));
+        }
+        const snapshotAbort = new AbortController();
+        abort = snapshotAbort;
+        let response: Awaited<ReturnType<HubSseFetch>>;
+        try {
+          response = await fetchImpl(url.toString(), {
+            method: 'GET',
+            headers: {
+              authorization: `Bearer ${apiKey}`,
+              accept: 'application/json',
+            },
+            signal: snapshotAbort.signal,
+          });
+        } finally {
+          if (abort === snapshotAbort) {
+            abort = null;
+          }
+        }
+        if (response.status === 404) {
+          options.onWarn?.('hub snapshot account not assigned; polling remains authoritative', {
+            accountId,
+          });
+          break;
+        }
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(`hub snapshot authorization failed (${response.status})`);
+        }
+        if (response.status !== 200 || response.json === undefined) {
+          throw new Error(`hub snapshot request failed (${response.status})`);
+        }
+        const parsed = syncSnapshotResponseSchema.safeParse(await response.json());
+        if (!parsed.success) {
+          throw new Error('hub snapshot response failed validation');
+        }
+        const snapshot = parsed.data;
+        if (
+          snapshot.page.accountId !== accountId
+          || snapshot.requestedAfterSeq !== requirement.requestedSeq
+        ) {
+          throw new Error('hub snapshot response scope mismatch');
+        }
+        snapshotCursor ??= snapshot.snapshotCursor;
+        if (snapshot.snapshotCursor !== snapshotCursor) {
+          throw new Error('hub snapshot cursor changed during recovery');
+        }
+        if (!snapshot.resumeAllowed) {
+          throw new Error('hub snapshot is partial; cursor advancement refused');
+        }
+        if (!running) {
+          throw new Error('hub snapshot recovery stopped');
+        }
+        await options.onSnapshot(snapshot);
+        if (snapshot.nextPageCursor === null) {
+          break;
+        }
+        pageCursor = snapshot.nextPageCursor;
+      }
+    }
+    if (running) {
+      options.setLastEventId(snapshotCursor ?? requirement.currentSeq);
     }
   }
 
@@ -248,10 +355,18 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         signal,
       });
       if (response.status === 401 || response.status === 403) {
-        return 'auth';
+        return { kind: 'auth' };
+      }
+      if (response.status === 409 && response.json !== undefined) {
+        const parsed = syncSnapshotRequiredSchema.safeParse(await response.json());
+        if (parsed.success) {
+          options.onSnapshotRequired?.(parsed.data);
+          return { kind: 'snapshot', requirement: parsed.data };
+        }
+        return { kind: 'error' };
       }
       if (response.status !== 200 || response.body === null) {
-        return 'error';
+        return { kind: 'error' };
       }
 
       const parser = new SseFrameParser();
@@ -267,7 +382,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         while (true) {
           const { done, value } = await reader.read();
           if (signal.aborted) {
-            return running ? 'error' : 'stopped'; // watchdog kill vs stop()
+            return running ? { kind: 'error' } : { kind: 'stopped' }; // watchdog vs stop()
           }
           if (done) {
             break;
@@ -292,9 +407,9 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       // Stream ended without error: the 15-min server lifetime close (normal)
       // — but only when it actually carried bytes; an instant empty close is
       // a misbehaving endpoint and takes the backoff path.
-      return receivedBytes ? 'clean-close' : 'error';
+      return receivedBytes ? { kind: 'clean-close' } : { kind: 'error' };
     } catch {
-      return running ? 'error' : 'stopped';
+      return running ? { kind: 'error' } : { kind: 'stopped' };
     } finally {
       if (watchdog) {
         clearTimeout(watchdog);
@@ -309,19 +424,36 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         setStatus('connecting');
       }
       const outcome = await connectOnce();
-      if (!running || outcome === 'stopped') {
+      if (!running || outcome.kind === 'stopped') {
         break;
       }
-      if (outcome === 'auth') {
+      if (outcome.kind === 'auth') {
         setStatus('auth-failed');
         running = false;
         break;
       }
-      if (outcome === 'clean-close') {
+      if (outcome.kind === 'clean-close') {
         // Silent reconnect+resume; status stays 'live' so polling never churns
         // through a restore/demote cycle every 15 minutes.
         await sleep(retryFloorMs);
         continue;
+      }
+      if (outcome.kind === 'snapshot') {
+        setStatus('degraded');
+        options.onWarn?.('hub replay gap detected; applying snapshot', {
+          requestedSeq: outcome.requirement.requestedSeq,
+          oldestAvailableSeq: outcome.requirement.oldestAvailableSeq,
+          currentSeq: outcome.requirement.currentSeq,
+        });
+        try {
+          await recoverSnapshots(outcome.requirement);
+          failures = 0;
+          continue;
+        } catch (error) {
+          options.onWarn?.('hub snapshot recovery failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
       setStatus('degraded');
       const delayMs = Math.min(HUB_RECONNECT_CAP_MS, retryFloorMs * 2 ** failures);

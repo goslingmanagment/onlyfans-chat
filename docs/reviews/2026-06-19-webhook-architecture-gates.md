@@ -205,6 +205,14 @@ Minimum tests before implementing C5:
   source timestamp;
 - malformed or unauthorized events are dropped without advancing `lastAppliedSeq`.
 
+**Implemented/validated 2026-06-19:** core `0f7eec7` and the paired desktop C5 change satisfy this
+gate. Core integration tests cover retained replay, stale-cursor `409`, page ACLs, pagination,
+disabled-projection refusal, and unresolved tombstones. Desktop tests cover full paginated apply
+before checkpoint, reconnect from the snapshot cursor, local-account authorization, malformed
+frame drops, idempotent message apply, and terminal tombstone preservation. Production api/worker
+run revision `0f7eec76836b`; authorized snapshots completed for both assigned accounts with one
+cursor per pagination walk and `resumeAllowed=true`.
+
 ## Gate 5: Command Outbox and Write Semantics
 
 Desktop's local outbox remains the product send-state model until core owns the command path. Moving

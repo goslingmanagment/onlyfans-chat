@@ -6,7 +6,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseSyncEvent } from '@chatgoose/shared/protocol/index';
-import type { NormalizedSyncMessage, SyncEvent } from '@chatgoose/shared/protocol/index';
+import type {
+  NormalizedSyncMessage,
+  SyncEvent,
+  SyncSnapshotResponse,
+} from '@chatgoose/shared/protocol/index';
 import {
   createHubSync,
   SseFrameParser,
@@ -19,6 +23,7 @@ import {
 import { createHubAwareSync, type HubFactoryCallbacks } from '../../src/main/sync/hub-provider';
 import type { HubSync } from '../../src/main/sync/hub-sync';
 import type { SyncProvider } from '../../src/main/sync/provider';
+import { mapHubMessage } from '../../src/main/sync/mappers';
 import { createDataLayer, type DataLayer } from '../../src/main/db/index';
 import type { MessageUpsert } from '../../src/main/db/index';
 
@@ -162,7 +167,7 @@ interface FetchCall {
 }
 
 function makeHarness(
-  responses: Array<{ status: number; stream: FakeStream | null }>,
+  responses: Array<{ status: number; stream: FakeStream | null; json?: unknown }>,
 ): { fetchImpl: HubSseFetch; calls: FetchCall[] } {
   const calls: FetchCall[] = [];
   const fetchImpl: HubSseFetch = (url, init) => {
@@ -171,7 +176,11 @@ function makeHarness(
     if (!next) {
       throw new Error('no scripted response');
     }
-    return Promise.resolve({ status: next.status, body: next.stream?.body ?? null });
+    return Promise.resolve({
+      status: next.status,
+      body: next.stream?.body ?? null,
+      ...(next.json === undefined ? {} : { json: () => Promise.resolve(next.json) }),
+    });
   };
   return { fetchImpl, calls };
 }
@@ -211,7 +220,7 @@ describe('createHubSync', () => {
   }
 
   function makeSync(
-    responses: Array<{ status: number; stream: FakeStream | null }>,
+    responses: Array<{ status: number; stream: FakeStream | null; json?: unknown }>,
     options: { initialLastEventId?: number | null; onEventDelay?: boolean } = {},
   ): SyncHarness {
     const { fetchImpl, calls } = makeHarness(responses);
@@ -232,6 +241,13 @@ describe('createHubSync', () => {
           await Promise.resolve(); // async handling must still precede persist
         }
         log.push(`event:${event.type}`);
+      },
+      accountIds: [ACCT],
+      onSnapshot: (snapshot) => {
+        log.push(`snapshot:${snapshot.page.accountId}:${snapshot.nextPageCursor ?? 'done'}`);
+      },
+      onSnapshotRequired: (requirement) => {
+        log.push(`gap:${requirement.requestedSeq}`);
       },
       onStatusChange: (status) => statuses.push(status),
       getLastEventId: () => lastEventId,
@@ -299,6 +315,154 @@ describe('createHubSync', () => {
     await drainMicrotasks();
     expect(h.calls[0]?.url).toBe('https://hub.test/api/v1/events/stream?lastEventId=612');
     h.sync.stop();
+  });
+
+  it('409 replay gap applies every snapshot page before checkpointing and reconnecting', async () => {
+    const resumed = makeStream();
+    const requirement = {
+      error: 'sync_snapshot_required',
+      message: 'cursor expired',
+      statusCode: 409,
+      version: 1,
+      requestedSeq: 7,
+      oldestAvailableSeq: 12,
+      currentSeq: 20,
+      snapshotPath: '/api/v1/events/snapshot',
+    };
+    const snapshot = (nextPageCursor: number | null): SyncSnapshotResponse => ({
+      version: 1,
+      requestedAfterSeq: 7,
+      snapshotCursor: 22,
+      stateAt: '2026-06-19T18:00:00.000Z',
+      resumeAllowed: true,
+      page: {
+        pageId: 1,
+        label: 'lora-of',
+        accountId: ACCT,
+        username: 'lora',
+        authStatus: 'connected',
+        authenticated: true,
+        authChangedAt: '2026-06-19T17:00:00.000Z',
+      },
+      coverage: {
+        durableDomains: ['chat_heads', 'hot_messages', 'message_tombstones', 'account_auth'],
+        omittedDomains: [
+          { domain: 'presence', reason: 'ephemeral_not_snapshotted' },
+          { domain: 'typing', reason: 'ephemeral_not_snapshotted' },
+        ],
+        messageWindow: 'hot_projection_plus_archive_delta',
+      },
+      threads: [],
+      unresolvedTombstones: [],
+      nextPageCursor,
+    });
+    const h = makeSync(
+      [
+        { status: 409, stream: null, json: requirement },
+        { status: 200, stream: null, json: snapshot(5) },
+        { status: 200, stream: null, json: snapshot(null) },
+        { status: 200, stream: resumed },
+      ],
+      { initialLastEventId: 7 },
+    );
+
+    h.sync.start();
+    await drainMicrotasks();
+
+    expect(h.calls.map((call) => call.url)).toEqual([
+      'https://hub.test/api/v1/events/stream?lastEventId=7',
+      'https://hub.test/api/v1/events/snapshot?accountId=acct_hub_test&afterSeq=7&pageCursor=0&limit=50',
+      'https://hub.test/api/v1/events/snapshot?accountId=acct_hub_test&afterSeq=7&pageCursor=5&limit=50&snapshotCursor=22',
+      'https://hub.test/api/v1/events/stream?lastEventId=22',
+    ]);
+    expect(h.log).toEqual([
+      'gap:7',
+      `snapshot:${ACCT}:5`,
+      `snapshot:${ACCT}:done`,
+      'persist:22',
+    ]);
+    expect(h.statuses).toEqual(['connecting', 'degraded', 'connecting']);
+
+    resumed.send(syncFrame(23, TYPING_DATA('9')));
+    await drainMicrotasks();
+    expect(h.log.at(-2)).toBe('event:typing');
+    expect(h.log.at(-1)).toBe('persist:23');
+    expect(h.sync.status()).toBe('live');
+    h.sync.stop();
+  });
+
+  it('refuses to checkpoint a partial snapshot', async () => {
+    let call = 0;
+    let lastEventId = 7;
+    const sync = createHubSync({
+      baseUrl: 'https://hub.test',
+      apiKey: 'k',
+      accountIds: [ACCT],
+      fetchImpl: () => {
+        call += 1;
+        if (call === 1) {
+          return Promise.resolve({
+            status: 409,
+            body: null,
+            json: () => Promise.resolve({
+              error: 'sync_snapshot_required',
+              message: 'cursor expired',
+              statusCode: 409,
+              version: 1,
+              requestedSeq: 7,
+              oldestAvailableSeq: 12,
+              currentSeq: 20,
+              snapshotPath: '/api/v1/events/snapshot',
+            }),
+          });
+        }
+        return Promise.resolve({
+          status: 200,
+          body: null,
+          json: () => Promise.resolve({
+            version: 1,
+            requestedAfterSeq: 7,
+            snapshotCursor: 20,
+            stateAt: '2026-06-19T18:00:00.000Z',
+            resumeAllowed: false,
+            page: {
+              pageId: 1,
+              label: 'lora-of',
+              accountId: ACCT,
+              username: null,
+              authStatus: null,
+              authenticated: null,
+              authChangedAt: null,
+            },
+            coverage: {
+              durableDomains: ['account_auth'],
+              omittedDomains: [
+                { domain: 'message_tombstones', reason: 'dm_cold_archive_disabled' },
+              ],
+              messageWindow: 'hot_projection_plus_archive_delta',
+            },
+            threads: [],
+            unresolvedTombstones: [],
+            nextPageCursor: null,
+          }),
+        });
+      },
+      sleep: () => new Promise(() => undefined),
+      onEvent: () => undefined,
+      onSnapshot: () => undefined,
+      getLastEventId: () => lastEventId,
+      setLastEventId: (id) => {
+        lastEventId = id;
+      },
+    });
+
+    sync.start();
+    await drainMicrotasks();
+
+    expect(call).toBe(2);
+    expect(lastEventId).toBe(7);
+    expect(sync.status()).toBe('degraded');
+    sync.stop();
   });
 
   it('watchdog: >45 s without any bytes kills the connection and reconnects degraded', async () => {
@@ -424,6 +588,26 @@ describe('createHubSync', () => {
     expect(h.log).toEqual(['event:typing', 'persist:4']); // invalid ids never persisted
     expect(h.sync.status()).toBe('live');
     expect(h.calls).toHaveLength(1); // stream survived
+    h.sync.stop();
+  });
+
+  it('drops an event outside the local account set without advancing the cursor', async () => {
+    const stream = makeStream();
+    const h = makeSync([{ status: 200, stream }]);
+    h.sync.start();
+    await drainMicrotasks();
+
+    stream.send(
+      syncFrame(
+        1,
+        JSON.stringify({ type: 'typing', accountId: 'acct_not_local', chatId: '9' }),
+      ),
+    );
+    stream.send(syncFrame(2, TYPING_DATA('9')));
+    await drainMicrotasks();
+
+    expect(h.sync.droppedFrameCount()).toBe(1);
+    expect(h.log).toEqual(['event:typing', 'persist:2']);
     h.sync.stop();
   });
 
@@ -738,6 +922,155 @@ describe('createHubAwareSync (provider composition)', () => {
       droppedEventsToday: 0,
       lastFallbackReason: null,
     });
+    provider.stop();
+  });
+
+  it('snapshot apply is idempotent, preserves local tombstones, and applies unresolved deletes', async () => {
+    const { provider, polling, callbacks, events } = build();
+    polling.ingestHubMessage = (accountId, chatId, message) => {
+      const mapped = mapHubMessage(accountId, chatId, message);
+      if (mapped === null) {
+        return Promise.resolve(false);
+      }
+      polling.ingestCalls.push({ accountId, chatId, messageId: message.id });
+      data.messages.upsertMany([mapped]);
+      return Promise.resolve(true);
+    };
+    data.chats.upsert({
+      accountId: ACCT,
+      chatId: '101',
+      fanName: 'Existing fan',
+      avatar: null,
+      unreadCount: 9,
+      hasUnreadTips: true,
+      lastMessageAt: '2026-06-19T17:00:00.000Z',
+      lastMessagePreview: 'old',
+      lastMessageIsSentByMe: false,
+      lastMessageId: 'old',
+      lastReadMessageId: null,
+      pinned: false,
+      canSendMessage: true,
+      canNotSendReason: null,
+      raw: {},
+    });
+    seedMessage('tombstoned', '101');
+    data.messages.markDeleted(ACCT, '101', ['tombstoned']);
+    seedMessage('delete-by-lookup', '101');
+    seedMessage('corrected', '101');
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onSnapshotRequired({
+      requestedSeq: 5,
+      oldestAvailableSeq: 10,
+      currentSeq: 20,
+    });
+
+    const snapshot: SyncSnapshotResponse = {
+      version: 1,
+      requestedAfterSeq: 5,
+      snapshotCursor: 20,
+      stateAt: '2026-06-19T18:00:00.000Z',
+      resumeAllowed: true,
+      page: {
+        pageId: 1,
+        label: 'lora-of',
+        accountId: ACCT,
+        username: 'lora',
+        authStatus: 'connected',
+        authenticated: true,
+        authChangedAt: '2026-06-19T17:59:00.000Z',
+      },
+      coverage: {
+        durableDomains: ['chat_heads', 'hot_messages', 'message_tombstones', 'account_auth'],
+        omittedDomains: [
+          { domain: 'presence', reason: 'ephemeral_not_snapshotted' },
+          { domain: 'typing', reason: 'ephemeral_not_snapshotted' },
+        ],
+        messageWindow: 'hot_projection_plus_archive_delta',
+      },
+      threads: [
+        {
+          chatId: '101',
+          fanName: 'Snapshot fan',
+          unreadCount: 2,
+          lastMessageId: 'new',
+          lastMessageAt: '2026-06-19T18:00:00.000Z',
+          lastMessageIsSentByMe: false,
+          lastMessagePreview: 'new body',
+          visible: true,
+          sourceUpdatedAt: '2026-06-19T18:00:01.000Z',
+          messages: [
+            {
+              chatId: '101',
+              messageId: 'new',
+              message: hubMessage({
+                id: 'new',
+                text: '<p>new body</p>',
+                createdAt: '2026-06-19T18:00:00.000Z',
+              }),
+              deletedAt: null,
+              sourceUpdatedAt: '2026-06-19T18:00:01.000Z',
+              sourceFanoutSeq: 19,
+            },
+            {
+              chatId: '101',
+              messageId: 'tombstoned',
+              message: hubMessage({
+                id: 'tombstoned',
+                text: '<p>must not resurrect</p>',
+              }),
+              deletedAt: null,
+              sourceUpdatedAt: '2026-06-19T18:00:01.000Z',
+              sourceFanoutSeq: 18,
+            },
+            {
+              chatId: '101',
+              messageId: 'corrected',
+              message: hubMessage({
+                id: 'corrected',
+                text: '<p>snapshot must not overwrite local body</p>',
+                isOpened: true,
+                isTip: true,
+                tipAmountUsd: 5,
+              }),
+              deletedAt: null,
+              sourceUpdatedAt: '2026-06-19T18:00:01.000Z',
+              sourceFanoutSeq: 18,
+            },
+          ],
+        },
+      ],
+      unresolvedTombstones: [
+        {
+          messageId: 'delete-by-lookup',
+          deletedAt: '2026-06-19T18:00:02.000Z',
+          sourceUpdatedAt: '2026-06-19T18:00:02.000Z',
+          sourceFanoutSeq: 20,
+        },
+      ],
+      nextPageCursor: null,
+    };
+
+    await callbacks().onSnapshot(snapshot);
+    await callbacks().onSnapshot(snapshot);
+
+    expect(data.messages.get(ACCT, '101', 'new')?.textPlain).toBe('new body');
+    expect(data.messages.get(ACCT, '101', 'tombstoned')?.deleted).toBe(true);
+    expect(data.messages.get(ACCT, '101', 'delete-by-lookup')?.deleted).toBe(true);
+    expect(data.messages.get(ACCT, '101', 'corrected')).toMatchObject({
+      textPlain: 'hi',
+      isOpened: true,
+      isTip: true,
+      tipAmount: 5,
+    });
+    expect(data.chats.get(ACCT, '101')).toMatchObject({
+      unreadCount: 2,
+      lastMessageId: 'new',
+      lastMessagePreview: 'new body',
+    });
+    expect(events.filter((event) => event.type === 'chatListUpdated')).toHaveLength(2);
+    expect(provider.hubActivity().lastFallbackReason).toBe('hub-replay-gap-snapshot');
     provider.stop();
   });
 

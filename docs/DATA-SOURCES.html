@@ -297,7 +297,7 @@
     <div class="src s-hub">
       <span class="tag">Хаб ядра · SSE</span>
       <h3>Бэкенд «ядра» / ChatMuse</h3>
-      <p>Наш собственный сервер (репозиторий <code>core</code>). Шлёт поток событий: messageReceived/messageSent могут содержать безопасно нормализованное тело сообщения и тогда пишутся в SQLite без <code>GET /messages</code>; id-only и notification-события остаются совместимыми fallback-кадрами. По умолчанию <b>выключен</b> — тогда работает поллинг.</p>
+      <p>Наш собственный сервер (репозиторий <code>core</code>). Шлёт поток событий: messageReceived/messageSent могут содержать безопасно нормализованное тело сообщения и тогда пишутся в SQLite без <code>GET /messages</code>; id-only и notification-события остаются совместимыми fallback-кадрами. Если сохранённый SSE-курсор старше журнала, core явно отвечает <code>409</code>, desktop временно возвращает polling, применяет chatter-scoped snapshot (chat heads, hot messages, tombstones, account auth), сохраняет snapshot-cursor только после полного применения и продолжает SSE-tail. По умолчанию hub <b>выключен</b> — тогда работает поллинг.</p>
       <span class="where">main/hub/* · main/sync/hub-*</span>
     </div>
 
@@ -374,7 +374,7 @@
     </div>
 
     <div class="flow-note">
-      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра (SSE): push-first live-канал; enriched message-кадры пишутся в БД без OFAPI, id-only/notification-кадры запускают безопасную REST-проверку. По умолчанию выключен.</span>
+      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра (SSE): push-first live-канал; enriched message-кадры пишутся в БД без OFAPI, id-only/notification-кадры запускают безопасную REST-проверку, а replay-gap лечится core snapshot + tail. По умолчанию выключен.</span>
       <span class="b ai" data-k="сбоку → экран">ИИ-провайдеры: тексты ответов/коучинга идут <b>прямо в ИИ-док</b>, минуя БД (кроме саммари — оно кэшируется).</span>
       <span class="b live" data-k="в обход кэша">Волт и галерея: <b>единственная</b> поверхность, что ходит в OFAPI <b>вживую на каждый показ</b> (1 кредит/вызов), без слоя БД.</span>
     </div>
@@ -431,7 +431,7 @@
           <span class="chip c-derived">вычисляется</span>
           <span class="chip c-hub">хаб: сообщения/typing/присутствие</span>
         </div>
-        <p>Каждый пузырь (текст, статус PPV/<code>isOpened</code>, медиа, типсы, тумбстоны) — из кэшированной таблицы <code>messages</code>. PPV-чип и статус отправки выводятся производно. В hub-live входящие/исходящие message-кадры с нормализованным телом попадают сюда пушем без фонового <code>GET /messages</code>; id-only/notification-кадры и read-state остаются REST-проверкой. «Печатает…» и присутствие приходят пушем по хаб-SSE с коротким TTL (last-seen в шапке — кэш).</p>
+        <p>Каждый пузырь (текст, статус PPV/<code>isOpened</code>, медиа, типсы, тумбстоны) — из кэшированной таблицы <code>messages</code>. PPV-чип и статус отправки выводятся производно. В hub-live входящие/исходящие message-кадры с нормализованным телом попадают сюда пушем без фонового <code>GET /messages</code>; id-only/notification-кадры и read-state остаются REST-проверкой. После replay-gap текущие hot-сообщения и delete-tombstones восстанавливаются из core snapshot без исторического bulk <code>GET /messages</code>. «Печатает…» и присутствие приходят пушем по хаб-SSE с коротким TTL и намеренно не входят в snapshot.</p>
       </div>
     </div>
 

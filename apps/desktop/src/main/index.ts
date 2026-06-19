@@ -399,7 +399,10 @@ async function initOfapi(
     hubModeOverride: () => settingsCache?.hubModeOverride ?? 'auto',
     // Resolved per (re)connect attempt so settings edits take effect on
     // reconfigureHub without re-running OFAPI init. Null = hub mode off.
-    createHub: async ({ onEvent, onStatusChange }) => {
+    createHub: async (
+      { onEvent, onStatusChange, onSnapshot, onSnapshotRequired },
+      accountIds,
+    ) => {
       const vm = await settingsStore.get();
       const hubKey = await keychain.getSecret('hubApiKey');
       if (vm.hubBaseUrl === null || hubKey === null || hubKey.length === 0) {
@@ -408,7 +411,10 @@ async function initOfapi(
       return createHubSync({
         baseUrl: vm.hubBaseUrl,
         apiKey: hubKey,
+        accountIds,
         onEvent,
+        onSnapshot,
+        onSnapshotRequired,
         onStatusChange,
         onWarn: (message, fields) => logger?.warn('hub-sse', message, fields),
         // Resume checkpoint is global per chatter key (core fanout_seq).

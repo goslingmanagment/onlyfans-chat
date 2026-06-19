@@ -319,6 +319,82 @@ export const syncEventSchema = z.discriminatedUnion('type', [
 ]);
 export type SyncEvent = z.infer<typeof syncEventSchema>;
 
+export const syncSnapshotRequiredSchema = z.object({
+  error: z.literal('sync_snapshot_required'),
+  message: z.string(),
+  statusCode: z.literal(409),
+  version: z.literal(1),
+  requestedSeq: z.number().int().nonnegative(),
+  oldestAvailableSeq: z.number().int().nonnegative().nullable(),
+  currentSeq: z.number().int().nonnegative(),
+  snapshotPath: z.literal('/api/v1/events/snapshot'),
+});
+export type SyncSnapshotRequired = z.infer<typeof syncSnapshotRequiredSchema>;
+
+const syncSnapshotTimestampSchema = z.string().refine(
+  (value) => Number.isFinite(Date.parse(value)),
+  'Expected an ISO timestamp',
+);
+
+export const syncSnapshotMessageSchema = z.object({
+  chatId: idSchema,
+  messageId: idSchema,
+  message: normalizedSyncMessageSchema.nullable(),
+  deletedAt: syncSnapshotTimestampSchema.nullable(),
+  sourceUpdatedAt: syncSnapshotTimestampSchema,
+  sourceFanoutSeq: z.number().int().nonnegative().nullable(),
+});
+export type SyncSnapshotMessage = z.infer<typeof syncSnapshotMessageSchema>;
+
+export const syncSnapshotThreadSchema = z.object({
+  chatId: idSchema,
+  fanName: z.string(),
+  unreadCount: z.number().int().nonnegative(),
+  lastMessageId: idSchema.nullable(),
+  lastMessageAt: syncSnapshotTimestampSchema.nullable(),
+  lastMessageIsSentByMe: z.boolean(),
+  lastMessagePreview: z.string(),
+  visible: z.boolean(),
+  sourceUpdatedAt: syncSnapshotTimestampSchema,
+  messages: z.array(syncSnapshotMessageSchema),
+});
+export type SyncSnapshotThread = z.infer<typeof syncSnapshotThreadSchema>;
+
+export const syncSnapshotResponseSchema = z.object({
+  version: z.literal(1),
+  requestedAfterSeq: z.number().int().nonnegative(),
+  snapshotCursor: z.number().int().nonnegative(),
+  stateAt: syncSnapshotTimestampSchema,
+  resumeAllowed: z.boolean(),
+  page: z.object({
+    pageId: z.number().int().positive(),
+    label: z.string(),
+    accountId: idSchema,
+    username: z.string().nullable(),
+    authStatus: z.string().nullable(),
+    authenticated: z.boolean().nullable(),
+    authChangedAt: syncSnapshotTimestampSchema.nullable(),
+  }),
+  coverage: z.object({
+    durableDomains: z.array(
+      z.enum(['chat_heads', 'hot_messages', 'message_tombstones', 'account_auth']),
+    ),
+    omittedDomains: z.array(z.object({ domain: z.string(), reason: z.string() })),
+    messageWindow: z.literal('hot_projection_plus_archive_delta'),
+  }),
+  threads: z.array(syncSnapshotThreadSchema),
+  unresolvedTombstones: z.array(
+    z.object({
+      messageId: idSchema,
+      deletedAt: syncSnapshotTimestampSchema,
+      sourceUpdatedAt: syncSnapshotTimestampSchema,
+      sourceFanoutSeq: z.number().int().nonnegative(),
+    }),
+  ),
+  nextPageCursor: z.number().int().nonnegative().nullable(),
+});
+export type SyncSnapshotResponse = z.infer<typeof syncSnapshotResponseSchema>;
+
 // ─── Boundary parse helpers (null = reject, mirroring legacy guards) ────
 
 export function parseOperationCommand(value: unknown): OperationCommand | null {

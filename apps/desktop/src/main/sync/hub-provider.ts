@@ -8,7 +8,12 @@
 
 import { z } from 'zod';
 import type { HubModeOverrideSetting } from '@chatgoose/shared/hub/mode';
-import type { NormalizedSyncMessage, SyncEvent } from '@chatgoose/shared/protocol/index';
+import type {
+  NormalizedSyncMessage,
+  SyncEvent,
+  SyncSnapshotResponse,
+  SyncSnapshotThread,
+} from '@chatgoose/shared/protocol/index';
 import type { DataLayer } from '../db/index';
 import type { HubSync, HubSyncStatus } from './hub-sync';
 import type { SyncListener, SyncProvider, SyncStatusSnapshot } from './provider';
@@ -20,6 +25,7 @@ export type HubFallbackReason =
   | 'hub-malformed-message-fallback'
   | 'hub-notification-fallback'
   | 'hub-ingest-error-fallback'
+  | 'hub-replay-gap-snapshot'
   | 'unknown-delete-head-refresh';
 
 type PollingLike = SyncProvider & {
@@ -36,13 +42,22 @@ type PollingLike = SyncProvider & {
 export interface HubFactoryCallbacks {
   onEvent: (event: SyncEvent) => Promise<void>;
   onStatusChange: (status: HubSyncStatus) => void;
+  onSnapshot: (snapshot: SyncSnapshotResponse) => Promise<void>;
+  onSnapshotRequired: (input: {
+    requestedSeq: number;
+    oldestAvailableSeq: number | null;
+    currentSeq: number;
+  }) => void;
 }
 
 export interface HubAwareSyncOptions {
   polling: PollingLike;
   data: DataLayer;
   /** Resolves null when hub settings (base URL + chatter key) are absent. */
-  createHub: (callbacks: HubFactoryCallbacks) => Promise<HubSync | null>;
+  createHub: (
+    callbacks: HubFactoryCallbacks,
+    accountIds: readonly string[],
+  ) => Promise<HubSync | null>;
   /** Dev/support-only D3 override. Auto keeps production behavior. */
   hubModeOverride?: () => HubModeOverrideSetting;
   now?: () => number;
@@ -93,6 +108,7 @@ const eventStatsSchema = z.object({
       'hub-malformed-message-fallback',
       'hub-notification-fallback',
       'hub-ingest-error-fallback',
+      'hub-replay-gap-snapshot',
       'unknown-delete-head-refresh',
     ])
     .nullable()
@@ -126,6 +142,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   let hubGeneration = 0;
   let liveSinceMs: number | null = null;
   let statusChangedAtMs: number | null = null;
+  let handledAccountIds: readonly string[] = [];
 
   function utcDayOf(epochMs: number): string {
     return new Date(epochMs).toISOString().slice(0, 10);
@@ -234,6 +251,136 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       return row.chat_id;
     }
     return null;
+  }
+
+  function snapshotHeadIsCurrent(thread: SyncSnapshotThread, existingAt: string | null): boolean {
+    if (thread.lastMessageAt === null) {
+      return existingAt === null;
+    }
+    if (existingAt === null) {
+      return true;
+    }
+    return Date.parse(thread.lastMessageAt) >= Date.parse(existingAt);
+  }
+
+  function upsertSnapshotThread(accountId: string, thread: SyncSnapshotThread): void {
+    const existing = data.chats.get(accountId, thread.chatId);
+    if (!thread.visible && existing === null) {
+      return;
+    }
+    const useSnapshotHead = snapshotHeadIsCurrent(thread, existing?.lastMessageAt ?? null);
+    data.chats.upsert({
+      accountId,
+      chatId: thread.chatId,
+      fanName: existing?.fanName ?? thread.fanName,
+      avatar: existing?.avatar ?? null,
+      unreadCount: useSnapshotHead ? thread.unreadCount : (existing?.unreadCount ?? 0),
+      hasUnreadTips: useSnapshotHead && thread.unreadCount === 0
+        ? false
+        : (existing?.hasUnreadTips ?? false),
+      lastMessageAt: useSnapshotHead ? thread.lastMessageAt : (existing?.lastMessageAt ?? null),
+      lastMessagePreview: useSnapshotHead
+        ? thread.lastMessagePreview
+        : (existing?.lastMessagePreview ?? ''),
+      lastMessageIsSentByMe: useSnapshotHead
+        ? thread.lastMessageIsSentByMe
+        : (existing?.lastMessageIsSentByMe ?? false),
+      lastMessageId: useSnapshotHead
+        ? thread.lastMessageId
+        : (existing?.lastMessageId ?? null),
+      lastReadMessageId: existing?.lastReadMessageId ?? null,
+      pinned: existing?.pinned ?? false,
+      canSendMessage: existing?.canSendMessage ?? true,
+      canNotSendReason: existing?.canNotSendReason ?? null,
+      raw: {
+        source: 'hub-snapshot',
+        sourceUpdatedAt: thread.sourceUpdatedAt,
+        visible: thread.visible,
+      },
+    });
+  }
+
+  async function applyHubSnapshot(snapshot: SyncSnapshotResponse): Promise<void> {
+    if (!handledAccountIds.includes(snapshot.page.accountId)) {
+      throw new Error(`Snapshot account ${snapshot.page.accountId} is not handled locally`);
+    }
+    if (snapshot.page.authenticated !== null) {
+      data.accounts.setAuthState(
+        snapshot.page.accountId,
+        snapshot.page.authenticated ? 'authenticated' : 'unauthenticated',
+      );
+    }
+
+    for (const thread of snapshot.threads) {
+      upsertSnapshotThread(snapshot.page.accountId, thread);
+    }
+    for (const thread of snapshot.threads) {
+      if (!thread.visible && data.chats.get(snapshot.page.accountId, thread.chatId) === null) {
+        continue;
+      }
+      for (const item of thread.messages) {
+        if (
+          item.chatId !== thread.chatId
+          || (item.message !== null && item.message.id !== item.messageId)
+        ) {
+          throw new Error(`Snapshot message scope mismatch for ${item.messageId}`);
+        }
+        const local = data.messages.get(snapshot.page.accountId, thread.chatId, item.messageId);
+        if (item.message !== null && local?.deleted !== true) {
+          if (local) {
+            // Existing bodies may have been corrected by a concurrent explicit
+            // REST read. Preserve them; only merge monotonic webhook facts.
+            data.messages.upsertMany([{
+              ...local,
+              isOpened: local.isOpened === true || item.message.isOpened === true
+                ? true
+                : (local.isOpened ?? item.message.isOpened ?? null),
+              isTip: local.isTip || (item.message.isTip ?? false),
+              tipAmount: Math.max(
+                local.tipAmount ?? 0,
+                item.message.tipAmountUsd ?? 0,
+              ) || null,
+              raw: {
+                source: 'hub-snapshot-merge',
+                sourceUpdatedAt: item.sourceUpdatedAt,
+                sourceFanoutSeq: item.sourceFanoutSeq,
+              },
+            }]);
+          } else {
+            const applied = await polling.ingestHubMessage(
+              snapshot.page.accountId,
+              thread.chatId,
+              item.message,
+            );
+            if (!applied) {
+              throw new Error(`Snapshot message failed local mapping for ${item.messageId}`);
+            }
+          }
+        }
+        if (item.deletedAt !== null) {
+          data.messages.markDeleted(snapshot.page.accountId, thread.chatId, [item.messageId]);
+        }
+      }
+    }
+    for (const tombstone of snapshot.unresolvedTombstones) {
+      const chatId = lookupChatId(snapshot.page.accountId, tombstone.messageId);
+      if (chatId !== null) {
+        data.messages.markDeleted(snapshot.page.accountId, chatId, [tombstone.messageId]);
+      }
+    }
+    // Re-apply authoritative heads after message upserts, which intentionally
+    // use the normal idempotent ingest path and its local chat-head heuristic.
+    for (const thread of snapshot.threads) {
+      upsertSnapshotThread(snapshot.page.accountId, thread);
+    }
+    emit({ type: 'chatListUpdated', accountId: snapshot.page.accountId });
+    onLog('info', 'hub snapshot page applied', {
+      accountId: snapshot.page.accountId,
+      snapshotCursor: snapshot.snapshotCursor,
+      threads: snapshot.threads.length,
+      nextPageCursor: snapshot.nextPageCursor,
+      unresolvedTombstones: snapshot.unresolvedTombstones.length,
+    });
   }
 
   async function handleHubEvent(event: SyncEvent): Promise<void> {
@@ -412,7 +559,17 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       return;
     }
     onLog('info', 'hub configure check started');
-    const next = await createHub({ onEvent: handleHubEvent, onStatusChange: handleHubStatus });
+    const next = await createHub(
+      {
+        onEvent: handleHubEvent,
+        onStatusChange: handleHubStatus,
+        onSnapshot: applyHubSnapshot,
+        onSnapshotRequired: (input) => {
+          recordFallback('hub-replay-gap-snapshot', input);
+        },
+      },
+      handledAccountIds,
+    );
     if (!running || generation !== hubGeneration) {
       next?.stop(); // superseded while resolving settings/keychain
       return;
@@ -458,6 +615,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   return {
     start(accountIds) {
       running = true;
+      handledAccountIds = [...accountIds];
       polling.start(accountIds);
       void startHub();
     },
