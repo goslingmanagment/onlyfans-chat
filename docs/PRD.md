@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Updated 2026-06-11 — implementation code-complete through P5; gates await owner/pilot validation (see [PLAN](PLAN.md)) |
+| Status | Updated 2026-06-19 — implementation code-complete through P5; webhook/SSE, read custody, command outbox default-off, and core AI gateway foundation are documented in [PLAN](PLAN.md) |
 | Product | Standalone desktop chat client for OnlyFans agency chatters, with built-in AI assistance |
 | Predecessor | ChatGoose Firefox extension for Fansly (`/Users/dmitriy/code/chatgoose`, analyzed in [research/legacy-chatgoose.md](research/legacy-chatgoose.md)) |
 | Platform API | onlyfansapi.com (OFAPI) — third-party hosted OnlyFans REST gateway (analyzed in [research/onlyfansapi.md](research/onlyfansapi.md)) |
@@ -56,7 +56,7 @@ OFAPI gives us full programmatic access to connected OnlyFans accounts (read cha
 Two components, introduced in stages (details in [PLAN.md](PLAN.md)):
 
 1. **Desktop app** (this repo, `apps/desktop`) — the chatter's workspace. In early phases it talks to OFAPI directly (polling) and to LLM providers directly, with per-chatter API keys (OFAPI offers no key scopes — custody rules in SPEC §5).
-2. **Agency Hub ("core", `~/code/core`) integration** — the agency's existing production backend (Fastify + Postgres + worker, Docker on a VPS) takes the hub role; we do **not** build a separate relay. Core already serves the legacy ChatGoose API (it calls the product "ChatMuse"): central fan-profile storage with append-only versions, AI-usage ingestion, per-chatter revocable API keys with page scoping — the desktop integrates these from P4. Core then gains the OnlyFans real-time pieces — an OFAPI webhook receiver + SSE event push to desktop clients — on a parallel track targeting desktop P3, and in P6 its planned hub-owned AI gateway (core roadmap Phase 7) with per-chatter limits.
+2. **Agency Hub ("core", `~/code/core`) integration** — the agency's existing production backend (Fastify + Postgres + worker, Docker on a VPS) takes the hub role; we do **not** build a separate relay. Core already serves the legacy ChatGoose API (it calls the product "ChatMuse"): central fan-profile storage with append-only versions, AI-usage ingestion, per-chatter revocable API keys with page scoping — the desktop integrates these from P4. Core now owns the push-first webhook/SSE path, the read-custody gateway, the default-off command outbox/executor foundation, and a default-off AI gateway foundation with owner usage reporting. Desktop still needs HubGateway wiring before local LLM provider keys can be removed.
 
 Rollout: internal pilot on 1 creator account + 1–2 trusted chatters in read+AI mode (sends still via OnlyMonster) → enable sending in-app → expand accounts/chatters → hub phase.
 
@@ -123,10 +123,10 @@ Model support: per-feature model selection + reasoning effort (off/low/medium/hi
 - Clear PPV compose summary before send (N items, price, previews) — misprice prevention.
 
 ### F8. Real-time via Agency Hub (core) [parallel core track, target P3; AI gateway P6]
-- Core gains an OFAPI webhook receiver (`messages.received/sent/deleted`, `messages.ppv.unlocked`, `tips.received`, `transactions.new` (lags ≤3 min), `subscriptions.*`, `users.typing/online/offline`, `accounts.*`): HMAC verify, `event_id` dedupe, journal, fan-out to desktop clients over **SSE** (core decision #25: REST + SSE, no websockets). `messages.deleted` is load-bearing for SPEC §6.3 tombstones.
-- Desktop drops its polling loops in favor of push (polling stays as degraded fallback); read-state (`isNew`) still polled on-demand for the open conversation.
+- Core has an OFAPI webhook receiver (`messages.received/sent/deleted`, `messages.ppv.unlocked`, `tips.received`, `transactions.new` (lags ≤3 min), `subscriptions.*`, `users.typing/online/offline`, `accounts.*`): HMAC verify, idempotency-header dedupe, journal, fan-out to desktop clients over **SSE** (core decision #25: REST + SSE, no websockets). `messages.deleted` is load-bearing for SPEC §6.3 tombstones.
+- Desktop uses push-first sync when hub is live (polling stays as degraded fallback); read-state (`isNew`) still polled on-demand for the open conversation.
 - Desktop authenticates to core with the existing per-chatter API keys (page-scoped, revocable — the central kill-switch already works today).
-- Central storage is live from P4 (fan summaries, AI usage); P6 adds per-chatter LLM token limits via core's hub-owned AI gateway (its roadmap Phase 7) — LLM calls proxy through core (central provider keys, caching, limits); desktop-direct mode remains for solo/dev use.
+- Central storage is live from P4 (fan summaries, AI usage). Core's P6 AI gateway foundation is implemented default-off: streaming route, provider custody boundary, quota reservation, usage/cost ledger fields, stale-reservation recovery, and owner reporting are in core, but production live provider validation and desktop HubGateway wiring are still pending. Desktop-direct mode remains the rollback/solo/dev path until the P6 gate is accepted.
 - OFAPI key custody (desktop holds no OFAPI key, OF calls proxied via core) was a P6 stretch decision — **upgraded to required-before-scale 2026-06-11** (OFAPI keys cannot be scoped; vendor FAQ). Interim mitigation: per-chatter *named* full-access keys, supervised pilot only, instant revocation (SPEC §5).
 
 ### F9. Settings [P1–P2, grows with features]
@@ -196,4 +196,4 @@ OnlyMonster, Infloww, Supercreator et al. offer CRM + AI features. We are not co
 - **P3 gate (sending):** full text shift in-app; zero lost/duplicated sends across ≥500 messages; restricted-words and error paths exercised; AI Insert replaces copy. Real-time target: the parallel core track is live — incoming message → UI ≤2 s p95 via SSE, polling demoted to fallback, credit burn per shift drops ≥5×. (If the track slips, P3 may ship on tightened polling, but the app is not declared the primary surface until SSE lands.)
 - **P4 gate:** Summary/Review/Ping/Hi at behavior parity with legacy (side-by-side prompt-output review); summary caching correct; summaries sync to Agency Hub (core) and are visible to other chatters and in core's dashboard.
 - **P5 gate:** PPV send with vault media + previews + price executes correctly end-to-end (verified in OM/OF).
-- **P6 gate:** per-chatter LLM limits enforced by core's AI gateway; desktop runs without local LLM provider keys in gateway mode; kill-switch (revoke chatter API key in core admin) demonstrated.
+- **P6 gate:** per-chatter LLM limits enforced by core's AI gateway; live provider streaming validated in production; desktop runs without local LLM provider keys in gateway mode; kill-switch (revoke chatter API key in core admin) demonstrated.
