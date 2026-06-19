@@ -115,6 +115,22 @@ Shadow projection plan:
 5. Only after a clean shadow window may desktop D6 reduce `spend-sweep` cadence or make it
    fallback/dev-only.
 
+Production C3 update (2026-06-19):
+
+- Core commit `3bdc35990018` added the second boot flag,
+  `OFAPI_SPEND_TRANSACTION_INGEST_ENABLED`, after the shadow flag. It applies only missing
+  `transactions.new` projection rows into core `transactions`, creates fan/page membership, and
+  rebuilds spender/revenue rollups.
+- Production runtime heartbeats after restart showed `ofapiSpendProjectionShadowEnabled=true`,
+  `ofapiSpendTransactionIngestEnabled=true`, and `skippedOverrides=[]` on both api and worker.
+- Post-apply production comparison over the current seven-day window showed
+  `matched=9` for `transactions.new` (`292970` gross mills / `234370` creator-net mills),
+  `missing_in_core_truth=0`, and `ppv_estimated=6`.
+- This closes the first missing-core-truth blocker for live `transactions.new`, but it does not
+  authorize desktop D6 yet: PPV remains estimated-only, `tips.received` still lacks a live verified
+  fixture, the matched sample window is short, and desktop still needs an explicit rollback flag
+  before the 10-minute `spend-sweep` cadence can be reduced.
+
 ## Gate 3: DM Cold Archive
 
 The first archive implementation must be forward-only. Historical bulk backfill is explicitly out
