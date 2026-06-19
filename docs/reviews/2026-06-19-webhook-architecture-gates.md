@@ -104,7 +104,9 @@ Shadow projection plan:
    but does not change desktop behavior or reduce the desktop spend sweep. If the live tip fixture
    is still unavailable, `tips.received` must be blocked/excluded rather than parsed from docs.
 2. Compare the shadow projection to the existing core `transactions` table and desktop
-   `fan_transactions` rollups over sampled production windows.
+   `fan_transactions` rollups over sampled production windows. Core's owner-only
+   `GET /api/v1/admin/ofapi/spend/comparison` is the production evidence surface for the
+   core-transaction half of this comparison.
 3. Required comparison dimensions: page, fan, UTC day, category, gross mills, creator-net mills,
    row count, duplicate count, missing-fan count, and pending/estimated rows.
 4. Acceptance before D6: zero duplicate settled rows; every mismatch over one cent per
