@@ -1034,7 +1034,13 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           : worstFailures > 0
             ? 'degraded'
             : 'live';
-      return { freshness, state, pollIntervalsMs, deepSweepEveryMs: DEEP_SWEEP_INTERVAL_MS };
+      return {
+        freshness,
+        listVerifiedAt: freshness,
+        state,
+        pollIntervalsMs,
+        deepSweepEveryMs: DEEP_SWEEP_INTERVAL_MS,
+      };
     },
     pollAccount,
   };

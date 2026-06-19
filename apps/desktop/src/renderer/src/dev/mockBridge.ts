@@ -470,8 +470,17 @@ function buildStore(): MockStore {
       creditsUsedToday: 1_243,
       rpmRemaining: 4_969,
       freshness,
+      listVerifiedAt: { ...freshness },
       state: 'live',
       hub: 'off',
+      hubMode: 'off',
+      hubLastEventAt: null,
+      hubLastEventType: null,
+      hubEventsToday: 0,
+      hubAppliedEventsToday: 0,
+      hubDroppedEventsToday: 0,
+      hubFallbackEventsToday: 0,
+      hubLastFallbackReason: null,
       aiTodayUsd: 0.86,
       sendsToday: { sent: 142, failed: 1, unconfirmed: 0 },
     },
@@ -588,6 +597,7 @@ export function createMockBridge(): ChatGooseBridge {
     const now = new Date().toISOString();
     for (const account of store.accounts) {
       store.sync.freshness[account.id] = now;
+      store.sync.listVerifiedAt[account.id] = now;
     }
     store.creditsToday += store.accounts.length;
     store.sync.creditsUsedToday = store.creditsToday;
@@ -1011,7 +1021,11 @@ export function createMockBridge(): ChatGooseBridge {
     },
     'query:settings.get': () => ({ ...store.settings }),
     'query:personalities.list': () => store.personalities.map((p) => ({ ...p })),
-    'query:sync.status': () => ({ ...store.sync, freshness: { ...store.sync.freshness } }),
+    'query:sync.status': () => ({
+      ...store.sync,
+      freshness: { ...store.sync.freshness },
+      listVerifiedAt: { ...store.sync.listVerifiedAt },
+    }),
     // Activity panel (mockup state A — core off): per-purpose split + AI ledger.
     'query:activity.summary': () => ({
       mode: 'polling' as const,
@@ -1031,6 +1045,11 @@ export function createMockBridge(): ChatGooseBridge {
         liveSince: null,
         statusChangedAt: new Date(Date.now() - 18 * 60_000).toISOString(),
         droppedFrames: 0,
+        appliedEventsToday: 0,
+        fallbackEventsToday: 0,
+        droppedEventsToday: 0,
+        eventsByTypeToday: {},
+        lastFallbackReason: null,
         pendingUsageEvents: 218,
         quarantinedUsageEvents: 0,
         pendingSummaries: 2,

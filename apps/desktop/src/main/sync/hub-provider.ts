@@ -12,6 +12,15 @@ import type { DataLayer } from '../db/index';
 import type { HubSync, HubSyncStatus } from './hub-sync';
 import type { SyncListener, SyncProvider, SyncStatusSnapshot } from './provider';
 
+export type HubMode = 'live' | 'degraded' | 'off';
+export type HubFallbackReason =
+  | 'hub-id-only-fallback'
+  | 'hub-mismatched-message-fallback'
+  | 'hub-malformed-message-fallback'
+  | 'hub-notification-fallback'
+  | 'hub-ingest-error-fallback'
+  | 'unknown-delete-head-refresh';
+
 type PollingLike = SyncProvider & {
   pollAccount(accountId: string): Promise<void>;
   setHubPollingSuspended(suspended: boolean): void;
@@ -34,6 +43,11 @@ export interface HubAwareSyncOptions {
   /** Resolves null when hub settings (base URL + chatter key) are absent. */
   createHub: (callbacks: HubFactoryCallbacks) => Promise<HubSync | null>;
   now?: () => number;
+  onLog?: (
+    level: 'debug' | 'info' | 'warn' | 'error',
+    message: string,
+    fields?: Record<string, unknown>,
+  ) => void;
 }
 
 /** Stream liveness for the Activity panel (PLAN item 9). */
@@ -41,8 +55,16 @@ export interface HubActivitySnapshot {
   /** Epoch ms of the last parsed hub frame; null = none yet (or restart-stale day). */
   lastEventAt: number | null;
   lastEventType: string | null;
-  /** Frames handled today (UTC) — persisted, survives restarts. */
+  /** Parsed hub SyncEvent frames received today (UTC) — persisted, survives restarts. */
   eventsToday: number;
+  /** Hub events applied to the local event stream today. */
+  appliedEventsToday: number;
+  /** Hub events that used a REST/list fallback today. */
+  fallbackEventsToday: number;
+  /** Hub events dropped after parse/lookup today; parser drops are counted separately by HubSync. */
+  droppedEventsToday: number;
+  eventsByTypeToday: Record<string, number>;
+  lastFallbackReason: HubFallbackReason | null;
   /** Epoch ms the stream went live; null while not live. */
   liveSinceMs: number | null;
   /** Epoch ms of the last status transition (e.g. "unreachable since 19:42"). */
@@ -55,8 +77,23 @@ const HUB_EVENT_STATS_KEY = 'hubSync.eventStats';
 const eventStatsSchema = z.object({
   day: z.string(),
   count: z.number().int().nonnegative(),
+  applied: z.number().int().nonnegative().default(0),
+  fallback: z.number().int().nonnegative().default(0),
+  dropped: z.number().int().nonnegative().default(0),
+  byType: z.record(z.string(), z.number().int().nonnegative()).default({}),
   lastEventAt: z.number().nullable(),
   lastEventType: z.string().nullable(),
+  lastFallbackReason: z
+    .enum([
+      'hub-id-only-fallback',
+      'hub-mismatched-message-fallback',
+      'hub-malformed-message-fallback',
+      'hub-notification-fallback',
+      'hub-ingest-error-fallback',
+      'unknown-delete-head-refresh',
+    ])
+    .nullable()
+    .default(null),
 });
 type EventStats = z.infer<typeof eventStatsSchema>;
 
@@ -66,12 +103,14 @@ export interface HubAwareSync extends SyncProvider {
   /** Recreates the hub connection from current settings (key/URL changes). */
   reconfigureHub(): Promise<void>;
   hubStatus(): HubSyncStatus | null;
+  hubMode(): HubMode;
   hubActivity(): HubActivitySnapshot;
 }
 
 export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   const { polling, data, createHub } = options;
   const now = options.now ?? Date.now;
+  const onLog = options.onLog ?? (() => undefined);
 
   const listeners = new Set<SyncListener>();
   let hub: HubSync | null = null;
@@ -91,23 +130,75 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   let eventStats: EventStats = data.settings.getParsed(HUB_EVENT_STATS_KEY, eventStatsSchema) ?? {
     day: utcDayOf(now()),
     count: 0,
+    applied: 0,
+    fallback: 0,
+    dropped: 0,
+    byType: {},
     lastEventAt: null,
     lastEventType: null,
+    lastFallbackReason: null,
   };
 
-  function recordHubEvent(event: SyncEvent): void {
-    const day = utcDayOf(now());
+  function resetStatsFor(day: string): void {
     eventStats = {
       day,
-      count: eventStats.day === day ? eventStats.count + 1 : 1,
-      lastEventAt: now(),
-      lastEventType: event.type,
+      count: 0,
+      applied: 0,
+      fallback: 0,
+      dropped: 0,
+      byType: {},
+      lastEventAt: null,
+      lastEventType: null,
+      lastFallbackReason: null,
     };
+  }
+
+  function persistEventStats(): void {
     try {
       data.settings.set(HUB_EVENT_STATS_KEY, eventStats);
     } catch {
       // Liveness bookkeeping must never break event handling.
     }
+  }
+
+  function recordHubEvent(event: SyncEvent): void {
+    const day = utcDayOf(now());
+    if (eventStats.day !== day) {
+      resetStatsFor(day);
+    }
+    eventStats = {
+      ...eventStats,
+      count: eventStats.count + 1,
+      byType: { ...eventStats.byType, [event.type]: (eventStats.byType[event.type] ?? 0) + 1 },
+      lastEventAt: now(),
+      lastEventType: event.type,
+    };
+    persistEventStats();
+  }
+
+  function recordApplied(): void {
+    eventStats = { ...eventStats, applied: eventStats.applied + 1 };
+    persistEventStats();
+  }
+
+  function recordFallback(reason: HubFallbackReason, fields?: Record<string, unknown>): void {
+    eventStats = {
+      ...eventStats,
+      fallback: eventStats.fallback + 1,
+      lastFallbackReason: reason,
+    };
+    persistEventStats();
+    onLog('info', `hub fallback: ${reason}`, { reason, ...fields });
+  }
+
+  function recordDropped(reason: HubFallbackReason, fields?: Record<string, unknown>): void {
+    eventStats = {
+      ...eventStats,
+      dropped: eventStats.dropped + 1,
+      lastFallbackReason: reason,
+    };
+    persistEventStats();
+    onLog('warn', `hub event dropped: ${reason}`, { reason, ...fields });
   }
 
   function emit(event: SyncEvent): void {
@@ -147,12 +238,42 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         if (event.message && event.message.id === event.messageId) {
           try {
             if (await polling.ingestHubMessage(event.accountId, event.chatId, event.message)) {
+              onLog('debug', 'hub enriched message applied', {
+                type: event.type,
+                accountId: event.accountId,
+                chatId: event.chatId,
+                messageId: event.messageId,
+              });
               emit(event);
+              recordApplied();
               break;
             }
+            recordFallback('hub-malformed-message-fallback', {
+              type: event.type,
+              accountId: event.accountId,
+              chatId: event.chatId,
+              messageId: event.messageId,
+            });
           } catch {
+            recordFallback('hub-ingest-error-fallback', {
+              type: event.type,
+              accountId: event.accountId,
+              chatId: event.chatId,
+              messageId: event.messageId,
+            });
             // fall through to the legacy reconciliation path below
           }
+        } else {
+          recordFallback(
+            event.message ? 'hub-mismatched-message-fallback' : 'hub-id-only-fallback',
+            {
+              type: event.type,
+              accountId: event.accountId,
+              chatId: event.chatId,
+              messageId: event.messageId,
+              hubMessageId: event.message?.id,
+            },
+          );
         }
 
         // Older Core frames and incomplete/mismatched bodies still reconcile via
@@ -163,27 +284,43 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
           // transient fetch failure: still emit — polling reconciles later
         }
         emit(event);
+        recordApplied();
         break;
       }
       case 'ppvUnlocked':
       case 'tipReceived':
         // Notification-shaped events are not full messages. Keep the existing
         // reconciliation path; with auto-read off, refreshChat is list-only.
+        recordFallback('hub-notification-fallback', {
+          type: event.type,
+          accountId: event.accountId,
+          chatId: event.chatId,
+          messageId: event.messageId,
+        });
         try {
           await polling.refreshChat(event.accountId, event.chatId);
         } catch {
           // transient fetch failure: still emit — polling reconciles later
         }
         emit(event);
+        recordApplied();
         break;
       case 'messageDeleted': {
         const chatId = event.chatId ?? lookupChatId(event.accountId, event.messageId);
         if (chatId === null) {
+          recordFallback('unknown-delete-head-refresh', {
+            accountId: event.accountId,
+            messageId: event.messageId,
+          });
           try {
             await polling.refreshAccountHead(event.accountId);
           } catch {
             // transient fetch failure: the next hub activity/degrade refresh reconciles
           }
+          recordDropped('unknown-delete-head-refresh', {
+            accountId: event.accountId,
+            messageId: event.messageId,
+          });
           return; // unknown message: nothing to tombstone, drop silently
         }
         // Tombstone (deleted=1) publishes bus scope 'messages' for the chat.
@@ -194,6 +331,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
           // transient fetch failure: still emit the tombstone
         }
         emit({ ...event, chatId });
+        recordApplied();
         break;
       }
       case 'chatListUpdated':
@@ -202,9 +340,11 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         } catch {
           emit(event);
         }
+        recordApplied();
         break;
       default:
         emit(event); // typing/presence/accountAuthChanged/…
+        recordApplied();
     }
   }
 
@@ -213,12 +353,20 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     statusChangedAtMs = now();
     liveSinceMs = isLive ? (liveSinceMs ?? now()) : null;
     if (isLive && !hubLive) {
+      onLog('info', 'SSE live; polling suspended', { status });
       polling.setHubPollingSuspended(true);
     } else if (!isLive && hubLive) {
       // Hub degraded/stopped: restore polling and run one reconciliation sweep
       // to close the gap the stream was covering (SPEC §6.2).
+      onLog(status === 'stopped' ? 'info' : 'warn', 'SSE not live; polling resumed', { status });
       polling.setHubPollingSuspended(false);
       void polling.forceRefresh().catch(() => undefined);
+    } else {
+      onLog(
+        status === 'degraded' || status === 'auth-failed' ? 'warn' : 'info',
+        `SSE ${status}`,
+        { status },
+      );
     }
     hubLive = isLive;
   }
@@ -226,23 +374,39 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   async function startHub(): Promise<void> {
     hubGeneration += 1;
     const generation = hubGeneration;
+    onLog('info', 'hub configure check started');
     const next = await createHub({ onEvent: handleHubEvent, onStatusChange: handleHubStatus });
     if (!running || generation !== hubGeneration) {
       next?.stop(); // superseded while resolving settings/keychain
       return;
     }
     hub = next;
-    hub?.start();
+    if (hub === null) {
+      onLog('info', 'hub not configured; using polling only');
+      return;
+    }
+    onLog('info', 'hub configured; starting SSE');
+    hub.start();
   }
 
   function stopHub(): void {
     hubGeneration += 1;
+    onLog('info', 'hub stopped');
     hub?.stop();
     hub = null;
     if (hubLive) {
       hubLive = false;
+      onLog('info', 'polling resumed after hub stop');
       polling.setHubPollingSuspended(false);
     }
+  }
+
+  function hubMode(): HubMode {
+    const status = hub?.status() ?? null;
+    if (status === 'live') {
+      return 'live';
+    }
+    return status === null || status === 'stopped' ? 'off' : 'degraded';
   }
 
   return {
@@ -276,10 +440,12 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       if (!running) {
         return;
       }
+      onLog('info', 'hub reconfigure requested');
       stopHub();
       await startHub();
     },
     hubStatus: () => hub?.status() ?? null,
+    hubMode,
     hubActivity: (): HubActivitySnapshot => {
       const day = utcDayOf(now());
       const sameDay = eventStats.day === day;
@@ -287,6 +453,11 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         lastEventAt: sameDay ? eventStats.lastEventAt : null,
         lastEventType: sameDay ? eventStats.lastEventType : null,
         eventsToday: sameDay ? eventStats.count : 0,
+        appliedEventsToday: sameDay ? eventStats.applied : 0,
+        fallbackEventsToday: sameDay ? eventStats.fallback : 0,
+        droppedEventsToday: sameDay ? eventStats.dropped : 0,
+        eventsByTypeToday: sameDay ? eventStats.byType : {},
+        lastFallbackReason: sameDay ? eventStats.lastFallbackReason : null,
         liveSinceMs,
         statusChangedAtMs,
         droppedFrames: hub?.droppedFrameCount() ?? 0,

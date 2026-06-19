@@ -612,10 +612,12 @@ describe('createHubAwareSync (provider composition)', () => {
     hub: FakeHub;
     callbacks: () => HubFactoryCallbacks;
     events: SyncEvent[];
+    logs: Array<{ level: string; message: string; fields?: Record<string, unknown> | undefined }>;
   } {
     const polling = makeFakePolling();
     const hub = makeFakeHub();
     let captured: HubFactoryCallbacks | null = null;
+    const logs: Array<{ level: string; message: string; fields?: Record<string, unknown> | undefined }> = [];
     const provider = createHubAwareSync({
       polling,
       data,
@@ -623,6 +625,7 @@ describe('createHubAwareSync (provider composition)', () => {
         captured = callbacks;
         return Promise.resolve(hub);
       },
+      onLog: (level, message, fields) => logs.push({ level, message, fields }),
     });
     const events: SyncEvent[] = [];
     provider.subscribe((event) => events.push(event));
@@ -631,6 +634,7 @@ describe('createHubAwareSync (provider composition)', () => {
       polling,
       hub,
       events,
+      logs,
       callbacks: () => {
         if (!captured) throw new Error('hub not created yet');
         return captured;
@@ -686,7 +690,7 @@ describe('createHubAwareSync (provider composition)', () => {
   });
 
   it('hub live suspends polling; degraded restores it and runs ONE reconciliation sweep', async () => {
-    const { provider, polling, callbacks } = build();
+    const { provider, polling, callbacks, logs } = build();
     provider.start([ACCT]);
     await Promise.resolve();
     await Promise.resolve();
@@ -704,6 +708,8 @@ describe('createHubAwareSync (provider composition)', () => {
 
     callbacks().onStatusChange('degraded'); // still down: no extra sweeps
     expect(polling.forceRefreshCalls).toBe(1);
+    expect(logs.map((log) => log.message)).toContain('SSE live; polling suspended');
+    expect(logs.map((log) => log.message)).toContain('SSE not live; polling resumed');
     provider.stop();
   });
 
@@ -725,11 +731,18 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(polling.ingestCalls).toEqual([{ accountId: ACCT, chatId: '101', messageId: '9001' }]);
     expect(polling.refreshCalls).toEqual([]);
     expect(events).toEqual([frame]);
+    expect(provider.hubActivity()).toMatchObject({
+      eventsToday: 1,
+      appliedEventsToday: 1,
+      fallbackEventsToday: 0,
+      droppedEventsToday: 0,
+      lastFallbackReason: null,
+    });
     provider.stop();
   });
 
   it('id-only messageReceived preserves the refreshChat fallback before re-emitting', async () => {
-    const { provider, polling, callbacks, events } = build();
+    const { provider, polling, callbacks, events, logs } = build();
     provider.start([ACCT]);
     await Promise.resolve();
     await Promise.resolve();
@@ -745,6 +758,14 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(polling.ingestCalls).toEqual([]);
     expect(polling.refreshCalls).toEqual([{ accountId: ACCT, chatId: '101' }]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
+    expect(provider.hubActivity()).toMatchObject({
+      eventsToday: 1,
+      appliedEventsToday: 1,
+      fallbackEventsToday: 1,
+      droppedEventsToday: 0,
+      lastFallbackReason: 'hub-id-only-fallback',
+    });
+    expect(logs.some((log) => log.message === 'hub fallback: hub-id-only-fallback')).toBe(true);
     provider.stop();
   });
 
@@ -881,6 +902,13 @@ describe('createHubAwareSync (provider composition)', () => {
     await callbacks().onEvent({ type: 'messageDeleted', accountId: ACCT, messageId: 'nope' });
     expect(polling.accountRefreshCalls).toEqual([ACCT]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }]);
+    expect(provider.hubActivity()).toMatchObject({
+      eventsToday: 1,
+      appliedEventsToday: 0,
+      fallbackEventsToday: 1,
+      droppedEventsToday: 1,
+      lastFallbackReason: 'unknown-delete-head-refresh',
+    });
     provider.stop();
   });
 
@@ -942,10 +970,12 @@ describe('createHubAwareSync (provider composition)', () => {
 
   it('createHub resolving null (hub unconfigured) leaves pure polling mode intact', async () => {
     const polling = makeFakePolling();
+    const logs: Array<{ level: string; message: string }> = [];
     const provider = createHubAwareSync({
       polling,
       data,
       createHub: () => Promise.resolve(null),
+      onLog: (level, message) => logs.push({ level, message }),
     });
     const events: SyncEvent[] = [];
     provider.subscribe((event) => events.push(event));
@@ -954,6 +984,8 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
 
     expect(provider.hubStatus()).toBeNull();
+    expect(provider.hubMode()).toBe('off');
+    expect(logs).toContainEqual({ level: 'info', message: 'hub not configured; using polling only' });
     polling.emit({ type: 'chatListUpdated', accountId: ACCT });
     expect(events).toHaveLength(1);
     expect(polling.suspensions).toEqual([]);

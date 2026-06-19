@@ -142,7 +142,16 @@ function MessagesRow({ vm, t }: { vm: ActivityVM; t: UiTranslator }): React.JSX.
         <Badge>HUB LIVE</Badge> <span className="text-ink-mid">{t('activity.hubPushed')}</span>
         <span className="num mt-0.5 block text-[11.5px] text-ink-low">
           {lastEvent}
-          {t('activity.eventsToday', { n: vm.hub.eventsToday.toLocaleString('en-US') })} ·{' '}
+          {t('activity.hubEventCounters', {
+            received: vm.hub.eventsToday.toLocaleString('en-US'),
+            applied: vm.hub.appliedEventsToday.toLocaleString('en-US'),
+            fallback: vm.hub.fallbackEventsToday.toLocaleString('en-US'),
+            dropped: vm.hub.droppedEventsToday.toLocaleString('en-US'),
+          })}
+          {vm.hub.lastFallbackReason !== null
+            ? ` · ${t('activity.lastFallback', { reason: vm.hub.lastFallbackReason })}`
+            : ''}{' '}
+          ·{' '}
           {t('activity.pollingSlowed', { notes: pollNotes.join('  ·  ') })}
           {sweep !== null ? `  ·  ${sweep}` : ''}
         </span>

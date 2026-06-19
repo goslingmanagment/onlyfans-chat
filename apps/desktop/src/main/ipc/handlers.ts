@@ -346,14 +346,26 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('query:sync.status', (): SyncStatusVM => {
     const snapshot = deps.creditMeter?.snapshot() ?? null;
     const syncStatus = deps.sync?.status() ?? { freshness: {}, state: 'offline' as const };
+    const hubActivity = deps.sync?.hubActivity?.() ?? null;
     const today = utcDayOf(Date.now());
     return {
       creditsBalance: snapshot?.balance ?? null,
       creditsUsedToday: snapshot?.usedToday ?? 0,
       rpmRemaining: snapshot?.rpmRemaining ?? null,
       freshness: syncStatus.freshness,
+      listVerifiedAt: syncStatus.listVerifiedAt ?? syncStatus.freshness,
       state: syncStatus.state,
       hub: deps.sync?.hubStatus?.() ?? 'off',
+      hubMode: deps.sync?.hubMode?.() ?? 'off',
+      hubLastEventAt:
+        hubActivity?.lastEventAt == null ? null : new Date(hubActivity.lastEventAt).toISOString(),
+      hubLastEventType: hubActivity?.lastEventType ?? null,
+      hubEventsToday: hubActivity?.eventsToday ?? 0,
+      hubAppliedEventsToday: hubActivity?.appliedEventsToday ?? 0,
+      hubDroppedEventsToday:
+        (hubActivity?.droppedEventsToday ?? 0) + (hubActivity?.droppedFrames ?? 0),
+      hubFallbackEventsToday: hubActivity?.fallbackEventsToday ?? 0,
+      hubLastFallbackReason: hubActivity?.lastFallbackReason ?? null,
       aiTodayUsd: aiTodayUsd(data, today),
       sendsToday: sendsToday(data, today),
     };

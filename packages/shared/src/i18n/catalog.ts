@@ -293,6 +293,14 @@ export const UI_MESSAGES = {
   'activity.deepSweep': { en: 'deep sweep {every}', ru: 'глубокий проход {every}' },
   'activity.lastEventAgo': { en: 'last event {age} ago', ru: 'последнее событие {age} назад' },
   'activity.eventsToday': { en: '{n} events today', ru: 'событий сегодня: {n}' },
+  'activity.hubEventCounters': {
+    en: 'received {received} · applied {applied} · fallback {fallback} · dropped {dropped}',
+    ru: 'принято {received} · применено {applied} · fallback {fallback} · отброшено {dropped}',
+  },
+  'activity.lastFallback': {
+    en: 'last fallback: {reason}',
+    ru: 'последний fallback: {reason}',
+  },
   'activity.pollingSlowed': { en: 'polling paused: {notes}', ru: 'опрос выключен: {notes}' },
   'activity.hubConnectedFor': {
     en: '— connected {dur} · {n} dropped frames',
@@ -427,6 +435,8 @@ export const UI_MESSAGES = {
   'sb.sends': { en: 'SENDS', ru: 'ОТПРАВКИ' },
   'sb.unconf': { en: 'UNCONF', ru: 'НЕ ПОДТВ.' },
   'sb.updated': { en: 'UPDATED', ru: 'ОБНОВЛЕНО' },
+  'sb.lastPush': { en: 'PUSH', ru: 'ПУШ' },
+  'sb.listVerified': { en: 'LIST', ru: 'СПИСОК' },
   'sb.ago': { en: 'AGO', ru: 'НАЗАД' },
   'sb.shortcuts': { en: 'SHORTCUTS', ru: 'КЛАВИШИ' },
 

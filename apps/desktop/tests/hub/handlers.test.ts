@@ -49,7 +49,24 @@ function makeSyncStub(hubState: HubSyncStatus | null): IpcDeps['sync'] {
     forceRefresh: async () => undefined,
     status: () => ({ freshness: {}, state: 'live' as const }),
   };
-  return { ...provider, hubStatus: () => hubState };
+  return {
+    ...provider,
+    hubStatus: () => hubState,
+    hubMode: () => (hubState === 'live' ? 'live' : hubState === null || hubState === 'stopped' ? 'off' : 'degraded'),
+    hubActivity: () => ({
+      lastEventAt: Date.parse('2026-06-11T12:00:00Z'),
+      lastEventType: 'messageReceived',
+      eventsToday: 7,
+      appliedEventsToday: 6,
+      fallbackEventsToday: 1,
+      droppedEventsToday: 0,
+      eventsByTypeToday: { messageReceived: 7 },
+      lastFallbackReason: 'hub-id-only-fallback',
+      liveSinceMs: Date.parse('2026-06-11T11:00:00Z'),
+      statusChangedAtMs: Date.parse('2026-06-11T11:00:00Z'),
+      droppedFrames: 2,
+    }),
+  };
 }
 
 function register(data: DataLayer, overrides: Partial<IpcDeps> = {}): { onHubConfigChanged: ReturnType<typeof vi.fn> } {
@@ -105,9 +122,18 @@ describe('hub IPC wiring', () => {
     register(data, { sync: makeSyncStub('live') });
     const status = (await invoke('query:sync.status')) as SyncStatusVM;
     expect(status.hub).toBe('live');
+    expect(status.hubMode).toBe('live');
+    expect(status.hubLastEventAt).toBe('2026-06-11T12:00:00.000Z');
+    expect(status.hubEventsToday).toBe(7);
+    expect(status.hubAppliedEventsToday).toBe(6);
+    expect(status.hubFallbackEventsToday).toBe(1);
+    expect(status.hubDroppedEventsToday).toBe(2);
+    expect(status.hubLastFallbackReason).toBe('hub-id-only-fallback');
 
     register(data, { sync: makeSyncStub('auth-failed') });
-    expect(((await invoke('query:sync.status')) as SyncStatusVM).hub).toBe('auth-failed');
+    const failed = (await invoke('query:sync.status')) as SyncStatusVM;
+    expect(failed.hub).toBe('auth-failed');
+    expect(failed.hubMode).toBe('degraded');
   });
 
   it("reports hub 'off' when sync is absent, hub-unaware, or unconfigured", async () => {

@@ -11,6 +11,7 @@ import { Kbd } from '../design/Kbd';
 import { Tooltip } from '../design/Tooltip';
 import { cx } from '../lib/cx';
 import { useT } from '../lib/i18n';
+import { selectStatusAge } from './statusAge';
 import { statusBarMode, STATUS_BAR_TIPS } from './statusBarTips';
 
 const TONE_DOT = { ok: 'bg-online', warn: 'bg-warn', bad: 'bg-bad' } as const;
@@ -57,8 +58,7 @@ export function StatusBar(): React.JSX.Element {
 
   const status = sync.data ?? null;
   const mode = statusBarMode(status?.state ?? 'offline', status?.hub ?? 'off');
-  const freshness =
-    selectedAccountId !== null ? (status?.freshness[selectedAccountId] ?? null) : null;
+  const age = selectStatusAge(status, selectedAccountId);
   const openActivity = (): void => setView('settings');
 
   return (
@@ -98,8 +98,25 @@ export function StatusBar(): React.JSX.Element {
         </Key>
       </Segment>
       <div className="ml-auto flex items-center gap-3.5">
-        <Segment tip={STATUS_BAR_TIPS.updated} onClick={openActivity}>
-          <DataAge at={freshness} prefix={t('sb.updated')} suffix={t('sb.ago')} />
+        <Segment
+          tip={age.primaryKind === 'push' ? STATUS_BAR_TIPS.lastPush : STATUS_BAR_TIPS.updated}
+          onClick={openActivity}
+        >
+          <span className="flex items-center gap-2">
+            <DataAge
+              at={age.primaryAt}
+              prefix={age.primaryKind === 'push' ? t('sb.lastPush') : t('sb.updated')}
+              suffix={t('sb.ago')}
+            />
+            {age.showListVerified && (
+              <DataAge
+                at={age.listVerifiedAt}
+                prefix={t('sb.listVerified')}
+                suffix={t('sb.ago')}
+                className="opacity-60"
+              />
+            )}
+          </span>
         </Segment>
         <button
           type="button"

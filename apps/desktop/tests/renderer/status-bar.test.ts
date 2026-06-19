@@ -5,6 +5,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type { SyncStatusVM } from '../../src/preload/contract';
+import { selectStatusAge } from '../../src/renderer/src/app/statusAge';
 import { statusBarMode, STATUS_BAR_TIPS } from '../../src/renderer/src/app/statusBarTips';
 
 function mockupTips(): Map<string, string> {
@@ -66,5 +68,47 @@ describe('statusBarMode (mode word matches the panel badge)', () => {
   it('sync trouble outranks the hub badge', () => {
     expect(statusBarMode('degraded', 'live')).toMatchObject({ word: 'DEGRADED', tone: 'warn' });
     expect(statusBarMode('offline', 'live')).toMatchObject({ word: 'OFFLINE', tone: 'bad' });
+  });
+});
+
+describe('selectStatusAge', () => {
+  const base: SyncStatusVM = {
+    creditsBalance: null,
+    creditsUsedToday: 0,
+    rpmRemaining: null,
+    freshness: { acct_1: '2026-06-11T10:00:00.000Z' },
+    listVerifiedAt: { acct_1: '2026-06-11T10:00:00.000Z' },
+    state: 'live',
+    hub: 'live',
+    hubMode: 'live',
+    hubLastEventAt: '2026-06-11T10:14:00.000Z',
+    hubLastEventType: 'messageReceived',
+    hubEventsToday: 1,
+    hubAppliedEventsToday: 1,
+    hubDroppedEventsToday: 0,
+    hubFallbackEventsToday: 0,
+    hubLastFallbackReason: null,
+    aiTodayUsd: 0,
+    sendsToday: { sent: 0, failed: 0, unconfirmed: 0 },
+  };
+
+  it('uses push event age as primary in hub-live and keeps list verification secondary', () => {
+    expect(selectStatusAge(base, 'acct_1')).toEqual({
+      primaryAt: '2026-06-11T10:14:00.000Z',
+      primaryKind: 'push',
+      listVerifiedAt: '2026-06-11T10:00:00.000Z',
+      showListVerified: true,
+    });
+  });
+
+  it('preserves old polling semantics outside hub-live', () => {
+    expect(
+      selectStatusAge({ ...base, hub: 'off', hubMode: 'off', hubLastEventAt: null }, 'acct_1'),
+    ).toEqual({
+      primaryAt: '2026-06-11T10:00:00.000Z',
+      primaryKind: 'list',
+      listVerifiedAt: '2026-06-11T10:00:00.000Z',
+      showListVerified: false,
+    });
   });
 });

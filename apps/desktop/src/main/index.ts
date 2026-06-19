@@ -390,6 +390,7 @@ async function initOfapi(
   sync = createHubAwareSync({
     polling,
     data: dataLayer,
+    onLog: (level, message, fields) => logger?.log(level, 'sync', message, fields),
     // Resolved per (re)connect attempt so settings edits take effect on
     // reconfigureHub without re-running OFAPI init. Null = hub mode off.
     createHub: async ({ onEvent, onStatusChange }) => {

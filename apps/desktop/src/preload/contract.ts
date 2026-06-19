@@ -121,9 +121,20 @@ export interface SyncStatusVM {
   rpmRemaining: number | null;
   /** Per-account ISO timestamp of last successful chat-list poll. */
   freshness: Record<string, string>;
+  /** Explicit list-verification clock; same data as `freshness` for older callers. */
+  listVerifiedAt: Record<string, string>;
   state: 'live' | 'degraded' | 'offline';
   /** Agency Hub SSE stream state (SPEC §6.2/§9); 'off' = hub not configured. */
   hub: 'off' | 'connecting' | 'live' | 'degraded' | 'auth-failed' | 'stopped';
+  /** Coarse operator mode: live push, degraded configured push, or no hub. */
+  hubMode: 'live' | 'degraded' | 'off';
+  hubLastEventAt: string | null;
+  hubLastEventType: string | null;
+  hubEventsToday: number;
+  hubAppliedEventsToday: number;
+  hubDroppedEventsToday: number;
+  hubFallbackEventsToday: number;
+  hubLastFallbackReason: string | null;
   /** Status bar "AI TODAY" aggregate (UTC day, ai_spend_log total). */
   aiTodayUsd: number;
   /** Status bar "SENDS" aggregate (UTC day, outbox state transitions). */
@@ -156,6 +167,11 @@ export interface ActivityVM {
     liveSince: string | null;
     statusChangedAt: string | null;
     droppedFrames: number;
+    appliedEventsToday: number;
+    fallbackEventsToday: number;
+    droppedEventsToday: number;
+    eventsByTypeToday: Record<string, number>;
+    lastFallbackReason: string | null;
     /** usage_events rows awaiting upload to core (parked when hub is off). */
     pendingUsageEvents: number;
     /** HTTP-400 events held back forever (never resent). */

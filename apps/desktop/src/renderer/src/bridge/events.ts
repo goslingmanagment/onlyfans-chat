@@ -15,6 +15,7 @@ import { playNotificationBlip } from '../lib/sound';
 import { uiMessage } from '@chatgoose/shared/i18n/index';
 import { currentLocale } from '../lib/i18n';
 import { handleAiOperationEvent } from '../features/ai/aiStore';
+import { syncStatusInvalidationKeysForEvent } from './syncInvalidation';
 
 const dbChangedSchema = z.object({
   scope: z.enum(['accounts', 'chats', 'messages', 'fans', 'summaries', 'settings', 'outbox']),
@@ -172,14 +173,18 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     }
     const event = parseSyncEvent(payload);
     if (event === null) return;
+    // Hub activity clocks/counters move on every SyncEvent, while polling-origin
+    // events still keep the old status aggregates honest. Batched invalidation
+    // keeps high-frequency typing/presence from thrashing React Query.
+    for (const key of syncStatusInvalidationKeysForEvent(event)) {
+      queueInvalidate(key);
+    }
     const ui = useUiStore.getState();
     switch (event.type) {
       case 'chatListUpdated':
         invalidateChats(event.accountId);
         queueInvalidate(['chat', event.accountId]);
         queueInvalidate(qk.accounts);
-        queueInvalidate(qk.syncStatus);
-        queueInvalidate(qk.activity);
         break;
       case 'messageReceived': {
         queueInvalidate(qk.messages(event.accountId, event.chatId));

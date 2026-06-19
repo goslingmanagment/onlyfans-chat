@@ -23,6 +23,7 @@ const TRAILING_DAYS = 7;
 
 export type ActivitySync = SyncProvider & {
   hubStatus?: () => HubSyncStatus | null;
+  hubMode?: () => 'live' | 'degraded' | 'off';
   hubActivity?: () => HubActivitySnapshot;
 };
 
@@ -188,6 +189,12 @@ export function buildActivitySummary(deps: ActivityDeps): ActivityVM {
       liveSince: toIso(hubActivity?.liveSinceMs),
       statusChangedAt: toIso(hubActivity?.statusChangedAtMs),
       droppedFrames: hubActivity?.droppedFrames ?? 0,
+      appliedEventsToday: hubActivity?.appliedEventsToday ?? 0,
+      fallbackEventsToday: hubActivity?.fallbackEventsToday ?? 0,
+      droppedEventsToday:
+        (hubActivity?.droppedEventsToday ?? 0) + (hubActivity?.droppedFrames ?? 0),
+      eventsByTypeToday: hubActivity?.eventsByTypeToday ?? {},
+      lastFallbackReason: hubActivity?.lastFallbackReason ?? null,
       pendingUsageEvents,
       quarantinedUsageEvents,
       pendingSummaries,

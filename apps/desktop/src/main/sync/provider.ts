@@ -9,6 +9,8 @@ export type SyncListener = (event: SyncEvent) => void;
 export interface SyncStatusSnapshot {
   /** Per-account ISO timestamp of the last successful chat-list poll. */
   freshness: Record<string, string>;
+  /** Same clock as `freshness`, named for hub-mode UI where push age is primary. */
+  listVerifiedAt?: Record<string, string>;
   state: 'live' | 'degraded' | 'offline';
   /** Effective per-account poll cadence (ms); null means automatic polling is paused. */
   pollIntervalsMs?: Record<string, number | null>;
