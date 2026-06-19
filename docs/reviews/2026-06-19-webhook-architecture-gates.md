@@ -152,6 +152,25 @@ Archive contract:
 - Required before enabling: retention period, owner/team ACLs, audit log, purge/export policy,
   encryption-at-rest decision, and operator-visible archive lag/gap metrics.
 
+Production C4 update (2026-06-19):
+
+- Core commits `932bf2c` and `c7a246a` implemented the first forward-only cold archive. The
+  production image is `agency-hub.source-revision=c7a246aef906`; api and worker containers were
+  healthy after deploy.
+- Migration `0037_dm_message_archive.sql` is applied. `dm_message_archive` stores normalized
+  message facts keyed by `(platform, ofapi_account_id, platform_message_id)` with source
+  idempotency/journal/fanout metadata, tombstone `deleted_at`, stable media metadata, and
+  `retain_until`. It intentionally has no FK to the raw journal because journal rows expire.
+- Production staged config enabled `ofapiDmColdArchiveEnabled=true`; latest api/worker heartbeats
+  showed `ofapiDmProjectionEnabled=true`, `ofapiDmColdArchiveEnabled=true`,
+  `ofapiDmColdArchiveRetentionDays=3650`, and `skippedOverrides=[]`.
+- Live production validation archived two post-enable `messages.received` events. The rows have
+  source journal ids and fanout seq values, non-empty stored text lengths, no tombstones, and
+  `media_contains_signed_url=false`. The owner-only status route is protected (`401` without auth).
+- Remaining boundary: no historical bulk `GET /messages` backfill, no raw transcript export API,
+  no media download/storage, and no desktop fallback removal. Historical import still needs a
+  separate governance/read-state/budget acceptance.
+
 ## Gate 4: Sync Snapshot, Cursor, and Gap Recovery
 
 The desktop cannot treat "eventually reconciled by polling" as the long-term correctness model.
