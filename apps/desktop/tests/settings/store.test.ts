@@ -78,6 +78,7 @@ describe('settings store', () => {
     expect(vm.accountMappings).toEqual({});
     expect(vm.accountOrder).toEqual([]);
     expect(vm.accountPageLabels).toEqual({});
+    expect(vm.ofapiReadTransport).toBe('direct');
     expect(vm.hubModeOverride).toBe('auto');
     expect(vm.spendStyle).toBe('figure');
     expect(vm.uiLocale).toBe('system');
@@ -89,17 +90,19 @@ describe('settings store', () => {
     expect(vm.hasOpenRouterKey).toBe(false);
   });
 
-  it('persists uiLocale, uiScale, uiTheme and hubModeOverride (round-trip) and zod-rejects bad values', async () => {
+  it('persists UI and hub transport settings (round-trip) and zod-rejects bad values', async () => {
     const { store, queries, secrets } = createStore();
     const vm = await store.update({
       uiLocale: 'ru',
       uiScale: 1.25,
       uiTheme: 'dark',
+      ofapiReadTransport: 'hub',
       hubModeOverride: 'hub',
     });
     expect(vm.uiLocale).toBe('ru');
     expect(vm.uiScale).toBe(1.25);
     expect(vm.uiTheme).toBe('dark');
+    expect(vm.ofapiReadTransport).toBe('hub');
     expect(vm.hubModeOverride).toBe('hub');
 
     const reread = createSettingsStore({ queries, secrets });
@@ -107,12 +110,14 @@ describe('settings store', () => {
     expect(again.uiLocale).toBe('ru');
     expect(again.uiScale).toBe(1.25);
     expect(again.uiTheme).toBe('dark');
+    expect(again.ofapiReadTransport).toBe('hub');
     expect(again.hubModeOverride).toBe('hub');
 
     await expect(store.update({ uiLocale: 'de' })).rejects.toThrow();
     await expect(store.update({ uiScale: 2 })).rejects.toThrow();
     await expect(store.update({ uiScale: 0.95 })).rejects.toThrow();
     await expect(store.update({ uiTheme: 'sepia' })).rejects.toThrow();
+    await expect(store.update({ ofapiReadTransport: 'proxy' })).rejects.toThrow();
     await expect(store.update({ hubModeOverride: 'both' })).rejects.toThrow();
   });
 
@@ -175,6 +180,7 @@ describe('settings store', () => {
     await expect(store.update({ defaultReplyTone: 'angry' })).rejects.toThrow();
     await expect(store.update({ debugMode: 'yes' })).rejects.toThrow();
     await expect(store.update({ spendStyle: 'badge' })).rejects.toThrow();
+    await expect(store.update({ ofapiReadTransport: 'fallback' })).rejects.toThrow();
     await expect(store.update({ hubModeOverride: 'fallback' })).rejects.toThrow();
     await expect(store.update({ nonsense: 1 })).rejects.toThrow(); // unknown key
     await expect(store.update('not-an-object')).rejects.toThrow();

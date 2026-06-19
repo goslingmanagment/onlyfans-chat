@@ -239,6 +239,13 @@ Rules:
 - When command ownership moves to core, desktop diagnostics must show local id, core command id,
   state, retry lineage, and last verifier result without exporting message text.
 
+**C6a boundary validated 2026-06-19:** core revision `1d2859f3e3bf` deliberately implements reads
+only. Its production route is a strict `GET /api/v1/ofapi/read/*` allowlist with chatter/page ACLs,
+central rate limiting, and ledger attribution; POST/write paths are absent. Desktop can opt into
+that read transport while retaining the direct writer and one shared credit meter. This does not
+satisfy Gate 5 and must not be extended into a generic write proxy. The next write slice starts
+with the command states and idempotency rules above.
+
 ## Gate 6: OLTP/OLAP Boundary
 
 Webhook projection tables are product state, not the analytics warehouse.

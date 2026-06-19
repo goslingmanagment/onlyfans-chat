@@ -33,7 +33,16 @@ import {
   type FetchRemote,
 } from './media/protocol';
 import { createSqliteMediaCacheQueries } from './media/cache';
-import { createOfApiClient, type OfApiClient } from './ofapi/client';
+import {
+  createOfApiClient,
+  type OfApiClient,
+  type OfApiClientOptions,
+} from './ofapi/client';
+import { createCreditMeter } from './ofapi/credit-meter';
+import {
+  buildHubOfApiReadBaseUrl,
+  createOfApiTransportClient,
+} from './ofapi/transport';
 import { createSendEngine, type SendEngine } from './send/engine';
 import { createVaultService, type VaultService } from './media/vault';
 import { createSpendersService, type SpendersService } from './spenders/service';
@@ -269,21 +278,74 @@ async function initOfapi(
   dataLayer: DataLayer,
   settingsStore: SettingsStore,
 ): Promise<void> {
-  const apiKey = await keychain.getSecret('ofapiKey');
-  if (!apiKey || client) {
+  if (client) {
     return;
   }
-  client = createOfApiClient({
-    apiKey,
-    // Background sync/refresh loops swallow OFAPI failures; observe them here so
-    // "sync stopped / rate-limited / OFAPI down" leaves a trace in the export.
-    onError: (error, context) =>
+  const [initialSettings, apiKey, hubApiKey] = await Promise.all([
+    settingsStore.get(),
+    keychain.getSecret('ofapiKey'),
+    keychain.getSecret('hubApiKey'),
+  ]);
+  const creditMeter = createCreditMeter();
+  const onError =
+    (transport: 'direct' | 'hub'): NonNullable<OfApiClientOptions['onError']> =>
+    (error, context): void =>
       logger?.warn('ofapi', `${context.purpose} ${error.code}`, {
         code: error.code,
+        transport,
         url: context.url,
         ...errorToFields(error),
-      }),
+      });
+
+  const directClient =
+    apiKey === null || apiKey.length === 0
+      ? null
+      : createOfApiClient({
+          apiKey,
+          creditMeter,
+          // Background sync/refresh loops swallow OFAPI failures; observe them
+          // here so outages and rate limits remain visible in diagnostics.
+          onError: onError('direct'),
+        });
+
+  let readClient: OfApiClient | null = directClient;
+  if (initialSettings.ofapiReadTransport === 'hub') {
+    if (
+      initialSettings.hubBaseUrl === null ||
+      hubApiKey === null ||
+      hubApiKey.length === 0
+    ) {
+      logger?.warn('ofapi', 'hub read transport not configured', {
+        transport: 'hub',
+        hasHubBaseUrl: initialSettings.hubBaseUrl !== null,
+        hasHubKey: hubApiKey !== null && hubApiKey.length > 0,
+      });
+      return;
+    }
+    readClient = createOfApiClient({
+      apiKey: hubApiKey,
+      baseUrl: buildHubOfApiReadBaseUrl(initialSettings.hubBaseUrl),
+      authErrorCode: 'CG-HUB-01',
+      creditMeter,
+      onError: onError('hub'),
+    });
+  }
+  if (readClient === null) {
+    logger?.info('ofapi', 'read transport unavailable', {
+      transport: initialSettings.ofapiReadTransport,
+      reason: 'missing-direct-key',
+    });
+    return;
+  }
+  client =
+    initialSettings.ofapiReadTransport === 'hub'
+      ? createOfApiTransportClient(readClient, directClient)
+      : readClient;
+  logger?.info('ofapi', 'read transport selected', {
+    transport: initialSettings.ofapiReadTransport,
+    directWritesAvailable: directClient !== null,
   });
+
   const utcDay = new Date().toISOString().slice(0, 10);
   client.creditMeter.hydrate({
     utcDay,
@@ -342,8 +404,7 @@ async function initOfapi(
     creditBudgetPerShift: number | null;
     autoReadChats: boolean;
     hubModeOverride: 'auto' | 'polling' | 'hub';
-  } | null =
-    await settingsStore.get();
+  } | null = initialSettings;
 
   // Hub config fingerprint: reconfigure the SSE connection only when the base
   // URL or the chatter key actually changed — NOT on every settings write
@@ -435,14 +496,17 @@ async function initOfapi(
   });
   void hub.reconfigure();
 
-  // Send engine (SPEC §7): exists exactly when a client does. messageSent sync
-  // events feed its verifier; boot reconciliation runs before any send can.
-  const engine = createSendEngine({
-    client,
-    data: dataLayer,
-    toMediaUrl,
-    getSettings: () => settingsStore.get(),
-  });
+  // Core C6a is read-only. The send engine exists only when the desktop still
+  // has a direct OFAPI writer; its verifier reads through the selected transport.
+  const engine =
+    directClient === null
+      ? null
+      : createSendEngine({
+          client,
+          data: dataLayer,
+          toMediaUrl,
+          getSettings: () => settingsStore.get(),
+        });
   sendEngine = engine;
   // Vault & PPV (PRD F7): vault/gallery thumbs are OF CDN URLs — minted into
   // media:// tokens through the same registering toMediaUrl seam as sync.
@@ -483,12 +547,14 @@ async function initOfapi(
     // never marks fans read on OnlyFans (ensureChat/listChats stay, they don't).
     getAutoRead: () => settingsCache?.autoReadChats ?? false,
   });
-  sync.subscribe((event) => engine.handleSyncEvent(event));
-  // Awaited on purpose (adversarial review 2026-06-11): the "reconciliation
-  // before any send" guarantee must hold even for a fast first user action.
-  // reconcileOnBoot swallows network errors internally, so this never blocks
-  // startup on connectivity.
-  await engine.reconcileOnBoot();
+  if (engine !== null) {
+    sync.subscribe((event) => engine.handleSyncEvent(event));
+    // Awaited on purpose (adversarial review 2026-06-11): the "reconciliation
+    // before any send" guarantee must hold even for a fast first user action.
+    // reconcileOnBoot swallows network errors internally, so this never blocks
+    // startup on connectivity.
+    await engine.reconcileOnBoot();
+  }
 
   const accountIds = await syncAccounts(client, dataLayer, toMediaUrl);
   sync.start(accountIds);
@@ -722,7 +788,12 @@ async function boot(): Promise<void> {
         void initOfapi(keychain, data, settingsStore);
       }
     },
-    onHubConfigChanged: () => recheckHubConfig?.(),
+    onHubConfigChanged: () => {
+      recheckHubConfig?.();
+      if (client === null && data !== null) {
+        void initOfapi(keychain, data, settingsStore);
+      }
+    },
     getCoreCreditsSummary: () => hub?.getOfapiCreditsSummary() ?? Promise.resolve(null),
     ...(logger !== null ? { logger } : {}),
     // Reads the update controller lazily — it is created asynchronously after

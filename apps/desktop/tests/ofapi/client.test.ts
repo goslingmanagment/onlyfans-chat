@@ -288,6 +288,19 @@ describe('error mapping through the request path', () => {
     expect(requests).toHaveLength(1);
   });
 
+  it('can classify a read-gateway 401 as Hub authentication failure', async () => {
+    const client = createOfApiClient({
+      apiKey: 'chatter-key',
+      baseUrl: 'https://hub.example.com/api/v1/ofapi/read',
+      authErrorCode: 'CG-HUB-01',
+      fetchImpl: () => Promise.resolve(jsonResponse({ message: 'Unauthorized' }, { status: 401 })),
+      sleep: instantSleep,
+    });
+    await expect(client.listAccounts()).rejects.toMatchObject({
+      code: 'CG-HUB-01',
+    });
+  });
+
   it('persistent 429 → retried with backoff then CG-OF-03', async () => {
     const { client, requests } = makeClient([
       () => jsonResponse({ message: 'Too Many Attempts.' }, { status: 429, headers: { 'retry-after': '1' } }),

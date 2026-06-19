@@ -490,7 +490,10 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     const touchedHub =
       typeof rawPatch === 'object' &&
       rawPatch !== null &&
-      ('hubApiKey' in rawPatch || 'hubBaseUrl' in rawPatch || 'hubModeOverride' in rawPatch);
+      ('hubApiKey' in rawPatch ||
+        'hubBaseUrl' in rawPatch ||
+        'hubModeOverride' in rawPatch ||
+        'ofapiReadTransport' in rawPatch);
     if (touchedHub) {
       deps.onHubConfigChanged?.();
     }

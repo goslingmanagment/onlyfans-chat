@@ -283,8 +283,8 @@
     <div class="src s-ofapi">
       <span class="tag">OFAPI · live</span>
       <h3>Живой OnlyFans через шлюз</h3>
-      <p>Третья сторона <code>onlyfansapi.com</code> — единственный путь к реальным данным OnlyFans. Каждый вызов = 1 кредит ($), ответы никогда не кэшируются на стороне шлюза. Это «земля» — первоисточник всего.</p>
-      <span class="where">main/ofapi/client.ts</span>
+      <p>Третья сторона <code>onlyfansapi.com</code> — единственный путь к реальным данным OnlyFans. Desktop может отправлять GET напрямую или через read-шлюз нашего core; upstream-вызов и кредит в обоих случаях остаются OFAPI. Записи пока всегда идут напрямую.</p>
+      <span class="where">main/ofapi/client.ts · main/ofapi/transport.ts</span>
     </div>
 
     <div class="src s-db">
@@ -295,9 +295,9 @@
     </div>
 
     <div class="src s-hub">
-      <span class="tag">Хаб ядра · SSE</span>
+      <span class="tag">Хаб ядра · SSE + REST</span>
       <h3>Бэкенд «ядра» / ChatMuse</h3>
-      <p>Наш собственный сервер (репозиторий <code>core</code>). Шлёт поток событий: messageReceived/messageSent могут содержать безопасно нормализованное тело сообщения и тогда пишутся в SQLite без <code>GET /messages</code>; id-only и notification-события остаются совместимыми fallback-кадрами. Если сохранённый SSE-курсор старше журнала, core явно отвечает <code>409</code>, desktop временно возвращает polling, применяет chatter-scoped snapshot (chat heads, hot messages, tombstones, account auth), сохраняет snapshot-cursor только после полного применения и продолжает SSE-tail. По умолчанию hub <b>выключен</b> — тогда работает поллинг.</p>
+      <p>Наш собственный сервер (репозиторий <code>core</code>). SSE шлёт события; snapshot закрывает разрыв старого курсора. Отдельный chatter-scoped REST-шлюз может выполнять разрешённые OFAPI GET от имени desktop и писать расход в центральный ledger. Режим чтения через Hub opt-in и применяется после перезапуска; без него остаётся прямой транспорт.</p>
       <span class="where">main/hub/* · main/sync/hub-*</span>
     </div>
 
@@ -374,7 +374,7 @@
     </div>
 
     <div class="flow-note">
-      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра (SSE): push-first live-канал; enriched message-кадры пишутся в БД без OFAPI, id-only/notification-кадры запускают безопасную REST-проверку, а replay-gap лечится core snapshot + tail. По умолчанию выключен.</span>
+      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра: SSE даёт push-first события, snapshot + tail закрывают replay-gap, а opt-in read gateway выполняет desktop GET через core. Direct остаётся rollback; writes пока не проксируются.</span>
       <span class="b ai" data-k="сбоку → экран">ИИ-провайдеры: тексты ответов/коучинга идут <b>прямо в ИИ-док</b>, минуя БД (кроме саммари — оно кэшируется).</span>
       <span class="b live" data-k="в обход кэша">Волт и галерея: <b>единственная</b> поверхность, что ходит в OFAPI <b>вживую на каждый показ</b> (1 кредит/вызов), без слоя БД.</span>
     </div>
@@ -497,7 +497,7 @@
           <span class="chip c-derived">вся статистика вычисляется</span>
           <span class="chip c-db">кэш БД</span>
         </div>
-        <p>Полки и ростеры тиров — <b>live OFAPI user-lists</b> по запросу, мемоизируются в памяти на 5 минут. А вот <b>каждая</b> $-цифра, счётчик, точка тишины и вся колонка статистики — <b>0 кредитов</b>, считается SQL-джойном по локальным таблицам <code>fans</code> / <code>chats</code> / <code>messages</code> / <code>fan_transactions</code>. Хаб не участвует.</p>
+        <p>Полки и ростеры тиров — <b>live OFAPI user-lists</b> по запросу, мемоизируются в памяти на 5 минут; GET идёт напрямую или через core согласно выбранному read transport. А вот <b>каждая</b> $-цифра, счётчик, точка тишины и вся колонка статистики — <b>0 кредитов</b>, считается SQL-джойном по локальным таблицам <code>fans</code> / <code>chats</code> / <code>messages</code> / <code>fan_transactions</code>.</p>
       </div>
     </div>
 
@@ -513,7 +513,7 @@
           <span class="chip c-db">только пиксели превью: кэш</span>
         </div>
         <span class="fresh live">Свежесть: вживую — единственная поверхность без слоя БД</span>
-        <p>Уникально среди всех: <code>query:vault.*</code> и <code>chat.gallery</code> идут <b>прямо в OFAPI</b> на каждый рендер, <b>1 кредит/вызов</b>, тормозятся только <code>staleTime</code> React Query (30/60/15с). В БД эти списки не кэшируются. Кэшируются лишь пиксели тумбов — через протокол <code>media://</code>.</p>
+        <p>Уникально среди всех: <code>query:vault.*</code> и <code>chat.gallery</code> делают <b>live OFAPI GET</b> на каждый рендер, напрямую или через core, <b>1 кредит/вызов</b>; тормозятся только <code>staleTime</code> React Query (30/60/15с). В БД эти списки не кэшируются. Кэшируются лишь пиксели тумбов — через протокол <code>media://</code>.</p>
       </div>
     </div>
 
@@ -528,7 +528,7 @@
           <span class="chip c-db">кэш БД (таблица settings)</span>
           <span class="chip c-ofapi">live: только тест/список</span>
         </div>
-        <p>Синхронные чтения из зашифрованной таблицы <code>settings</code>. Четыре API-ключа лежат <b>только в keychain ОС</b> (наружу отдаётся лишь «есть/нет»). Единственные live/кредитные пути — выбор списка для спендеров (TTL 5 мин) и явные кнопки <b>«Тест ключей / хаба»</b>.</p>
+        <p>Синхронные чтения из зашифрованной таблицы <code>settings</code>. Секреты лежат <b>только в keychain ОС</b> (наружу отдаётся лишь «есть/нет»). Здесь выбирается OFAPI read transport: <b>Direct</b> или <b>Agency Hub</b>; изменение применяется после перезапуска. Hub-режим требует URL + chatter key, а direct OFAPI key пока нужен для отправки и других writes.</p>
       </div>
     </div>
 
@@ -544,7 +544,7 @@
           <span class="chip c-db">кэш БД (логи)</span>
           <span class="chip c-hub">liveness: SSE (off по умолч.)</span>
         </div>
-        <p>Ни одного live-вызова OFAPI на открытие. Цифры — <b>снимок локального счётчика кредитов в памяти</b> (снимается как побочка любых других OFAPI-вызовов), локальные агрегаты (<code>credit_log</code>, <code>ai_spend_log</code>, <code>outbox</code>) и, если hub настроен, chatter-scoped сводка core <code>/api/v1/ofapi/credits/summary</code> по назначенным страницам. Состояние синка разделяет push-свежесть (последнее SSE-событие) и REST-сверку списка; Activity/диагностика считают hub events received/applied/fallback/dropped и последнюю причину fallback. Обновляется реактивно по событиям, не по таймеру.</p>
+        <p>Ни одного live-вызова OFAPI на открытие. Цифры — <b>снимок локального счётчика desktop-инициированных REST-вызовов</b> (он общий для Hub reads и direct writes), локальные агрегаты (<code>credit_log</code>, <code>ai_spend_log</code>, <code>outbox</code>) и, если hub настроен, chatter-scoped сводка core <code>/api/v1/ofapi/credits/summary</code> по назначенным страницам. Состояние синка разделяет push-свежесть и REST-сверку списка; Activity/диагностика считают hub events received/applied/fallback/dropped и последнюю причину fallback.</p>
       </div>
     </div>
 

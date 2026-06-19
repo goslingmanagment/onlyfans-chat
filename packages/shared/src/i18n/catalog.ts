@@ -105,6 +105,17 @@ export const UI_MESSAGES = {
   'hub.baseUrl.hint': { en: "your agency's core server", ru: 'core-сервер вашего агентства' },
   'hub.key.label': { en: 'Chatter API key', ru: 'API-ключ чаттера' },
   'hub.key.hint': { en: 'agency_hub_core_… — set-only', ru: 'agency_hub_core_… — только запись' },
+  'hub.ofapiReads.label': { en: 'OFAPI reads', ru: 'Чтение OFAPI' },
+  'hub.ofapiReads.hint': {
+    en: 'Route GET requests directly or through Agency Hub',
+    ru: 'GET-запросы напрямую или через Agency Hub',
+  },
+  'hub.ofapiReads.direct': { en: 'Direct', ru: 'Напрямую' },
+  'hub.ofapiReads.hub': { en: 'Agency Hub', ru: 'Agency Hub' },
+  'hub.ofapiReads.restart': {
+    en: 'Restart required. Writes remain direct.',
+    ru: 'Нужен перезапуск. Запись пока напрямую.',
+  },
   'hub.streamStatus': { en: 'Stream status', ru: 'Статус стрима' },
   'hub.status.connecting': { en: 'connecting…', ru: 'подключение…' },
   'hub.status.live': { en: 'live', ru: 'работает' },

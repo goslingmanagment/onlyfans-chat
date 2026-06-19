@@ -12,6 +12,7 @@ import { useAccounts, useKeyTest, useSyncStatus } from '../../../bridge/queries'
 import { localizedErrorText, useLocale, useT } from '../../../lib/i18n';
 import { Badge } from '../../../design/Badge';
 import { Button } from '../../../design/Button';
+import { Chip } from '../../../design/Chip';
 import { Section, type PatchFn } from '../SettingsSurface';
 
 type HubState = SyncStatusVM['hub'];
@@ -116,6 +117,27 @@ export function HubSettings({
             spellCheck={false}
             className="min-w-0 flex-1 rounded-chip border border-line bg-bg1 px-3 py-1.5 text-[13px] outline-none placeholder:text-ink-low focus:border-clay-line"
           />
+        </div>
+        <div className="flex items-center gap-3 py-1">
+          <div className="w-44 flex-none">
+            <div className="text-[13px] font-semibold">{t('hub.ofapiReads.label')}</div>
+            <div className="text-[11px] text-ink-low">{t('hub.ofapiReads.hint')}</div>
+          </div>
+          <div className="flex items-center rounded-full border border-line bg-bg1 p-0.5">
+            <Chip
+              selected={settings.ofapiReadTransport === 'direct'}
+              onClick={() => patch({ ofapiReadTransport: 'direct' })}
+            >
+              {t('hub.ofapiReads.direct')}
+            </Chip>
+            <Chip
+              selected={settings.ofapiReadTransport === 'hub'}
+              onClick={() => patch({ ofapiReadTransport: 'hub' })}
+            >
+              {t('hub.ofapiReads.hub')}
+            </Chip>
+          </div>
+          <span className="text-[11px] text-ink-low">{t('hub.ofapiReads.restart')}</span>
         </div>
 
         {hub !== 'off' && (

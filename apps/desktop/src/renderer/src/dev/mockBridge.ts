@@ -413,6 +413,7 @@ function buildStore(): MockStore {
     hasOpenRouterKey: false,
     hasHubKey: false,
     hubBaseUrl: null,
+    ofapiReadTransport: 'direct',
     hubModeOverride: 'auto',
     spendStyle: 'figure',
     uiLocale: 'system',

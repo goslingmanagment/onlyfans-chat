@@ -146,19 +146,21 @@ describe('hub IPC wiring', () => {
     expect(((await invoke('query:sync.status')) as SyncStatusVM).hub).toBe('off');
   });
 
-  it('onHubConfigChanged fires on key-only, URL-only, override, and combined hub patches', async () => {
+  it('onHubConfigChanged fires on key, URL, read transport, override, and combined patches', async () => {
     const { onHubConfigChanged } = register(data);
     await invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_x' });
     expect(onHubConfigChanged).toHaveBeenCalledTimes(1);
     await invoke('cmd:settings.update', { hubBaseUrl: 'https://hub.example.com' });
     expect(onHubConfigChanged).toHaveBeenCalledTimes(2);
-    await invoke('cmd:settings.update', { hubModeOverride: 'polling' });
+    await invoke('cmd:settings.update', { ofapiReadTransport: 'hub' });
     expect(onHubConfigChanged).toHaveBeenCalledTimes(3);
+    await invoke('cmd:settings.update', { hubModeOverride: 'polling' });
+    expect(onHubConfigChanged).toHaveBeenCalledTimes(4);
     await invoke('cmd:settings.update', {
       hubBaseUrl: 'https://hub2.example.com',
       hubApiKey: 'agency_hub_core_y',
     });
-    expect(onHubConfigChanged).toHaveBeenCalledTimes(4);
+    expect(onHubConfigChanged).toHaveBeenCalledTimes(5);
   });
 
   it('onHubConfigChanged stays silent on unrelated or invalid patches', async () => {

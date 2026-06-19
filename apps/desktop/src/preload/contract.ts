@@ -278,6 +278,11 @@ export interface SettingsVM {
   accountOrder: string[];
   /** Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off. */
   hubBaseUrl: string | null;
+  /**
+   * OFAPI GET transport. `hub` routes reads through core with the chatter key;
+   * writes remain direct until the command gateway ships.
+   */
+  ofapiReadTransport: 'direct' | 'hub';
   /** Dev/support-only sync override. Default 'auto'; non-auto persists across restarts. */
   hubModeOverride: HubModeOverrideSetting;
   /**

@@ -15,6 +15,7 @@ import {
   QUICK_MIN_MESSAGE_COUNT,
 } from '@chatgoose/shared';
 import { HUB_MODE_OVERRIDE_SETTINGS } from '@chatgoose/shared/hub/mode';
+import { OFAPI_READ_TRANSPORTS } from '../ofapi/transport';
 import type {
   ModelSelectableFeature,
   ReasoningEffort,
@@ -76,6 +77,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'accountMappings',
   'accountOrder',
   'hubBaseUrl',
+  'ofapiReadTransport',
   'hubModeOverride',
   'accountPageLabels',
   'spendStyle',
@@ -109,6 +111,8 @@ const persistedFieldSchemas = {
   accountOrder: z.array(z.string().min(1)).max(200),
   // Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off.
   hubBaseUrl: z.string().min(1).nullable(),
+  // C6 custody bridge: GETs via core; writes stay direct until command gateway.
+  ofapiReadTransport: z.enum(OFAPI_READ_TRANSPORTS),
   // Dev/support-only override for D3 diagnostics. Default auto.
   hubModeOverride: z.enum(HUB_MODE_OVERRIDE_SETTINGS),
   // Manual OFAPI accountId → core page-label overrides (SPEC §8.5).
@@ -155,6 +159,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   accountMappings: {},
   accountOrder: [],
   hubBaseUrl: null,
+  ofapiReadTransport: 'direct',
   hubModeOverride: 'auto',
   accountPageLabels: {},
   spendStyle: 'figure',
@@ -185,6 +190,7 @@ export const settingsPatchSchema = z.strictObject({
   accountMappings: persistedFieldSchemas.accountMappings.optional(),
   accountOrder: persistedFieldSchemas.accountOrder.optional(),
   hubBaseUrl: persistedFieldSchemas.hubBaseUrl.optional(),
+  ofapiReadTransport: persistedFieldSchemas.ofapiReadTransport.optional(),
   hubModeOverride: persistedFieldSchemas.hubModeOverride.optional(),
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
   spendStyle: persistedFieldSchemas.spendStyle.optional(),
@@ -296,6 +302,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       accountMappings: readField('accountMappings'),
       accountOrder: readField('accountOrder'),
       hubBaseUrl: readField('hubBaseUrl'),
+      ofapiReadTransport: readField('ofapiReadTransport'),
       hubModeOverride: readField('hubModeOverride'),
       accountPageLabels: readField('accountPageLabels'),
       spendStyle: readField('spendStyle'),

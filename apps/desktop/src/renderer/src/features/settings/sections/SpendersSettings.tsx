@@ -23,8 +23,13 @@ export function SpendersSettings({
   const accountList = accounts.data ?? [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const accountId = selectedId ?? accountList[0]?.id ?? null;
+  const hasOfapiReadAccess =
+    settings.hasOfapiKey ||
+    (settings.ofapiReadTransport === 'hub' &&
+      settings.hubBaseUrl !== null &&
+      settings.hasHubKey);
 
-  const lists = useSpenderLists(accountId, settings.hasOfapiKey);
+  const lists = useSpenderLists(accountId, hasOfapiReadAccess);
   const mapped = accountId !== null ? (settings.spendersListMappings[accountId] ?? []) : [];
   const byId = new Map((lists.data?.lists ?? []).map((list) => [list.id, list]));
 
@@ -72,7 +77,7 @@ export function SpendersSettings({
         </div>
       )}
 
-      {!settings.hasOfapiKey ? (
+      {!hasOfapiReadAccess ? (
         <p className="text-[12.5px] text-ink-low">{t('sp.set.noKey')}</p>
       ) : (
         <div className="grid grid-cols-2 gap-4">

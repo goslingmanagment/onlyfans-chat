@@ -93,6 +93,8 @@ export type TransactionType = 'subscribes' | 'tips' | 'post' | 'chat_messages' |
 export interface OfApiClientOptions {
   apiKey: string;
   baseUrl?: string;
+  /** Hub read gateway uses a chatter key, so its 401 belongs to CG-HUB-01. */
+  authErrorCode?: 'CG-OF-01' | 'CG-HUB-01';
   fetchImpl?: typeof fetch;
   onMeta?: CreditMeterListener;
   creditMeter?: CreditMeter;
@@ -423,12 +425,20 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
 
     if (!response.ok) {
       const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
-      const mapped = mapOfApiHttpError({
+      const upstreamMapped = mapOfApiHttpError({
         status: response.status,
         url,
         body,
         ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
       });
+      const mapped =
+        response.status === 401 &&
+        options.authErrorCode !== undefined &&
+        upstreamMapped.code === 'CG-OF-01'
+          ? new OfApiError(options.authErrorCode, {
+              ...(upstreamMapped.detail !== undefined ? { detail: upstreamMapped.detail } : {}),
+            })
+          : upstreamMapped;
       options.onError?.(mapped, { url, purpose: spec.purpose });
       throw mapped;
     }
