@@ -544,6 +544,18 @@ async function boot(): Promise<void> {
 
   const settingsStore = createSettingsStore({ queries: data.settings, secrets: keychain });
 
+  // Runtime seed for local/prod evidence builds. The secret is supplied by the
+  // launcher and then persisted through the normal encrypted keychain path.
+  const hubBaseUrlEnv = process.env['CHATGOOSE_HUB_BASE_URL']?.trim();
+  const hubApiKeyEnv = process.env['CHATGOOSE_HUB_API_KEY']?.trim();
+  if (hubBaseUrlEnv || hubApiKeyEnv) {
+    await settingsStore.update({
+      ...(hubBaseUrlEnv ? { hubBaseUrl: hubBaseUrlEnv.replace(/\/+$/, '') } : {}),
+      ...(hubApiKeyEnv ? { hubApiKey: hubApiKeyEnv } : {}),
+    });
+    await refreshRedactionSecrets();
+  }
+
   // Dev convenience (same spirit as the spike-key import): seed the Spenders
   // list→shelf mapping once from CHATGOOSE_SPENDERS_MAP="acct_…=id1,id2,…"
   // so a live evidence run needs no manual settings entry. Never overwrites.

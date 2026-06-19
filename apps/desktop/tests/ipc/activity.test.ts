@@ -220,7 +220,7 @@ describe('buildActivitySummary', () => {
         status: () => ({
           freshness: { acct_free: '2026-06-11T19:58:00.000Z' },
           state: 'live',
-          pollIntervalsMs: { acct_free: 120_000 },
+          pollIntervalsMs: { acct_free: null },
           deepSweepEveryMs: 300_000,
         }),
       }),
@@ -243,8 +243,8 @@ describe('buildActivitySummary', () => {
       pendingSummaries: 1,
       syncedSummariesToday: 1,
     });
-    // hub demotion shows through as the relaxed effective cadence
-    expect(vm.accounts[0]?.pollIntervalMs).toBe(120_000);
+    // hub-live suspension shows through as no active automatic polling cadence
+    expect(vm.accounts[0]?.pollIntervalMs).toBeNull();
   });
 
   it('renders empty-but-valid with no sync, no meter, no data (fresh install)', () => {

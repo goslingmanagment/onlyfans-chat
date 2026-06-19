@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import type { SyncEvent } from '@chatgoose/shared/protocol/index';
+import type { NormalizedSyncMessage, SyncEvent } from '@chatgoose/shared/protocol/index';
 import { createDataLayer, type DataLayer } from '../../src/main/db/index';
 import { createPollingSync } from '../../src/main/sync/polling-sync';
 import { createBudgetGuard } from '../../src/main/sync/budget-guard';
 import type { OfApiClient } from '../../src/main/ofapi/client';
-import type { OfApiChat, OfApiMessage } from '../../src/main/ofapi/schemas';
+import type { OfApiChat, OfApiMessage, OfApiTransaction } from '../../src/main/ofapi/schemas';
 
 const TEST_DRIVER = 'bsqlite3-mc-node';
 const ACCT = 'acct_test';
@@ -63,6 +63,36 @@ function makeMessage(overrides: {
   } as OfApiMessage;
 }
 
+function makeHubMessage(overrides: Partial<NormalizedSyncMessage> = {}): NormalizedSyncMessage {
+  return {
+    id: '6',
+    text: '<p>hub body</p>',
+    createdAt: '2026-06-10T12:01:00+00:00',
+    isSentByMe: false,
+    price: 0,
+    isOpened: false,
+    isNew: true,
+    isTip: false,
+    ...overrides,
+  };
+}
+
+function makeTransaction(overrides: {
+  id: number;
+  fanId?: number;
+  amount?: number;
+  createdAt?: string;
+}): OfApiTransaction {
+  return {
+    id: overrides.id,
+    amount: overrides.amount ?? 25,
+    net: overrides.amount != null ? Math.round(overrides.amount * 80) / 100 : 20,
+    createdAt: overrides.createdAt ?? '2026-06-10T12:00:00+00:00',
+    type: 'tip',
+    user: { id: overrides.fanId ?? 101 },
+  } as OfApiTransaction;
+}
+
 interface StubClient {
   client: OfApiClient;
   listChatsCalls: number;
@@ -75,8 +105,10 @@ interface StubClient {
     purpose?: string;
   }[];
   listMessagesCalls: { lastId?: string; order?: string; limit?: number; purpose?: string }[];
+  listTransactionsCalls: { limit?: number; purpose?: string; startDate?: string }[];
   setChats(chats: OfApiChat[]): void;
   setMessages(messages: OfApiMessage[]): void;
+  setTransactions(transactions: OfApiTransaction[]): void;
 }
 
 /**
@@ -87,15 +119,20 @@ interface StubClient {
 function makeStubClient(): StubClient {
   let all: OfApiChat[] = [];
   let messages: OfApiMessage[] = [];
+  let transactions: OfApiTransaction[] = [];
   const state: StubClient = {
     listChatsCalls: 0,
     listChatsParams: [],
     listMessagesCalls: [],
+    listTransactionsCalls: [],
     setChats: (next) => {
       all = next;
     },
     setMessages: (next) => {
       messages = next;
+    },
+    setTransactions: (next) => {
+      transactions = next;
     },
     client: {
       listChats: vi.fn(
@@ -148,6 +185,16 @@ function makeStubClient(): StubClient {
         },
       ),
       getMessage: vi.fn(async () => messages[0]),
+      listTransactions: vi.fn(
+        async (params: { limit?: number; purpose?: string; startDate?: string }) => {
+          state.listTransactionsCalls.push({
+            ...(params.limit != null ? { limit: params.limit } : {}),
+            ...(params.purpose != null ? { purpose: params.purpose } : {}),
+            ...(params.startDate != null ? { startDate: params.startDate } : {}),
+          });
+          return { transactions, hasMore: false, nextMarker: null };
+        },
+      ),
       getUserByUsername: vi.fn(async () => {
         throw new Error('404');
       }),
@@ -579,32 +626,86 @@ describe('PollingSync', () => {
     sync.stop();
   });
 
-  it('hub demotion slows the poll loop ×6 but read-state sweeps stay FULL-RATE (SPEC §6.2)', async () => {
+  it('hub live suspends the hydrated poll loop but read-state sweeps stay FULL-RATE (SPEC §6.2)', async () => {
     stub.setChats([makeChat({ fanId: 101, lastMessageId: 9 })]);
     const recentIso = new Date(Date.now() - 60_000).toISOString();
     stub.setMessages([makeMessage({ id: 9, fromMe: true, isNew: true, createdAt: recentIso })]);
     const sync = makeSync();
     sync.start([ACCT]);
     await vi.runOnlyPendingTimersAsync();
+    expect(hydrationState()?.done).toBe(true);
     await sync.openConversation(ACCT, '101'); // arms the read-state sweep
 
-    sync.setHubDemoted(true);
-    // the already-pending 60s timer fires once more, then reschedules at ×6
+    sync.setHubPollingSuspended(true);
+    expect(sync.status().pollIntervalsMs?.[ACCT]).toBeNull();
     await vi.advanceTimersByTimeAsync(60_000);
     const base = stub.listChatsCalls;
     const sweepsBefore = stub.listMessagesCalls.length;
 
-    await vi.advanceTimersByTimeAsync(60_000 * 6 - 2);
-    expect(stub.listChatsCalls).toBe(base); // poll loop demoted
-    // sweeps kept their 30s cadence through the entire demoted window
+    await vi.advanceTimersByTimeAsync(60_000 * 6);
+    expect(stub.listChatsCalls).toBe(base); // poll loop suspended
+    // sweeps keep their 30s cadence through the entire suspended window
     expect(stub.listMessagesCalls.length - sweepsBefore).toBeGreaterThanOrEqual(10);
-    await vi.advanceTimersByTimeAsync(4);
-    expect(stub.listChatsCalls).toBe(base + 1); // ×6 but still polling
 
-    // restore reschedules at the full cadence without waiting out the slow timer
-    sync.setHubDemoted(false);
+    // restore reschedules at the full cadence
+    sync.setHubPollingSuspended(false);
+    expect(sync.status().pollIntervalsMs?.[ACCT]).toBe(60_000);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(stub.listChatsCalls).toBe(base + 2);
+    expect(stub.listChatsCalls).toBe(base + 1);
+    sync.stop();
+  });
+
+  it('hub live keeps polling an account until initial hydration is done', async () => {
+    stub.setChats(makeChats(130));
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await drainPoll();
+    expect(hydrationState()?.done).toBe(false);
+    const before = stub.listChatsCalls;
+
+    sync.setHubPollingSuspended(true);
+    expect(sync.status().pollIntervalsMs?.[ACCT]).toBe(60_000);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await drainPoll();
+    expect(stub.listChatsCalls).toBeGreaterThan(before);
+    sync.stop();
+  });
+
+  it('hub live does not suspend the independent fan-spend sweep', async () => {
+    stub.setChats([]);
+    stub.setTransactions([makeTransaction({ id: 1, fanId: 101, amount: 50 })]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    expect(hydrationState()?.done).toBe(true);
+    expect(stub.listTransactionsCalls.length).toBeGreaterThan(0);
+    const spendCalls = stub.listTransactionsCalls.length;
+
+    sync.setHubPollingSuspended(true);
+    expect(sync.status().pollIntervalsMs?.[ACCT]).toBeNull();
+    const listCalls = stub.listChatsCalls;
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(stub.listChatsCalls).toBe(listCalls);
+    await vi.advanceTimersByTimeAsync(10 * 60_000 - 60_000);
+    expect(stub.listTransactionsCalls.length).toBeGreaterThan(spendCalls);
+    sync.stop();
+  });
+
+  it('budget exhaustion defers the independent fan-spend sweep', async () => {
+    let exhausted = true;
+    stub.setChats([]);
+    stub.setTransactions([makeTransaction({ id: 1, fanId: 101, amount: 50 })]);
+    const sync = makeSync(() => exhausted);
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    expect(hydrationState()?.done).toBe(true);
+    expect(stub.listTransactionsCalls).toHaveLength(0);
+
+    exhausted = false;
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(stub.listTransactionsCalls.length).toBeGreaterThan(0);
     sync.stop();
   });
 
@@ -844,19 +945,29 @@ describe('PollingSync', () => {
       sync.stop();
     });
 
-    it('refreshChat does NOT call listMessages (no stamp); it only nudges the list', async () => {
+    it('refreshChat does NOT call listMessages; it debounces a list-only head refresh', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
       stub.setMessages([makeMessage({ id: 5 })]);
       const sync = makeSyncOff();
       sync.start([ACCT]);
       await vi.runOnlyPendingTimersAsync();
       const callsBefore = stub.listMessagesCalls.length;
+      const listCallsBefore = stub.listChatsCalls;
       events = [];
 
-      await sync.refreshChat(ACCT, '101', 'spenders-refresh');
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 6, unread: 2 })]);
+      const first = sync.refreshChat(ACCT, '101', 'spenders-refresh');
+      const second = sync.refreshChat(ACCT, '101', 'spenders-refresh');
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(stub.listChatsCalls).toBe(listCallsBefore);
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.all([first, second]);
+
       expect(stub.listMessagesCalls.length).toBe(callsBefore);
+      expect(stub.listChatsCalls).toBe(listCallsBefore + 1);
       expect(data.threadFetchLog.get(ACCT, '101')).toBeNull();
       expect(events.some((e) => e.type === 'chatListUpdated')).toBe(true);
+      expect(data.chats.get(ACCT, '101')?.unreadCount).toBe(2);
       sync.stop();
     });
 
@@ -894,6 +1005,108 @@ describe('PollingSync', () => {
       expect(stub.listMessagesCalls.length).toBe(callsBefore + 1);
       expect(data.messages.count(ACCT, '101')).toBe(2);
       expect(data.threadFetchLog.get(ACCT, '101')).not.toBeNull();
+      sync.stop();
+    });
+
+    it('ingestHubMessage writes a text body and updates the chat preview without body reads', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      const listMessagesBefore = stub.listMessagesCalls.length;
+
+      await expect(sync.ingestHubMessage(ACCT, '101', makeHubMessage())).resolves.toBe(true);
+
+      const message = data.messages.get(ACCT, '101', '6');
+      expect(message).toMatchObject({
+        messageId: '6',
+        textHtml: '<p>hub body</p>',
+        textPlain: 'hub body',
+        isSentByMe: false,
+      });
+      expect(data.chats.get(ACCT, '101')).toMatchObject({
+        lastMessageId: '6',
+        lastMessagePreview: 'hub body',
+        lastMessageIsSentByMe: false,
+        unreadCount: 1,
+      });
+      expect(stub.listMessagesCalls.length).toBe(listMessagesBefore);
+      expect(vi.mocked(stub.client.getMessage)).not.toHaveBeenCalled();
+      sync.stop();
+    });
+
+    it('duplicate/replayed hub messages do not double-increment unread', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      await sync.ingestHubMessage(ACCT, '101', makeHubMessage({ id: '6' }));
+      await sync.ingestHubMessage(ACCT, '101', makeHubMessage({ id: '6' }));
+
+      expect(data.messages.count(ACCT, '101')).toBe(1);
+      expect(data.chats.get(ACCT, '101')?.unreadCount).toBe(1);
+      expect(stub.listMessagesCalls).toHaveLength(0);
+      sync.stop();
+    });
+
+    it('sent hub messages advance the preview and clear unread without incrementing', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5, unread: 2 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      await sync.ingestHubMessage(
+        ACCT,
+        '101',
+        makeHubMessage({ id: '7', text: '<p>model reply</p>', isSentByMe: true, isNew: false }),
+      );
+
+      expect(data.chats.get(ACCT, '101')).toMatchObject({
+        lastMessageId: '7',
+        lastMessagePreview: 'model reply',
+        lastMessageIsSentByMe: true,
+        unreadCount: 0,
+      });
+      expect(stub.listMessagesCalls).toHaveLength(0);
+      sync.stop();
+    });
+
+    it('hub media metadata stores no URLs and does not trigger getMessage while auto-read is off', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      await sync.ingestHubMessage(
+        ACCT,
+        '101',
+        makeHubMessage({
+          id: '8',
+          text: '',
+          mediaCount: 1,
+          media: [{
+            id: 'media_1',
+            type: 'video',
+            isReady: false,
+            locked: true,
+            durationSeconds: 42,
+          }],
+        }),
+      );
+
+      expect(data.messages.get(ACCT, '101', '8')?.media).toEqual([{
+        id: 'media_1',
+        type: 'video',
+        thumbUrl: null,
+        fullUrl: null,
+        isReady: false,
+        locked: true,
+        durationSeconds: 42,
+      }]);
+      expect(data.chats.get(ACCT, '101')?.lastMessagePreview).toBe('Media');
+      expect(vi.mocked(stub.client.getMessage)).not.toHaveBeenCalled();
+      expect(stub.listMessagesCalls).toHaveLength(0);
       sync.stop();
     });
   });

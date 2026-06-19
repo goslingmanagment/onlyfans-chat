@@ -10,8 +10,8 @@ export interface SyncStatusSnapshot {
   /** Per-account ISO timestamp of the last successful chat-list poll. */
   freshness: Record<string, string>;
   state: 'live' | 'degraded' | 'offline';
-  /** Effective per-account poll cadence (ms) after focus/hidden/budget/hub factors. */
-  pollIntervalsMs?: Record<string, number>;
+  /** Effective per-account poll cadence (ms); null means automatic polling is paused. */
+  pollIntervalsMs?: Record<string, number | null>;
   deepSweepEveryMs?: number;
 }
 

@@ -283,8 +283,8 @@ export const UI_MESSAGES = {
   'activity.rowSends': { en: 'SENDS', ru: 'ОТПРАВКИ' },
   'activity.askingOfapi': { en: '— asking OFAPI directly', ru: '— опрашиваем OFAPI напрямую' },
   'activity.hubPushed': {
-    en: '— pushed from core in seconds; polling relaxed to safety-net',
-    ru: '— события приходят от core за секунды; опрос переведён в страховочный режим',
+    en: '— pushed from core in seconds; polling paused while live',
+    ru: '— события приходят от core за секунды; опрос выключен, пока Hub live',
   },
   'activity.notPolledYet': { en: 'not polled yet', ru: 'ещё не опрашивался' },
   'activity.polledAgo': { en: 'polled {age} ago', ru: 'опрошен {age} назад' },
@@ -293,7 +293,7 @@ export const UI_MESSAGES = {
   'activity.deepSweep': { en: 'deep sweep {every}', ru: 'глубокий проход {every}' },
   'activity.lastEventAgo': { en: 'last event {age} ago', ru: 'последнее событие {age} назад' },
   'activity.eventsToday': { en: '{n} events today', ru: 'событий сегодня: {n}' },
-  'activity.pollingSlowed': { en: 'polling slowed: {notes}', ru: 'опрос замедлен: {notes}' },
+  'activity.pollingSlowed': { en: 'polling paused: {notes}', ru: 'опрос выключен: {notes}' },
   'activity.hubConnectedFor': {
     en: '— connected {dur} · {n} dropped frames',
     ru: '— подключён {dur} · битых кадров: {n}',

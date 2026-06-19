@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import { htmlToPlainText } from '@chatgoose/shared/transcript/index';
+import type { NormalizedSyncMessage } from '@chatgoose/shared/protocol/index';
 import type {
   AccountUpsert,
   ChatUpsert,
@@ -172,6 +173,50 @@ export function mapMessage(
     media: (message.media ?? [])
       .map((item) => mapMediaItem(item, toMediaUrl))
       .filter((item): item is MessageMediaItem => item !== null),
+    deleted: false,
+    raw: message,
+  };
+}
+
+export function mapHubMessage(
+  accountId: string,
+  chatId: string,
+  message: NormalizedSyncMessage,
+): MessageUpsert | null {
+  if (message.id.length === 0 || Number.isNaN(Date.parse(message.createdAt))) {
+    return null;
+  }
+
+  return {
+    accountId,
+    chatId,
+    messageId: message.id,
+    createdAt: message.createdAt,
+    isSentByMe: message.isSentByMe,
+    textHtml: message.text,
+    textPlain: htmlToPlainText(message.text),
+    price: message.price,
+    isOpened: message.isOpened ?? null,
+    isNew: message.isNew ?? false,
+    isTip: message.isTip ?? false,
+    tipAmount: message.tipAmountUsd ?? null,
+    tipText: message.tipText != null ? htmlToPlainText(message.tipText) : null,
+    replyTo:
+      message.replyTo?.sender != null
+        ? {
+            sender: message.replyTo.sender,
+            textPreview: message.replyTo.textPreview,
+          }
+        : null,
+    media: (message.media ?? []).map((item) => ({
+      id: item.id,
+      type: item.type,
+      thumbUrl: null,
+      fullUrl: null,
+      isReady: item.isReady,
+      locked: item.locked,
+      durationSeconds: item.durationSeconds ?? null,
+    })),
     deleted: false,
     raw: message,
   };

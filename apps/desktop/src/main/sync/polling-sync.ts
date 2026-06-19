@@ -9,9 +9,9 @@
 
 import { z } from 'zod';
 import { OFAPI_INTER_PAGE_DELAY_MS, type OfApiPurpose } from '@chatgoose/shared';
-import type { SyncEvent } from '@chatgoose/shared/protocol/index';
+import type { NormalizedSyncMessage, SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { OfApiClient } from '../ofapi/client';
-import type { DataLayer, FanTransactionUpsert } from '../db/index';
+import type { ChatRow, DataLayer, FanTransactionUpsert, MessageUpsert } from '../db/index';
 import type { OfApiChat, OfApiTransaction } from '../ofapi/schemas';
 import { paginateMarker } from '../ofapi/pagination';
 import type { SleepFn } from '../ofapi/rate-limiter';
@@ -20,6 +20,7 @@ import {
   mapChat,
   mapFan,
   mapFanTransaction,
+  mapHubMessage,
   mapMessage,
   type ToMediaUrl,
 } from './mappers';
@@ -29,11 +30,10 @@ const FOCUSED_POLL_MS = 20_000;
 const UNFOCUSED_POLL_MS = 60_000;
 const HIDDEN_FACTOR = 4;
 const BUDGET_FACTOR = 4;
-// SPEC §6.2: while hub SSE is live, the chat-list poll is reconciliation only —
-// slow ×6, never stop (the hub stream carries ids, not bodies). The read-state
-// sweep stays FULL-RATE regardless: no upstream webhook exists for isNew flips,
-// so hub mode changes nothing about seen-tick detection.
-const HUB_DEMOTION_FACTOR = 6;
+// SPEC §6.2: while hub SSE is live, the periodic chat-list poll pauses after
+// initial hydration finishes. Id-only and notification hub frames use this
+// debounce window to coalesce body-free list refreshes when auto-read is off.
+const HUB_LIST_REFRESH_DEBOUNCE_MS = 2_000;
 // OnlyFans ignores limit>10 on chats and dictates its own page size (live
 // 2026-06-11: ~10 near the order=recent head, 10–19 deeper); limit≤10 is
 // honored, so we request an explicit 10 and advance the offset by what
@@ -95,11 +95,20 @@ type PollDepth = 'hot' | 'deep';
 
 interface AccountLoop {
   timer: ReturnType<typeof setTimeout> | null;
+  spendTimer: ReturnType<typeof setTimeout> | null;
   inFlight: boolean;
+  spendInFlight: boolean;
   lastSuccessAt: number | null;
   lastDeepSweepAt: number | null;
   lastSpendSweepAt: number | null;
   consecutiveFailures: number;
+}
+
+interface PendingHubListRefresh {
+  timer: ReturnType<typeof setTimeout> | null;
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
 }
 
 /** Persisted per account (settings table) so restarts resume, never rewalk. */
@@ -119,8 +128,16 @@ function hydrationKey(accountId: string): string {
 export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   /** Visible for the composition root: poll one account immediately. */
   pollAccount(accountId: string): Promise<void>;
-  /** Hub-live cadence demotion (×6 on the poll loop only; sweeps unaffected). */
-  setHubDemoted(demoted: boolean): void;
+  /** Hub-live automatic chat-list polling suspension; read-state sweeps unaffected. */
+  setHubPollingSuspended(suspended: boolean): void;
+  /** Event-driven, body-free page-1 list refresh for hub account-level activity. */
+  refreshAccountHead(accountId: string): Promise<void>;
+  /** Body-free local ingestion for enriched hub message events. */
+  ingestHubMessage(
+    accountId: string,
+    chatId: string,
+    message: NormalizedSyncMessage,
+  ): Promise<boolean>;
 } {
   const { client, data, toMediaUrl } = options;
   const now = options.now ?? Date.now;
@@ -134,12 +151,13 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   let running = false;
   let focusedAccount: string | null = null;
   let windowVisible = true;
-  let hubDemoted = false;
+  let hubPollingSuspended = false;
   let openConversation: { accountId: string; chatId: string } | null = null;
 
   let sweepTimer: ReturnType<typeof setTimeout> | null = null;
   let sweepLastChangeAt = 0;
   const mediaPollers = new Map<string, { startedAt: number; timer: ReturnType<typeof setTimeout> }>();
+  const hubListRefreshes = new Map<string, PendingHubListRefresh>();
 
   function emit(event: SyncEvent): void {
     for (const listener of listeners) {
@@ -147,24 +165,66 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }
   }
 
-  function intervalFor(accountId: string): number {
+  function shouldSuspendLoop(accountId: string): boolean {
+    return hubPollingSuspended && readHydration(accountId).done;
+  }
+
+  function intervalFor(accountId: string): number | null {
+    if (shouldSuspendLoop(accountId)) {
+      return null;
+    }
     const base = accountId === focusedAccount ? FOCUSED_POLL_MS : UNFOCUSED_POLL_MS;
     const hidden = windowVisible ? 1 : HIDDEN_FACTOR;
     const budget = isBudgetExhausted() ? BUDGET_FACTOR : 1;
-    const hub = hubDemoted ? HUB_DEMOTION_FACTOR : 1;
-    return base * hidden * budget * hub;
+    return base * hidden * budget;
   }
 
-  function schedule(accountId: string, delayMs: number): void {
+  function schedule(accountId: string, delayMs: number | null): void {
     const loop = loops.get(accountId);
-    if (!loop || !running) {
+    if (!loop) {
       return;
     }
     if (loop.timer) {
       clearTimeout(loop.timer);
+      loop.timer = null;
+    }
+    if (!running || delayMs === null) {
+      return;
     }
     loop.timer = setTimeout(() => {
       void pollAccount(accountId).finally(() => schedule(accountId, intervalFor(accountId)));
+    }, delayMs);
+  }
+
+  function scheduleBurst(accountId: string): void {
+    schedule(accountId, intervalFor(accountId) === null ? null : 0);
+  }
+
+  function clearHubListRefreshes(): void {
+    for (const pending of hubListRefreshes.values()) {
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+      }
+      pending.resolve();
+    }
+    hubListRefreshes.clear();
+  }
+
+  function scheduleSpendSweep(accountId: string, delayMs: number): void {
+    const loop = loops.get(accountId);
+    if (!loop) {
+      return;
+    }
+    if (loop.spendTimer) {
+      clearTimeout(loop.spendTimer);
+      loop.spendTimer = null;
+    }
+    if (!running) {
+      return;
+    }
+    loop.spendTimer = setTimeout(() => {
+      loop.spendTimer = null;
+      void runSpendSweep(accountId);
     }, delayMs);
   }
 
@@ -251,6 +311,44 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       };
       mediaPollers.set(key, { startedAt, timer: setTimeout(poll, MEDIA_READY_POLL_MS) });
     }
+  }
+
+  function compareMessageIds(a: string, b: string): number {
+    if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
+      const left = BigInt(a);
+      const right = BigInt(b);
+      return left < right ? -1 : left > right ? 1 : 0;
+    }
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
+
+  function hubMessageAdvances(message: MessageUpsert, chat: ChatRow): boolean {
+    if (chat.lastMessageAt === null) {
+      return true;
+    }
+    const messageMs = Date.parse(message.createdAt);
+    const chatMs = Date.parse(chat.lastMessageAt);
+    if (Number.isNaN(messageMs) || Number.isNaN(chatMs)) {
+      return false;
+    }
+    if (messageMs !== chatMs) {
+      return messageMs > chatMs;
+    }
+    return chat.lastMessageId === null || compareMessageIds(message.messageId, chat.lastMessageId) > 0;
+  }
+
+  function previewFromMessage(message: MessageUpsert): string {
+    const text = message.textPlain.split('\n')[0]?.trim() ?? '';
+    if (text.length > 0) {
+      return text;
+    }
+    if (message.isTip) {
+      return 'Tip';
+    }
+    if (message.media.length > 0) {
+      return 'Media';
+    }
+    return '';
   }
 
   /**
@@ -368,6 +466,110 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     return data.chats.get(accountId, chatId) !== null;
   }
 
+  async function refreshAccountHeadNow(accountId: string): Promise<void> {
+    const loop = loops.get(accountId);
+    if (!loop || !running || loop.inFlight) {
+      return;
+    }
+    try {
+      const head = await walkChatPages(accountId, 0, 1, 'hot-poll');
+      upsertChatRows(accountId, head.chats);
+      loop.lastSuccessAt = now();
+      loop.consecutiveFailures = 0;
+      emit({ type: 'chatListUpdated', accountId });
+    } catch (error) {
+      loop.consecutiveFailures += 1;
+      throw error;
+    }
+  }
+
+  function armHubListRefresh(accountId: string, pending: PendingHubListRefresh): void {
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+    }
+    pending.timer = setTimeout(() => {
+      pending.timer = null;
+      if (hubListRefreshes.get(accountId) !== pending) {
+        return;
+      }
+      hubListRefreshes.delete(accountId);
+      void refreshAccountHeadNow(accountId).then(pending.resolve, pending.reject);
+    }, HUB_LIST_REFRESH_DEBOUNCE_MS);
+  }
+
+  function refreshAccountHead(accountId: string): Promise<void> {
+    if (!running) {
+      return Promise.resolve();
+    }
+    const existing = hubListRefreshes.get(accountId);
+    if (existing) {
+      armHubListRefresh(accountId, existing);
+      return Promise.resolve();
+    }
+    let resolvePending!: () => void;
+    let rejectPending!: (error: unknown) => void;
+    const promise = new Promise<void>((resolve, reject) => {
+      resolvePending = resolve;
+      rejectPending = reject;
+    });
+    const pending: PendingHubListRefresh = {
+      timer: null,
+      promise,
+      resolve: resolvePending,
+      reject: rejectPending,
+    };
+    hubListRefreshes.set(accountId, pending);
+    armHubListRefresh(accountId, pending);
+    void promise.catch(() => undefined);
+    return Promise.resolve();
+  }
+
+  async function ingestHubMessage(
+    accountId: string,
+    chatId: string,
+    message: NormalizedSyncMessage,
+  ): Promise<boolean> {
+    const upsert = mapHubMessage(accountId, chatId, message);
+    if (upsert === null) {
+      return false;
+    }
+
+    const existed = data.messages.get(accountId, chatId, upsert.messageId) !== null;
+    data.messages.upsertMany([upsert]);
+    data.messages.prune(accountId, chatId);
+    if (autoReadEnabled()) {
+      trackUnreadyMedia(accountId, chatId, [upsert]);
+    }
+
+    const chat = data.chats.get(accountId, chatId);
+    if (chat === null) {
+      await refreshAccountHead(accountId);
+      return true;
+    }
+
+    const advances = hubMessageAdvances(upsert, chat);
+    const newIncoming = !existed && !upsert.isSentByMe;
+    const clearUnread = !existed && upsert.isSentByMe && advances;
+    data.chats.upsert({
+      accountId: chat.accountId,
+      chatId: chat.chatId,
+      fanName: chat.fanName,
+      avatar: chat.avatar,
+      unreadCount: clearUnread ? 0 : newIncoming ? chat.unreadCount + 1 : chat.unreadCount,
+      hasUnreadTips: clearUnread ? false : chat.hasUnreadTips || (newIncoming && upsert.isTip),
+      lastMessageAt: advances ? upsert.createdAt : chat.lastMessageAt,
+      lastMessagePreview: advances ? previewFromMessage(upsert) : chat.lastMessagePreview,
+      lastMessageIsSentByMe: advances ? upsert.isSentByMe : chat.lastMessageIsSentByMe,
+      lastMessageId: advances ? upsert.messageId : chat.lastMessageId,
+      lastReadMessageId: chat.lastReadMessageId,
+      pinned: chat.pinned,
+      canSendMessage: chat.canSendMessage,
+      canNotSendReason: chat.canNotSendReason,
+      raw: { source: 'hub-message', messageId: upsert.messageId },
+    });
+    return true;
+  }
+
   async function pollAccount(accountId: string, depth: PollDepth = 'hot'): Promise<void> {
     const loop = loops.get(accountId);
     if (!loop || loop.inFlight) {
@@ -468,30 +670,15 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         );
         upsertChatRows(accountId, chunk.chats);
         const pagesWalked = hydration.pagesWalked + chunk.pages;
-        data.settings.set(hydrationKey(accountId), {
+        const nextHydration = {
           nextOffset: chunk.nextOffset,
           pagesWalked,
           done: chunk.exhausted || pagesWalked >= HYDRATION_MAX_PAGES,
-        } satisfies HydrationState);
+        } satisfies HydrationState;
+        data.settings.set(hydrationKey(accountId), nextHydration);
         emit({ type: 'chatListUpdated', accountId }); // progressive inbox paint
-      }
-
-      // Fan-spend sweep (DESIGN §1): incremental transactions walk on its own
-      // cadence, gated on hydration so the one-time -30days window walk never
-      // competes with the chat-list hydration for credits. Failure-isolated —
-      // a transactions hiccup must not degrade the chat poll's status.
-      if (
-        hydration.done &&
-        (loop.lastSpendSweepAt === null ||
-          now() - loop.lastSpendSweepAt >= SPEND_SWEEP_INTERVAL_MS)
-      ) {
-        try {
-          await sweepFanSpend(accountId);
-        } catch {
-          // transient; the stamp below still advances so a broken transactions
-          // endpoint retries at sweep cadence, not on every poll tick
-        } finally {
-          loop.lastSpendSweepAt = now();
+        if (nextHydration.done && loop.spendTimer === null && !loop.spendInFlight) {
+          scheduleSpendSweep(accountId, 0);
         }
       }
 
@@ -620,6 +807,39 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     );
   }
 
+  async function runSpendSweep(accountId: string): Promise<void> {
+    const loop = loops.get(accountId);
+    if (!loop || !running || loop.spendInFlight) {
+      return;
+    }
+    if (!readHydration(accountId).done) {
+      return;
+    }
+    if (isBudgetExhausted()) {
+      scheduleSpendSweep(accountId, SPEND_SWEEP_INTERVAL_MS);
+      return;
+    }
+    const dueIn =
+      loop.lastSpendSweepAt === null
+        ? 0
+        : SPEND_SWEEP_INTERVAL_MS - (now() - loop.lastSpendSweepAt);
+    if (dueIn > 0) {
+      scheduleSpendSweep(accountId, dueIn);
+      return;
+    }
+    loop.spendInFlight = true;
+    try {
+      await sweepFanSpend(accountId);
+    } catch {
+      // transient; the stamp below still advances so a broken transactions
+      // endpoint retries at sweep cadence, independent of chat-list polling
+    } finally {
+      loop.lastSpendSweepAt = now();
+      loop.spendInFlight = false;
+      scheduleSpendSweep(accountId, SPEND_SWEEP_INTERVAL_MS);
+    }
+  }
+
   async function refreshFanDetail(accountId: string, chatId: string): Promise<void> {
     const cached = data.fans.get(accountId, chatId);
     if (cached && now() - Date.parse(cached.fetchedAt) < FAN_DETAIL_TTL_MS) {
@@ -645,12 +865,17 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         if (!loops.has(accountId)) {
           loops.set(accountId, {
             timer: null,
+            spendTimer: null,
             inFlight: false,
+            spendInFlight: false,
             lastSuccessAt: null,
             lastDeepSweepAt: null,
             lastSpendSweepAt: null,
             consecutiveFailures: 0,
           });
+        }
+        if (readHydration(accountId).done) {
+          scheduleSpendSweep(accountId, 0);
         }
         void pollAccount(accountId).finally(() => schedule(accountId, intervalFor(accountId)));
       }
@@ -662,6 +887,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           clearTimeout(loop.timer);
         }
         loop.timer = null;
+        if (loop.spendTimer) {
+          clearTimeout(loop.spendTimer);
+        }
+        loop.spendTimer = null;
       }
       if (sweepTimer) {
         clearTimeout(sweepTimer);
@@ -671,6 +900,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         clearTimeout(poller.timer);
       }
       mediaPollers.clear();
+      clearHubListRefreshes();
     },
     subscribe(listener) {
       listeners.add(listener);
@@ -680,9 +910,9 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       // refreshChat is the AUTOMATIC/background body-read seam (hub message
       // reactions, scoped Spenders refresh). When auto-read is off, skip the
       // tail GET (which would mark the chat read) and just nudge the list;
-      // listChats-driven rows stay fresh through the poll.
+      // listChats-driven rows stay fresh through a debounced hub activity refresh.
       if (!autoReadEnabled()) {
-        emit({ type: 'chatListUpdated', accountId });
+        await refreshAccountHead(accountId);
         return;
       }
       await fetchChatTail(accountId, chatId, purpose);
@@ -751,7 +981,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     setFocusedAccount(accountId) {
       focusedAccount = accountId;
       if (running && accountId && loops.has(accountId)) {
-        schedule(accountId, 0); // resume burst on focus
+        scheduleBurst(accountId); // resume burst on focus when polling is active
       }
     },
     setWindowVisible(visible) {
@@ -759,22 +989,29 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       windowVisible = visible;
       if (running && visible && wasHidden) {
         for (const accountId of loops.keys()) {
-          schedule(accountId, 0); // resume burst when the window comes back
+          scheduleBurst(accountId); // resume burst when the window comes back
         }
       }
     },
-    setHubDemoted(demoted) {
-      const wasDemoted = hubDemoted;
-      hubDemoted = demoted;
-      if (running && !demoted && wasDemoted) {
-        // Hub dropped: pending timers were scheduled at the slow cadence —
-        // reschedule at the restored interval (the composition root's
-        // reconciliation forceRefresh covers the immediate gap).
-        for (const accountId of loops.keys()) {
+    setHubPollingSuspended(suspended) {
+      const wasSuspended = hubPollingSuspended;
+      hubPollingSuspended = suspended;
+      if (!running || suspended === wasSuspended) {
+        return;
+      }
+      for (const accountId of loops.keys()) {
+        if (suspended && shouldSuspendLoop(accountId)) {
+          schedule(accountId, null);
+        } else {
+          // Hub dropped, or the account is still hydrating: keep/restore the
+          // normal cadence. The composition root's reconciliation forceRefresh
+          // covers the immediate gap when the stream goes down.
           schedule(accountId, intervalFor(accountId));
         }
       }
     },
+    refreshAccountHead,
+    ingestHubMessage,
     async forceRefresh(accountId) {
       const targets = accountId ? [accountId] : [...loops.keys()];
       // Manual refresh = deep sweep: pull DEEP_SWEEP_PAGES, not just page 1.
@@ -782,7 +1019,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     },
     status(): SyncStatusSnapshot {
       const freshness: Record<string, string> = {};
-      const pollIntervalsMs: Record<string, number> = {};
+      const pollIntervalsMs: Record<string, number | null> = {};
       let worstFailures = 0;
       for (const [accountId, loop] of loops) {
         if (loop.lastSuccessAt != null) {

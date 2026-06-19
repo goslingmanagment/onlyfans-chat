@@ -1,21 +1,26 @@
-// Hub-aware sync composition (SPEC §6.2): PollingSync keeps running and keeps
-// owning hydration, read-state sweeps, media polling, refreshChat,
-// readChatTailForUserOpen and openConversation; HubSync only changes WHEN
-// bodies are fetched. Hub frames carry ids, not bodies — message-bearing events
-// trigger a tail fetch through the polling provider before re-emitting, so
-// SQLite stays the single source of truth. Both providers' events flow through
-// ONE listener set: the send engine's messageSent subscription works
-// identically in either mode.
+// Hub-aware sync composition (SPEC §6.2): PollingSync owns hydration,
+// read-state sweeps, media polling, refreshChat, readChatTailForUserOpen and
+// openConversation. While HubSync is live, periodic chat-list polling is paused
+// after hydration; enriched message frames ingest locally, and id-only/
+// notification activity falls back to scoped/body reads or debounced list-only
+// refreshes. Both providers' events flow through ONE listener set: the send
+// engine's messageSent subscription works identically in either mode.
 
 import { z } from 'zod';
-import type { SyncEvent } from '@chatgoose/shared/protocol/index';
+import type { NormalizedSyncMessage, SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { DataLayer } from '../db/index';
 import type { HubSync, HubSyncStatus } from './hub-sync';
 import type { SyncListener, SyncProvider, SyncStatusSnapshot } from './provider';
 
 type PollingLike = SyncProvider & {
   pollAccount(accountId: string): Promise<void>;
-  setHubDemoted(demoted: boolean): void;
+  setHubPollingSuspended(suspended: boolean): void;
+  refreshAccountHead(accountId: string): Promise<void>;
+  ingestHubMessage(
+    accountId: string,
+    chatId: string,
+    message: NormalizedSyncMessage,
+  ): Promise<boolean>;
 };
 
 export interface HubFactoryCallbacks {
@@ -57,6 +62,7 @@ type EventStats = z.infer<typeof eventStatsSchema>;
 
 export interface HubAwareSync extends SyncProvider {
   pollAccount(accountId: string): Promise<void>;
+  refreshAccountHead(accountId: string): Promise<void>;
   /** Recreates the hub connection from current settings (key/URL changes). */
   reconfigureHub(): Promise<void>;
   hubStatus(): HubSyncStatus | null;
@@ -137,12 +143,32 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     recordHubEvent(event);
     switch (event.type) {
       case 'messageReceived':
-      case 'messageSent':
+      case 'messageSent': {
+        if (event.message && event.message.id === event.messageId) {
+          try {
+            if (await polling.ingestHubMessage(event.accountId, event.chatId, event.message)) {
+              emit(event);
+              break;
+            }
+          } catch {
+            // fall through to the legacy reconciliation path below
+          }
+        }
+
+        // Older Core frames and incomplete/mismatched bodies still reconcile via
+        // the polling provider. With auto-read off this is list-only.
+        try {
+          await polling.refreshChat(event.accountId, event.chatId);
+        } catch {
+          // transient fetch failure: still emit — polling reconciles later
+        }
+        emit(event);
+        break;
+      }
       case 'ppvUnlocked':
       case 'tipReceived':
-        // Fetch the bodies first so renderer invalidation finds fresh rows.
-        // refreshChat emits its own chatListUpdated; it never emits message
-        // events, so re-emitting the original frame cannot duplicate.
+        // Notification-shaped events are not full messages. Keep the existing
+        // reconciliation path; with auto-read off, refreshChat is list-only.
         try {
           await polling.refreshChat(event.accountId, event.chatId);
         } catch {
@@ -153,15 +179,32 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       case 'messageDeleted': {
         const chatId = event.chatId ?? lookupChatId(event.accountId, event.messageId);
         if (chatId === null) {
+          try {
+            await polling.refreshAccountHead(event.accountId);
+          } catch {
+            // transient fetch failure: the next hub activity/degrade refresh reconciles
+          }
           return; // unknown message: nothing to tombstone, drop silently
         }
         // Tombstone (deleted=1) publishes bus scope 'messages' for the chat.
         data.messages.markDeleted(event.accountId, chatId, [event.messageId]);
+        try {
+          await polling.refreshAccountHead(event.accountId);
+        } catch {
+          // transient fetch failure: still emit the tombstone
+        }
         emit({ ...event, chatId });
         break;
       }
+      case 'chatListUpdated':
+        try {
+          await polling.refreshAccountHead(event.accountId);
+        } catch {
+          emit(event);
+        }
+        break;
       default:
-        emit(event); // typing/presence/accountAuthChanged/chatListUpdated/…
+        emit(event); // typing/presence/accountAuthChanged/…
     }
   }
 
@@ -170,11 +213,11 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     statusChangedAtMs = now();
     liveSinceMs = isLive ? (liveSinceMs ?? now()) : null;
     if (isLive && !hubLive) {
-      polling.setHubDemoted(true);
+      polling.setHubPollingSuspended(true);
     } else if (!isLive && hubLive) {
-      // Hub degraded/stopped: restore full cadence and run one reconciliation
-      // sweep to close the gap the stream was covering (SPEC §6.2).
-      polling.setHubDemoted(false);
+      // Hub degraded/stopped: restore polling and run one reconciliation sweep
+      // to close the gap the stream was covering (SPEC §6.2).
+      polling.setHubPollingSuspended(false);
       void polling.forceRefresh().catch(() => undefined);
     }
     hubLive = isLive;
@@ -198,7 +241,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     hub = null;
     if (hubLive) {
       hubLive = false;
-      polling.setHubDemoted(false);
+      polling.setHubPollingSuspended(false);
     }
   }
 
@@ -217,6 +260,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    refreshAccountHead: (accountId) => polling.refreshAccountHead(accountId),
     refreshChat: (accountId, chatId, purpose) => polling.refreshChat(accountId, chatId, purpose),
     readChatTailForUserOpen: (accountId, chatId, purpose) =>
       polling.readChatTailForUserOpen(accountId, chatId, purpose),

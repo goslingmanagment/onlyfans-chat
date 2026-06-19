@@ -203,11 +203,45 @@ export const chatListUpdatedEventSchema = z.object({
   accountId: idSchema,
 });
 
+export const normalizedSyncMessageMediaSchema = z.object({
+  id: idSchema,
+  type: z.enum(['photo', 'video', 'audio', 'gif', 'other']),
+  isReady: z.boolean(),
+  locked: z.boolean(),
+  durationSeconds: z.number().nonnegative().nullable().optional(),
+});
+
+export const normalizedSyncMessageReplyToSchema = z.object({
+  messageId: idSchema.optional(),
+  sender: z.enum(['fan', 'model']).optional(),
+  textPreview: z.string(),
+});
+
+export const normalizedSyncMessageSchema = z.object({
+  id: idSchema,
+  text: z.string(),
+  createdAt: z.string(),
+  isSentByMe: z.boolean(),
+  price: z.number().nonnegative(),
+  isOpened: z.boolean().nullable().optional(),
+  isNew: z.boolean().optional(),
+  isTip: z.boolean().optional(),
+  tipAmountUsd: z.number().nonnegative().nullable().optional(),
+  tipText: z.string().nullable().optional(),
+  mediaCount: z.number().int().nonnegative().optional(),
+  media: z.array(normalizedSyncMessageMediaSchema).optional(),
+  replyTo: normalizedSyncMessageReplyToSchema.nullable().optional(),
+});
+export type NormalizedSyncMessage = z.infer<typeof normalizedSyncMessageSchema>;
+
+const tolerantNormalizedSyncMessageSchema = normalizedSyncMessageSchema.optional().catch(undefined);
+
 export const messageReceivedEventSchema = z.object({
   type: z.literal('messageReceived'),
   accountId: idSchema,
   chatId: idSchema,
   messageId: idSchema,
+  message: tolerantNormalizedSyncMessageSchema,
 });
 
 export const messageSentEventSchema = z.object({
@@ -215,20 +249,21 @@ export const messageSentEventSchema = z.object({
   accountId: idSchema,
   chatId: idSchema,
   messageId: idSchema,
+  message: tolerantNormalizedSyncMessageSchema,
 });
 
 export const ppvUnlockedEventSchema = z.object({
   type: z.literal('ppvUnlocked'),
   accountId: idSchema,
   chatId: idSchema,
-  messageId: idSchema,
+  messageId: idSchema.optional(),
 });
 
 export const tipReceivedEventSchema = z.object({
   type: z.literal('tipReceived'),
   accountId: idSchema,
   chatId: idSchema,
-  messageId: idSchema,
+  messageId: idSchema.optional(),
   // OFAPI amounts are dollars; absent when upstream omits it (never fabricate).
   amountUsd: z.number().nonnegative().optional(),
 });

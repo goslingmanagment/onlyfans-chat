@@ -5,7 +5,8 @@
 // 15-min max stream lifetime (clean close = normal path).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SyncEvent } from '@chatgoose/shared/protocol/index';
+import { parseSyncEvent } from '@chatgoose/shared/protocol/index';
+import type { NormalizedSyncMessage, SyncEvent } from '@chatgoose/shared/protocol/index';
 import {
   createHubSync,
   SseFrameParser,
@@ -465,25 +466,72 @@ describe('createHubSync', () => {
     expect(events).toEqual([{ type: 'messageDeleted', accountId: ACCT, messageId: '1000001' }]);
     sync.stop();
   });
+
+  it('accepts ppv/tip notification frames without messageId', () => {
+    expect(parseSyncEvent({ type: 'ppvUnlocked', accountId: ACCT, chatId: '5' })).toEqual({
+      type: 'ppvUnlocked',
+      accountId: ACCT,
+      chatId: '5',
+    });
+    expect(parseSyncEvent({ type: 'tipReceived', accountId: ACCT, chatId: '5', amountUsd: 5 })).toEqual({
+      type: 'tipReceived',
+      accountId: ACCT,
+      chatId: '5',
+      amountUsd: 5,
+    });
+  });
+
+  it('keeps the id-only envelope when an enriched message body drifts out of schema', () => {
+    const parsed = parseSyncEvent({
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '5',
+      messageId: '9001',
+      message: {
+        id: '9001',
+        text: '<p>hello</p>',
+        createdAt: '2026-06-11T12:00:00+00:00',
+        isSentByMe: false,
+        price: 0,
+        media: [{ id: 'm1', type: 'new-upstream-type', isReady: true, locked: false }],
+      },
+    });
+
+    expect(parsed).toMatchObject({
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '5',
+      messageId: '9001',
+    });
+    expect(parsed?.type === 'messageReceived' ? parsed.message : null).toBeUndefined();
+  });
 });
 
 // ─── provider composition ──────────────────────────────────────────────────
 
 interface FakePolling extends SyncProvider {
   pollAccount(accountId: string): Promise<void>;
-  setHubDemoted(demoted: boolean): void;
-  demotions: boolean[];
+  setHubPollingSuspended(suspended: boolean): void;
+  suspensions: boolean[];
   forceRefreshCalls: number;
   refreshCalls: Array<{ accountId: string; chatId: string }>;
+  accountRefreshCalls: string[];
+  ingestCalls: Array<{ accountId: string; chatId: string; messageId: string }>;
+  ingestResult: boolean;
+  refreshAccountHead(accountId: string): Promise<void>;
+  ingestHubMessage(accountId: string, chatId: string, message: NormalizedSyncMessage): Promise<boolean>;
   emit(event: SyncEvent): void;
 }
 
 function makeFakePolling(): FakePolling {
   const listeners = new Set<(event: SyncEvent) => void>();
   const polling: FakePolling = {
-    demotions: [],
+    suspensions: [],
     forceRefreshCalls: 0,
     refreshCalls: [],
+    accountRefreshCalls: [],
+    ingestCalls: [],
+    ingestResult: true,
     emit: (event) => {
       for (const listener of listeners) listener(event);
     },
@@ -499,6 +547,15 @@ function makeFakePolling(): FakePolling {
       polling.emit({ type: 'chatListUpdated', accountId });
       return Promise.resolve();
     },
+    refreshAccountHead: (accountId) => {
+      polling.accountRefreshCalls.push(accountId);
+      polling.emit({ type: 'chatListUpdated', accountId });
+      return Promise.resolve();
+    },
+    ingestHubMessage: (accountId, chatId, message) => {
+      polling.ingestCalls.push({ accountId, chatId, messageId: message.id });
+      return Promise.resolve(polling.ingestResult);
+    },
     readChatTailForUserOpen: () => Promise.resolve(),
     ensureChat: () => Promise.resolve(true),
     openConversation: () => Promise.resolve(),
@@ -511,8 +568,8 @@ function makeFakePolling(): FakePolling {
     },
     status: () => ({ freshness: {}, state: 'live' }),
     pollAccount: () => Promise.resolve(),
-    setHubDemoted: (demoted) => {
-      polling.demotions.push(demoted);
+    setHubPollingSuspended: (suspended) => {
+      polling.suspensions.push(suspended);
     },
   };
   return polling;
@@ -604,6 +661,20 @@ describe('createHubAwareSync (provider composition)', () => {
     data.messages.upsertMany([upsert]);
   }
 
+  function hubMessage(overrides: Partial<NormalizedSyncMessage> = {}): NormalizedSyncMessage {
+    return {
+      id: '9001',
+      text: '<p>hello from hub</p>',
+      createdAt: '2026-06-11T12:00:00+00:00',
+      isSentByMe: false,
+      price: 0,
+      isOpened: false,
+      isNew: true,
+      isTip: false,
+      ...overrides,
+    };
+  }
+
   it('start() starts polling AND the hub when settings are configured', async () => {
     const { provider, hub } = build();
     provider.start([ACCT]);
@@ -614,21 +685,21 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(hub.stopCalls).toBe(1);
   });
 
-  it('hub live demotes polling cadence; degraded restores it and runs ONE reconciliation sweep', async () => {
+  it('hub live suspends polling; degraded restores it and runs ONE reconciliation sweep', async () => {
     const { provider, polling, callbacks } = build();
     provider.start([ACCT]);
     await Promise.resolve();
     await Promise.resolve();
 
     callbacks().onStatusChange('live');
-    expect(polling.demotions).toEqual([true]);
+    expect(polling.suspensions).toEqual([true]);
     expect(polling.forceRefreshCalls).toBe(0);
 
-    callbacks().onStatusChange('live'); // no re-demotion churn
-    expect(polling.demotions).toEqual([true]);
+    callbacks().onStatusChange('live'); // no re-suspension churn
+    expect(polling.suspensions).toEqual([true]);
 
     callbacks().onStatusChange('degraded');
-    expect(polling.demotions).toEqual([true, false]);
+    expect(polling.suspensions).toEqual([true, false]);
     expect(polling.forceRefreshCalls).toBe(1);
 
     callbacks().onStatusChange('degraded'); // still down: no extra sweeps
@@ -636,7 +707,28 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
-  it('messageReceived triggers exactly one refreshChat (bodies first), then re-emits', async () => {
+  it('enriched messageReceived ingests locally and skips refreshChat', async () => {
+    const { provider, polling, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const frame: SyncEvent = {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: '9001',
+      message: hubMessage(),
+    };
+    await callbacks().onEvent(frame);
+
+    expect(polling.ingestCalls).toEqual([{ accountId: ACCT, chatId: '101', messageId: '9001' }]);
+    expect(polling.refreshCalls).toEqual([]);
+    expect(events).toEqual([frame]);
+    provider.stop();
+  });
+
+  it('id-only messageReceived preserves the refreshChat fallback before re-emitting', async () => {
     const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
     await Promise.resolve();
@@ -650,8 +742,61 @@ describe('createHubAwareSync (provider composition)', () => {
     };
     await callbacks().onEvent(frame);
 
+    expect(polling.ingestCalls).toEqual([]);
     expect(polling.refreshCalls).toEqual([{ accountId: ACCT, chatId: '101' }]);
-    // refreshChat's own chatListUpdated arrives BEFORE the id-bearing event
+    expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
+    provider.stop();
+  });
+
+  it('mismatched enriched message falls back to refreshChat', async () => {
+    const { provider, polling, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const frame: SyncEvent = {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: '9001',
+      message: hubMessage({ id: 'other-message' }),
+    };
+    await callbacks().onEvent(frame);
+
+    expect(polling.ingestCalls).toEqual([]);
+    expect(polling.refreshCalls).toEqual([{ accountId: ACCT, chatId: '101' }]);
+    expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
+    provider.stop();
+  });
+
+  it('bad enriched message bodies degrade to id-only fallback instead of dropping the frame', async () => {
+    const { provider, polling, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const frame = parseSyncEvent({
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: '9001',
+      message: {
+        id: '9001',
+        text: '<p>hello</p>',
+        createdAt: '2026-06-11T12:00:00+00:00',
+        isSentByMe: false,
+        price: 0,
+        media: [{ id: 'm1', type: 'new-upstream-type', isReady: true, locked: false }],
+      },
+    });
+    if (frame === null) {
+      throw new Error('Expected invalid message body to preserve the event envelope');
+    }
+
+    await callbacks().onEvent(frame);
+
+    expect(polling.ingestCalls).toEqual([]);
+    expect(polling.refreshCalls).toEqual([{ accountId: ACCT, chatId: '101' }]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
     provider.stop();
   });
@@ -691,7 +836,7 @@ describe('createHubAwareSync (provider composition)', () => {
   });
 
   it('messageDeleted without chatId tombstones via DB lookup and re-emits enriched', async () => {
-    const { provider, callbacks, events } = build();
+    const { provider, polling, callbacks, events } = build();
     seedMessage('1000001', '4471102');
     provider.start([ACCT]);
     await Promise.resolve();
@@ -700,7 +845,9 @@ describe('createHubAwareSync (provider composition)', () => {
     await callbacks().onEvent({ type: 'messageDeleted', accountId: ACCT, messageId: '1000001' });
 
     expect(data.messages.get(ACCT, '4471102', '1000001')?.deleted).toBe(true);
+    expect(polling.accountRefreshCalls).toEqual([ACCT]);
     expect(events).toEqual([
+      { type: 'chatListUpdated', accountId: ACCT },
       { type: 'messageDeleted', accountId: ACCT, messageId: '1000001', chatId: '4471102' },
     ]);
     provider.stop();
@@ -725,14 +872,15 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
-  it('messageDeleted for an unknown message drops silently (no emit, no tombstone)', async () => {
-    const { provider, callbacks, events } = build();
+  it('messageDeleted for an unknown message still refreshes the account head', async () => {
+    const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
     await Promise.resolve();
     await Promise.resolve();
 
     await callbacks().onEvent({ type: 'messageDeleted', accountId: ACCT, messageId: 'nope' });
-    expect(events).toEqual([]);
+    expect(polling.accountRefreshCalls).toEqual([ACCT]);
+    expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }]);
     provider.stop();
   });
 
@@ -750,7 +898,23 @@ describe('createHubAwareSync (provider composition)', () => {
       chatId: '555',
     });
     expect(data.messages.get(ACCT, '555', '1000003')?.deleted).toBe(true);
-    expect(events).toHaveLength(1);
+    expect(events).toEqual([
+      { type: 'chatListUpdated', accountId: ACCT },
+      { type: 'messageDeleted', accountId: ACCT, messageId: '1000003', chatId: '555' },
+    ]);
+    provider.stop();
+  });
+
+  it('chatListUpdated refreshes the account head and avoids duplicate list events', async () => {
+    const { provider, polling, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await callbacks().onEvent({ type: 'chatListUpdated', accountId: ACCT });
+
+    expect(polling.accountRefreshCalls).toEqual([ACCT]);
+    expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }]);
     provider.stop();
   });
 
@@ -792,7 +956,7 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(provider.hubStatus()).toBeNull();
     polling.emit({ type: 'chatListUpdated', accountId: ACCT });
     expect(events).toHaveLength(1);
-    expect(polling.demotions).toEqual([]);
+    expect(polling.suspensions).toEqual([]);
     provider.stop();
   });
 
@@ -819,13 +983,13 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
     await Promise.resolve();
     cb().onStatusChange('live');
-    expect(polling.demotions).toEqual([true]);
+    expect(polling.suspensions).toEqual([true]);
 
     await provider.reconfigureHub();
     expect(hubs[0]?.stopCalls).toBe(1);
     expect(hubs[1]?.startCalls).toBe(1);
-    // demotion released on teardown; the new hub re-demotes when it goes live
-    expect(polling.demotions).toEqual([true, false]);
+    // suspension released on teardown; the new hub suspends when it goes live
+    expect(polling.suspensions).toEqual([true, false]);
     provider.stop();
   });
 

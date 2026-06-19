@@ -122,12 +122,12 @@ describe('fan-spend sweep', () => {
     }
   }
 
-  /** Poll #1 completes hydration; the sweep is gated on hydration.done, so it
-   *  first runs on poll #2. */
+  /** Poll #1 completes hydration; the independent spend timer then fires. */
   async function bootAndSweep(sync: ReturnType<typeof makeSync>): Promise<void> {
     sync.start([ACCT]); // poll #1 floats
     await drainPoll();
-    await sync.pollAccount(ACCT); // poll #2 — first spend sweep
+    await vi.advanceTimersByTimeAsync(0); // first spend sweep
+    await drainPoll();
   }
 
   function spendOf(chatId: string): { lifetimeSpend: number | null; spend30d: number | null } {
@@ -169,8 +169,8 @@ describe('fan-spend sweep', () => {
 
     // a new tip lands; the next sweep becomes due after the 10-minute cadence
     stub.setTransactions([tx('t2', 101, 25, 0), t1]);
-    vi.setSystemTime(Date.now() + SPEND_SWEEP_INTERVAL_MS);
-    await sync.pollAccount(ACCT);
+    await vi.advanceTimersByTimeAsync(SPEND_SWEEP_INTERVAL_MS);
+    await drainPoll();
 
     expect(stub.txCalls).toHaveLength(2);
     const expectedStart = new Date(Date.parse(t1.createdAt ?? '') - 60 * 60_000)
@@ -186,7 +186,7 @@ describe('fan-spend sweep', () => {
     stub.setTransactions([tx('t1', 101, 50, 2)]);
     const sync = makeSync();
     await bootAndSweep(sync);
-    await sync.pollAccount(ACCT); // immediately after — not due yet
+    await vi.advanceTimersByTimeAsync(SPEND_SWEEP_INTERVAL_MS - 1);
     expect(stub.txCalls).toHaveLength(1);
     sync.stop();
   });
