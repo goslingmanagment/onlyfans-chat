@@ -9,6 +9,8 @@ import type {
   HubFanProfile,
   HubOfapiCreditsSummary,
   HubPage,
+  HubAiGatewayStreamCallbacks,
+  HubAiGatewayStreamRequest,
   HubUsageBatchResult,
   HubUsageEvent,
 } from '@chatgoose/shared/hub/index';
@@ -50,6 +52,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hasHubKey: false,
     hubBaseUrl: null,
     ofapiReadTransport: 'direct',
+    aiGatewayTransport: 'direct',
     hubModeOverride: 'auto',
     spendSweepRollbackToLegacy: true,
     spendStyle: 'figure',
@@ -124,6 +127,8 @@ export interface FakeHubClient extends HubClient {
   putFanProfileMock: ReturnType<typeof vi.fn>;
   postUsageBatchMock: ReturnType<typeof vi.fn>;
   getOfapiCreditsSummaryMock: ReturnType<typeof vi.fn>;
+  streamAiGatewayMock: ReturnType<typeof vi.fn>;
+  aiGatewayRequests: HubAiGatewayStreamRequest[];
   batches: HubUsageEvent[][];
 }
 
@@ -134,9 +139,14 @@ export function makeFakeHubClient(
     putFanProfile: () => Promise<unknown>;
     postUsageBatch: (args: { events: HubUsageEvent[] }) => Promise<HubUsageBatchResult>;
     getOfapiCreditsSummary: () => Promise<HubOfapiCreditsSummary>;
+    streamAiGateway: (
+      args: { request: HubAiGatewayStreamRequest },
+      callbacks: HubAiGatewayStreamCallbacks,
+    ) => Promise<string>;
   }> = {},
 ): FakeHubClient {
   const batches: HubUsageEvent[][] = [];
+  const aiGatewayRequests: HubAiGatewayStreamRequest[] = [];
   const listPagesMock = vi.fn(overrides.listPages ?? (() => Promise.resolve([hubPage()])));
   const getFanProfileMock = vi.fn(overrides.getFanProfile ?? (() => Promise.resolve(null)));
   const putFanProfileMock = vi.fn(
@@ -185,18 +195,36 @@ export function makeFakeHubClient(
           limitations: [],
         })),
   );
+  const streamAiGatewayMock = vi.fn(
+    overrides.streamAiGateway ??
+      ((args: { request: HubAiGatewayStreamRequest }, callbacks: HubAiGatewayStreamCallbacks) => {
+        aiGatewayRequests.push(args.request);
+        callbacks.onText('hub reply');
+        callbacks.onUsage?.({
+          input_tokens: 10,
+          cache_creation_input_tokens: 2,
+          cache_read_input_tokens: 3,
+          output_tokens: 4,
+        });
+        callbacks.onStopReason?.('end_turn');
+        return Promise.resolve('hub reply');
+      }),
+  );
   return {
     listPages: listPagesMock,
     getFanProfile: getFanProfileMock,
     putFanProfile: putFanProfileMock,
     postUsageBatch: postUsageBatchMock,
     getOfapiCreditsSummary: getOfapiCreditsSummaryMock,
+    streamAiGateway: streamAiGatewayMock,
     getServerTimeOffsetMs: () => null,
     listPagesMock,
     getFanProfileMock,
     putFanProfileMock,
     postUsageBatchMock,
     getOfapiCreditsSummaryMock,
+    streamAiGatewayMock,
+    aiGatewayRequests,
     batches,
   } as FakeHubClient;
 }

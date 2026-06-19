@@ -116,6 +116,17 @@ export const UI_MESSAGES = {
     en: 'Restart required. Writes remain direct.',
     ru: 'Нужен перезапуск. Запись пока напрямую.',
   },
+  'hub.aiGateway.label': { en: 'AI generation', ru: 'Генерация ИИ' },
+  'hub.aiGateway.hint': {
+    en: 'Direct local keys or core streaming gateway.',
+    ru: 'Локальные ключи напрямую или стрим через core.',
+  },
+  'hub.aiGateway.direct': { en: 'Direct', ru: 'Напрямую' },
+  'hub.aiGateway.hub': { en: 'Agency Hub', ru: 'Agency Hub' },
+  'hub.aiGateway.liveGate': {
+    en: 'Hub mode needs saved hub settings and the core live gate.',
+    ru: 'Для Hub нужны сохранённые настройки хаба и live-gate в core.',
+  },
   'hub.streamStatus': { en: 'Stream status', ru: 'Статус стрима' },
   'hub.status.connecting': { en: 'connecting…', ru: 'подключение…' },
   'hub.status.live': { en: 'live', ru: 'работает' },
@@ -897,7 +908,10 @@ export const UI_MESSAGES = {
   'aidock.pingTip': { en: 'Reactivation message for a silent fan', ru: 'Сообщение для реактивации молчащего фана' },
   'aidock.hiTip': { en: '3 opener variants for a fresh conversation', ru: '3 варианта первого сообщения для нового диалога' },
   'aidock.gate.unmapped': { en: 'Map a personality in Settings', ru: 'Свяжите личность в настройках' },
-  'aidock.gate.noKey': { en: 'Add an Anthropic or OpenRouter key in Settings', ru: 'Добавьте ключ Anthropic или OpenRouter в настройках' },
+  'aidock.gate.noKey': {
+    en: 'Add a direct AI key or configure Hub AI in Settings',
+    ru: 'Добавьте прямой AI-ключ или настройте Hub AI в настройках',
+  },
   'aidock.pingBlocked': { en: 'Fan is active — use Reply', ru: 'Фан активен — используйте Reply' },
   'aidock.hiLocked': {
     en: 'Conversation already has more than {max} messages — use Reply',

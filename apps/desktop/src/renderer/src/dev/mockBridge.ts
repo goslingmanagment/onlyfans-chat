@@ -414,6 +414,7 @@ function buildStore(): MockStore {
     hasHubKey: false,
     hubBaseUrl: null,
     ofapiReadTransport: 'direct',
+    aiGatewayTransport: 'direct',
     hubModeOverride: 'auto',
     spendSweepRollbackToLegacy: true,
     spendStyle: 'figure',

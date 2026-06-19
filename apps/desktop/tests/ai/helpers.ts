@@ -14,8 +14,7 @@ import type { OfApiClient } from '@main/ofapi/client';
 import type { OfApiMessage, OfApiTransaction, OfApiUser } from '@main/ofapi/schemas';
 import type { SettingsStore } from '@main/settings/store';
 import type { Keychain } from '@main/secrets/keychain';
-import type { AiGateway, AiGatewayCallbacks } from '@main/ai/gateway';
-import type { LlmStreamRequest } from '@main/ai/providers/index';
+import type { AiGateway, AiGatewayCallbacks, AiGatewayRequest } from '@main/ai/gateway';
 import type { AiStartRequest, SettingsVM } from '../../src/preload/contract';
 
 export const ACCT = 'acct_test';
@@ -41,6 +40,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hasHubKey: false,
     hubBaseUrl: null,
     ofapiReadTransport: 'direct',
+    aiGatewayTransport: 'direct',
     hubModeOverride: 'auto',
     spendSweepRollbackToLegacy: true,
     spendStyle: 'figure',
@@ -247,7 +247,7 @@ export function makeStubClient(): StubClient {
 
 export interface StubGateway {
   gateway: AiGateway;
-  calls: LlmStreamRequest[];
+  calls: AiGatewayRequest[];
   cb: AiGatewayCallbacks | null;
   cancelCount: number;
 }

@@ -139,6 +139,27 @@ export function HubSettings({
           </div>
           <span className="text-[11px] text-ink-low">{t('hub.ofapiReads.restart')}</span>
         </div>
+        <div className="flex items-center gap-3 py-1">
+          <div className="w-44 flex-none">
+            <div className="text-[13px] font-semibold">{t('hub.aiGateway.label')}</div>
+            <div className="text-[11px] text-ink-low">{t('hub.aiGateway.hint')}</div>
+          </div>
+          <div className="flex items-center rounded-full border border-line bg-bg1 p-0.5">
+            <Chip
+              selected={settings.aiGatewayTransport === 'direct'}
+              onClick={() => patch({ aiGatewayTransport: 'direct' })}
+            >
+              {t('hub.aiGateway.direct')}
+            </Chip>
+            <Chip
+              selected={settings.aiGatewayTransport === 'hub'}
+              onClick={() => patch({ aiGatewayTransport: 'hub' })}
+            >
+              {t('hub.aiGateway.hub')}
+            </Chip>
+          </div>
+          <span className="text-[11px] text-ink-low">{t('hub.aiGateway.liveGate')}</span>
+        </div>
 
         {hub !== 'off' && (
           <div className="flex items-center gap-3 py-1">

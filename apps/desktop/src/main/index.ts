@@ -53,7 +53,7 @@ import { createHubSync } from './sync/hub-sync';
 import { createHubAwareSync, type HubAwareSync } from './sync/hub-provider';
 import { registerIpcHandlers } from './ipc/handlers';
 import { runKeyTest } from './diagnostics/key-tests';
-import { createAiCoordinator, type AiCoordinator } from './ai/index';
+import { createAiCoordinator, createDirectGateway, createSelectableAiGateway, type AiCoordinator } from './ai/index';
 import { createHubModule, type HubModule } from './hub/index';
 import { attachEventForwarding } from './ipc/events';
 import { focusExistingWindow } from './platform/single-instance';
@@ -725,6 +725,14 @@ async function boot(): Promise<void> {
       client,
       settingsStore,
       keychain,
+      ...(hub !== null
+        ? {
+            gateway: createSelectableAiGateway({
+              direct: createDirectGateway({ keychain }),
+              hub: hub.aiGateway,
+            }),
+          }
+        : {}),
       // Hooks delegate through the hub module — unconfigured hub stays inert.
       ...(hub !== null
         ? { summaryHub: hub.summaryHub, onUsageEvent: (event) => hub?.onUsageEvent(event) }

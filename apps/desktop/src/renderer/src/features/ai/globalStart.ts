@@ -14,7 +14,13 @@ import type {
 import { qk } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { startAiFeature, type LiveAiFeature } from './aiStore';
-import { deriveHiLocked, evaluateAiGate, evaluateHiGate, evaluatePingGate } from './dockLogic';
+import {
+  deriveHiLocked,
+  evaluateAiGate,
+  evaluateHiGate,
+  evaluatePingGate,
+  hasConfiguredAiTransport,
+} from './dockLogic';
 import { pingGateKey } from './pingGate';
 
 type MessagesData = InfiniteData<{ items: MessageVM[]; hasMore: boolean }>;
@@ -34,7 +40,7 @@ export function startAiFromGlobal(feature: LiveAiFeature, queryClient: QueryClie
 
   const gate = evaluateAiGate({
     mapped: account.personalityId !== null,
-    hasLlmKey: settings.hasAnthropicKey || settings.hasOpenRouterKey,
+    hasLlmKey: hasConfiguredAiTransport(settings),
   });
   if (!gate.ok) return;
 

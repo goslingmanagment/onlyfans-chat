@@ -11,6 +11,7 @@ import {
   errorHint,
   evaluateAiGate,
   extractPromptBlocks,
+  hasConfiguredAiTransport,
   isFrameForOperation,
   shouldAutoInsertCompactDraft,
   toggleTone,
@@ -277,12 +278,42 @@ describe('evaluateAiGate', () => {
     expect(evaluateAiGate({ mapped: true, hasLlmKey: false })).toEqual({
       ok: false,
       reason: 'no-key',
-      message: 'Add an Anthropic or OpenRouter key in Settings',
+      message: 'Add a direct AI key or configure Hub AI in Settings',
     });
   });
 
   it('mapped + key → ok', () => {
     expect(evaluateAiGate({ mapped: true, hasLlmKey: true })).toEqual({ ok: true });
+  });
+
+  it('treats hub AI as configured only when hub URL and chatter key exist', () => {
+    expect(
+      hasConfiguredAiTransport({
+        aiGatewayTransport: 'direct',
+        hasAnthropicKey: true,
+        hasOpenRouterKey: false,
+        hasHubKey: false,
+        hubBaseUrl: null,
+      }),
+    ).toBe(true);
+    expect(
+      hasConfiguredAiTransport({
+        aiGatewayTransport: 'hub',
+        hasAnthropicKey: false,
+        hasOpenRouterKey: false,
+        hasHubKey: true,
+        hubBaseUrl: 'https://hub.example.com',
+      }),
+    ).toBe(true);
+    expect(
+      hasConfiguredAiTransport({
+        aiGatewayTransport: 'hub',
+        hasAnthropicKey: true,
+        hasOpenRouterKey: false,
+        hasHubKey: false,
+        hubBaseUrl: 'https://hub.example.com',
+      }),
+    ).toBe(false);
   });
 });
 

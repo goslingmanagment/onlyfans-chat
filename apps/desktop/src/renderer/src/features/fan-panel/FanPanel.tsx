@@ -8,7 +8,7 @@ import type { FanPanelVM } from '../../../../preload/contract';
 import { useAccounts, useFan, useMessages, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { startAiFeature, useAiStore } from '../ai/aiStore';
-import { evaluateAiGate } from '../ai/dockLogic';
+import { evaluateAiGate, hasConfiguredAiTransport } from '../ai/dockLogic';
 import { gateText } from '../ai/gateText';
 import { isScanStale, splitSummaryParagraphs } from './scanLogic';
 import { Avatar } from '../../design/Avatar';
@@ -252,7 +252,7 @@ function ScanTab({
     account !== null && settings.data !== undefined
       ? evaluateAiGate({
           mapped: account.personalityId !== null,
-          hasLlmKey: settings.data.hasAnthropicKey || settings.data.hasOpenRouterKey,
+          hasLlmKey: hasConfiguredAiTransport(settings.data),
         })
       : null;
   const blockedReason = gate === null ? t('common.loading') : gate.ok ? null : gateText(t, gate.reason);

@@ -164,12 +164,12 @@ describe('Ping / Hi pill gates (precedence: unmapped → no-key → feature gate
   it('missing LLM key outranks the feature gates', () => {
     expect(evaluatePingGate(NO_KEY_GATE, false)).toEqual({
       enabled: false,
-      reason: 'Add an Anthropic or OpenRouter key in Settings',
+      reason: 'Add a direct AI key or configure Hub AI in Settings',
       code: 'no-key',
     });
     expect(evaluateHiGate(NO_KEY_GATE, true)).toEqual({
       enabled: false,
-      reason: 'Add an Anthropic or OpenRouter key in Settings',
+      reason: 'Add a direct AI key or configure Hub AI in Settings',
       code: 'no-key',
     });
   });

@@ -60,7 +60,7 @@ import type { OfApiClient } from '../ofapi/client';
 import type { SettingsStore } from '../settings/store';
 import type { Keychain, SecretName } from '../secrets/keychain';
 import { createDirectGateway } from './gateway';
-import type { AiGateway, CancelFn } from './gateway';
+import type { AiGateway, AiGatewayTransport, CancelFn } from './gateway';
 import { createContextLoader } from './context-loader';
 import type { ContextLoader } from './context-loader';
 import { createOperationProfiler, NO_OP_PROFILER } from './profiler';
@@ -229,6 +229,7 @@ interface OperationState {
   chunkBuffer: string;
   chunkTimer: ReturnType<typeof setTimeout> | null;
   startedAtMs: number;
+  aiGatewayTransport: AiGatewayTransport;
   /** Set only on a fan-summary cache miss; null for every other feature. */
   summarySeed: SummaryCacheSeed | null;
 }
@@ -603,20 +604,22 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       isRegeneration: op.params.forceRegenerate === true,
       completedAt: new Date().toISOString(),
     };
-    try {
-      deps.data.db
-        .prepare(
-          'INSERT INTO usage_events (client_event_id, payload, created_at, attempts) ' +
-            'VALUES (@client_event_id, @payload, @created_at, 0) ' +
-            'ON CONFLICT (client_event_id) DO NOTHING',
-        )
-        .run({
-          client_event_id: op.operationId,
-          payload: JSON.stringify(payload),
-          created_at: payload.completedAt,
-        });
-    } catch {
-      // Usage bookkeeping must never fail a completed operation.
+    if (op.aiGatewayTransport !== 'hub') {
+      try {
+        deps.data.db
+          .prepare(
+            'INSERT INTO usage_events (client_event_id, payload, created_at, attempts) ' +
+              'VALUES (@client_event_id, @payload, @created_at, 0) ' +
+              'ON CONFLICT (client_event_id) DO NOTHING',
+          )
+          .run({
+            client_event_id: op.operationId,
+            payload: JSON.stringify(payload),
+            created_at: payload.completedAt,
+          });
+      } catch {
+        // Usage bookkeeping must never fail a completed operation.
+      }
     }
     try {
       deps.data.aiSpendLog.recordRun({
@@ -633,10 +636,12 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     } catch {
       // Ledger bookkeeping must never fail a completed operation.
     }
-    try {
-      deps.onUsageEvent?.(payload);
-    } catch {
-      // Same guarantee for a throwing hook.
+    if (op.aiGatewayTransport !== 'hub') {
+      try {
+        deps.onUsageEvent?.(payload);
+      } catch {
+        // Same guarantee for a throwing hook.
+      }
     }
   }
 
@@ -671,10 +676,13 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     return personality;
   }
 
-  async function checkProviderKey(modelId: string): Promise<void> {
+  async function checkProviderKey(modelId: string, transport: AiGatewayTransport): Promise<void> {
     const entry = getModelEntry(modelId);
     if (entry === null) {
       throw new CgError('CG-API-03');
+    }
+    if (transport === 'hub') {
+      return;
     }
     const secretName: SecretName =
       entry.provider === 'anthropic' ? 'anthropicKey' : 'openRouterKey';
@@ -718,7 +726,8 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     const reasoningEffort =
       settings.featureReasoning[modelFeature] ?? DEFAULT_FEATURE_REASONING[modelFeature];
     op.modelId = modelId;
-    await checkProviderKey(modelId);
+    op.aiGatewayTransport = settings.aiGatewayTransport;
+    await checkProviderKey(modelId, op.aiGatewayTransport);
     if (op.settled) {
       return;
     }
@@ -924,7 +933,18 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     op.timeouts.llmRequestStarted();
     op.ttfbStage = op.profiler.stage('llm-ttfb');
     op.cancelStream = gateway.stream(
-      { feature: op.feature, modelId, systemBlocks, userBlocks, reasoningEffort },
+      {
+        feature: op.feature,
+        modelId,
+        systemBlocks,
+        userBlocks,
+        reasoningEffort,
+        clientRequestId: op.operationId,
+        accountId: op.accountId,
+        chatId: op.chatId,
+        isRegeneration: op.params.forceRegenerate === true,
+        transport: op.aiGatewayTransport,
+      },
       {
         onProgress: () => {
           if (!op.settled) {
@@ -1022,6 +1042,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         chunkBuffer: '',
         chunkTimer: null,
         startedAtMs: Date.now(),
+        aiGatewayTransport: 'direct',
         summarySeed: null,
       };
 

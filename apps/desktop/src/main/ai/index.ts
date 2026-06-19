@@ -6,8 +6,15 @@
 
 export { createAiCoordinator, buildFeatureResult, PERSONALITIES_SETTINGS_KEY } from './coordinator';
 export type { AiCoordinator, AiCoordinatorDeps, SummaryHubHooks, UsageEventRecord } from './coordinator';
-export { createDirectGateway } from './gateway';
-export type { AiGateway, AiGatewayCallbacks, DirectGatewayOptions } from './gateway';
+export { createDirectGateway, createSelectableAiGateway } from './gateway';
+export type {
+  AiGateway,
+  AiGatewayCallbacks,
+  AiGatewayRequest,
+  AiGatewayTransport,
+  DirectGatewayOptions,
+  SelectableAiGatewayOptions,
+} from './gateway';
 export { createContextLoader } from './context-loader';
 export type {
   ContextLoader,

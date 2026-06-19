@@ -263,6 +263,21 @@ export interface AiGateInput {
   hasLlmKey: boolean;
 }
 
+export interface AiTransportSettings {
+  hasAnthropicKey: boolean;
+  hasOpenRouterKey: boolean;
+  hasHubKey: boolean;
+  hubBaseUrl: string | null;
+  aiGatewayTransport: 'direct' | 'hub';
+}
+
+export function hasConfiguredAiTransport(settings: AiTransportSettings): boolean {
+  if (settings.aiGatewayTransport === 'hub') {
+    return settings.hubBaseUrl !== null && settings.hasHubKey;
+  }
+  return settings.hasAnthropicKey || settings.hasOpenRouterKey;
+}
+
 export type AiGate =
   | { ok: true }
   | { ok: false; reason: 'unmapped' | 'no-key'; message: string };
@@ -272,7 +287,11 @@ export function evaluateAiGate(input: AiGateInput): AiGate {
     return { ok: false, reason: 'unmapped', message: 'Map a personality in Settings' };
   }
   if (!input.hasLlmKey) {
-    return { ok: false, reason: 'no-key', message: 'Add an Anthropic or OpenRouter key in Settings' };
+    return {
+      ok: false,
+      reason: 'no-key',
+      message: 'Add a direct AI key or configure Hub AI in Settings',
+    };
   }
   return { ok: true };
 }

@@ -11,7 +11,7 @@ import { Kbd } from '../../design/Kbd';
 import { cx } from '../../lib/cx';
 import { modCombo } from '../../lib/modKey';
 import { startAiFeature, type LiveAiFeature } from './aiStore';
-import { evaluateAiGate } from './dockLogic';
+import { evaluateAiGate, hasConfiguredAiTransport } from './dockLogic';
 import { gateText } from './gateText';
 import { useT } from '../../lib/i18n';
 
@@ -81,7 +81,7 @@ export function AiHeaderMenu(): React.JSX.Element {
   const gate = ready
     ? evaluateAiGate({
         mapped: account.personalityId !== null,
-        hasLlmKey: settings.data.hasAnthropicKey || settings.data.hasOpenRouterKey,
+        hasLlmKey: hasConfiguredAiTransport(settings.data),
       })
     : null;
   const blockedReason =

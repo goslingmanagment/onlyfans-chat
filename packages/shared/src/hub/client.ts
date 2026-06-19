@@ -8,6 +8,13 @@
 import { z } from 'zod';
 import type { CgErrorDetail } from '../errors/index';
 import { CgError } from '../errors/index';
+import type { LlmUsageMetrics } from '../llm/sse';
+import { parseSseEventBlock } from '../llm/sse';
+
+// Minimal ambient type for the WHATWG TextDecoder global (lib "ES2023" has no DOM types).
+declare class TextDecoder {
+  decode(input?: Uint8Array, options?: { stream?: boolean }): string;
+}
 
 // ─── Timeouts & limits (legacy constants are normative; research §7) ─────
 
@@ -35,11 +42,24 @@ export const HUB_USAGE_BATCH_MAX_EVENTS = 100;
 
 export interface HubAbortSignalLike {
   readonly aborted: boolean;
+  addEventListener?(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener?(type: 'abort', listener: () => void): void;
+}
+
+export interface HubReadableStreamReader {
+  read(): Promise<{ done: boolean; value?: Uint8Array | undefined }>;
+  cancel(): Promise<unknown>;
+  releaseLock?(): void;
+}
+
+export interface HubReadableStreamLike {
+  getReader(): HubReadableStreamReader;
 }
 
 export interface HubResponseLike {
   status: number;
   headers: { get(name: string): string | null };
+  body?: HubReadableStreamLike | null;
   text(): Promise<string>;
 }
 
@@ -235,6 +255,103 @@ const hubUsageBatchRequestSchema = z.object({
   events: z.array(hubUsageEventSchema).min(1).max(HUB_USAGE_BATCH_MAX_EVENTS),
 });
 
+// ─── AI gateway stream (core C6c/R4; outbound + inbound contract) ─────────
+
+const hubAiGatewayPromptBlockSchema = z.object({
+  text: z.string().min(1).max(100_000),
+  cache: z.enum(['1h', '5m', 'none']),
+});
+
+const hubAiGatewayStreamRequestSchema = z.object({
+  clientRequestId: z.uuid(),
+  feature: z.enum(HUB_USAGE_FEATURES),
+  pageLabel: z.string().min(1).max(120),
+  platform: z.enum(['onlyfans', 'fansly']),
+  platformUserId: z.string().min(1).max(255),
+  conversationId: z.string().min(1).max(255).nullable().optional(),
+  model: z.string().min(1).max(100),
+  reasoningEffort: z.enum(['off', 'low', 'medium', 'high', 'max']),
+  temperature: z.number().min(0).max(2).optional(),
+  maxTokens: z.number().int().positive().max(100_000).optional(),
+  isRegeneration: z.boolean(),
+  prompt: z.object({
+    systemBlocks: z.array(hubAiGatewayPromptBlockSchema).min(1).max(64),
+    userBlocks: z.array(hubAiGatewayPromptBlockSchema).min(1).max(64),
+  }),
+});
+
+export type HubAiGatewayStreamRequest = z.infer<typeof hubAiGatewayStreamRequestSchema>;
+
+const hubAiGatewayUsageSchema = z.object({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cacheWriteTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
+  costMicroUsd: z.number().int().nonnegative(),
+  costApproximate: z.boolean(),
+});
+
+const hubAiGatewayQuotaSchema = z.object({
+  accepted: z.boolean(),
+  remainingRequestsToday: z.number().int().nonnegative().nullable(),
+  remainingMicroUsdToday: z.number().int().nonnegative().nullable(),
+});
+
+const hubAiGatewayStreamFrameSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('meta'),
+    requestId: z.uuid(),
+    clientRequestId: z.uuid(),
+    feature: z.enum(HUB_USAGE_FEATURES),
+    pageLabel: z.string(),
+    model: z.string(),
+    provider: z.enum(['anthropic', 'openrouter']),
+    providerResponseId: z.string().nullable(),
+    quota: hubAiGatewayQuotaSchema,
+  }),
+  z.object({ type: z.literal('content_delta'), text: z.string() }),
+  z.object({ type: z.literal('reasoning_delta'), text: z.string() }),
+  z.object({
+    type: z.literal('usage'),
+    usage: hubAiGatewayUsageSchema,
+    providerResponseId: z.string().nullable(),
+    cacheHit: z.boolean(),
+  }),
+  z.object({
+    type: z.literal('error'),
+    code: z.string().min(1).max(100),
+    message: z.string().min(1).max(500),
+    retryAfterMs: z.number().int().nonnegative().nullable(),
+  }),
+  z.object({ type: z.literal('done'), stopReason: z.string().nullable() }),
+]);
+
+type HubAiGatewayStreamFrame = z.infer<typeof hubAiGatewayStreamFrameSchema>;
+
+export interface HubAiGatewayStreamCallbacks {
+  onText: (text: string) => void;
+  onUsage?: (usage: LlmUsageMetrics) => void;
+  onProgress?: () => void;
+  onReasoningDelta?: (text: string) => void;
+  onStopReason?: (stopReason: string | null) => void;
+}
+
+function mapGatewayUsage(usage: z.infer<typeof hubAiGatewayUsageSchema>): LlmUsageMetrics {
+  return {
+    input_tokens: usage.inputTokens,
+    cache_creation_input_tokens: usage.cacheWriteTokens,
+    cache_read_input_tokens: usage.cacheReadTokens,
+    output_tokens: usage.outputTokens,
+  };
+}
+
+function frameParseError(message: string, detail?: CgErrorDetail): HubError {
+  return new HubError('invalid-response', {
+    message,
+    ...(detail !== undefined ? { detail } : {}),
+  });
+}
+
 // ─── Client ───────────────────────────────────────────────────────────────
 
 export interface HubClientOptions {
@@ -261,6 +378,10 @@ export interface HubClient {
   }): Promise<HubProfileVersion>;
   postUsageBatch(args: { events: HubUsageEvent[]; timeoutMs?: number }): Promise<HubUsageBatchResult>;
   getOfapiCreditsSummary(options?: { timeoutMs?: number }): Promise<HubOfapiCreditsSummary>;
+  streamAiGateway(
+    args: { request: HubAiGatewayStreamRequest; signal?: HubAbortSignalLike },
+    callbacks: HubAiGatewayStreamCallbacks,
+  ): Promise<string>;
   /**
    * Last observed server-minus-local clock offset in ms, derived from the
    * Date header of any core response (SPEC §8.6 clock-skew guard; also feeds
@@ -374,6 +495,80 @@ export function createHubClient(options: HubClientOptions): HubClient {
     return parsed.data;
   }
 
+  async function readTextSafely(response: HubResponseLike): Promise<string> {
+    try {
+      return await response.text();
+    } catch {
+      return '';
+    }
+  }
+
+  function dispatchAiGatewayFrame(
+    frame: HubAiGatewayStreamFrame,
+    callbacks: HubAiGatewayStreamCallbacks,
+    state: { rawText: string; doneSeen: boolean },
+  ): void {
+    callbacks.onProgress?.();
+    switch (frame.type) {
+      case 'meta':
+        return;
+      case 'content_delta':
+        state.rawText += frame.text;
+        callbacks.onText(frame.text);
+        return;
+      case 'reasoning_delta':
+        callbacks.onReasoningDelta?.(frame.text);
+        return;
+      case 'usage':
+        callbacks.onUsage?.(mapGatewayUsage(frame.usage));
+        return;
+      case 'error':
+        throw new HubError('http', {
+          message: frame.message,
+          detail: {
+            providerMessage: frame.code,
+            ...(frame.retryAfterMs !== null ? { retryAfterMs: frame.retryAfterMs } : {}),
+          },
+        });
+      case 'done':
+        state.doneSeen = true;
+        callbacks.onStopReason?.(frame.stopReason);
+        return;
+    }
+  }
+
+  function drainAiGatewayBlocks(
+    raw: string,
+    callbacks: HubAiGatewayStreamCallbacks,
+    state: { rawText: string; doneSeen: boolean },
+  ): string {
+    const blocks = raw.split(/\r?\n\r?\n/);
+    const remainder = blocks.pop() ?? '';
+    for (const block of blocks) {
+      const event = parseSseEventBlock(block);
+      if (event === null || event.data === '[DONE]') {
+        continue;
+      }
+      if (event.event !== 'ai') {
+        continue;
+      }
+      let json: unknown;
+      try {
+        json = JSON.parse(event.data);
+      } catch {
+        throw frameParseError('hub AI stream frame was not JSON');
+      }
+      const frame = hubAiGatewayStreamFrameSchema.safeParse(json);
+      if (!frame.success) {
+        throw frameParseError('hub AI stream frame failed schema validation', {
+          providerMessage: frame.error.message.slice(0, 400),
+        });
+      }
+      dispatchAiGatewayFrame(frame.data, callbacks, state);
+    }
+    return remainder;
+  }
+
   function profilePath(pageLabel: string, fanId: string): string {
     return `/api/v1/pages/${encodeURIComponent(pageLabel)}/fans/${encodeURIComponent(fanId)}/profile`;
   }
@@ -443,6 +638,99 @@ export function createHubClient(options: HubClientOptions): HubClient {
         timeoutMs: summaryOptions?.timeoutMs ?? HUB_OFAPI_CREDITS_TIMEOUT_MS,
       });
       return parseBody(hubOfapiCreditsSummarySchema, raw);
+    },
+
+    async streamAiGateway({ request: streamRequest, signal }, callbacks) {
+      const requestBody = hubAiGatewayStreamRequestSchema.safeParse(streamRequest);
+      if (!requestBody.success) {
+        throw new HubError('bad-request', {
+          message: 'AI gateway stream request failed contract validation',
+          detail: { providerMessage: requestBody.error.message.slice(0, 400) },
+        });
+      }
+
+      const init: HubRequestInit = {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          accept: 'text/event-stream',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(requestBody.data),
+        ...(signal !== undefined ? { signal } : {}),
+      };
+
+      let response: HubResponseLike;
+      try {
+        response = await fetchImpl(`${baseUrl}/api/v1/ai/gateway/stream`, init);
+      } catch (error) {
+        throw new HubError(classifyFetchFailure(error), {
+          message: errorMessageOf(error),
+          detail: { providerMessage: errorMessageOf(error) },
+        });
+      }
+
+      recordServerTime(response);
+
+      if (response.status === 401 || response.status === 403) {
+        throw new HubError('auth', {
+          detail: buildHttpDetail(response.status, await readTextSafely(response)),
+        });
+      }
+      if (response.status === 400) {
+        throw new HubError('bad-request', {
+          detail: buildHttpDetail(response.status, await readTextSafely(response)),
+        });
+      }
+      if (response.status < 200 || response.status >= 300) {
+        throw new HubError('http', {
+          detail: buildHttpDetail(response.status, await readTextSafely(response)),
+        });
+      }
+
+      const body = response.body;
+      if (body === null || body === undefined) {
+        throw frameParseError('hub AI stream response had no body');
+      }
+
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      const state = { rawText: '', doneSeen: false };
+      let buffer = '';
+      const onAbort = (): void => {
+        void reader.cancel().catch(() => {});
+      };
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+
+      try {
+        while (true) {
+          if (signal?.aborted) {
+            throw new Error('Operation aborted');
+          }
+          const { done, value } = await reader.read();
+          if (signal?.aborted) {
+            throw new Error('Operation aborted');
+          }
+          if (done) {
+            break;
+          }
+          if (value !== undefined) {
+            buffer = drainAiGatewayBlocks(
+              buffer + decoder.decode(value, { stream: true }),
+              callbacks,
+              state,
+            );
+          }
+        }
+      } finally {
+        signal?.removeEventListener?.('abort', onAbort);
+        reader.releaseLock?.();
+      }
+
+      if (!state.doneSeen) {
+        throw frameParseError('hub AI stream ended without a done frame');
+      }
+      return state.rawText;
     },
 
     getServerTimeOffsetMs() {

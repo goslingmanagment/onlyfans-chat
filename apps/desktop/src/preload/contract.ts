@@ -307,6 +307,11 @@ export interface SettingsVM {
    * writes remain direct until the command gateway ships.
    */
   ofapiReadTransport: 'direct' | 'hub';
+  /**
+   * AI generation transport. `direct` uses local provider keys; `hub` streams
+   * through core's default-off AI gateway with DirectGateway as the rollback.
+   */
+  aiGatewayTransport: 'direct' | 'hub';
   /** Dev/support-only sync override. Default 'auto'; non-auto persists across restarts. */
   hubModeOverride: HubModeOverrideSetting;
   /**

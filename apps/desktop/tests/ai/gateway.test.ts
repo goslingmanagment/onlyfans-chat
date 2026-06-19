@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { CgError } from '@chatgoose/shared/errors/index';
 import type { LlmUsageMetrics } from '@chatgoose/shared/llm/sse';
 import { createDirectGateway } from '@main/ai/gateway';
-import type { AiGatewayCallbacks } from '@main/ai/gateway';
+import type { AiGatewayCallbacks, AiGatewayRequest } from '@main/ai/gateway';
 import { baseRequest, HAPPY_STREAM, recordingFetch, sseResponse } from '../ai-providers/helpers';
 import { makeKeychain } from './helpers';
 
@@ -48,6 +48,18 @@ function collector(): Collected {
   };
 }
 
+function gatewayRequest(overrides: Partial<AiGatewayRequest> = {}): AiGatewayRequest {
+  return {
+    ...baseRequest(),
+    clientRequestId: '11111111-1111-4111-8111-111111111111',
+    accountId: 'acct_test',
+    chatId: '4242',
+    isRegeneration: false,
+    transport: 'direct',
+    ...overrides,
+  };
+}
+
 describe('createDirectGateway', () => {
   it('streams via the provider with the keychain key and completes with the raw text', async () => {
     const { fetchImpl, calls } = recordingFetch([() => sseResponse(HAPPY_STREAM)]);
@@ -57,7 +69,7 @@ describe('createDirectGateway', () => {
     });
     const collected = collector();
 
-    gateway.stream(baseRequest(), collected.cb);
+    gateway.stream(gatewayRequest(), collected.cb);
     await collected.done;
 
     expect(collected.completed).toEqual(['Hello there']);
@@ -72,7 +84,7 @@ describe('createDirectGateway', () => {
     const gateway = createDirectGateway({ keychain: makeKeychain({}), fetchImpl });
     const collected = collector();
 
-    gateway.stream(baseRequest(), collected.cb);
+    gateway.stream(gatewayRequest(), collected.cb);
     await collected.done;
 
     expect(collected.errors).toHaveLength(1);
@@ -89,7 +101,7 @@ describe('createDirectGateway', () => {
     });
     const collected = collector();
 
-    const cancel = gateway.stream(baseRequest(), collected.cb);
+    const cancel = gateway.stream(gatewayRequest(), collected.cb);
     cancel();
     // allow the async pipeline to wind down
     await new Promise((resolve) => setTimeout(resolve, 10));

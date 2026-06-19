@@ -297,6 +297,28 @@ describe('AiCoordinator', () => {
     expect(gateway.calls).toHaveLength(0);
   });
 
+  it('hub AI mode skips local provider-key gating and does not enqueue legacy usage reporting', async () => {
+    build(makeSettingsVM({ aiGatewayTransport: 'hub' }), {});
+    await startAndReachStream({ params: { forceRegenerate: true } });
+
+    expect(gateway.calls[0]).toMatchObject({
+      clientRequestId: 'op-1',
+      accountId: ACCT,
+      chatId: '4242',
+      isRegeneration: true,
+      transport: 'hub',
+    });
+
+    gateway.cb?.onUsage?.(USAGE);
+    gateway.cb?.onComplete('hub answer');
+    await flushAsync();
+
+    const row = data.db
+      .prepare('SELECT client_event_id FROM usage_events WHERE client_event_id = @id')
+      .get({ id: 'op-1' });
+    expect(row).toBeUndefined();
+  });
+
   it('reports the spend summary computed from the streamed usage', async () => {
     build();
     await startAndReachStream();

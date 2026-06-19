@@ -16,6 +16,19 @@ import type { Keychain } from '../secrets/keychain';
 
 export type { CancelFn, LlmStreamRequest } from './providers/index';
 
+export type AiGatewayTransport = 'direct' | 'hub';
+
+export interface AiGatewayRequest extends LlmStreamRequest {
+  /** Stable operation/request id; core uses it as the gateway idempotency key. */
+  clientRequestId: string;
+  /** Local OFAPI account id; hub mode resolves this to a core page label. */
+  accountId: string;
+  /** Raw OnlyFans fan/conversation id. */
+  chatId: string;
+  isRegeneration: boolean;
+  transport: AiGatewayTransport;
+}
+
 /** Provider StreamCallbacks plus the terminal success signal. */
 export interface AiGatewayCallbacks extends StreamCallbacks {
   /** Fired exactly once with the full raw text after the stream completes. */
@@ -23,7 +36,7 @@ export interface AiGatewayCallbacks extends StreamCallbacks {
 }
 
 export interface AiGateway {
-  stream(req: LlmStreamRequest, cb: AiGatewayCallbacks): CancelFn;
+  stream(req: AiGatewayRequest, cb: AiGatewayCallbacks): CancelFn;
 }
 
 export interface DirectGatewayOptions {
@@ -103,6 +116,20 @@ export function createDirectGateway(options: DirectGatewayOptions): AiGateway {
       })();
 
       return () => controller.abort();
+    },
+  };
+}
+
+export interface SelectableAiGatewayOptions {
+  direct: AiGateway;
+  hub: AiGateway;
+}
+
+export function createSelectableAiGateway(options: SelectableAiGatewayOptions): AiGateway {
+  return {
+    stream(req, cb) {
+      const target = req.transport === 'hub' ? options.hub : options.direct;
+      return target.stream(req, cb);
     },
   };
 }

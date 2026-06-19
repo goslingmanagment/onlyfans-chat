@@ -78,6 +78,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'accountOrder',
   'hubBaseUrl',
   'ofapiReadTransport',
+  'aiGatewayTransport',
   'hubModeOverride',
   'spendSweepRollbackToLegacy',
   'accountPageLabels',
@@ -114,6 +115,8 @@ const persistedFieldSchemas = {
   hubBaseUrl: z.string().min(1).nullable(),
   // C6 custody bridge: GETs via core; writes stay direct until command gateway.
   ofapiReadTransport: z.enum(OFAPI_READ_TRANSPORTS),
+  // C6c AI custody bridge: provider calls stay direct unless hub is selected explicitly.
+  aiGatewayTransport: z.enum(['direct', 'hub']),
   // Dev/support-only override for D3 diagnostics. Default auto.
   hubModeOverride: z.enum(HUB_MODE_OVERRIDE_SETTINGS),
   // D6 rollback guard: true forces the old 10-minute fan-spend sweep.
@@ -163,6 +166,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   accountOrder: [],
   hubBaseUrl: null,
   ofapiReadTransport: 'direct',
+  aiGatewayTransport: 'direct',
   hubModeOverride: 'auto',
   spendSweepRollbackToLegacy: true,
   accountPageLabels: {},
@@ -195,6 +199,7 @@ export const settingsPatchSchema = z.strictObject({
   accountOrder: persistedFieldSchemas.accountOrder.optional(),
   hubBaseUrl: persistedFieldSchemas.hubBaseUrl.optional(),
   ofapiReadTransport: persistedFieldSchemas.ofapiReadTransport.optional(),
+  aiGatewayTransport: persistedFieldSchemas.aiGatewayTransport.optional(),
   hubModeOverride: persistedFieldSchemas.hubModeOverride.optional(),
   spendSweepRollbackToLegacy: persistedFieldSchemas.spendSweepRollbackToLegacy.optional(),
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
@@ -308,6 +313,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       accountOrder: readField('accountOrder'),
       hubBaseUrl: readField('hubBaseUrl'),
       ofapiReadTransport: readField('ofapiReadTransport'),
+      aiGatewayTransport: readField('aiGatewayTransport'),
       hubModeOverride: readField('hubModeOverride'),
       spendSweepRollbackToLegacy: readField('spendSweepRollbackToLegacy'),
       accountPageLabels: readField('accountPageLabels'),

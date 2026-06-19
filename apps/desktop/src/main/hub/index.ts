@@ -15,6 +15,8 @@ import { createPageLabelResolver } from './page-resolver';
 import { createSqliteUsageEventStore } from './usage-store';
 import { createSummaryHubHooks } from './summary-hooks';
 import { mapUsagePayloadToHubEvent } from './usage-mapper';
+import { createHubAiGateway } from './ai-gateway';
+import type { AiGateway } from '../ai/gateway';
 
 export { createPageLabelResolver, PAGE_LIST_CACHE_TTL_MS } from './page-resolver';
 export type { PageLabelResolver, PageLabelResolverOptions } from './page-resolver';
@@ -40,6 +42,8 @@ export interface HubModule {
    * reconfiguration internally (absent hub config behaves as absent hooks).
    */
   summaryHub: SummaryHubHooks;
+  /** Future P6 AI transport. Inert until hub config exists and AI mode is set to hub. */
+  aiGateway: AiGateway;
   /** Coordinator onUsageEvent target: raw payload → wire event → reporter. */
   onUsageEvent: (event: UsageEventRecord) => void;
   /** Page-scoped core OFAPI spend summary for Activity/diagnostics; null when hub is off/unreachable. */
@@ -53,6 +57,7 @@ interface ActiveHub {
   client: HubClient;
   reporter: UsageReporter;
   hooks: SummaryHubHooks;
+  aiGateway: AiGateway;
 }
 
 export function createHubModule(options: HubModuleOptions): HubModule {
@@ -77,6 +82,20 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       prefetchSummary: (args) =>
         active?.hooks.prefetchSummary?.(args) ?? Promise.resolve(null),
       pushSummary: (args) => active?.hooks.pushSummary?.(args) ?? Promise.resolve(),
+    },
+
+    aiGateway: {
+      stream(req, cb) {
+        if (active === null) {
+          cb.onError?.(
+            new HubError('bad-request', {
+              message: 'Hub AI gateway is not configured',
+            }),
+          );
+          return () => {};
+        }
+        return active.aiGateway.stream(req, cb);
+      },
     },
 
     onUsageEvent(event) {
@@ -142,6 +161,10 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         hooks: createSummaryHubHooks({
           client,
           data,
+          resolvePageLabel: (accountId) => resolver.resolve(accountId),
+        }),
+        aiGateway: createHubAiGateway({
+          client,
           resolvePageLabel: (accountId) => resolver.resolve(accountId),
         }),
       };

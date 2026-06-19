@@ -16,7 +16,13 @@ import { getBridge } from '../../bridge/bridge';
 import { qk } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { startAiFeature } from '../ai/aiStore';
-import { deriveHiLocked, evaluateAiGate, evaluateHiGate, evaluatePingGate } from '../ai/dockLogic';
+import {
+  deriveHiLocked,
+  evaluateAiGate,
+  evaluateHiGate,
+  evaluatePingGate,
+  hasConfiguredAiTransport,
+} from '../ai/dockLogic';
 import { pingGateKey } from '../ai/pingGate';
 import { COMPOSER_TEXTAREA_ID } from '../conversation/composerDom';
 import { previewRow, useSpendersStore } from './spendersStore';
@@ -92,7 +98,7 @@ export function startAiFromPreview(feature: PreviewAiFeature, queryClient: Query
 
   const gate = evaluateAiGate({
     mapped: account.personalityId !== null,
-    hasLlmKey: settings.hasAnthropicKey || settings.hasOpenRouterKey,
+    hasLlmKey: hasConfiguredAiTransport(settings),
   });
   if (!gate.ok) return;
 

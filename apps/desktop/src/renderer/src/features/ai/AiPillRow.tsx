@@ -20,6 +20,7 @@ import {
   evaluateAiGate,
   evaluateHiGate,
   evaluatePingGate,
+  hasConfiguredAiTransport,
   type AiGate,
 } from './dockLogic';
 import { TonePopover } from './TonePopover';
@@ -210,7 +211,7 @@ export function AiPillRow({
   const gate: AiGate | null = ready
     ? evaluateAiGate({
         mapped: account.personalityId !== null,
-        hasLlmKey: settings.data.hasAnthropicKey || settings.data.hasOpenRouterKey,
+        hasLlmKey: hasConfiguredAiTransport(settings.data),
       })
     : null;
   const blockedMessage = gate !== null && !gate.ok ? gateText(t, gate.reason) : null;
