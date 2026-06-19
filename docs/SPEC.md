@@ -151,6 +151,20 @@ interface SyncProvider {
 8. Typing indicator: while composer has activity, call typing endpoint every 3 s (free); stop on idle 4 s.
 9. Mark-as-read: on conversation open + window focused, debounced 1.5 s; settings toggle, default ON (decided 2026-06-10).
 
+### 7.1 Future core command recovery UX
+
+When desktop write custody is enabled later, the local outbox remains the source of drafts and optimistic bubbles; core command status is the source of server-owned execution state. Core responses never return message text, so recovery UI must use the local draft/outbox payload and only show core metadata (`payloadHash`, state, attempts, verifier result, platform id).
+
+- `queued`: core accepted the command. If execution is disabled, show it as parked by the server and allow cancel while it remains queued.
+- `in_flight`: server attempt is running. Disable resend/direct fallback for the same local row and keep one visible pending bubble.
+- `confirmed`: reconcile to sent, using `platformMessageId` when present.
+- `failed_retryable`: show edit/retry; retry creates a new local row and new `clientCommandId` with `retryOfCommandId`.
+- `failed_terminal`: show the terminal reason; any new send is a new command id after human edit/confirmation.
+- `indeterminate`: map to the existing unconfirmed UX. It is not safe-to-resend; the chatter must verify the conversation when possible before creating a new retry command.
+- `cancelled`: remove the queued pending bubble but keep the audit row.
+
+This mapping must not add a background `GET /messages` solely to decide command outcome. Evidence comes from the core status endpoint, `messages.sent` verifier, and existing user-visible manual checks.
+
 ## 8. AI layer (port of legacy, adapted to OFAPI data)
 
 ### 8.1 Behavior carried over from legacy (into `packages/shared`) — fresh code, locked behavior
