@@ -220,23 +220,37 @@ export const HUB_OFAPI_COMMAND_STATES = [
 
 const hubOfapiCommandStateSchema = z.enum(HUB_OFAPI_COMMAND_STATES);
 
-const hubOfapiCommandCreateRequestSchema = z.strictObject({
+const hubOfapiCommandKindSchema = z.enum(['send_text_message_v1', 'typing_active_v1']);
+
+const hubOfapiCommandBaseFields = {
   clientCommandId: z.string().uuid(),
-  kind: z.literal('send_text_message_v1'),
   accountId: z.string().regex(/^acct_[A-Za-z0-9]+$/),
   conversationId: z.string().regex(/^[0-9]{1,30}$/),
-  payload: z.strictObject({
-    text: z.string().min(1).max(10_000).refine((text) => text.trim().length > 0, {
-      message: 'Message text must not be blank',
+};
+
+const hubOfapiCommandCreateRequestSchema = z.discriminatedUnion('kind', [
+  z.strictObject({
+    ...hubOfapiCommandBaseFields,
+    kind: z.literal('send_text_message_v1'),
+    payload: z.strictObject({
+      text: z.string().min(1).max(10_000).refine((text) => text.trim().length > 0, {
+        message: 'Message text must not be blank',
+      }),
     }),
+    retryOfCommandId: z.string().uuid().nullable().optional(),
   }),
-  retryOfCommandId: z.string().uuid().nullable().optional(),
-});
+  z.strictObject({
+    ...hubOfapiCommandBaseFields,
+    kind: z.literal('typing_active_v1'),
+    payload: z.strictObject({}),
+    retryOfCommandId: z.null().optional(),
+  }),
+]);
 
 const hubOfapiCommandResponseSchema = z.strictObject({
   commandId: z.string().uuid(),
   clientCommandId: z.string().uuid(),
-  kind: z.literal('send_text_message_v1'),
+  kind: hubOfapiCommandKindSchema,
   accountId: z.string(),
   conversationId: z.string(),
   state: hubOfapiCommandStateSchema,

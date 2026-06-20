@@ -103,6 +103,55 @@ describe('send engine hub command transport', () => {
     engine.dispose();
   });
 
+  it('routes typing beacons through hub command intake when hub writes are active', async () => {
+    const direct = makeStubClient();
+    const createOfapiCommand = vi.fn(async ({ command: request }) =>
+      command(request.clientCommandId, 'confirmed', {
+        kind: 'typing_active_v1',
+        platformMessageId: null,
+      }),
+    );
+    const engine = createSendEngine({
+      client: direct.client,
+      directClient: direct.client,
+      hubCommandClient: {
+        createOfapiCommand,
+        getOfapiCommand: vi.fn(),
+      },
+      getWriteTransport: () => 'hub',
+      data,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+
+    engine.typingActive(ACCT, CHAT);
+    engine.typingActive(ACCT, CHAT);
+    await drain();
+
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+    expect(createOfapiCommand).toHaveBeenCalledWith({
+      command: {
+        clientCommandId: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        ),
+        kind: 'typing_active_v1',
+        accountId: ACCT,
+        conversationId: CHAT,
+        payload: {},
+      },
+    });
+    expect(direct.client.startTyping).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(2500);
+    engine.typingActive(ACCT, CHAT);
+    await drain();
+
+    expect(createOfapiCommand).toHaveBeenCalledTimes(2);
+    expect(direct.client.startTyping).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+
   it('recovers an ambiguous intake by repeating the same client id without a body read', async () => {
     const direct = makeStubClient();
     let failIntake = true;

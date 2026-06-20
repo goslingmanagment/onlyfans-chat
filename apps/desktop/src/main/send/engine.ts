@@ -715,15 +715,32 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     },
 
     typingActive(accountId, chatId) {
-      if (directClient === null) {
-        return;
-      }
       const key = chatKey(accountId, chatId);
       const last = typingLastAt.get(key);
       if (last !== undefined && now() - last < TYPING_MIN_INTERVAL_MS) {
         return;
       }
       typingLastAt.set(key, now());
+      if (getWriteTransport() === 'hub') {
+        if (hubCommandClient === undefined) {
+          return;
+        }
+        void hubCommandClient
+          .createOfapiCommand({
+            command: {
+              clientCommandId: randomUUID(),
+              kind: 'typing_active_v1',
+              accountId,
+              conversationId: chatId,
+              payload: {},
+            },
+          })
+          .catch(() => undefined);
+        return;
+      }
+      if (directClient === null) {
+        return;
+      }
       // 0 credits, purely cosmetic: losing one is harmless (client contract).
       void directClient.startTyping({ accountId, chatId, purpose: 'send' }).catch(() => undefined);
     },

@@ -48,6 +48,16 @@ function makeCommand() {
   };
 }
 
+function makeTypingCommand() {
+  return {
+    clientCommandId: CLIENT_COMMAND_ID,
+    kind: 'typing_active_v1' as const,
+    accountId: 'acct_abc123',
+    conversationId: '123456',
+    payload: {},
+  };
+}
+
 describe('HubClient OFAPI command outbox', () => {
   it('creates command rows through the core outbox without accepting payload text in the response', async () => {
     const calls: Array<{ url: string; init: HubRequestInit }> = [];
@@ -69,6 +79,28 @@ describe('HubClient OFAPI command outbox', () => {
     expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/ofapi/commands');
     expect(calls[0]?.init.method).toBe('POST');
     expect(JSON.parse(calls[0]?.init.body ?? '{}')).toEqual(makeCommand());
+  });
+
+  it('creates empty-payload typing command rows through the core outbox', async () => {
+    const calls: Array<{ url: string; init: HubRequestInit }> = [];
+    const fetchImpl: HubFetch = (url, init) => {
+      calls.push({ url, init });
+      return Promise.resolve(jsonResponse(commandResponse({
+        kind: 'typing_active_v1',
+        platformMessageId: null,
+      }), 202));
+    };
+    const client = createHubClient({ baseUrl: 'https://hub.example.com/', apiKey: 'k', fetchImpl });
+
+    const result = await client.createOfapiCommand({ command: makeTypingCommand() });
+
+    expect(result).toMatchObject({
+      commandId: COMMAND_ID,
+      kind: 'typing_active_v1',
+      state: 'queued',
+      platformMessageId: null,
+    });
+    expect(JSON.parse(calls[0]?.init.body ?? '{}')).toEqual(makeTypingCommand());
   });
 
   it('reads and cancels command state with terminal recovery fields', async () => {
@@ -112,6 +144,12 @@ describe('HubClient OFAPI command outbox', () => {
 
     await expect(client.createOfapiCommand({
       command: { ...makeCommand(), payload: { text: '   ' } },
+    })).rejects.toMatchObject({
+      code: 'CG-HUB-02',
+      reason: 'bad-request',
+    } satisfies Partial<HubError>);
+    await expect(client.createOfapiCommand({
+      command: { ...makeTypingCommand(), payload: { text: 'not allowed' } } as never,
     })).rejects.toMatchObject({
       code: 'CG-HUB-02',
       reason: 'bad-request',
