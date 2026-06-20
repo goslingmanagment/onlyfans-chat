@@ -297,7 +297,7 @@
     <div class="src s-hub">
       <span class="tag">Хаб ядра · SSE + REST</span>
       <h3>Бэкенд «ядра» / ChatMuse</h3>
-      <p>Наш собственный сервер (репозиторий <code>core</code>). SSE шлёт события; snapshot закрывает разрыв старого курсора. Chatter-scoped REST-шлюз выполняет разрешённые OFAPI GET и пишет расход в центральный ledger. Text command outbox/executor прошёл controlled live send+unsend: один command = максимум одна vendor-попытка, ответы и логи без текста. Desktop умеет восстанавливать статус по тому же client id без чтения тела чата.</p>
+      <p>Наш production-сервер (репозиторий <code>core</code>). SSE шлёт события; snapshot закрывает разрыв старого курсора. Chatter-scoped REST-шлюз выполняет разрешённые OFAPI GET и пишет расход в центральный ledger. Text command executor включён после controlled live send+unsend: один command = максимум одна vendor-попытка, ответы и логи без текста. Desktop восстанавливает статус по тому же client id без чтения тела чата.</p>
       <span class="where">main/hub/* · main/sync/hub-*</span>
     </div>
 
@@ -374,8 +374,8 @@
     </div>
 
     <div class="flow-note">
-      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра: SSE даёт push-first события, snapshot + tail закрывают replay-gap, а opt-in read gateway выполняет desktop GET через core. Direct остаётся rollback; write-основа в core есть default-off, но desktop writes остаются прямыми до live execution gate и recovery UX.</span>
-      <span class="b ai" data-k="сбоку → экран">ИИ-провайдеры: тексты ответов/коучинга идут <b>прямо в ИИ-док</b>, минуя БД (кроме саммари — оно кэшируется).</span>
+      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра: SSE даёт push-first события, snapshot + tail закрывают replay-gap, Hub read и Hub text-write — production defaults. Direct остаётся rollback и нужен для PPV/media/typing/mark-read/unsend/upload до отдельных command-контрактов.</span>
+      <span class="b ai" data-k="сбоку → экран">ИИ-провайдеры: сейчас desktop вызывает их напрямую. Core AI gateway готов, но Anthropic отклоняет production egress с 403, поэтому Hub AI откатан и не является default.</span>
       <span class="b live" data-k="в обход кэша">Волт и галерея: <b>единственная</b> поверхность, что ходит в OFAPI <b>вживую на каждый показ</b> (1 кредит/вызов), без слоя БД.</span>
     </div>
   </div>
@@ -463,7 +463,7 @@
           <span class="chip c-db">контекст: кэш</span>
           <span class="chip c-ofapi">контекст: live при нехватке</span>
         </div>
-        <p>Любой текст — <b>свежий live-вызов LLM</b> на каждый прогон. Исключение — «саммари фана»: берётся из локального кэша <code>summaries</code> или из префетча хаба. Контекст (транскрипт, спенд, имя/био) — сначала из кэша; core <code>transactions.new</code> authoritative после 30-дневного comparison 11/11, mismatch=0. Desktop делает только часовую сверку; support-toggle возвращает старые 10 минут. PPV unlock остаётся estimated, tips — blocked до live fixture. Сейчас расход токенов пишется локально (<code>ai_spend_log</code>); в direct-режиме он репортится в core через <code>/ai-usage/batch</code>, а в hub-режиме идёт через core AI gateway без двойного репорта. Core AI gateway уже есть default-off с quota/cost ledger и owner reporting; desktop HubGateway тоже wired default-off, но live provider validation ещё не принята.</p>
+        <p>Любой текст — <b>свежий live-вызов LLM</b> на каждый прогон. Исключение — «саммари фана»: берётся из локального кэша <code>summaries</code> или из префетча хаба. Контекст (транскрипт, спенд, имя/био) — сначала из кэша; core <code>transactions.new</code> authoritative после 30-дневного comparison 11/11, mismatch=0. Desktop делает только часовую сверку; support-toggle возвращает старые 10 минут. PPV unlock остаётся estimated, tips — blocked до live fixture. В текущем direct-режиме расход токенов репортится в core через <code>/ai-usage/batch</code>. HubGateway умеет central quota/cost ledger без двойного репорта, но production Anthropic egress вернул 403; flag/key откатили, поэтому Hub AI пока выключен.</p>
         <div class="note-line">Модели по фичам настраиваемы: Claude (Sonnet/Opus/Haiku) и через OpenRouter — Gemini/Grok. Промпты заморожены byte-for-byte.</div>
       </div>
     </div>
