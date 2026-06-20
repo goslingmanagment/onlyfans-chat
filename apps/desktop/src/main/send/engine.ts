@@ -145,6 +145,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
   const verifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const markReadTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const typingLastAt = new Map<string, number>();
+  const pendingHubUnsends = new Map<string, Promise<void>>();
   let disposed = false;
 
   function chatKey(accountId: string, chatId: string): string {
@@ -352,6 +353,52 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       });
       scheduleVerify(row.accountId, row.chatId);
       return false;
+    }
+  }
+
+  async function unsendViaHub(accountId: string, chatId: string, messageId: string): Promise<void> {
+    if (hubCommandClient === undefined) {
+      throw new Error('Hub command transport is unavailable for unsend');
+    }
+    const key = `${accountId}|${chatId}|${messageId}`;
+    const pending = pendingHubUnsends.get(key);
+    if (pending !== undefined) {
+      return pending;
+    }
+
+    const task = (async () => {
+      const command = await waitForHubCommand(
+        await hubCommandClient.createOfapiCommand({
+          command: {
+            clientCommandId: randomUUID(),
+            kind: 'unsend_message_v1',
+            accountId,
+            conversationId: chatId,
+            payload: { messageId },
+          },
+        }),
+      );
+      switch (command.state) {
+        case 'confirmed':
+          data.messages.markDeleted(accountId, chatId, [messageId]);
+          return;
+        case 'queued':
+        case 'in_flight':
+        case 'indeterminate':
+          return;
+        case 'failed_retryable':
+        case 'failed_terminal':
+        case 'cancelled':
+          throw new Error(command.lastErrorCode ?? `Hub unsend command ended as ${command.state}`);
+      }
+    })();
+    pendingHubUnsends.set(key, task);
+    try {
+      await task;
+    } finally {
+      if (pendingHubUnsends.get(key) === task) {
+        pendingHubUnsends.delete(key);
+      }
     }
   }
 
@@ -779,6 +826,10 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     },
 
     async unsend(accountId, chatId, messageId) {
+      if (getWriteTransport() === 'hub') {
+        await unsendViaHub(accountId, chatId, messageId);
+        return;
+      }
       if (directClient === null) {
         throw new Error('Direct OFAPI write transport is unavailable for unsend');
       }

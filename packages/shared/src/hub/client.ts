@@ -220,7 +220,11 @@ export const HUB_OFAPI_COMMAND_STATES = [
 
 const hubOfapiCommandStateSchema = z.enum(HUB_OFAPI_COMMAND_STATES);
 
-const hubOfapiCommandKindSchema = z.enum(['send_text_message_v1', 'typing_active_v1']);
+const hubOfapiCommandKindSchema = z.enum([
+  'send_text_message_v1',
+  'typing_active_v1',
+  'unsend_message_v1',
+]);
 
 const hubOfapiCommandBaseFields = {
   clientCommandId: z.string().uuid(),
@@ -243,6 +247,14 @@ const hubOfapiCommandCreateRequestSchema = z.discriminatedUnion('kind', [
     ...hubOfapiCommandBaseFields,
     kind: z.literal('typing_active_v1'),
     payload: z.strictObject({}),
+    retryOfCommandId: z.null().optional(),
+  }),
+  z.strictObject({
+    ...hubOfapiCommandBaseFields,
+    kind: z.literal('unsend_message_v1'),
+    payload: z.strictObject({
+      messageId: z.string().regex(/^[0-9]{1,30}$/),
+    }),
     retryOfCommandId: z.null().optional(),
   }),
 ]);
