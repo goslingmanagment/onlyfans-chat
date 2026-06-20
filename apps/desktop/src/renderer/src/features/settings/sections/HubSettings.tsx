@@ -160,6 +160,27 @@ export function HubSettings({
           </div>
           <span className="text-[11px] text-ink-low">{t('hub.aiGateway.liveGate')}</span>
         </div>
+        <div className="flex items-center gap-3 py-1">
+          <div className="w-44 flex-none">
+            <div className="text-[13px] font-semibold">{t('hub.ofapiWrites.label')}</div>
+            <div className="text-[11px] text-ink-low">{t('hub.ofapiWrites.hint')}</div>
+          </div>
+          <div className="flex items-center rounded-full border border-line bg-bg1 p-0.5">
+            <Chip
+              selected={settings.ofapiWriteTransport === 'direct'}
+              onClick={() => patch({ ofapiWriteTransport: 'direct' })}
+            >
+              {t('hub.ofapiWrites.direct')}
+            </Chip>
+            <Chip
+              selected={settings.ofapiWriteTransport === 'hub'}
+              onClick={() => patch({ ofapiWriteTransport: 'hub' })}
+            >
+              {t('hub.ofapiWrites.hub')}
+            </Chip>
+          </div>
+          <span className="text-[11px] text-ink-low">{t('hub.ofapiWrites.restart')}</span>
+        </div>
 
         {hub !== 'off' && (
           <div className="flex items-center gap-3 py-1">

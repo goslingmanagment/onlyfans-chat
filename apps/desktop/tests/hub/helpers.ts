@@ -53,6 +53,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hasHubKey: false,
     hubBaseUrl: null,
     ofapiReadTransport: 'direct',
+    ofapiWriteTransport: 'direct',
     aiGatewayTransport: 'direct',
     hubModeOverride: 'auto',
     spendSweepRollbackToLegacy: true,

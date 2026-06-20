@@ -11,6 +11,7 @@ import type { DbChangeBus } from '../change-bus';
 import { toJson } from '../rows';
 
 export type OutboxState = 'queued' | 'sending' | 'sent' | 'failed' | 'unconfirmed' | 'cancelled';
+export type OutboxTransport = 'direct' | 'hub';
 
 const OUTBOX_STATES = [
   'queued',
@@ -29,6 +30,7 @@ export interface OutboxRow {
   accountId: string;
   chatId: string;
   text: string;
+  transport: OutboxTransport;
   state: OutboxState;
   sequenceId: string | null;
   partIndex: number;
@@ -55,6 +57,7 @@ export interface OutboxInsert {
   accountId: string;
   chatId: string;
   text: string;
+  transport?: OutboxTransport;
   sequenceId: string | null;
   partIndex: number;
   retryOf: string | null;
@@ -66,7 +69,7 @@ export interface OutboxInsert {
 }
 
 const COLUMNS =
-  'local_id, account_id, chat_id, text, state, sequence_id, part_index, message_id, ' +
+  'local_id, account_id, chat_id, text, transport, state, sequence_id, part_index, message_id, ' +
   'error_code, error_message, text_highlights, attempts, retry_of, price, media_files, ' +
   'previews, created_at, updated_at';
 
@@ -75,6 +78,8 @@ const outboxSqlSchema = z.object({
   account_id: z.string(),
   chat_id: z.string(),
   text: z.string(),
+  // Audit/export queries created before v11 may omit this additive column.
+  transport: z.enum(['direct', 'hub']).default('direct'),
   state: z.enum(OUTBOX_STATES),
   sequence_id: z.string().nullable(),
   part_index: z.number().int(),
@@ -104,6 +109,7 @@ export function decodeOutboxRow(value: unknown): OutboxRow {
     accountId: row.account_id,
     chatId: row.chat_id,
     text: row.text,
+    transport: row.transport,
     state: row.state,
     sequenceId: row.sequence_id,
     partIndex: row.part_index,
@@ -159,11 +165,11 @@ export interface OutboxQueries {
 
 const INSERT_SQL = `
 INSERT INTO outbox (
-  local_id, account_id, chat_id, text, state, sequence_id, part_index,
+  local_id, account_id, chat_id, text, transport, state, sequence_id, part_index,
   message_id, error_code, error_message, text_highlights, attempts, retry_of,
   price, media_files, previews, created_at, updated_at
 ) VALUES (
-  @local_id, @account_id, @chat_id, @text, 'queued', @sequence_id, @part_index,
+  @local_id, @account_id, @chat_id, @text, @transport, 'queued', @sequence_id, @part_index,
   NULL, NULL, NULL, '[]', 0, @retry_of,
   @price, @media_files, @previews, @created_at, @created_at
 )`;
@@ -192,6 +198,7 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
             account_id: row.accountId,
             chat_id: row.chatId,
             text: row.text,
+            transport: row.transport ?? 'direct',
             sequence_id: row.sequenceId,
             part_index: row.partIndex,
             retry_of: row.retryOf,

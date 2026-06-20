@@ -123,6 +123,7 @@ export type {
   OutboxInsert,
   OutboxMediaId,
   OutboxState,
+  OutboxTransport,
   OutboxTransitionArgs,
 } from './queries/outbox';
 export { createCreditLogQueries } from './queries/credit-log';

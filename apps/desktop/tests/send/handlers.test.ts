@@ -141,6 +141,7 @@ describe('send-channel IPC handlers', () => {
         localId: 'L1',
         chatId: CHAT,
         text: 'hello',
+        transport: 'direct',
         state: 'queued',
         messageId: null,
         sequenceId: 'seq-1',

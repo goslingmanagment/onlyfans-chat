@@ -10,8 +10,15 @@
 
 import { randomUUID } from 'node:crypto';
 import { CgError } from '@chatgoose/shared';
+import type { HubClient, HubOfapiCommand } from '@chatgoose/shared/hub/index';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
-import type { DataLayer, MessageRow, OutboxMediaId, OutboxRow } from '../db/index';
+import type {
+  DataLayer,
+  MessageRow,
+  OutboxMediaId,
+  OutboxRow,
+  OutboxTransport,
+} from '../db/index';
 import type { OfApiClient } from '../ofapi/client';
 import { classifySendFailure } from '../ofapi/send-outcome';
 import { OfApiError } from '../ofapi/errors';
@@ -35,6 +42,8 @@ const VERIFY_TAIL_LIMIT = 50;
 export const TYPING_MIN_INTERVAL_MS = 2500;
 // SPEC §7.9: mark-as-read debounced 1.5 s per chat, gated on the settings toggle.
 export const MARK_READ_DEBOUNCE_MS = 1500;
+export const HUB_COMMAND_POLL_INTERVAL_MS = 500;
+export const HUB_COMMAND_POLL_LIMIT = 60;
 // PPV price bounds (openapi send-message: "0 or between 3-200", integer dollars).
 export const PPV_PRICE_MIN = 3;
 export const PPV_PRICE_MAX = 200;
@@ -47,6 +56,10 @@ export type SendClient = Pick<
 
 export interface SendEngineOptions {
   client: SendClient;
+  /** Explicit direct writer. Omit in legacy/tests to reuse client; null = no direct writes. */
+  directClient?: SendClient | null;
+  hubCommandClient?: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand'>;
+  getWriteTransport?: () => OutboxTransport;
   data: DataLayer;
   toMediaUrl: ToMediaUrl;
   getSettings: () => Promise<{ markAsReadOnOpen: boolean }>;
@@ -54,6 +67,8 @@ export interface SendEngineOptions {
   sleep?: SleepFn;
   /** Uniform [0,1) source for the inter-part delay (injectable for tests). */
   random?: () => number;
+  hubCommandPollIntervalMs?: number;
+  hubCommandPollLimit?: number;
 }
 
 export interface SendEngine {
@@ -115,10 +130,16 @@ function toWireMediaId(id: OutboxMediaId): string | number {
 
 export function createSendEngine(options: SendEngineOptions): SendEngine {
   const { client, data, toMediaUrl, getSettings } = options;
+  const directClient = options.directClient === undefined ? client : options.directClient;
+  const hubCommandClient = options.hubCommandClient;
+  const getWriteTransport = options.getWriteTransport ?? (() => 'direct' as const);
   const now = options.now ?? Date.now;
   const sleep: SleepFn =
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const random = options.random ?? Math.random;
+  const hubCommandPollIntervalMs =
+    options.hubCommandPollIntervalMs ?? HUB_COMMAND_POLL_INTERVAL_MS;
+  const hubCommandPollLimit = options.hubCommandPollLimit ?? HUB_COMMAND_POLL_LIMIT;
 
   const pumping = new Set<string>();
   const verifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -190,11 +211,161 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     })();
   }
 
-  /** Exactly one client.sendMessage per claimed row — there is no other call site. */
-  async function attemptSend(row: OutboxRow): Promise<boolean> {
+  function upsertHubConfirmedMessage(row: OutboxRow, command: HubOfapiCommand): void {
+    if (command.platformMessageId === null) {
+      throw new Error('Hub confirmed command omitted platformMessageId');
+    }
+    data.messages.upsertMany([
+      {
+        accountId: row.accountId,
+        chatId: row.chatId,
+        messageId: command.platformMessageId,
+        createdAt: command.attemptFinishedAt ?? command.updatedAt,
+        isSentByMe: true,
+        textHtml: row.text,
+        textPlain: row.text,
+        price: 0,
+        isOpened: null,
+        isNew: false,
+        isTip: false,
+        tipAmount: null,
+        tipText: null,
+        replyTo: null,
+        media: [],
+        deleted: false,
+        raw: {
+          source: 'hub-command',
+          commandId: command.commandId,
+        },
+      },
+    ]);
+  }
+
+  function settleHubCommand(row: OutboxRow, command: HubOfapiCommand): boolean {
+    switch (command.state) {
+      case 'confirmed':
+        upsertHubConfirmedMessage(row, command);
+        data.outbox.transition({
+          localId: row.localId,
+          from: ['sending', 'unconfirmed'],
+          to: 'sent',
+          ...(command.platformMessageId === null ? {} : { messageId: command.platformMessageId }),
+        });
+        return true;
+      case 'failed_retryable':
+      case 'failed_terminal':
+      case 'cancelled':
+        data.outbox.transition({
+          localId: row.localId,
+          from: ['sending', 'unconfirmed'],
+          to: 'failed',
+          errorCode: command.lastErrorCode ?? 'CG-APP-01',
+          errorMessage:
+            command.state === 'cancelled'
+              ? 'The server command was cancelled before delivery'
+              : `The server command ended as ${command.state}`,
+        });
+        return false;
+      case 'indeterminate':
+        data.outbox.transition({
+          localId: row.localId,
+          from: ['sending'],
+          to: 'unconfirmed',
+          errorCode: 'CG-OF-06',
+          errorMessage: 'The server could not prove whether the message was delivered',
+        });
+        return false;
+      case 'queued':
+      case 'in_flight':
+        return false;
+    }
+  }
+
+  async function ensureHubCommand(row: OutboxRow): Promise<HubOfapiCommand> {
+    if (hubCommandClient === undefined) {
+      throw new Error('Hub command transport is unavailable');
+    }
+    let retryOfCommandId: string | null = null;
+    if (row.retryOf !== null) {
+      const original = data.outbox.get(row.retryOf);
+      if (original === null || original.transport !== 'hub') {
+        throw new Error('Hub retry source is missing or used a different transport');
+      }
+      retryOfCommandId = (await ensureHubCommand(original)).commandId;
+    }
+    return hubCommandClient.createOfapiCommand({
+      command: {
+        clientCommandId: row.localId,
+        kind: 'send_text_message_v1',
+        accountId: row.accountId,
+        conversationId: row.chatId,
+        payload: { text: row.text },
+        retryOfCommandId,
+      },
+    });
+  }
+
+  async function waitForHubCommand(command: HubOfapiCommand): Promise<HubOfapiCommand> {
+    if (hubCommandClient === undefined) {
+      throw new Error('Hub command transport is unavailable');
+    }
+    let current = command;
+    for (let poll = 0; poll < hubCommandPollLimit; poll += 1) {
+      if (current.state !== 'queued' && current.state !== 'in_flight') {
+        return current;
+      }
+      await sleep(hubCommandPollIntervalMs);
+      current = await hubCommandClient.getOfapiCommand({ commandId: current.commandId });
+    }
+    return current;
+  }
+
+  async function attemptHubSend(row: OutboxRow): Promise<boolean> {
     try {
+      const command = await waitForHubCommand(await ensureHubCommand(row));
+      if (command.state === 'queued' || command.state === 'in_flight') {
+        data.outbox.transition({
+          localId: row.localId,
+          from: ['sending'],
+          to: 'unconfirmed',
+          errorCode: 'CG-OF-06',
+          errorMessage: 'The server command is still pending; status recovery will continue',
+        });
+        scheduleVerify(row.accountId, row.chatId);
+        return false;
+      }
+      const sent = settleHubCommand(row, command);
+      if (!sent && command.state === 'indeterminate') {
+        scheduleVerify(row.accountId, row.chatId);
+      }
+      return sent;
+    } catch (error) {
+      // Intake is idempotent on localId/clientCommandId. A transport failure may
+      // have happened after core accepted the command, so never fall back to a
+      // direct send; recovery repeats intake with the same id and reads status.
+      data.outbox.transition({
+        localId: row.localId,
+        from: ['sending'],
+        to: 'unconfirmed',
+        errorCode: 'CG-OF-06',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      scheduleVerify(row.accountId, row.chatId);
+      return false;
+    }
+  }
+
+  /** Exactly one direct send or one idempotent core command per claimed row. */
+  async function attemptSend(row: OutboxRow): Promise<boolean> {
+    if (row.transport === 'hub' && row.mediaFiles.length === 0) {
+      return attemptHubSend(row);
+    }
+    try {
+      if (directClient === null) {
+        throw new Error('Direct OFAPI write transport is unavailable');
+      }
       const isMediaSend = row.mediaFiles.length > 0;
-      const created = await client.sendMessage({
+      const created = await directClient.sendMessage({
         accountId: row.accountId,
         chatId: row.chatId,
         text: row.text,
@@ -323,6 +494,21 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     if (unconfirmed.length === 0) {
       return;
     }
+    const hubRows = unconfirmed.filter((row) => row.transport === 'hub');
+    for (const row of hubRows) {
+      try {
+        const command = await waitForHubCommand(await ensureHubCommand(row));
+        settleHubCommand(row, command);
+      } catch {
+        // Core or network still unavailable; the periodic status pass retries.
+      }
+    }
+    const directRows = data.outbox
+      .listByStateForChat(accountId, chatId, 'unconfirmed')
+      .filter((row) => row.transport === 'direct');
+    if (directRows.length === 0) {
+      return;
+    }
     const { messages } = await client.listMessages({
       accountId,
       chatId,
@@ -376,11 +562,13 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       gateCanSend(accountId, chatId);
       const sequenceId = parts.length > 1 ? randomUUID() : null;
       const createdAt = nowIso();
+      const transport = getWriteTransport();
       const rows = parts.map((text, partIndex) => ({
         localId: randomUUID(),
         accountId,
         chatId,
         text,
+        transport,
         sequenceId,
         partIndex,
         retryOf: null,
@@ -418,6 +606,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
           accountId,
           chatId,
           text,
+          transport: 'direct',
           sequenceId: null, // sequences never apply to PPV (one row, PRD F7)
           partIndex: 0,
           retryOf: null,
@@ -453,6 +642,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
           accountId,
           chatId: row.chatId,
           text,
+          transport: row.transport,
           sequenceId: null,
           partIndex: 0,
           retryOf: localId,
@@ -525,6 +715,9 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     },
 
     typingActive(accountId, chatId) {
+      if (directClient === null) {
+        return;
+      }
       const key = chatKey(accountId, chatId);
       const last = typingLastAt.get(key);
       if (last !== undefined && now() - last < TYPING_MIN_INTERVAL_MS) {
@@ -532,12 +725,12 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       }
       typingLastAt.set(key, now());
       // 0 credits, purely cosmetic: losing one is harmless (client contract).
-      void client.startTyping({ accountId, chatId, purpose: 'send' }).catch(() => undefined);
+      void directClient.startTyping({ accountId, chatId, purpose: 'send' }).catch(() => undefined);
     },
 
     async markRead(accountId, chatId) {
       const settings = await getSettings();
-      if (!settings.markAsReadOnOpen || disposed) {
+      if (!settings.markAsReadOnOpen || disposed || directClient === null) {
         return;
       }
       const key = chatKey(accountId, chatId);
@@ -549,7 +742,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         key,
         setTimeout(() => {
           markReadTimers.delete(key);
-          void client
+          void directClient
             .markChatRead({ accountId, chatId, purpose: 'send' })
             .then(({ success }) => {
               if (!success) {
@@ -569,8 +762,16 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     },
 
     async unsend(accountId, chatId, messageId) {
+      if (directClient === null) {
+        throw new Error('Direct OFAPI write transport is unavailable for unsend');
+      }
       // Window errors (CG-OF-07 / upstream 4xx) propagate to the caller.
-      const { success } = await client.deleteMessage({ accountId, chatId, messageId, purpose: 'send' });
+      const { success } = await directClient.deleteMessage({
+        accountId,
+        chatId,
+        messageId,
+        purpose: 'send',
+      });
       if (success) {
         data.messages.markDeleted(accountId, chatId, [messageId]); // tombstone
       }

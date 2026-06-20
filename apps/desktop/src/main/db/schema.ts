@@ -291,6 +291,16 @@ CREATE TABLE thread_fetch_log (
 );
 `;
 
+// v11 — core command transport ownership for plain-text sends. The local
+// outbox keeps the message text/draft and a durable transport choice; the
+// row's UUID is also the core clientCommandId, so a restart can repeat command
+// intake idempotently without persisting core payloads or issuing a second
+// vendor attempt.
+export const SCHEMA_V11 = `
+ALTER TABLE outbox ADD COLUMN transport TEXT NOT NULL DEFAULT 'direct'
+  CHECK (transport IN ('direct', 'hub'));
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',

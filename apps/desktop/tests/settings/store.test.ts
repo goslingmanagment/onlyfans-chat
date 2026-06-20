@@ -79,6 +79,7 @@ describe('settings store', () => {
     expect(vm.accountOrder).toEqual([]);
     expect(vm.accountPageLabels).toEqual({});
     expect(vm.ofapiReadTransport).toBe('direct');
+    expect(vm.ofapiWriteTransport).toBe('direct');
     expect(vm.aiGatewayTransport).toBe('direct');
     expect(vm.hubModeOverride).toBe('auto');
     expect(vm.spendSweepRollbackToLegacy).toBe(true);
@@ -99,6 +100,7 @@ describe('settings store', () => {
       uiScale: 1.25,
       uiTheme: 'dark',
       ofapiReadTransport: 'hub',
+      ofapiWriteTransport: 'hub',
       aiGatewayTransport: 'hub',
       hubModeOverride: 'hub',
       spendSweepRollbackToLegacy: false,
@@ -107,6 +109,7 @@ describe('settings store', () => {
     expect(vm.uiScale).toBe(1.25);
     expect(vm.uiTheme).toBe('dark');
     expect(vm.ofapiReadTransport).toBe('hub');
+    expect(vm.ofapiWriteTransport).toBe('hub');
     expect(vm.aiGatewayTransport).toBe('hub');
     expect(vm.hubModeOverride).toBe('hub');
     expect(vm.spendSweepRollbackToLegacy).toBe(false);
@@ -117,6 +120,7 @@ describe('settings store', () => {
     expect(again.uiScale).toBe(1.25);
     expect(again.uiTheme).toBe('dark');
     expect(again.ofapiReadTransport).toBe('hub');
+    expect(again.ofapiWriteTransport).toBe('hub');
     expect(again.aiGatewayTransport).toBe('hub');
     expect(again.hubModeOverride).toBe('hub');
     expect(again.spendSweepRollbackToLegacy).toBe(false);
@@ -126,6 +130,7 @@ describe('settings store', () => {
     await expect(store.update({ uiScale: 0.95 })).rejects.toThrow();
     await expect(store.update({ uiTheme: 'sepia' })).rejects.toThrow();
     await expect(store.update({ ofapiReadTransport: 'proxy' })).rejects.toThrow();
+    await expect(store.update({ ofapiWriteTransport: 'proxy' })).rejects.toThrow();
     await expect(store.update({ aiGatewayTransport: 'proxy' })).rejects.toThrow();
     await expect(store.update({ hubModeOverride: 'both' })).rejects.toThrow();
     await expect(store.update({ spendSweepRollbackToLegacy: 'yes' })).rejects.toThrow();

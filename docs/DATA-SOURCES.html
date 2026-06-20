@@ -283,7 +283,7 @@
     <div class="src s-ofapi">
       <span class="tag">OFAPI · live</span>
       <h3>Живой OnlyFans через шлюз</h3>
-      <p>Третья сторона <code>onlyfansapi.com</code> — единственный путь к реальным данным OnlyFans. Desktop может отправлять GET напрямую или через read-шлюз нашего core; upstream-вызов и кредит в обоих случаях остаются OFAPI. Записи в desktop пока идут напрямую: core command outbox/executor уже существует default-off, но desktop write transport и live execution gate не приняты.</p>
+      <p>Третья сторона <code>onlyfansapi.com</code> — единственный путь к реальным данным OnlyFans. Desktop может отправлять GET напрямую или через read-шлюз core. Обычный текстовый send может идти через core command outbox: desktop хранит локальный текст и стабильный client id, core делает максимум одну OFAPI-попытку. Direct остаётся rollback; PPV/media и остальные mutations пока прямые.</p>
       <span class="where">main/ofapi/client.ts · main/ofapi/transport.ts</span>
     </div>
 
@@ -297,7 +297,7 @@
     <div class="src s-hub">
       <span class="tag">Хаб ядра · SSE + REST</span>
       <h3>Бэкенд «ядра» / ChatMuse</h3>
-      <p>Наш собственный сервер (репозиторий <code>core</code>). SSE шлёт события; snapshot закрывает разрыв старого курсора. Отдельный chatter-scoped REST-шлюз может выполнять разрешённые OFAPI GET от имени desktop и писать расход в центральный ledger. Command outbox/executor для текстовых send-команд развернут default-off: intake/read/cancel уже имеют strict client contract без текста в ответах, но execution выключен до контролируемого live-gate. Режим чтения через Hub opt-in и применяется после перезапуска; без него остаётся прямой транспорт.</p>
+      <p>Наш собственный сервер (репозиторий <code>core</code>). SSE шлёт события; snapshot закрывает разрыв старого курсора. Chatter-scoped REST-шлюз выполняет разрешённые OFAPI GET и пишет расход в центральный ledger. Text command outbox/executor прошёл controlled live send+unsend: один command = максимум одна vendor-попытка, ответы и логи без текста. Desktop умеет восстанавливать статус по тому же client id без чтения тела чата.</p>
       <span class="where">main/hub/* · main/sync/hub-*</span>
     </div>
 
@@ -447,7 +447,7 @@
           <span class="chip c-derived">вычисляется</span>
           <span class="chip c-ofapi">OFAPI · по действию человека</span>
         </div>
-        <p>Видимый UI (оптимистичные строки, черновики, гейт «можно отправлять») — из кэша + производно. Сегодня сеть — <b>явные действия человека</b> в <code>send/engine.ts</code>: отправка (POST), read-only верификатор, unsend, «печатает», mark-read; каждое срабатывает раз и пишется обратно в кэш. Core command outbox/executor — следующий custody слой, но execution выключен и desktop transport ещё не подключён. Send никогда не ретраится автоматически (инвариант SPEC §15).</p>
+        <p>Видимый UI (оптимистичные строки, черновики, гейт «можно отправлять») — из кэша + производно. Для plain text <code>send/engine.ts</code> сохраняет transport в локальном outbox: <b>Hub</b> отправляет idempotent command и сверяет core status, <b>Direct</b> остаётся rollback. При неясном результате Hub никогда не переключается на прямой POST и не делает <code>GET /messages</code> только ради проверки. PPV/media, unsend, typing и mark-read пока прямые.</p>
       </div>
     </div>
 
@@ -528,7 +528,7 @@
           <span class="chip c-db">кэш БД (таблица settings)</span>
           <span class="chip c-ofapi">live: только тест/список</span>
         </div>
-        <p>Синхронные чтения из зашифрованной таблицы <code>settings</code>. Секреты лежат <b>только в keychain ОС</b> (наружу отдаётся лишь «есть/нет»). Здесь выбирается OFAPI read transport: <b>Direct</b> или <b>Agency Hub</b>; изменение применяется после перезапуска. Hub-режим требует URL + chatter key, а direct OFAPI key пока нужен для отправки и других writes, пока command transport не прошёл live execution gate.</p>
+        <p>Синхронные чтения из зашифрованной таблицы <code>settings</code>. Секреты лежат <b>только в keychain ОС</b> (наружу отдаётся лишь «есть/нет»). Отдельно выбираются read transport и plain-text send transport: <b>Direct</b> или <b>Agency Hub</b>. Hub требует URL + chatter key; direct OFAPI key пока нужен для PPV/media и остальных write-команд без core contract.</p>
       </div>
     </div>
 

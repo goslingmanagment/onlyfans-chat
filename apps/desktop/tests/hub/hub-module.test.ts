@@ -133,6 +133,41 @@ describe('createHubModule', () => {
     module.dispose();
   });
 
+  it('delegates command intake only while hub credentials are configured', async () => {
+    const data = memoryDataLayer();
+    const client = makeFakeHubClient();
+    const off = createHubModule({
+      data,
+      settingsStore: makeSettingsStore(makeSettingsVM()),
+      keychain: makeKeychain(null),
+      createClient: () => client,
+    });
+    await off.reconfigure();
+    await expect(
+      off.commandClient.getOfapiCommand({
+        commandId: '22222222-2222-4222-8222-222222222222',
+      }),
+    ).rejects.toThrow('Hub command transport is not configured');
+
+    const configured = createHubModule({
+      data,
+      settingsStore: makeSettingsStore(
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+      ),
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient: () => client,
+    });
+    await configured.reconfigure();
+    await expect(
+      configured.commandClient.getOfapiCommand({
+        commandId: '22222222-2222-4222-8222-222222222222',
+      }),
+    ).resolves.toMatchObject({ state: 'queued' });
+    expect(client.getOfapiCommand).toHaveBeenCalledTimes(1);
+    configured.dispose();
+    off.dispose();
+  });
+
   it('keeps the OFAPI credit summary inert when hub is off or unavailable', async () => {
     const data = memoryDataLayer();
     const warn = vi.fn();

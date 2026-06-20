@@ -403,6 +403,7 @@ async function initOfapi(
   let settingsCache: {
     creditBudgetPerShift: number | null;
     autoReadChats: boolean;
+    ofapiWriteTransport: 'direct' | 'hub';
     hubModeOverride: 'auto' | 'polling' | 'hub';
     spendSweepRollbackToLegacy: boolean;
   } | null = initialSettings;
@@ -498,17 +499,18 @@ async function initOfapi(
   });
   void hub.reconfigure();
 
-  // Core C6a is read-only. The send engine exists only when the desktop still
-  // has a direct OFAPI writer; its verifier reads through the selected transport.
-  const engine =
-    directClient === null
-      ? null
-      : createSendEngine({
-          client,
-          data: dataLayer,
-          toMediaUrl,
-          getSettings: () => settingsStore.get(),
-        });
+  // Plain text can use the core C6b command outbox even when no local OFAPI key
+  // exists. PPV/media and auxiliary mutations still require directClient until
+  // their own versioned command kinds ship.
+  const engine = createSendEngine({
+    client,
+    directClient,
+    hubCommandClient: hub.commandClient,
+    getWriteTransport: () => settingsCache?.ofapiWriteTransport ?? 'direct',
+    data: dataLayer,
+    toMediaUrl,
+    getSettings: () => settingsStore.get(),
+  });
   sendEngine = engine;
   // Vault & PPV (PRD F7): vault/gallery thumbs are OF CDN URLs — minted into
   // media:// tokens through the same registering toMediaUrl seam as sync.

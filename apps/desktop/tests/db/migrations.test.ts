@@ -33,7 +33,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
-      expect(SCHEMA_VERSION).toBe(10);
+      expect(SCHEMA_VERSION).toBe(11);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       // v10: per-fan thread-fetch stamps (spenders freshness, PLAN item 13)
       expect(names).toContain('thread_fetch_log');
@@ -73,6 +73,7 @@ describe('migration runner', () => {
         'price',
         'media_files',
         'previews',
+        'transport',
       ]) {
         expect(outboxCols).toContain(col);
       }
@@ -272,6 +273,28 @@ describe('migration runner', () => {
         "VALUES ('acct_1', '101', '2026-06-13T12:00:00.000Z')",
     );
     expect(db.prepare('SELECT COUNT(*) AS n FROM thread_fetch_log').get()).toEqual({ n: 1 });
+    db.close();
+  });
+
+  it('v10 → v11 keeps existing outbox rows on direct transport', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 10));
+    db.exec(
+      `INSERT INTO outbox (
+        local_id, account_id, chat_id, text, state, sequence_id, part_index,
+        message_id, error_code, error_message, text_highlights, attempts, retry_of,
+        price, media_files, previews, created_at, updated_at
+      ) VALUES (
+        'L1', 'acct_1', '101', 'hello', 'failed', NULL, 0,
+        NULL, 'CG-APP-01', 'failed', '[]', 1, NULL,
+        0, '[]', '[]', '2026-06-20T00:00:00.000Z', '2026-06-20T00:00:01.000Z'
+      )`,
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 10, to: SCHEMA_VERSION });
+    expect(db.prepare("SELECT transport FROM outbox WHERE local_id = 'L1'").get()).toEqual({
+      transport: 'direct',
+    });
     db.close();
   });
 

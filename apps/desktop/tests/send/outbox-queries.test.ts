@@ -43,6 +43,7 @@ describe('outbox queries', () => {
       accountId: ACCT,
       chatId: CHAT,
       text: 'text L1',
+      transport: 'direct',
       state: 'queued',
       sequenceId: 'seq',
       partIndex: 2,

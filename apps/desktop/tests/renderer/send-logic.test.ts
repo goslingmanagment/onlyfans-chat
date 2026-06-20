@@ -27,6 +27,7 @@ function outboxItem(overrides: Partial<OutboxItemVM>): OutboxItemVM {
     localId: `local_${seq}`,
     chatId: 'c1',
     text: 'hello there',
+    transport: 'direct',
     state: 'queued',
     messageId: null,
     sequenceId: null,

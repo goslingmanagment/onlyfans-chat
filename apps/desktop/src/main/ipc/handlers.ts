@@ -201,6 +201,7 @@ function outboxToVM(row: OutboxRow): OutboxItemVM {
     localId: row.localId,
     chatId: row.chatId,
     text: row.text,
+    transport: row.transport,
     state: row.state,
     messageId: row.messageId,
     sequenceId: row.sequenceId,

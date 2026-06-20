@@ -308,6 +308,12 @@ export interface SettingsVM {
    */
   ofapiReadTransport: 'direct' | 'hub';
   /**
+   * Plain-text send transport. `hub` submits idempotent commands to core;
+   * direct remains the documented rollback. PPV/media and auxiliary mutations
+   * stay direct until separate versioned core command kinds ship.
+   */
+  ofapiWriteTransport: 'direct' | 'hub';
+  /**
    * AI generation transport. `direct` uses local provider keys; `hub` streams
    * through core's default-off AI gateway with DirectGateway as the rollback.
    */
@@ -461,6 +467,7 @@ export interface OutboxItemVM {
   localId: string;
   chatId: string;
   text: string;
+  transport: 'direct' | 'hub';
   state: OutboxStateVM;
   /** Server message id once confirmed (POST response or verifier match). */
   messageId: string | null;

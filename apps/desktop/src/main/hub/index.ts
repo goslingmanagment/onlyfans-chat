@@ -44,6 +44,8 @@ export interface HubModule {
   summaryHub: SummaryHubHooks;
   /** Future P6 AI transport. Inert until hub config exists and AI mode is set to hub. */
   aiGateway: AiGateway;
+  /** Stable delegator for C6b text-command intake/status recovery. */
+  commandClient: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand' | 'cancelOfapiCommand'>;
   /** Coordinator onUsageEvent target: raw payload → wire event → reporter. */
   onUsageEvent: (event: UsageEventRecord) => void;
   /** Page-scoped core OFAPI spend summary for Activity/diagnostics; null when hub is off/unreachable. */
@@ -95,6 +97,33 @@ export function createHubModule(options: HubModuleOptions): HubModule {
           return () => {};
         }
         return active.aiGateway.stream(req, cb);
+      },
+    },
+
+    commandClient: {
+      createOfapiCommand(args) {
+        if (active === null) {
+          return Promise.reject(
+            new HubError('bad-request', { message: 'Hub command transport is not configured' }),
+          );
+        }
+        return active.client.createOfapiCommand(args);
+      },
+      getOfapiCommand(args) {
+        if (active === null) {
+          return Promise.reject(
+            new HubError('bad-request', { message: 'Hub command transport is not configured' }),
+          );
+        }
+        return active.client.getOfapiCommand(args);
+      },
+      cancelOfapiCommand(args) {
+        if (active === null) {
+          return Promise.reject(
+            new HubError('bad-request', { message: 'Hub command transport is not configured' }),
+          );
+        }
+        return active.client.cancelOfapiCommand(args);
       },
     },
 

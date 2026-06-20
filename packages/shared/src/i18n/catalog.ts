@@ -117,6 +117,17 @@ export const UI_MESSAGES = {
     ru: 'Нужен перезапуск. Запись пока напрямую.',
   },
   'hub.aiGateway.label': { en: 'AI generation', ru: 'Генерация ИИ' },
+  'hub.ofapiWrites.label': { en: 'Text sends', ru: 'Текстовые отправки' },
+  'hub.ofapiWrites.hint': {
+    en: 'Route plain-text sends through the core command outbox.',
+    ru: 'Отправлять текст через очередь команд core.',
+  },
+  'hub.ofapiWrites.direct': { en: 'Direct', ru: 'Напрямую' },
+  'hub.ofapiWrites.hub': { en: 'Agency Hub', ru: 'Agency Hub' },
+  'hub.ofapiWrites.restart': {
+    en: 'takes effect immediately',
+    ru: 'применяется сразу',
+  },
   'hub.aiGateway.hint': {
     en: 'Direct local keys or core streaming gateway.',
     ru: 'Локальные ключи напрямую или стрим через core.',
