@@ -374,7 +374,7 @@
     </div>
 
     <div class="flow-note">
-      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра: SSE даёт push-first события, snapshot + tail закрывают replay-gap, Hub read, Hub text-write, Hub typing command и Hub unsend command — production path/rollout. Direct остаётся rollback и нужен для PPV/media/mark-read/upload до отдельных command-контрактов.</span>
+      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра: SSE даёт push-first события, snapshot + tail закрывают replay-gap, Hub read, Hub text-write, Hub typing command и Hub unsend command — production-validated path. Direct остаётся rollback и нужен для PPV/media/mark-read/upload до отдельных command-контрактов.</span>
       <span class="b ai" data-k="сбоку → экран">ИИ-провайдеры: desktop пока вызывает напрямую. Core AI gateway теперь ходит к Anthropic через page/account proxy и production-enabled; Desktop Hub AI не default до отдельного rollout.</span>
       <span class="b live" data-k="в обход кэша">Волт и галерея: <b>единственная</b> поверхность, что ходит в OFAPI <b>вживую на каждый показ</b> (1 кредит/вызов), без слоя БД.</span>
     </div>
