@@ -283,7 +283,7 @@
     <div class="src s-ofapi">
       <span class="tag">OFAPI · live</span>
       <h3>Живой OnlyFans через шлюз</h3>
-      <p>Третья сторона <code>onlyfansapi.com</code> — единственный путь к реальным данным OnlyFans. Desktop может отправлять GET напрямую или через read-шлюз core. Обычный текстовый send, typing-beacon и unsend могут идти через core command outbox: desktop хранит локальный текст/стабильный client id для send, typing шлёт пустой advisory command, а unsend шлёт только numeric message id; core делает максимум одну OFAPI-попытку. Direct остаётся rollback; PPV/media, mark-read, upload и остальные mutations пока прямые.</p>
+      <p>Третья сторона <code>onlyfansapi.com</code> — единственный путь к реальным данным OnlyFans. Desktop может отправлять GET напрямую или через read-шлюз core. Обычный текстовый send, typing-beacon, unsend и mark-read могут идти через core command outbox: desktop хранит локальный текст/стабильный client id для send, typing и mark-read шлют пустой command, а unsend шлёт только numeric message id; core делает максимум одну OFAPI-попытку. Direct остаётся rollback; PPV/media, upload и остальные mutations пока прямые.</p>
       <span class="where">main/ofapi/client.ts · main/ofapi/transport.ts</span>
     </div>
 
@@ -297,7 +297,7 @@
     <div class="src s-hub">
       <span class="tag">Хаб ядра · SSE + REST</span>
       <h3>Бэкенд «ядра» / ChatMuse</h3>
-      <p>Наш production-сервер (репозиторий <code>core</code>). SSE шлёт события; snapshot закрывает разрыв старого курсора. Chatter-scoped REST-шлюз выполняет разрешённые OFAPI GET и пишет расход в центральный ledger. Text command executor включён после controlled live send+unsend; typing command executor добавлен как empty-payload advisory beacon; unsend command executor делает один DELETE по numeric message id: один command = максимум одна vendor-попытка, ответы и логи без текста/media URL. Desktop восстанавливает статус text-send по тому же client id без чтения тела чата.</p>
+      <p>Наш production-сервер (репозиторий <code>core</code>). SSE шлёт события; snapshot закрывает разрыв старого курсора. Chatter-scoped REST-шлюз выполняет разрешённые OFAPI GET и пишет расход в центральный ledger. Text command executor включён после controlled live send+unsend; typing command executor добавлен как empty-payload advisory beacon; unsend command executor делает один DELETE по numeric message id; mark-read command executor делает один empty-payload mark-as-read POST: один command = максимум одна vendor-попытка, ответы и логи без текста/media URL. Desktop восстанавливает статус text-send по тому же client id без чтения тела чата.</p>
       <span class="where">main/hub/* · main/sync/hub-*</span>
     </div>
 
@@ -374,7 +374,7 @@
     </div>
 
     <div class="flow-note">
-      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра: SSE даёт push-first события, snapshot + tail закрывают replay-gap, Hub read, Hub text-write, Hub typing command и Hub unsend command — production-validated path. Direct остаётся rollback и нужен для PPV/media/mark-read/upload до отдельных command-контрактов.</span>
+      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра: SSE даёт push-first события, snapshot + tail закрывают replay-gap, Hub read, Hub text-write, Hub typing command, Hub unsend command и Hub mark-read command — production-validated path. Direct остаётся rollback и нужен для PPV/media/upload до отдельных command-контрактов.</span>
       <span class="b ai" data-k="сбоку → экран">ИИ-провайдеры: desktop пока вызывает напрямую. Core AI gateway теперь ходит к Anthropic через page/account proxy и production-enabled; Desktop Hub AI не default до отдельного rollout.</span>
       <span class="b live" data-k="в обход кэша">Волт и галерея: <b>единственная</b> поверхность, что ходит в OFAPI <b>вживую на каждый показ</b> (1 кредит/вызов), без слоя БД.</span>
     </div>
@@ -447,7 +447,7 @@
           <span class="chip c-derived">вычисляется</span>
           <span class="chip c-ofapi">OFAPI · по действию человека</span>
         </div>
-        <p>Видимый UI (оптимистичные строки, черновики, гейт «можно отправлять») — из кэша + производно. Для plain text <code>send/engine.ts</code> сохраняет transport в локальном outbox: <b>Hub</b> отправляет idempotent command и сверяет core status, <b>Direct</b> остаётся rollback. При неясном результате Hub никогда не переключается на прямой POST и не делает <code>GET /messages</code> только ради проверки. Typing при Hub write transport идёт как empty-payload <code>typing_active_v1</code>; unsend идёт как <code>unsend_message_v1</code> и ставит tombstone только после core-confirmed. PPV/media и mark-read пока прямые.</p>
+        <p>Видимый UI (оптимистичные строки, черновики, гейт «можно отправлять») — из кэша + производно. Для plain text <code>send/engine.ts</code> сохраняет transport в локальном outbox: <b>Hub</b> отправляет idempotent command и сверяет core status, <b>Direct</b> остаётся rollback. При неясном результате Hub никогда не переключается на прямой POST и не делает <code>GET /messages</code> только ради проверки. Typing при Hub write transport идёт как empty-payload <code>typing_active_v1</code>; unsend идёт как <code>unsend_message_v1</code> и ставит tombstone только после core-confirmed; mark-read идёт как empty-payload <code>mark_chat_read_v1</code> и обнуляет unread только после core-confirmed. PPV/media и upload пока прямые.</p>
       </div>
     </div>
 
@@ -528,7 +528,7 @@
           <span class="chip c-db">кэш БД (таблица settings)</span>
           <span class="chip c-ofapi">live: только тест/список</span>
         </div>
-        <p>Синхронные чтения из зашифрованной таблицы <code>settings</code>. Секреты лежат <b>только в keychain ОС</b> (наружу отдаётся лишь «есть/нет»). Отдельно выбираются read transport и plain-text send transport: <b>Direct</b> или <b>Agency Hub</b>. Hub требует URL + chatter key; direct OFAPI key пока нужен для PPV/media, mark-read, upload и остальных write-команд без core contract.</p>
+        <p>Синхронные чтения из зашифрованной таблицы <code>settings</code>. Секреты лежат <b>только в keychain ОС</b> (наружу отдаётся лишь «есть/нет»). Отдельно выбираются read transport и plain-text send transport: <b>Direct</b> или <b>Agency Hub</b>. Hub требует URL + chatter key; direct OFAPI key пока нужен для PPV/media, upload и остальных write-команд без core contract.</p>
       </div>
     </div>
 

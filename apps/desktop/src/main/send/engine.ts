@@ -402,6 +402,42 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     }
   }
 
+  async function markReadViaHub(accountId: string, chatId: string): Promise<boolean> {
+    if (hubCommandClient === undefined) {
+      return false;
+    }
+    const command = await waitForHubCommand(
+      await hubCommandClient.createOfapiCommand({
+        command: {
+          clientCommandId: randomUUID(),
+          kind: 'mark_chat_read_v1',
+          accountId,
+          conversationId: chatId,
+          payload: {},
+        },
+      }),
+    );
+    return command.state === 'confirmed';
+  }
+
+  async function markReadViaDirect(accountId: string, chatId: string): Promise<boolean> {
+    if (directClient === null) {
+      return false;
+    }
+    const { success } = await directClient.markChatRead({ accountId, chatId, purpose: 'send' });
+    return success;
+  }
+
+  function zeroUnread(accountId: string, chatId: string): void {
+    data.db
+      .prepare(
+        `UPDATE chats SET unread_count = 0, updated_at = @updated_at
+         WHERE account_id = @account_id AND chat_id = @chat_id`,
+      )
+      .run({ account_id: accountId, chat_id: chatId, updated_at: nowIso() });
+    data.bus.publish({ scope: 'chats', accountId, chatId });
+  }
+
   /** Exactly one direct send or one idempotent core command per claimed row. */
   async function attemptSend(row: OutboxRow): Promise<boolean> {
     if (row.transport === 'hub' && row.mediaFiles.length === 0) {
@@ -794,7 +830,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
 
     async markRead(accountId, chatId) {
       const settings = await getSettings();
-      if (!settings.markAsReadOnOpen || disposed || directClient === null) {
+      if (!settings.markAsReadOnOpen || disposed) {
         return;
       }
       const key = chatKey(accountId, chatId);
@@ -806,21 +842,16 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         key,
         setTimeout(() => {
           markReadTimers.delete(key);
-          void directClient
-            .markChatRead({ accountId, chatId, purpose: 'send' })
-            .then(({ success }) => {
+          void (async () => {
+            const success =
+              getWriteTransport() === 'hub'
+                ? await markReadViaHub(accountId, chatId)
+                : await markReadViaDirect(accountId, chatId);
               if (!success) {
                 return;
               }
-              data.db
-                .prepare(
-                  `UPDATE chats SET unread_count = 0, updated_at = @updated_at
-                   WHERE account_id = @account_id AND chat_id = @chat_id`,
-                )
-                .run({ account_id: accountId, chat_id: chatId, updated_at: nowIso() });
-              data.bus.publish({ scope: 'chats', accountId, chatId });
-            })
-            .catch(() => undefined); // lossy: the next conversation open retries
+              zeroUnread(accountId, chatId);
+            })().catch(() => undefined); // lossy: the next conversation open retries
         }, MARK_READ_DEBOUNCE_MS),
       );
     },

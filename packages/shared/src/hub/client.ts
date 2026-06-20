@@ -224,6 +224,7 @@ const hubOfapiCommandKindSchema = z.enum([
   'send_text_message_v1',
   'typing_active_v1',
   'unsend_message_v1',
+  'mark_chat_read_v1',
 ]);
 
 const hubOfapiCommandBaseFields = {
@@ -255,6 +256,12 @@ const hubOfapiCommandCreateRequestSchema = z.discriminatedUnion('kind', [
     payload: z.strictObject({
       messageId: z.string().regex(/^[0-9]{1,30}$/),
     }),
+    retryOfCommandId: z.null().optional(),
+  }),
+  z.strictObject({
+    ...hubOfapiCommandBaseFields,
+    kind: z.literal('mark_chat_read_v1'),
+    payload: z.strictObject({}),
     retryOfCommandId: z.null().optional(),
   }),
 ]);

@@ -153,6 +153,60 @@ describe('send engine hub command transport', () => {
     engine.dispose();
   });
 
+  it('routes debounced mark-read through hub command intake and zeroes unread only after confirmation', async () => {
+    seedChat(data, { unreadCount: 3 });
+    const direct = makeStubClient();
+    const createOfapiCommand = vi.fn(async ({ command: request }) =>
+      command(request.clientCommandId, 'confirmed', {
+        kind: 'mark_chat_read_v1',
+        platformMessageId: null,
+      }),
+    );
+    const engine = createSendEngine({
+      client: direct.client,
+      directClient: null,
+      hubCommandClient: {
+        createOfapiCommand,
+        getOfapiCommand: vi.fn(),
+      },
+      getWriteTransport: () => 'hub',
+      data,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: true }),
+      sleep: () => Promise.resolve(),
+      hubCommandPollIntervalMs: 0,
+      hubCommandPollLimit: 1,
+    });
+
+    await engine.markRead(ACCT, CHAT);
+    await vi.advanceTimersByTimeAsync(1000);
+    await engine.markRead(ACCT, CHAT);
+    await vi.advanceTimersByTimeAsync(1499);
+    await drain();
+
+    expect(createOfapiCommand).not.toHaveBeenCalled();
+    expect(data.chats.get(ACCT, CHAT)?.unreadCount).toBe(3);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await drain();
+
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+    expect(createOfapiCommand).toHaveBeenCalledWith({
+      command: {
+        clientCommandId: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        ),
+        kind: 'mark_chat_read_v1',
+        accountId: ACCT,
+        conversationId: CHAT,
+        payload: {},
+      },
+    });
+    expect(direct.markReadCalls).toBe(0);
+    expect(data.chats.get(ACCT, CHAT)?.unreadCount).toBe(0);
+    engine.dispose();
+  });
+
   it('routes unsend through hub command intake and tombstones only after confirmation', async () => {
     seedMessage(data, { messageId: '9001', deleted: false });
     const direct = makeStubClient();

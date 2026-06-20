@@ -68,6 +68,16 @@ function makeUnsendCommand() {
   };
 }
 
+function makeMarkReadCommand() {
+  return {
+    clientCommandId: CLIENT_COMMAND_ID,
+    kind: 'mark_chat_read_v1' as const,
+    accountId: 'acct_abc123',
+    conversationId: '123456',
+    payload: {},
+  };
+}
+
 describe('HubClient OFAPI command outbox', () => {
   it('creates command rows through the core outbox without accepting payload text in the response', async () => {
     const calls: Array<{ url: string; init: HubRequestInit }> = [];
@@ -135,6 +145,27 @@ describe('HubClient OFAPI command outbox', () => {
     expect(JSON.parse(calls[0]?.init.body ?? '{}')).toEqual(makeUnsendCommand());
   });
 
+  it('creates empty-payload mark-read command rows through the core outbox', async () => {
+    const calls: Array<{ url: string; init: HubRequestInit }> = [];
+    const fetchImpl: HubFetch = (url, init) => {
+      calls.push({ url, init });
+      return Promise.resolve(jsonResponse(commandResponse({
+        kind: 'mark_chat_read_v1',
+        platformMessageId: null,
+      }), 202));
+    };
+    const client = createHubClient({ baseUrl: 'https://hub.example.com/', apiKey: 'k', fetchImpl });
+
+    const result = await client.createOfapiCommand({ command: makeMarkReadCommand() });
+
+    expect(result).toMatchObject({
+      commandId: COMMAND_ID,
+      kind: 'mark_chat_read_v1',
+      state: 'queued',
+      platformMessageId: null,
+    });
+    expect(JSON.parse(calls[0]?.init.body ?? '{}')).toEqual(makeMarkReadCommand());
+  });
 
   it('reads and cancels command state with terminal recovery fields', async () => {
     const calls: Array<{ url: string; init: HubRequestInit }> = [];
@@ -189,6 +220,12 @@ describe('HubClient OFAPI command outbox', () => {
     } satisfies Partial<HubError>);
     await expect(client.createOfapiCommand({
       command: { ...makeUnsendCommand(), payload: { messageId: '../987654321' } } as never,
+    })).rejects.toMatchObject({
+      code: 'CG-HUB-02',
+      reason: 'bad-request',
+    } satisfies Partial<HubError>);
+    await expect(client.createOfapiCommand({
+      command: { ...makeMarkReadCommand(), payload: { text: 'not allowed' } } as never,
     })).rejects.toMatchObject({
       code: 'CG-HUB-02',
       reason: 'bad-request',
