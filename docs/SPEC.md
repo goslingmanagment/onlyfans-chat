@@ -1,6 +1,6 @@
 # ChatGoose Desktop — Technical Specification
 
-Status: Updated 2026-06-20 — webhook/SSE, snapshot recovery, Hub read custody, live Hub text/typing/unsend/mark-read command custody, implemented Hub media-send custody pending production validation, hourly spend reconcile, and durable telemetry are production defaults or rollout paths with rollback controls. Core AI gateway is proxy-routed and production-enabled; Desktop Direct AI remains the current rollback/default until desktop rollout is accepted.
+Status: Updated 2026-06-20 — webhook/SSE, snapshot recovery, Hub read custody, live Hub text/typing/unsend/mark-read/media-send command custody, hourly spend reconcile, and durable telemetry are production defaults or rollout paths with rollback controls. Core AI gateway is proxy-routed and production-enabled; Desktop Direct AI remains the current rollback/default until desktop rollout is accepted.
 
 ## 1. Architecture overview
 
