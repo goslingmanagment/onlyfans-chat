@@ -198,7 +198,7 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
             account_id: row.accountId,
             chat_id: row.chatId,
             text: row.text,
-            transport: row.transport ?? 'direct',
+            transport: row.transport ?? 'hub',
             sequence_id: row.sequenceId,
             part_index: row.partIndex,
             retry_of: row.retryOf,

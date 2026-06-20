@@ -33,7 +33,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
-      expect(SCHEMA_VERSION).toBe(12);
+      expect(SCHEMA_VERSION).toBe(13);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       // v10: per-fan thread-fetch stamps (spenders freshness, PLAN item 13)
       expect(names).toContain('thread_fetch_log');
@@ -77,6 +77,10 @@ describe('migration runner', () => {
       ]) {
         expect(outboxCols).toContain(col);
       }
+      const transportDefault = layer.db
+        .prepare("SELECT dflt_value FROM pragma_table_info('outbox') WHERE name = 'transport'")
+        .get();
+      expect(transportDefault).toEqual({ dflt_value: "'hub'" });
     } finally {
       layer.close();
     }
@@ -322,6 +326,43 @@ describe('migration runner', () => {
       { key: 'ofapiWriteTransport', value: '"hub"' },
       { key: 'spendSweepRollbackToLegacy', value: 'false' },
     ]);
+    db.close();
+  });
+
+  it('v13 changes only the outbox transport default to hub', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 12));
+    db.exec(
+      `INSERT INTO outbox (
+        local_id, account_id, chat_id, text, transport, state, sequence_id, part_index,
+        message_id, error_code, error_message, text_highlights, attempts, retry_of,
+        price, media_files, previews, created_at, updated_at
+      ) VALUES (
+        'legacy-direct', 'acct_1', '101', 'hello', 'direct', 'failed', NULL, 0,
+        NULL, 'CG-APP-01', 'failed', '[]', 1, NULL,
+        0, '[]', '[]', '2026-06-20T00:00:00.000Z', '2026-06-20T00:00:01.000Z'
+      )`,
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 12, to: SCHEMA_VERSION });
+    expect(db.prepare("SELECT transport FROM outbox WHERE local_id = 'legacy-direct'").get()).toEqual({
+      transport: 'direct',
+    });
+
+    db.exec(
+      `INSERT INTO outbox (
+        local_id, account_id, chat_id, text, state, sequence_id, part_index,
+        message_id, error_code, error_message, text_highlights, attempts, retry_of,
+        price, media_files, previews, created_at, updated_at
+      ) VALUES (
+        'default-hub', 'acct_1', '101', 'hello', 'queued', NULL, 0,
+        NULL, NULL, NULL, '[]', 0, NULL,
+        0, '[]', '[]', '2026-06-20T00:00:02.000Z', '2026-06-20T00:00:02.000Z'
+      )`,
+    );
+    expect(db.prepare("SELECT transport FROM outbox WHERE local_id = 'default-hub'").get()).toEqual({
+      transport: 'hub',
+    });
     db.close();
   });
 

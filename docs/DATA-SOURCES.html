@@ -374,7 +374,7 @@
     </div>
 
     <div class="flow-note">
-      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра: SSE даёт push-first события, snapshot + tail закрывают replay-gap, Hub read, Hub text-write, Hub media/PPV command, Hub typing command, Hub unsend command и Hub mark-read command. Direct остаётся rollback; обычная работа в Hub mode не требует local OFAPI key. Local file-byte upload intentionally absent.</span>
+      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра: SSE даёт push-first события, snapshot + tail закрывают replay-gap, Hub read, Hub text-write, Hub media/PPV command, Hub typing command, Hub unsend command и Hub mark-read command. Fresh/default profile использует production Hub URL; Direct остаётся rollback. Обычная работа в Hub mode не требует local OFAPI key. Local file-byte upload intentionally absent.</span>
       <span class="b ai" data-k="сбоку → экран">ИИ-провайдеры: desktop пока вызывает напрямую. Core AI gateway теперь ходит к Anthropic через page/account proxy и production-enabled; Desktop Hub AI не default до отдельного rollout.</span>
       <span class="b live" data-k="в обход кэша">Волт и галерея: <b>единственная</b> поверхность, что ходит в OFAPI <b>вживую на каждый показ</b> (1 кредит/вызов), без слоя БД.</span>
     </div>
@@ -528,7 +528,7 @@
           <span class="chip c-db">кэш БД (таблица settings)</span>
           <span class="chip c-ofapi">live: только тест/список</span>
         </div>
-        <p>Синхронные чтения из зашифрованной таблицы <code>settings</code>. Секреты лежат <b>только в keychain ОС</b> (наружу отдаётся лишь «есть/нет»). Отдельно выбираются read transport и send transport: <b>Direct</b> или <b>Agency Hub</b>. Hub требует URL + chatter key; local OFAPI key не нужен для нормальной Hub-работы и остаётся только как явный Direct rollback. Local upload-from-disk не поддерживается.</p>
+        <p>Синхронные чтения из зашифрованной таблицы <code>settings</code>. Секреты лежат <b>только в keychain ОС</b> (наружу отдаётся лишь «есть/нет»). Fresh/default profile уже имеет production Hub URL и выбирает Hub read/write; для нормальной Hub-работы нужен chatter key, а local OFAPI key не нужен и остаётся только как явный Direct rollback. Local upload-from-disk не поддерживается.</p>
       </div>
     </div>
 
@@ -542,7 +542,7 @@
         <div class="chips">
           <span class="chip c-derived">вычисляется в памяти</span>
           <span class="chip c-db">кэш БД (логи)</span>
-          <span class="chip c-hub">liveness: SSE (off по умолч.)</span>
+          <span class="chip c-hub">liveness: SSE (default с Hub key)</span>
         </div>
         <p>Ни одного live-вызова OFAPI на открытие. Цифры — <b>снимок локального счётчика desktop-инициированных REST-вызовов</b> (он общий для Hub reads и direct writes), локальные агрегаты (<code>credit_log</code>, <code>ai_spend_log</code>, <code>outbox</code>) и, если hub настроен, chatter-scoped сводка core <code>/api/v1/ofapi/credits/summary</code> по назначенным страницам. Состояние синка разделяет push-свежесть и REST-сверку списка; Activity/диагностика считают hub events received/applied/fallback/dropped по типам событий, lifetime totals и последнюю причину fallback.</p>
       </div>

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_FEATURE_MODELS,
   DEFAULT_FEATURE_REASONING,
+  DEFAULT_AGENCY_HUB_BASE_URL,
   DEFAULT_SETTINGS,
 } from '@chatgoose/shared';
 import { createSettingsStore } from '@main/settings/store';
@@ -78,6 +79,7 @@ describe('settings store', () => {
     expect(vm.accountMappings).toEqual({});
     expect(vm.accountOrder).toEqual([]);
     expect(vm.accountPageLabels).toEqual({});
+    expect(vm.hubBaseUrl).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
     expect(vm.ofapiReadTransport).toBe('hub');
     expect(vm.ofapiWriteTransport).toBe('hub');
     expect(vm.aiGatewayTransport).toBe('direct');
@@ -265,10 +267,10 @@ describe('settings store', () => {
     expect(again.hasHubKey).toBe(true);
   });
 
-  it('hubBaseUrl defaults to null, clears to null, and rejects the empty string', async () => {
+  it('hubBaseUrl defaults to production Hub, clears to null, and rejects the empty string', async () => {
     const { store } = createStore();
     const initial = await store.get();
-    expect(initial.hubBaseUrl).toBeNull();
+    expect(initial.hubBaseUrl).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
     expect(initial.hasHubKey).toBe(false);
 
     await store.update({ hubBaseUrl: 'https://hub.example.com' });

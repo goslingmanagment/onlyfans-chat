@@ -15,6 +15,7 @@ import type {
   HubUsageBatchResult,
   HubUsageEvent,
 } from '@chatgoose/shared/hub/index';
+import { DEFAULT_AGENCY_HUB_BASE_URL } from '@chatgoose/shared/constants';
 import { createChangeBus, createDataLayer } from '@main/db/index';
 import type { DataLayer } from '@main/db/index';
 import type { SettingsStore } from '@main/settings/store';
@@ -47,13 +48,13 @@ export function seedAccount(data: DataLayer, username = 'loravie', id = ACCT): v
 
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
-    hasOfapiKey: true,
+    hasOfapiKey: false,
     hasAnthropicKey: true,
     hasOpenRouterKey: false,
-    hasHubKey: false,
-    hubBaseUrl: null,
-    ofapiReadTransport: 'direct',
-    ofapiWriteTransport: 'direct',
+    hasHubKey: true,
+    hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+    ofapiReadTransport: 'hub',
+    ofapiWriteTransport: 'hub',
     aiGatewayTransport: 'direct',
     hubModeOverride: 'auto',
     spendSweepRollbackToLegacy: true,
@@ -62,7 +63,12 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     uiLocale: 'system',
     uiScale: 1,
     uiTheme: 'light',
-    keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
+    keyMeta: {
+      ofapi: null,
+      anthropic: null,
+      openRouter: null,
+      hub: { last4: 'core', setAt: 0 },
+    },
     featureModels: {
       'fast-reply': 'anthropic:claude-sonnet-4-6',
       'help-me': 'anthropic:claude-sonnet-4-6',

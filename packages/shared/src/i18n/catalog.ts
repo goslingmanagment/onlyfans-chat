@@ -21,14 +21,14 @@ export const UI_MESSAGES = {
   'settings.title': { en: 'Settings', ru: 'Настройки' },
   'settings.back': { en: '← back to workspace', ru: '← назад к работе' },
 
-  // ── API keys ──────────────────────────────────────────────────────────────
-  'keys.title': { en: 'API keys', ru: 'API-ключи' },
+  // ── Rollback / provider keys ──────────────────────────────────────────────
+  'keys.title': { en: 'Rollback keys', ru: 'Ключи отката' },
   'keys.hint': {
-    en: 'Stored in the OS keychain by the main process — set-only, never displayed.',
-    ru: 'Хранятся в системной связке ключей — только запись, никогда не показываются.',
+    en: 'Optional local fallback keys. Normal OFAPI reads/writes use Agency Hub and do not need a local OFAPI key.',
+    ru: 'Опциональные локальные ключи отката. Обычные чтения/записи OFAPI идут через Agency Hub и не требуют локального OFAPI-ключа.',
   },
   'keys.ofapi.label': { en: 'OFAPI key', ru: 'Ключ OFAPI' },
-  'keys.ofapi.hint': { en: 'per-chatter scoped key', ru: 'личный ключ чаттера' },
+  'keys.ofapi.hint': { en: 'Direct rollback only', ru: 'только откат Direct' },
   'keys.anthropic.label': { en: 'Anthropic key', ru: 'Ключ Anthropic' },
   'keys.anthropic.hint': { en: 'direct AI provider', ru: 'основной ИИ-провайдер' },
   'keys.openrouter.label': { en: 'OpenRouter key', ru: 'Ключ OpenRouter' },
@@ -98,8 +98,8 @@ export const UI_MESSAGES = {
   // ── Agency Hub ────────────────────────────────────────────────────────────
   'hub.title': { en: 'Agency Hub', ru: 'Agency Hub' },
   'hub.hint': {
-    en: 'Real-time message events stream from the hub when both fields are set; the app falls back to polling automatically when the stream drops.',
-    ru: 'Когда заполнены оба поля, события приходят от хаба в реальном времени; при обрыве стрима приложение само возвращается к опросу.',
+    en: 'Default path for realtime events and supported OFAPI reads/writes. Chatter machines do not need local OFAPI keys.',
+    ru: 'Основной путь для live-событий и поддержанных чтений/записей OFAPI. Машинам чаттеров не нужны локальные OFAPI-ключи.',
   },
   'hub.baseUrl.label': { en: 'Hub base URL', ru: 'Адрес хаба' },
   'hub.baseUrl.hint': { en: "your agency's core server", ru: 'core-сервер вашего агентства' },
@@ -107,20 +107,20 @@ export const UI_MESSAGES = {
   'hub.key.hint': { en: 'agency_hub_core_… — set-only', ru: 'agency_hub_core_… — только запись' },
   'hub.ofapiReads.label': { en: 'OFAPI reads', ru: 'Чтение OFAPI' },
   'hub.ofapiReads.hint': {
-    en: 'Route GET requests directly or through Agency Hub',
-    ru: 'GET-запросы напрямую или через Agency Hub',
+    en: 'Agency Hub is the normal keyless path; Direct is rollback only',
+    ru: 'Agency Hub — обычный путь без локального ключа; Direct только для отката',
   },
   'hub.ofapiReads.direct': { en: 'Direct', ru: 'Напрямую' },
   'hub.ofapiReads.hub': { en: 'Agency Hub', ru: 'Agency Hub' },
   'hub.ofapiReads.restart': {
-    en: 'Restart required. Writes remain direct.',
-    ru: 'Нужен перезапуск. Запись пока напрямую.',
+    en: 'Restart required. Hub is the production default.',
+    ru: 'Нужен перезапуск. Hub — production default.',
   },
   'hub.aiGateway.label': { en: 'AI generation', ru: 'Генерация ИИ' },
-  'hub.ofapiWrites.label': { en: 'Text sends', ru: 'Текстовые отправки' },
+  'hub.ofapiWrites.label': { en: 'OFAPI writes', ru: 'Записи OFAPI' },
   'hub.ofapiWrites.hint': {
-    en: 'Route plain-text sends through the core command outbox.',
-    ru: 'Отправлять текст через очередь команд core.',
+    en: 'Text, typing, unsend, mark-read, media and PPV go through core commands.',
+    ru: 'Текст, typing, unsend, mark-read, медиа и PPV идут через команды core.',
   },
   'hub.ofapiWrites.direct': { en: 'Direct', ru: 'Напрямую' },
   'hub.ofapiWrites.hub': { en: 'Agency Hub', ru: 'Agency Hub' },
@@ -155,12 +155,12 @@ export const UI_MESSAGES = {
   },
   'hub.pageLabels.placeholder': { en: 'auto (match by username)', ru: 'авто (по username)' },
   'hub.footerOk': {
-    en: 'Hub connection configured — live events active when the stream is healthy.',
-    ru: 'Хаб настроен — живые события идут, пока стрим работает.',
+    en: 'Hub connection configured — normal keyless operation is available.',
+    ru: 'Хаб настроен — доступен обычный режим без локального OFAPI-ключа.',
   },
   'hub.footerOff': {
-    en: 'Not connected — the app runs on polling alone.',
-    ru: 'Не подключено — приложение работает только на опросе.',
+    en: 'Not connected — paste a chatter key to use the Hub path.',
+    ru: 'Не подключено — вставьте ключ чаттера, чтобы использовать Hub.',
   },
   'hub.saveBtn': { en: 'Save hub settings', ru: 'Сохранить настройки хаба' },
   'hub.testBtn': { en: 'Test connection', ru: 'Проверить подключение' },
@@ -645,8 +645,8 @@ export const UI_MESSAGES = {
   'sp.set.down': { en: 'Down', ru: 'Ниже' },
   'sp.set.empty': { en: 'No lists mapped yet.', ru: 'Списки пока не выбраны.' },
   'sp.set.noKey': {
-    en: 'Lists load once the OFAPI key is configured.',
-    ru: 'Списки загрузятся после настройки ключа OFAPI.',
+    en: 'Lists load once Agency Hub is configured; Direct OFAPI is rollback only.',
+    ru: 'Списки загрузятся после настройки Agency Hub; Direct OFAPI только для отката.',
   },
   'sp.set.fansCount': { en: '{n} fans', ru: '{n} фанов' },
   // ── Spenders page stats panel (owner v2 2026-06-13; mockups/experiments/spenders-page-2.html) ──

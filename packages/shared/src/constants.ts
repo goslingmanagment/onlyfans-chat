@@ -78,6 +78,7 @@ export const AGENCY_HUB_AI_USAGE_REPORT_TIMEOUT_MS = 5_000;
 export const AGENCY_HUB_AI_USAGE_REPORT_MAX_ATTEMPTS = 3;
 export const AGENCY_HUB_AI_USAGE_REPORT_RETRY_DELAYS_MS = [5_000, 15_000];
 export const AGENCY_HUB_PROFILE_MAX_BYTES = 50_000;
+export const DEFAULT_AGENCY_HUB_BASE_URL = 'https://gosling-agency.ru';
 
 // ─── LLM per-feature parameters (research §4.4/§4.5) ────────────────────
 

@@ -34,6 +34,7 @@ import {
   normalizeReplyParts,
   normalizeSingleReplyPart,
 } from '@chatgoose/shared/output/reply-output';
+import { DEFAULT_AGENCY_HUB_BASE_URL } from '@chatgoose/shared';
 import { applyChatFilter, sortChatsByRecency } from '../lib/filters';
 import { fuzzyFilter } from '../lib/fuzzy';
 
@@ -408,13 +409,13 @@ function buildStore(): MockStore {
   ];
 
   const settings: SettingsVM = {
-    hasOfapiKey: true,
+    hasOfapiKey: false,
     hasAnthropicKey: true,
     hasOpenRouterKey: false,
-    hasHubKey: false,
-    hubBaseUrl: null,
-    ofapiReadTransport: 'direct',
-    ofapiWriteTransport: 'direct',
+    hasHubKey: true,
+    hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+    ofapiReadTransport: 'hub',
+    ofapiWriteTransport: 'hub',
     aiGatewayTransport: 'direct',
     hubModeOverride: 'auto',
     spendSweepRollbackToLegacy: true,
@@ -423,10 +424,10 @@ function buildStore(): MockStore {
     uiScale: 1,
     uiTheme: 'light',
     keyMeta: {
-      ofapi: { last4: '7f2c', setAt: Date.now() - 12 * 86_400_000 },
+      ofapi: null,
       anthropic: { last4: 'a4f2', setAt: Date.now() - 5 * 86_400_000 },
       openRouter: null,
-      hub: null,
+      hub: { last4: 'h8b2', setAt: Date.now() - 12 * 86_400_000 },
     },
     featureModels: {
       'fast-reply': 'anthropic:claude-sonnet-4-6',
@@ -477,13 +478,13 @@ function buildStore(): MockStore {
       freshness,
       listVerifiedAt: { ...freshness },
       state: 'live',
-      hub: 'off',
-      hubMode: 'off',
+      hub: 'live',
+      hubMode: 'live',
       hubModeOverride: 'auto',
-      hubLastEventAt: null,
-      hubLastEventType: null,
-      hubEventsToday: 0,
-      hubAppliedEventsToday: 0,
+      hubLastEventAt: new Date().toISOString(),
+      hubLastEventType: 'messages.received',
+      hubEventsToday: 42,
+      hubAppliedEventsToday: 42,
       hubDroppedEventsToday: 0,
       hubFallbackEventsToday: 0,
       hubEventsByTypeToday: {},
@@ -1043,9 +1044,9 @@ export function createMockBridge(): ChatGooseBridge {
       freshness: { ...store.sync.freshness },
       listVerifiedAt: { ...store.sync.listVerifiedAt },
     }),
-    // Activity panel (mockup state A — core off): per-purpose split + AI ledger.
+    // Activity panel: Hub-first/keyless default with polling paused while SSE is live.
     'query:activity.summary': () => ({
-      mode: 'polling' as const,
+      mode: store.sync.hub === 'live' ? ('hub-live' as const) : ('polling' as const),
       syncState: store.sync.state,
       accounts: store.accounts.map((account, index) => ({
         accountId: account.id,
@@ -1056,13 +1057,13 @@ export function createMockBridge(): ChatGooseBridge {
       deepSweepEveryMs: 300_000,
       hub: {
         status: store.sync.hub,
-        lastEventAt: null,
-        lastEventType: null,
-        eventsToday: 0,
-        liveSince: null,
+        lastEventAt: store.sync.hubLastEventAt,
+        lastEventType: store.sync.hubLastEventType,
+        eventsToday: store.sync.hubEventsToday,
+        liveSince: new Date(Date.now() - 18 * 60_000).toISOString(),
         statusChangedAt: new Date(Date.now() - 18 * 60_000).toISOString(),
         droppedFrames: 0,
-        appliedEventsToday: 0,
+        appliedEventsToday: store.sync.hubAppliedEventsToday,
         fallbackEventsToday: 0,
         droppedEventsToday: 0,
         eventsByTypeToday: {},

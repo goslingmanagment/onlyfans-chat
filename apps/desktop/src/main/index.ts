@@ -506,7 +506,7 @@ async function initOfapi(
     client,
     directClient,
     hubCommandClient: hub.commandClient,
-    getWriteTransport: () => settingsCache?.ofapiWriteTransport ?? 'direct',
+    getWriteTransport: () => settingsCache?.ofapiWriteTransport ?? 'hub',
     data: dataLayer,
     toMediaUrl,
     getSettings: () => settingsStore.get(),

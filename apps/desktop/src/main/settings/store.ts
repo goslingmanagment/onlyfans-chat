@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   DEEP_MAX_MESSAGE_COUNT,
   DEEP_MIN_MESSAGE_COUNT,
+  DEFAULT_AGENCY_HUB_BASE_URL,
   DEFAULT_SETTINGS,
   IMPROVE_MAX_MESSAGE_COUNT,
   IMPROVE_MIN_MESSAGE_COUNT,
@@ -167,7 +168,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   creditBudgetPerShift: null,
   accountMappings: {},
   accountOrder: [],
-  hubBaseUrl: null,
+  hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
   ofapiReadTransport: 'hub',
   ofapiWriteTransport: 'hub',
   aiGatewayTransport: 'direct',

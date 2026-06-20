@@ -4,6 +4,7 @@
 
 import { vi } from 'vitest';
 import {
+  DEFAULT_AGENCY_HUB_BASE_URL,
   DEFAULT_FEATURE_MODELS,
   DEFAULT_FEATURE_REASONING,
 } from '@chatgoose/shared/constants';
@@ -34,13 +35,13 @@ export function memoryDataLayer(): DataLayer {
 
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
-    hasOfapiKey: true,
+    hasOfapiKey: false,
     hasAnthropicKey: true,
     hasOpenRouterKey: false,
-    hasHubKey: false,
-    hubBaseUrl: null,
-    ofapiReadTransport: 'direct',
-    ofapiWriteTransport: 'direct',
+    hasHubKey: true,
+    hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+    ofapiReadTransport: 'hub',
+    ofapiWriteTransport: 'hub',
     aiGatewayTransport: 'direct',
     hubModeOverride: 'auto',
     spendSweepRollbackToLegacy: true,
@@ -49,7 +50,12 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     uiLocale: 'system',
     uiScale: 1,
     uiTheme: 'light',
-    keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
+    keyMeta: {
+      ofapi: null,
+      anthropic: null,
+      openRouter: null,
+      hub: { last4: 'core', setAt: 0 },
+    },
     featureModels: { ...DEFAULT_FEATURE_MODELS },
     featureReasoning: { ...DEFAULT_FEATURE_REASONING },
     quickMessageCount: 5,

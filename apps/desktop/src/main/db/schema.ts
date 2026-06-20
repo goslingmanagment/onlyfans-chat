@@ -312,6 +312,50 @@ INSERT INTO settings (key, value) VALUES
 ON CONFLICT (key) DO UPDATE SET value = excluded.value;
 `;
 
+// v13 — Hub/keyless is now the fail-safe default even for low-level outbox
+// inserts that omit an explicit transport. Existing rows keep their stamped
+// transport; old pre-v11 rows remain Direct because they were created before the
+// core command outbox existed.
+export const SCHEMA_V13 = `
+CREATE TABLE outbox_next (
+  local_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  text TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('queued', 'sending', 'sent', 'failed', 'unconfirmed', 'cancelled')),
+  sequence_id TEXT,
+  part_index INTEGER NOT NULL DEFAULT 0,
+  message_id TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  text_highlights TEXT NOT NULL DEFAULT '[]',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  retry_of TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  price REAL NOT NULL DEFAULT 0,
+  media_files TEXT NOT NULL DEFAULT '[]',
+  previews TEXT NOT NULL DEFAULT '[]',
+  transport TEXT NOT NULL DEFAULT 'hub' CHECK (transport IN ('direct', 'hub'))
+);
+
+INSERT INTO outbox_next (
+  local_id, account_id, chat_id, text, state, sequence_id, part_index,
+  message_id, error_code, error_message, text_highlights, attempts, retry_of,
+  created_at, updated_at, price, media_files, previews, transport
+)
+SELECT
+  local_id, account_id, chat_id, text, state, sequence_id, part_index,
+  message_id, error_code, error_message, text_highlights, attempts, retry_of,
+  created_at, updated_at, price, media_files, previews, transport
+FROM outbox;
+
+DROP TABLE outbox;
+ALTER TABLE outbox_next RENAME TO outbox;
+CREATE INDEX idx_outbox_chat ON outbox (account_id, chat_id, created_at);
+CREATE INDEX idx_outbox_state ON outbox (state);
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',

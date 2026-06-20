@@ -1,4 +1,4 @@
-// Hub module composition: inert when unconfigured (today's behavior), live
+// Hub module composition: inert when explicitly unconfigured, live
 // usage pipeline when configured (coordinator payload → mapper → reporter →
 // batch over the injected client), persisted-backlog flush on reconfigure,
 // and clean teardown when the config is removed.
@@ -36,7 +36,13 @@ describe('createHubModule', () => {
     const client = makeFakeHubClient();
     const module = createHubModule({
       data,
-      settingsStore: makeSettingsStore(makeSettingsVM()), // hubBaseUrl null
+      settingsStore: makeSettingsStore(
+        makeSettingsVM({
+          hubBaseUrl: null,
+          hasHubKey: false,
+          keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
+        }),
+      ),
       keychain: makeKeychain('agency_hub_core_x'),
       createClient: () => client,
     });
@@ -138,7 +144,13 @@ describe('createHubModule', () => {
     const client = makeFakeHubClient();
     const off = createHubModule({
       data,
-      settingsStore: makeSettingsStore(makeSettingsVM()),
+      settingsStore: makeSettingsStore(
+        makeSettingsVM({
+          hubBaseUrl: null,
+          hasHubKey: false,
+          keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
+        }),
+      ),
       keychain: makeKeychain(null),
       createClient: () => client,
     });
@@ -176,7 +188,13 @@ describe('createHubModule', () => {
     });
     const module = createHubModule({
       data,
-      settingsStore: makeSettingsStore(makeSettingsVM()),
+      settingsStore: makeSettingsStore(
+        makeSettingsVM({
+          hubBaseUrl: null,
+          hasHubKey: false,
+          keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
+        }),
+      ),
       keychain: makeKeychain('agency_hub_core_x'),
       createClient: () => client,
       onWarn: warn,
@@ -222,7 +240,11 @@ describe('createHubModule', () => {
     });
     await module.reconfigure();
 
-    current = makeSettingsVM(); // hub config removed
+    current = makeSettingsVM({
+      hubBaseUrl: null,
+      hasHubKey: false,
+      keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
+    });
     await module.reconfigure();
 
     module.onUsageEvent(usagePayload({ clientEventId: 'op-parked' }));

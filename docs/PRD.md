@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Updated 2026-06-19 — implementation code-complete through P5; webhook/SSE, read custody, command outbox default-off, and core AI gateway foundation are documented in [PLAN](PLAN.md) |
+| Status | Updated 2026-06-20 — implementation code-complete through P5; webhook/SSE, read custody, supported command custody, keyless Hub defaults, and core AI gateway foundation are documented in [PLAN](PLAN.md) |
 | Product | Standalone desktop chat client for OnlyFans agency chatters, with built-in AI assistance |
 | Predecessor | ChatGoose Firefox extension for Fansly (`/Users/dmitriy/code/chatgoose`, analyzed in [research/legacy-chatgoose.md](research/legacy-chatgoose.md)) |
 | Platform API | onlyfansapi.com (OFAPI) — third-party hosted OnlyFans REST gateway (analyzed in [research/onlyfansapi.md](research/onlyfansapi.md)) |
@@ -55,8 +55,8 @@ OFAPI gives us full programmatic access to connected OnlyFans accounts (read cha
 
 Two components, introduced in stages (details in [PLAN.md](PLAN.md)):
 
-1. **Desktop app** (this repo, `apps/desktop`) — the chatter's workspace. In early phases it talks to OFAPI directly (polling) and to LLM providers directly, with per-chatter API keys (OFAPI offers no key scopes — custody rules in SPEC §5).
-2. **Agency Hub ("core", `~/code/core`) integration** — the agency's existing production backend (Fastify + Postgres + worker, Docker on a VPS) takes the hub role; we do **not** build a separate relay. Core already serves the legacy ChatGoose API (it calls the product "ChatMuse"): central fan-profile storage with append-only versions, AI-usage ingestion, per-chatter revocable API keys with page scoping — the desktop integrates these from P4. Core now owns the push-first webhook/SSE path, the read-custody gateway, the default-off command outbox/executor foundation, and a default-off AI gateway foundation with owner usage reporting. Desktop has default-off HubGateway wiring; local LLM provider keys cannot be removed until live provider validation passes.
+1. **Desktop app** (this repo, `apps/desktop`) — the chatter's workspace. Fresh/default profiles are Hub-first for supported OFAPI reads and writes: the production Hub URL is prefilled, a Hub chatter key is the normal onboarding secret, and a local OFAPI key is optional Direct rollback only (OFAPI offers no key scopes — custody rules in SPEC §5). Desktop still calls LLM providers directly until the separate desktop AI-gateway rollout is accepted.
+2. **Agency Hub ("core", `~/code/core`) integration** — the agency's existing production backend (Fastify + Postgres + worker, Docker on a VPS) takes the hub role; we do **not** build a separate relay. Core already serves the legacy ChatGoose API (it calls the product "ChatMuse"): central fan-profile storage with append-only versions, AI-usage ingestion, per-chatter revocable API keys with page scoping — the desktop integrates these from P4. Core now owns the push-first webhook/SSE path, the read-custody gateway, supported command intake/execution, and a production-enabled AI gateway foundation with owner usage reporting. Desktop Hub mode covers reads, text, typing, unsend, mark-read, and media/PPV sends without a local OFAPI key; Direct remains explicit rollback.
 
 Rollout: internal pilot on 1 creator account + 1–2 trusted chatters in read+AI mode (sends still via OnlyMonster) → enable sending in-app → expand accounts/chatters → hub phase.
 
@@ -126,8 +126,8 @@ Model support: per-feature model selection + reasoning effort (off/low/medium/hi
 - Core has an OFAPI webhook receiver (`messages.received/sent/deleted`, `messages.ppv.unlocked`, `tips.received`, `transactions.new` (lags ≤3 min), `subscriptions.*`, `users.typing/online/offline`, `accounts.*`): HMAC verify, idempotency-header dedupe, journal, fan-out to desktop clients over **SSE** (core decision #25: REST + SSE, no websockets). `messages.deleted` is load-bearing for SPEC §6.3 tombstones.
 - Desktop uses push-first sync when hub is live (polling stays as degraded fallback); read-state (`isNew`) still polled on-demand for the open conversation.
 - Desktop authenticates to core with the existing per-chatter API keys (page-scoped, revocable — the central kill-switch already works today).
-- Central storage is live from P4 (fan summaries, AI usage). Core's P6 AI gateway foundation is implemented default-off: streaming route, provider custody boundary, quota reservation, usage/cost ledger fields, stale-reservation recovery, and owner reporting are in core. Desktop has default-off HubGateway wiring, but production live provider validation is still pending. Desktop-direct mode remains the rollback/solo/dev path until the P6 gate is accepted.
-- OFAPI key custody (desktop holds no OFAPI key, OF calls proxied via core) was a P6 stretch decision — **upgraded to required-before-scale 2026-06-11** (OFAPI keys cannot be scoped; vendor FAQ). Interim mitigation: per-chatter *named* full-access keys, supervised pilot only, instant revocation (SPEC §5).
+- Central storage is live from P4 (fan summaries, AI usage). Core's P6 AI gateway foundation is production-enabled with provider egress routed through page/account proxies, quota reservation, usage/cost ledger fields, stale-reservation recovery, and owner reporting. Desktop has HubGateway wiring, but desktop AI still defaults to Direct until the separate rollout is accepted.
+- OFAPI key custody (desktop holds no OFAPI key, OF calls proxied via core) is now the default normal-operation path for supported reads and writes. A local OFAPI key remains an optional, named, revocable Direct rollback only (SPEC §5).
 
 ### F9. Settings [P1–P2, grows with features]
 Ported legacy schema where applicable: provider API keys; per-feature model + reasoning; message-count knobs (quick 100 / improve 25 / deep 1500, same ranges); personalities CRUD; account→personality mappings; debug mode (+ pipeline profiling view); prompt-caching toggle; sound/notification prefs; mark-as-read policy; interface language + UI scale; **color theme (`system` / `light` / `dark`, default `light`; owner 2026-06-13);** Agency Hub (core) URL + chatter API key (from P4).
