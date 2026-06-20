@@ -257,6 +257,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       throw new Error('hub snapshot recovery is not configured');
     }
     let snapshotCursor: number | null = null;
+    let appliedSnapshotPage = false;
     for (const accountId of allowedAccountIds) {
       let pageCursor = 0;
       for (;;) {
@@ -322,14 +323,18 @@ export function createHubSync(options: HubSyncOptions): HubSync {
           throw new Error('hub snapshot recovery stopped');
         }
         await options.onSnapshot(snapshot);
+        appliedSnapshotPage = true;
         if (snapshot.nextPageCursor === null) {
           break;
         }
         pageCursor = snapshot.nextPageCursor;
       }
     }
+    if (!appliedSnapshotPage || snapshotCursor === null) {
+      throw new Error('hub snapshot recovery produced no snapshot pages');
+    }
     if (running) {
-      options.setLastEventId(snapshotCursor ?? requirement.currentSeq);
+      options.setLastEventId(snapshotCursor);
     }
   }
 

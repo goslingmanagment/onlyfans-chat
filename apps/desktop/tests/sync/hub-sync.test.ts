@@ -465,6 +465,57 @@ describe('createHubSync', () => {
     sync.stop();
   });
 
+  it('does not advance the cursor when no account produces a snapshot', async () => {
+    let call = 0;
+    let lastEventId = 7;
+    const warnings: string[] = [];
+    const sync = createHubSync({
+      baseUrl: 'https://hub.test',
+      apiKey: 'k',
+      accountIds: [ACCT],
+      fetchImpl: () => {
+        call += 1;
+        if (call === 1) {
+          return Promise.resolve({
+            status: 409,
+            body: null,
+            json: () => Promise.resolve({
+              error: 'sync_snapshot_required',
+              message: 'cursor expired',
+              statusCode: 409,
+              version: 1,
+              requestedSeq: 7,
+              oldestAvailableSeq: 12,
+              currentSeq: 20,
+              snapshotPath: '/api/v1/events/snapshot',
+            }),
+          });
+        }
+        if (call === 2) {
+          return Promise.resolve({ status: 404, body: null });
+        }
+        return new Promise(() => undefined);
+      },
+      sleep: () => new Promise(() => undefined),
+      onEvent: () => undefined,
+      onSnapshot: () => undefined,
+      getLastEventId: () => lastEventId,
+      setLastEventId: (id) => {
+        lastEventId = id;
+      },
+      onWarn: (message) => warnings.push(message),
+    });
+
+    sync.start();
+    await drainMicrotasks();
+
+    expect(call).toBeGreaterThanOrEqual(2);
+    expect(lastEventId).toBe(7);
+    expect(sync.status()).toBe('degraded');
+    expect(warnings).toContain('hub snapshot recovery failed');
+    sync.stop();
+  });
+
   it('watchdog: >45 s without any bytes kills the connection and reconnects degraded', async () => {
     const first = makeStream();
     const second = makeStream();
