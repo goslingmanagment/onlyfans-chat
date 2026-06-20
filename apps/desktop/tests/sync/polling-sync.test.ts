@@ -1050,6 +1050,53 @@ describe('PollingSync', () => {
       sync.stop();
     });
 
+    it('late hub message bodies do not resurrect a local tombstone', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      data.messages.upsertMany([
+        {
+          accountId: ACCT,
+          chatId: '101',
+          messageId: '6',
+          createdAt: '2026-06-10T12:01:00.000Z',
+          isSentByMe: true,
+          textHtml: '<p>deleted local body</p>',
+          textPlain: 'deleted local body',
+          price: 0,
+          isOpened: null,
+          isNew: false,
+          isTip: false,
+          tipAmount: null,
+          tipText: null,
+          replyTo: null,
+          media: [],
+          deleted: false,
+          raw: {},
+        },
+      ]);
+      data.messages.markDeleted(ACCT, '101', ['6']);
+
+      await sync.ingestHubMessage(
+        ACCT,
+        '101',
+        makeHubMessage({ id: '6', text: '<p>late hub body</p>', isSentByMe: true, isNew: false }),
+      );
+
+      expect(data.messages.get(ACCT, '101', '6')).toMatchObject({
+        deleted: true,
+        textPlain: 'deleted local body',
+      });
+      expect(data.chats.get(ACCT, '101')).toMatchObject({
+        lastMessageId: '5',
+        lastMessagePreview: 'hey',
+      });
+      expect(stub.listMessagesCalls).toHaveLength(0);
+      sync.stop();
+    });
+
     it('sent hub messages advance the preview and clear unread without incrementing', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: 5, unread: 2 })]);
       const sync = makeSyncOff();

@@ -552,7 +552,12 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       return false;
     }
 
-    const existed = data.messages.get(accountId, chatId, upsert.messageId) !== null;
+    const existing = data.messages.get(accountId, chatId, upsert.messageId);
+    if (existing?.deleted === true) {
+      return true;
+    }
+
+    const existed = existing !== null;
     data.messages.upsertMany([upsert]);
     data.messages.prune(accountId, chatId);
     if (autoReadEnabled()) {
