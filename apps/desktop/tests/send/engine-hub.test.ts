@@ -104,6 +104,72 @@ describe('send engine hub command transport', () => {
     engine.dispose();
   });
 
+  it('routes media sends through core command intake when hub writes are active', async () => {
+    const direct = makeStubClient();
+    const getOfapiCommand = vi.fn(async ({ commandId }: { commandId: string }) =>
+      command('unused', 'confirmed', {
+        commandId,
+        kind: 'send_media_message_v1',
+        platformMessageId: '9002',
+      }),
+    );
+    const createOfapiCommand = vi.fn(async ({ command: request }) =>
+      command(request.clientCommandId, 'queued', { kind: 'send_media_message_v1' }),
+    );
+    const engine = createSendEngine({
+      client: direct.client,
+      directClient: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand },
+      getWriteTransport: () => 'hub',
+      data,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      hubCommandPollIntervalMs: 0,
+      hubCommandPollLimit: 2,
+    });
+
+    const { localId } = engine.sendPpv({
+      accountId: ACCT,
+      chatId: CHAT,
+      text: 'media caption',
+      price: 25,
+      mediaFiles: ['3866342509', 'ofapi_media_abc123'],
+      previews: ['3866342509'],
+    });
+    await drain();
+
+    expect(createOfapiCommand).toHaveBeenCalledWith({
+      command: {
+        clientCommandId: localId,
+        kind: 'send_media_message_v1',
+        accountId: ACCT,
+        conversationId: CHAT,
+        payload: {
+          text: 'media caption',
+          price: 25,
+          mediaFiles: ['3866342509', 'ofapi_media_abc123'],
+          previews: ['3866342509'],
+        },
+        retryOfCommandId: null,
+      },
+    });
+    expect(getOfapiCommand).toHaveBeenCalledTimes(1);
+    expect(direct.sendCalls).toHaveLength(0);
+    expect(direct.listMessagesCalls).toBe(0);
+    expect(data.outbox.get(localId)).toMatchObject({
+      transport: 'hub',
+      state: 'sent',
+      messageId: '9002',
+    });
+    expect(data.messages.get(ACCT, CHAT, '9002')).toMatchObject({
+      textPlain: 'media caption',
+      price: 25,
+      isSentByMe: true,
+    });
+    engine.dispose();
+  });
+
   it('routes typing beacons through hub command intake when hub writes are active', async () => {
     const direct = makeStubClient();
     const createOfapiCommand = vi.fn(async ({ command: request }) =>

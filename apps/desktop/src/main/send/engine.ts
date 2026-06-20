@@ -128,6 +128,10 @@ function toWireMediaId(id: OutboxMediaId): string | number {
   return /^\d+$/.test(id) ? Number(id) : id;
 }
 
+function toCommandMediaId(id: OutboxMediaId): string {
+  return String(id);
+}
+
 export function createSendEngine(options: SendEngineOptions): SendEngine {
   const { client, data, toMediaUrl, getSettings } = options;
   const directClient = options.directClient === undefined ? client : options.directClient;
@@ -225,7 +229,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         isSentByMe: true,
         textHtml: row.text,
         textPlain: row.text,
-        price: 0,
+        price: row.price,
         isOpened: null,
         isNew: false,
         isTip: false,
@@ -294,15 +298,31 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       }
       retryOfCommandId = (await ensureHubCommand(original)).commandId;
     }
+    const command =
+      row.mediaFiles.length > 0
+        ? ({
+            clientCommandId: row.localId,
+            kind: 'send_media_message_v1',
+            accountId: row.accountId,
+            conversationId: row.chatId,
+            payload: {
+              text: row.text,
+              price: row.price,
+              mediaFiles: row.mediaFiles.map(toCommandMediaId),
+              previews: row.previews.map(toCommandMediaId),
+            },
+            retryOfCommandId,
+          } as const)
+        : ({
+            clientCommandId: row.localId,
+            kind: 'send_text_message_v1',
+            accountId: row.accountId,
+            conversationId: row.chatId,
+            payload: { text: row.text },
+            retryOfCommandId,
+          } as const);
     return hubCommandClient.createOfapiCommand({
-      command: {
-        clientCommandId: row.localId,
-        kind: 'send_text_message_v1',
-        accountId: row.accountId,
-        conversationId: row.chatId,
-        payload: { text: row.text },
-        retryOfCommandId,
-      },
+      command,
     });
   }
 
@@ -440,7 +460,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
 
   /** Exactly one direct send or one idempotent core command per claimed row. */
   async function attemptSend(row: OutboxRow): Promise<boolean> {
-    if (row.transport === 'hub' && row.mediaFiles.length === 0) {
+    if (row.transport === 'hub') {
       return attemptHubSend(row);
     }
     try {
@@ -689,7 +709,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
           accountId,
           chatId,
           text,
-          transport: 'direct',
+          transport: getWriteTransport(),
           sequenceId: null, // sequences never apply to PPV (one row, PRD F7)
           partIndex: 0,
           retryOf: null,

@@ -222,6 +222,7 @@ const hubOfapiCommandStateSchema = z.enum(HUB_OFAPI_COMMAND_STATES);
 
 const hubOfapiCommandKindSchema = z.enum([
   'send_text_message_v1',
+  'send_media_message_v1',
   'typing_active_v1',
   'unsend_message_v1',
   'mark_chat_read_v1',
@@ -233,6 +234,56 @@ const hubOfapiCommandBaseFields = {
   conversationId: z.string().regex(/^[0-9]{1,30}$/),
 };
 
+const hubOfapiCommandMediaIdSchema = z.string().regex(
+  /^(?:[0-9]{1,30}|ofapi_media_[A-Za-z0-9_-]{1,128})$/,
+);
+
+const hubOfapiCommandPriceSchema = z.number().int().min(0).max(200).refine(
+  (price) => price === 0 || price >= 3,
+  { message: 'Price must be 0 or an integer from 3 to 200' },
+);
+
+const hubSendMediaMessagePayloadSchema = z.strictObject({
+  text: z.string().max(10_000),
+  price: hubOfapiCommandPriceSchema,
+  mediaFiles: z.array(hubOfapiCommandMediaIdSchema).min(1).max(50),
+  previews: z.array(hubOfapiCommandMediaIdSchema).max(50),
+}).superRefine((payload, ctx) => {
+  const attached = new Set<string>();
+  for (const id of payload.mediaFiles) {
+    if (attached.has(id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['mediaFiles'],
+        message: 'mediaFiles must not contain duplicates',
+      });
+      break;
+    }
+    attached.add(id);
+  }
+
+  const previews = new Set<string>();
+  for (const id of payload.previews) {
+    if (previews.has(id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['previews'],
+        message: 'previews must not contain duplicates',
+      });
+      break;
+    }
+    previews.add(id);
+    if (!attached.has(id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['previews'],
+        message: 'previews must be a subset of mediaFiles',
+      });
+      break;
+    }
+  }
+});
+
 const hubOfapiCommandCreateRequestSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     ...hubOfapiCommandBaseFields,
@@ -242,6 +293,12 @@ const hubOfapiCommandCreateRequestSchema = z.discriminatedUnion('kind', [
         message: 'Message text must not be blank',
       }),
     }),
+    retryOfCommandId: z.string().uuid().nullable().optional(),
+  }),
+  z.strictObject({
+    ...hubOfapiCommandBaseFields,
+    kind: z.literal('send_media_message_v1'),
+    payload: hubSendMediaMessagePayloadSchema,
     retryOfCommandId: z.string().uuid().nullable().optional(),
   }),
   z.strictObject({
