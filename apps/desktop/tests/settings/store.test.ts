@@ -78,11 +78,11 @@ describe('settings store', () => {
     expect(vm.accountMappings).toEqual({});
     expect(vm.accountOrder).toEqual([]);
     expect(vm.accountPageLabels).toEqual({});
-    expect(vm.ofapiReadTransport).toBe('direct');
-    expect(vm.ofapiWriteTransport).toBe('direct');
+    expect(vm.ofapiReadTransport).toBe('hub');
+    expect(vm.ofapiWriteTransport).toBe('hub');
     expect(vm.aiGatewayTransport).toBe('direct');
     expect(vm.hubModeOverride).toBe('auto');
-    expect(vm.spendSweepRollbackToLegacy).toBe(true);
+    expect(vm.spendSweepRollbackToLegacy).toBe(false);
     expect(vm.spendStyle).toBe('figure');
     expect(vm.uiLocale).toBe('system');
     expect(vm.uiScale).toBe(1);

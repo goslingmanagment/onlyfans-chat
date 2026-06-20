@@ -187,7 +187,7 @@ export function BehaviorSettings({
         />
         {(settings.debugMode
           || settings.hubModeOverride !== 'auto'
-          || !settings.spendSweepRollbackToLegacy) && (
+          || settings.spendSweepRollbackToLegacy) && (
           <>
             <OptionRow
               label={t('behavior.hubModeOverride')}

@@ -301,6 +301,17 @@ ALTER TABLE outbox ADD COLUMN transport TEXT NOT NULL DEFAULT 'direct'
   CHECK (transport IN ('direct', 'hub'));
 `;
 
+// v12 — production custody defaults after core read + text-command live
+// acceptance. These are reversible settings, not destructive data changes:
+// support can select Direct and/or restore the legacy 10-minute sweep.
+export const SCHEMA_V12 = `
+INSERT INTO settings (key, value) VALUES
+  ('ofapiReadTransport', '"hub"'),
+  ('ofapiWriteTransport', '"hub"'),
+  ('spendSweepRollbackToLegacy', 'false')
+ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',

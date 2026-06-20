@@ -452,7 +452,7 @@ async function initOfapi(
     // Default OFF: no automatic message-body reads (poll deltas, sweeps, media
     // polling) so OnlyFans never marks a chat read without an explicit open.
     autoReadEnabled: () => settingsCache?.autoReadChats ?? false,
-    spendSweepRollbackToLegacy: () => settingsCache?.spendSweepRollbackToLegacy ?? true,
+    spendSweepRollbackToLegacy: () => settingsCache?.spendSweepRollbackToLegacy ?? false,
   });
 
   const lastEventIdSchema = z.number().int().nonnegative();

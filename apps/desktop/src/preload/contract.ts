@@ -321,8 +321,8 @@ export interface SettingsVM {
   /** Dev/support-only sync override. Default 'auto'; non-auto persists across restarts. */
   hubModeOverride: HubModeOverrideSetting;
   /**
-   * D6 rollback guard. True (default) forces the legacy 10-minute desktop
-   * fan-spend sweep even after a future core-backed reduced cadence ships.
+   * D6 rollback guard. True forces the legacy 10-minute desktop fan-spend
+   * sweep; the accepted production default is hourly reconciliation.
    */
   spendSweepRollbackToLegacy: boolean;
   /**

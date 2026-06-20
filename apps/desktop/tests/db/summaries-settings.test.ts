@@ -89,7 +89,13 @@ describe('settings(key, value JSON)', () => {
   it('lists all settings excluding schema_version', () => {
     layer.settings.set('a', 1);
     layer.settings.set('b', 'two');
-    expect(layer.settings.all()).toEqual({ a: 1, b: 'two' });
+    expect(layer.settings.all()).toEqual({
+      a: 1,
+      b: 'two',
+      ofapiReadTransport: 'hub',
+      ofapiWriteTransport: 'hub',
+      spendSweepRollbackToLegacy: false,
+    });
   });
 
   it('refuses to touch schema_version (owned by migrations)', () => {

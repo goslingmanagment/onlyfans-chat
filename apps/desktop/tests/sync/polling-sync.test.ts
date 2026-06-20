@@ -688,7 +688,7 @@ describe('PollingSync', () => {
 
     await vi.advanceTimersByTimeAsync(60_000);
     expect(stub.listChatsCalls).toBe(listCalls);
-    await vi.advanceTimersByTimeAsync(10 * 60_000 - 60_000);
+    await vi.advanceTimersByTimeAsync(60 * 60_000 - 60_000);
     expect(stub.listTransactionsCalls.length).toBeGreaterThan(spendCalls);
     sync.stop();
   });
@@ -704,7 +704,7 @@ describe('PollingSync', () => {
     expect(stub.listTransactionsCalls).toHaveLength(0);
 
     exhausted = false;
-    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(stub.listTransactionsCalls.length).toBeGreaterThan(0);
     sync.stop();
   });

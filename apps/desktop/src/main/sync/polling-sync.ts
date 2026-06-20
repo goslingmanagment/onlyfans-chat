@@ -65,6 +65,7 @@ const OFFLINE_AFTER_FAILURES = 3;
 // values are unverified upstream. Runs only after hydration completes — the
 // initial walk must not compete with the chat-list hydration for credits.
 const LEGACY_SPEND_SWEEP_INTERVAL_MS = 10 * 60_000;
+const REDUCED_SPEND_SWEEP_INTERVAL_MS = 60 * 60_000;
 const SPEND_TX_PAGE_LIMIT = 10;
 const SPEND_SWEEP_MAX_PAGES = 100;
 const SPEND_SWEEP_OVERLAP_MS = 60 * 60_000;
@@ -149,7 +150,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   const isBudgetExhausted = options.isBudgetExhausted ?? ((): boolean => false);
   const autoReadEnabled = options.autoReadEnabled ?? ((): boolean => false);
   const spendSweepRollbackToLegacy =
-    options.spendSweepRollbackToLegacy ?? ((): boolean => true);
+    options.spendSweepRollbackToLegacy ?? ((): boolean => false);
   const sleep: SleepFn =
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
@@ -190,10 +191,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     if (spendSweepRollbackToLegacy()) {
       return LEGACY_SPEND_SWEEP_INTERVAL_MS;
     }
-    // D6 has not reduced the desktop sweep yet. Keep the non-rollback branch on
-    // the old cadence until core shadow comparison, PPV/tips policy, and rollout
-    // acceptance are complete.
-    return LEGACY_SPEND_SWEEP_INTERVAL_MS;
+    // Core transactions.new projection is authoritative after the clean
+    // production shadow comparison. Keep an hourly reconcile for estimated PPV
+    // and fixture-blocked tips until those domains gain authoritative contracts.
+    return REDUCED_SPEND_SWEEP_INTERVAL_MS;
   }
 
   function schedule(accountId: string, delayMs: number | null): void {

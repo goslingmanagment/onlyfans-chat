@@ -33,7 +33,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
-      expect(SCHEMA_VERSION).toBe(11);
+      expect(SCHEMA_VERSION).toBe(12);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       // v10: per-fan thread-fetch stamps (spenders freshness, PLAN item 13)
       expect(names).toContain('thread_fetch_log');
@@ -276,7 +276,7 @@ describe('migration runner', () => {
     db.close();
   });
 
-  it('v10 → v11 keeps existing outbox rows on direct transport', () => {
+  it('v10 → latest keeps existing outbox rows on direct transport', () => {
     const db = rawDb();
     runMigrations(db, MIGRATIONS.slice(0, 10));
     db.exec(
@@ -295,6 +295,33 @@ describe('migration runner', () => {
     expect(db.prepare("SELECT transport FROM outbox WHERE local_id = 'L1'").get()).toEqual({
       transport: 'direct',
     });
+    db.close();
+  });
+
+  it('v11 → v12 flips reversible production custody defaults', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 11));
+    db.exec(
+      `INSERT INTO settings (key, value) VALUES
+        ('ofapiReadTransport', '"direct"'),
+        ('ofapiWriteTransport', '"direct"'),
+        ('spendSweepRollbackToLegacy', 'true')
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 11, to: SCHEMA_VERSION });
+    const values = db
+      .prepare(
+        `SELECT key, value FROM settings
+         WHERE key IN ('ofapiReadTransport', 'ofapiWriteTransport', 'spendSweepRollbackToLegacy')
+         ORDER BY key`,
+      )
+      .all();
+    expect(values).toEqual([
+      { key: 'ofapiReadTransport', value: '"hub"' },
+      { key: 'ofapiWriteTransport', value: '"hub"' },
+      { key: 'spendSweepRollbackToLegacy', value: 'false' },
+    ]);
     db.close();
   });
 

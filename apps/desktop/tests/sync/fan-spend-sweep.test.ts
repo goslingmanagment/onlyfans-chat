@@ -11,7 +11,8 @@ import type { OfApiChat, OfApiTransaction } from '../../src/main/ofapi/schemas';
 const TEST_DRIVER = 'bsqlite3-mc-node';
 const ACCT = 'acct_test';
 const DAY_MS = 24 * 60 * 60_000;
-const SPEND_SWEEP_INTERVAL_MS = 10 * 60_000;
+const LEGACY_SPEND_SWEEP_INTERVAL_MS = 10 * 60_000;
+const REDUCED_SPEND_SWEEP_INTERVAL_MS = 60 * 60_000;
 
 function chatWithFan(fanId: number): OfApiChat {
   return {
@@ -172,7 +173,7 @@ describe('fan-spend sweep', () => {
 
     // a new tip lands; the next sweep becomes due after the 10-minute cadence
     stub.setTransactions([tx('t2', 101, 25, 0), t1]);
-    await vi.advanceTimersByTimeAsync(SPEND_SWEEP_INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(REDUCED_SPEND_SWEEP_INTERVAL_MS);
     await drainPoll();
 
     expect(stub.txCalls).toHaveLength(2);
@@ -189,7 +190,7 @@ describe('fan-spend sweep', () => {
     stub.setTransactions([tx('t1', 101, 50, 2)]);
     const sync = makeSync();
     await bootAndSweep(sync);
-    await vi.advanceTimersByTimeAsync(SPEND_SWEEP_INTERVAL_MS - 1);
+    await vi.advanceTimersByTimeAsync(REDUCED_SPEND_SWEEP_INTERVAL_MS - 1);
     expect(stub.txCalls).toHaveLength(1);
     sync.stop();
   });
@@ -198,7 +199,7 @@ describe('fan-spend sweep', () => {
     stub.setTransactions([tx('t1', 101, 50, 2)]);
     const sync = makeSync({ spendSweepRollbackToLegacy: () => true });
     await bootAndSweep(sync);
-    await vi.advanceTimersByTimeAsync(SPEND_SWEEP_INTERVAL_MS - 1);
+    await vi.advanceTimersByTimeAsync(LEGACY_SPEND_SWEEP_INTERVAL_MS - 1);
     expect(stub.txCalls).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     await drainPoll();
@@ -206,12 +207,15 @@ describe('fan-spend sweep', () => {
     sync.stop();
   });
 
-  it('disabling the rollback flag does not reduce spend-sweep cadence before D6 acceptance', async () => {
+  it('the accepted D6 path reconciles hourly when rollback is disabled', async () => {
     stub.setTransactions([tx('t1', 101, 50, 2)]);
     const sync = makeSync({ spendSweepRollbackToLegacy: () => false });
     await bootAndSweep(sync);
-    await vi.advanceTimersByTimeAsync(SPEND_SWEEP_INTERVAL_MS - 1);
+    await vi.advanceTimersByTimeAsync(REDUCED_SPEND_SWEEP_INTERVAL_MS - 1);
     expect(stub.txCalls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await drainPoll();
+    expect(stub.txCalls).toHaveLength(2);
     sync.stop();
   });
 
