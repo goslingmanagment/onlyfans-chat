@@ -200,6 +200,31 @@ describe('HubClient OFAPI command outbox', () => {
     ]);
   });
 
+  it('tolerates additive command response fields from core', async () => {
+    const fetchImpl: HubFetch = (url) => {
+      const response = {
+        ...commandResponse({ state: url.endsWith('/cancel') ? 'cancelled' : 'queued' }),
+        verifierSource: 'webhook',
+        lane: 'dm-command',
+      };
+      return Promise.resolve(jsonResponse(response, url.endsWith('/commands') ? 202 : 200));
+    };
+    const client = createHubClient({ baseUrl: 'https://hub.example.com', apiKey: 'k', fetchImpl });
+
+    await expect(client.createOfapiCommand({ command: makeCommand() })).resolves.toMatchObject({
+      commandId: COMMAND_ID,
+      state: 'queued',
+    });
+    await expect(client.getOfapiCommand({ commandId: COMMAND_ID })).resolves.toMatchObject({
+      commandId: COMMAND_ID,
+      state: 'queued',
+    });
+    await expect(client.cancelOfapiCommand({ commandId: COMMAND_ID })).resolves.toMatchObject({
+      commandId: COMMAND_ID,
+      state: 'cancelled',
+    });
+  });
+
   it('fails before the wire for malformed command requests and command ids', async () => {
     const fetchImpl: HubFetch = () => {
       throw new Error('must not fetch');

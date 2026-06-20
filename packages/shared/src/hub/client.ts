@@ -323,7 +323,7 @@ const hubOfapiCommandCreateRequestSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
-const hubOfapiCommandResponseSchema = z.strictObject({
+const hubOfapiCommandResponseFields = {
   commandId: z.string().uuid(),
   clientCommandId: z.string().uuid(),
   kind: hubOfapiCommandKindSchema,
@@ -342,7 +342,40 @@ const hubOfapiCommandResponseSchema = z.strictObject({
   createdAt: z.string(),
   updatedAt: z.string(),
   deduplicated: z.boolean(),
-});
+};
+
+const hubOfapiCommandResponseSchema = z
+  .object(hubOfapiCommandResponseFields)
+  .passthrough()
+  .superRefine((value, ctx) => {
+    if (Object.prototype.hasOwnProperty.call(value, 'payload')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['payload'],
+        message: 'Command responses must not include command payloads',
+      });
+    }
+  })
+  .transform((value) => ({
+    commandId: value.commandId,
+    clientCommandId: value.clientCommandId,
+    kind: value.kind,
+    accountId: value.accountId,
+    conversationId: value.conversationId,
+    state: value.state,
+    payloadHash: value.payloadHash,
+    retryOfCommandId: value.retryOfCommandId,
+    attemptCount: value.attemptCount,
+    lastErrorCode: value.lastErrorCode,
+    lastErrorClass: value.lastErrorClass,
+    verifierResult: value.verifierResult,
+    platformMessageId: value.platformMessageId,
+    attemptStartedAt: value.attemptStartedAt,
+    attemptFinishedAt: value.attemptFinishedAt,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    deduplicated: value.deduplicated,
+  }));
 
 export type HubOfapiCommandCreateRequest = z.infer<typeof hubOfapiCommandCreateRequestSchema>;
 export type HubOfapiCommand = z.infer<typeof hubOfapiCommandResponseSchema>;
