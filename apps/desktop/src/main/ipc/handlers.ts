@@ -175,11 +175,6 @@ const chatGallerySchema = z.object({
   chatId: idSchema,
   offset: z.number().int().min(0).optional(),
 });
-const vaultUploadSchema = z.object({
-  accountId: idSchema,
-  fileToken: z.uuid(),
-  useAsync: z.boolean().optional(),
-});
 // Vault ids (numeric strings) or single-use ofapi_media_ ids; the engine owns
 // the previews ⊆ mediaFiles and price-bounds invariants (validated pre-enqueue).
 const ppvMediaIdSchema = z.string().min(1).max(64);
@@ -234,12 +229,12 @@ export interface IpcDeps {
   sync: ActivitySync | null;
   creditMeter: CreditMeter | null;
   coordinator: AiCoordinatorLike | null;
-  /** Null until an OFAPI key exists (same lifecycle as sync). */
+  /** Null until an OFAPI read transport exists (same lifecycle as sync). */
   send: SendEngine | null;
-  /** Vault browsing/upload (PRD F7); null/absent until an OFAPI key exists.
+  /** Vault browsing/gallery (PRD F7); null/absent until an OFAPI read transport exists.
    *  Optional (not `| null` alone) so pre-P5 IpcDeps call sites stay valid. */
   vault?: VaultService | null;
-  /** Spenders board (PLAN item 12); null/absent until an OFAPI key exists. */
+  /** Spenders board (PLAN item 12); null/absent until an OFAPI read transport exists. */
   spenders?: SpendersService | null;
   /** Spenders freshness: hydrate TTL guard + scoped refresh queue (PLAN item 13). */
   spendersRefresh?: SpendersRefreshService | null;
@@ -624,7 +619,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   function requireSend(): SendEngine {
     if (!deps.send) {
-      throw new Error('Sending is not available yet — configure the OFAPI key in Settings.');
+      throw new Error('Sending is not available yet — configure Hub or Direct write transport in Settings.');
     }
     return deps.send;
   }
@@ -659,7 +654,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     await requireSend().verifyChat(args.accountId, args.chatId);
   });
 
-  // Advisory commands: silently no-op without an engine (no key ⇒ no live composer).
+  // Advisory commands: silently no-op without an engine (no write transport ⇒ no live composer).
   ipcMain.handle('cmd:chat.typingActive', (_event, rawArgs: unknown) => {
     const args = convSchema.parse(rawArgs);
     deps.send?.typingActive(args.accountId, args.chatId);
@@ -679,7 +674,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   function requireSpenders(): SpendersService {
     if (!deps.spenders) {
-      throw new Error('The spenders board is not available yet — configure the OFAPI key in Settings.');
+      throw new Error('The spenders board is not available yet — configure OFAPI read access in Settings.');
     }
     return deps.spenders;
   }
@@ -712,7 +707,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     // is a live getter — see index.ts) so a key configured AFTER boot is seen.
     const service = deps.spendersRefresh;
     if (!service) {
-      // No OFAPI key yet → no tail GET is possible; report the local-only state
+      // No OFAPI read transport yet → no tail GET is possible; report the local-only state
       // in the same shape so the renderer never has to special-case it.
       return {
         hasChat: data.chats.get(args.accountId, args.chatId) !== null,
@@ -730,7 +725,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   function requireSpendersRefresh(): SpendersRefreshService {
     if (!deps.spendersRefresh) {
-      throw new Error('Spenders refresh is not available yet — configure the OFAPI key in Settings.');
+      throw new Error('Spenders refresh is not available yet — configure OFAPI read access in Settings.');
     }
     return deps.spendersRefresh;
   }
@@ -758,7 +753,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   function requireVault(): VaultService {
     if (!deps.vault) {
-      throw new Error('The vault is not available yet — configure the OFAPI key in Settings.');
+      throw new Error('The vault is not available yet — configure OFAPI read access in Settings.');
     }
     return deps.vault;
   }
@@ -784,17 +779,6 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       accountId: args.accountId,
       chatId: args.chatId,
       ...(args.offset !== undefined ? { offset: args.offset } : {}),
-    });
-  });
-
-  ipcMain.handle('cmd:vault.pickFile', () => requireVault().pickFile());
-
-  ipcMain.handle('cmd:vault.upload', (_event, rawArgs: unknown) => {
-    const args = vaultUploadSchema.parse(rawArgs);
-    return requireVault().upload({
-      accountId: args.accountId,
-      fileToken: args.fileToken,
-      ...(args.useAsync !== undefined ? { useAsync: args.useAsync } : {}),
     });
   });
 

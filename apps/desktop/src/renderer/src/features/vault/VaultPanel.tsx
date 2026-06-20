@@ -1,15 +1,12 @@
 // Vault attach panel (PRD F7) — a dock-style surface above the composer (NOT
 // a modal: the thread stays visible, DESIGN anti-goal "no modal dialogs inside
 // the shift loop"). Album chips → search → virtualized thumb grid with ordered
-// multi-select + preview-subset toggles → upload-from-disk with credit
-// preflight → the mandatory PPV COMPOSE SUMMARY strip whose confirm button
-// restates the price in words (misprice guard).
+// multi-select + preview-subset toggles → the mandatory PPV COMPOSE SUMMARY
+// strip whose confirm button restates the price in words (misprice guard).
 
 import { useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useQueryClient } from '@tanstack/react-query';
 import type { VaultItemVM } from '../../../../preload/contract';
-import { getBridge } from '../../bridge/bridge';
 import { useVaultAlbums, useVaultMedia } from '../../bridge/queries';
 import { useAiStore } from '../ai/aiStore';
 import { pluralWord } from '@chatgoose/shared/i18n/index';
@@ -100,72 +97,6 @@ function VaultCell({ item }: { item: VaultItemVM }): React.JSX.Element {
   );
 }
 
-function UploadControls({ accountId }: { accountId: string }): React.JSX.Element {
-  const t = useT();
-  const upload = useVaultStore((s) => s.upload);
-  const setUpload = useVaultStore((s) => s.setUpload);
-  const queryClient = useQueryClient();
-
-  async function pick(): Promise<void> {
-    try {
-      const picked = await getBridge().invoke('cmd:vault.pickFile', undefined);
-      if (picked !== null) setUpload({ phase: 'picked', file: picked });
-    } catch (error) {
-      setUpload({ phase: 'error', message: error instanceof Error ? error.message : String(error) });
-    }
-  }
-
-  async function confirmUpload(): Promise<void> {
-    if (upload.phase !== 'picked') return;
-    const file = upload.file;
-    setUpload({ phase: 'uploading', file });
-    try {
-      await getBridge().invoke('cmd:vault.upload', { accountId, fileToken: file.token });
-      setUpload({ phase: 'idle' });
-      await queryClient.invalidateQueries({ queryKey: ['vault'] }); // new item lands in the grid
-    } catch (error) {
-      setUpload({ phase: 'error', message: error instanceof Error ? error.message : String(error) });
-    }
-  }
-
-  if (upload.phase === 'picked' || upload.phase === 'uploading') {
-    const { name, bytes, creditEstimate } = upload.file;
-    return (
-      <span className="num flex items-center gap-2 rounded-full border border-amber-line bg-amber-bg px-3 py-1 text-micro text-amber">
-        {t('vault.uploadPreflight', {
-          name,
-          mb: (bytes / 1_000_000).toFixed(1),
-          credits: creditEstimate,
-        })}
-        {upload.phase === 'uploading' ? (
-          <span className="animate-pulse font-bold">UPLOADING…</span>
-        ) : (
-          <>
-            <button type="button" onClick={() => void confirmUpload()} className="cursor-pointer font-bold underline decoration-dotted">
-              {t('vault.uploadConfirm')}
-            </button>
-            <button type="button" onClick={() => useVaultStore.getState().setUpload({ phase: 'idle' })} className="cursor-pointer underline decoration-dotted">
-              {t('common.cancel')}
-            </button>
-          </>
-        )}
-      </span>
-    );
-  }
-  return (
-    <span className="flex items-center gap-2">
-      {upload.phase === 'error' && (
-        <span className="text-[12px] text-bad" title={upload.message}>
-          {t('vault.uploadFailed')}
-        </span>
-      )}
-      <Button size="sm" onClick={() => void pick()} title={t('vault.uploadButtonTip')}>
-        {t('vault.uploadButton')}
-      </Button>
-    </span>
-  );
-}
-
 export function VaultPanel({
   accountId,
   chatId,
@@ -226,7 +157,7 @@ export function VaultPanel({
 
   return (
     <div className="mx-[18px] mt-[9px] flex-none rounded-card border border-line-strong bg-bg1 shadow-soft">
-      {/* header: albums + search + upload */}
+      {/* header: albums + search */}
       <div className="flex items-center gap-2 border-b border-line px-3 py-2">
         <span className="cap text-micro text-ink-low">VAULT</span>
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
@@ -253,7 +184,6 @@ export function VaultPanel({
           placeholder={t('vault.searchPh')}
           className="w-[150px] rounded-chip border border-line bg-bg2 px-2.5 py-1 text-[12.5px] outline-none focus:border-clay-line"
         />
-        <UploadControls accountId={accountId} />
         <button
           type="button"
           onClick={() => setOpen(false)}

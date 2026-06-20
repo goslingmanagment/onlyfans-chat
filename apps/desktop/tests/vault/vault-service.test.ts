@@ -1,12 +1,12 @@
 // Main-process vault service (PRD F7, SPEC §4/§15.1): VM mapping with thumbs
 // minted through the registering toMediaUrl seam (the renderer must never see
-// raw OF CDN URLs), the one-shot pick-file token pattern (the renderer never
-// sees filesystem paths), and the upload flow incl. async polling.
+// raw OF CDN URLs). Local file-byte upload is intentionally outside this app
+// service.
 
 import { describe, expect, it, vi } from 'vitest';
 import { createVaultService, mapVaultItem } from '@main/media/vault';
 import type { VaultClient, VaultServiceOptions } from '@main/media/vault';
-import type { OfApiUploadStatus, OfApiVaultMedia } from '@main/ofapi/schemas';
+import type { OfApiVaultMedia } from '@main/ofapi/schemas';
 
 const ACCT = 'acct_test';
 
@@ -34,13 +34,7 @@ function vaultMedia(overrides: Partial<OfApiVaultMedia> = {}): OfApiVaultMedia {
   };
 }
 
-interface StubbedClient {
-  client: VaultClient;
-  statuses: OfApiUploadStatus[];
-}
-
-function makeClient(overrides: Partial<Record<keyof VaultClient, unknown>> = {}): StubbedClient {
-  const statuses: OfApiUploadStatus[] = [];
+function makeClient(overrides: Partial<Record<keyof VaultClient, unknown>> = {}): VaultClient {
   const client = {
     listVaultMedia: vi.fn(async () => ({ items: [vaultMedia()], hasMore: false })),
     listVaultLists: vi.fn(async () => ({
@@ -50,32 +44,19 @@ function makeClient(overrides: Partial<Record<keyof VaultClient, unknown>> = {})
       ],
       hasMore: false,
     })),
-    getVaultMedia: vi.fn(async () => vaultMedia()),
     listChatMedia: vi.fn(async () => ({ messages: [], hasMore: false, nextLastId: null })),
-    uploadVaultMedia: vi.fn(async () => ({ kind: 'completed' as const, media: vaultMedia() })),
-    getUploadStatus: vi.fn(async () => {
-      const next = statuses.shift();
-      if (next === undefined) throw new Error('no scripted status left');
-      return next;
-    }),
     ...overrides,
   } as unknown as VaultClient;
-  return { client, statuses };
+  return client;
 }
 
 function makeService(
-  stub: StubbedClient,
+  client: VaultClient,
   overrides: Partial<VaultServiceOptions> = {},
 ): ReturnType<typeof createVaultService> {
   return createVaultService({
-    client: stub.client,
+    client,
     toMediaUrl,
-    dialog: {
-      showOpenDialog: async () => ({ canceled: false, filePaths: ['/private/home/x/clip.mp4'] }),
-    },
-    statFile: async () => ({ size: 12_400_000 }),
-    readFileBytes: async () => new TextEncoder().encode('bytes'),
-    sleep: () => Promise.resolve(),
     ...overrides,
   });
 }
@@ -106,12 +87,12 @@ describe('mapVaultItem', () => {
 
 describe('listVault / listAlbums / chatGallery', () => {
   it('passes albumId + query through and computes nextOffset from hasMore', async () => {
-    const stub = makeClient({
+    const client = makeClient({
       listVaultMedia: vi.fn(async () => ({ items: [vaultMedia()], hasMore: true })),
     });
-    const service = makeService(stub);
+    const service = makeService(client);
     const page = await service.listVault({ accountId: ACCT, albumId: '703', query: 'gym', offset: 60 });
-    expect(stub.client.listVaultMedia).toHaveBeenCalledWith(
+    expect(client.listVaultMedia).toHaveBeenCalledWith(
       expect.objectContaining({ accountId: ACCT, listId: '703', query: 'gym', offset: 60 }),
     );
     expect(page.hasMore).toBe(true);
@@ -132,7 +113,7 @@ describe('listVault / listAlbums / chatGallery', () => {
   });
 
   it('gallery: isSentByMe from fromUser vs the fan id (chat_id === fan.id), media minted', async () => {
-    const stub = makeClient({
+    const client = makeClient({
       listChatMedia: vi.fn(async () => ({
         messages: [
           {
@@ -161,7 +142,7 @@ describe('listVault / listAlbums / chatGallery', () => {
         nextLastId: '9100000002',
       })),
     });
-    const service = makeService(stub);
+    const service = makeService(client);
     const page = await service.chatGallery({ accountId: ACCT, chatId: '1000039' });
     expect(page.items[0]).toMatchObject({
       messageId: '9100000001',
@@ -173,84 +154,5 @@ describe('listVault / listAlbums / chatGallery', () => {
     expect(page.items[0]?.media[0]?.thumbUrl).toMatch(/^media:\/\//);
     expect(page.items[1]?.isSentByMe).toBe(false);
     expect(page.nextOffset).toBe(2);
-  });
-});
-
-describe('pickFile (one-shot token — the renderer never sees paths)', () => {
-  it('returns name/bytes/credit preflight + an opaque token, no path', async () => {
-    const service = makeService(makeClient());
-    const picked = await service.pickFile();
-    expect(picked).not.toBeNull();
-    expect(picked).toMatchObject({ name: 'clip.mp4', bytes: 12_400_000, creditEstimate: 38 });
-    expect(JSON.stringify(picked)).not.toContain('/private/home'); // no path leak
-  });
-
-  it('returns null on cancel and rejects oversize files at preflight', async () => {
-    const cancelled = makeService(makeClient(), {
-      dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
-    });
-    await expect(cancelled.pickFile()).resolves.toBeNull();
-
-    const oversize = makeService(makeClient(), {
-      statFile: async () => ({ size: 100 * 1_000_000 + 1 }),
-    });
-    await expect(oversize.pickFile()).rejects.toMatchObject({ code: 'CG-OF-08' });
-  });
-});
-
-describe('upload', () => {
-  it('sync path: resolves the token, uploads, returns the reusable vault id; token is one-shot', async () => {
-    const stub = makeClient();
-    const service = makeService(stub);
-    const picked = await service.pickFile();
-    const result = await service.upload({ accountId: ACCT, fileToken: picked?.token ?? '' });
-    expect(result).toEqual({ vaultId: '3866342509', isReady: true, creditsUsed: null });
-    expect(stub.client.uploadVaultMedia).toHaveBeenCalledWith(
-      expect.objectContaining({ accountId: ACCT, fileName: 'clip.mp4' }),
-    );
-    // one-shot: a second use must re-pick (re-preflight)
-    await expect(service.upload({ accountId: ACCT, fileToken: picked?.token ?? '' })).rejects.toThrow(
-      /token/,
-    );
-  });
-
-  it('async path: polls until completed and returns media.id + credits_used', async () => {
-    const stub = makeClient({
-      uploadVaultMedia: vi.fn(async () => ({
-        kind: 'started' as const,
-        prefixedId: 'ofapi_media_x',
-        pollingUrl: 'https://app.onlyfansapi.com/api/acct_test/media/uploads/ofapi_media_x/status',
-      })),
-    });
-    stub.statuses.push(
-      { status: 'processing', prefixed_id: 'ofapi_media_x' },
-      { status: 'completed', prefixed_id: 'ofapi_media_x', media: { id: 3866999002, isReady: false }, credits_used: 38 },
-    );
-    const service = makeService(stub);
-    const picked = await service.pickFile();
-    const result = await service.upload({ accountId: ACCT, fileToken: picked?.token ?? '', useAsync: true });
-    expect(result).toEqual({ vaultId: '3866999002', isReady: false, creditsUsed: 38 });
-    expect(stub.client.getUploadStatus).toHaveBeenCalledTimes(2);
-    expect(stub.client.getUploadStatus).toHaveBeenCalledWith({
-      accountId: ACCT,
-      uploadId: 'ofapi_media_x',
-      purpose: 'vault',
-    });
-  });
-
-  it('async path: failed status surfaces as CG-OF-08 with the upstream error', async () => {
-    const stub = makeClient({
-      uploadVaultMedia: vi.fn(async () => ({
-        kind: 'started' as const,
-        prefixedId: 'ofapi_media_x',
-        pollingUrl: 'https://example/poll',
-      })),
-    });
-    stub.statuses.push({ status: 'failed', prefixed_id: 'ofapi_media_x', error: 'transcode exploded' });
-    const service = makeService(stub);
-    const picked = await service.pickFile();
-    await expect(
-      service.upload({ accountId: ACCT, fileToken: picked?.token ?? '', useAsync: true }),
-    ).rejects.toMatchObject({ code: 'CG-OF-08', message: 'transcode exploded' });
   });
 });

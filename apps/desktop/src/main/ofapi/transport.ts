@@ -14,16 +14,22 @@ export function buildHubOfApiReadBaseUrl(hubBaseUrl: string): string {
 
 function missingDirectWriter(): OfApiError {
   return new OfApiError('CG-OF-01', {
-    message: 'A direct OFAPI key is required for writes until the core command gateway is enabled.',
+    message: 'A direct OFAPI key is required for Direct rollback writes.',
+    detail: { provider: 'ofapi' },
+  });
+}
+
+function disabledDiskUpload(): OfApiError {
+  return new OfApiError('CG-OF-08', {
+    message: 'Local file upload into Vault is disabled in ChatGoose Desktop.',
     detail: { provider: 'ofapi' },
   });
 }
 
 /**
- * C6 custody bridge: every read uses `readClient`; writes remain on the direct
- * client until core owns command idempotency and indeterminate-send recovery.
- * Both clients must share one meter so the desktop budget guard still observes
- * every REST request during the migration.
+ * C6 custody bridge: every read uses `readClient`; legacy Direct writes remain
+ * available only for explicit rollback paths. Local file-byte uploads are not
+ * app-supported and fail closed before any network call.
  */
 export function createOfApiTransportClient(
   readClient: OfApiClient,
@@ -60,7 +66,9 @@ export function createOfApiTransportClient(
     listChatMedia: (params) => readClient.listChatMedia(params),
     getUploadStatus: (params) => readClient.getUploadStatus(params),
 
-    uploadVaultMedia: async (params) => requireWriteClient().uploadVaultMedia(params),
+    uploadVaultMedia: async () => {
+      throw disabledDiskUpload();
+    },
     sendMessage: async (params) => requireWriteClient().sendMessage(params),
     deleteMessage: async (params) => requireWriteClient().deleteMessage(params),
     likeMessage: async (params) => requireWriteClient().likeMessage(params),

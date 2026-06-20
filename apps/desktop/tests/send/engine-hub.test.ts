@@ -55,7 +55,7 @@ describe('send engine hub command transport', () => {
     data.close();
   });
 
-  it('uses core command intake/status and never calls direct send or GET /messages', async () => {
+  it('uses core command intake/status without a Direct client or GET /messages', async () => {
     const direct = makeStubClient();
     const getOfapiCommand = vi.fn(async ({ commandId }: { commandId: string }) =>
       command('unused', 'confirmed', { commandId }),
@@ -65,7 +65,7 @@ describe('send engine hub command transport', () => {
     );
     const engine = createSendEngine({
       client: direct.client,
-      directClient: direct.client,
+      directClient: null,
       hubCommandClient: { createOfapiCommand, getOfapiCommand },
       getWriteTransport: () => 'hub',
       data,
@@ -104,7 +104,7 @@ describe('send engine hub command transport', () => {
     engine.dispose();
   });
 
-  it('routes media sends through core command intake when hub writes are active', async () => {
+  it('routes media sends through core command intake without a Direct client', async () => {
     const direct = makeStubClient();
     const getOfapiCommand = vi.fn(async ({ commandId }: { commandId: string }) =>
       command('unused', 'confirmed', {
@@ -118,7 +118,7 @@ describe('send engine hub command transport', () => {
     );
     const engine = createSendEngine({
       client: direct.client,
-      directClient: direct.client,
+      directClient: null,
       hubCommandClient: { createOfapiCommand, getOfapiCommand },
       getWriteTransport: () => 'hub',
       data,
@@ -170,7 +170,7 @@ describe('send engine hub command transport', () => {
     engine.dispose();
   });
 
-  it('routes typing beacons through hub command intake when hub writes are active', async () => {
+  it('routes typing beacons through hub command intake without a Direct client', async () => {
     const direct = makeStubClient();
     const createOfapiCommand = vi.fn(async ({ command: request }) =>
       command(request.clientCommandId, 'confirmed', {
@@ -180,7 +180,7 @@ describe('send engine hub command transport', () => {
     );
     const engine = createSendEngine({
       client: direct.client,
-      directClient: direct.client,
+      directClient: null,
       hubCommandClient: {
         createOfapiCommand,
         getOfapiCommand: vi.fn(),
@@ -273,7 +273,7 @@ describe('send engine hub command transport', () => {
     engine.dispose();
   });
 
-  it('routes unsend through hub command intake and tombstones only after confirmation', async () => {
+  it('routes unsend through hub command intake without a Direct client and tombstones only after confirmation', async () => {
     seedMessage(data, { messageId: '9001', deleted: false });
     const direct = makeStubClient();
     const createOfapiCommand = vi.fn(async ({ command: request }) =>
@@ -284,7 +284,7 @@ describe('send engine hub command transport', () => {
     );
     const engine = createSendEngine({
       client: direct.client,
-      directClient: direct.client,
+      directClient: null,
       hubCommandClient: {
         createOfapiCommand,
         getOfapiCommand: vi.fn(),
@@ -328,7 +328,7 @@ describe('send engine hub command transport', () => {
     );
     const engine = createSendEngine({
       client: direct.client,
-      directClient: direct.client,
+      directClient: null,
       hubCommandClient: {
         createOfapiCommand,
         getOfapiCommand: vi.fn(async ({ commandId }: { commandId: string }) =>

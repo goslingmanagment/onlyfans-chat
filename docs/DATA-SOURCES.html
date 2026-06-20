@@ -283,7 +283,7 @@
     <div class="src s-ofapi">
       <span class="tag">OFAPI · live</span>
       <h3>Живой OnlyFans через шлюз</h3>
-      <p>Третья сторона <code>onlyfansapi.com</code> — единственный путь к реальным данным OnlyFans. Desktop может отправлять GET напрямую или через read-шлюз core. Text send, media/PPV send, typing-beacon, unsend и mark-read могут идти через core command outbox: desktop хранит локальный payload/стабильный client id для send, typing и mark-read шлют пустой command, unsend шлёт только numeric message id, а media/PPV шлёт только caption/price/media ids/previews; core делает максимум одну OFAPI-попытку. Direct остаётся rollback; upload и остальные unsupported mutations пока прямые.</p>
+      <p>Третья сторона <code>onlyfansapi.com</code> — единственный путь к реальным данным OnlyFans. Desktop может отправлять GET напрямую или через read-шлюз core. Text send, media/PPV send, typing-beacon, unsend и mark-read могут идти через core command outbox: desktop хранит локальный payload/стабильный client id для send, typing и mark-read шлют пустой command, unsend шлёт только numeric message id, а media/PPV шлёт только caption/price/media ids/previews; core делает максимум одну OFAPI-попытку. Direct остаётся rollback. Local upload-from-disk удалён из app surface и fail-closed на app transport.</p>
       <span class="where">main/ofapi/client.ts · main/ofapi/transport.ts</span>
     </div>
 
@@ -374,7 +374,7 @@
     </div>
 
     <div class="flow-note">
-      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра: SSE даёт push-first события, snapshot + tail закрывают replay-gap, Hub read, Hub text-write, Hub media/PPV command, Hub typing command, Hub unsend command и Hub mark-read command. Direct остаётся rollback и нужен для upload/unsupported writes до отдельных custody-контрактов.</span>
+      <span class="b hub" data-k="сбоку → сборщик">Хаб ядра: SSE даёт push-first события, snapshot + tail закрывают replay-gap, Hub read, Hub text-write, Hub media/PPV command, Hub typing command, Hub unsend command и Hub mark-read command. Direct остаётся rollback; обычная работа в Hub mode не требует local OFAPI key. Local file-byte upload intentionally absent.</span>
       <span class="b ai" data-k="сбоку → экран">ИИ-провайдеры: desktop пока вызывает напрямую. Core AI gateway теперь ходит к Anthropic через page/account proxy и production-enabled; Desktop Hub AI не default до отдельного rollout.</span>
       <span class="b live" data-k="в обход кэша">Волт и галерея: <b>единственная</b> поверхность, что ходит в OFAPI <b>вживую на каждый показ</b> (1 кредит/вызов), без слоя БД.</span>
     </div>
@@ -447,7 +447,7 @@
           <span class="chip c-derived">вычисляется</span>
           <span class="chip c-ofapi">OFAPI · по действию человека</span>
         </div>
-        <p>Видимый UI (оптимистичные строки, черновики, гейт «можно отправлять») — из кэша + производно. Для text и media/PPV <code>send/engine.ts</code> сохраняет transport в локальном outbox: <b>Hub</b> отправляет idempotent command и сверяет core status, <b>Direct</b> остаётся rollback. При неясном результате Hub никогда не переключается на прямой POST и не делает <code>GET /messages</code> только ради проверки. Media/PPV Hub payload содержит caption/price/media ids/previews, без media URL или file bytes. Typing при Hub write transport идёт как empty-payload <code>typing_active_v1</code>; unsend идёт как <code>unsend_message_v1</code> и ставит tombstone только после core-confirmed; mark-read идёт как empty-payload <code>mark_chat_read_v1</code> и обнуляет unread только после core-confirmed. Upload пока прямой.</p>
+        <p>Видимый UI (оптимистичные строки, черновики, гейт «можно отправлять») — из кэша + производно. Для text и media/PPV <code>send/engine.ts</code> сохраняет transport в локальном outbox: <b>Hub</b> отправляет idempotent command и сверяет core status, <b>Direct</b> остаётся rollback. При неясном результате Hub никогда не переключается на прямой POST и не делает <code>GET /messages</code> только ради проверки. Media/PPV Hub payload содержит caption/price/media ids/previews, без media URL или file bytes. Typing при Hub write transport идёт как empty-payload <code>typing_active_v1</code>; unsend идёт как <code>unsend_message_v1</code> и ставит tombstone только после core-confirmed; mark-read идёт как empty-payload <code>mark_chat_read_v1</code> и обнуляет unread только после core-confirmed. Local upload-from-disk удалён из UI/IPC и fail-closed в app transport.</p>
       </div>
     </div>
 
@@ -528,7 +528,7 @@
           <span class="chip c-db">кэш БД (таблица settings)</span>
           <span class="chip c-ofapi">live: только тест/список</span>
         </div>
-        <p>Синхронные чтения из зашифрованной таблицы <code>settings</code>. Секреты лежат <b>только в keychain ОС</b> (наружу отдаётся лишь «есть/нет»). Отдельно выбираются read transport и send transport: <b>Direct</b> или <b>Agency Hub</b>. Hub требует URL + chatter key; direct OFAPI key пока нужен для upload и остальных write-команд без core contract, а также как явный rollback.</p>
+        <p>Синхронные чтения из зашифрованной таблицы <code>settings</code>. Секреты лежат <b>только в keychain ОС</b> (наружу отдаётся лишь «есть/нет»). Отдельно выбираются read transport и send transport: <b>Direct</b> или <b>Agency Hub</b>. Hub требует URL + chatter key; local OFAPI key не нужен для нормальной Hub-работы и остаётся только как явный Direct rollback. Local upload-from-disk не поддерживается.</p>
       </div>
     </div>
 

@@ -303,14 +303,13 @@ export interface SettingsVM {
   /** Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off. */
   hubBaseUrl: string | null;
   /**
-   * OFAPI GET transport. `hub` routes reads through core with the chatter key;
-   * writes remain direct until the command gateway ships.
+   * OFAPI GET transport. `hub` routes reads through core with the chatter key.
    */
   ofapiReadTransport: 'direct' | 'hub';
   /**
-   * Plain-text send transport. `hub` submits idempotent commands to core;
-   * direct remains the documented rollback. PPV/media and auxiliary mutations
-   * stay direct until separate versioned core command kinds ship.
+   * OFAPI write transport. `hub` submits supported versioned commands to core
+   * (text, typing, unsend, mark-read, media/PPV); direct remains the documented
+   * rollback. Local file-byte uploads are intentionally not app-supported.
    */
   ofapiWriteTransport: 'direct' | 'hub';
   /**
@@ -618,24 +617,6 @@ export interface GalleryItemVM {
   media: MessageMediaVM[];
 }
 
-/** cmd:vault.pickFile result — the renderer never sees the filesystem path. */
-export interface VaultPickedFileVM {
-  /** Opaque one-shot token minted in main; pass to cmd:vault.upload. */
-  token: string;
-  name: string;
-  bytes: number;
-  /** Size preflight at 3 credits per decimal MB (PRD F7). */
-  creditEstimate: number;
-}
-
-export interface VaultUploadResultVM {
-  /** OF vault media id — REUSABLE (unlike single-use ofapi_media_ ids). */
-  vaultId: string;
-  /** false ⇒ still transcoding; the vault grid shows the processing state. */
-  isReady: boolean;
-  creditsUsed: number | null;
-}
-
 // ─── Channel map ─────────────────────────────────────────────────────────
 
 export interface InvokeChannels {
@@ -813,13 +794,6 @@ export interface InvokeChannels {
     args: { accountId: string; chatId: string; offset?: number };
     result: { items: GalleryItemVM[]; hasMore: boolean; nextOffset: number | null };
   };
-  /** Main-process file dialog; null when the chatter cancels. */
-  'cmd:vault.pickFile': { args: void; result: VaultPickedFileVM | null };
-  /** Uploads the picked file into the VAULT (reusable id); token is one-shot. */
-  'cmd:vault.upload': {
-    args: { accountId: string; fileToken: string; useAsync?: boolean };
-    result: VaultUploadResultVM;
-  };
   /**
    * PPV / media send: single outbox row (sequences never apply). Price 0 =
    * free media message; otherwise whole dollars 3–200. previews ⊆ mediaFiles.
@@ -953,8 +927,6 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:vault.list': true,
   'query:vault.albums': true,
   'query:chat.gallery': true,
-  'cmd:vault.pickFile': true,
-  'cmd:vault.upload': true,
   'cmd:send.ppv': true,
 };
 

@@ -28,7 +28,6 @@ const READ_METHODS = [
 ] as const;
 
 const WRITE_METHODS = [
-  'uploadVaultMedia',
   'sendMessage',
   'deleteMessage',
   'likeMessage',
@@ -39,7 +38,7 @@ const WRITE_METHODS = [
 
 function fakeClient(meter = createCreditMeter()) {
   const methods = Object.fromEntries(
-    [...READ_METHODS, ...WRITE_METHODS].map((name) => [
+    [...READ_METHODS, ...WRITE_METHODS, 'uploadVaultMedia' as const].map((name) => [
       name,
       vi.fn(async () => ({ source: name })),
     ]),
@@ -60,7 +59,7 @@ describe('OFAPI transport client', () => {
     );
   });
 
-  it('routes every read to hub and every write to the direct client', async () => {
+  it('routes every read to hub and rollback writes to the direct client', async () => {
     const meter = createCreditMeter();
     const read = fakeClient(meter);
     const write = fakeClient(meter);
@@ -79,6 +78,20 @@ describe('OFAPI transport client', () => {
     expect(client.creditMeter).toBe(meter);
   });
 
+  it('fails closed for app-level local file uploads without calling Direct', async () => {
+    const meter = createCreditMeter();
+    const read = fakeClient(meter);
+    const write = fakeClient(meter);
+    const client = createOfApiTransportClient(read.client, write.client);
+
+    await expect(client.uploadVaultMedia({} as never)).rejects.toMatchObject({
+      code: 'CG-OF-08',
+      message: 'Local file upload into Vault is disabled in ChatGoose Desktop.',
+    });
+    expect(write.methods.uploadVaultMedia).not.toHaveBeenCalled();
+    expect(read.methods.uploadVaultMedia).not.toHaveBeenCalled();
+  });
+
   it('keeps read-only mode usable without a direct key and fails writes before network', async () => {
     const read = fakeClient();
     const client = createOfApiTransportClient(read.client, null);
@@ -87,7 +100,11 @@ describe('OFAPI transport client', () => {
     await expect(client.sendMessage({} as never)).rejects.toMatchObject({
       code: 'CG-OF-01',
     });
+    await expect(client.uploadVaultMedia({} as never)).rejects.toMatchObject({
+      code: 'CG-OF-08',
+    });
     expect(read.methods.sendMessage).not.toHaveBeenCalled();
+    expect(read.methods.uploadVaultMedia).not.toHaveBeenCalled();
   });
 
   it('rejects split clients that would make the desktop budget meter incomplete', () => {

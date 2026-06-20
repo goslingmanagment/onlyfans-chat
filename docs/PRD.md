@@ -65,7 +65,7 @@ Rollout: internal pilot on 1 creator account + 1–2 trusted chatters in read+AI
 Features marked **[P1]**–**[P7]** map to plan phases. Legacy behavioral details (exact prompts, thresholds, timeouts) are normative where referenced — see [research/legacy-chatgoose.md](research/legacy-chatgoose.md).
 
 ### F1. Accounts & onboarding [P1]
-- App configured with an OFAPI key (per-chatter **named** key in direct mode — OFAPI keys cannot be scoped, every key is full-access; custody rules in SPEC §5) and, from P4, an Agency Hub (core) chatter API key. Keys stored in OS keychain, never in plaintext config.
+- App configured with an Agency Hub (core) chatter API key for normal Hub mode. A per-chatter **named** OFAPI key remains optional for explicit Direct rollback/dev mode only — OFAPI keys cannot be scoped, every key is full-access; custody rules in SPEC §5. Keys are stored in OS keychain, never in plaintext config.
 - App lists connected OF accounts (`GET /api/accounts`), shows auth state (`is_authenticated`), and surfaces re-auth needs (later via `accounts.authentication_failed` / `is_authenticated=false`; a lone `accounts.session_expired` is informational — OFAPI auto-recovers it; in P1 via API errors).
 - Account connection itself happens in the OFAPI console by the admin (out of app scope for v1; revisit embedded connect widget later).
 - **Personality mapping:** every account must be mapped to a personality before AI features activate (same rule as legacy; unmapped → AI buttons disabled with clear prompt). Personalities: name + free-form content, CRUD in settings, bundled "Lora" starter ported from legacy.
@@ -119,7 +119,7 @@ Model support: per-feature model selection + reasoning effort (off/low/medium/hi
 ### F7. Vault & PPV sending [P5]
 - Browse vault (`GET /{account}/media/vault`, albums via vault lists), thumbnail grid, search/filter, multi-select.
 - Attach vault media to a message; set price ($3–200) and free-preview subset (previews ⊆ attached); locked-text caption.
-- Upload new media from disk (3 credits/MB — show size/cost preflight; route through vault for reusability; `ofapi_media_` direct-upload IDs are single-use).
+- Local upload-from-disk is intentionally absent from the desktop app surface as an unsafe file-byte custody path. Media sends use existing Vault media ids; unsupported local file-byte upload is not a normal-operation requirement.
 - Clear PPV compose summary before send (N items, price, previews) — misprice prevention.
 
 ### F8. Real-time via Agency Hub (core) [parallel core track, target P3; AI gateway P6]
@@ -158,7 +158,7 @@ Concrete layout anatomy, hotkey map, performance-engineering checklist and visua
 - **No send idempotency upstream** → client-side dedup is a correctness requirement, not polish.
 - **Account-scoped calls cost 1 credit each, never cached** → sync design is a cost feature (SPEC §6).
 - **OF restricted-words** and 24 h unsend window are platform rules surfaced in UX.
-- Chatter machines hold sensitive data (fan PII, adult DM history) → local store is **encrypted at rest** with purge controls (SPEC §10); per-chatter named OFAPI keys under the SPEC §5 custody rules (vendor offers no key scopes — verified 2026-06-11).
+- Chatter machines hold sensitive data (fan PII, adult DM history) → local store is **encrypted at rest** with purge controls (SPEC §10); optional Direct rollback OFAPI keys stay under the SPEC §5 custody rules (vendor offers no key scopes — verified 2026-06-11).
 - AI provider usage policies: agency-operated assistant for adult-platform chat; same posture as the legacy product (human-in-the-loop, no platform ToS evasion features beyond what the agency already accepts by using OnlyMonster/OFAPI).
 
 ## 9. Competitive/context note

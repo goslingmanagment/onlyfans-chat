@@ -1,5 +1,5 @@
 // IPC trust boundary for the SPEC §7 channels: zod rejection of malformed
-// args, clean degradation when no engine exists (no OFAPI key), VM mapping
+// args, clean degradation when no engine exists (no write transport), VM mapping
 // for query:outbox.list, and the settings-table draft store.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -105,15 +105,15 @@ describe('send-channel IPC handlers', () => {
     expect(result).toEqual({ localIds: ['local-1'], sequenceId: null });
   });
 
-  it('send commands fail cleanly when no engine exists (no OFAPI key)', async () => {
+  it('send commands fail cleanly when no engine exists (no write transport)', async () => {
     register(data, null);
     await expect(
       invoke('cmd:send.message', { accountId: ACCT, chatId: CHAT, parts: ['hi'] }),
-    ).rejects.toThrow(/OFAPI key/);
+    ).rejects.toThrow(/write transport/);
     await expect(
       invoke('cmd:send.retry', { accountId: ACCT, localId: 'L1', text: 'hi' }),
-    ).rejects.toThrow(/OFAPI key/);
-    // Advisory channels no-op silently (no key ⇒ composer is not live anyway).
+    ).rejects.toThrow(/write transport/);
+    // Advisory channels no-op silently (no write transport ⇒ composer is not live anyway).
     await expect(
       invoke('cmd:chat.typingActive', { accountId: ACCT, chatId: CHAT }),
     ).resolves.toBeUndefined();

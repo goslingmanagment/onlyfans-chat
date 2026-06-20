@@ -14,7 +14,7 @@ import {
   safeStorage,
   shell,
 } from 'electron';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { resolveUiLocale, uiMessage, type UiLocale } from '@chatgoose/shared/i18n/index';
@@ -499,9 +499,9 @@ async function initOfapi(
   });
   void hub.reconfigure();
 
-  // Plain text can use the core C6b command outbox even when no local OFAPI key
-  // exists. PPV/media and auxiliary mutations still require directClient until
-  // their own versioned command kinds ship.
+  // Hub-supported writes (text, typing, unsend, mark-read, media/PPV) can run
+  // without a local OFAPI key. directClient remains only for explicit Direct
+  // rollback paths.
   const engine = createSendEngine({
     client,
     directClient,
@@ -517,10 +517,6 @@ async function initOfapi(
   vaultService = createVaultService({
     client,
     toMediaUrl,
-    dialog: {
-      showOpenDialog: (options) =>
-        dialog.showOpenDialog({ properties: ['openFile'], filters: options.filters }),
-    },
   });
   // Spenders board (PLAN item 12): OM tier lists read-only via the metered
   // client; all spend/counter joins stay on the local DB.
@@ -1020,12 +1016,21 @@ async function boot(): Promise<void> {
   loadWindowContent(mainWindow);
 }
 
+// Dev-only smoke hook: run a keyless Hub profile without touching the real dev
+// userData. Packaged builds ignore env overrides so production profile custody
+// stays stable.
+const devUserDataDir = !app.isPackaged ? process.env['CHATGOOSE_USER_DATA_DIR']?.trim() : undefined;
+if (devUserDataDir !== undefined && devUserDataDir.length > 0) {
+  app.setPath('userData', resolve(devUserDataDir));
+}
+
 // Packaged builds get their own userData dir named after the product.
 // Electron derives the app name from package.json ("@chatgoose/desktop"),
 // which would nest userData under "appData/@chatgoose/" and COLLIDE with the
 // dev profile — the packaged-app smoke run (PLAN item 11) found it reading
 // dev's dbKey.secret and failing to decrypt (different binary, Keychain/DPAPI
-// denies). Dev keeps the historical path; packaged installs start clean.
+// denies). Dev keeps the historical path unless CHATGOOSE_USER_DATA_DIR was
+// provided for an isolated smoke run; packaged installs start clean.
 if (app.isPackaged) {
   app.setPath('userData', join(app.getPath('appData'), 'ChatGoose'));
 }

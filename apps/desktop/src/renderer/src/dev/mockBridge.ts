@@ -969,8 +969,6 @@ export function createMockBridge(): ChatGooseBridge {
       tipsTotal: Math.floor(rng() * 300),
     });
   }
-  let vaultUploadSeq = 0;
-  const pickedTokens = new Map<string, { name: string; bytes: number }>();
 
   function findOutboxRow(
     accountId: string,
@@ -1611,36 +1609,6 @@ export function createMockBridge(): ChatGooseBridge {
       const page = all.slice(start, start + 16);
       const hasMore = start + page.length < all.length;
       return { items: page, hasMore, nextOffset: hasMore ? start + page.length : null };
-    },
-    'cmd:vault.pickFile': () => {
-      vaultUploadSeq += 1;
-      const token = `pick_${vaultUploadSeq}`;
-      const bytes = 4_000_000 + Math.floor(rng() * 60_000_000);
-      pickedTokens.set(token, { name: `IMG_${4000 + vaultUploadSeq}.mp4`, bytes });
-      return {
-        token,
-        name: `IMG_${4000 + vaultUploadSeq}.mp4`,
-        bytes,
-        creditEstimate: Math.ceil((bytes / 1_000_000) * 3),
-      };
-    },
-    'cmd:vault.upload': async ({ fileToken }) => {
-      const picked = pickedTokens.get(fileToken);
-      if (picked === undefined) throw new Error('unknown or already-used file token');
-      pickedTokens.delete(fileToken);
-      await sleep(1_200); // exercise the uploading state
-      const item: VaultItemVM = {
-        id: String(3_866_900_000 + vaultUploadSeq),
-        type: 'video',
-        thumbUrl: svgThumb(200, 200, pick(THUMB_TONES), pick(THUMB_TONES)),
-        isReady: true,
-        durationSeconds: 42,
-        createdAt: new Date().toISOString(),
-        likesCount: 0,
-        tipsTotal: 0,
-      };
-      vaultItems.unshift(item);
-      return { vaultId: item.id, isReady: true, creditsUsed: Math.ceil((picked.bytes / 1_000_000) * 3) };
     },
     'cmd:send.ppv': ({ accountId, chatId, text, price, mediaFiles }) => {
       const key = `${accountId}/${chatId}`;
