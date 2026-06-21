@@ -11,8 +11,15 @@ INSERT INTO accounts (id, username, display_name, avatar, auth_state, raw, updat
 VALUES (@id, @username, @display_name, @avatar, @auth_state, @raw, @updated_at)
 ON CONFLICT (id) DO UPDATE SET
   username = excluded.username,
-  display_name = excluded.display_name,
-  avatar = excluded.avatar,
+  display_name = CASE
+    WHEN trim(excluded.display_name) = '' THEN accounts.display_name
+    WHEN excluded.display_name = excluded.username
+      AND trim(accounts.display_name) <> ''
+      AND accounts.display_name <> accounts.username
+      THEN accounts.display_name
+    ELSE excluded.display_name
+  END,
+  avatar = COALESCE(excluded.avatar, accounts.avatar),
   auth_state = excluded.auth_state,
   raw = excluded.raw,
   updated_at = excluded.updated_at`;

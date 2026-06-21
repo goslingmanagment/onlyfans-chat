@@ -41,6 +41,59 @@ describe('accounts queries', () => {
     expect(layer.accounts.get('acct_1')?.displayName).toBe('Model One Renamed');
   });
 
+  it('preserves richer account identity when a gateway payload is partial', () => {
+    layer.accounts.upsert({
+      id: 'acct_1',
+      username: 'loravie',
+      displayName: 'LoraVie',
+      avatar: 'media://avatar-token',
+      authState: 'authenticated',
+      raw: { source: 'direct' },
+    });
+
+    layer.accounts.upsert({
+      id: 'acct_1',
+      username: 'loravie',
+      displayName: 'loravie',
+      avatar: null,
+      authState: 'authenticated',
+      raw: { source: 'hub-partial' },
+    });
+
+    expect(layer.accounts.get('acct_1')).toMatchObject({
+      username: 'loravie',
+      displayName: 'LoraVie',
+      avatar: 'media://avatar-token',
+      authState: 'authenticated',
+    });
+  });
+
+  it('accepts fresher non-generic account identity and avatar values', () => {
+    layer.accounts.upsert({
+      id: 'acct_1',
+      username: 'loravie',
+      displayName: 'LoraVie',
+      avatar: 'media://old-avatar-token',
+      authState: 'authenticated',
+      raw: {},
+    });
+
+    layer.accounts.upsert({
+      id: 'acct_1',
+      username: 'loravievip',
+      displayName: 'LoraVie VIP',
+      avatar: 'media://new-avatar-token',
+      authState: 'authenticated',
+      raw: {},
+    });
+
+    expect(layer.accounts.get('acct_1')).toMatchObject({
+      username: 'loravievip',
+      displayName: 'LoraVie VIP',
+      avatar: 'media://new-avatar-token',
+    });
+  });
+
   it('updates auth state and publishes an accounts event', () => {
     const flushed: unknown[] = [];
     layer.bus.subscribe((events) => flushed.push(...events));
