@@ -85,6 +85,19 @@ describe('settings store', () => {
     expect(vm.aiGatewayTransport).toBe('direct');
     expect(vm.hubModeOverride).toBe('auto');
     expect(vm.spendSweepRollbackToLegacy).toBe(false);
+    expect(vm.unreadReconcile).toEqual({
+      enabled: true,
+      triggerOnUnreadTabOpen: true,
+      triggerOnWindowFocus: true,
+      triggerOnAccountFocus: true,
+      focusDebounceMs: 30_000,
+      immediateMaxPages: 3,
+      focusedIntervalMs: 5 * 60_000,
+      focusedMaxPages: 2,
+      hiddenEnabled: true,
+      hiddenIntervalMs: 15 * 60_000,
+      hiddenMaxPages: 1,
+    });
     expect(vm.spendStyle).toBe('figure');
     expect(vm.uiLocale).toBe('system');
     expect(vm.uiScale).toBe(1);
@@ -106,6 +119,19 @@ describe('settings store', () => {
       aiGatewayTransport: 'hub',
       hubModeOverride: 'hub',
       spendSweepRollbackToLegacy: false,
+      unreadReconcile: {
+        enabled: true,
+        triggerOnUnreadTabOpen: false,
+        triggerOnWindowFocus: true,
+        triggerOnAccountFocus: false,
+        focusDebounceMs: 10_000,
+        immediateMaxPages: 4,
+        focusedIntervalMs: 120_000,
+        focusedMaxPages: 2,
+        hiddenEnabled: false,
+        hiddenIntervalMs: 900_000,
+        hiddenMaxPages: 1,
+      },
     });
     expect(vm.uiLocale).toBe('ru');
     expect(vm.uiScale).toBe(1.25);
@@ -115,6 +141,8 @@ describe('settings store', () => {
     expect(vm.aiGatewayTransport).toBe('hub');
     expect(vm.hubModeOverride).toBe('hub');
     expect(vm.spendSweepRollbackToLegacy).toBe(false);
+    expect(vm.unreadReconcile.immediateMaxPages).toBe(4);
+    expect(vm.unreadReconcile.triggerOnUnreadTabOpen).toBe(false);
 
     const reread = createSettingsStore({ queries, secrets });
     const again = await reread.get();
@@ -126,6 +154,7 @@ describe('settings store', () => {
     expect(again.aiGatewayTransport).toBe('hub');
     expect(again.hubModeOverride).toBe('hub');
     expect(again.spendSweepRollbackToLegacy).toBe(false);
+    expect(again.unreadReconcile.focusedIntervalMs).toBe(120_000);
 
     await expect(store.update({ uiLocale: 'de' })).rejects.toThrow();
     await expect(store.update({ uiScale: 2 })).rejects.toThrow();
@@ -136,6 +165,11 @@ describe('settings store', () => {
     await expect(store.update({ aiGatewayTransport: 'proxy' })).rejects.toThrow();
     await expect(store.update({ hubModeOverride: 'both' })).rejects.toThrow();
     await expect(store.update({ spendSweepRollbackToLegacy: 'yes' })).rejects.toThrow();
+    await expect(
+      store.update({
+        unreadReconcile: { ...vm.unreadReconcile, focusedIntervalMs: 1 },
+      }),
+    ).rejects.toThrow();
   });
 
   it('records non-secret key metadata (last4 + setAt) on save and clears it on delete', async () => {

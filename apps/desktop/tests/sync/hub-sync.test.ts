@@ -801,6 +801,7 @@ function makeFakePolling(): FakePolling {
       polling.forceRefreshCalls += 1;
       return Promise.resolve();
     },
+    reconcileUnread: () => Promise.resolve(),
     status: () => ({ freshness: {}, state: 'live' }),
     pollAccount: () => Promise.resolve(),
     setHubPollingSuspended: (suspended) => {

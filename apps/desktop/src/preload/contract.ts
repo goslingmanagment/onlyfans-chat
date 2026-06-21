@@ -266,6 +266,31 @@ export interface OutboxAuditReportVM {
   cleanSends: number;
 }
 
+export interface UnreadReconcileSettingsVM {
+  /** Master switch for body-free unread read-state reconciliation. */
+  enabled: boolean;
+  /** Run an immediate reconcile when the user opens the unread tab. */
+  triggerOnUnreadTabOpen: boolean;
+  /** Run an immediate reconcile when the app window regains focus. */
+  triggerOnWindowFocus: boolean;
+  /** Run an immediate reconcile when the selected account changes. */
+  triggerOnAccountFocus: boolean;
+  /** Debounce for immediate focus/tab/account triggers. */
+  focusDebounceMs: number;
+  /** Max `filter=unread` pages for immediate triggers. */
+  immediateMaxPages: number;
+  /** Focused-account timer interval while hub-live polling is suspended. */
+  focusedIntervalMs: number;
+  /** Max pages per focused-account timer tick. */
+  focusedMaxPages: number;
+  /** Whether a slow hidden-window timer is allowed. */
+  hiddenEnabled: boolean;
+  /** Hidden-window focused-account timer interval. */
+  hiddenIntervalMs: number;
+  /** Max pages per hidden-window timer tick. */
+  hiddenMaxPages: number;
+}
+
 export interface SettingsVM {
   hasOfapiKey: boolean;
   hasAnthropicKey: boolean;
@@ -324,6 +349,11 @@ export interface SettingsVM {
    * sweep; the accepted production default is hourly reconciliation.
    */
   spendSweepRollbackToLegacy: boolean;
+  /**
+   * Body-free unread read-state reconcile. Uses `GET /chats?filter=unread`
+   * only; it never fetches message bodies and never marks chats read upstream.
+   */
+  unreadReconcile: UnreadReconcileSettingsVM;
   /**
    * Manual OFAPI accountId → core page-label overrides (SPEC §8.5). Accounts
    * not listed here auto-match by normalized username in main.
@@ -676,6 +706,11 @@ export interface InvokeChannels {
    *  open chat's message tail. Maps to SyncProvider.readChatTailForUserOpen. */
   'cmd:conversation.refresh': { args: { accountId: string; chatId: string }; result: void };
   'cmd:sync.forceRefresh': { args: { accountId?: string }; result: void };
+  'cmd:sync.reconcileUnread': {
+    args: { accountId?: string; trigger?: 'manual' | 'unread-tab' | 'account-focus' };
+    result: void;
+  };
+  'cmd:sync.focusAccount': { args: { accountId: string | null }; result: void };
   'cmd:settings.update': { args: SettingsPatch; result: SettingsVM };
   'cmd:personalities.save': { args: Personality; result: Personality[] };
   'cmd:personalities.delete': { args: { id: string }; result: Personality[] };
@@ -897,6 +932,8 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'cmd:conversation.close': true,
   'cmd:conversation.refresh': true,
   'cmd:sync.forceRefresh': true,
+  'cmd:sync.reconcileUnread': true,
+  'cmd:sync.focusAccount': true,
   'cmd:settings.update': true,
   'cmd:personalities.save': true,
   'cmd:personalities.delete': true,

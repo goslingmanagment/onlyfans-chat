@@ -6,6 +6,13 @@ import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 
 export type SyncListener = (event: SyncEvent) => void;
 
+export type UnreadReconcileTrigger =
+  | 'manual'
+  | 'unread-tab'
+  | 'window-focus'
+  | 'account-focus'
+  | 'timer';
+
 export interface SyncStatusSnapshot {
   /** Per-account ISO timestamp of the last successful chat-list poll. */
   freshness: Record<string, string>;
@@ -40,5 +47,6 @@ export interface SyncProvider {
   setFocusedAccount(accountId: string | null): void;
   setWindowVisible(visible: boolean): void;
   forceRefresh(accountId?: string): Promise<void>;
+  reconcileUnread(accountId?: string, trigger?: UnreadReconcileTrigger): Promise<void>;
   status(): SyncStatusSnapshot;
 }

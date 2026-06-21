@@ -419,6 +419,19 @@ function buildStore(): MockStore {
     aiGatewayTransport: 'direct',
     hubModeOverride: 'auto',
     spendSweepRollbackToLegacy: true,
+    unreadReconcile: {
+      enabled: true,
+      triggerOnUnreadTabOpen: true,
+      triggerOnWindowFocus: true,
+      triggerOnAccountFocus: true,
+      focusDebounceMs: 30_000,
+      immediateMaxPages: 3,
+      focusedIntervalMs: 5 * 60_000,
+      focusedMaxPages: 2,
+      hiddenEnabled: true,
+      hiddenIntervalMs: 15 * 60_000,
+      hiddenMaxPages: 1,
+    },
     spendStyle: 'figure',
     uiLocale: 'system',
     uiScale: 1,
@@ -1243,6 +1256,19 @@ export function createMockBridge(): ChatGooseBridge {
     'cmd:sync.forceRefresh': () => {
       pollTick();
     },
+    'cmd:sync.reconcileUnread': (args) => {
+      const accountIds = args.accountId === undefined ? [...store.chats.keys()] : [args.accountId];
+      for (const accountId of accountIds) {
+        const rows = store.chats.get(accountId) ?? [];
+        for (const chat of rows) {
+          chat.unreadCount = 0;
+          chat.hasUnreadTips = false;
+        }
+        emit('db:changed', { scope: 'chats', accountId });
+        emit('sync:event', { type: 'chatListUpdated', accountId });
+      }
+    },
+    'cmd:sync.focusAccount': () => undefined,
     'cmd:settings.update': (patch) => {
       const { ofapiKey, anthropicKey, openRouterKey, hubApiKey, ...rest } = patch;
       store.settings = { ...store.settings, ...rest };

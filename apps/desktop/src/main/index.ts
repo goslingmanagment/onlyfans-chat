@@ -65,7 +65,7 @@ import {
   type AppUpdaterLike,
   type UpdateController,
 } from './platform/updater';
-import type { UpdateStatusVM } from '../preload/contract';
+import type { UnreadReconcileSettingsVM, UpdateStatusVM } from '../preload/contract';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 
@@ -406,6 +406,7 @@ async function initOfapi(
     ofapiWriteTransport: 'direct' | 'hub';
     hubModeOverride: 'auto' | 'polling' | 'hub';
     spendSweepRollbackToLegacy: boolean;
+    unreadReconcile: UnreadReconcileSettingsVM;
   } | null = initialSettings;
 
   // Hub config fingerprint: reconfigure the SSE connection only when the base
@@ -453,6 +454,7 @@ async function initOfapi(
     // polling) so OnlyFans never marks a chat read without an explicit open.
     autoReadEnabled: () => settingsCache?.autoReadChats ?? false,
     spendSweepRollbackToLegacy: () => settingsCache?.spendSweepRollbackToLegacy ?? false,
+    unreadReconcileSettings: () => settingsCache?.unreadReconcile,
   });
 
   const lastEventIdSchema = z.number().int().nonnegative();

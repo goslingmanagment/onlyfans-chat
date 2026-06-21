@@ -70,6 +70,44 @@ function OptionRow({
   );
 }
 
+function NumberRow({
+  label,
+  hint,
+  value,
+  min,
+  max,
+  step,
+  suffix,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  suffix?: string;
+  onChange: (next: number) => void;
+}): React.JSX.Element {
+  return (
+    <OptionRow label={label} hint={hint}>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => {
+          const next = Number(event.currentTarget.value);
+          if (Number.isFinite(next)) onChange(next);
+        }}
+        className="num h-[30px] w-[74px] rounded border border-line bg-bg1 px-2 text-right text-[12px] text-ink outline-none focus:border-clay-line"
+      />
+      {suffix !== undefined && <span className="text-[11px] text-ink-low">{suffix}</span>}
+    </OptionRow>
+  );
+}
+
 export function BehaviorSettings({
   settings,
   patch,
@@ -78,6 +116,9 @@ export function BehaviorSettings({
   patch: PatchFn;
 }): React.JSX.Element {
   const t = useT();
+  const patchUnread = (next: Partial<SettingsVM['unreadReconcile']>): void => {
+    patch({ unreadReconcile: { ...settings.unreadReconcile, ...next } });
+  };
 
   const localeOptionLabel = (option: UiLocaleSetting): string => {
     if (option === 'system') return t('behavior.language.system');
@@ -185,6 +226,99 @@ export function BehaviorSettings({
           on={settings.debugMode}
           onChange={(v) => patch({ debugMode: v })}
         />
+        <div className="border-t border-line pt-2">
+          <Toggle
+            label={t('behavior.unreadReconcile')}
+            hint={t('behavior.unreadReconcileHint')}
+            on={settings.unreadReconcile.enabled}
+            onChange={(v) => patchUnread({ enabled: v })}
+          />
+          <div className="grid grid-cols-2 gap-x-8">
+            <Toggle
+              label={t('behavior.unreadReconcileUnreadTab')}
+              hint={t('behavior.unreadReconcileUnreadTabHint')}
+              on={settings.unreadReconcile.triggerOnUnreadTabOpen}
+              onChange={(v) => patchUnread({ triggerOnUnreadTabOpen: v })}
+            />
+            <Toggle
+              label={t('behavior.unreadReconcileWindowFocus')}
+              hint={t('behavior.unreadReconcileWindowFocusHint')}
+              on={settings.unreadReconcile.triggerOnWindowFocus}
+              onChange={(v) => patchUnread({ triggerOnWindowFocus: v })}
+            />
+            <Toggle
+              label={t('behavior.unreadReconcileAccountFocus')}
+              hint={t('behavior.unreadReconcileAccountFocusHint')}
+              on={settings.unreadReconcile.triggerOnAccountFocus}
+              onChange={(v) => patchUnread({ triggerOnAccountFocus: v })}
+            />
+            <Toggle
+              label={t('behavior.unreadReconcileHidden')}
+              hint={t('behavior.unreadReconcileHiddenHint')}
+              on={settings.unreadReconcile.hiddenEnabled}
+              onChange={(v) => patchUnread({ hiddenEnabled: v })}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-x-8">
+            <NumberRow
+              label={t('behavior.unreadReconcileDebounce')}
+              hint={t('behavior.unreadReconcileDebounceHint')}
+              value={Math.round(settings.unreadReconcile.focusDebounceMs / 1000)}
+              min={0}
+              max={600}
+              step={5}
+              suffix={t('behavior.seconds')}
+              onChange={(v) => patchUnread({ focusDebounceMs: Math.round(v * 1000) })}
+            />
+            <NumberRow
+              label={t('behavior.unreadReconcileImmediatePages')}
+              hint={t('behavior.unreadReconcileImmediatePagesHint')}
+              value={settings.unreadReconcile.immediateMaxPages}
+              min={1}
+              max={50}
+              step={1}
+              onChange={(v) => patchUnread({ immediateMaxPages: Math.round(v) })}
+            />
+            <NumberRow
+              label={t('behavior.unreadReconcileFocusedInterval')}
+              hint={t('behavior.unreadReconcileFocusedIntervalHint')}
+              value={Math.round(settings.unreadReconcile.focusedIntervalMs / 1000)}
+              min={30}
+              max={3600}
+              step={30}
+              suffix={t('behavior.seconds')}
+              onChange={(v) => patchUnread({ focusedIntervalMs: Math.round(v * 1000) })}
+            />
+            <NumberRow
+              label={t('behavior.unreadReconcileFocusedPages')}
+              hint={t('behavior.unreadReconcileFocusedPagesHint')}
+              value={settings.unreadReconcile.focusedMaxPages}
+              min={1}
+              max={50}
+              step={1}
+              onChange={(v) => patchUnread({ focusedMaxPages: Math.round(v) })}
+            />
+            <NumberRow
+              label={t('behavior.unreadReconcileHiddenInterval')}
+              hint={t('behavior.unreadReconcileHiddenIntervalHint')}
+              value={Math.round(settings.unreadReconcile.hiddenIntervalMs / 1000)}
+              min={60}
+              max={21_600}
+              step={60}
+              suffix={t('behavior.seconds')}
+              onChange={(v) => patchUnread({ hiddenIntervalMs: Math.round(v * 1000) })}
+            />
+            <NumberRow
+              label={t('behavior.unreadReconcileHiddenPages')}
+              hint={t('behavior.unreadReconcileHiddenPagesHint')}
+              value={settings.unreadReconcile.hiddenMaxPages}
+              min={1}
+              max={50}
+              step={1}
+              onChange={(v) => patchUnread({ hiddenMaxPages: Math.round(v) })}
+            />
+          </div>
+        </div>
         {(settings.debugMode
           || settings.hubModeOverride !== 'auto'
           || settings.spendSweepRollbackToLegacy) && (

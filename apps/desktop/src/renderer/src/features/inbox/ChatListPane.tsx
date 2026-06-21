@@ -1,11 +1,11 @@
 // Chat list (~340px): one quiet filter row, virtualized 64px rows, footer
 // hints. No list title, no search box — search lives in ⌘K (DESIGN §1).
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { UiMessageKey } from '@chatgoose/shared/i18n/index';
 import type { ChatFilter } from '../../../../preload/contract';
-import { useChats, useSettings } from '../../bridge/queries';
+import { useChats, useReconcileUnread, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { chatFilterCounts } from '../../lib/filters';
 import { useT } from '../../lib/i18n';
@@ -33,7 +33,9 @@ export function ChatListPane(): React.JSX.Element {
   const chats = useChats(accountId, chatFilter);
   const allChats = useChats(accountId, 'all'); // counts for the filter chips
   const counts = chatFilterCounts(allChats.data?.items ?? []);
-  const spendStyle = useSettings().data?.spendStyle ?? 'figure';
+  const settings = useSettings();
+  const spendStyle = settings.data?.spendStyle ?? 'figure';
+  const { mutate: reconcileUnread } = useReconcileUnread();
 
   const items = chats.data?.items ?? [];
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -52,6 +54,26 @@ export function ChatListPane(): React.JSX.Element {
     },
     [accountId, selectChat],
   );
+
+  useEffect(() => {
+    const unreadReconcile = settings.data?.unreadReconcile;
+    if (
+      accountId === null ||
+      chatFilter !== 'unread' ||
+      unreadReconcile?.enabled !== true ||
+      unreadReconcile.triggerOnUnreadTabOpen !== true ||
+      counts.unread === 0
+    ) {
+      return;
+    }
+    reconcileUnread({ accountId, trigger: 'unread-tab' });
+  }, [
+    accountId,
+    chatFilter,
+    counts.unread,
+    reconcileUnread,
+    settings.data?.unreadReconcile,
+  ]);
 
   return (
     <section className="flex min-h-0 w-[340px] flex-none flex-col border-r border-line bg-bg1">

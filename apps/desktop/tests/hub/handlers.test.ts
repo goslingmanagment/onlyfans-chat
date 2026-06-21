@@ -47,6 +47,7 @@ function makeSyncStub(hubState: HubSyncStatus | null): IpcDeps['sync'] {
     setFocusedAccount: () => undefined,
     setWindowVisible: () => undefined,
     forceRefresh: async () => undefined,
+    reconcileUnread: async () => undefined,
     status: () => ({ freshness: {}, state: 'live' as const }),
   };
   return {

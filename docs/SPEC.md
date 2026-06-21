@@ -1,6 +1,6 @@
 # ChatGoose Desktop — Technical Specification
 
-Status: Updated 2026-06-20 — webhook/SSE, snapshot recovery, Hub read custody, live Hub text/typing/unsend/mark-read/media-send command custody, hourly spend reconcile, and durable telemetry are production defaults or rollout paths with rollback controls. Core AI gateway is proxy-routed and production-enabled; Desktop Direct AI remains the current rollback/default until desktop rollout is accepted.
+Status: Updated 2026-06-21 — webhook/SSE, snapshot recovery, Hub read custody, live Hub text/typing/unsend/mark-read/media-send command custody, configurable unread read-state reconcile, hourly spend reconcile, and durable telemetry are production defaults or rollout paths with rollback controls. Core AI gateway is proxy-routed and production-enabled; Desktop Direct AI remains the current rollback/default until desktop rollout is accepted.
 
 ## 1. Architecture overview
 
@@ -112,6 +112,7 @@ interface SyncProvider {
                              // accountAuthChanged | readStateChanged
   refreshChat(account: AccountId, chatId: ChatId, purpose?: OfApiPurpose): Promise<void> // automatic/background tail fetch, gated by auto-read
   readChatTailForUserOpen(account: AccountId, chatId: ChatId, purpose?: OfApiPurpose): Promise<void> // deliberate single-chat user read, no openConversation side effects
+  reconcileUnread(account?: AccountId, trigger?: UnreadReconcileTrigger): Promise<void> // list-only filter=unread read-state reconcile
 }
 ```
 
@@ -128,6 +129,7 @@ interface SyncProvider {
 - For ordinary transport degradation or auth failure, the app resumes polling and runs a reconciliation `forceRefresh` (the same 5-page deep sweep as manual refresh), then pauses periodic list polling again once hub returns live. While hub is live and account hydration is complete, periodic chat-list polling is fully paused; read-state/media/spenders/user-open paths remain explicit REST paths.
 - `messages.received` / `messages.sent` frames may carry an optional normalized message body. Complete matching bodies are ingested into SQLite without `GET /messages`; id-only, mismatched, malformed, `ppvUnlocked`, and `tipReceived` notification-shaped frames keep the safe fallback path. With `autoReadChats=false`, that fallback is list-only and never performs a background message-body read.
 - Event checkpoints advance only after a frame parses, belongs to a locally handled account, and applies successfully. Snapshot apply preserves existing local tombstones, applies unresolved delete tombstones by `(accountId,messageId)` lookup, and re-applies authoritative chat heads after idempotent message ingest.
+- **Unread read-state reconcile (desktop fallback, 2026-06-21):** hub/webhook mode still has no upstream event when a chat is read externally in OF/OnlyMonster. Desktop therefore owns a small body-free reconcile path using only `GET /{account}/chats?filter=unread&order=recent` under ledger purpose `unread-reconcile`. It runs only when local unread exists, on configurable immediate triggers (Unread tab, window focus, account focus) plus a focused-account timer while hub-live polling is suspended; all toggles, intervals, debounces, and page caps live in Settings → Behavior. Returned rows are upserted normally. Missing local unread rows are cleared only when the capped scan is exhaustive, and only if the chat's `last_message_id` did not move during the scan; partial scans never clear the missing tail. This path never calls `GET /messages`, never calls mark-read, and is independent from `autoReadChats`.
 - Read-state remains polling of the open conversation (no upstream webhook exists), under the **same conditional sweep policy as §6.1** — left unconditional it would dominate hub-mode credit burn and erase most of the webhook savings.
 - Command custody is not implied by hub reads. Desktop has a strict shared client for core command create/read/cancel responses, including explicit `indeterminate` status and no-payload response parsing. The local send engine owns the visible outbox and recovery UX while routing supported write kinds through core when Hub write transport is selected. Fresh profiles default both read and write transport to Hub with the production Hub URL already set; normal Hub mode does not require a local OFAPI key for read, text, typing, unsend, mark-read, or media/PPV sends. Direct remains an explicit rollback path. Unsupported local file-byte upload is intentionally absent and fail-closed.
 

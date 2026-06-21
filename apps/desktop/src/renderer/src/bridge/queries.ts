@@ -481,6 +481,13 @@ export function useForceRefresh() {
   });
 }
 
+export function useReconcileUnread() {
+  return useMutation({
+    mutationFn: (vars: { accountId?: string; trigger?: 'manual' | 'unread-tab' | 'account-focus' }) =>
+      getBridge().invoke('cmd:sync.reconcileUnread', vars),
+  });
+}
+
 /** Manual in-chat ↻: pull this one chat's message tail now. New rows arrive via
  *  the db:changed → qk.messages invalidation path, so no manual cache poke. */
 export function useRefreshConversation() {

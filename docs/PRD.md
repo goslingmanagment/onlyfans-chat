@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Updated 2026-06-20 — implementation code-complete through P5; webhook/SSE, read custody, supported command custody, keyless Hub defaults, and core AI gateway foundation are documented in [PLAN](PLAN.md) |
+| Status | Updated 2026-06-21 — implementation code-complete through P5; webhook/SSE, read custody, supported command custody, keyless Hub defaults, configurable unread reconcile, and core AI gateway foundation are documented in [PLAN](PLAN.md) |
 | Product | Standalone desktop chat client for OnlyFans agency chatters, with built-in AI assistance |
 | Predecessor | ChatGoose Firefox extension for Fansly (`/Users/dmitriy/code/chatgoose`, analyzed in [research/legacy-chatgoose.md](research/legacy-chatgoose.md)) |
 | Platform API | onlyfansapi.com (OFAPI) — third-party hosted OnlyFans REST gateway (analyzed in [research/onlyfansapi.md](research/onlyfansapi.md)) |
@@ -124,13 +124,13 @@ Model support: per-feature model selection + reasoning effort (off/low/medium/hi
 
 ### F8. Real-time via Agency Hub (core) [parallel core track, target P3; AI gateway P6]
 - Core has an OFAPI webhook receiver (`messages.received/sent/deleted`, `messages.ppv.unlocked`, `tips.received`, `transactions.new` (lags ≤3 min), `subscriptions.*`, `users.typing/online/offline`, `accounts.*`): HMAC verify, idempotency-header dedupe, journal, fan-out to desktop clients over **SSE** (core decision #25: REST + SSE, no websockets). `messages.deleted` is load-bearing for SPEC §6.3 tombstones.
-- Desktop uses push-first sync when hub is live (polling stays as degraded fallback); read-state (`isNew`) still polled on-demand for the open conversation.
+- Desktop uses push-first sync when hub is live (polling stays as degraded fallback); read-state (`isNew`) still polled on-demand for the open conversation. External OF/OnlyMonster reads that clear unread badges have no webhook, so desktop also runs a configurable, body-free unread reconcile using only the chat-list unread filter (no message bodies, no mark-read).
 - Desktop authenticates to core with the existing per-chatter API keys (page-scoped, revocable — the central kill-switch already works today).
 - Central storage is live from P4 (fan summaries, AI usage). Core's P6 AI gateway foundation is production-enabled with provider egress routed through page/account proxies, quota reservation, usage/cost ledger fields, stale-reservation recovery, and owner reporting. Desktop has HubGateway wiring, but desktop AI still defaults to Direct until the separate rollout is accepted.
 - OFAPI key custody (desktop holds no OFAPI key, OF calls proxied via core) is now the default normal-operation path for supported reads and writes. A local OFAPI key remains an optional, named, revocable Direct rollback only (SPEC §5).
 
 ### F9. Settings [P1–P2, grows with features]
-Ported legacy schema where applicable: provider API keys; per-feature model + reasoning; message-count knobs (quick 100 / improve 25 / deep 1500, same ranges); personalities CRUD; account→personality mappings; debug mode (+ pipeline profiling view); prompt-caching toggle; sound/notification prefs; mark-as-read policy; interface language + UI scale; **color theme (`system` / `light` / `dark`, default `light`; owner 2026-06-13);** Agency Hub (core) URL + chatter API key (from P4).
+Ported legacy schema where applicable: provider API keys; per-feature model + reasoning; message-count knobs (quick 100 / improve 25 / deep 1500, same ranges); personalities CRUD; account→personality mappings; debug mode (+ pipeline profiling view); prompt-caching toggle; sound/notification prefs; mark-as-read policy; configurable unread reconcile triggers/intervals/page caps; interface language + UI scale; **color theme (`system` / `light` / `dark`, default `light`; owner 2026-06-13);** Agency Hub (core) URL + chatter API key (from P4).
 
 ### F10. Operational UX (cross-cutting)
 - **Status bar:** OFAPI credit balance + credits used today (from `_meta._credits` / `x-ofapi-credits-*` headers where present — the envelope isn't universal), per-op LLM cost after each AI action (legacy spend summary), sync freshness ("updated 12 s ago"), connection state.

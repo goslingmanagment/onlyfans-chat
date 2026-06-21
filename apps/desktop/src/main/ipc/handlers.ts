@@ -84,6 +84,11 @@ const messagesPageSchema = z.object({
 const fanGetSchema = z.object({ accountId: idSchema, fanId: idSchema });
 const convSchema = z.object({ accountId: idSchema, chatId: idSchema });
 const forceRefreshSchema = z.object({ accountId: idSchema.optional() });
+const reconcileUnreadSchema = z.object({
+  accountId: idSchema.optional(),
+  trigger: z.enum(['manual', 'unread-tab', 'account-focus']).optional(),
+});
+const focusAccountSchema = z.object({ accountId: idSchema.nullable() });
 const mappingSchema = z.object({ accountId: idSchema, personalityId: z.string().nullable() });
 const personalitySchema = z.object({
   id: z.string().min(1),
@@ -488,6 +493,16 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('cmd:sync.forceRefresh', async (_event, rawArgs: unknown) => {
     const args = forceRefreshSchema.parse(rawArgs ?? {});
     await deps.sync?.forceRefresh(args.accountId);
+  });
+
+  ipcMain.handle('cmd:sync.reconcileUnread', async (_event, rawArgs: unknown) => {
+    const args = reconcileUnreadSchema.parse(rawArgs ?? {});
+    await deps.sync?.reconcileUnread(args.accountId, args.trigger ?? 'manual');
+  });
+
+  ipcMain.handle('cmd:sync.focusAccount', (_event, rawArgs: unknown) => {
+    const args = focusAccountSchema.parse(rawArgs);
+    deps.sync?.setFocusedAccount(args.accountId);
   });
 
   ipcMain.handle('cmd:settings.update', async (_event, rawPatch: unknown) => {

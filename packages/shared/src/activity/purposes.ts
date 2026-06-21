@@ -5,6 +5,7 @@
 export const OFAPI_PURPOSES = [
   'hot-poll',
   'deep-sweep',
+  'unread-reconcile',
   'hydration',
   'message-tail',
   'chat-refresh',
@@ -29,6 +30,7 @@ export const UNTAGGED_PURPOSE = 'untagged';
 export const OFAPI_PURPOSE_LABELS: Readonly<Record<string, string>> = {
   'hot-poll': 'Hot polls (new-message detector)',
   'deep-sweep': 'Deep sweeps (older chats)',
+  'unread-reconcile': 'Unread read-state reconcile',
   'hydration': 'Hydration (chat-list backfill, fan details)',
   'message-tail': 'Message fetches (changed chats)',
   'chat-refresh': 'Manual chat refresh',

@@ -267,6 +267,95 @@ export const UI_MESSAGES = {
     en: 'Support rollback for D6: keep the desktop fan-spend sweep at 10 minutes.',
     ru: 'Rollback для D6: держит desktop sweep спенда на старых 10 минутах.',
   },
+  'behavior.unreadReconcile': {
+    en: 'Unread reconcile',
+    ru: 'Сверка непрочитанных',
+  },
+  'behavior.unreadReconcileHint': {
+    en: 'List-only read-state check for externally read OF chats. No message bodies, no mark-read.',
+    ru: 'List-only проверка чатов, прочитанных вне приложения. Без загрузки сообщений и без mark-read.',
+  },
+  'behavior.unreadReconcileUnreadTab': {
+    en: 'On unread tab',
+    ru: 'При вкладке unread',
+  },
+  'behavior.unreadReconcileUnreadTabHint': {
+    en: 'Run when the Unread filter opens and local unread exists',
+    ru: 'Запускать при открытии фильтра «Непрочитанные», если локально есть unread',
+  },
+  'behavior.unreadReconcileWindowFocus': {
+    en: 'On window focus',
+    ru: 'При фокусе окна',
+  },
+  'behavior.unreadReconcileWindowFocusHint': {
+    en: 'Debounced app focus check',
+    ru: 'Сверка при возврате в окно, с debounce',
+  },
+  'behavior.unreadReconcileAccountFocus': {
+    en: 'On account focus',
+    ru: 'При выборе аккаунта',
+  },
+  'behavior.unreadReconcileAccountFocusHint': {
+    en: 'Run when the selected account changes',
+    ru: 'Запускать при смене выбранного аккаунта',
+  },
+  'behavior.unreadReconcileHidden': {
+    en: 'Hidden timer',
+    ru: 'Таймер в фоне',
+  },
+  'behavior.unreadReconcileHiddenHint': {
+    en: 'Slow reconcile while the app window is hidden',
+    ru: 'Редкая сверка, когда окно скрыто',
+  },
+  'behavior.unreadReconcileDebounce': {
+    en: 'Focus debounce',
+    ru: 'Debounce фокуса',
+  },
+  'behavior.unreadReconcileDebounceHint': {
+    en: 'Minimum gap between immediate triggers',
+    ru: 'Минимальная пауза между быстрыми триггерами',
+  },
+  'behavior.unreadReconcileImmediatePages': {
+    en: 'Immediate max pages',
+    ru: 'Страниц сразу',
+  },
+  'behavior.unreadReconcileImmediatePagesHint': {
+    en: 'Page cap for tab/focus/account triggers',
+    ru: 'Лимит страниц для вкладки, окна и аккаунта',
+  },
+  'behavior.unreadReconcileFocusedInterval': {
+    en: 'Focused interval',
+    ru: 'Интервал в фокусе',
+  },
+  'behavior.unreadReconcileFocusedIntervalHint': {
+    en: 'Timer runs only for the focused account while hub-live polling is suspended',
+    ru: 'Таймер работает только для focused аккаунта, когда hub-live остановил обычный polling',
+  },
+  'behavior.unreadReconcileFocusedPages': {
+    en: 'Focused max pages',
+    ru: 'Страниц в фокусе',
+  },
+  'behavior.unreadReconcileFocusedPagesHint': {
+    en: 'Page cap for each focused timer tick',
+    ru: 'Лимит страниц на тик focused таймера',
+  },
+  'behavior.unreadReconcileHiddenInterval': {
+    en: 'Hidden interval',
+    ru: 'Интервал в фоне',
+  },
+  'behavior.unreadReconcileHiddenIntervalHint': {
+    en: 'Hidden-window timer cadence',
+    ru: 'Частота таймера при скрытом окне',
+  },
+  'behavior.unreadReconcileHiddenPages': {
+    en: 'Hidden max pages',
+    ru: 'Страниц в фоне',
+  },
+  'behavior.unreadReconcileHiddenPagesHint': {
+    en: 'Page cap for each hidden timer tick',
+    ru: 'Лимит страниц на тик фонового таймера',
+  },
+  'behavior.seconds': { en: 'sec', ru: 'сек' },
   'behavior.advanced': { en: 'Advanced', ru: 'Дополнительно' },
   'behavior.language': { en: 'Language', ru: 'Язык' },
   'behavior.languageHint': { en: 'Interface language', ru: 'Язык интерфейса' },
@@ -487,6 +576,10 @@ export const UI_MESSAGES = {
   // OFAPI purpose labels (credits ledger rows).
   'purpose.hot-poll': { en: 'Hot polls (new-message detector)', ru: 'Горячие опросы (детектор новых сообщений)' },
   'purpose.deep-sweep': { en: 'Deep sweeps (older chats)', ru: 'Глубокие проходы (старые чаты)' },
+  'purpose.unread-reconcile': {
+    en: 'Unread read-state reconcile',
+    ru: 'Сверка read-state непрочитанных',
+  },
   'purpose.hydration': {
     en: 'Hydration (chat-list backfill, fan details)',
     ru: 'Догрузка (список чатов, анкеты фанов)',

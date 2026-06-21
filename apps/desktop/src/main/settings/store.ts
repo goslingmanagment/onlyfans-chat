@@ -83,6 +83,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'aiGatewayTransport',
   'hubModeOverride',
   'spendSweepRollbackToLegacy',
+  'unreadReconcile',
   'accountPageLabels',
   'spendStyle',
   'spendersListMappings',
@@ -90,6 +91,20 @@ export const PERSISTED_SETTINGS_KEYS = [
   'uiScale',
   'uiTheme',
 ] as const satisfies readonly (keyof PersistedSettings)[];
+
+const unreadReconcileSettingsSchema = z.strictObject({
+  enabled: z.boolean(),
+  triggerOnUnreadTabOpen: z.boolean(),
+  triggerOnWindowFocus: z.boolean(),
+  triggerOnAccountFocus: z.boolean(),
+  focusDebounceMs: z.number().int().min(0).max(10 * 60_000),
+  immediateMaxPages: z.number().int().min(1).max(50),
+  focusedIntervalMs: z.number().int().min(30_000).max(60 * 60_000),
+  focusedMaxPages: z.number().int().min(1).max(50),
+  hiddenEnabled: z.boolean(),
+  hiddenIntervalMs: z.number().int().min(60_000).max(6 * 60 * 60_000),
+  hiddenMaxPages: z.number().int().min(1).max(50),
+});
 
 const persistedFieldSchemas = {
   featureModels: z.record(z.enum(MODEL_SELECTABLE_FEATURES), z.string().min(1)),
@@ -125,6 +140,7 @@ const persistedFieldSchemas = {
   hubModeOverride: z.enum(HUB_MODE_OVERRIDE_SETTINGS),
   // D6 rollback guard: true forces the old 10-minute fan-spend sweep.
   spendSweepRollbackToLegacy: z.boolean(),
+  unreadReconcile: unreadReconcileSettingsSchema,
   // Manual OFAPI accountId → core page-label overrides (SPEC §8.5).
   accountPageLabels: z.record(z.string(), z.string()),
   // Chat-list lifetime-spend style (DESIGN §1): bare figure (default) or chip.
@@ -174,6 +190,19 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   aiGatewayTransport: 'direct',
   hubModeOverride: 'auto',
   spendSweepRollbackToLegacy: false,
+  unreadReconcile: {
+    enabled: true,
+    triggerOnUnreadTabOpen: true,
+    triggerOnWindowFocus: true,
+    triggerOnAccountFocus: true,
+    focusDebounceMs: 30_000,
+    immediateMaxPages: 3,
+    focusedIntervalMs: 5 * 60_000,
+    focusedMaxPages: 2,
+    hiddenEnabled: true,
+    hiddenIntervalMs: 15 * 60_000,
+    hiddenMaxPages: 1,
+  },
   accountPageLabels: {},
   spendStyle: 'figure',
   spendersListMappings: {},
@@ -208,6 +237,7 @@ export const settingsPatchSchema = z.strictObject({
   aiGatewayTransport: persistedFieldSchemas.aiGatewayTransport.optional(),
   hubModeOverride: persistedFieldSchemas.hubModeOverride.optional(),
   spendSweepRollbackToLegacy: persistedFieldSchemas.spendSweepRollbackToLegacy.optional(),
+  unreadReconcile: persistedFieldSchemas.unreadReconcile.optional(),
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
   spendStyle: persistedFieldSchemas.spendStyle.optional(),
   spendersListMappings: persistedFieldSchemas.spendersListMappings.optional(),
@@ -323,6 +353,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       aiGatewayTransport: readField('aiGatewayTransport'),
       hubModeOverride: readField('hubModeOverride'),
       spendSweepRollbackToLegacy: readField('spendSweepRollbackToLegacy'),
+      unreadReconcile: readField('unreadReconcile'),
       accountPageLabels: readField('accountPageLabels'),
       spendStyle: readField('spendStyle'),
       spendersListMappings: readField('spendersListMappings'),

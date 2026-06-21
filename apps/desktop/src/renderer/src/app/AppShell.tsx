@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useAccounts, useSettings } from '../bridge/queries';
+import { getBridge } from '../bridge/bridge';
 import { useUiStore } from '../state/uiStore';
 import { useSettingsCache } from '../state/settingsCache';
 import { applyThemeSetting } from '../lib/theme';
@@ -39,6 +40,10 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => {
     if (settings.data !== undefined) setFromSettings(settings.data);
   }, [settings.data, setFromSettings]);
+
+  useEffect(() => {
+    void getBridge().invoke('cmd:sync.focusAccount', { accountId: selectedAccountId });
+  }, [selectedAccountId]);
 
   // Apply the color theme; resolves 'system' against the OS scheme and tracks
   // OS flips. Drives the `dark` class on <html> — every color flips via CSS

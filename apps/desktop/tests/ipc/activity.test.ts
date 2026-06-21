@@ -51,6 +51,7 @@ function fakeSync(overrides: Partial<ActivitySync> = {}): ActivitySync {
     setFocusedAccount: () => undefined,
     setWindowVisible: () => undefined,
     forceRefresh: () => Promise.resolve(),
+    reconcileUnread: () => Promise.resolve(),
     status: () => ({
       freshness: { acct_free: '2026-06-11T19:59:52.000Z' },
       state: 'live',

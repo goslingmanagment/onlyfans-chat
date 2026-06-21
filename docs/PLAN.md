@@ -1,6 +1,6 @@
 # ChatGoose Desktop — Implementation Plan
 
-Status: Updated 2026-06-20 — **desktop webhook/SSE, read custody, live text/typing/unsend/mark-read command custody, snapshot recovery, and hourly spend reconciliation are production defaults/rolling out with explicit rollback controls.** Core AI gateway is proxy-routed and production-enabled; Desktop Direct AI remains default until rollout acceptance. Phases gate on the acceptance criteria in [PRD.md](PRD.md) §12.
+Status: Updated 2026-06-21 — **desktop webhook/SSE, read custody, live text/typing/unsend/mark-read command custody, snapshot recovery, configurable unread reconcile, and hourly spend reconciliation are production defaults/rolling out with explicit rollback controls.** Core AI gateway is proxy-routed and production-enabled; Desktop Direct AI remains default until rollout acceptance. Phases gate on the acceptance criteria in [PRD.md](PRD.md) §12.
 
 ## Where the project stands (baseline 2026-06-11; custody updates 2026-06-20)
 
@@ -15,7 +15,7 @@ Status: Updated 2026-06-20 — **desktop webhook/SSE, read custody, live text/ty
 | **P5** vault / PPV | ✅ built; purchased-state flip fixture-tested | one live PPV round-trip on the test fan |
 
 **Owner checklist to close the gates:** see item 8 below (consolidated steps, in order).
-**Open tracks (not blocking the completed custody gates):** fresh/default desktop profiles now start Hub-first: production Hub URL prefilled, Hub read/write selected, and normal operation works without a local OFAPI key for reads, text, typing, unsend, mark-read, and media/PPV sends once a chatter key is present. Direct remains the explicit rollback path in Settings. Local upload-from-disk is removed from the app surface as an unsafe file-byte custody path, not carried as pending scale work. Core AI gateway is proxy-routed and production-enabled, but Desktop Direct AI remains the rollback/current path until desktop rollout is accepted. Off-server backup storage/restore drills also require infrastructure outside these repos.
+**Open tracks (not blocking the completed custody gates):** fresh/default desktop profiles now start Hub-first: production Hub URL prefilled, Hub read/write selected, and normal operation works without a local OFAPI key for reads, text, typing, unsend, mark-read, and media/PPV sends once a chatter key is present. Direct remains the explicit rollback path in Settings. Local upload-from-disk is removed from the app surface as an unsafe file-byte custody path, not carried as pending scale work. Core AI gateway is proxy-routed and production-enabled, but Desktop Direct AI remains the rollback/current path until desktop rollout is accepted. Off-server backup storage/restore drills also require infrastructure outside these repos. Desktop follow-up shipped 2026-06-21: hub-live unread badge drift is covered by a configurable, list-only `filter=unread&order=recent` reconcile path (`unread-reconcile` ledger purpose), with trigger/interval/page-cap controls in Settings → Behavior.
 
 ## Phase 0 — Validation spikes & bootstrap (~week 0–1)
 

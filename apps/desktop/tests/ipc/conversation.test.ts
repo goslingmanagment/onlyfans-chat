@@ -44,6 +44,7 @@ function makeSyncStub(): ActivitySync {
     setFocusedAccount: vi.fn(),
     setWindowVisible: vi.fn(),
     forceRefresh: vi.fn(async () => undefined),
+    reconcileUnread: vi.fn(async () => undefined),
     status: vi.fn(() => ({ freshness: {}, state: 'live' as const })),
   };
 }

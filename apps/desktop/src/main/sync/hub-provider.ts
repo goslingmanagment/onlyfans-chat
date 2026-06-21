@@ -796,6 +796,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     setFocusedAccount: (accountId) => polling.setFocusedAccount(accountId),
     setWindowVisible: (visible) => polling.setWindowVisible(visible),
     forceRefresh: (accountId) => polling.forceRefresh(accountId),
+    reconcileUnread: (accountId, trigger) => polling.reconcileUnread(accountId, trigger),
     status: (): SyncStatusSnapshot => polling.status(),
     pollAccount: (accountId) => polling.pollAccount(accountId),
     async reconfigureHub() {

@@ -10,8 +10,8 @@
 import { z } from 'zod';
 import { OFAPI_INTER_PAGE_DELAY_MS, type OfApiPurpose } from '@chatgoose/shared';
 import type { NormalizedSyncMessage, SyncEvent } from '@chatgoose/shared/protocol/index';
-import type { OfApiClient } from '../ofapi/client';
-import type { ChatRow, DataLayer, FanTransactionUpsert, MessageUpsert } from '../db/index';
+import type { ChatListFilter, OfApiClient } from '../ofapi/client';
+import type { ChatRow, ChatUpsert, DataLayer, FanTransactionUpsert, MessageUpsert } from '../db/index';
 import type { OfApiChat, OfApiTransaction } from '../ofapi/schemas';
 import { paginateMarker } from '../ofapi/pagination';
 import type { SleepFn } from '../ofapi/rate-limiter';
@@ -24,7 +24,12 @@ import {
   mapMessage,
   type ToMediaUrl,
 } from './mappers';
-import type { SyncListener, SyncProvider, SyncStatusSnapshot } from './provider';
+import type {
+  SyncListener,
+  SyncProvider,
+  SyncStatusSnapshot,
+  UnreadReconcileTrigger,
+} from './provider';
 
 const FOCUSED_POLL_MS = 20_000;
 const UNFOCUSED_POLL_MS = 60_000;
@@ -72,6 +77,34 @@ const SPEND_SWEEP_OVERLAP_MS = 60 * 60_000;
 /** Retention horizon: window (30d) + 1d slack; the cutoff is read-time. */
 const SPEND_RETENTION_MS = 31 * 24 * 60 * 60_000;
 
+export interface UnreadReconcileSettings {
+  enabled: boolean;
+  triggerOnUnreadTabOpen: boolean;
+  triggerOnWindowFocus: boolean;
+  triggerOnAccountFocus: boolean;
+  focusDebounceMs: number;
+  immediateMaxPages: number;
+  focusedIntervalMs: number;
+  focusedMaxPages: number;
+  hiddenEnabled: boolean;
+  hiddenIntervalMs: number;
+  hiddenMaxPages: number;
+}
+
+export const DEFAULT_UNREAD_RECONCILE_SETTINGS: UnreadReconcileSettings = {
+  enabled: true,
+  triggerOnUnreadTabOpen: true,
+  triggerOnWindowFocus: true,
+  triggerOnAccountFocus: true,
+  focusDebounceMs: 30_000,
+  immediateMaxPages: 3,
+  focusedIntervalMs: 5 * 60_000,
+  focusedMaxPages: 2,
+  hiddenEnabled: true,
+  hiddenIntervalMs: 15 * 60_000,
+  hiddenMaxPages: 1,
+};
+
 export interface PollingSyncOptions {
   client: OfApiClient;
   data: DataLayer;
@@ -92,6 +125,8 @@ export interface PollingSyncOptions {
    * The future reduced-cadence branch must be gated behind false.
    */
   spendSweepRollbackToLegacy?: () => boolean;
+  /** Body-free list-only read-state reconcile for hub-live unread drift. */
+  unreadReconcileSettings?: () => Partial<UnreadReconcileSettings> | undefined;
   now?: () => number;
   /** Inter-page pacing during multi-page chat walks (injectable for tests). */
   sleep?: SleepFn;
@@ -102,11 +137,14 @@ type PollDepth = 'hot' | 'deep';
 interface AccountLoop {
   timer: ReturnType<typeof setTimeout> | null;
   spendTimer: ReturnType<typeof setTimeout> | null;
+  unreadReconcileTimer: ReturnType<typeof setTimeout> | null;
   inFlight: boolean;
   spendInFlight: boolean;
+  unreadReconcileInFlight: boolean;
   lastSuccessAt: number | null;
   lastDeepSweepAt: number | null;
   lastSpendSweepAt: number | null;
+  lastUnreadReconcileAt: number | null;
   consecutiveFailures: number;
 }
 
@@ -144,6 +182,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     chatId: string,
     message: NormalizedSyncMessage,
   ): Promise<boolean>;
+  /** Body-free `filter=unread` read-state reconcile (no message bodies, no mark-read). */
+  reconcileUnread(accountId?: string, trigger?: UnreadReconcileTrigger): Promise<void>;
 } {
   const { client, data, toMediaUrl } = options;
   const now = options.now ?? Date.now;
@@ -151,6 +191,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   const autoReadEnabled = options.autoReadEnabled ?? ((): boolean => false);
   const spendSweepRollbackToLegacy =
     options.spendSweepRollbackToLegacy ?? ((): boolean => false);
+  const unreadReconcileSettings =
+    options.unreadReconcileSettings ?? ((): Partial<UnreadReconcileSettings> | undefined => undefined);
   const sleep: SleepFn =
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
@@ -195,6 +237,83 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     // production shadow comparison. Keep an hourly reconcile for estimated PPV
     // and fixture-blocked tips until those domains gain authoritative contracts.
     return REDUCED_SPEND_SWEEP_INTERVAL_MS;
+  }
+
+  function unreadSettings(): UnreadReconcileSettings {
+    return { ...DEFAULT_UNREAD_RECONCILE_SETTINGS, ...(unreadReconcileSettings() ?? {}) };
+  }
+
+  function listLocalUnreadChats(accountId: string): ChatRow[] {
+    const out: ChatRow[] = [];
+    const limit = 500;
+    let offset = 0;
+    for (;;) {
+      const page = data.chats.list({ accountId, filter: 'unread', limit, offset });
+      out.push(...page.items);
+      if (!page.hasMore || page.items.length === 0) {
+        break;
+      }
+      offset += page.items.length;
+    }
+    return out;
+  }
+
+  function hasLocalUnread(accountId: string): boolean {
+    return data.chats.list({ accountId, filter: 'unread', limit: 1 }).items.length > 0;
+  }
+
+  function unreadIntervalFor(accountId: string): number | null {
+    const settings = unreadSettings();
+    if (
+      !settings.enabled ||
+      !running ||
+      focusedAccount !== accountId ||
+      !shouldSuspendLoop(accountId) ||
+      !hasLocalUnread(accountId)
+    ) {
+      return null;
+    }
+    if (windowVisible) {
+      return settings.focusedIntervalMs;
+    }
+    return settings.hiddenEnabled ? settings.hiddenIntervalMs : null;
+  }
+
+  function unreadTimerMaxPages(): number {
+    const settings = unreadSettings();
+    return windowVisible ? settings.focusedMaxPages : settings.hiddenMaxPages;
+  }
+
+  function triggerAllowed(trigger: UnreadReconcileTrigger, settings: UnreadReconcileSettings): boolean {
+    if (trigger === 'unread-tab') return settings.triggerOnUnreadTabOpen;
+    if (trigger === 'window-focus') return settings.triggerOnWindowFocus;
+    if (trigger === 'account-focus') return settings.triggerOnAccountFocus;
+    return true;
+  }
+
+  function scheduleUnreadReconcile(accountId: string, delayMs = unreadIntervalFor(accountId)): void {
+    const loop = loops.get(accountId);
+    if (!loop) {
+      return;
+    }
+    if (loop.unreadReconcileTimer) {
+      clearTimeout(loop.unreadReconcileTimer);
+      loop.unreadReconcileTimer = null;
+    }
+    if (!running || delayMs === null) {
+      return;
+    }
+    loop.unreadReconcileTimer = setTimeout(() => {
+      void runUnreadReconcile(accountId, unreadTimerMaxPages(), 'timer').finally(() =>
+        scheduleUnreadReconcile(accountId),
+      );
+    }, delayMs);
+  }
+
+  function scheduleAllUnreadReconcile(): void {
+    for (const accountId of loops.keys()) {
+      scheduleUnreadReconcile(accountId);
+    }
   }
 
   function schedule(accountId: string, delayMs: number | null): void {
@@ -398,6 +517,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     startOffset: number,
     maxPages: number,
     purpose: OfApiPurpose,
+    options: { filter?: ChatListFilter } = {},
   ): Promise<{ chats: OfApiChat[]; nextOffset: number; pages: number; exhausted: boolean }> {
     const collected: OfApiChat[] = [];
     const seenFanIds = new Set<string>();
@@ -413,6 +533,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         limit: CHATS_PAGE_LIMIT,
         offset,
         order: 'recent',
+        ...(options.filter !== undefined ? { filter: options.filter } : {}),
         skipUsers: 'none',
         purpose,
       });
@@ -456,6 +577,125 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     data.chats.upsertMany(chatUpserts);
   }
 
+  async function runUnreadReconcile(
+    accountId: string,
+    maxPages: number,
+    trigger: UnreadReconcileTrigger,
+  ): Promise<void> {
+    const loop = loops.get(accountId);
+    const settings = unreadSettings();
+    if (!loop || !running || loop.unreadReconcileInFlight || !settings.enabled) {
+      return;
+    }
+    const localUnreadAtStart = listLocalUnreadChats(accountId);
+    if (localUnreadAtStart.length === 0) {
+      return;
+    }
+
+    loop.unreadReconcileInFlight = true;
+    try {
+      const startHeads = new Map(
+        localUnreadAtStart.map((chat) => [chat.chatId, chat.lastMessageId] as const),
+      );
+      const scan = await walkChatPages(
+        accountId,
+        0,
+        Math.max(1, Math.floor(maxPages)),
+        'unread-reconcile',
+        { filter: 'unread' },
+      );
+      upsertChatRows(accountId, scan.chats);
+
+      const returned = new Set<string>();
+      for (const chat of scan.chats) {
+        const fanId = chat.fan?.id;
+        if (fanId != null) {
+          returned.add(String(fanId));
+        }
+      }
+
+      const cleared: ChatUpsert[] = [];
+      if (scan.exhausted) {
+        for (const startChat of localUnreadAtStart) {
+          if (returned.has(startChat.chatId)) {
+            continue;
+          }
+          const current = data.chats.get(accountId, startChat.chatId);
+          if (
+            current === null ||
+            current.unreadCount === 0 ||
+            startHeads.get(startChat.chatId) !== current.lastMessageId
+          ) {
+            continue;
+          }
+          cleared.push({
+            accountId: current.accountId,
+            chatId: current.chatId,
+            fanName: current.fanName,
+            avatar: current.avatar,
+            unreadCount: 0,
+            hasUnreadTips: false,
+            lastMessageAt: current.lastMessageAt,
+            lastMessagePreview: current.lastMessagePreview,
+            lastMessageIsSentByMe: current.lastMessageIsSentByMe,
+            lastMessageId: current.lastMessageId,
+            lastReadMessageId: current.lastReadMessageId,
+            pinned: current.pinned,
+            canSendMessage: current.canSendMessage,
+            canNotSendReason: current.canNotSendReason,
+            raw: { source: 'unread-reconcile', trigger },
+          });
+        }
+        data.chats.upsertMany(cleared);
+      }
+
+      loop.lastUnreadReconcileAt = now();
+      if (scan.chats.length > 0 || cleared.length > 0) {
+        emit({ type: 'chatListUpdated', accountId });
+      }
+    } catch {
+      loop.consecutiveFailures += 1;
+    } finally {
+      loop.unreadReconcileInFlight = false;
+    }
+  }
+
+  async function reconcileUnread(
+    accountId?: string,
+    trigger: UnreadReconcileTrigger = 'manual',
+  ): Promise<void> {
+    const settings = unreadSettings();
+    if (!settings.enabled || !triggerAllowed(trigger, settings)) {
+      return;
+    }
+    const targets = accountId ? [accountId] : focusedAccount ? [focusedAccount] : [...loops.keys()];
+    const nowMs = now();
+    await Promise.all(
+      targets.map(async (target) => {
+        const loop = loops.get(target);
+        if (!loop || !hasLocalUnread(target)) {
+          return;
+        }
+        if (
+          trigger !== 'manual' &&
+          loop.lastUnreadReconcileAt !== null &&
+          nowMs - loop.lastUnreadReconcileAt < settings.focusDebounceMs
+        ) {
+          return;
+        }
+        await runUnreadReconcile(target, settings.immediateMaxPages, trigger);
+        scheduleUnreadReconcile(target);
+      }),
+    );
+  }
+
+  function fireUnreadReconcile(accountId: string | null, trigger: UnreadReconcileTrigger): void {
+    if (accountId === null) {
+      return;
+    }
+    void reconcileUnread(accountId, trigger);
+  }
+
   async function ensureChat(
     accountId: string,
     chatId: string,
@@ -494,6 +734,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       upsertChatRows(accountId, head.chats);
       loop.lastSuccessAt = now();
       loop.consecutiveFailures = 0;
+      scheduleUnreadReconcile(accountId);
       emit({ type: 'chatListUpdated', accountId });
     } catch (error) {
       loop.consecutiveFailures += 1;
@@ -590,6 +831,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       canNotSendReason: chat.canNotSendReason,
       raw: { source: 'hub-message', messageId: upsert.messageId },
     });
+    scheduleUnreadReconcile(accountId);
     return true;
   }
 
@@ -710,6 +952,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         loop.lastDeepSweepAt = now();
       }
       loop.consecutiveFailures = 0;
+      scheduleUnreadReconcile(accountId);
     } catch {
       loop.consecutiveFailures += 1;
     } finally {
@@ -890,18 +1133,24 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           loops.set(accountId, {
             timer: null,
             spendTimer: null,
+            unreadReconcileTimer: null,
             inFlight: false,
             spendInFlight: false,
+            unreadReconcileInFlight: false,
             lastSuccessAt: null,
             lastDeepSweepAt: null,
             lastSpendSweepAt: null,
+            lastUnreadReconcileAt: null,
             consecutiveFailures: 0,
           });
         }
         if (readHydration(accountId).done) {
           scheduleSpendSweep(accountId, 0);
         }
-        void pollAccount(accountId).finally(() => schedule(accountId, intervalFor(accountId)));
+        void pollAccount(accountId).finally(() => {
+          schedule(accountId, intervalFor(accountId));
+          scheduleUnreadReconcile(accountId);
+        });
       }
     },
     stop() {
@@ -915,6 +1164,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           clearTimeout(loop.spendTimer);
         }
         loop.spendTimer = null;
+        if (loop.unreadReconcileTimer) {
+          clearTimeout(loop.unreadReconcileTimer);
+        }
+        loop.unreadReconcileTimer = null;
       }
       if (sweepTimer) {
         clearTimeout(sweepTimer);
@@ -981,6 +1234,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           canNotSendReason: cached.canNotSendReason,
           raw: null, // write-only column; chats reads never select it
         });
+        scheduleUnreadReconcile(accountId);
       }
       // openConversation is the ONE sanctioned message-body read when auto-read
       // is OFF — force the tail fetch (and its media polling) unconditionally.
@@ -1006,7 +1260,9 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       focusedAccount = accountId;
       if (running && accountId && loops.has(accountId)) {
         scheduleBurst(accountId); // resume burst on focus when polling is active
+        fireUnreadReconcile(accountId, 'account-focus');
       }
+      scheduleAllUnreadReconcile();
     },
     setWindowVisible(visible) {
       const wasHidden = !windowVisible;
@@ -1015,7 +1271,9 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         for (const accountId of loops.keys()) {
           scheduleBurst(accountId); // resume burst when the window comes back
         }
+        fireUnreadReconcile(focusedAccount, 'window-focus');
       }
+      scheduleAllUnreadReconcile();
     },
     setHubPollingSuspended(suspended) {
       const wasSuspended = hubPollingSuspended;
@@ -1032,10 +1290,12 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           // covers the immediate gap when the stream goes down.
           schedule(accountId, intervalFor(accountId));
         }
+        scheduleUnreadReconcile(accountId);
       }
     },
     refreshAccountHead,
     ingestHubMessage,
+    reconcileUnread,
     async forceRefresh(accountId) {
       const targets = accountId ? [accountId] : [...loops.keys()];
       // Manual refresh = deep sweep: pull DEEP_SWEEP_PAGES, not just page 1.

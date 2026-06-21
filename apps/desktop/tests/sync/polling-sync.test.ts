@@ -99,6 +99,7 @@ interface StubClient {
   listChatsParams: {
     limit?: number;
     offset?: number;
+    filter?: string;
     query?: string;
     order?: string;
     skipUsers?: string;
@@ -109,6 +110,7 @@ interface StubClient {
   setChats(chats: OfApiChat[]): void;
   setMessages(messages: OfApiMessage[]): void;
   setTransactions(transactions: OfApiTransaction[]): void;
+  onListChats(fn: ((params: { filter?: string; purpose?: string }) => void) | null): void;
 }
 
 /**
@@ -120,6 +122,7 @@ function makeStubClient(): StubClient {
   let all: OfApiChat[] = [];
   let messages: OfApiMessage[] = [];
   let transactions: OfApiTransaction[] = [];
+  let onListChats: ((params: { filter?: string; purpose?: string }) => void) | null = null;
   const state: StubClient = {
     listChatsCalls: 0,
     listChatsParams: [],
@@ -134,20 +137,29 @@ function makeStubClient(): StubClient {
     setTransactions: (next) => {
       transactions = next;
     },
+    onListChats: (fn) => {
+      onListChats = fn;
+    },
     client: {
       listChats: vi.fn(
         async (params: {
           limit?: number;
           offset?: number;
+          filter?: string;
           query?: string;
           order?: string;
           skipUsers?: string;
           purpose?: string;
         }) => {
+        onListChats?.({
+          ...(params.filter !== undefined ? { filter: params.filter } : {}),
+          ...(params.purpose !== undefined ? { purpose: params.purpose } : {}),
+        });
         state.listChatsCalls += 1;
         state.listChatsParams.push({
           ...(params.limit != null ? { limit: params.limit } : {}),
           ...(params.offset != null ? { offset: params.offset } : {}),
+          ...(params.filter != null ? { filter: params.filter } : {}),
           ...(params.query != null ? { query: params.query } : {}),
           ...(params.order != null ? { order: params.order } : {}),
           ...(params.skipUsers != null ? { skipUsers: params.skipUsers } : {}),
@@ -155,7 +167,7 @@ function makeStubClient(): StubClient {
         });
         const offset = params.offset ?? 0;
         const limit = Math.min(params.limit ?? 10, 10);
-        const source =
+        const queried =
           params.query == null || params.query.trim().length === 0
             ? all
             : all.filter((chat) => {
@@ -165,6 +177,10 @@ function makeStubClient(): StubClient {
                   chat.fan?.name?.toLowerCase().includes(q) === true
                 );
               });
+        const source =
+          params.filter === 'unread' || params.filter === 'unread_with_tips'
+            ? queried.filter((chat) => (chat.unreadMessagesCount ?? 0) > 0)
+            : queried;
         const chats = source.slice(offset, offset + limit);
         return {
           chats,
@@ -263,6 +279,34 @@ describe('PollingSync', () => {
 
   function hydrationState(): z.infer<typeof hydrationSchema> | null {
     return data.settings.getParsed(`sync.chatHydration.${ACCT}`, hydrationSchema) ?? null;
+  }
+
+  function upsertLocalChat({
+    chatId = '101',
+    unread = 1,
+    lastMessageId = '5',
+  }: {
+    chatId?: string;
+    unread?: number;
+    lastMessageId?: string | null;
+  } = {}): void {
+    data.chats.upsert({
+      accountId: ACCT,
+      chatId,
+      fanName: `Fan${chatId}`,
+      avatar: null,
+      unreadCount: unread,
+      hasUnreadTips: false,
+      lastMessageAt: '2026-06-10T12:00:00.000Z',
+      lastMessagePreview: 'hey',
+      lastMessageIsSentByMe: false,
+      lastMessageId,
+      lastReadMessageId: null,
+      pinned: false,
+      canSendMessage: true,
+      canNotSendReason: null,
+      raw: {},
+    });
   }
 
   it('ensureChat is a no-op when the chat row already exists', async () => {
@@ -690,6 +734,70 @@ describe('PollingSync', () => {
     expect(stub.listChatsCalls).toBe(listCalls);
     await vi.advanceTimersByTimeAsync(60 * 60_000 - 60_000);
     expect(stub.listTransactionsCalls.length).toBeGreaterThan(spendCalls);
+    sync.stop();
+  });
+
+  it('unread reconcile clears externally-read local unread with list-only filter=unread', async () => {
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    upsertLocalChat({ chatId: '101', unread: 1, lastMessageId: '5' });
+    const listMessagesBefore = stub.listMessagesCalls.length;
+
+    await sync.reconcileUnread(ACCT, 'manual');
+
+    expect(data.chats.get(ACCT, '101')?.unreadCount).toBe(0);
+    expect(stub.listMessagesCalls.length).toBe(listMessagesBefore);
+    expect(stub.listChatsParams.at(-1)).toEqual({
+      limit: 10,
+      offset: 0,
+      filter: 'unread',
+      order: 'recent',
+      skipUsers: 'none',
+      purpose: 'unread-reconcile',
+    });
+    sync.stop();
+  });
+
+  it('unread reconcile partial scan upserts the head but does not clear missing local unread', async () => {
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    upsertLocalChat({ chatId: '101', unread: 1, lastMessageId: '5' });
+    stub.setChats(makeChats(40, 1000).map((chat) => ({ ...chat, unreadMessagesCount: 1 })));
+
+    await sync.reconcileUnread(ACCT, 'manual');
+
+    expect(data.chats.get(ACCT, '101')?.unreadCount).toBe(1);
+    expect(data.chats.get(ACCT, '1000')?.unreadCount).toBe(1);
+    expect(stub.listChatsParams.slice(-3).map((params) => params.filter)).toEqual([
+      'unread',
+      'unread',
+      'unread',
+    ]);
+    sync.stop();
+  });
+
+  it('unread reconcile head-fence keeps a chat unread if SSE advances it during the scan', async () => {
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    upsertLocalChat({ chatId: '101', unread: 1, lastMessageId: '5' });
+    stub.onListChats((params) => {
+      if (params.purpose === 'unread-reconcile') {
+        upsertLocalChat({ chatId: '101', unread: 1, lastMessageId: '6' });
+      }
+    });
+
+    await sync.reconcileUnread(ACCT, 'manual');
+
+    expect(data.chats.get(ACCT, '101')).toMatchObject({
+      unreadCount: 1,
+      lastMessageId: '6',
+    });
     sync.stop();
   });
 
