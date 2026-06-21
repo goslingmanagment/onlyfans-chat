@@ -14,12 +14,13 @@ function makeChat(overrides: {
   fanId: number;
   lastMessageId?: number;
   unread?: number;
+  hasUnreadTips?: boolean;
   fromFan?: boolean;
   name?: string;
 }): OfApiChat {
   return {
     unreadMessagesCount: overrides.unread ?? 0,
-    hasUnreadTips: false,
+    hasUnreadTips: overrides.hasUnreadTips ?? false,
     canSendMessage: true,
     lastReadMessageId: null,
     lastMessage:
@@ -178,8 +179,10 @@ function makeStubClient(): StubClient {
                 );
               });
         const source =
-          params.filter === 'unread' || params.filter === 'unread_with_tips'
+          params.filter === 'unread'
             ? queried.filter((chat) => (chat.unreadMessagesCount ?? 0) > 0)
+            : params.filter === 'unread_with_tips'
+              ? queried.filter((chat) => chat.hasUnreadTips === true)
             : queried;
         const chats = source.slice(offset, offset + limit);
         return {
@@ -258,7 +261,15 @@ describe('PollingSync', () => {
     }
   }
 
-  function makeSync(budgetExhausted = (): boolean => false) {
+  function makeSync(
+    budgetExhausted = (): boolean => false,
+    unreadReconcileSettings?: () => {
+      focusedIntervalMs?: number;
+      focusedMaxPages?: number;
+      hiddenEnabled?: boolean;
+      focusDebounceMs?: number;
+    },
+  ) {
     const sync = createPollingSync({
       client: stub.client,
       data,
@@ -268,6 +279,7 @@ describe('PollingSync', () => {
       // paths (poll-delta tail fetch, read-state sweep, media polling). The
       // default-OFF gate is covered by its own describe block below.
       autoReadEnabled: () => true,
+      ...(unreadReconcileSettings === undefined ? {} : { unreadReconcileSettings }),
       // No-op sleep so multi-page walks resolve under fake timers; pacing asserted via `sleeps`.
       sleep: async (ms) => {
         sleeps.push(ms);
@@ -285,10 +297,12 @@ describe('PollingSync', () => {
     chatId = '101',
     unread = 1,
     lastMessageId = '5',
+    hasUnreadTips = false,
   }: {
     chatId?: string;
     unread?: number;
     lastMessageId?: string | null;
+    hasUnreadTips?: boolean;
   } = {}): void {
     data.chats.upsert({
       accountId: ACCT,
@@ -296,7 +310,7 @@ describe('PollingSync', () => {
       fanName: `Fan${chatId}`,
       avatar: null,
       unreadCount: unread,
-      hasUnreadTips: false,
+      hasUnreadTips,
       lastMessageAt: '2026-06-10T12:00:00.000Z',
       lastMessagePreview: 'hey',
       lastMessageIsSentByMe: false,
@@ -760,6 +774,22 @@ describe('PollingSync', () => {
     sync.stop();
   });
 
+  it('unread reconcile preserves unread tip state when it only proves messages were read', async () => {
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    upsertLocalChat({ chatId: '101', unread: 1, lastMessageId: '5', hasUnreadTips: true });
+
+    await sync.reconcileUnread(ACCT, 'manual');
+
+    expect(data.chats.get(ACCT, '101')).toMatchObject({
+      unreadCount: 0,
+      hasUnreadTips: true,
+    });
+    sync.stop();
+  });
+
   it('unread reconcile partial scan upserts the head but does not clear missing local unread', async () => {
     stub.setChats([]);
     const sync = makeSync();
@@ -777,6 +807,23 @@ describe('PollingSync', () => {
       'unread',
       'unread',
     ]);
+    sync.stop();
+  });
+
+  it('unread reconcile does not regress a locally newer hub head from a stale returned unread row', async () => {
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    upsertLocalChat({ chatId: '101', unread: 2, lastMessageId: '6' });
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5, unread: 1 })]);
+
+    await sync.reconcileUnread(ACCT, 'manual');
+
+    expect(data.chats.get(ACCT, '101')).toMatchObject({
+      unreadCount: 2,
+      lastMessageId: '6',
+    });
     sync.stop();
   });
 
@@ -798,6 +845,63 @@ describe('PollingSync', () => {
       unreadCount: 1,
       lastMessageId: '6',
     });
+    sync.stop();
+  });
+
+  it('unread reconcile timer is armed without resetting on frequent hub messages', async () => {
+    stub.setChats([]);
+    const sync = makeSync(() => false, () => ({
+      focusedIntervalMs: 1_000,
+      focusedMaxPages: 1,
+      focusDebounceMs: 0,
+    }));
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    upsertLocalChat({ chatId: '101', unread: 1, lastMessageId: '5' });
+    sync.setFocusedAccount(ACCT);
+    sync.setHubPollingSuspended(true);
+    const unreadCallsBefore = stub.listChatsParams.filter((p) => p.purpose === 'unread-reconcile').length;
+
+    await vi.advanceTimersByTimeAsync(400);
+    await sync.ingestHubMessage(ACCT, '101', makeHubMessage({ id: '6' }));
+    await vi.advanceTimersByTimeAsync(400);
+    await sync.ingestHubMessage(ACCT, '101', makeHubMessage({ id: '7' }));
+    await vi.advanceTimersByTimeAsync(201);
+
+    expect(stub.listChatsParams.filter((p) => p.purpose === 'unread-reconcile')).toHaveLength(
+      unreadCallsBefore + 1,
+    );
+    sync.stop();
+  });
+
+  it('unread reconcile event triggers do not spend while normal polling is active', async () => {
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    upsertLocalChat({ chatId: '101', unread: 1, lastMessageId: '5' });
+    const unreadCallsBefore = stub.listChatsParams.filter((p) => p.purpose === 'unread-reconcile').length;
+
+    await sync.reconcileUnread(ACCT, 'unread-tab');
+
+    expect(stub.listChatsParams.filter((p) => p.purpose === 'unread-reconcile')).toHaveLength(
+      unreadCallsBefore,
+    );
+    expect(data.chats.get(ACCT, '101')?.unreadCount).toBe(1);
+    sync.stop();
+  });
+
+  it('transient unread reconcile failures do not poison the main sync status counter', async () => {
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    upsertLocalChat({ chatId: '101', unread: 1, lastMessageId: '5' });
+    vi.mocked(stub.client.listChats).mockRejectedValueOnce(new Error('5xx'));
+
+    await sync.reconcileUnread(ACCT, 'manual');
+
+    expect(sync.status().state).toBe('live');
     sync.stop();
   });
 

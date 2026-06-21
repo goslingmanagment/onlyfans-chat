@@ -310,6 +310,14 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }, delayMs);
   }
 
+  function armUnreadReconcile(accountId: string): void {
+    const loop = loops.get(accountId);
+    if (!loop || loop.unreadReconcileTimer) {
+      return;
+    }
+    scheduleUnreadReconcile(accountId);
+  }
+
   function scheduleAllUnreadReconcile(): void {
     for (const accountId of loops.keys()) {
       scheduleUnreadReconcile(accountId);
@@ -561,14 +569,48 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     return data.settings.getParsed(hydrationKey(accountId), hydrationStateSchema) ?? FRESH_HYDRATION;
   }
 
+  function cachedHeadIsNewer(cached: ChatRow, next: ChatUpsert): boolean {
+    if (cached.lastMessageAt !== null && next.lastMessageAt !== null) {
+      const cachedMs = Date.parse(cached.lastMessageAt);
+      const nextMs = Date.parse(next.lastMessageAt);
+      if (!Number.isNaN(cachedMs) && !Number.isNaN(nextMs) && cachedMs !== nextMs) {
+        return cachedMs > nextMs;
+      }
+    }
+    if (cached.lastMessageId !== null && next.lastMessageId !== null) {
+      return compareMessageIds(cached.lastMessageId, next.lastMessageId) > 0;
+    }
+    return cached.lastMessageId !== null && next.lastMessageId === null;
+  }
+
+  function applyLocalHeadGuard(accountId: string, next: ChatUpsert): ChatUpsert {
+    const cached = data.chats.get(accountId, next.chatId);
+    if (cached === null || !cachedHeadIsNewer(cached, next)) {
+      return next;
+    }
+    return {
+      ...next,
+      unreadCount: cached.unreadCount,
+      hasUnreadTips: cached.hasUnreadTips,
+      lastMessageAt: cached.lastMessageAt,
+      lastMessagePreview: cached.lastMessagePreview,
+      lastMessageIsSentByMe: cached.lastMessageIsSentByMe,
+      lastMessageId: cached.lastMessageId,
+    };
+  }
+
   /** Upsert chat + fan rows only — the list payload is all the inbox needs. */
-  function upsertChatRows(accountId: string, chats: readonly OfApiChat[]): void {
+  function upsertChatRows(
+    accountId: string,
+    chats: readonly OfApiChat[],
+    options: { preserveLocalHead?: boolean } = {},
+  ): void {
     const chatUpserts = [];
     const fetchedAt = new Date(now()).toISOString();
     for (const chat of chats) {
       const mapped = mapChat(accountId, chat, toMediaUrl);
       if (mapped) {
-        chatUpserts.push(mapped);
+        chatUpserts.push(options.preserveLocalHead === true ? applyLocalHeadGuard(accountId, mapped) : mapped);
       }
       if (chat.fan != null) {
         data.fans.upsert(mapFan(accountId, chat.fan, toMediaUrl, fetchedAt));
@@ -604,7 +646,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         'unread-reconcile',
         { filter: 'unread' },
       );
-      upsertChatRows(accountId, scan.chats);
+      upsertChatRows(accountId, scan.chats, { preserveLocalHead: true });
 
       const returned = new Set<string>();
       for (const chat of scan.chats) {
@@ -634,7 +676,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
             fanName: current.fanName,
             avatar: current.avatar,
             unreadCount: 0,
-            hasUnreadTips: false,
+            hasUnreadTips: current.hasUnreadTips,
             lastMessageAt: current.lastMessageAt,
             lastMessagePreview: current.lastMessagePreview,
             lastMessageIsSentByMe: current.lastMessageIsSentByMe,
@@ -654,7 +696,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         emit({ type: 'chatListUpdated', accountId });
       }
     } catch {
-      loop.consecutiveFailures += 1;
+      // Transient unread-reconcile failures must not poison the main sync
+      // health counter while hub-live polling is otherwise suspended.
     } finally {
       loop.unreadReconcileInFlight = false;
     }
@@ -673,7 +716,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     await Promise.all(
       targets.map(async (target) => {
         const loop = loops.get(target);
-        if (!loop || !hasLocalUnread(target)) {
+        if (!loop || (trigger !== 'manual' && !shouldSuspendLoop(target)) || !hasLocalUnread(target)) {
           return;
         }
         if (
@@ -734,7 +777,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       upsertChatRows(accountId, head.chats);
       loop.lastSuccessAt = now();
       loop.consecutiveFailures = 0;
-      scheduleUnreadReconcile(accountId);
+      armUnreadReconcile(accountId);
       emit({ type: 'chatListUpdated', accountId });
     } catch (error) {
       loop.consecutiveFailures += 1;
@@ -831,7 +874,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       canNotSendReason: chat.canNotSendReason,
       raw: { source: 'hub-message', messageId: upsert.messageId },
     });
-    scheduleUnreadReconcile(accountId);
+    armUnreadReconcile(accountId);
     return true;
   }
 
@@ -952,7 +995,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         loop.lastDeepSweepAt = now();
       }
       loop.consecutiveFailures = 0;
-      scheduleUnreadReconcile(accountId);
+      armUnreadReconcile(accountId);
     } catch {
       loop.consecutiveFailures += 1;
     } finally {
