@@ -37,8 +37,12 @@ export function NavNumberOverlay({
           style={{ transform: `translateY(${i * rowHeight}px)` }}
         >
           {/* neutral ink chip (not the clay attention color) centered over the
-              avatar; a bg1 ring separates it from the photo underneath */}
-          <span className="num flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-ink px-1.5 text-[12px] font-semibold text-white shadow-pop ring-2 ring-bg1">
+              avatar; a bg1 ring separates it from the photo underneath. Text is
+              bg1 (the chip's own inverse), NOT literal white, so the digit
+              flips WITH the theme: on dark the ink fill lifts to ivory and the
+              digit drops to the panel tone, staying legible — a pure-white
+              digit would all but vanish on that light chip. */}
+          <span className="num flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-ink px-1.5 text-[12px] font-semibold text-bg1 shadow-pop ring-2 ring-bg1">
             {i + 1}
           </span>
         </div>
