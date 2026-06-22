@@ -157,6 +157,8 @@ export interface HubAwareSync extends SyncProvider {
   refreshAccountHead(accountId: string): Promise<void>;
   /** Recreates the hub connection from current settings (key/URL changes). */
   reconfigureHub(): Promise<void>;
+  /** Hub status/liveness changes; payload is read through query:sync.status. */
+  subscribeStatus(listener: () => void): () => void;
   hubStatus(): HubSyncStatus | null;
   hubMode(): HubMode;
   hubModeOverride(): HubModeOverrideSetting;
@@ -170,6 +172,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   const modeOverride = options.hubModeOverride ?? (() => 'auto' as const);
 
   const listeners = new Set<SyncListener>();
+  const statusListeners = new Set<() => void>();
   let hub: HubSync | null = null;
   let hubLive = false;
   let forceHubSuspended = false;
@@ -384,6 +387,12 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   function emit(event: SyncEvent): void {
     for (const listener of listeners) {
       listener(event);
+    }
+  }
+
+  function emitStatus(): void {
+    for (const listener of statusListeners) {
+      listener();
     }
   }
 
@@ -681,6 +690,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         );
       }
       hubLive = isLive;
+      emitStatus();
       return;
     }
     if (isLive && !hubLive) {
@@ -700,6 +710,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       );
     }
     hubLive = isLive;
+    emitStatus();
   }
 
   async function startHub(): Promise<void> {
@@ -714,6 +725,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       hubLive = false;
       forceHubSuspended = false;
       hub = null;
+      emitStatus();
       return;
     }
     onLog('info', 'hub configure check started');
@@ -738,6 +750,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         onLog('warn', 'hub forced but not configured; using polling only', { override });
       }
       onLog('info', 'hub not configured; using polling only');
+      emitStatus();
       return;
     }
     if (override === 'hub' && !forceHubSuspended) {
@@ -746,6 +759,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       forceHubSuspended = true;
     }
     onLog('info', 'hub configured; starting SSE');
+    emitStatus();
     hub.start();
   }
 
@@ -760,6 +774,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     }
     hubLive = false;
     forceHubSuspended = false;
+    emitStatus();
   }
 
   function hubMode(): HubMode {
@@ -785,6 +800,10 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    subscribeStatus(listener) {
+      statusListeners.add(listener);
+      return () => statusListeners.delete(listener);
     },
     refreshAccountHead: (accountId) => polling.refreshAccountHead(accountId),
     refreshChat: (accountId, chatId, purpose) => polling.refreshChat(accountId, chatId, purpose),

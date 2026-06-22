@@ -122,6 +122,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
   });
 
   const creditBalanceSchema = z.object({ type: z.literal('creditBalance') });
+  const syncStatusSchema = z.object({ type: z.literal('syncStatus') });
 
   // Additive frame (contract.ts SpendersRefreshEvent): scoped-refresh queue
   // progress. Live counts drive the spenders store (button N/M + hairline
@@ -139,6 +140,11 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     // Additive status frame (contract.ts CreditBalanceEvent): not part of the
     // shared SyncEvent union — refresh the credit figures and move on.
     if (creditBalanceSchema.safeParse(payload).success) {
+      queueInvalidate(qk.syncStatus);
+      queueInvalidate(qk.activity);
+      return;
+    }
+    if (syncStatusSchema.safeParse(payload).success) {
       queueInvalidate(qk.syncStatus);
       queueInvalidate(qk.activity);
       return;

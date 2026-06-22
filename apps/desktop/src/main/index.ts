@@ -83,6 +83,7 @@ let vaultService: VaultService | null = null;
 let spendersService: SpendersService | null = null;
 let spendersRefresh: SpendersRefreshService | null = null;
 let hub: HubModule | null = null;
+let disposeEventForwarding: (() => void) | null = null;
 /** Set once electron-updater is dynamic-imported (win32 packaged only); null
  *  everywhere else — the IPC layer then reports phase 'unsupported'. */
 let updateController: UpdateController | null = null;
@@ -565,6 +566,60 @@ async function initOfapi(
   spendersRefresh.resume(accountIds);
 }
 
+function emitSyncStatusFrame(): void {
+  const win = mainWindow;
+  if (win === null || win.isDestroyed()) {
+    return;
+  }
+  win.webContents.send('sync:event', { type: 'syncStatus' });
+}
+
+function reattachEventForwarding(): void {
+  const liveData = data;
+  if (liveData === null) {
+    return;
+  }
+  disposeEventForwarding?.();
+  disposeEventForwarding = attachEventForwarding({
+    window: () => mainWindow,
+    bus: liveData.bus,
+    sync,
+    creditMeter: client?.creditMeter ?? null,
+    coordinator,
+    spendersRefresh,
+    onSyncEvent: (event) => {
+      if (event.type === 'chatListUpdated') {
+        const total = liveData.accounts.list().reduce((sum, account) => sum + account.unreadTotal, 0);
+        if (process.platform === 'darwin') {
+          app.dock?.setBadge(total > 0 ? String(total) : '');
+        } else if (process.platform === 'win32' && mainWindow && !mainWindow.isDestroyed()) {
+          // Taskbar parity for the dock badge (PLAN item 11): overlay icon
+          // with the count drawn in main (platform/badge.ts), null to clear.
+          const png = badgePng(total);
+          mainWindow.setOverlayIcon(
+            png === null ? null : nativeImage.createFromBuffer(png),
+            png === null ? '' : `${total} unread`,
+          );
+        }
+      }
+      if (
+        event.type === 'messageReceived' &&
+        mainWindow &&
+        (!mainWindow.isVisible() || !mainWindow.isFocused()) &&
+        Notification.isSupported()
+      ) {
+        const chat = liveData.chats.get(event.accountId, event.chatId);
+        new Notification({
+          title: chat?.fanName ?? uiMessage(uiLocale, 'notif.newMessage'),
+          body: chat?.lastMessagePreview ?? '',
+          silent: true,
+        }).show();
+      }
+    },
+  });
+  emitSyncStatusFrame();
+}
+
 async function boot(): Promise<void> {
   const userData = app.getPath('userData');
 
@@ -780,6 +835,8 @@ async function boot(): Promise<void> {
         return;
       }
       purging = true;
+      disposeEventForwarding?.();
+      disposeEventForwarding = null;
       sync?.stop();
       spendersRefresh?.dispose();
       sendEngine?.dispose();
@@ -795,13 +852,15 @@ async function boot(): Promise<void> {
     },
     onOfapiKeyConfigured: () => {
       if (data) {
-        void initOfapi(keychain, data, settingsStore);
+        void initOfapi(keychain, data, settingsStore).then(() => reattachEventForwarding());
       }
     },
     onHubConfigChanged: () => {
       recheckHubConfig?.();
       if (client === null && data !== null) {
-        void initOfapi(keychain, data, settingsStore);
+        void initOfapi(keychain, data, settingsStore).then(() => reattachEventForwarding());
+      } else {
+        emitSyncStatusFrame();
       }
     },
     getCoreCreditsSummary: () => hub?.getOfapiCreditsSummary() ?? Promise.resolve(null),
@@ -953,43 +1012,7 @@ async function boot(): Promise<void> {
     },
   });
 
-  attachEventForwarding({
-    window: () => mainWindow,
-    bus: data.bus,
-    sync,
-    creditMeter: client?.creditMeter ?? null,
-    coordinator,
-    spendersRefresh,
-    onSyncEvent: (event) => {
-      if (event.type === 'chatListUpdated' && data) {
-        const total = data.accounts.list().reduce((sum, account) => sum + account.unreadTotal, 0);
-        if (process.platform === 'darwin') {
-          app.dock?.setBadge(total > 0 ? String(total) : '');
-        } else if (process.platform === 'win32' && mainWindow && !mainWindow.isDestroyed()) {
-          // Taskbar parity for the dock badge (PLAN item 11): overlay icon
-          // with the count drawn in main (platform/badge.ts), null to clear.
-          const png = badgePng(total);
-          mainWindow.setOverlayIcon(
-            png === null ? null : nativeImage.createFromBuffer(png),
-            png === null ? '' : `${total} unread`,
-          );
-        }
-      }
-      if (
-        event.type === 'messageReceived' &&
-        mainWindow &&
-        (!mainWindow.isVisible() || !mainWindow.isFocused()) &&
-        Notification.isSupported()
-      ) {
-        const chat = data?.chats.get(event.accountId, event.chatId);
-        new Notification({
-          title: chat?.fanName ?? uiMessage(uiLocale, 'notif.newMessage'),
-          body: chat?.lastMessagePreview ?? '',
-          silent: true,
-        }).show();
-      }
-    },
-  });
+  reattachEventForwarding();
 
   // Dev-only evidence hook: CHATGOOSE_CAPTURE=/path/prefix captures the window
   // every 10 s (prefix-1.png, prefix-2.png, …) so a live run can be documented

@@ -9,10 +9,18 @@ import type { CreditMeter } from '../ofapi/credit-meter';
 import type { SyncProvider } from '../sync/provider';
 import type { SpendersRefreshFrame } from '../spenders/refresh';
 
+interface SyncStatusEvent {
+  type: 'syncStatus';
+}
+
+type StatusAwareSyncProvider = SyncProvider & {
+  subscribeStatus?: (listener: () => void) => () => void;
+};
+
 export interface EventForwarderDeps {
   window: () => BrowserWindow | null;
   bus: DbChangeBus;
-  sync: SyncProvider | null;
+  sync: StatusAwareSyncProvider | null;
   creditMeter: CreditMeter | null;
   coordinator: { subscribe(listener: (event: OperationEvent) => void): () => void } | null;
   /** Spenders refresh queue progress frames (PLAN item 13), additive on sync:event. */
@@ -47,6 +55,14 @@ export function attachEventForwarding(deps: EventForwarderDeps): () => void {
         deps.onSyncEvent?.(event);
       }),
     );
+    if (deps.sync.subscribeStatus) {
+      disposers.push(
+        deps.sync.subscribeStatus(() => {
+          const frame: SyncStatusEvent = { type: 'syncStatus' };
+          send('sync:event', frame);
+        }),
+      );
+    }
   }
 
   if (deps.creditMeter) {
