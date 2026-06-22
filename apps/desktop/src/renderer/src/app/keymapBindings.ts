@@ -7,18 +7,21 @@ import type { KeyBinding } from '../lib/keymap';
 import { appPlatform, modCombo, type LabelPlatform } from '../lib/modKey';
 import type { UiMessageKey } from '@chatgoose/shared/i18n/index';
 
-/** ⌘0..⌘9 — primary dock-part action: insert (copy when sending unavailable, SPEC §7.0). */
-export type AiPartAction =
-  | 'ai-part-0'
-  | 'ai-part-1'
-  | 'ai-part-2'
-  | 'ai-part-3'
-  | 'ai-part-4'
-  | 'ai-part-5'
-  | 'ai-part-6'
-  | 'ai-part-7'
-  | 'ai-part-8'
-  | 'ai-part-9';
+/** ⌘0 — insert all dock parts as a [NEXT] sequence (SPEC §7.0). Individual
+ *  parts 1..9 are click-only now that ⌘1..9 jump chats (see ChatJumpAction). */
+export type AiPartAction = 'ai-part-0';
+
+/** ⌘1..⌘9 — jump to the Nth chat in the current filtered chat list. */
+export type ChatJumpAction =
+  | 'chat-jump-1'
+  | 'chat-jump-2'
+  | 'chat-jump-3'
+  | 'chat-jump-4'
+  | 'chat-jump-5'
+  | 'chat-jump-6'
+  | 'chat-jump-7'
+  | 'chat-jump-8'
+  | 'chat-jump-9';
 
 export type KeyAction =
   | 'palette'
@@ -45,28 +48,31 @@ export type KeyAction =
   | 'board-open-chat'
   | 'board-back'
   | 'board-stats'
-  | AiPartAction;
+  | AiPartAction
+  | ChatJumpAction;
 
-const AI_PART_ACTIONS = [
-  'ai-part-1',
-  'ai-part-2',
-  'ai-part-3',
-  'ai-part-4',
-  'ai-part-5',
-  'ai-part-6',
-  'ai-part-7',
-  'ai-part-8',
-  'ai-part-9',
-] as const satisfies readonly AiPartAction[];
+const CHAT_JUMP_ACTIONS = [
+  'chat-jump-1',
+  'chat-jump-2',
+  'chat-jump-3',
+  'chat-jump-4',
+  'chat-jump-5',
+  'chat-jump-6',
+  'chat-jump-7',
+  'chat-jump-8',
+  'chat-jump-9',
+] as const satisfies readonly ChatJumpAction[];
 
 /** The full table for a given platform — exported so tests pin both label sets. */
 export function buildKeyBindings(platform: LabelPlatform): KeyBinding<KeyAction>[] {
   const mod = (key: string): string => modCombo(key, platform);
-  const aiPartBindings: KeyBinding<KeyAction>[] = AI_PART_ACTIONS.map((action, i) => ({
+  // ⌘1..⌘9 jump to the Nth visible chat (Slack/Telegram parity). Hidden from the
+  // cheatsheet list — summarized as one collapsed row + the held-modifier overlay.
+  const chatJumpBindings: KeyBinding<KeyAction>[] = CHAT_JUMP_ACTIONS.map((action, i) => ({
     action,
     combo: `mod+${i + 1}`,
     label: mod(`${i + 1}`),
-    description: `Insert AI draft part ${i + 1}`,
+    description: `Jump to chat ${i + 1}`,
     hideFromCheatsheet: true,
   }));
   return [
@@ -96,7 +102,7 @@ export function buildKeyBindings(platform: LabelPlatform): KeyBinding<KeyAction>
     { action: 'board-open-chat', combo: 'o', label: 'O', description: 'Spenders: open the full chat', hideFromCheatsheet: true },
     { action: 'board-back', combo: 'arrowleft', label: '←', description: 'Spenders: back to chat', hideFromCheatsheet: true },
     { action: 'board-stats', combo: 's', label: 'S', description: 'Spenders: expand/collapse stats', hideFromCheatsheet: true },
-    ...aiPartBindings,
+    ...chatJumpBindings,
   ];
 }
 
@@ -107,7 +113,7 @@ export function buildCheatsheetExtras(
   platform: LabelPlatform,
 ): ReadonlyArray<{ label: string; description: string }> {
   return [
-    { label: modCombo('1…9', platform), description: 'Insert AI draft part N (or click the bubble)' },
+    { label: modCombo('1…9', platform), description: 'Jump to chat N (hold the mod key to number the list)' },
     { label: 'SPACE / O / ← / S', description: 'Spenders page: preview / open chat / back / stats' },
   ];
 }

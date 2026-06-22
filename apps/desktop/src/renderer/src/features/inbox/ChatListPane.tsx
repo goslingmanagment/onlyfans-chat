@@ -15,12 +15,17 @@ import { Kbd } from '../../design/Kbd';
 import { SkeletonRows } from '../../design/Skeleton';
 import { EmptyState } from '../../design/EmptyState';
 import { ChatRow } from './ChatRow';
+import { NavNumberOverlay } from './NavNumberOverlay';
 
 const FILTERS: Array<{ id: ChatFilter; labelKey: UiMessageKey }> = [
   { id: 'all', labelKey: 'sp.all' },
   { id: 'unread', labelKey: 'inbox.filterUnread' },
   { id: 'with_tips', labelKey: 'inbox.filterTips' },
 ];
+
+/** Fixed chat-row height — matches ChatRow `h-16`; shared by the virtualizer
+ *  estimate and the ⌘1..9 number overlay so their geometry can't drift. */
+const ROW_HEIGHT = 64;
 
 export function ChatListPane(): React.JSX.Element {
   const t = useT();
@@ -43,7 +48,7 @@ export function ChatListPane(): React.JSX.Element {
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 64,
+    estimateSize: () => ROW_HEIGHT,
     overscan: 8,
     getItemKey: (i) => items[i]?.chatId ?? i,
   });
@@ -121,12 +126,19 @@ export function ChatListPane(): React.JSX.Element {
                 </div>
               );
             })}
+            {/* ⌘1..9 badges — one isolated layer, painted only while the mod key
+                is held; shares this scrolled coordinate space with the rows. */}
+            <NavNumberOverlay count={items.length} rowHeight={ROW_HEIGHT} />
           </div>
         )}
       </div>
-      <div className="flex flex-none items-center gap-2 border-t border-line bg-bg1 px-[14px] py-2 text-[11px] text-ink-low">
-        <Kbd>J</Kbd>
-        <Kbd>K</Kbd> {t('inbox.footNavigate')} · <Kbd>{modCombo('U')}</Kbd> {t('inbox.footNextUnread')}
+      <div className="flex flex-none flex-wrap items-center gap-x-2 gap-y-1 border-t border-line bg-bg1 px-[14px] py-2 text-[11px] text-ink-low">
+        <span className="flex items-center gap-1">
+          <Kbd>J</Kbd>
+          <Kbd>K</Kbd> {t('inbox.footNavigate')}
+        </span>
+        · <span className="flex items-center gap-1"><Kbd>{modCombo('U')}</Kbd> {t('inbox.footNextUnread')}</span>
+        · <span className="flex items-center gap-1"><Kbd>{modCombo('1–9')}</Kbd> {t('inbox.footJump')}</span>
       </div>
     </section>
   );

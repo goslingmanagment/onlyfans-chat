@@ -6,6 +6,7 @@ import {
   chatMatchesFilter,
   nextChatId,
   nextUnreadChatId,
+  nthChatId,
   sortChatsByRecency,
 } from '../../src/renderer/src/lib/filters';
 
@@ -99,6 +100,31 @@ describe('nextChatId (J/K)', () => {
 
   it('returns null for an empty list', () => {
     expect(nextChatId([], null, 1)).toBeNull();
+  });
+});
+
+describe('nthChatId (⌘1..⌘9 jump)', () => {
+  const ids = ['a', 'b', 'c', 'd'];
+
+  it('returns the 1-based Nth id (9 = ninth, not last)', () => {
+    expect(nthChatId(ids, 1)).toBe('a');
+    expect(nthChatId(ids, 3)).toBe('c');
+    expect(nthChatId(ids, 4)).toBe('d');
+  });
+
+  it('no-ops past the end of the list', () => {
+    expect(nthChatId(ids, 5)).toBeNull();
+    expect(nthChatId(['only'], 9)).toBeNull();
+  });
+
+  it('no-ops for n < 1 and non-integers (⌘0 is not a jump)', () => {
+    expect(nthChatId(ids, 0)).toBeNull();
+    expect(nthChatId(ids, -1)).toBeNull();
+    expect(nthChatId(ids, 1.5)).toBeNull();
+  });
+
+  it('returns null for an empty list', () => {
+    expect(nthChatId([], 1)).toBeNull();
   });
 });
 

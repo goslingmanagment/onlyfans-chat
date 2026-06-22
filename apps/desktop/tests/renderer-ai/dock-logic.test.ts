@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   DOCK_TONES,
   buildToneMenuItems,
-  copyChipLabel,
   copyPayload,
   copyablePartsOf,
   cycleTone,
@@ -100,18 +99,6 @@ describe('copyPayload (secondary copy chip + the canSend=false degrade)', () => 
     expect(copyPayload(parts, -1)).toBeNull();
     expect(copyPayload([], 0)).toBeNull();
     expect(copyPayload([], 1)).toBeNull();
-  });
-
-  it('chip labels number parts 1..9, beyond that no hotkey', () => {
-    expect(copyChipLabel(1)).toBe('COPY ⌘1');
-    expect(copyChipLabel(9)).toBe('COPY ⌘9');
-    expect(copyChipLabel(10)).toBe('COPY');
-  });
-
-  it('renders the Windows mod label when the platform is injected (PLAN item 11)', () => {
-    expect(copyChipLabel(1, 'darwin')).toBe('COPY ⌘1');
-    expect(copyChipLabel(1, 'win32')).toBe('COPY Ctrl+1');
-    expect(copyChipLabel(10, 'win32')).toBe('COPY');
   });
 });
 

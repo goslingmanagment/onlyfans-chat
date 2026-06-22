@@ -33,7 +33,7 @@ export function HotkeyCheatsheet(): React.JSX.Element | null {
           ))}
           {CHEATSHEET_EXTRAS.map((b, i) => (
             <div key={b.label} className="flex items-center justify-between py-[3px] text-[12.5px]">
-              <span className="text-ink-mid">{i === 0 ? t('cheat.extraParts') : t('cheat.extraSpenders')}</span>
+              <span className="text-ink-mid">{i === 0 ? t('cheat.extraJump') : t('cheat.extraSpenders')}</span>
               <Kbd>{b.label}</Kbd>
             </div>
           ))}

@@ -5,9 +5,10 @@
 import { useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { createKeymap, type KeyEventLike } from '../lib/keymap';
-import { nextChatId, nextUnreadChatId } from '../lib/filters';
+import { nextChatId, nextUnreadChatId, nthChatId } from '../lib/filters';
 import { KEY_BINDINGS } from './keymapBindings';
 import { useUiStore } from '../state/uiStore';
+import { useNavOverlayStore } from '../state/navOverlayStore';
 import { qk } from '../bridge/queries';
 import type { ChatListItemVM, SettingsVM } from '../../../preload/contract';
 import {
@@ -62,7 +63,16 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
       );
     }
 
+    // P2 number overlay: hold ⌘/Ctrl → badge the chat list (NavNumberOverlay).
+    // Driven off the LIVE modifier flags so a missed up/down self-heals on the
+    // next key event; keyup/blur/visibility (below) clear it when the modifier
+    // or window focus drops — the OS eating a keyup (⌘Tab) never sticks badges.
+    function setModHeld(held: boolean): void {
+      useNavOverlayStore.getState().setModHeld(held);
+    }
+
     function onKeyDown(e: KeyboardEvent): void {
+      setModHeld(e.metaKey || e.ctrlKey);
       const action = keymap.resolve(toEventLike(e));
       if (action === null) return;
       const ui = useUiStore.getState();
@@ -102,8 +112,9 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
           break;
       }
 
-      // ⌘1..9 / ⌘0 — insert AI draft part N / all parts; degrades to copy when
-      // the chat can't be messaged (SPEC §7.0)
+      // ⌘0 — insert ALL AI draft parts as a [NEXT] sequence; degrades to copy
+      // when the chat can't be messaged (SPEC §7.0). Individual parts are
+      // click-only now (⌘1..9 jump chats), so this branch only ever sees 0.
       if (action.startsWith('ai-part-')) {
         const aiOp = useAiStore.getState().op;
         if (aiOp === null) return; // let the default through
@@ -206,6 +217,23 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
       if (ui.view !== 'workspace' || ui.selectedAccountId === null) return;
       const accountId = ui.selectedAccountId;
 
+      // ⌘1..9 — jump to the Nth chat in the current filtered list. Workspace
+      // only (settings/spenders never reach here). Fires from the composer too
+      // (mod combos pass the editable gate); preventDefault ONLY when we
+      // actually navigate, so an out-of-range ⌘N just falls through harmlessly.
+      if (action.startsWith('chat-jump-')) {
+        if (e.isComposing) return; // IME compose: never navigate mid-composition
+        const target = nthChatId(
+          chatItems(accountId, ui.chatFilter).map((c) => c.chatId),
+          Number(action.slice('chat-jump-'.length)),
+        );
+        if (target !== null) {
+          e.preventDefault();
+          ui.selectChat(accountId, target);
+        }
+        return;
+      }
+
       switch (action) {
         case 'next-chat':
         case 'prev-chat': {
@@ -296,8 +324,26 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
       }
     }
 
+    function onKeyUp(e: KeyboardEvent): void {
+      setModHeld(e.metaKey || e.ctrlKey);
+    }
+    function onWindowBlur(): void {
+      setModHeld(false);
+    }
+    function onVisibilityChange(): void {
+      if (document.hidden) setModHeld(false);
+    }
+
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onWindowBlur);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onWindowBlur);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [keymap, queryClient]);
 
   return <>{children}</>;

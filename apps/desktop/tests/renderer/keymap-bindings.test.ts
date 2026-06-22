@@ -32,6 +32,31 @@ describe('deep-AI key bindings (⌘P / ⌘G / ⌘E / ⌘S)', () => {
   });
 });
 
+describe('chat-jump chord (⌘1..⌘9 reclaimed from ai-part-1..9)', () => {
+  it.each([
+    ['1', 'chat-jump-1'],
+    ['5', 'chat-jump-5'],
+    ['9', 'chat-jump-9'],
+  ] as const)('⌘%s resolves to %s', (key, action) => {
+    expect(keymap.resolve(mod(key))).toBe(action);
+  });
+
+  it('⌘0 still resolves to ai-part-0 (insert all parts is kept)', () => {
+    expect(keymap.resolve(mod('0'))).toBe('ai-part-0');
+  });
+
+  it('the old ai-part-1..9 actions are gone from the table', () => {
+    const actions = KEY_BINDINGS.map((b) => b.action);
+    expect(actions).not.toContain('ai-part-1');
+    expect(actions).not.toContain('ai-part-9');
+    expect(actions).toContain('ai-part-0');
+  });
+
+  it('jumps fire from inside the composer (mod combos pass the editable gate)', () => {
+    expect(keymap.resolve(mod('1', true))).toBe('chat-jump-1');
+  });
+});
+
 describe('binding table hygiene', () => {
   it('no combo is bound twice', () => {
     const combos = KEY_BINDINGS.map((b) => {

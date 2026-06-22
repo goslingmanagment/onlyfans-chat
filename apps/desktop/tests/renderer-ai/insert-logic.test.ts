@@ -2,13 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   INSERT_SEQUENCE_JOINER,
   appendToDraft,
-  insertChipLabel,
   insertPayload,
   resolveDockPartAction,
 } from '../../src/renderer/src/features/ai/dockLogic';
 import { splitDraftParts } from '../../src/renderer/src/features/conversation/sendLogic';
 
-describe('insertPayload (⌘0..⌘9 / bubble click)', () => {
+describe('insertPayload (⌘0 insert-all / bubble click)', () => {
   const parts = ['first part', 'second part', 'third part'];
 
   it('partIndex N inserts part N (1-based)', () => {
@@ -33,18 +32,6 @@ describe('insertPayload (⌘0..⌘9 / bubble click)', () => {
     expect(insertPayload(parts, -1)).toBeNull();
     expect(insertPayload([], 0)).toBeNull();
     expect(insertPayload([], 1)).toBeNull();
-  });
-
-  it('chip labels number parts 1..9, beyond that no hotkey', () => {
-    expect(insertChipLabel(1)).toBe('INSERT ⌘1');
-    expect(insertChipLabel(9)).toBe('INSERT ⌘9');
-    expect(insertChipLabel(10)).toBe('INSERT');
-  });
-
-  it('renders the Windows mod label when the platform is injected (PLAN item 11)', () => {
-    expect(insertChipLabel(1, 'darwin')).toBe('INSERT ⌘1');
-    expect(insertChipLabel(1, 'win32')).toBe('INSERT Ctrl+1');
-    expect(insertChipLabel(10, 'win32')).toBe('INSERT');
   });
 });
 

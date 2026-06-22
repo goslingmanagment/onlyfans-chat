@@ -1,8 +1,8 @@
 // The AI dock (DESIGN §1 AI surface): streaming draft-message bubbles above
 // the composer. P3: primary action is INSERT — clicking a bubble inserts it
-// into the composer; ⌘1..9 insert part N, ⌘0 inserts all parts as a [NEXT]
-// sequence. Copy is the secondary chip and the canSendMessage=false degrade
-// (SPEC §7.0).
+// into the composer; individual parts are click-only (⌘1..9 jump chats), while
+// ⌘0 still inserts all parts as a [NEXT] sequence. Copy is the secondary chip
+// and the canSendMessage=false degrade (SPEC §7.0).
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -35,12 +35,10 @@ import { usePingGate } from './pingGate';
 import {
   DOCK_FEATURE_LABELS,
   DOCK_TONES,
-  copyChipLabel,
   copyablePartsOf,
   errorHint,
   extractPromptBlocks,
   formatOpCost,
-  insertChipLabel,
   progressLabel,
   shouldAutoInsertCompactDraft,
   toggleTone,
@@ -422,14 +420,16 @@ function DraftBubble({
       ? s.partFeedback.kind
       : null,
   );
+  // Click-only since ⌘1..9 now jump chats (⌘0 still inserts all parts). The
+  // chip names the action; it no longer advertises a per-part hotkey.
   const chipText =
     feedback !== null
       ? feedback === 'inserted'
         ? 'INSERTED'
         : 'COPIED'
       : canSend
-        ? insertChipLabel(partNumber)
-        : copyChipLabel(partNumber);
+        ? 'INSERT'
+        : 'COPY';
   return (
     <button
       type="button"

@@ -22,8 +22,6 @@ import {
   normalizeSingleReplyPart,
   normalizeVariantReplyParts,
 } from '@chatgoose/shared/output/reply-output';
-import { appPlatform, modCombo, type LabelPlatform } from '../../lib/modKey';
-
 // ─── Tones ───────────────────────────────────────────────────────────────
 
 export const DOCK_TONES = ['casual', 'flirty', 'upsell', 'spicy'] as const satisfies readonly ReplyTone[];
@@ -84,12 +82,6 @@ export function copyPayload(parts: readonly string[], partIndex: number): string
   return parts[partIndex - 1] ?? null;
 }
 
-export function copyChipLabel(partNumber: number, platform: LabelPlatform = appPlatform()): string {
-  return partNumber >= 1 && partNumber <= 9
-    ? `COPY ${modCombo(`${partNumber}`, platform)}`
-    : 'COPY';
-}
-
 // ─── Insert payload selection (P3: INSERT is the primary bubble action) ───
 
 export const INSERT_SEQUENCE_JOINER = '\n[NEXT]\n';
@@ -102,12 +94,6 @@ export function insertPayload(parts: readonly string[], partIndex: number): stri
   if (parts.length === 0 || partIndex < 0) return null;
   if (partIndex === 0) return parts.join(INSERT_SEQUENCE_JOINER);
   return parts[partIndex - 1] ?? null;
-}
-
-export function insertChipLabel(partNumber: number, platform: LabelPlatform = appPlatform()): string {
-  return partNumber >= 1 && partNumber <= 9
-    ? `INSERT ${modCombo(`${partNumber}`, platform)}`
-    : 'INSERT';
 }
 
 /** Insert appends below whatever the chatter already typed; blank drafts are replaced. */

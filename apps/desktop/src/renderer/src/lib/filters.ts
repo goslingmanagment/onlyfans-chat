@@ -60,6 +60,16 @@ export function nextChatId(
   return orderedIds[next] ?? null;
 }
 
+/**
+ * ⌘1..⌘9 jump: the Nth chat (1-based) in the current visible/filtered order.
+ * Out of range (n < 1, n > length) → null = no-op. The overlay shows badges
+ * only for the same first nine indices, so affordance matches capability.
+ */
+export function nthChatId(orderedIds: readonly string[], n: number): string | null {
+  if (!Number.isInteger(n) || n < 1 || n > orderedIds.length) return null;
+  return orderedIds[n - 1] ?? null;
+}
+
 /** ⌘U: next chat with unread, scanning forward from current and wrapping. */
 export function nextUnreadChatId(
   chats: readonly ChatListItemVM[],
