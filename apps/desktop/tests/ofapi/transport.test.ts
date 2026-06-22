@@ -59,20 +59,20 @@ describe('OFAPI transport client', () => {
     );
   });
 
-  it('routes every read to hub and rollback writes to the direct client', async () => {
+  it('routes every read to the selected read client and fails writes before network', async () => {
     const meter = createCreditMeter();
     const read = fakeClient(meter);
-    const write = fakeClient(meter);
-    const client = createOfApiTransportClient(read.client, write.client);
+    const client = createOfApiTransportClient(read.client);
 
     for (const method of READ_METHODS) {
       await (client[method] as (params?: unknown) => Promise<unknown>)({});
       expect(read.methods[method]).toHaveBeenCalledTimes(1);
-      expect(write.methods[method]).not.toHaveBeenCalled();
     }
     for (const method of WRITE_METHODS) {
-      await (client[method] as (params?: unknown) => Promise<unknown>)({});
-      expect(write.methods[method]).toHaveBeenCalledTimes(1);
+      await expect((client[method] as (params?: unknown) => Promise<unknown>)({})).rejects.toMatchObject({
+        code: 'CG-HUB-02',
+        message: 'Direct OFAPI writes are disabled. Use Agency Hub commands for OnlyFans writes.',
+      });
       expect(read.methods[method]).not.toHaveBeenCalled();
     }
     expect(client.creditMeter).toBe(meter);
@@ -81,37 +81,27 @@ describe('OFAPI transport client', () => {
   it('fails closed for app-level local file uploads without calling Direct', async () => {
     const meter = createCreditMeter();
     const read = fakeClient(meter);
-    const write = fakeClient(meter);
-    const client = createOfApiTransportClient(read.client, write.client);
+    const client = createOfApiTransportClient(read.client);
 
     await expect(client.uploadVaultMedia({} as never)).rejects.toMatchObject({
       code: 'CG-OF-08',
       message: 'Local file upload into Vault is disabled in ChatGoose Desktop.',
     });
-    expect(write.methods.uploadVaultMedia).not.toHaveBeenCalled();
     expect(read.methods.uploadVaultMedia).not.toHaveBeenCalled();
   });
 
-  it('keeps read-only mode usable without a direct key and fails writes before network', async () => {
+  it('keeps read-only mode usable and fails writes before network', async () => {
     const read = fakeClient();
-    const client = createOfApiTransportClient(read.client, null);
+    const client = createOfApiTransportClient(read.client);
 
     await expect(client.listAccounts()).resolves.toEqual({ source: 'listAccounts' });
     await expect(client.sendMessage({} as never)).rejects.toMatchObject({
-      code: 'CG-OF-01',
+      code: 'CG-HUB-02',
     });
     await expect(client.uploadVaultMedia({} as never)).rejects.toMatchObject({
       code: 'CG-OF-08',
     });
     expect(read.methods.sendMessage).not.toHaveBeenCalled();
     expect(read.methods.uploadVaultMedia).not.toHaveBeenCalled();
-  });
-
-  it('rejects split clients that would make the desktop budget meter incomplete', () => {
-    const read = fakeClient();
-    const write = fakeClient();
-    expect(() => createOfApiTransportClient(read.client, write.client)).toThrow(
-      'must share one credit meter',
-    );
   });
 });

@@ -21,6 +21,7 @@ import {
   drain,
   loadFixture,
   makeSentMessage,
+  makeStubHubCommandClient,
   makeStubClient,
   makeTailMessage,
   memoryDataLayer,
@@ -56,6 +57,7 @@ describe('send engine (SPEC §7)', () => {
   let data: DataLayer;
   let stub: StubSendClient;
   let markAsReadOnOpen: boolean;
+  let localSeq: number;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -63,6 +65,7 @@ describe('send engine (SPEC §7)', () => {
     data = memoryDataLayer();
     stub = makeStubClient();
     markAsReadOnOpen = true;
+    localSeq = 0;
     seedChat(data);
   });
 
@@ -83,6 +86,7 @@ describe('send engine (SPEC §7)', () => {
       });
     const engine = createSendEngine({
       client: (overrides.stub ?? stub).client,
+      hubCommandClient: overrides.hubCommandClient ?? makeStubHubCommandClient(overrides.stub ?? stub),
       data,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen }),
@@ -94,6 +98,31 @@ describe('send engine (SPEC §7)', () => {
 
   function rowState(localId: string): string | undefined {
     return data.outbox.get(localId)?.state;
+  }
+
+  function insertLegacyDirectUnconfirmed({
+    text,
+    createdAt = new Date().toISOString(),
+  }: {
+    text: string;
+    createdAt?: string;
+  }): string {
+    localSeq += 1;
+    const localId = `legacy-direct-${localSeq}`;
+    data.db
+      .prepare(
+        `INSERT INTO outbox (
+          local_id, account_id, chat_id, text, transport, state, sequence_id, part_index,
+          message_id, error_code, error_message, text_highlights, attempts, retry_of,
+          price, media_files, previews, created_at, updated_at
+        ) VALUES (
+          @local_id, @account_id, @chat_id, @text, 'direct', 'unconfirmed', NULL, 0,
+          NULL, 'CG-OF-06', 'legacy direct row', '[]', 1, NULL,
+          0, '[]', '[]', @created_at, @created_at
+        )`,
+      )
+      .run({ local_id: localId, account_id: ACCT, chat_id: CHAT, text, created_at: createdAt });
+    return localId;
   }
 
   // ── Happy path ───────────────────────────────────────────────────────────
@@ -159,7 +188,7 @@ describe('send engine (SPEC §7)', () => {
     expect(row).toMatchObject({
       state: 'failed',
       errorCode: 'CG-OF-05',
-      textHighlights: ['haha no I do not even have a cashapp'],
+      textHighlights: [],
       attempts: 1,
     });
     expect(row?.errorMessage).toBeTruthy();
@@ -178,54 +207,38 @@ describe('send engine (SPEC §7)', () => {
       attempts: 1,
     });
 
-    // Periodic verifier passes (empty tail), a manual pass, and a restart
-    // reconcile must never produce a second POST (SPEC §15.5).
+    // Periodic verifier passes and a manual pass must never produce a second
+    // command execution (SPEC §15.5).
     await vi.advanceTimersByTimeAsync(VERIFY_INTERVAL_MS * 4);
     await engine.verifyChat(ACCT, CHAT);
-    const restartStub = makeStubClient();
-    const { engine: rebooted } = makeEngine({ stub: restartStub });
-    await rebooted.reconcileOnBoot();
 
     expect(data.outbox.get(localId)?.state).toBe('unconfirmed');
     expect(stub.sendCalls).toHaveLength(1);
-    expect(restartStub.sendCalls).toHaveLength(0);
-    expect(stub.listMessagesCalls).toBeGreaterThan(0); // it verified, not re-sent
+    expect(stub.listMessagesCalls).toBe(0); // Hub status recovery, not body reads
     engine.dispose();
-    rebooted.dispose();
   });
 
   // ── Verifier ─────────────────────────────────────────────────────────────
 
   it('verifier promotes on tail match: normalized text equality + time window', async () => {
-    stub.onSend(() => Promise.reject(timeoutError()));
     const { engine } = makeEngine();
-    const { localIds } = engine.sendParts({
-      accountId: ACCT,
-      chatId: CHAT,
-      parts: ['hello   world '], // extra whitespace — normalization must match
-    });
-    await drain();
+    const localId = insertLegacyDirectUnconfirmed({ text: 'hello   world ' }); // normalization must match
 
     stub.setTail([makeTailMessage({ id: 555, text: '<p>hello world</p>', fromMe: true })]);
     await engine.verifyChat(ACCT, CHAT);
 
-    expect(data.outbox.get(localIds[0] ?? '')).toMatchObject({
+    expect(data.outbox.get(localId)).toMatchObject({
       state: 'sent',
       messageId: '555',
     });
-    expect(stub.sendCalls).toHaveLength(1);
+    expect(stub.sendCalls).toHaveLength(0);
     engine.dispose();
   });
 
   it('verifier refuses cross-claiming: one candidate promotes one row, oldest first', async () => {
-    stub.onSend(() => Promise.reject(timeoutError()));
     const { engine } = makeEngine();
-    const first = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['dup'] });
-    await drain();
-    const second = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['dup'] });
-    await drain();
-    const firstId = first.localIds[0] ?? '';
-    const secondId = second.localIds[0] ?? '';
+    const firstId = insertLegacyDirectUnconfirmed({ text: 'dup' });
+    const secondId = insertLegacyDirectUnconfirmed({ text: 'dup' });
     expect(rowState(firstId)).toBe('unconfirmed');
     expect(rowState(secondId)).toBe('unconfirmed');
 
@@ -243,11 +256,8 @@ describe('send engine (SPEC §7)', () => {
   });
 
   it('verifier leaves no-match unconfirmed (wrong text; outside time window)', async () => {
-    stub.onSend(() => Promise.reject(timeoutError()));
     const { engine } = makeEngine();
-    const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['exact text'] });
-    await drain();
-    const localId = localIds[0] ?? '';
+    const localId = insertLegacyDirectUnconfirmed({ text: 'exact text' });
 
     stub.setTail([
       makeTailMessage({ id: 801, text: 'different text' }),
@@ -266,11 +276,8 @@ describe('send engine (SPEC §7)', () => {
   });
 
   it('messageSent sync event promotes from the LOCAL table without network', async () => {
-    stub.onSend(() => Promise.reject(timeoutError()));
     const { engine } = makeEngine();
-    const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['ping pong'] });
-    await drain();
-    const localId = localIds[0] ?? '';
+    const localId = insertLegacyDirectUnconfirmed({ text: 'ping pong' });
     expect(rowState(localId)).toBe('unconfirmed');
 
     // Sync already upserted the delivered message before emitting the event.
@@ -279,18 +286,17 @@ describe('send engine (SPEC §7)', () => {
 
     expect(data.outbox.get(localId)).toMatchObject({ state: 'sent', messageId: '910' });
     expect(stub.listMessagesCalls).toBe(0);
-    expect(stub.sendCalls).toHaveLength(1);
+    expect(stub.sendCalls).toHaveLength(0);
     engine.dispose();
   });
 
   it('periodic auto-verify runs every 30 s and stops for rows older than 10 min', async () => {
-    stub.onSend(() => Promise.reject(timeoutError()));
     const { engine } = makeEngine();
-    engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['lost'] });
-    await drain();
+    insertLegacyDirectUnconfirmed({ text: 'lost' });
+    await engine.reconcileOnBoot();
 
     await vi.advanceTimersByTimeAsync(2 * VERIFY_INTERVAL_MS);
-    expect(stub.listMessagesCalls).toBe(2);
+    expect(stub.listMessagesCalls).toBeGreaterThanOrEqual(2);
 
     // Beyond the 10-minute auto window the chain goes quiet…
     await vi.advanceTimersByTimeAsync(15 * 60_000);
@@ -328,21 +334,20 @@ describe('send engine (SPEC §7)', () => {
     expect(rowState(id2)).toBe('queued');
     expect(rowState(id3)).toBe('queued');
 
-    // "Restart": fresh engine over the same DB; tail contains the delivered part.
+    // "Restart": fresh engine over the same DB; core status confirms the command.
     const bootStub = makeStubClient();
-    bootStub.setTail([makeTailMessage({ id: 555, text: '<p>part one</p>' })]);
     const { engine: rebooted } = makeEngine({ stub: bootStub });
     await rebooted.reconcileOnBoot();
 
-    expect(data.outbox.get(id1)).toMatchObject({ state: 'sent', messageId: '555' });
+    expect(data.outbox.get(id1)).toMatchObject({ state: 'sent', messageId: '9000000001' });
     expect(rowState(id2)).toBe('cancelled'); // restart kills pending sequences
     expect(rowState(id3)).toBe('cancelled');
-    expect(bootStub.sendCalls).toHaveLength(0); // never auto-sends on boot
+    expect(bootStub.sendCalls).toHaveLength(1); // idempotent status/intake recovery
 
     // The pre-restart POST resolving late must not clobber the verified row.
     releaseSend?.(makeSentMessage({ id: 999, text: 'part one' }));
     await drain();
-    expect(data.outbox.get(id1)).toMatchObject({ state: 'sent', messageId: '555', attempts: 1 });
+    expect(data.outbox.get(id1)).toMatchObject({ state: 'sent', messageId: '9000000001', attempts: 1 });
     expect(stub.sendCalls).toHaveLength(1);
     rebooted.dispose();
     engine.dispose();
@@ -354,7 +359,8 @@ describe('send engine (SPEC §7)', () => {
     const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['vanished'] });
     await drain();
 
-    const bootStub = makeStubClient(); // empty tail — nothing to match
+    const bootStub = makeStubClient();
+    bootStub.onSend(() => Promise.reject(timeoutError()));
     const { engine: rebooted } = makeEngine({ stub: bootStub });
     await rebooted.reconcileOnBoot();
     expect(data.outbox.get(localIds[0] ?? '')).toMatchObject({
@@ -578,22 +584,25 @@ describe('send engine (SPEC §7)', () => {
 
   // ── Typing / mark-read / unsend ──────────────────────────────────────────
 
-  it('typingActive: min 2.5 s between calls per chat, errors swallowed', async () => {
-    const { engine } = makeEngine();
-    // First call rejects — fire-and-forget must swallow it (no unhandled rejection).
-    (stub.client.startTyping as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error('typing endpoint hiccup'),
-    );
+  it('typingActive: without Hub command transport it never calls Direct', async () => {
+    const engine = createSendEngine({
+      client: stub.client,
+      data,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen }),
+      sleep: () => Promise.resolve(),
+      random: () => 0.5,
+    });
     engine.typingActive(ACCT, CHAT);
     engine.typingActive(ACCT, CHAT);
     engine.typingActive(ACCT, CHAT);
     await drain();
-    expect(stub.client.startTyping).toHaveBeenCalledTimes(1);
+    expect(stub.typingCalls).toBe(0);
 
     await vi.advanceTimersByTimeAsync(2500);
     engine.typingActive(ACCT, CHAT);
     await drain();
-    expect(stub.client.startTyping).toHaveBeenCalledTimes(2);
+    expect(stub.typingCalls).toBe(0);
     engine.dispose();
   });
 

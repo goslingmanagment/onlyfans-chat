@@ -332,11 +332,10 @@ export interface SettingsVM {
    */
   ofapiReadTransport: 'direct' | 'hub';
   /**
-   * OFAPI write transport. `hub` submits supported versioned commands to core
-   * (text, typing, unsend, mark-read, media/PPV); direct remains the documented
-   * rollback. Local file-byte uploads are intentionally not app-supported.
+   * OFAPI write transport. All app writes use supported versioned Hub commands
+   * (text, typing, unsend, mark-read, media/PPV). Direct writes are not exposed.
    */
-  ofapiWriteTransport: 'direct' | 'hub';
+  ofapiWriteTransport: 'hub';
   /**
    * AI generation transport. `direct` uses local provider keys; `hub` streams
    * through core's default-off AI gateway with DirectGateway as the rollback.

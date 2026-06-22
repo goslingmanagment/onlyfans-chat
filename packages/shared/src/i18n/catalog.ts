@@ -22,13 +22,13 @@ export const UI_MESSAGES = {
   'settings.back': { en: '← back to workspace', ru: '← назад к работе' },
 
   // ── Rollback / provider keys ──────────────────────────────────────────────
-  'keys.title': { en: 'Rollback keys', ru: 'Ключи отката' },
+  'keys.title': { en: 'Local keys', ru: 'Локальные ключи' },
   'keys.hint': {
-    en: 'Optional local fallback keys. Normal OFAPI reads/writes use Agency Hub and do not need a local OFAPI key.',
-    ru: 'Опциональные локальные ключи отката. Обычные чтения/записи OFAPI идут через Agency Hub и не требуют локального OFAPI-ключа.',
+    en: 'Optional local keys for Direct reads and direct AI. OFAPI writes always use Agency Hub.',
+    ru: 'Опциональные локальные ключи для Direct-чтения и прямого ИИ. Записи OFAPI всегда идут через Agency Hub.',
   },
   'keys.ofapi.label': { en: 'OFAPI key', ru: 'Ключ OFAPI' },
-  'keys.ofapi.hint': { en: 'Direct rollback only', ru: 'только откат Direct' },
+  'keys.ofapi.hint': { en: 'Direct reads only; never app writes', ru: 'только Direct-чтение; не записи' },
   'keys.anthropic.label': { en: 'Anthropic key', ru: 'Ключ Anthropic' },
   'keys.anthropic.hint': { en: 'direct AI provider', ru: 'основной ИИ-провайдер' },
   'keys.openrouter.label': { en: 'OpenRouter key', ru: 'Ключ OpenRouter' },
@@ -98,8 +98,8 @@ export const UI_MESSAGES = {
   // ── Agency Hub ────────────────────────────────────────────────────────────
   'hub.title': { en: 'Agency Hub', ru: 'Agency Hub' },
   'hub.hint': {
-    en: 'Default path for realtime events and supported OFAPI reads/writes. Chatter machines do not need local OFAPI keys.',
-    ru: 'Основной путь для live-событий и поддержанных чтений/записей OFAPI. Машинам чаттеров не нужны локальные OFAPI-ключи.',
+    en: 'Default path for realtime events and supported OFAPI reads. OFAPI writes are Hub-only.',
+    ru: 'Основной путь для live-событий и поддержанных чтений OFAPI. Записи OFAPI идут только через Hub.',
   },
   'hub.baseUrl.label': { en: 'Hub base URL', ru: 'Адрес хаба' },
   'hub.baseUrl.hint': { en: "your agency's core server", ru: 'core-сервер вашего агентства' },
@@ -119,14 +119,14 @@ export const UI_MESSAGES = {
   'hub.aiGateway.label': { en: 'AI generation', ru: 'Генерация ИИ' },
   'hub.ofapiWrites.label': { en: 'OFAPI writes', ru: 'Записи OFAPI' },
   'hub.ofapiWrites.hint': {
-    en: 'Text, typing, unsend, mark-read, media and PPV go through core commands.',
-    ru: 'Текст, typing, unsend, mark-read, медиа и PPV идут через команды core.',
+    en: 'Text, typing, unsend, mark-read, media and PPV go through core commands. Direct is disabled.',
+    ru: 'Текст, typing, unsend, mark-read, медиа и PPV идут через команды core. Direct выключен.',
   },
   'hub.ofapiWrites.direct': { en: 'Direct', ru: 'Напрямую' },
   'hub.ofapiWrites.hub': { en: 'Agency Hub', ru: 'Agency Hub' },
   'hub.ofapiWrites.restart': {
-    en: 'takes effect immediately',
-    ru: 'применяется сразу',
+    en: 'fails closed if Hub is unavailable',
+    ru: 'fail-closed, если Hub недоступен',
   },
   'hub.aiGateway.hint': {
     en: 'Direct local keys or core streaming gateway.',

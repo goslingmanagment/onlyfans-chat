@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HubOfapiCommand } from '@chatgoose/shared/hub/index';
+import { HubError, type HubOfapiCommand } from '@chatgoose/shared/hub/index';
 import { createSendEngine } from '@main/send/engine';
 import type { DataLayer } from '@main/db/index';
 import {
@@ -65,9 +65,7 @@ describe('send engine hub command transport', () => {
     );
     const engine = createSendEngine({
       client: direct.client,
-      directClient: null,
       hubCommandClient: { createOfapiCommand, getOfapiCommand },
-      getWriteTransport: () => 'hub',
       data,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
@@ -118,9 +116,7 @@ describe('send engine hub command transport', () => {
     );
     const engine = createSendEngine({
       client: direct.client,
-      directClient: null,
       hubCommandClient: { createOfapiCommand, getOfapiCommand },
-      getWriteTransport: () => 'hub',
       data,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
@@ -180,12 +176,10 @@ describe('send engine hub command transport', () => {
     );
     const engine = createSendEngine({
       client: direct.client,
-      directClient: null,
       hubCommandClient: {
         createOfapiCommand,
         getOfapiCommand: vi.fn(),
       },
-      getWriteTransport: () => 'hub',
       data,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
@@ -208,14 +202,14 @@ describe('send engine hub command transport', () => {
         payload: {},
       },
     });
-    expect(direct.client.startTyping).not.toHaveBeenCalled();
+    expect(direct.typingCalls).toBe(0);
 
     await vi.advanceTimersByTimeAsync(2500);
     engine.typingActive(ACCT, CHAT);
     await drain();
 
     expect(createOfapiCommand).toHaveBeenCalledTimes(2);
-    expect(direct.client.startTyping).not.toHaveBeenCalled();
+    expect(direct.typingCalls).toBe(0);
     engine.dispose();
   });
 
@@ -230,12 +224,10 @@ describe('send engine hub command transport', () => {
     );
     const engine = createSendEngine({
       client: direct.client,
-      directClient: null,
       hubCommandClient: {
         createOfapiCommand,
         getOfapiCommand: vi.fn(),
       },
-      getWriteTransport: () => 'hub',
       data,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen: true }),
@@ -284,12 +276,10 @@ describe('send engine hub command transport', () => {
     );
     const engine = createSendEngine({
       client: direct.client,
-      directClient: null,
       hubCommandClient: {
         createOfapiCommand,
         getOfapiCommand: vi.fn(),
       },
-      getWriteTransport: () => 'hub',
       data,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
@@ -328,14 +318,12 @@ describe('send engine hub command transport', () => {
     );
     const engine = createSendEngine({
       client: direct.client,
-      directClient: null,
       hubCommandClient: {
         createOfapiCommand,
         getOfapiCommand: vi.fn(async ({ commandId }: { commandId: string }) =>
           command('unused', 'queued', { commandId, kind: 'unsend_message_v1' }),
         ),
       },
-      getWriteTransport: () => 'hub',
       data,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
@@ -372,7 +360,6 @@ describe('send engine hub command transport', () => {
         createOfapiCommand,
         getOfapiCommand: vi.fn(),
       },
-      getWriteTransport: () => 'hub',
       data,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
@@ -392,6 +379,38 @@ describe('send engine hub command transport', () => {
       localId,
     ]);
     expect(data.outbox.get(localId)?.state).toBe('sent');
+    expect(direct.listMessagesCalls).toBe(0);
+    engine.dispose();
+  });
+
+  it('fails closed when Hub command transport is not configured', async () => {
+    const direct = makeStubClient();
+    const createOfapiCommand = vi.fn(async () => {
+      throw new HubError('bad-request', {
+        message: 'Hub command transport is not configured',
+      });
+    });
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: {
+        createOfapiCommand,
+        getOfapiCommand: vi.fn(),
+      },
+      data,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+
+    const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello'] });
+    await drain();
+
+    expect(data.outbox.get(localIds[0] ?? '')).toMatchObject({
+      state: 'failed',
+      errorCode: 'CG-HUB-02',
+      errorMessage: 'Hub command transport is not configured',
+    });
+    expect(direct.sendCalls).toHaveLength(0);
     expect(direct.listMessagesCalls).toBe(0);
     engine.dispose();
   });
@@ -419,7 +438,6 @@ describe('send engine hub command transport', () => {
         createOfapiCommand,
         getOfapiCommand: vi.fn(),
       },
-      getWriteTransport: () => 'hub',
       data,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),

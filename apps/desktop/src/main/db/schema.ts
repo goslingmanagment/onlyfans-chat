@@ -356,6 +356,14 @@ CREATE INDEX idx_outbox_chat ON outbox (account_id, chat_id, created_at);
 CREATE INDEX idx_outbox_state ON outbox (state);
 `;
 
+// v14 — Direct OFAPI writes are no longer an app-supported rollback. Preserve
+// old outbox row stamps for audit/recovery, but force any persisted write
+// transport preference back to the Hub command path.
+export const SCHEMA_V14 = `
+INSERT INTO settings (key, value) VALUES ('ofapiWriteTransport', '"hub"')
+ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',

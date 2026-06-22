@@ -109,10 +109,10 @@ describe('send-channel IPC handlers', () => {
     register(data, null);
     await expect(
       invoke('cmd:send.message', { accountId: ACCT, chatId: CHAT, parts: ['hi'] }),
-    ).rejects.toThrow(/write transport/);
+    ).rejects.toThrow(/Agency Hub/);
     await expect(
       invoke('cmd:send.retry', { accountId: ACCT, localId: 'L1', text: 'hi' }),
-    ).rejects.toThrow(/write transport/);
+    ).rejects.toThrow(/Agency Hub/);
     // Advisory channels no-op silently (no write transport ⇒ composer is not live anyway).
     await expect(
       invoke('cmd:chat.typingActive', { accountId: ACCT, chatId: CHAT }),

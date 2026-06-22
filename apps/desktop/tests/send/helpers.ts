@@ -5,6 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { vi } from 'vitest';
+import type { HubClient, HubOfapiCommand } from '@chatgoose/shared/hub/index';
 import { createChangeBus, createDataLayer } from '@main/db/index';
 import type { ChatUpsert, DataLayer, MessageUpsert } from '@main/db/index';
 import type { SendClient } from '@main/send/engine';
@@ -220,6 +221,142 @@ export function makeStubClient(): StubSendClient {
     } as unknown as SendClient,
   };
   return state;
+}
+
+function commandFromRequest(
+  request: Parameters<HubClient['createOfapiCommand']>[0]['command'],
+  state: HubOfapiCommand['state'],
+  overrides: Partial<HubOfapiCommand> = {},
+): HubOfapiCommand {
+  return {
+    commandId: overrides.commandId ?? `cmd-${request.clientCommandId}`,
+    clientCommandId: request.clientCommandId,
+    kind: request.kind,
+    accountId: request.accountId,
+    conversationId: request.conversationId,
+    state,
+    payloadHash: '0'.repeat(64),
+    retryOfCommandId: 'retryOfCommandId' in request ? (request.retryOfCommandId ?? null) : null,
+    attemptCount: state === 'queued' ? 0 : 1,
+    lastErrorCode: null,
+    lastErrorClass: null,
+    verifierResult: null,
+    platformMessageId: state === 'confirmed' ? '9001' : null,
+    attemptStartedAt: state === 'queued' ? null : new Date().toISOString(),
+    attemptFinishedAt: state === 'confirmed' ? new Date().toISOString() : null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    deduplicated: false,
+    ...overrides,
+  };
+}
+
+function errorCode(error: unknown): string | null {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const value = (error as { code?: unknown }).code;
+    return typeof value === 'string' ? value : null;
+  }
+  return null;
+}
+
+/**
+ * Test double for core's command executor. It records command payloads through
+ * the existing stub counters so the older state-machine tests can keep their
+ * assertions while the production engine has no Direct write client.
+ */
+export function makeStubHubCommandClient(stub: StubSendClient): Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand'> {
+  const commands = new Map<string, HubOfapiCommand>();
+
+  const createOfapiCommand = vi.fn(async ({ command: request }: Parameters<HubClient['createOfapiCommand']>[0]) => {
+    const existing = commands.get(request.clientCommandId);
+    if (existing !== undefined) {
+      return { ...existing, deduplicated: true };
+    }
+
+    let result: HubOfapiCommand;
+    try {
+      switch (request.kind) {
+        case 'send_text_message_v1': {
+          const sent = await (stub.client as SendClient & { sendMessage: (params: unknown) => Promise<OfApiSentMessage> }).sendMessage({
+            accountId: request.accountId,
+            chatId: request.conversationId,
+            text: request.payload.text,
+            purpose: 'send',
+          });
+          result = commandFromRequest(request, 'confirmed', {
+            platformMessageId: String(sent.id),
+            attemptFinishedAt: sent.createdAt,
+          });
+          break;
+        }
+        case 'send_media_message_v1': {
+          const sent = await (stub.client as SendClient & { sendMessage: (params: unknown) => Promise<OfApiSentMessage> }).sendMessage({
+            accountId: request.accountId,
+            chatId: request.conversationId,
+            text: request.payload.text,
+            price: request.payload.price,
+            mediaFiles: request.payload.mediaFiles,
+            previews: request.payload.previews,
+            purpose: 'send',
+          });
+          result = commandFromRequest(request, 'confirmed', {
+            platformMessageId: String(sent.id),
+            attemptFinishedAt: sent.createdAt,
+          });
+          break;
+        }
+        case 'typing_active_v1':
+          await (stub.client as SendClient & { startTyping: (params: unknown) => Promise<void> }).startTyping({
+            accountId: request.accountId,
+            chatId: request.conversationId,
+            purpose: 'send',
+          });
+          result = commandFromRequest(request, 'confirmed', { platformMessageId: null });
+          break;
+        case 'mark_chat_read_v1': {
+          const { success } = await (stub.client as SendClient & { markChatRead: (params: unknown) => Promise<{ success: boolean }> }).markChatRead({
+            accountId: request.accountId,
+            chatId: request.conversationId,
+            purpose: 'send',
+          });
+          result = commandFromRequest(request, success ? 'confirmed' : 'failed_retryable', {
+            platformMessageId: null,
+          });
+          break;
+        }
+        case 'unsend_message_v1':
+          await (stub.client as SendClient & { deleteMessage: (params: unknown) => Promise<{ success: boolean }> }).deleteMessage({
+            accountId: request.accountId,
+            chatId: request.conversationId,
+            messageId: request.payload.messageId,
+            purpose: 'send',
+          });
+          result = commandFromRequest(request, 'confirmed', {
+            platformMessageId: request.payload.messageId,
+          });
+          break;
+      }
+    } catch (error) {
+      const code = errorCode(error);
+      result = commandFromRequest(request, code === 'CG-OF-05' ? 'failed_terminal' : 'indeterminate', {
+        lastErrorCode: code,
+        lastErrorClass: code === 'CG-OF-05' ? 'terminal' : 'indeterminate',
+        platformMessageId: null,
+      });
+    }
+    commands.set(request.clientCommandId, result);
+    return result;
+  });
+
+  const getOfapiCommand = vi.fn(async ({ commandId }: { commandId: string }) => {
+    const found = [...commands.values()].find((command) => command.commandId === commandId);
+    if (found === undefined) {
+      throw new Error(`unknown command ${commandId}`);
+    }
+    return found;
+  });
+
+  return { createOfapiCommand, getOfapiCommand };
 }
 
 /** Settles the pump/verifier microtask chains without firing any timer. */

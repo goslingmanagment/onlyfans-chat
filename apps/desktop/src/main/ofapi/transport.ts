@@ -12,9 +12,9 @@ export function buildHubOfApiReadBaseUrl(hubBaseUrl: string): string {
   return `${base}/api/v1/ofapi/read`;
 }
 
-function missingDirectWriter(): OfApiError {
-  return new OfApiError('CG-OF-01', {
-    message: 'A direct OFAPI key is required for Direct rollback writes.',
+function disabledDirectWrite(): OfApiError {
+  return new OfApiError('CG-HUB-02', {
+    message: 'Direct OFAPI writes are disabled. Use Agency Hub commands for OnlyFans writes.',
     detail: { provider: 'ofapi' },
   });
 }
@@ -27,25 +27,11 @@ function disabledDiskUpload(): OfApiError {
 }
 
 /**
- * C6 custody bridge: every read uses `readClient`; legacy Direct writes remain
- * available only for explicit rollback paths. Local file-byte uploads are not
- * app-supported and fail closed before any network call.
+ * C6 custody bridge: every read uses `readClient`; app-level writes fail closed
+ * here so the only supported write path is the Hub command outbox. Local file-byte
+ * uploads are not app-supported and fail closed before any network call.
  */
-export function createOfApiTransportClient(
-  readClient: OfApiClient,
-  writeClient: OfApiClient | null,
-): OfApiClient {
-  if (writeClient !== null && writeClient.creditMeter !== readClient.creditMeter) {
-    throw new Error('OFAPI read/write clients must share one credit meter');
-  }
-
-  function requireWriteClient(): OfApiClient {
-    if (writeClient === null) {
-      throw missingDirectWriter();
-    }
-    return writeClient;
-  }
-
+export function createOfApiTransportClient(readClient: OfApiClient): OfApiClient {
   return {
     creditMeter: readClient.creditMeter,
     listAccounts: (params) => readClient.listAccounts(params),
@@ -69,11 +55,23 @@ export function createOfApiTransportClient(
     uploadVaultMedia: async () => {
       throw disabledDiskUpload();
     },
-    sendMessage: async (params) => requireWriteClient().sendMessage(params),
-    deleteMessage: async (params) => requireWriteClient().deleteMessage(params),
-    likeMessage: async (params) => requireWriteClient().likeMessage(params),
-    unlikeMessage: async (params) => requireWriteClient().unlikeMessage(params),
-    startTyping: async (params) => requireWriteClient().startTyping(params),
-    markChatRead: async (params) => requireWriteClient().markChatRead(params),
+    sendMessage: async () => {
+      throw disabledDirectWrite();
+    },
+    deleteMessage: async () => {
+      throw disabledDirectWrite();
+    },
+    likeMessage: async () => {
+      throw disabledDirectWrite();
+    },
+    unlikeMessage: async () => {
+      throw disabledDirectWrite();
+    },
+    startTyping: async () => {
+      throw disabledDirectWrite();
+    },
+    markChatRead: async () => {
+      throw disabledDirectWrite();
+    },
   };
 }

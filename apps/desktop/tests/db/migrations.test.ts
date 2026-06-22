@@ -33,7 +33,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
-      expect(SCHEMA_VERSION).toBe(13);
+      expect(SCHEMA_VERSION).toBe(14);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       // v10: per-fan thread-fetch stamps (spenders freshness, PLAN item 13)
       expect(names).toContain('thread_fetch_log');
@@ -362,6 +362,33 @@ describe('migration runner', () => {
     );
     expect(db.prepare("SELECT transport FROM outbox WHERE local_id = 'default-hub'").get()).toEqual({
       transport: 'hub',
+    });
+    db.close();
+  });
+
+  it('v14 forces persisted write transport back to hub without rewriting outbox audit rows', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 13));
+    db.exec(
+      `INSERT INTO settings (key, value) VALUES ('ofapiWriteTransport', '"direct"')
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+       INSERT INTO outbox (
+         local_id, account_id, chat_id, text, transport, state, sequence_id, part_index,
+         message_id, error_code, error_message, text_highlights, attempts, retry_of,
+         price, media_files, previews, created_at, updated_at
+       ) VALUES (
+         'legacy-direct', 'acct_1', '101', 'hello', 'direct', 'failed', NULL, 0,
+         NULL, 'CG-APP-01', 'failed', '[]', 1, NULL,
+         0, '[]', '[]', '2026-06-20T00:00:00.000Z', '2026-06-20T00:00:01.000Z'
+       )`,
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 13, to: SCHEMA_VERSION });
+    expect(db.prepare("SELECT value FROM settings WHERE key = 'ofapiWriteTransport'").get()).toEqual({
+      value: '"hub"',
+    });
+    expect(db.prepare("SELECT transport FROM outbox WHERE local_id = 'legacy-direct'").get()).toEqual({
+      transport: 'direct',
     });
     db.close();
   });

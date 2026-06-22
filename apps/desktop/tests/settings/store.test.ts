@@ -161,6 +161,7 @@ describe('settings store', () => {
     await expect(store.update({ uiScale: 0.95 })).rejects.toThrow();
     await expect(store.update({ uiTheme: 'sepia' })).rejects.toThrow();
     await expect(store.update({ ofapiReadTransport: 'proxy' })).rejects.toThrow();
+    await expect(store.update({ ofapiWriteTransport: 'direct' })).rejects.toThrow();
     await expect(store.update({ ofapiWriteTransport: 'proxy' })).rejects.toThrow();
     await expect(store.update({ aiGatewayTransport: 'proxy' })).rejects.toThrow();
     await expect(store.update({ hubModeOverride: 'both' })).rejects.toThrow();

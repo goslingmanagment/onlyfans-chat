@@ -338,13 +338,10 @@ async function initOfapi(
     });
     return;
   }
-  client =
-    initialSettings.ofapiReadTransport === 'hub'
-      ? createOfApiTransportClient(readClient, directClient)
-      : readClient;
+  client = createOfApiTransportClient(readClient);
   logger?.info('ofapi', 'read transport selected', {
     transport: initialSettings.ofapiReadTransport,
-    directWritesAvailable: directClient !== null,
+    directReadAvailable: directClient !== null,
   });
 
   const utcDay = new Date().toISOString().slice(0, 10);
@@ -404,7 +401,7 @@ async function initOfapi(
   let settingsCache: {
     creditBudgetPerShift: number | null;
     autoReadChats: boolean;
-    ofapiWriteTransport: 'direct' | 'hub';
+    ofapiWriteTransport: 'hub';
     hubModeOverride: 'auto' | 'polling' | 'hub';
     spendSweepRollbackToLegacy: boolean;
     unreadReconcile: UnreadReconcileSettingsVM;
@@ -502,14 +499,12 @@ async function initOfapi(
   });
   void hub.reconfigure();
 
-  // Hub-supported writes (text, typing, unsend, mark-read, media/PPV) can run
-  // without a local OFAPI key. directClient remains only for explicit Direct
-  // rollback paths.
+  // Hub-supported writes (text, typing, unsend, mark-read, media/PPV) are the
+  // only app write path. The local OFAPI key may still back Direct reads, but it
+  // is never passed to the send engine.
   const engine = createSendEngine({
     client,
-    directClient,
     hubCommandClient: hub.commandClient,
-    getWriteTransport: () => settingsCache?.ofapiWriteTransport ?? 'hub',
     data: dataLayer,
     toMediaUrl,
     getSettings: () => settingsStore.get(),

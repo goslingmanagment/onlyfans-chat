@@ -130,10 +130,10 @@ const persistedFieldSchemas = {
   accountOrder: z.array(z.string().min(1)).max(200),
   // Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off.
   hubBaseUrl: z.string().min(1).nullable(),
-  // C6 custody bridge: GETs via core; writes stay direct until command gateway.
+  // C6 custody bridge: GETs may be direct or hub.
   ofapiReadTransport: z.enum(OFAPI_READ_TRANSPORTS),
-  // C6b text-command custody bridge; direct remains the rollback.
-  ofapiWriteTransport: z.enum(['direct', 'hub']),
+  // C6b+ hard invariant: all app writes go through Hub commands.
+  ofapiWriteTransport: z.literal('hub'),
   // C6c AI custody bridge: provider calls stay direct unless hub is selected explicitly.
   aiGatewayTransport: z.enum(['direct', 'hub']),
   // Dev/support-only override for D3 diagnostics. Default auto.

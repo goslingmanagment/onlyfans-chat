@@ -1,7 +1,8 @@
-// SPEC §7 send pipeline — the ONLY code path that may call client.sendMessage.
+// SPEC §7 send pipeline — the ONLY code path that may create Hub OFAPI commands.
 // Correctness contract (SPEC §15.5, the product's most important invariant):
-// a row is POSTed at most once, ever. Rows reach 'sending' exclusively through
-// the atomic outbox.claimNextQueued (queued→sending persisted BEFORE the POST);
+// a row is submitted to core at most once per stable client command id. Rows
+// reach 'sending' exclusively through the atomic outbox.claimNextQueued
+// (queued→sending persisted BEFORE command intake);
 // no transition re-queues a row; restarts park 'sending' as 'unconfirmed'; and
 // recovery is verification (read-only) or a NEW row (retry of a definite
 // failure) — never a second attempt on the same row. Indeterminate outcomes
@@ -10,7 +11,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { CgError } from '@chatgoose/shared';
-import type { HubClient, HubOfapiCommand } from '@chatgoose/shared/hub/index';
+import { HubError, type HubClient, type HubOfapiCommand } from '@chatgoose/shared/hub/index';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 import type {
   DataLayer,
@@ -20,8 +21,6 @@ import type {
   OutboxTransport,
 } from '../db/index';
 import type { OfApiClient } from '../ofapi/client';
-import { classifySendFailure } from '../ofapi/send-outcome';
-import { OfApiError } from '../ofapi/errors';
 import type { SleepFn } from '../ofapi/rate-limiter';
 import { mapMessage, type ToMediaUrl } from '../sync/mappers';
 
@@ -49,17 +48,11 @@ export const PPV_PRICE_MIN = 3;
 export const PPV_PRICE_MAX = 200;
 
 /** The narrow client surface the engine touches (stubbed in tests). */
-export type SendClient = Pick<
-  OfApiClient,
-  'sendMessage' | 'listMessages' | 'deleteMessage' | 'startTyping' | 'markChatRead'
->;
+export type SendClient = Pick<OfApiClient, 'listMessages'>;
 
 export interface SendEngineOptions {
   client: SendClient;
-  /** Explicit direct writer. Omit in legacy/tests to reuse client; null = no direct writes. */
-  directClient?: SendClient | null;
   hubCommandClient?: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand'>;
-  getWriteTransport?: () => OutboxTransport;
   data: DataLayer;
   toMediaUrl: ToMediaUrl;
   getSettings: () => Promise<{ markAsReadOnOpen: boolean }>;
@@ -122,21 +115,43 @@ export function isValidPpvPrice(price: number): boolean {
   return Number.isInteger(price) && price >= PPV_PRICE_MIN && price <= PPV_PRICE_MAX;
 }
 
-/** Wire form: vault ids go as numbers (docs examples), `ofapi_media_…` as strings. */
-function toWireMediaId(id: OutboxMediaId): string | number {
-  if (typeof id === 'number') return id;
-  return /^\d+$/.test(id) ? Number(id) : id;
-}
+const HUB_WRITE_TRANSPORT: OutboxTransport = 'hub';
+const DIRECT_WRITE_DISABLED_MESSAGE =
+  'Direct OFAPI writes are disabled. Configure Agency Hub before sending OnlyFans messages.';
+const HUB_WRITE_UNAVAILABLE_MESSAGE =
+  'Agency Hub command transport is required for OnlyFans writes. Configure Hub before sending.';
 
 function toCommandMediaId(id: OutboxMediaId): string {
   return String(id);
 }
 
+function hubWriteUnavailable(): CgError {
+  return new CgError('CG-HUB-02', { message: HUB_WRITE_UNAVAILABLE_MESSAGE });
+}
+
+function isHubWriteUnavailable(error: unknown): boolean {
+  if (error instanceof HubError) {
+    return error.reason === 'auth' || error.reason === 'bad-request';
+  }
+  return (
+    error instanceof CgError &&
+    error.code === 'CG-HUB-02' &&
+    error.message === HUB_WRITE_UNAVAILABLE_MESSAGE
+  );
+}
+
+function hubFailureCode(error: unknown, unavailable: boolean): 'CG-HUB-01' | 'CG-HUB-02' | 'CG-OF-06' {
+  if (!unavailable) {
+    return 'CG-OF-06';
+  }
+  return error instanceof CgError && (error.code === 'CG-HUB-01' || error.code === 'CG-HUB-02')
+    ? error.code
+    : 'CG-HUB-02';
+}
+
 export function createSendEngine(options: SendEngineOptions): SendEngine {
   const { client, data, toMediaUrl, getSettings } = options;
-  const directClient = options.directClient === undefined ? client : options.directClient;
   const hubCommandClient = options.hubCommandClient;
-  const getWriteTransport = options.getWriteTransport ?? (() => 'direct' as const);
   const now = options.now ?? Date.now;
   const sleep: SleepFn =
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -288,15 +303,14 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
 
   async function ensureHubCommand(row: OutboxRow): Promise<HubOfapiCommand> {
     if (hubCommandClient === undefined) {
-      throw new Error('Hub command transport is unavailable');
+      throw hubWriteUnavailable();
     }
     let retryOfCommandId: string | null = null;
     if (row.retryOf !== null) {
       const original = data.outbox.get(row.retryOf);
-      if (original === null || original.transport !== 'hub') {
-        throw new Error('Hub retry source is missing or used a different transport');
+      if (original !== null && original.transport === 'hub') {
+        retryOfCommandId = (await ensureHubCommand(original)).commandId;
       }
-      retryOfCommandId = (await ensureHubCommand(original)).commandId;
     }
     const command =
       row.mediaFiles.length > 0
@@ -328,7 +342,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
 
   async function waitForHubCommand(command: HubOfapiCommand): Promise<HubOfapiCommand> {
     if (hubCommandClient === undefined) {
-      throw new Error('Hub command transport is unavailable');
+      throw hubWriteUnavailable();
     }
     let current = command;
     for (let poll = 0; poll < hubCommandPollLimit; poll += 1) {
@@ -361,24 +375,28 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       }
       return sent;
     } catch (error) {
+      const unavailable = isHubWriteUnavailable(error);
       // Intake is idempotent on localId/clientCommandId. A transport failure may
       // have happened after core accepted the command, so never fall back to a
       // direct send; recovery repeats intake with the same id and reads status.
+      // Missing Hub config is the exception: no command could have been accepted.
       data.outbox.transition({
         localId: row.localId,
         from: ['sending'],
-        to: 'unconfirmed',
-        errorCode: 'CG-OF-06',
+        to: unavailable ? 'failed' : 'unconfirmed',
+        errorCode: hubFailureCode(error, unavailable),
         errorMessage: error instanceof Error ? error.message : String(error),
       });
-      scheduleVerify(row.accountId, row.chatId);
+      if (!unavailable) {
+        scheduleVerify(row.accountId, row.chatId);
+      }
       return false;
     }
   }
 
   async function unsendViaHub(accountId: string, chatId: string, messageId: string): Promise<void> {
     if (hubCommandClient === undefined) {
-      throw new Error('Hub command transport is unavailable for unsend');
+      throw hubWriteUnavailable();
     }
     const key = `${accountId}|${chatId}|${messageId}`;
     const pending = pendingHubUnsends.get(key);
@@ -440,14 +458,6 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     return command.state === 'confirmed';
   }
 
-  async function markReadViaDirect(accountId: string, chatId: string): Promise<boolean> {
-    if (directClient === null) {
-      return false;
-    }
-    const { success } = await directClient.markChatRead({ accountId, chatId, purpose: 'send' });
-    return success;
-  }
-
   function zeroUnread(accountId: string, chatId: string): void {
     data.db
       .prepare(
@@ -458,75 +468,23 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     data.bus.publish({ scope: 'chats', accountId, chatId });
   }
 
-  /** Exactly one direct send or one idempotent core command per claimed row. */
+  function failClosedDirectRow(row: OutboxRow): boolean {
+    data.outbox.transition({
+      localId: row.localId,
+      from: ['sending'],
+      to: 'failed',
+      errorCode: 'CG-HUB-02',
+      errorMessage: DIRECT_WRITE_DISABLED_MESSAGE,
+    });
+    return false;
+  }
+
+  /** Exactly one idempotent core command per claimed row; Direct rows fail closed. */
   async function attemptSend(row: OutboxRow): Promise<boolean> {
     if (row.transport === 'hub') {
       return attemptHubSend(row);
     }
-    try {
-      if (directClient === null) {
-        throw new Error('Direct OFAPI write transport is unavailable');
-      }
-      const isMediaSend = row.mediaFiles.length > 0;
-      const created = await directClient.sendMessage({
-        accountId: row.accountId,
-        chatId: row.chatId,
-        text: row.text,
-        purpose: 'send',
-        ...(isMediaSend
-          ? {
-              price: row.price,
-              mediaFiles: row.mediaFiles.map(toWireMediaId),
-              ...(row.previews.length > 0 ? { previews: row.previews.map(toWireMediaId) } : {}),
-              // PRD F7 locked-text caption: a priced caption rides behind the paywall.
-              ...(row.price > 0 && row.text.trim() !== '' ? { lockedText: true } : {}),
-            }
-          : {}),
-      });
-      // The POST response lacks isSentByMe — it is OUR send by definition.
-      const upsert = mapMessage(
-        row.accountId,
-        row.chatId,
-        { ...created, isSentByMe: true },
-        toMediaUrl,
-      );
-      data.messages.upsertMany([upsert]);
-      data.outbox.transition({
-        localId: row.localId,
-        from: ['sending'],
-        to: 'sent',
-        messageId: String(created.id),
-      });
-      return true;
-    } catch (error) {
-      settleFailure(row, error);
-      return false;
-    }
-  }
-
-  function settleFailure(row: OutboxRow, error: unknown): void {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    if (classifySendFailure(error) === 'definite') {
-      // Strictly-definite non-delivery (SPEC §7.4): safe to offer retry/edit.
-      data.outbox.transition({
-        localId: row.localId,
-        from: ['sending'],
-        to: 'failed',
-        errorCode: error instanceof CgError ? error.code : 'CG-APP-01',
-        errorMessage,
-        textHighlights: error instanceof OfApiError ? (error.textHighLights ?? []) : [],
-      });
-    } else {
-      // The message may have reached the fan — NEVER auto-retry (SPEC §15.5).
-      data.outbox.transition({
-        localId: row.localId,
-        from: ['sending'],
-        to: 'unconfirmed',
-        errorCode: 'CG-OF-06',
-        errorMessage,
-      });
-      scheduleVerify(row.accountId, row.chatId);
-    }
+    return failClosedDirectRow(row);
   }
 
   // ── Verifier (SPEC §7.5) ─────────────────────────────────────────────────
@@ -665,13 +623,12 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       gateCanSend(accountId, chatId);
       const sequenceId = parts.length > 1 ? randomUUID() : null;
       const createdAt = nowIso();
-      const transport = getWriteTransport();
       const rows = parts.map((text, partIndex) => ({
         localId: randomUUID(),
         accountId,
         chatId,
         text,
-        transport,
+        transport: HUB_WRITE_TRANSPORT,
         sequenceId,
         partIndex,
         retryOf: null,
@@ -709,7 +666,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
           accountId,
           chatId,
           text,
-          transport: getWriteTransport(),
+          transport: HUB_WRITE_TRANSPORT,
           sequenceId: null, // sequences never apply to PPV (one row, PRD F7)
           partIndex: 0,
           retryOf: null,
@@ -745,7 +702,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
           accountId,
           chatId: row.chatId,
           text,
-          transport: row.transport,
+          transport: HUB_WRITE_TRANSPORT,
           sequenceId: null,
           partIndex: 0,
           retryOf: localId,
@@ -824,28 +781,20 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         return;
       }
       typingLastAt.set(key, now());
-      if (getWriteTransport() === 'hub') {
-        if (hubCommandClient === undefined) {
-          return;
-        }
-        void hubCommandClient
-          .createOfapiCommand({
-            command: {
-              clientCommandId: randomUUID(),
-              kind: 'typing_active_v1',
-              accountId,
-              conversationId: chatId,
-              payload: {},
-            },
-          })
-          .catch(() => undefined);
+      if (hubCommandClient === undefined) {
         return;
       }
-      if (directClient === null) {
-        return;
-      }
-      // 0 credits, purely cosmetic: losing one is harmless (client contract).
-      void directClient.startTyping({ accountId, chatId, purpose: 'send' }).catch(() => undefined);
+      void hubCommandClient
+        .createOfapiCommand({
+          command: {
+            clientCommandId: randomUUID(),
+            kind: 'typing_active_v1',
+            accountId,
+            conversationId: chatId,
+            payload: {},
+          },
+        })
+        .catch(() => undefined);
     },
 
     async markRead(accountId, chatId) {
@@ -863,37 +812,18 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         setTimeout(() => {
           markReadTimers.delete(key);
           void (async () => {
-            const success =
-              getWriteTransport() === 'hub'
-                ? await markReadViaHub(accountId, chatId)
-                : await markReadViaDirect(accountId, chatId);
-              if (!success) {
-                return;
-              }
-              zeroUnread(accountId, chatId);
-            })().catch(() => undefined); // lossy: the next conversation open retries
+            const success = await markReadViaHub(accountId, chatId);
+            if (!success) {
+              return;
+            }
+            zeroUnread(accountId, chatId);
+          })().catch(() => undefined); // lossy: the next conversation open retries
         }, MARK_READ_DEBOUNCE_MS),
       );
     },
 
     async unsend(accountId, chatId, messageId) {
-      if (getWriteTransport() === 'hub') {
-        await unsendViaHub(accountId, chatId, messageId);
-        return;
-      }
-      if (directClient === null) {
-        throw new Error('Direct OFAPI write transport is unavailable for unsend');
-      }
-      // Window errors (CG-OF-07 / upstream 4xx) propagate to the caller.
-      const { success } = await directClient.deleteMessage({
-        accountId,
-        chatId,
-        messageId,
-        purpose: 'send',
-      });
-      if (success) {
-        data.messages.markDeleted(accountId, chatId, [messageId]); // tombstone
-      }
+      await unsendViaHub(accountId, chatId, messageId);
     },
 
     dispose() {

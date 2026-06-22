@@ -632,7 +632,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   function requireSend(): SendEngine {
     if (!deps.send) {
-      throw new Error('Sending is not available yet — configure Hub or Direct write transport in Settings.');
+      throw new Error('Sending is not available yet — configure Agency Hub in Settings.');
     }
     return deps.send;
   }
