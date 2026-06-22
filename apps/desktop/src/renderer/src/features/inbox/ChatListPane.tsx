@@ -103,7 +103,7 @@ export function ChatListPane(): React.JSX.Element {
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((vi) => {
               const chat = items[vi.index];
-              if (chat === undefined) return null;
+              if (chat === undefined || accountId === null) return null;
               return (
                 <div
                   key={vi.key}
@@ -111,6 +111,7 @@ export function ChatListPane(): React.JSX.Element {
                   style={{ height: vi.size, transform: `translateY(${vi.start}px)` }}
                 >
                   <ChatRow
+                    accountId={accountId}
                     chat={chat}
                     selected={chat.chatId === selectedChatId}
                     online={false}

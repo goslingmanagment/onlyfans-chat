@@ -1,5 +1,5 @@
 // Coordinator lifecycle behavior (SPEC §8.3, research §8): frame ordering,
-// concurrency gates, discard-on-switch, staged timeouts, result sanitation,
+// concurrency gates, navigation-independent lifecycle, staged timeouts, result sanitation,
 // spend summaries, usage_events bookkeeping, debug prompt inspection and the
 // no-double-retry contract with the providers.
 
@@ -19,6 +19,7 @@ import type { AiCoordinator } from '@main/ai/index';
 import type { DataLayer } from '@main/db/index';
 import {
   ACCT,
+  CHAT,
   flushAsync,
   framesOfType,
   makeKeychain,
@@ -164,21 +165,23 @@ describe('AiCoordinator', () => {
     expect(gateway.calls).toHaveLength(1);
   });
 
-  it('discards on conversation switch mid-stream and ignores the stale completion', async () => {
+  it('keeps an operation alive across conversation open/close events', async () => {
     build();
     await startAndReachStream();
     gateway.cb?.onText('partial');
     await vi.advanceTimersByTimeAsync(STREAM_CHUNK_FLUSH_MS);
 
     coordinator.conversationOpened(ACCT, '9999');
-    const discarded = framesOfType(frames, 'operation:discarded');
-    expect(discarded).toHaveLength(1);
-    expect(discarded[0]?.reason).toBe('chat_changed');
-    expect(gateway.cancelCount).toBe(1);
+    coordinator.conversationClosed(ACCT, CHAT);
+    expect(framesOfType(frames, 'operation:discarded')).toHaveLength(0);
+    expect(gateway.cancelCount).toBe(0);
 
     gateway.cb?.onComplete('partial and more');
     await flushAsync();
-    expect(framesOfType(frames, 'operation:complete')).toHaveLength(0);
+    const complete = framesOfType(frames, 'operation:complete');
+    expect(complete).toHaveLength(1);
+    expect(complete[0]?.operationId).toBe('op-1');
+    expect(complete[0]?.result.rawText).toBe('partial and more');
     expect(framesOfType(frames, 'operation:error')).toHaveLength(0);
   });
 

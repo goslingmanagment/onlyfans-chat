@@ -126,7 +126,7 @@ function FullDock(): React.JSX.Element | null {
       {/* body */}
       <div className="flex flex-col gap-[7px] px-3.5 pt-[9px] pb-1">
         {/* keyed per op: a superseding run must not append into the old bubbles */}
-        {running && <StreamingDrafts key={op.operationId} />}
+        {running && <StreamingDrafts key={op.operationId} operationId={op.operationId} />}
         {status === 'completed' && view !== null && (
           <CompletedView view={view} canSend={canSend} cannotReason={cannotReason} />
         )}
@@ -217,7 +217,8 @@ function CompactDock(): React.JSX.Element | null {
       viewKind: view?.kind ?? null,
       canSend,
       partCount: parts.length,
-    });
+    }) &&
+    op.completedWhileVisible;
 
   useEffect(() => {
     if (!autoInsertable || op === null) return;

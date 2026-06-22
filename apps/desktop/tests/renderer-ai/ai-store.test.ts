@@ -27,8 +27,10 @@ import {
   activateToneFromMenu,
   setToneMenuOpen,
   handleConversationChange,
+  startAiFeature,
   type AiStartContext,
 } from '../../src/renderer/src/features/ai/aiStore';
+import { useUiStore } from '../../src/renderer/src/state/uiStore';
 
 const CTX: AiStartContext = { accountId: 'acct_1', chatId: '555', defaultTone: 'casual' };
 
@@ -48,6 +50,9 @@ function resetStore(): void {
       spend: null,
       profiling: null,
       debugPrompt: null,
+      jobsById: {},
+      jobsByConversation: {},
+      visibleConversationKey: null,
       toneOverride: null,
       toneMenuOpen: false,
       preferSplit: false,
@@ -69,8 +74,10 @@ function lastAiStart(): AiStartRequest {
 beforeEach(() => {
   invoke.mockClear();
   resetStore();
-  // Seed a stable conversation key so the first handleConversationChange in a
-  // test counts as a real switch (module-level lastConversationKey persists).
+  useUiStore.setState({ toasts: [] });
+  // Module-level lastConversationKey persists across tests; force a visible
+  // empty state before selecting the test chat.
+  handleConversationChange(null, null);
   handleConversationChange(CTX.accountId, CTX.chatId);
   invoke.mockClear();
 });
@@ -144,6 +151,41 @@ describe('handleConversationChange (sticky-within-chat / reset-on-switch)', () =
     handleConversationChange(CTX.accountId, '999');
     // next fan starts from the settings default again (override cleared)
     expect(useAiStore.getState().toneOverride).toBeNull();
+  });
+
+  it('keeps a running generation alive while another fan is visible', () => {
+    activateToneFromMenu('flirty', CTX);
+    const operationId = useAiStore.getState().op?.operationId;
+    expect(operationId).toBeTruthy();
+
+    invoke.mockClear();
+    handleConversationChange(CTX.accountId, '999');
+
+    expect(invoke.mock.calls.some((c) => c[0] === 'ai:cancel')).toBe(false);
+    expect(useAiStore.getState().op).toBeNull();
+    expect(useAiStore.getState().jobsById[operationId ?? '']).toMatchObject({
+      status: 'running',
+      chatId: CTX.chatId,
+    });
+
+    handleConversationChange(CTX.accountId, CTX.chatId);
+    expect(useAiStore.getState().op?.operationId).toBe(operationId);
+  });
+
+  it('blocks the fourth concurrent generation with a visible toast', () => {
+    startAiFeature('fast-reply', CTX);
+    startAiFeature('fast-reply', { ...CTX, chatId: '556' });
+    startAiFeature('fast-reply', { ...CTX, chatId: '557' });
+    invoke.mockClear();
+
+    startAiFeature('fast-reply', { ...CTX, chatId: '558' });
+
+    expect(invoke.mock.calls.some((c) => c[0] === 'ai:start')).toBe(false);
+    expect(Object.values(useAiStore.getState().jobsById).filter((job) => job.status === 'running')).toHaveLength(3);
+    expect(useUiStore.getState().toasts.at(-1)).toMatchObject({
+      title: 'AI busy',
+      body: '3 generations are already running.',
+    });
   });
 
   it('no-ops when the conversation key is unchanged (override stays put)', () => {

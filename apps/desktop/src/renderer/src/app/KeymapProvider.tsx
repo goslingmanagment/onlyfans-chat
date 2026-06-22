@@ -90,7 +90,7 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
           if (ui.paletteOpen) ui.setPaletteOpen(false);
           else if (ui.cheatsheetOpen) ui.setCheatsheetOpen(false);
           else if (ui.view === 'spenders' && useSpendersStore.getState().previewFanId !== null) {
-            // mockup: ESC closes the quick look (its unmount discards any op)
+            // mockup: ESC closes the quick look; AI keeps running unless explicitly cancelled
             useSpendersStore.getState().closePreview();
           } else if (useAiStore.getState().op !== null) dismissDock();
           else if (ui.view === 'settings') ui.setView('workspace');

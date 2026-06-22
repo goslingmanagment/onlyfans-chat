@@ -687,23 +687,27 @@ export function createMockBridge(): ChatGooseBridge {
 
   // ── AI operation scripting ─────────────────────────────────────────────
   const aiTimers = new Map<string, Array<ReturnType<typeof setTimeout>>>();
-  let activeAiOpId: string | null = null;
+  const activeAiByConversation = new Map<string, string>();
 
   function stopAiOp(operationId: string): void {
     for (const timer of aiTimers.get(operationId) ?? []) clearTimeout(timer);
     aiTimers.delete(operationId);
-    if (activeAiOpId === operationId) activeAiOpId = null;
+    for (const [key, activeOperationId] of activeAiByConversation) {
+      if (activeOperationId === operationId) activeAiByConversation.delete(key);
+    }
   }
 
   function runAiOperation(req: AiStartRequest): void {
     if (req.feature === 'compare') return; // not an operation feature
     const feature = req.feature;
-    if (activeAiOpId !== null && aiTimers.has(activeAiOpId)) {
-      const superseded = activeAiOpId;
+    const conversationKey = `${req.accountId}/${req.chatId}`;
+    const activeOperationId = activeAiByConversation.get(conversationKey) ?? null;
+    if (activeOperationId !== null && aiTimers.has(activeOperationId)) {
+      const superseded = activeOperationId;
       stopAiOp(superseded);
       emit('ai:event', { type: 'operation:discarded', operationId: superseded, reason: 'superseded' });
     }
-    activeAiOpId = req.operationId;
+    activeAiByConversation.set(conversationKey, req.operationId);
     const timers: Array<ReturnType<typeof setTimeout>> = [];
     aiTimers.set(req.operationId, timers);
     let at = 0;

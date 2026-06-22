@@ -36,7 +36,7 @@ export function ConversationPane(): React.JSX.Element {
   const selectedChat = useChat(accountId, chatId);
   const fan = useFan(accountId, chatId);
 
-  // conversation switch dismisses the AI dock (the discarded frame confirms),
+  // Conversation switch selects the visible per-chat AI job,
   // resets the per-conversation composer draft, and drops any in-progress
   // vault selection (it belonged to the previous fan's compose)
   useEffect(() => {

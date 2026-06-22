@@ -3,7 +3,7 @@
 // hi/improve, compact dock + compact density, paged read-only thread). This
 // shell owns ONLY the modal chrome (scrim, card, compact header with sub/online
 // chips, footer) and the read-only lifecycle: the preview IS the active
-// conversation while open (draft load/persist + dock discard-on-switch), but it
+// conversation while open (draft load/persist + visible per-chat AI dock), but it
 // runs NO aggressive poll and NO mark-read (0 credits — the full chat owns those).
 
 import { useEffect, useState } from 'react';
@@ -139,7 +139,7 @@ export function QuickLook({
   }
 
   // The preview IS the active conversation while open: per-chat draft
-  // load/persist + dock discard-on-switch ride the existing machinery.
+  // load/persist + visible AI job selection ride the existing machinery.
   useEffect(() => {
     handleConversationChange(accountId, fanId);
     // The vault selection is a GLOBAL in-progress compose for ONE fan; J/K

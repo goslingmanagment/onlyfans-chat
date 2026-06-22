@@ -5,6 +5,7 @@ import { cx } from '../../lib/cx';
 import { useT } from '../../lib/i18n';
 import { formatWholeDollars } from '../../lib/money';
 import { formatListTime } from '../../lib/time';
+import { selectConversationJob, useAiStore } from '../ai/aiStore';
 
 /** Memoized 64px chat row per mockup .row — virtualized parent positions it.
  *  Fan value per DESIGN §1: lifetime beside the name (figure or chip per the
@@ -13,12 +14,14 @@ import { formatListTime } from '../../lib/time';
  *  renders nothing; the unread badge is always clay (no tip pill — tips read
  *  via the Tips filter and the preview line). */
 export const ChatRow = memo(function ChatRow({
+  accountId,
   chat,
   selected,
   online,
   spendStyle,
   onSelect,
 }: {
+  accountId: string;
   chat: ChatListItemVM;
   selected: boolean;
   online: boolean;
@@ -26,6 +29,7 @@ export const ChatRow = memo(function ChatRow({
   onSelect: (chatId: string) => void;
 }): React.JSX.Element {
   const t = useT();
+  const aiStatus = useAiStore((s) => selectConversationJob(s, accountId, chat.chatId)?.status ?? null);
   const lifetime =
     chat.lifetimeSpend !== null && Math.round(chat.lifetimeSpend) > 0
       ? formatWholeDollars(chat.lifetimeSpend)
@@ -77,6 +81,25 @@ export const ChatRow = memo(function ChatRow({
           {chat.lastMessageAt === null ? '' : formatListTime(new Date(chat.lastMessageAt), new Date())}
         </span>
         <span className="flex items-center gap-1.5">
+          {aiStatus !== null && (
+            <span
+              title={
+                aiStatus === 'running'
+                  ? 'AI is generating'
+                  : aiStatus === 'completed'
+                    ? 'AI draft ready'
+                    : 'AI generation failed'
+              }
+              className={cx(
+                'num flex h-[17px] min-w-[18px] items-center justify-center rounded-[9px] border px-[5px] text-[9px] font-semibold',
+                aiStatus === 'running' && 'border-clay-line bg-clay-bg text-clay-deep',
+                aiStatus === 'completed' && 'border-green-line bg-green-bg text-green',
+                aiStatus === 'error' && 'border-bad/35 bg-bad/8 text-bad',
+              )}
+            >
+              {aiStatus === 'running' ? 'AI' : aiStatus === 'completed' ? 'OK' : '!'}
+            </span>
+          )}
           {flow30d !== null && (
             <span title={t('inbox.spend30d')} className="num text-[10px] font-semibold text-green">
               {flow30d}

@@ -1,7 +1,7 @@
 // AI layer barrel (SPEC §8). The composition root wires:
 //   const coordinator = createAiCoordinator({ data, client, settingsStore, keychain });
 //   ipc 'ai:start' → coordinator.start, 'ai:cancel' → coordinator.cancel,
-//   'cmd:conversation.open/close' → conversationOpened/conversationClosed,
+//   'cmd:conversation.open/close' → sync focus only; AI lifecycle is explicit cancel/dispose,
 //   coordinator.subscribe(event => webContents.send('ai:event', event)).
 
 export { createAiCoordinator, buildFeatureResult, PERSONALITIES_SETTINGS_KEY } from './coordinator';

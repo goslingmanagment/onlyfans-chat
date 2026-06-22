@@ -40,19 +40,23 @@ interface SinkHandle {
   apply(ops: StreamRenderOp[]): void;
 }
 
-export const StreamingDrafts = memo(function StreamingDrafts(): React.JSX.Element {
+export const StreamingDrafts = memo(function StreamingDrafts({
+  operationId,
+}: {
+  operationId: string;
+}): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const container = ref.current;
     if (container === null) return;
     const appender = createDomAppender(container);
-    const unregister = registerStreamSink((ops) => appender.apply(ops));
+    const unregister = registerStreamSink(operationId, (ops) => appender.apply(ops));
     return () => {
       unregister();
       container.replaceChildren();
     };
-  }, []);
+  }, [operationId]);
 
   // React owns only this empty container; bubbles inside are imperative DOM.
   return <div ref={ref} className="flex flex-col gap-[7px]" />;

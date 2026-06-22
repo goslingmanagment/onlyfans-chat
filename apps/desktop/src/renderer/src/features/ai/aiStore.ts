@@ -1,8 +1,8 @@
-// AI dock state + controller. Per-chunk frames NEVER touch this store — they
-// flow through the imperative stream sink into direct DOM text-node appends
-// (DESIGN §3.4); only lifecycle frames (progress / complete / error /
-// discarded / debugPrompt) update React state. Subscribe with per-field
-// selectors only.
+// AI dock state + controller. The user-visible dock is still a single surface,
+// but the underlying lifecycle is per conversation: a generation keeps running
+// when the chatter switches chats, and the dock renders the job for the visible
+// conversation only. Per-chunk frames never touch React state; each operation has
+// its own imperative stream buffer/splitter and the visible sink replays it.
 
 import { create } from 'zustand';
 import type { ReplyTone } from '@chatgoose/shared/types';
@@ -19,6 +19,7 @@ import { getBridge } from '../../bridge/bridge';
 import { useUiStore } from '../../state/uiStore';
 import { focusComposer } from '../conversation/composerDom';
 import {
+  DOCK_FEATURE_LABELS,
   appendToDraft,
   copyPayload,
   copyablePartsOf,
@@ -26,12 +27,12 @@ import {
   createStreamSplitter,
   cycleTone,
   deriveDockView,
-  isFrameForOperation,
   resolveDockPartAction,
   type ChunkBatcher,
   type DockTone,
   type DockView,
   type StreamRenderOp,
+  type StreamSplitter,
 } from './dockLogic';
 
 /** Every coordinator-accepted feature is live (P4) — only 'compare' stays gated. */
@@ -48,18 +49,38 @@ export interface ActiveAiOp {
 
 export type DockStatus = 'running' | 'completed' | 'error';
 
-interface AiDockState {
-  op: ActiveAiOp | null;
+export interface AiJob extends ActiveAiOp {
+  conversationKey: string;
   status: DockStatus;
   phase: OperationPhase;
   progressMessage: string | null;
-  /** Deep loads report page counters via operation:progress (currentPage/targetPages). */
   progressPages: { current: number; target: number } | null;
   view: DockView | null;
   error: UserFacingErrorPayload | null;
   spend: LlmSpendSummaryPayload | null;
   profiling: ProfilingSnapshotPayload | null;
   debugPrompt: Record<string, unknown> | null;
+  /** True only when completion happened while this job was the visible dock job. */
+  completedWhileVisible: boolean;
+  startedAt: number;
+  updatedAt: number;
+}
+
+export interface AiDockState {
+  /** Job for the visible conversation, preserved for existing component selectors. */
+  op: AiJob | null;
+  status: DockStatus;
+  phase: OperationPhase;
+  progressMessage: string | null;
+  progressPages: { current: number; target: number } | null;
+  view: DockView | null;
+  error: UserFacingErrorPayload | null;
+  spend: LlmSpendSummaryPayload | null;
+  profiling: ProfilingSnapshotPayload | null;
+  debugPrompt: Record<string, unknown> | null;
+  jobsById: Record<string, AiJob>;
+  jobsByConversation: Record<string, string>;
+  visibleConversationKey: string | null;
   /** null = follow settings.defaultReplyTone. */
   toneOverride: ReplyTone | null;
   /** Reply split-menu (the ▾ tone picker on the pill row) open state. */
@@ -72,6 +93,9 @@ interface AiDockState {
   /** Bumped when a Scan lands in the panel — the fan panel flashes its Scan tab. */
   scanFlashSeq: number;
 }
+
+const MAX_RUNNING_JOBS = 3;
+const MAX_TERMINAL_JOBS = 24;
 
 const CLEARED = {
   op: null,
@@ -87,8 +111,56 @@ const CLEARED = {
   partFeedback: null,
 } satisfies Partial<AiDockState>;
 
+function visibleFields(job: AiJob | null): Partial<AiDockState> {
+  if (job === null) return CLEARED;
+  return {
+    op: job,
+    status: job.status,
+    phase: job.phase,
+    progressMessage: job.progressMessage,
+    progressPages: job.progressPages,
+    view: job.view,
+    error: job.error,
+    spend: job.spend,
+    profiling: job.profiling,
+    debugPrompt: job.debugPrompt,
+  };
+}
+
+export function conversationKey(accountId: string, chatId: string): string {
+  return `${accountId}/${chatId}`;
+}
+
+function visibleJobFrom(state: Pick<AiDockState, 'visibleConversationKey' | 'jobsByConversation' | 'jobsById'>): AiJob | null {
+  if (state.visibleConversationKey === null) return null;
+  const operationId = state.jobsByConversation[state.visibleConversationKey];
+  return operationId === undefined ? null : state.jobsById[operationId] ?? null;
+}
+
+function withVisibleFields(
+  patcher: (state: AiDockState) => Partial<AiDockState>,
+): (state: AiDockState) => Partial<AiDockState> {
+  return (state) => {
+    const patch = patcher(state);
+    const next = { ...state, ...patch };
+    return { ...patch, ...visibleFields(visibleJobFrom(next)) };
+  };
+}
+
+export function selectConversationJob(
+  state: Pick<AiDockState, 'jobsByConversation' | 'jobsById'>,
+  accountId: string,
+  chatId: string,
+): AiJob | null {
+  const operationId = state.jobsByConversation[conversationKey(accountId, chatId)];
+  return operationId === undefined ? null : state.jobsById[operationId] ?? null;
+}
+
 export const useAiStore = create<AiDockState>(() => ({
   ...CLEARED,
+  jobsById: {},
+  jobsByConversation: {},
+  visibleConversationKey: null,
   toneOverride: null,
   toneMenuOpen: false,
   preferSplit: false,
@@ -96,40 +168,67 @@ export const useAiStore = create<AiDockState>(() => ({
   scanFlashSeq: 0,
 }));
 
-// ─── Imperative stream sink (registered by the streaming bubble) ──────────
+// ─── Imperative stream sinks (one per operation) ────────────────────────────
 
 type SinkApply = (ops: StreamRenderOp[]) => void;
 
-let sinkApply: SinkApply | null = null;
-let sinkBacklog: StreamRenderOp[] = [];
+interface StreamState {
+  splitter: StreamSplitter;
+  batcher: ChunkBatcher;
+  renderOps: StreamRenderOp[];
+  sinkApply: SinkApply | null;
+}
 
-export function registerStreamSink(apply: SinkApply): () => void {
-  sinkApply = apply;
-  if (sinkBacklog.length > 0) {
-    const backlog = sinkBacklog;
-    sinkBacklog = [];
-    apply(backlog);
-  }
+const streamsByOperation = new Map<string, StreamState>();
+
+function createOperationStream(operationId: string): void {
+  const splitter = createStreamSplitter();
+  const stream: StreamState = {
+    splitter,
+    batcher: createChunkBatcher((text) => pushRenderOps(operationId, splitter.feed(text))),
+    renderOps: [],
+    sinkApply: null,
+  };
+  streamsByOperation.set(operationId, stream);
+}
+
+function pushRenderOps(operationId: string, ops: StreamRenderOp[]): void {
+  if (ops.length === 0) return;
+  const stream = streamsByOperation.get(operationId);
+  if (stream === undefined) return;
+  stream.renderOps.push(...ops);
+  stream.sinkApply?.(ops);
+}
+
+function completeStream(operationId: string): void {
+  const stream = streamsByOperation.get(operationId);
+  if (stream === undefined) return;
+  stream.batcher.flush();
+  pushRenderOps(operationId, stream.splitter.finish());
+  stream.batcher.dispose();
+  stream.sinkApply = null;
+}
+
+function disposeStream(operationId: string): void {
+  const stream = streamsByOperation.get(operationId);
+  if (stream === undefined) return;
+  stream.batcher.dispose();
+  stream.sinkApply = null;
+  streamsByOperation.delete(operationId);
+}
+
+export function registerStreamSink(operationId: string, apply: SinkApply): () => void {
+  const stream = streamsByOperation.get(operationId);
+  if (stream === undefined) return () => undefined;
+  stream.sinkApply = apply;
+  if (stream.renderOps.length > 0) apply(stream.renderOps);
   return () => {
-    if (sinkApply === apply) sinkApply = null;
+    const current = streamsByOperation.get(operationId);
+    if (current?.sinkApply === apply) current.sinkApply = null;
   };
 }
 
-function pushRenderOps(ops: StreamRenderOp[]): void {
-  if (ops.length === 0) return;
-  if (sinkApply !== null) sinkApply(ops);
-  else sinkBacklog.push(...ops);
-}
-
-let batcher: ChunkBatcher | null = null;
-
-function resetStream(): void {
-  batcher?.dispose();
-  batcher = null;
-  sinkBacklog = [];
-}
-
-// ─── Controller ───────────────────────────────────────────────────────────
+// ─── Controller ─────────────────────────────────────────────────────────────
 
 export interface AiStartContext {
   accountId: string;
@@ -141,23 +240,90 @@ let lastDefaultTone: ReplyTone = 'casual';
 let feedbackResetTimer: ReturnType<typeof setTimeout> | null = null;
 let lastConversationKey: string | null = null;
 
+function runningJobCount(state: Pick<AiDockState, 'jobsById'>): number {
+  return Object.values(state.jobsById).filter((job) => job.status === 'running').length;
+}
+
+function removeJobPatch(
+  state: AiDockState,
+  operationId: string,
+): Pick<AiDockState, 'jobsById' | 'jobsByConversation'> {
+  const job = state.jobsById[operationId];
+  const jobsById = { ...state.jobsById };
+  const jobsByConversation = { ...state.jobsByConversation };
+  delete jobsById[operationId];
+  if (job !== undefined && jobsByConversation[job.conversationKey] === operationId) {
+    delete jobsByConversation[job.conversationKey];
+  }
+  disposeStream(operationId);
+  return { jobsById, jobsByConversation };
+}
+
+function evictTerminalJobs(
+  jobsById: Record<string, AiJob>,
+  jobsByConversation: Record<string, string>,
+): { jobsById: Record<string, AiJob>; jobsByConversation: Record<string, string> } {
+  const terminal = Object.values(jobsById)
+    .filter((job) => job.status !== 'running')
+    .sort((a, b) => a.updatedAt - b.updatedAt);
+  if (terminal.length <= MAX_TERMINAL_JOBS) return { jobsById, jobsByConversation };
+
+  const nextJobsById = { ...jobsById };
+  const nextJobsByConversation = { ...jobsByConversation };
+  for (const job of terminal.slice(0, terminal.length - MAX_TERMINAL_JOBS)) {
+    delete nextJobsById[job.operationId];
+    if (nextJobsByConversation[job.conversationKey] === job.operationId) {
+      delete nextJobsByConversation[job.conversationKey];
+    }
+    disposeStream(job.operationId);
+  }
+  return { jobsById: nextJobsById, jobsByConversation: nextJobsByConversation };
+}
+
+function pushHiddenCompletionToast(job: AiJob, status: 'completed' | 'error'): void {
+  const title = status === 'completed' ? 'AI ready' : 'AI failed';
+  const feature = DOCK_FEATURE_LABELS[job.feature];
+  useUiStore.getState().pushToast({
+    title,
+    body: `${feature} · chat ${job.chatId}`,
+    accountId: job.accountId,
+    chatId: job.chatId,
+  });
+}
+
 export function startAiFeature(
   feature: LiveAiFeature,
   ctx: AiStartContext,
   opts: { draftText?: string; forceRegenerate?: boolean } = {},
 ): void {
   const state = useAiStore.getState();
-  if (state.op !== null && state.status === 'running') {
-    void getBridge().invoke('ai:cancel', { operationId: state.op.operationId });
+  const key = conversationKey(ctx.accountId, ctx.chatId);
+  const existingOperationId = state.jobsByConversation[key];
+  const existingJob = existingOperationId === undefined ? null : state.jobsById[existingOperationId] ?? null;
+  const replacingRunningSameChat = existingJob?.status === 'running';
+
+  if (!replacingRunningSameChat && runningJobCount(state) >= MAX_RUNNING_JOBS) {
+    useUiStore.getState().pushToast({
+      title: 'AI busy',
+      body: `${MAX_RUNNING_JOBS} generations are already running.`,
+      accountId: ctx.accountId,
+      chatId: ctx.chatId,
+    });
+    return;
   }
+
   const draft = (opts.draftText ?? state.draftText).trim();
   if (feature === 'improve-draft' && draft.length === 0) return;
 
-  lastDefaultTone = ctx.defaultTone;
-  resetStream();
-  const splitter = createStreamSplitter();
-  batcher = createChunkBatcher((text) => pushRenderOps(splitter.feed(text)));
+  if (existingJob !== null) {
+    if (existingJob.status === 'running') {
+      void getBridge().invoke('ai:cancel', { operationId: existingJob.operationId });
+    }
+    const removed = removeJobPatch(state, existingJob.operationId);
+    useAiStore.setState(withVisibleFields(() => removed));
+  }
 
+  lastDefaultTone = ctx.defaultTone;
   const operationId = crypto.randomUUID();
   const params: AiStartRequest['params'] = {};
   if (feature === 'fast-reply') {
@@ -167,16 +333,35 @@ export function startAiFeature(
   if (feature === 'improve-draft') params.draftText = draft;
   if (opts.forceRegenerate === true) params.forceRegenerate = true;
 
-  useAiStore.setState({
-    ...CLEARED,
-    op: {
-      operationId,
-      feature,
-      accountId: ctx.accountId,
-      chatId: ctx.chatId,
-      ...(feature === 'improve-draft' ? { draftText: draft } : {}),
-    },
-  });
+  createOperationStream(operationId);
+  const now = Date.now();
+  const job: AiJob = {
+    operationId,
+    feature,
+    accountId: ctx.accountId,
+    chatId: ctx.chatId,
+    conversationKey: key,
+    status: 'running',
+    phase: 'idle',
+    progressMessage: null,
+    progressPages: null,
+    view: null,
+    error: null,
+    spend: null,
+    profiling: null,
+    debugPrompt: null,
+    completedWhileVisible: false,
+    startedAt: now,
+    updatedAt: now,
+    ...(feature === 'improve-draft' ? { draftText: draft } : {}),
+  };
+
+  useAiStore.setState(
+    withVisibleFields((s) => ({
+      jobsById: { ...s.jobsById, [operationId]: job },
+      jobsByConversation: { ...s.jobsByConversation, [key]: operationId },
+    })),
+  );
   void getBridge().invoke('ai:start', {
     operationId,
     feature,
@@ -209,8 +394,8 @@ export function dismissDock(): void {
   if (state.status === 'running') {
     void getBridge().invoke('ai:cancel', { operationId: state.op.operationId });
   }
-  resetStream();
-  useAiStore.setState(CLEARED);
+  const removed = removeJobPatch(state, state.op.operationId);
+  useAiStore.setState(withVisibleFields(() => removed));
 }
 
 export function cancelActiveOperation(): void {
@@ -254,25 +439,26 @@ function scheduleDraftSave(): void {
 }
 
 /**
- * Conversation switch dismisses the dock (the discarded frame confirms),
- * saves the outgoing chat's draft and loads the incoming chat's.
+ * Conversation switch saves the outgoing chat's draft, loads the incoming chat's
+ * draft and changes which AI job the dock renders. It does not cancel AI.
  */
 export function handleConversationChange(accountId: string | null, chatId: string | null): void {
-  const state = useAiStore.getState();
-  if (state.op !== null && (state.op.accountId !== accountId || state.op.chatId !== chatId)) {
-    dismissDock();
-  }
-  const key = `${accountId ?? ''}/${chatId ?? ''}`;
+  const key = accountId !== null && chatId !== null ? conversationKey(accountId, chatId) : null;
   if (lastConversationKey === key) return;
   lastConversationKey = key;
+
   // Reset the active tone back to default (toneOverride → null) when the active
-  // chat changes, so a "spicy" pick does not leak to the next fan (legacy was
-  // non-sticky; sticky-within-chat is a deliberate, owner-flagged default). Runs
-  // AFTER dismissDock so the outgoing dock's fade-out still reads the old tone;
-  // also closes the Reply split-menu so it never lingers across a switch.
-  if (useAiStore.getState().toneOverride !== null || useAiStore.getState().toneMenuOpen) {
-    useAiStore.setState({ toneOverride: null, toneMenuOpen: false });
-  }
+  // chat changes, so a "spicy" pick does not leak to the next fan.
+  const state = useAiStore.getState();
+  useAiStore.setState(
+    withVisibleFields(() => ({
+      visibleConversationKey: key,
+      ...(state.toneOverride !== null || state.toneMenuOpen
+        ? { toneOverride: null, toneMenuOpen: false }
+        : {}),
+    })),
+  );
+
   persistDraftNow();
   draftConversation = accountId !== null && chatId !== null ? { accountId, chatId } : null;
   draftDirty = false;
@@ -313,9 +499,6 @@ export function setToneMenuOpen(open: boolean): void {
 /**
  * Reply split-menu pick (variant C): set the active tone AND immediately start a
  * fast-reply in it — one click = one toned generation, no wasted "normal" run.
- * Closes the menu first; startAiFeature reads params.tone from toneOverride
- * (line in startAiFeature), so no new tone wiring reaches IPC/main. The single-
- * flight guard inside startAiFeature cancels any in-flight op for this chat.
  */
 export function activateToneFromMenu(tone: DockTone, ctx: AiStartContext): void {
   setDockTone(tone);
@@ -391,58 +574,112 @@ export function activateDockPart(partIndex: number, ctx: { canSend: boolean }): 
 
 export function handleAiOperationEvent(event: OperationEvent): void {
   const state = useAiStore.getState();
-  if (!isFrameForOperation(state.op?.operationId ?? null, event)) return;
+  const job = state.jobsById[event.operationId];
+  if (job === undefined) return;
+  const wasVisible = state.visibleConversationKey === job.conversationKey;
   switch (event.type) {
     case 'operation:progress':
-      useAiStore.setState({
-        phase: event.phase,
-        progressMessage: event.message ?? null,
-        progressPages:
-          event.currentPage !== undefined && event.targetPages !== undefined
-            ? { current: event.currentPage, target: event.targetPages }
-            : null,
-      });
+      useAiStore.setState(
+        withVisibleFields((s) => {
+          const current = s.jobsById[event.operationId];
+          if (current === undefined) return {};
+          return {
+            jobsById: {
+              ...s.jobsById,
+              [event.operationId]: {
+                ...current,
+                phase: event.phase,
+                progressMessage: event.message ?? null,
+                progressPages:
+                  event.currentPage !== undefined && event.targetPages !== undefined
+                    ? { current: event.currentPage, target: event.targetPages }
+                    : null,
+                updatedAt: Date.now(),
+              },
+            },
+          };
+        }),
+      );
       return;
     case 'operation:chunk':
-      // Hot path: straight to the DOM sink — zero React updates per chunk.
-      batcher?.push(event.text);
+      streamsByOperation.get(event.operationId)?.batcher.push(event.text);
       return;
     case 'operation:debugPrompt':
-      useAiStore.setState({ debugPrompt: event.snapshot });
+      useAiStore.setState(
+        withVisibleFields((s) => {
+          const current = s.jobsById[event.operationId];
+          if (current === undefined) return {};
+          return {
+            jobsById: {
+              ...s.jobsById,
+              [event.operationId]: { ...current, debugPrompt: event.snapshot, updatedAt: Date.now() },
+            },
+          };
+        }),
+      );
       return;
-    case 'operation:complete': {
-      batcher?.flush();
-      resetStream();
-      const op = state.op;
-      if (op === null) return;
-      useAiStore.setState({
-        status: 'completed',
-        phase: 'completed',
-        progressMessage: null,
-        progressPages: null,
-        view: deriveDockView(op.feature, event.result),
-        spend: event.llmSpend ?? null,
-        profiling: event.profiling ?? null,
-      });
-      // Scan body lives in the panel — point the chatter there (DESIGN §1).
-      if (op.feature === 'fan-summary') focusScanTab();
+    case 'operation:complete':
+      completeStream(event.operationId);
+      useAiStore.setState(
+        withVisibleFields((s) => {
+          const current = s.jobsById[event.operationId];
+          if (current === undefined) return {};
+          const completed: AiJob = {
+            ...current,
+            status: 'completed',
+            phase: 'completed',
+            progressMessage: null,
+            progressPages: null,
+            view: deriveDockView(current.feature, event.result),
+            spend: event.llmSpend ?? null,
+            profiling: event.profiling ?? null,
+            completedWhileVisible: wasVisible,
+            updatedAt: Date.now(),
+          };
+          const kept = evictTerminalJobs(
+            { ...s.jobsById, [event.operationId]: completed },
+            s.jobsByConversation,
+          );
+          return kept;
+        }),
+      );
+      // Scan body lives in the panel — point the chatter there only when it is
+      // still the visible chat. Hidden completions get a toast instead.
+      if (job.feature === 'fan-summary' && wasVisible) focusScanTab();
+      if (!wasVisible) pushHiddenCompletionToast(job, 'completed');
       return;
-    }
     case 'operation:error':
-      resetStream();
-      useAiStore.setState({
-        status: 'error',
-        phase: 'error',
-        progressMessage: null,
-        progressPages: null,
-        error: event.error,
-        profiling: event.profiling ?? null,
-      });
+      disposeStream(event.operationId);
+      useAiStore.setState(
+        withVisibleFields((s) => {
+          const current = s.jobsById[event.operationId];
+          if (current === undefined) return {};
+          const failed: AiJob = {
+            ...current,
+            status: 'error',
+            phase: 'error',
+            progressMessage: null,
+            progressPages: null,
+            error: event.error,
+            profiling: event.profiling ?? null,
+            updatedAt: Date.now(),
+          };
+          const kept = evictTerminalJobs(
+            { ...s.jobsById, [event.operationId]: failed },
+            s.jobsByConversation,
+          );
+          return kept;
+        }),
+      );
+      if (!wasVisible) pushHiddenCompletionToast(job, 'error');
       return;
     case 'operation:discarded':
-      // Authoritative dismissal (chat_changed / cancelled / superseded).
-      resetStream();
-      useAiStore.setState(CLEARED);
+      useAiStore.setState(
+        withVisibleFields((s) => {
+          if (s.jobsById[event.operationId] === undefined) return {};
+          return removeJobPatch(s, event.operationId);
+        }),
+      );
       return;
   }
 }

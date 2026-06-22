@@ -1,8 +1,8 @@
 // AI operation coordinator — behavioral port of the legacy lifecycle (SPEC §8.3,
 // research §8): one operation per conversation with synchronous reservation
 // (CG-FLOW-04 on concurrent start), operationId correlation with stale-event
-// discard, discard on conversation switch, staged timeouts, 50 ms chunk
-// batching, sanitizer/XML result pipeline, CG-coded errors, debug profiling.
+// discard, navigation-independent operation lifecycle, staged timeouts, 50 ms
+// chunk batching, sanitizer/XML result pipeline, CG-coded errors, debug profiling.
 //
 // P4 scope: all seven operation features (quick fast-reply / improve-draft /
 // help-me plus deep fan-summary / chat-review and gated ping / hi-greeting).
@@ -1065,22 +1065,15 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       }
     },
 
-    conversationOpened(accountId, chatId) {
-      // Route change semantics (legacy tab:routeChanged): anything in flight
-      // for a different conversation is discarded — its result would land in
-      // the wrong UI context.
-      for (const op of [...byId.values()]) {
-        if (op.accountId !== accountId || op.chatId !== chatId) {
-          discard(op, 'chat_changed');
-        }
-      }
+    conversationOpened(_accountId, _chatId) {
+      // Navigation no longer owns AI lifecycle. The renderer routes frames by
+      // operationId to a per-conversation job, so background generations keep
+      // running while the chatter moves through other fans.
     },
 
-    conversationClosed(accountId, chatId) {
-      const op = byConversation.get(conversationKeyOf(accountId, chatId));
-      if (op !== undefined) {
-        discard(op, 'chat_changed');
-      }
+    conversationClosed(_accountId, _chatId) {
+      // Closing a view is not cancellation; only explicit ai:cancel/dispose
+      // should discard an operation.
     },
 
     subscribe(listener) {

@@ -471,13 +471,11 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:conversation.open', async (_event, rawArgs: unknown) => {
     const args = convSchema.parse(rawArgs);
-    deps.coordinator?.conversationOpened(args.accountId, args.chatId);
     await deps.sync?.openConversation(args.accountId, args.chatId);
   });
 
   ipcMain.handle('cmd:conversation.close', (_event, rawArgs: unknown) => {
     const args = convSchema.parse(rawArgs);
-    deps.coordinator?.conversationClosed(args.accountId, args.chatId);
     deps.sync?.closeConversation(args.accountId, args.chatId);
   });
 
