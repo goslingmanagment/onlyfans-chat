@@ -3,6 +3,7 @@
 // outcomes are never auto-retried, recovery is verification or a NEW row.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CgError } from '@chatgoose/shared';
 import type { DataLayer } from '@main/db/index';
 import {
   createSendEngine,
@@ -18,6 +19,7 @@ import type { SleepFn } from '@main/ofapi/rate-limiter';
 import {
   ACCT,
   CHAT,
+  allowMessageGuard,
   drain,
   loadFixture,
   makeSentMessage,
@@ -88,6 +90,7 @@ describe('send engine (SPEC §7)', () => {
       client: (overrides.stub ?? stub).client,
       hubCommandClient: overrides.hubCommandClient ?? makeStubHubCommandClient(overrides.stub ?? stub),
       data,
+      messageGuard: overrides.messageGuard ?? allowMessageGuard,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen }),
       sleep,
@@ -169,6 +172,38 @@ describe('send engine (SPEC §7)', () => {
       /unknown chat/,
     );
     expect(data.outbox.listForChat(ACCT, CHAT)).toHaveLength(0);
+    expect(stub.sendCalls).toHaveLength(0);
+  });
+
+  it('message guard block prevents any outbox row or Hub command', () => {
+    const guard = {
+      assertAllowed: vi.fn(() => {
+        throw new CgError('CG-GUARD-01');
+      }),
+    };
+    const { engine } = makeEngine({ messageGuard: guard });
+
+    expect(() =>
+      engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['telegram @name'] }),
+    ).toThrow(/Message Guard/);
+    expect(data.outbox.listForChat(ACCT, CHAT)).toHaveLength(0);
+    expect(guard.assertAllowed).toHaveBeenCalledTimes(1);
+    expect(stub.sendCalls).toHaveLength(0);
+  });
+
+  it('message guard pre-validates all sequence parts atomically', () => {
+    const guard = {
+      assertAllowed: vi.fn((args: { text: string }) => {
+        if (args.text.includes('cashapp')) throw new CgError('CG-GUARD-01');
+      }),
+    };
+    const { engine } = makeEngine({ messageGuard: guard });
+
+    expect(() =>
+      engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['clean one', 'cashapp me'] }),
+    ).toThrow(/Message Guard/);
+    expect(data.outbox.listForChat(ACCT, CHAT)).toHaveLength(0);
+    expect(guard.assertAllowed).toHaveBeenCalledTimes(2);
     expect(stub.sendCalls).toHaveLength(0);
   });
 
@@ -498,6 +533,31 @@ describe('send engine (SPEC §7)', () => {
     engine.dispose();
   });
 
+  it('message guard blocks retry before cancelling the old failed row', async () => {
+    stub.onSend(() => Promise.reject(restrictedWordsError()));
+    const { engine } = makeEngine();
+    const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['bad word'] });
+    await drain();
+    const failedId = localIds[0] ?? '';
+    expect(rowState(failedId)).toBe('failed');
+
+    const guard = {
+      assertAllowed: vi.fn(() => {
+        throw new CgError('CG-GUARD-01');
+      }),
+    };
+    const retryEngine = makeEngine({ messageGuard: guard }).engine;
+    expect(() =>
+      retryEngine.retry({ accountId: ACCT, localId: failedId, text: 'telegram @name' }),
+    ).toThrow(/Message Guard/);
+
+    expect(rowState(failedId)).toBe('failed');
+    expect(data.outbox.listForChat(ACCT, CHAT)).toHaveLength(1);
+    expect(stub.sendCalls.map((call) => call.text)).toEqual(['bad word']);
+    retryEngine.dispose();
+    engine.dispose();
+  });
+
   it('retry of an unconfirmed row is rejected (the verifier owns that path)', async () => {
     stub.onSend(() => Promise.reject(timeoutError()));
     const { engine } = makeEngine();
@@ -588,6 +648,7 @@ describe('send engine (SPEC §7)', () => {
     const engine = createSendEngine({
       client: stub.client,
       data,
+      messageGuard: allowMessageGuard,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen }),
       sleep: () => Promise.resolve(),

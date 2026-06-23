@@ -9,11 +9,15 @@ import type { HubClient, HubOfapiCommand } from '@chatgoose/shared/hub/index';
 import { createChangeBus, createDataLayer } from '@main/db/index';
 import type { ChatUpsert, DataLayer, MessageUpsert } from '@main/db/index';
 import type { SendClient } from '@main/send/engine';
+import type { MessageGuardRuntime } from '@main/message-guard/runtime';
 import type { OfApiMessage, OfApiSentMessage } from '@main/ofapi/schemas';
 
 export const TEST_DRIVER = 'bsqlite3-mc-node';
 export const ACCT = 'acct_test';
 export const CHAT = '101';
+export const allowMessageGuard: Pick<MessageGuardRuntime, 'assertAllowed'> = {
+  assertAllowed: () => undefined,
+};
 
 const FIXTURES_DIR = new URL('../../../../tests/fixtures/ofapi/', import.meta.url);
 

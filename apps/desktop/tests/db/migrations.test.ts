@@ -33,8 +33,24 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_chats_account_recent');
       expect(indexes).toContain('idx_messages_chat_recent');
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
-      expect(SCHEMA_VERSION).toBe(14);
+      expect(indexes).toContain('idx_message_guard_events_occurred');
+      expect(indexes).toContain('idx_message_guard_events_hash');
+      expect(SCHEMA_VERSION).toBe(15);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
+      const guardCols = layer.db
+        .prepare("SELECT name FROM pragma_table_info('message_guard_events')")
+        .all()
+        .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
+      for (const col of [
+        'message_text',
+        'message_hash',
+        'matched_original',
+        'matched_normalized',
+        'policy_version',
+        'rule_id',
+      ]) {
+        expect(guardCols).toContain(col);
+      }
       // v10: per-fan thread-fetch stamps (spenders freshness, PLAN item 13)
       expect(names).toContain('thread_fetch_log');
       // v9: fan_transactions carries net alongside the gross amount

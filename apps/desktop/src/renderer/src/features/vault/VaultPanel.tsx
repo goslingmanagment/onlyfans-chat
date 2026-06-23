@@ -4,10 +4,10 @@
 // multi-select + preview-subset toggles → the mandatory PPV COMPOSE SUMMARY
 // strip whose confirm button restates the price in words (misprice guard).
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { VaultItemVM } from '../../../../preload/contract';
-import { useVaultAlbums, useVaultMedia } from '../../bridge/queries';
+import { useGuardConfig, useVaultAlbums, useVaultMedia } from '../../bridge/queries';
 import { useAiStore } from '../ai/aiStore';
 import { pluralWord } from '@chatgoose/shared/i18n/index';
 import { Chip } from '../../design/Chip';
@@ -22,6 +22,13 @@ import {
   selectionOrder,
 } from './vaultLogic';
 import { sendPpvCompose } from './ppvSendController';
+import {
+  compileRendererGuardPolicy,
+  scanDraftForDisplay,
+  setCurrentGuardState,
+  verdictBlocks,
+  verdictCategories,
+} from '../conversation/guardLogic';
 
 const GRID_COLUMNS = 6;
 const CELL_HEIGHT = 96;
@@ -120,6 +127,11 @@ export function VaultPanel({
   const clearSelection = useVaultStore((s) => s.clearSelection);
   const draft = useAiStore((s) => s.draftText);
   const [searchInput, setSearchInput] = useState(search);
+  const guardConfig = useGuardConfig();
+  const guardState = useMemo(
+    () => compileRendererGuardPolicy(guardConfig.data ?? null),
+    [guardConfig.data],
+  );
 
   const albums = useVaultAlbums(open ? accountId : null, open);
   const media = useVaultMedia(open ? accountId : null, albumId, search, open);
@@ -137,11 +149,22 @@ export function VaultPanel({
     overscan: 4,
   });
 
-  if (!open) return null;
-
   const price = parsePpvPrice(priceInput);
   const summary = deriveComposeSummary(selection, price, draft);
+  const guardVerdict = useMemo(
+    () => scanDraftForDisplay(guardState, draft.trim()),
+    [draft, guardState],
+  );
+  const guardReady = guardState.kind === 'ready';
+  const guardBlocked = !guardReady || verdictBlocks(guardVerdict);
+  const guardCategories = verdictCategories(guardVerdict);
   const customAlbums = (albums.data ?? []).filter((album) => album.custom);
+
+  useEffect(() => {
+    setCurrentGuardState(guardState);
+  }, [guardState]);
+
+  if (!open) return null;
 
   function onGridScroll(): void {
     const el = scrollRef.current;
@@ -281,6 +304,27 @@ export function VaultPanel({
                 })}
               </span>
             )}
+            {guardVerdict?.decision === 'block' && (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 truncate text-[12px] text-bad">
+                  {t('guard.ppvBlockedBanner')}
+                </span>
+                {guardCategories.map((category) => (
+                  <span
+                    key={category}
+                    className="num rounded-full border border-bad/30 bg-bad/10 px-2 py-0.5 text-micro font-semibold text-bad"
+                  >
+                    {category === 'off_platform'
+                      ? t('guard.chip.off_platform')
+                      : category === 'red'
+                        ? t('guard.chip.red')
+                        : category === 'yellow'
+                          ? t('guard.chip.yellow')
+                          : t('guard.chip.custom')}
+                  </span>
+                ))}
+              </span>
+            )}
             <span className="ml-auto flex items-center gap-2">
               <Button size="sm" variant="subtle" onClick={clearSelection}>
                 {t('vault.clear')}
@@ -289,8 +333,14 @@ export function VaultPanel({
               <Button
                 size="sm"
                 variant="primary"
-                disabled={!canSend || summary === null}
-                title={canSend ? t('vault.confirmTipCanSend') : t('conv.cannotSendFallback')}
+                disabled={!canSend || summary === null || guardBlocked}
+                title={
+                  !canSend
+                    ? t('conv.cannotSendFallback')
+                    : guardBlocked
+                      ? t('guard.sendBlockedTooltip')
+                      : t('vault.confirmTipCanSend')
+                }
                 onClick={() => sendPpvCompose({ accountId, chatId, canSend })}
               >
                 {summary !== null

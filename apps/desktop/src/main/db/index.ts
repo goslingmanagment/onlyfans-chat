@@ -30,6 +30,8 @@ import { createMediaUrlsQueries } from './queries/media-urls';
 import type { MediaUrlsQueries } from './queries/media-urls';
 import { createThreadFetchLogQueries } from './queries/thread-fetch-log';
 import type { ThreadFetchLogQueries } from './queries/thread-fetch-log';
+import { createMessageGuardEventsQueries } from './queries/message-guard-events';
+import type { MessageGuardEventsQueries } from './queries/message-guard-events';
 
 export interface DataLayer {
   db: ChatGooseDb;
@@ -46,6 +48,7 @@ export interface DataLayer {
   aiSpendLog: AiSpendLogQueries;
   mediaUrls: MediaUrlsQueries;
   threadFetchLog: ThreadFetchLogQueries;
+  messageGuardEvents: MessageGuardEventsQueries;
   close(): void;
 }
 
@@ -67,6 +70,7 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     aiSpendLog: createAiSpendLogQueries(db),
     mediaUrls: createMediaUrlsQueries(db),
     threadFetchLog: createThreadFetchLogQueries(db),
+    messageGuardEvents: createMessageGuardEventsQueries(db, bus),
     close() {
       bus.flushNow();
       bus.dispose();
@@ -132,3 +136,9 @@ export { createAiSpendLogQueries } from './queries/ai-spend';
 export type { AiSpendLogQueries, AiSpendRunArgs } from './queries/ai-spend';
 export { createMediaUrlsQueries } from './queries/media-urls';
 export type { MediaUrlsQueries } from './queries/media-urls';
+export { createMessageGuardEventsQueries } from './queries/message-guard-events';
+export type {
+  MessageGuardBlocksReport,
+  MessageGuardEventsQueries,
+  MessageGuardRecentEvent,
+} from './queries/message-guard-events';

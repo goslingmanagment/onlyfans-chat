@@ -5,6 +5,7 @@
 // match (price + media count + window — designed and pinned here).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CgError } from '@chatgoose/shared';
 import type { DataLayer } from '@main/db/index';
 import {
   createSendEngine,
@@ -19,6 +20,7 @@ import type { OfApiError } from '@main/ofapi/errors';
 import {
   ACCT,
   CHAT,
+  allowMessageGuard,
   drain,
   loadFixture,
   makeSentMessage,
@@ -72,6 +74,7 @@ describe('send engine — PPV path (PRD F7)', () => {
       client: stub.client,
       hubCommandClient: overrides.hubCommandClient ?? makeStubHubCommandClient(stub),
       data,
+      messageGuard: overrides.messageGuard ?? allowMessageGuard,
       toMediaUrl,
       getSettings: () => Promise.resolve({ markAsReadOnOpen: true }),
       sleep: () => Promise.resolve(),
@@ -169,6 +172,25 @@ describe('send engine — PPV path (PRD F7)', () => {
     const engine = makeEngine();
     expect(() => engine.sendPpv(ppvArgs())).toThrow(/Rejected by user/);
     expect(data.outbox.listForChat(ACCT, CHAT)).toHaveLength(0);
+  });
+
+  it('message guard blocks the PPV caption before enqueue', () => {
+    const guard = {
+      assertAllowed: vi.fn(() => {
+        throw new CgError('CG-GUARD-01');
+      }),
+    };
+    const engine = makeEngine({ messageGuard: guard });
+
+    expect(() => engine.sendPpv(ppvArgs({ text: 'paypal me' }))).toThrow(/Message Guard/);
+    expect(data.outbox.listForChat(ACCT, CHAT)).toHaveLength(0);
+    expect(guard.assertAllowed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        surface: 'engine:sendPpv',
+        mediaCount: MEDIA.length,
+        price: 25,
+      }),
+    );
   });
 
   // ── Happy path ───────────────────────────────────────────────────────────

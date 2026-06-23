@@ -17,6 +17,11 @@ import type { LogLevel } from '@chatgoose/shared/diagnostics/log';
 import type { HubModeOverrideSetting } from '@chatgoose/shared/hub/mode';
 import type { UiLocaleSetting } from '@chatgoose/shared/i18n/index';
 import type { UiThemeSetting } from '@chatgoose/shared/theme';
+import type {
+  GuardCategory,
+  GuardVerdict,
+  MessageGuardPolicy,
+} from '@chatgoose/shared/message-guard/index';
 
 // ─── View models ─────────────────────────────────────────────────────────
 
@@ -38,6 +43,8 @@ export interface ChatListItemVM {
   fanName: string;
   avatarUrl: string | null;
   lastMessageAt: string | null; // ISO
+  /** Newest message id from the chat-list head. May exist before local body rows do. */
+  lastMessageId: string | null;
   lastMessagePreview: string;
   lastMessageIsSentByMe: boolean;
   unreadCount: number;
@@ -87,6 +94,12 @@ export interface MessageVM {
   replyTo: { sender: 'model' | 'fan'; textPreview: string } | null;
   deleted: boolean;
 }
+
+export type ConversationOpenResultVM = {
+  result: 'inserted' | 'empty' | 'unchanged' | 'unknown' | 'skipped_no_sync';
+  localCountBefore: number | null;
+  localCountAfter: number | null;
+};
 
 export interface FanPanelVM {
   fanId: string;
@@ -266,6 +279,31 @@ export interface OutboxAuditReportVM {
   cleanSends: number;
 }
 
+export interface MessageGuardRecentEventVM {
+  id: string;
+  occurredAt: string;
+  accountId: string;
+  chatId: string;
+  surface: string;
+  transport: string | null;
+  decision: 'blocked' | 'warned' | 'sent_after_warning';
+  policyVersion: string;
+  category: GuardCategory;
+  ruleId: string;
+  ruleLabel: string;
+  messageHash: string;
+  mediaCount: number;
+  price: number;
+}
+
+export interface MessageGuardBlocksReportVM {
+  total: number;
+  byDecision: Record<string, number>;
+  byCategory: Record<string, number>;
+  byRule: Record<string, number>;
+  recent: MessageGuardRecentEventVM[];
+}
+
 export interface UnreadReconcileSettingsVM {
   /** Master switch for body-free unread read-state reconciliation. */
   enabled: boolean;
@@ -365,6 +403,10 @@ export interface SettingsVM {
    * board shelves (PLAN item 12). Spenders outside mapped lists → «Без тира».
    */
   spendersListMappings: Record<string, string[]>;
+  /** Desktop Message Guard policy. Local-first in P1/P2; shaped for core later. */
+  messageGuardPolicy: MessageGuardPolicy;
+  /** Guard config source transport seam; P1/P2 use local only. */
+  guardConfigTransport: 'local' | 'hub';
   /** Interface language; 'system' resolves from the OS locale at runtime. */
   uiLocale: UiLocaleSetting;
   /** Window zoom factor (0.9 | 1 | 1.1 | 1.25). */
@@ -482,7 +524,7 @@ export interface AiFeedbackRequest {
 }
 
 export interface DbChangedEvent {
-  scope: 'accounts' | 'chats' | 'messages' | 'fans' | 'summaries' | 'settings' | 'outbox';
+  scope: 'accounts' | 'chats' | 'messages' | 'fans' | 'summaries' | 'settings' | 'outbox' | 'guard';
   accountId?: string;
   chatId?: string;
 }
@@ -674,6 +716,13 @@ export interface InvokeChannels {
   'query:activity.summary': { args: void; result: ActivityVM };
   /** RUN OUTBOX AUDIT button — read-only sweep over the outbox audit trail. */
   'query:outbox.audit': { args: { accountId?: string }; result: OutboxAuditReportVM };
+  'query:guard.config': { args: void; result: MessageGuardPolicy };
+  'cmd:guard.config.update': { args: MessageGuardPolicy; result: MessageGuardPolicy };
+  'query:guard.scan': { args: { text: string }; result: GuardVerdict };
+  'query:guard.blocks': {
+    args: { accountId?: string; limit?: number };
+    result: MessageGuardBlocksReportVM;
+  };
   /** Settings → Models cost hints: per-feature trailing-7-day runs + USD. */
   'query:ai.featureCosts': { args: void; result: AiFeatureCostsVM };
   /** Settings "Test" buttons — probes the STORED key/connection (no args carry keys). */
@@ -698,12 +747,17 @@ export interface InvokeChannels {
   'query:ai.pingGate': { args: { accountId: string; chatId: string }; result: PingGateVM };
   'cmd:conversation.open': {
     args: { accountId: string; chatId: string };
-    result: void;
+    result: ConversationOpenResultVM;
   };
   'cmd:conversation.close': { args: { accountId: string; chatId: string }; result: void };
   /** Manual single-chat refresh (in-chat ↻ button): deliberate user read of the
    *  open chat's message tail. Maps to SyncProvider.readChatTailForUserOpen. */
   'cmd:conversation.refresh': { args: { accountId: string; chatId: string }; result: void };
+  /** Manual/user scrollback: fetch one older OFAPI page before the oldest local row. */
+  'cmd:conversation.loadOlder': {
+    args: { accountId: string; chatId: string };
+    result: { returned: number; fresh: number; hasOlder: boolean };
+  };
   'cmd:sync.forceRefresh': { args: { accountId?: string }; result: void };
   'cmd:sync.reconcileUnread': {
     args: { accountId?: string; trigger?: 'manual' | 'unread-tab' | 'account-focus' };
@@ -917,6 +971,10 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:sync.status': true,
   'query:activity.summary': true,
   'query:outbox.audit': true,
+  'query:guard.config': true,
+  'cmd:guard.config.update': true,
+  'query:guard.scan': true,
+  'query:guard.blocks': true,
   'query:ai.featureCosts': true,
   'cmd:keys.test': true,
   'query:localData.stats': true,
@@ -930,6 +988,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'cmd:conversation.open': true,
   'cmd:conversation.close': true,
   'cmd:conversation.refresh': true,
+  'cmd:conversation.loadOlder': true,
   'cmd:sync.forceRefresh': true,
   'cmd:sync.reconcileUnread': true,
   'cmd:sync.focusAccount': true,

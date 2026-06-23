@@ -3,19 +3,28 @@
 // shows an inline cancel chip; when the platform blocks messaging the whole
 // composer is disabled with the platform's reason (SPEC §7.0).
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatListItemVM } from '../../../../preload/contract';
+import type { GuardCategory, GuardVerdict } from '@chatgoose/shared/message-guard/index';
 import { Button } from '../../design/Button';
 import { Kbd } from '../../design/Kbd';
 import { modCombo } from '../../lib/modKey';
 import { getBridge } from '../../bridge/bridge';
-import { useOutbox } from '../../bridge/queries';
+import { useGuardConfig, useOutbox } from '../../bridge/queries';
 import { DraftTextarea } from './DraftTextarea';
 import { COMPOSER_TEXTAREA_ID } from './composerDom';
 import { useAiStore, setDraftText } from '../ai/aiStore';
 import { useVaultStore } from '../vault/vaultStore';
 import { sendCurrentDraft } from './sendController';
 import { activeSequence, createTypingThrottle } from './sendLogic';
+import {
+  compileRendererGuardPolicy,
+  scanDraftForDisplay,
+  setCurrentGuardState,
+  verdictBlocks,
+  verdictCategories,
+  verdictToSegments,
+} from './guardLogic';
 import { useLocale, useT } from '../../lib/i18n';
 import { pluralWord } from '@chatgoose/shared/i18n/index';
 
@@ -34,6 +43,12 @@ export function ComposerBar({
   const locale = useLocale();
   const draft = useAiStore((s) => s.draftText);
   const outbox = useOutbox(accountId, chat.chatId);
+  const guardConfig = useGuardConfig();
+  const [guardVerdict, setGuardVerdict] = useState<GuardVerdict | null>(null);
+  const guardState = useMemo(
+    () => compileRendererGuardPolicy(guardConfig.data ?? null),
+    [guardConfig.data],
+  );
   const outboxItems = outbox.data;
   const sequence = useMemo(() => activeSequence(outboxItems ?? []), [outboxItems]);
   const vaultOpen = useVaultStore((s) => s.open);
@@ -47,6 +62,41 @@ export function ComposerBar({
   // the PPV summary strip owns the explicit confirm (PRD F7 misprice guard).
   const ppvComposeActive = attachedCount > 0;
   const cannotReason = chat.canNotSendReason ?? t('conv.cannotSendFallback');
+  const guardReady = guardState.kind === 'ready';
+  const guardBlocked = !guardReady || verdictBlocks(guardVerdict);
+  const guardSegments = useMemo(
+    () => verdictToSegments(draft, guardVerdict),
+    [draft, guardVerdict],
+  );
+  const guardCategories = verdictCategories(guardVerdict);
+
+  function guardChipLabel(category: GuardCategory): string {
+    switch (category) {
+      case 'off_platform':
+        return t('guard.chip.off_platform');
+      case 'red':
+        return t('guard.chip.red');
+      case 'yellow':
+        return t('guard.chip.yellow');
+      case 'custom':
+        return t('guard.chip.custom');
+    }
+  }
+
+  useEffect(() => {
+    setCurrentGuardState(guardState);
+  }, [guardState]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setGuardVerdict(
+        draft.length === 0 || guardState.kind !== 'ready'
+          ? null
+          : scanDraftForDisplay(guardState, draft),
+      );
+    }, draft.length === 0 || guardState.kind !== 'ready' ? 0 : 140);
+    return () => clearTimeout(timer);
+  }, [draft, guardState]);
 
   // typing-out beacon: ≤1 cmd:chat.typingActive / 3 s, session ends after 4 s idle (SPEC §7.8)
   const throttleRef = useRef(createTypingThrottle());
@@ -80,6 +130,7 @@ export function ComposerBar({
         value={draft}
         onChange={onDraftChange}
         disabled={!canSend}
+        guardSegments={guardSegments}
         placeholder={
           canSend
             ? t('conv.composerPlaceholder', { persona: personaName, r: modCombo('R'), i: modCombo('I') })
@@ -105,6 +156,22 @@ export function ComposerBar({
         )}
         {!canSend ? (
           <span className="num min-w-0 truncate text-micro tracking-[0.08em] text-warn">{cannotReason}</span>
+        ) : !guardReady && !guardConfig.isPending ? (
+          <span className="num min-w-0 truncate text-micro tracking-[0.08em] text-bad">
+            {t('guard.policyUnavailable')}
+          </span>
+        ) : guardVerdict?.decision === 'block' ? (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 truncate text-[12.5px] text-bad">{t('guard.blockedBanner')}</span>
+            {guardCategories.map((category) => (
+              <span
+                key={category}
+                className="num rounded-full border border-bad/30 bg-bad/10 px-2 py-0.5 text-micro font-semibold text-bad"
+              >
+                {guardChipLabel(category)}
+              </span>
+            ))}
+          </span>
         ) : ppvComposeActive ? (
           <span className="num min-w-0 truncate text-micro tracking-[0.08em] text-ink-mid">
             {t('conv.ppvComposeHint')}
@@ -128,10 +195,12 @@ export function ComposerBar({
         <Button
           variant="primary"
           className="shrink-0"
-          disabled={!canSend || blank || ppvComposeActive}
+          disabled={!canSend || blank || ppvComposeActive || guardBlocked}
           title={
             !canSend
               ? cannotReason
+              : guardBlocked
+                ? t('guard.sendBlockedTooltip')
               : ppvComposeActive
                 ? t('conv.ppvUseConfirmBtn')
                 : t('conv.sendTooltip', { combo: modCombo('↵') })

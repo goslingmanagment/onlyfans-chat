@@ -18,7 +18,7 @@ import { handleAiOperationEvent } from '../features/ai/aiStore';
 import { syncStatusInvalidationKeysForEvent } from './syncInvalidation';
 
 const dbChangedSchema = z.object({
-  scope: z.enum(['accounts', 'chats', 'messages', 'fans', 'summaries', 'settings', 'outbox']),
+  scope: z.enum(['accounts', 'chats', 'messages', 'fans', 'summaries', 'settings', 'outbox', 'guard']),
   accountId: z.string().optional(),
   chatId: z.string().optional(),
 });
@@ -112,6 +112,12 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
       case 'settings':
         queueInvalidate(qk.settings);
         queueInvalidate(qk.personalities);
+        queueInvalidate(qk.guardConfig);
+        break;
+      case 'guard':
+        queueInvalidate(qk.guardConfig);
+        queueInvalidate(qk.guardBlocks(event.accountId));
+        queueInvalidate(qk.activity);
         break;
     }
   }

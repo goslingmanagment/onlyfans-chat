@@ -39,6 +39,8 @@ export const CG_ERROR_CODES = [
   'CG-OF-08',
   'CG-HUB-01',
   'CG-HUB-02',
+  'CG-GUARD-01',
+  'CG-GUARD-02',
 ] as const;
 
 export type CgErrorCode = (typeof CG_ERROR_CODES)[number];
@@ -192,6 +194,14 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
     message: 'Agency Hub request failed.',
     recovery: 'Local results are kept and sync retries automatically. Report this if it keeps failing.',
   },
+  'CG-GUARD-01': {
+    message: 'Message Guard blocked this message.',
+    recovery: 'Edit the highlighted text and send again.',
+  },
+  'CG-GUARD-02': {
+    message: 'Message Guard policy is unavailable.',
+    recovery: 'Reload ChatGoose or contact a manager before sending.',
+  },
 };
 
 const CODE_SET: ReadonlySet<string> = new Set(CG_ERROR_CODES);
@@ -226,6 +236,14 @@ export interface CgErrorDetail {
   responseSnippet?: string;
   retryAfterMs?: number;
   retryAtMs?: number;
+  policyVersion?: string;
+  guardSpans?: Array<{
+    start: number;
+    end: number;
+    category: string;
+    ruleId: string;
+    ruleLabel: string;
+  }>;
 }
 
 export interface CgErrorOptions {

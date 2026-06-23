@@ -8,6 +8,7 @@ import {
   DEFAULT_FEATURE_MODELS,
   DEFAULT_FEATURE_REASONING,
 } from '@chatgoose/shared/constants';
+import { BUILTIN_MESSAGE_GUARD_POLICY } from '@chatgoose/shared/message-guard/index';
 import type { OperationEvent } from '@chatgoose/shared/protocol/index';
 import { createChangeBus, createDataLayer } from '@main/db/index';
 import type { DataLayer, MessageUpsert } from '@main/db/index';
@@ -60,6 +61,8 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     },
     spendStyle: 'figure',
     spendersListMappings: {},
+    messageGuardPolicy: BUILTIN_MESSAGE_GUARD_POLICY,
+    guardConfigTransport: 'local',
     uiLocale: 'system',
     uiScale: 1,
     uiTheme: 'light',

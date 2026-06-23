@@ -5,6 +5,7 @@
 
 import { getBridge } from '../../bridge/bridge';
 import { setDraftText, useAiStore } from '../ai/aiStore';
+import { scanTextForSend } from '../conversation/guardLogic';
 import { useVaultStore } from './vaultStore';
 import { deriveComposeSummary, parsePpvPrice } from './vaultLogic';
 
@@ -24,6 +25,7 @@ export function sendPpvCompose(args: {
   const draft = useAiStore.getState().draftText;
   const summary = deriveComposeSummary(selection, price, draft);
   if (summary === null) return; // nothing selected or invalid price — no send
+  if (scanTextForSend(draft.trim()) !== 'allow') return;
 
   inFlight.add(key);
   void getBridge()

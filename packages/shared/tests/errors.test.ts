@@ -36,6 +36,8 @@ describe('error registry', () => {
       'CG-OF-08',
       'CG-HUB-01',
       'CG-HUB-02',
+      'CG-GUARD-01',
+      'CG-GUARD-02',
     ];
     for (const code of newCodes) {
       expect(isCgErrorCode(code), code).toBe(true);

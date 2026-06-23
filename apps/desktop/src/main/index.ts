@@ -44,6 +44,7 @@ import {
   createOfApiTransportClient,
 } from './ofapi/transport';
 import { createSendEngine, type SendEngine } from './send/engine';
+import { createMessageGuardRuntime, type MessageGuardRuntime } from './message-guard/runtime';
 import { createVaultService, type VaultService } from './media/vault';
 import { createSpendersService, type SpendersService } from './spenders/service';
 import { createSpendersRefresh, type SpendersRefreshService } from './spenders/refresh';
@@ -79,6 +80,7 @@ let sync: HubAwareSync | null = null;
 let client: OfApiClient | null = null;
 let coordinator: AiCoordinator | null = null;
 let sendEngine: SendEngine | null = null;
+let messageGuard: MessageGuardRuntime | null = null;
 let vaultService: VaultService | null = null;
 let spendersService: SpendersService | null = null;
 let spendersRefresh: SpendersRefreshService | null = null;
@@ -447,12 +449,15 @@ async function initOfapi(
     client,
     data: dataLayer,
     toMediaUrl,
+    // DIAGNOSTIC (temporary — empty-thread investigation 2026-06-23): scope 'diag'.
+    onLog: (level, message, fields) => logger?.log(level, 'diag', message, fields),
     isBudgetExhausted: () => budgetGuard.isExhausted(),
     // Default OFF: no automatic message-body reads (poll deltas, sweeps, media
     // polling) so OnlyFans never marks a chat read without an explicit open.
     autoReadEnabled: () => settingsCache?.autoReadChats ?? false,
     spendSweepRollbackToLegacy: () => settingsCache?.spendSweepRollbackToLegacy ?? false,
     unreadReconcileSettings: () => settingsCache?.unreadReconcile,
+    readTransport: () => initialSettings.ofapiReadTransport,
   });
 
   const lastEventIdSchema = z.number().int().nonnegative();
@@ -506,6 +511,7 @@ async function initOfapi(
     client,
     hubCommandClient: hub.commandClient,
     data: dataLayer,
+    messageGuard: messageGuard ?? createMessageGuardRuntime({ data: dataLayer }),
     toMediaUrl,
     getSettings: () => settingsStore.get(),
   });
@@ -672,6 +678,11 @@ async function boot(): Promise<void> {
     filePath: join(userData, 'chatgoose.db'),
     encryptionKey: dbKey,
   });
+  messageGuard = createMessageGuardRuntime({
+    data,
+    ...(logger !== null ? { logger } : {}),
+  });
+  messageGuard.pruneExpired();
 
   const settingsStore = createSettingsStore({ queries: data.settings, secrets: keychain });
 
@@ -813,6 +824,9 @@ async function boot(): Promise<void> {
     get send() {
       return sendEngine;
     },
+    get messageGuard() {
+      return messageGuard;
+    },
     get vault() {
       return vaultService;
     },
@@ -934,6 +948,12 @@ async function boot(): Promise<void> {
         } catch {
           audit = null;
         }
+        let guardAudit: ReturnType<MessageGuardRuntime['blocks']> | null;
+        try {
+          guardAudit = messageGuard?.blocks({ limit: 50 }) ?? null;
+        } catch {
+          guardAudit = null;
+        }
         // Flush then read the DURABLE on-disk log so a crash from a PRIOR
         // session is in the export even though the in-memory ring restarted.
         await logger?.flush();
@@ -975,6 +995,7 @@ async function boot(): Promise<void> {
                 messages: countRows('messages'),
                 summaries: countRows('summaries'),
                 outbox: countRows('outbox'),
+                messageGuardEvents: countRows('message_guard_events'),
               },
             },
             outboxAudit: audit
@@ -987,6 +1008,7 @@ async function boot(): Promise<void> {
                   sentMissingFromMessages: audit.sentMissingFromMessages.length,
                 }
               : null,
+            messageGuardAudit: guardAudit,
             errorCounts: logger?.errorCounts() ?? {},
             logs: logger?.snapshot() ?? [],
             fileLog,

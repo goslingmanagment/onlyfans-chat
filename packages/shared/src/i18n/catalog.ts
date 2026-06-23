@@ -94,6 +94,14 @@ export const UI_MESSAGES = {
     en: 'The hub is unreachable.',
     ru: 'Хаб недоступен.',
   },
+  'err.CG-GUARD-01': {
+    en: 'Message Guard blocked this message.',
+    ru: 'Message Guard заблокировал это сообщение.',
+  },
+  'err.CG-GUARD-02': {
+    en: 'Message Guard policy is unavailable.',
+    ru: 'Политика Message Guard недоступна.',
+  },
 
   // ── Agency Hub ────────────────────────────────────────────────────────────
   'hub.title': { en: 'Agency Hub', ru: 'Agency Hub' },
@@ -940,6 +948,17 @@ export const UI_MESSAGES = {
   'conv.isTyping': { en: '{name} is typing', ru: '{name} печатает' },
   'conv.emptyTitle': { en: 'No messages yet', ru: 'Сообщений пока нет' },
   'conv.emptyHint': { en: 'This conversation has no history.', ru: 'В этой переписке нет истории.' },
+  'conv.historyLoadingTitle': { en: 'Loading history', ru: 'Загружаем историю' },
+  'conv.historyLoadingHint': {
+    en: 'The chat has a recent message; the thread body is still being fetched.',
+    ru: 'В списке есть последнее сообщение; тело переписки ещё подтягивается.',
+  },
+  'conv.historyLoadFailedTitle': { en: 'History did not load', ru: 'История не загрузилась' },
+  'conv.historyLoadFailedHint': {
+    en: 'The chat exists, but the message history request returned no local rows or failed.',
+    ru: 'Чат есть, но запрос истории не записал локальные сообщения или завершился ошибкой.',
+  },
+  'conv.historyRetry': { en: 'Retry', ru: 'Повторить' },
   'conv.loadingOlder': { en: 'LOADING OLDER…', ru: 'ЗАГРУЗКА СТАРЫХ…' },
   'conv.mediaCount': { en: '{n} media', ru: '{n} медиа' },
   'conv.rowEdit': { en: 'Edit', ru: 'Изменить' },
@@ -948,6 +967,54 @@ export const UI_MESSAGES = {
   'conv.restrictedWordsBanner': {
     en: 'OnlyFans blocked this message — restricted words',
     ru: 'OnlyFans заблокировал это сообщение — запрещённые слова',
+  },
+  'guard.blockedBanner': {
+    en: 'Message Guard blocked this draft — edit the highlighted text.',
+    ru: 'Message Guard заблокировал черновик — исправьте выделенный текст.',
+  },
+  'guard.ppvBlockedBanner': {
+    en: 'Message Guard blocked this caption — edit the highlighted text.',
+    ru: 'Message Guard заблокировал подпись — исправьте выделенный текст.',
+  },
+  'guard.policyUnavailable': {
+    en: 'Message Guard policy unavailable — sending is paused.',
+    ru: 'Политика Message Guard недоступна — отправка на паузе.',
+  },
+  'guard.sendBlockedTooltip': {
+    en: 'Message Guard blocked this. Edit the highlighted text.',
+    ru: 'Message Guard заблокировал это. Исправьте выделенный текст.',
+  },
+  'guard.reason.off_platform': {
+    en: 'Off-platform content',
+    ru: 'Внешняя площадка',
+  },
+  'guard.reason.red': {
+    en: 'Red-list term',
+    ru: 'Термин из красного списка',
+  },
+  'guard.reason.yellow': {
+    en: 'Review term',
+    ru: 'Термин для проверки',
+  },
+  'guard.reason.custom': {
+    en: 'Custom policy',
+    ru: 'Правило агентства',
+  },
+  'guard.chip.off_platform': {
+    en: 'off-platform',
+    ru: 'внешняя площадка',
+  },
+  'guard.chip.red': {
+    en: 'red list',
+    ru: 'красный список',
+  },
+  'guard.chip.yellow': {
+    en: 'review',
+    ru: 'проверка',
+  },
+  'guard.chip.custom': {
+    en: 'custom',
+    ru: 'правило',
   },
   'conv.unconfirmedExplainer': {
     en: 'Delivery unconfirmed — it may have reached the fan',

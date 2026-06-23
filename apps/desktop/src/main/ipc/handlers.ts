@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { Personality } from '@chatgoose/shared/types';
 import { analyzePingSegment } from '@chatgoose/shared/transcript/index';
 import { reconcileBundledPersonalities } from '@chatgoose/shared/prompts/personalities';
+import { messageGuardPolicySchema } from '@chatgoose/shared/message-guard/index';
 import type { DataLayer, OutboxRow } from '../db/index';
 import type { SettingsStore } from '../settings/store';
 import type { CreditMeter } from '../ofapi/credit-meter';
@@ -16,9 +17,11 @@ import type { VaultService } from '../media/vault';
 import type { SpendersService } from '../spenders/service';
 import type { SpendersRefreshService } from '../spenders/refresh';
 import type { Logger } from '../diagnostics/logger';
+import type { MessageGuardRuntime } from '../message-guard/runtime';
 import type {
   ActivityVM,
   AiStartRequest,
+  ConversationOpenResultVM,
   KeyTestProvider,
   KeyTestResultVM,
   LocalDataStatsVM,
@@ -63,6 +66,71 @@ const logClientSchema = z.object({
   message: z.string().max(4000),
   fields: z.record(z.string(), z.unknown()).optional(),
 });
+
+function safeErrorOutcome(error: unknown): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (error instanceof Error) {
+    fields['errorName'] = error.name;
+  }
+  if (error === null || typeof error !== 'object') {
+    fields['valueType'] = typeof error;
+    return fields;
+  }
+  const record = error as Record<string, unknown>;
+  if (typeof record['code'] === 'string') {
+    fields['errorCode'] = record['code'];
+  }
+  if (typeof record['upstreamStatus'] === 'number') {
+    fields['upstreamStatus'] = record['upstreamStatus'];
+  }
+  const detail = record['detail'];
+  if (detail !== null && typeof detail === 'object') {
+    const detailRecord = detail as Record<string, unknown>;
+    if (typeof detailRecord['status'] === 'number') {
+      fields['httpStatus'] = detailRecord['status'];
+    }
+    if (typeof detailRecord['retryAfterMs'] === 'number') {
+      fields['retryAfterMs'] = detailRecord['retryAfterMs'];
+    }
+  }
+  return fields;
+}
+
+function safeMessageCount(
+  data: DataLayer,
+  accountId: string,
+  chatId: string,
+): number | null {
+  try {
+    return data.messages.count(accountId, chatId);
+  } catch {
+    return null;
+  }
+}
+
+function safeLastMessageId(data: DataLayer, accountId: string, chatId: string): string | null {
+  try {
+    return data.chats.get(accountId, chatId)?.lastMessageId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function conversationLoadResult(
+  before: number | null,
+  after: number | null,
+): ConversationOpenResultVM['result'] {
+  if (after === null) {
+    return 'unknown';
+  }
+  if (before !== null && after > before) {
+    return 'inserted';
+  }
+  if (after === 0) {
+    return 'empty';
+  }
+  return 'unchanged';
+}
 
 const chatsListSchema = z.object({
   accountId: idSchema,
@@ -191,6 +259,11 @@ const sendPpvSchema = z.object({
   mediaFiles: z.array(ppvMediaIdSchema).min(1).max(40),
   previews: z.array(ppvMediaIdSchema).max(40),
 });
+const guardScanSchema = z.object({ text: z.string().max(20_000) });
+const guardBlocksSchema = z.object({
+  accountId: idSchema.optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
 
 function draftKey(accountId: string, chatId: string): string {
   return `draft.${accountId}.${chatId}`;
@@ -236,6 +309,8 @@ export interface IpcDeps {
   coordinator: AiCoordinatorLike | null;
   /** Null until an OFAPI read transport exists (same lifecycle as sync). */
   send: SendEngine | null;
+  /** Synchronous Message Guard runtime; created at DB boot. */
+  messageGuard?: MessageGuardRuntime | null;
   /** Vault browsing/gallery (PRD F7); null/absent until an OFAPI read transport exists.
    *  Optional (not `| null` alone) so pre-P5 IpcDeps call sites stay valid. */
   vault?: VaultService | null;
@@ -416,6 +491,33 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return auditOutbox(data, args.accountId !== undefined ? { accountId: args.accountId } : {});
   });
 
+  function requireMessageGuard(): MessageGuardRuntime {
+    if (!deps.messageGuard) {
+      throw new Error('Message Guard is not available in this build.');
+    }
+    return deps.messageGuard;
+  }
+
+  ipcMain.handle('query:guard.config', () => requireMessageGuard().getPolicy());
+
+  ipcMain.handle('cmd:guard.config.update', (_event, rawArgs: unknown) => {
+    const policy = messageGuardPolicySchema.parse(rawArgs);
+    return requireMessageGuard().updatePolicy(policy);
+  });
+
+  ipcMain.handle('query:guard.scan', (_event, rawArgs: unknown) => {
+    const args = guardScanSchema.parse(rawArgs);
+    return requireMessageGuard().scan(args.text);
+  });
+
+  ipcMain.handle('query:guard.blocks', (_event, rawArgs: unknown) => {
+    const args = guardBlocksSchema.parse(rawArgs ?? {});
+    return requireMessageGuard().blocks({
+      ...(args.accountId !== undefined ? { accountId: args.accountId } : {}),
+      ...(args.limit !== undefined ? { limit: args.limit } : {}),
+    });
+  });
+
   ipcMain.handle('query:ai.featureCosts', () => buildFeatureCosts(data));
 
   ipcMain.handle('cmd:keys.test', (_event, rawArgs: unknown) => {
@@ -471,7 +573,59 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:conversation.open', async (_event, rawArgs: unknown) => {
     const args = convSchema.parse(rawArgs);
-    await deps.sync?.openConversation(args.accountId, args.chatId);
+    const startedAt = Date.now();
+    const localCountBefore = safeMessageCount(data, args.accountId, args.chatId);
+    const lastMessageId = safeLastMessageId(data, args.accountId, args.chatId);
+    deps.logger?.info('conversation', 'diag conversation.open requested', {
+      accountId: args.accountId,
+      chatId: args.chatId,
+      lastMessageId,
+      localCountBefore,
+    });
+    if (!deps.sync) {
+      deps.logger?.warn('conversation', 'diag conversation.open skipped', {
+        accountId: args.accountId,
+        chatId: args.chatId,
+        lastMessageId,
+        localCountBefore,
+        localCountAfter: localCountBefore,
+        result: 'skipped_no_sync',
+        elapsedMs: Date.now() - startedAt,
+      });
+      return {
+        result: 'skipped_no_sync',
+        localCountBefore,
+        localCountAfter: localCountBefore,
+      };
+    }
+    try {
+      await deps.sync.openConversation(args.accountId, args.chatId);
+      const localCountAfter = safeMessageCount(data, args.accountId, args.chatId);
+      const result = conversationLoadResult(localCountBefore, localCountAfter);
+      deps.logger?.info('conversation', 'diag conversation.open outcome', {
+        accountId: args.accountId,
+        chatId: args.chatId,
+        lastMessageId,
+        localCountBefore,
+        localCountAfter,
+        result,
+        elapsedMs: Date.now() - startedAt,
+      });
+      return { result, localCountBefore, localCountAfter };
+    } catch (error) {
+      const localCountAfter = safeMessageCount(data, args.accountId, args.chatId);
+      deps.logger?.warn('conversation', 'diag conversation.open failed', {
+        accountId: args.accountId,
+        chatId: args.chatId,
+        lastMessageId,
+        localCountBefore,
+        localCountAfter,
+        result: 'failed',
+        elapsedMs: Date.now() - startedAt,
+        ...safeErrorOutcome(error),
+      });
+      throw error;
+    }
   });
 
   ipcMain.handle('cmd:conversation.close', (_event, rawArgs: unknown) => {
@@ -485,7 +639,62 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   // only pulls this chat's message tail now instead of waiting for the poll.
   ipcMain.handle('cmd:conversation.refresh', async (_event, rawArgs: unknown) => {
     const args = convSchema.parse(rawArgs);
-    await deps.sync?.readChatTailForUserOpen(args.accountId, args.chatId, 'chat-refresh');
+    const startedAt = Date.now();
+    const localCountBefore = safeMessageCount(data, args.accountId, args.chatId);
+    const lastMessageId = safeLastMessageId(data, args.accountId, args.chatId);
+    deps.logger?.info('conversation', 'diag conversation.refresh requested', {
+      accountId: args.accountId,
+      chatId: args.chatId,
+      lastMessageId,
+      localCountBefore,
+    });
+    if (!deps.sync) {
+      deps.logger?.warn('conversation', 'diag conversation.refresh skipped', {
+        accountId: args.accountId,
+        chatId: args.chatId,
+        lastMessageId,
+        localCountBefore,
+        localCountAfter: localCountBefore,
+        result: 'skipped_no_sync',
+        elapsedMs: Date.now() - startedAt,
+      });
+      return;
+    }
+    try {
+      await deps.sync.readChatTailForUserOpen(args.accountId, args.chatId, 'chat-refresh');
+      const localCountAfter = safeMessageCount(data, args.accountId, args.chatId);
+      deps.logger?.info('conversation', 'diag conversation.refresh outcome', {
+        accountId: args.accountId,
+        chatId: args.chatId,
+        lastMessageId,
+        localCountBefore,
+        localCountAfter,
+        result: conversationLoadResult(localCountBefore, localCountAfter),
+        elapsedMs: Date.now() - startedAt,
+      });
+    } catch (error) {
+      const localCountAfter = safeMessageCount(data, args.accountId, args.chatId);
+      deps.logger?.warn('conversation', 'diag conversation.refresh failed', {
+        accountId: args.accountId,
+        chatId: args.chatId,
+        lastMessageId,
+        localCountBefore,
+        localCountAfter,
+        result: 'failed',
+        elapsedMs: Date.now() - startedAt,
+        ...safeErrorOutcome(error),
+      });
+      throw error;
+    }
+  });
+
+  ipcMain.handle('cmd:conversation.loadOlder', async (_event, rawArgs: unknown) => {
+    const args = convSchema.parse(rawArgs);
+    return deps.sync?.loadOlderMessagesForUserOpen(args.accountId, args.chatId) ?? {
+      returned: 0,
+      fresh: 0,
+      hasOlder: false,
+    };
   });
 
   ipcMain.handle('cmd:sync.forceRefresh', async (_event, rawArgs: unknown) => {
@@ -520,6 +729,13 @@ export function registerIpcHandlers(deps: IpcDeps): void {
         'ofapiReadTransport' in rawPatch);
     if (touchedHub) {
       deps.onHubConfigChanged?.();
+    }
+    const touchedGuard =
+      typeof rawPatch === 'object' &&
+      rawPatch !== null &&
+      ('messageGuardPolicy' in rawPatch || 'guardConfigTransport' in rawPatch);
+    if (touchedGuard) {
+      data.bus.publish({ scope: 'guard' });
     }
     return result;
   });

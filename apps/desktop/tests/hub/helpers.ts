@@ -16,6 +16,7 @@ import type {
   HubUsageEvent,
 } from '@chatgoose/shared/hub/index';
 import { DEFAULT_AGENCY_HUB_BASE_URL } from '@chatgoose/shared/constants';
+import { BUILTIN_MESSAGE_GUARD_POLICY } from '@chatgoose/shared/message-guard/index';
 import { createChangeBus, createDataLayer } from '@main/db/index';
 import type { DataLayer } from '@main/db/index';
 import type { SettingsStore } from '@main/settings/store';
@@ -73,6 +74,8 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     },
     spendStyle: 'figure',
     spendersListMappings: {},
+    messageGuardPolicy: BUILTIN_MESSAGE_GUARD_POLICY,
+    guardConfigTransport: 'local',
     uiLocale: 'system',
     uiScale: 1,
     uiTheme: 'light',

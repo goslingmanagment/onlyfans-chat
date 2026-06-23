@@ -34,7 +34,12 @@ import {
   normalizeReplyParts,
   normalizeSingleReplyPart,
 } from '@chatgoose/shared/output/reply-output';
-import { DEFAULT_AGENCY_HUB_BASE_URL } from '@chatgoose/shared';
+import {
+  BUILTIN_MESSAGE_GUARD_POLICY,
+  DEFAULT_AGENCY_HUB_BASE_URL,
+  compileGuard,
+  scanText,
+} from '@chatgoose/shared';
 import { applyChatFilter, sortChatsByRecency } from '../lib/filters';
 import { fuzzyFilter } from '../lib/fuzzy';
 
@@ -362,6 +367,7 @@ function buildStore(): MockStore {
         fanName: name,
         avatarUrl: null,
         lastMessageAt: last?.createdAt ?? null,
+        lastMessageId: last?.id ?? (noHistory ? String(fanSeq * 10_000) : null),
         lastMessagePreview: last === undefined
           ? ''
           : last.isTip
@@ -433,6 +439,8 @@ function buildStore(): MockStore {
       hiddenMaxPages: 1,
     },
     spendStyle: 'figure',
+    messageGuardPolicy: BUILTIN_MESSAGE_GUARD_POLICY,
+    guardConfigTransport: 'local',
     uiLocale: 'system',
     uiScale: 1,
     uiTheme: 'light',
@@ -667,6 +675,7 @@ export function createMockBridge(): ChatGooseBridge {
     msgs.push(incoming);
     store.messages.set(key, msgs);
     chat.lastMessageAt = incoming.createdAt;
+    chat.lastMessageId = incoming.id;
     chat.lastMessagePreview = incoming.text;
     chat.lastMessageIsSentByMe = false;
     chat.unreadCount += 1;
@@ -871,6 +880,7 @@ export function createMockBridge(): ChatGooseBridge {
     const chat = chats.find((c) => c.chatId === chatId);
     if (chat !== undefined) {
       chat.lastMessageAt = message.createdAt;
+      chat.lastMessageId = message.id;
       chat.lastMessagePreview = text;
       chat.lastMessageIsSentByMe = true;
       chat.fanWaiting = false;
@@ -1024,6 +1034,16 @@ export function createMockBridge(): ChatGooseBridge {
     currentVersion: '0.0.1',
   };
 
+  function mockGuardScan(text: string) {
+    return scanText(compileGuard(store.settings.messageGuardPolicy), text);
+  }
+
+  function assertMockGuardAllowed(text: string): void {
+    if (mockGuardScan(text).decision === 'block') {
+      throw new Error('CG-GUARD-01');
+    }
+  }
+
   const handlers: InvokeHandlers = {
     'query:accounts.list': () => store.accounts.map((a) => ({ ...a })),
     'query:chats.list': ({ accountId, filter, limit, offset }) => {
@@ -1157,6 +1177,21 @@ export function createMockBridge(): ChatGooseBridge {
       sentMissingFromMessages: [],
       cleanSends: 142,
     }),
+    'query:guard.config': () => store.settings.messageGuardPolicy,
+    'cmd:guard.config.update': (policy) => {
+      store.settings = { ...store.settings, messageGuardPolicy: policy };
+      emit('db:changed', { scope: 'guard' });
+      emit('db:changed', { scope: 'settings' });
+      return policy;
+    },
+    'query:guard.scan': ({ text }) => mockGuardScan(text),
+    'query:guard.blocks': () => ({
+      total: 0,
+      byDecision: {},
+      byCategory: {},
+      byRule: {},
+      recent: [],
+    }),
     'query:ai.featureCosts': () => ({
       sinceDay: '2026-06-05',
       byFeature: {
@@ -1219,7 +1254,14 @@ export function createMockBridge(): ChatGooseBridge {
       };
     },
     'query:ai.pingGate': () => ({ segment: 'active', blocked: true }),
-    'cmd:conversation.open': () => undefined,
+    'cmd:conversation.open': ({ accountId, chatId }) => {
+      const localCount = store.messages.get(`${accountId}/${chatId}`)?.length ?? 0;
+      return {
+        result: localCount === 0 ? 'empty' : 'unchanged',
+        localCountBefore: localCount,
+        localCountAfter: localCount,
+      };
+    },
     'cmd:conversation.close': () => undefined,
     'cmd:conversation.refresh': ({ accountId, chatId }) => {
       // Dev stand-in for the real tail GET: append one fresh fan line to this
@@ -1250,12 +1292,39 @@ export function createMockBridge(): ChatGooseBridge {
       msgs.push(incoming);
       store.messages.set(key, msgs);
       chat.lastMessageAt = incoming.createdAt;
+      chat.lastMessageId = incoming.id;
       chat.lastMessagePreview = incoming.text;
       chat.lastMessageIsSentByMe = false;
       store.chats.set(accountId, sortChatsByRecency(chats));
       emit('db:changed', { scope: 'messages', accountId, chatId });
       emit('db:changed', { scope: 'chats', accountId });
       emit('sync:event', { type: 'chatListUpdated', accountId });
+    },
+    'cmd:conversation.loadOlder': ({ accountId, chatId }) => {
+      const key = `${accountId}/${chatId}`;
+      const msgs = store.messages.get(key) ?? [];
+      messageSeq += 1;
+      const oldestMs =
+        msgs.length > 0 ? Date.parse(msgs[0]?.createdAt ?? '') || Date.now() : Date.now();
+      const older: MessageVM = {
+        id: String(messageSeq),
+        chatId,
+        createdAt: new Date(oldestMs - 60_000).toISOString(),
+        isSentByMe: false,
+        text: pick(FAN_LINES),
+        media: [],
+        price: 0,
+        ppvState: null,
+        isTip: false,
+        tipAmount: null,
+        tipText: null,
+        isNew: false,
+        replyTo: null,
+        deleted: false,
+      };
+      store.messages.set(key, [older, ...msgs]);
+      emit('db:changed', { scope: 'messages', accountId, chatId });
+      return { returned: 1, fresh: 1, hasOlder: msgs.length < 40 };
     },
     'cmd:sync.forceRefresh': () => {
       pollTick();
@@ -1295,6 +1364,9 @@ export function createMockBridge(): ChatGooseBridge {
             : 'degraded';
       store.sync.hubModeOverride = store.settings.hubModeOverride;
       emit('db:changed', { scope: 'settings' });
+      if ('messageGuardPolicy' in patch || 'guardConfigTransport' in patch) {
+        emit('db:changed', { scope: 'guard' });
+      }
       return { ...store.settings };
     },
     'cmd:personalities.save': (personality) => {
@@ -1339,6 +1411,7 @@ export function createMockBridge(): ChatGooseBridge {
     'query:outbox.list': ({ accountId, chatId }) =>
       (outboxStore.get(`${accountId}/${chatId}`) ?? []).map((r) => ({ ...r })),
     'cmd:send.message': ({ accountId, chatId, parts }) => {
+      for (const part of parts) assertMockGuardAllowed(part);
       const key = `${accountId}/${chatId}`;
       localSeq += 1;
       const sequenceId = parts.length > 1 ? `seq_${localSeq}` : null;
@@ -1504,6 +1577,7 @@ export function createMockBridge(): ChatGooseBridge {
       const row = chats.find((c) => c.chatId === chatId);
       if (row !== undefined && last !== undefined) {
         row.lastMessageAt = last.createdAt;
+        row.lastMessageId = last.id;
         row.lastMessagePreview = last.isTip
           ? `[Tip $${last.tipAmount ?? 0}] ${last.tipText ?? ''}`.trim()
           : last.text;
@@ -1642,6 +1716,7 @@ export function createMockBridge(): ChatGooseBridge {
       return { items: page, hasMore, nextOffset: hasMore ? start + page.length : null };
     },
     'cmd:send.ppv': ({ accountId, chatId, text, price, mediaFiles }) => {
+      assertMockGuardAllowed(text);
       const key = `${accountId}/${chatId}`;
       const row = makeOutboxRow(chatId, text, null, 0, { price, mediaCount: mediaFiles.length });
       outboxStore.set(key, [...(outboxStore.get(key) ?? []), row]);

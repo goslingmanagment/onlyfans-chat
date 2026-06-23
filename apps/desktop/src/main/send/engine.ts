@@ -23,6 +23,7 @@ import type {
 import type { OfApiClient } from '../ofapi/client';
 import type { SleepFn } from '../ofapi/rate-limiter';
 import { mapMessage, type ToMediaUrl } from '../sync/mappers';
+import type { MessageGuardRuntime } from '../message-guard/runtime';
 
 // Multi-part pacing (SPEC §7.7): randomized so sequences don't read as a bot.
 export const INTER_PART_DELAY_MIN_MS = 2000;
@@ -54,6 +55,7 @@ export interface SendEngineOptions {
   client: SendClient;
   hubCommandClient?: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand'>;
   data: DataLayer;
+  messageGuard: Pick<MessageGuardRuntime, 'assertAllowed'>;
   toMediaUrl: ToMediaUrl;
   getSettings: () => Promise<{ markAsReadOnOpen: boolean }>;
   now?: () => number;
@@ -150,7 +152,7 @@ function hubFailureCode(error: unknown, unavailable: boolean): 'CG-HUB-01' | 'CG
 }
 
 export function createSendEngine(options: SendEngineOptions): SendEngine {
-  const { client, data, toMediaUrl, getSettings } = options;
+  const { client, data, messageGuard, toMediaUrl, getSettings } = options;
   const hubCommandClient = options.hubCommandClient;
   const now = options.now ?? Date.now;
   const sleep: SleepFn =
@@ -185,6 +187,25 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         `Cannot send to this chat: ${chat.canNotSendReason ?? 'messaging is restricted by the platform'}`,
       );
     }
+  }
+
+  function guardText(args: {
+    accountId: string;
+    chatId: string;
+    text: string;
+    surface: string;
+    mediaCount?: number;
+    price?: number;
+  }): void {
+    messageGuard.assertAllowed({
+      accountId: args.accountId,
+      chatId: args.chatId,
+      text: args.text,
+      surface: args.surface,
+      transport: HUB_WRITE_TRANSPORT,
+      ...(args.mediaCount !== undefined ? { mediaCount: args.mediaCount } : {}),
+      ...(args.price !== undefined ? { price: args.price } : {}),
+    });
   }
 
   function interPartDelayMs(): number {
@@ -621,6 +642,9 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         throw new Error('sendParts: at least one part is required');
       }
       gateCanSend(accountId, chatId);
+      for (const text of parts) {
+        guardText({ accountId, chatId, text, surface: 'engine:sendParts' });
+      }
       const sequenceId = parts.length > 1 ? randomUUID() : null;
       const createdAt = nowIso();
       const rows = parts.map((text, partIndex) => ({
@@ -659,6 +683,14 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         }
       }
       gateCanSend(accountId, chatId);
+      guardText({
+        accountId,
+        chatId,
+        text,
+        surface: 'engine:sendPpv',
+        mediaCount: mediaFiles.length,
+        price,
+      });
       const localId = randomUUID();
       data.outbox.insertMany([
         {
@@ -694,6 +726,14 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         throw new Error(`retry: only failed rows can be retried (row is '${row.state}')`);
       }
       gateCanSend(accountId, row.chatId);
+      guardText({
+        accountId,
+        chatId: row.chatId,
+        text,
+        surface: 'engine:retry',
+        mediaCount: row.mediaFiles.length,
+        price: row.price,
+      });
       data.outbox.transition({ localId, from: ['failed'], to: 'cancelled' }); // superseded
       const newLocalId = randomUUID();
       data.outbox.insertMany([

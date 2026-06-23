@@ -15,6 +15,10 @@ import {
   QUICK_MAX_MESSAGE_COUNT,
   QUICK_MIN_MESSAGE_COUNT,
 } from '@chatgoose/shared';
+import {
+  BUILTIN_MESSAGE_GUARD_POLICY,
+  messageGuardPolicySchema,
+} from '@chatgoose/shared/message-guard/index';
 import { HUB_MODE_OVERRIDE_SETTINGS } from '@chatgoose/shared/hub/mode';
 import { OFAPI_READ_TRANSPORTS } from '../ofapi/transport';
 import type {
@@ -87,6 +91,8 @@ export const PERSISTED_SETTINGS_KEYS = [
   'accountPageLabels',
   'spendStyle',
   'spendersListMappings',
+  'messageGuardPolicy',
+  'guardConfigTransport',
   'uiLocale',
   'uiScale',
   'uiTheme',
@@ -147,6 +153,9 @@ const persistedFieldSchemas = {
   spendStyle: z.enum(['figure', 'chip']),
   // Spenders board: per-account ordered OM list ids → shelves (PLAN item 12).
   spendersListMappings: z.record(z.string(), z.array(z.string().min(1).max(64)).max(50)),
+  // Message Guard: local-first policy cache. P3 editor/core transport can update this.
+  messageGuardPolicy: messageGuardPolicySchema,
+  guardConfigTransport: z.enum(['local', 'hub']),
   // Interface language; 'system' resolves from the OS locale at runtime.
   uiLocale: z.enum(UI_LOCALE_SETTINGS),
   // Window zoom factor — fixed steps only, applied via webContents.setZoomFactor.
@@ -206,6 +215,8 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   accountPageLabels: {},
   spendStyle: 'figure',
   spendersListMappings: {},
+  messageGuardPolicy: BUILTIN_MESSAGE_GUARD_POLICY,
+  guardConfigTransport: 'local',
   uiLocale: 'system',
   uiScale: 1,
   // Light stays the default (owner decision 2026-06-13: dark is opt-in).
@@ -241,6 +252,8 @@ export const settingsPatchSchema = z.strictObject({
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
   spendStyle: persistedFieldSchemas.spendStyle.optional(),
   spendersListMappings: persistedFieldSchemas.spendersListMappings.optional(),
+  messageGuardPolicy: persistedFieldSchemas.messageGuardPolicy.optional(),
+  guardConfigTransport: persistedFieldSchemas.guardConfigTransport.optional(),
   uiLocale: persistedFieldSchemas.uiLocale.optional(),
   uiScale: persistedFieldSchemas.uiScale.optional(),
   uiTheme: persistedFieldSchemas.uiTheme.optional(),
@@ -357,6 +370,8 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       accountPageLabels: readField('accountPageLabels'),
       spendStyle: readField('spendStyle'),
       spendersListMappings: readField('spendersListMappings'),
+      messageGuardPolicy: readField('messageGuardPolicy'),
+      guardConfigTransport: readField('guardConfigTransport'),
       uiLocale: readField('uiLocale'),
       uiScale: readField('uiScale'),
       uiTheme: readField('uiTheme'),

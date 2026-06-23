@@ -34,6 +34,7 @@ export interface DiagnosticsInputs {
   coreCredits: unknown;
   db: { schemaVersion: number | null; counts: Record<string, number> };
   outboxAudit: unknown;
+  messageGuardAudit?: unknown;
   /** error-level CG-* code → count over the in-memory log ring. */
   errorCounts: Record<string, number>;
   /** Structured recent records from the in-memory ring (current session). */

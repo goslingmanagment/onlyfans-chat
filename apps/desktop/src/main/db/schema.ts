@@ -364,6 +364,38 @@ INSERT INTO settings (key, value) VALUES ('ofapiWriteTransport', '"hub"')
 ON CONFLICT (key) DO UPDATE SET value = excluded.value;
 `;
 
+// v15 — Message Guard local audit (desktop UX + defense-in-depth). Full text is
+// stored only in the encrypted local DB for owner review; diagnostics/read APIs
+// expose counts, hashes, categories and rule ids, never message_text.
+export const SCHEMA_V15 = `
+CREATE TABLE message_guard_events (
+  id TEXT PRIMARY KEY,
+  occurred_at TEXT NOT NULL,
+  actor_user_id TEXT,
+  actor_label TEXT,
+  account_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  surface TEXT NOT NULL,
+  transport TEXT,
+  decision TEXT NOT NULL CHECK (decision IN ('blocked', 'warned', 'sent_after_warning')),
+  policy_version TEXT NOT NULL,
+  category TEXT NOT NULL,
+  rule_id TEXT NOT NULL,
+  rule_label TEXT NOT NULL,
+  matched_original TEXT NOT NULL,
+  matched_normalized TEXT NOT NULL,
+  span_start INTEGER NOT NULL,
+  span_end INTEGER NOT NULL,
+  message_text TEXT NOT NULL,
+  message_hash TEXT NOT NULL,
+  media_count INTEGER NOT NULL DEFAULT 0,
+  price REAL NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_message_guard_events_occurred ON message_guard_events (occurred_at);
+CREATE INDEX idx_message_guard_events_account_chat ON message_guard_events (account_id, chat_id, occurred_at);
+CREATE INDEX idx_message_guard_events_hash ON message_guard_events (message_hash);
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',
@@ -379,4 +411,5 @@ export const ALL_TABLES = [
   'fan_transactions',
   'ai_spend_log',
   'thread_fetch_log',
+  'message_guard_events',
 ] as const;

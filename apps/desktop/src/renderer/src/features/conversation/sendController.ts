@@ -7,6 +7,7 @@
 import { getBridge } from '../../bridge/bridge';
 import { setDraftText, useAiStore } from '../ai/aiStore';
 import { useVaultStore } from '../vault/vaultStore';
+import { scanDraftPartsForSend } from './guardLogic';
 import { splitDraftParts } from './sendLogic';
 
 const inFlight = new Set<string>();
@@ -25,6 +26,7 @@ export function sendCurrentDraft(args: {
   const draft = useAiStore.getState().draftText;
   const parts = splitDraftParts(draft);
   if (parts.length === 0) return;
+  if (scanDraftPartsForSend(draft) !== 'allow') return;
   inFlight.add(key);
   void getBridge()
     .invoke('cmd:send.message', { accountId: args.accountId, chatId: args.chatId, parts })

@@ -20,6 +20,7 @@ import type {
   GalleryItemVM,
   KeyTestProvider,
   LocalDataStatsVM,
+  MessageGuardBlocksReportVM,
   MessageVM,
   OutboxItemVM,
   SettingsPatch,
@@ -33,6 +34,7 @@ import type {
   VaultAlbumVM,
   VaultItemVM,
 } from '../../../preload/contract';
+import type { MessageGuardPolicy } from '@chatgoose/shared/message-guard/index';
 import type { Personality } from '@chatgoose/shared/types';
 import { getBridge } from './bridge';
 
@@ -48,6 +50,8 @@ export const qk = {
   personalities: ['personalities'] as const,
   syncStatus: ['sync-status'] as const,
   activity: ['activity'] as const,
+  guardConfig: ['guard-config'] as const,
+  guardBlocks: (accountId?: string) => ['guard-blocks', accountId ?? 'all'] as const,
   aiFeatureCosts: ['ai-feature-costs'] as const,
   localDataStats: ['local-data-stats'] as const,
   updateStatus: ['update-status'] as const,
@@ -125,6 +129,16 @@ export function useMessages(accountId: string | null, chatId: string | null): Me
     // pages are ascending within; oldest loaded message id pages further back
     getNextPageParam: (last) => (last.hasMore ? (last.items[0]?.id ?? null) : null),
     enabled: accountId !== null && chatId !== null,
+  });
+}
+
+export function useLoadOlderMessages(accountId: string, chatId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => getBridge().invoke('cmd:conversation.loadOlder', { accountId, chatId }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.messages(accountId, chatId) });
+    },
   });
 }
 
@@ -210,6 +224,25 @@ export function useActivitySummary(enabled: boolean) {
   return useQuery<ActivityVM>({
     queryKey: qk.activity,
     queryFn: () => getBridge().invoke('query:activity.summary', undefined),
+    enabled,
+  });
+}
+
+export function useGuardConfig() {
+  return useQuery<MessageGuardPolicy>({
+    queryKey: qk.guardConfig,
+    queryFn: () => getBridge().invoke('query:guard.config', undefined),
+  });
+}
+
+export function useGuardBlocks(accountId: string | undefined, enabled: boolean) {
+  return useQuery<MessageGuardBlocksReportVM>({
+    queryKey: qk.guardBlocks(accountId),
+    queryFn: () =>
+      getBridge().invoke('query:guard.blocks', {
+        ...(accountId !== undefined ? { accountId } : {}),
+        limit: 50,
+      }),
     enabled,
   });
 }
