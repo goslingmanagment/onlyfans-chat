@@ -104,4 +104,5 @@ describe('OFAPI transport client', () => {
     expect(read.methods.sendMessage).not.toHaveBeenCalled();
     expect(read.methods.uploadVaultMedia).not.toHaveBeenCalled();
   });
+
 });

@@ -598,8 +598,10 @@ describe('auto-read OFF (default)', () => {
       accountId: ACCT,
       chatId: '7',
       order: 'desc',
-      limit: 100,
+      limit: 30,
       purpose: 'message-tail',
+      priority: 'user',
+      retry: 'none',
     });
     expect(data.messages.count(ACCT, '7')).toBeGreaterThan(0);
     expect(data.threadFetchLog.get(ACCT, '7')).toBe('2026-06-13T12:00:00.000Z');

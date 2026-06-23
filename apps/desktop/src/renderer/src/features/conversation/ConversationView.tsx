@@ -9,7 +9,12 @@
 
 import { useAccounts, useChat } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
-import { Thread, type ThreadDensity, type ThreadScrollMode } from './Thread';
+import {
+  Thread,
+  type ThreadDensity,
+  type ThreadHistoryLoadState,
+  type ThreadScrollMode,
+} from './Thread';
 import { ComposerBar } from './ComposerBar';
 import { AiDockMount } from '../ai/AiDock';
 import { AiPillRow } from '../ai/AiPillRow';
@@ -28,6 +33,9 @@ export function ConversationView({
   threadOverlay = null,
   jumpToLatestKey = null,
   aiDisabledReason = null,
+  historyLoadState = 'idle',
+  lastMessageId = null,
+  onRetryHistory,
 }: {
   accountId: string;
   chatId: string;
@@ -37,6 +45,9 @@ export function ConversationView({
   threadOverlay?: React.ReactNode;
   jumpToLatestKey?: string | null;
   aiDisabledReason?: string | null;
+  historyLoadState?: ThreadHistoryLoadState;
+  lastMessageId?: string | null;
+  onRetryHistory?: (() => void) | undefined;
 }): React.JSX.Element {
   const t = useT();
   const chat = useChat(accountId, chatId).data ?? null;
@@ -65,6 +76,9 @@ export function ConversationView({
             density={density}
             scrollMode={scrollMode}
             jumpToLatestKey={jumpToLatestKey}
+            historyLoadState={historyLoadState}
+            lastMessageId={lastMessageId}
+            onRetryHistory={onRetryHistory}
           />
         </ThreadRegion>
         <div data-density={density} className="flex flex-none flex-col">
@@ -123,6 +137,9 @@ export function ConversationView({
             density={density}
             scrollMode={scrollMode}
             jumpToLatestKey={jumpToLatestKey}
+            historyLoadState={historyLoadState}
+            lastMessageId={chat.lastMessageId}
+            onRetryHistory={onRetryHistory}
           />
         </ThreadRegion>
       )}

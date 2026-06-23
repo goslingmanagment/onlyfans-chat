@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useFlatMessages, useMessages, useOutbox } from '../../bridge/queries';
+import { useFlatMessages, useLoadOlderMessages, useMessages, useOutbox } from '../../bridge/queries';
 import { buildThreadRows, type ThreadRow } from '../../lib/messages';
 import { mergeOutboxRows } from './sendLogic';
 import { SkeletonThread } from '../../design/Skeleton';
@@ -24,6 +24,7 @@ import { useT } from '../../lib/i18n';
 
 export type ThreadDensity = 'comfortable' | 'compact';
 export type ThreadScrollMode = 'stick' | 'paged';
+export type ThreadHistoryLoadState = 'idle' | 'loading' | 'error' | 'ready';
 
 type RowMetrics = {
   base: number;
@@ -78,6 +79,9 @@ export function Thread({
   density = 'comfortable',
   scrollMode = 'stick',
   jumpToLatestKey = null,
+  historyLoadState = 'idle',
+  lastMessageId = null,
+  onRetryHistory,
 }: {
   accountId: string;
   chatId: string;
@@ -85,11 +89,24 @@ export function Thread({
   density?: ThreadDensity;
   scrollMode?: ThreadScrollMode;
   jumpToLatestKey?: string | null;
+  historyLoadState?: ThreadHistoryLoadState;
+  lastMessageId?: string | null;
+  onRetryHistory?: (() => void) | undefined;
 }): React.JSX.Element {
   const t = useT();
   const { query, rows } = useConversationThread(accountId, chatId);
+  const {
+    data: loadOlderData,
+    isPending: isLoadingOlder,
+    mutateAsync: loadOlderAsync,
+    reset: resetLoadOlder,
+  } = useLoadOlderMessages(accountId, chatId);
   const metrics = ROW_METRICS[density];
   const paged = scrollMode === 'paged';
+
+  useEffect(() => {
+    resetLoadOlder();
+  }, [accountId, chatId, resetLoadOlder]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -224,17 +241,75 @@ export function Thread({
     ) {
       anchorKeyRef.current = rows[0]?.key ?? null;
       void query.fetchNextPage();
+    } else if (
+      el.scrollTop < 300 &&
+      !query.hasNextPage &&
+      !query.isFetchingNextPage &&
+      !isLoadingOlder &&
+      anchorKeyRef.current === null &&
+      rows.length > 0
+    ) {
+      anchorKeyRef.current = rows[0]?.key ?? null;
+      void loadOlderAsync().then(
+        (result) => {
+          if (result.fresh === 0) {
+            anchorKeyRef.current = null;
+          }
+        },
+        () => {
+          anchorKeyRef.current = null;
+        },
+      );
     }
-  }, [paged, query, rows]);
+  }, [isLoadingOlder, loadOlderAsync, paged, query, rows]);
 
   function loadEarlier(): void {
-    if (!query.hasNextPage || query.isFetchingNextPage) return;
+    if (query.isFetchingNextPage || isLoadingOlder) return;
     anchorKeyRef.current = rows[0]?.key ?? null;
-    void query.fetchNextPage();
+    if (query.hasNextPage) {
+      void query.fetchNextPage();
+    } else {
+      void loadOlderAsync().then(
+        (result) => {
+          if (result.fresh === 0) {
+            anchorKeyRef.current = null;
+          }
+        },
+        () => {
+          anchorKeyRef.current = null;
+        },
+      );
+    }
   }
 
   if (query.isPending) return <SkeletonThread />;
   if (rows.length === 0) {
+    const hasRemoteHead = lastMessageId !== null;
+    const loading = hasRemoteHead && historyLoadState === 'loading';
+    const failed = hasRemoteHead && historyLoadState === 'error';
+    if (!paged && (loading || failed)) {
+      return (
+        <div className="flex flex-1 items-center justify-center bg-bg0 px-6 text-center">
+          <div className="max-w-[360px]">
+            <div className="font-serif text-[18px] font-semibold text-ink">
+              {failed ? t('conv.historyLoadFailedTitle') : t('conv.historyLoadingTitle')}
+            </div>
+            <div className="mt-2 text-[13px] leading-5 text-ink-low">
+              {failed ? t('conv.historyLoadFailedHint') : t('conv.historyLoadingHint')}
+            </div>
+            {failed && onRetryHistory !== undefined && (
+              <button
+                type="button"
+                onClick={onRetryHistory}
+                className="mt-4 cursor-pointer rounded-[6px] border border-line bg-bg1 px-3 py-1.5 text-[12px] font-semibold text-ink hover:bg-bg2"
+              >
+                {t('conv.historyRetry')}
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
     return paged ? (
       <div
         data-density={density}
@@ -256,18 +331,19 @@ export function Thread({
       data-density={density}
       className={cx('min-h-0 flex-1 overflow-y-auto bg-bg0', paged && 'pt-3 pb-1.5')}
     >
-      {paged && query.hasNextPage === true && (
+      {paged && (query.hasNextPage === true || isLoadingOlder || loadOlderData?.hasOlder === true) && (
         <div className="pb-1.5 text-center">
           <button
             type="button"
             onClick={loadEarlier}
+            disabled={query.isFetchingNextPage || isLoadingOlder}
             className="cursor-pointer text-[10.5px] text-ink-low underline decoration-dotted underline-offset-3 hover:text-ink-mid"
           >
-            {query.isFetchingNextPage ? t('sp.loading') : t('sp.earlier')}
+            {query.isFetchingNextPage || isLoadingOlder ? t('sp.loading') : t('sp.earlier')}
           </button>
         </div>
       )}
-      {!paged && query.isFetchingNextPage && (
+      {!paged && (query.isFetchingNextPage || isLoadingOlder) && (
         <div className="num py-2 text-center text-micro tracking-[0.1em] text-ink-low">
           {t('conv.loadingOlder')}
         </div>

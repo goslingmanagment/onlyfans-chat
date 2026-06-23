@@ -1,6 +1,6 @@
 # CLAUDE.md — ChatGoose Desktop
 
-Desktop chat client for OnlyFans agency chatters with built-in AI assistance (reply generation, coaching, fan summaries, reactivation pings). Successor to the ChatGoose Firefox extension for Fansly. We cannot inject into OnlyFans (accounts are accessed via OnlyMonster), so this app renders its own chat interface on top of the third-party OnlyFans API (onlyfansapi.com, "OFAPI").
+Desktop chat client for OnlyFans agency chatters with built-in AI assistance (reply generation, coaching, fan summaries, reactivation pings). Successor to the ChatGoose Firefox extension for Fansly. We cannot inject into OnlyFans, so this app renders its own chat interface on top of the third-party OnlyFans API (onlyfansapi.com, "OFAPI") — OnlyFans accounts are connected through OFAPI, and the desktop reaches OFAPI through the Agency Hub "core" (reads proxied via the hub read-gateway, writes via the command outbox).
 
 **Current state (2026-06-11): implementation underway — the Electron app lives in `apps/desktop`. Phases 0–5 are built; the P3–P5 gates await owner/pilot evidence; P6 (AI gateway, core-side) is deferred (owner decision 2026-06-11).** Start any implementation work from the plan's current phase — the per-phase status notes in `docs/PLAN.md` are the source of truth, not this line.
 

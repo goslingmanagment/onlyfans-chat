@@ -38,6 +38,12 @@ export interface SyncProvider {
     chatId: string,
     purpose?: OfApiPurpose,
   ): Promise<void>;
+  /** Deliberate user scrollback read: fetch older history before the oldest
+   *  local row using first_id+desc. Returns counts only; no message bodies. */
+  loadOlderMessagesForUserOpen(
+    accountId: string,
+    chatId: string,
+  ): Promise<{ returned: number; fresh: number; hasOlder: boolean }>;
   /** Lazily resolve the chat-list metadata row (canSendMessage, lastMessage)
    *  for deep Spenders rows that are outside the initial inbox hydration. */
   ensureChat(accountId: string, chatId: string, hint?: { username?: string | null }): Promise<boolean>;

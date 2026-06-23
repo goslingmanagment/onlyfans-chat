@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { createOfApiClient } from '@main/ofapi/client';
-import type { OfApiClientOptions } from '@main/ofapi/client';
+import type { OfApiClientOptions, OfApiRequestEvent } from '@main/ofapi/client';
 import { OfApiError } from '@main/ofapi/errors';
 import type { CreditMeterSnapshot } from '@main/ofapi/credit-meter';
 import { instantSleep, jsonResponse, loadFixture, stubFetch } from './helpers';
@@ -114,6 +114,44 @@ describe('listMessages (recorded fixture)', () => {
       client.listMessages({ purpose: 'message-tail', accountId: ACCOUNT_ID, chatId: '1', lastId: '2', order: 'desc' }),
     ).rejects.toMatchObject({ code: 'CG-APP-01' });
     expect(requests).toHaveLength(1);
+  });
+
+  it('emits request lifecycle diagnostics for message history reads', async () => {
+    const fixture = loadFixture('list-messages.json');
+    const events: OfApiRequestEvent[] = [];
+    const { client } = makeClient([() => jsonResponse(fixture)], {
+      onRequestEvent: (event) => events.push(event),
+    });
+
+    await client.listMessages({
+      purpose: 'message-tail',
+      accountId: ACCOUNT_ID,
+      chatId: '1000039',
+      limit: 30,
+      order: 'desc',
+      priority: 'user',
+    });
+
+    expect(events.map((event) => event.phase)).toEqual(['queued', 'started', 'response']);
+    expect(events[0]).toMatchObject({
+      accountKey: ACCOUNT_ID,
+      method: 'GET',
+      path: `/${ACCOUNT_ID}/chats/1000039/messages`,
+      purpose: 'message-tail',
+      priority: 'user',
+      retry: 'idempotent',
+      attempt: 1,
+      query: { limit: 30, order: 'desc', skip_users: 'all' },
+    });
+    expect(events[1]).toMatchObject({ phase: 'started', attempt: 1 });
+    expect(events[1]?.phase === 'started' ? events[1].queueWaitMs : -1).toBeGreaterThanOrEqual(0);
+    expect(events[2]).toMatchObject({
+      phase: 'response',
+      attempt: 1,
+      status: 200,
+      willRetry: false,
+    });
+    expect(events[2]?.phase === 'response' ? events[2].elapsedMs : -1).toBeGreaterThanOrEqual(0);
   });
 });
 

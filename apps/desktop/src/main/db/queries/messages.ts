@@ -58,6 +58,7 @@ export interface LastBySender {
 export interface MessagesQueries {
   upsertMany(messages: readonly MessageUpsert[]): void;
   get(accountId: string, chatId: string, messageId: string): MessageRow | null;
+  oldest(accountId: string, chatId: string): MessageRow | null;
   page(args: { accountId: string; chatId: string; beforeId?: string; limit?: number }): MessagePage;
   /** Batched per-chat MAX(created_at) split by is_sent_by_me; deleted excluded.
    *  Chats with no local history are absent from the map. */
@@ -129,6 +130,17 @@ export function createMessagesQueries(db: ChatGooseDb, bus: DbChangeBus): Messag
     },
 
     get: getOne,
+
+    oldest(accountId, chatId) {
+      const row: unknown = db
+        .prepare(
+          `SELECT ${COLUMNS} FROM messages
+           WHERE account_id = @account_id AND chat_id = @chat_id
+           ORDER BY created_at ASC, message_id ASC LIMIT 1`,
+        )
+        .get({ account_id: accountId, chat_id: chatId });
+      return row === undefined ? null : decodeMessageRow(row);
+    },
 
     page({ accountId, chatId, beforeId, limit = 100 }) {
       const base = { account_id: accountId, chat_id: chatId };

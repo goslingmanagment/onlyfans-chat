@@ -13,6 +13,7 @@ import { createDataLayer, createChangeBus } from '@main/db/index';
 import { createOfApiClient } from '@main/ofapi/client';
 import { createSendEngine } from '@main/send/engine';
 import { auditOutbox } from '@main/send/audit';
+import { allowMessageGuard } from '../send/helpers';
 
 const ENABLED =
   process.env['P3_LIVE_SEND'] === '1' &&
@@ -35,6 +36,7 @@ describe.skipIf(!ENABLED)('LIVE send-pipeline gate check (test fan only)', () =>
     const engine = createSendEngine({
       client,
       data,
+      messageGuard: allowMessageGuard,
       toMediaUrl: () => null,
       getSettings: async () => ({ markAsReadOnOpen: false }),
     });

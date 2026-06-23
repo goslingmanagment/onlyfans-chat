@@ -37,6 +37,7 @@ import {
   createOfApiClient,
   type OfApiClient,
   type OfApiClientOptions,
+  type OfApiRequestEvent,
 } from './ofapi/client';
 import { createCreditMeter } from './ofapi/credit-meter';
 import {
@@ -69,6 +70,8 @@ import {
 import type { UnreadReconcileSettingsVM, UpdateStatusVM } from '../preload/contract';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
+
+const HUB_OFAPI_READ_TIMEOUT_MS = 75_000;
 
 let mainWindow: BrowserWindow | null = null;
 /** Diagnostics logger — created first thing in boot() so even early failures land. */
@@ -299,16 +302,60 @@ async function initOfapi(
         url: context.url,
         ...errorToFields(error),
       });
+  const onRequestEvent =
+    (transport: 'direct' | 'hub'): NonNullable<OfApiClientOptions['onRequestEvent']> =>
+    (event: OfApiRequestEvent): void => {
+      const match = /^\/([^/]+)\/chats\/([^/]+)\/messages$/.exec(event.path);
+      if (!match) return;
+      const accountId = decodeURIComponent(match[1] ?? event.accountKey);
+      const chatId = decodeURIComponent(match[2] ?? '');
+      const fields: Record<string, unknown> = {
+        transport,
+        accountId,
+        chatId,
+        purpose: event.purpose,
+        method: event.method,
+        order: event.query['order'] ?? null,
+        limit: event.query['limit'] ?? null,
+        firstId: event.query['first_id'] ?? null,
+        lastId: event.query['last_id'] ?? null,
+        skipUsers: event.query['skip_users'] ?? null,
+        priority: event.priority,
+        retry: event.retry,
+        attempt: event.attempt,
+      };
+      if (event.phase === 'started') {
+        fields['queueWaitMs'] = event.queueWaitMs;
+      }
+      if (event.phase === 'response') {
+        fields['status'] = event.status;
+        fields['elapsedMs'] = event.elapsedMs;
+        fields['willRetry'] = event.willRetry;
+        fields['retryKind'] = event.retryKind ?? null;
+        fields['retryDelayMs'] = event.retryDelayMs ?? null;
+      }
+      logger?.info(
+        'diag',
+        event.phase === 'queued'
+          ? 'diag ofapi.requestQueued'
+          : event.phase === 'started'
+            ? 'diag ofapi.requestStarted'
+            : 'diag ofapi.requestResponse',
+        fields,
+      );
+    };
 
   const directClient =
     apiKey === null || apiKey.length === 0
       ? null
       : createOfApiClient({
           apiKey,
+          requestTimeoutMs: HUB_OFAPI_READ_TIMEOUT_MS,
           creditMeter,
           // Background sync/refresh loops swallow OFAPI failures; observe them
           // here so outages and rate limits remain visible in diagnostics.
           onError: onError('direct'),
+          onRequestEvent: onRequestEvent('direct'),
         });
 
   let readClient: OfApiClient | null = directClient;
@@ -329,8 +376,10 @@ async function initOfapi(
       apiKey: hubApiKey,
       baseUrl: buildHubOfApiReadBaseUrl(initialSettings.hubBaseUrl),
       authErrorCode: 'CG-HUB-01',
+      requestTimeoutMs: HUB_OFAPI_READ_TIMEOUT_MS,
       creditMeter,
       onError: onError('hub'),
+      onRequestEvent: onRequestEvent('hub'),
     });
   }
   if (readClient === null) {

@@ -16,7 +16,7 @@ import type { operations } from './ofapi.gen';
 import { createCreditMeter } from './credit-meter';
 import type { CreditMeter, CreditMeterListener } from './credit-meter';
 import { createRateLimiter, createRequestExecutor } from './rate-limiter';
-import type { RateLimiter, RateLimiterOptions, RetryPolicy, SleepFn } from './rate-limiter';
+import type { QueuePriority, RateLimiter, RateLimiterOptions, RetryPolicy, SleepFn } from './rate-limiter';
 import { OfApiError, mapOfApiHttpError, mapOfApiNetworkError, ofApiShapeError, parseRetryAfterMs } from './errors';
 import type { FixtureCapture } from './fixture-capture';
 import {
@@ -111,6 +111,42 @@ export interface OfApiClientOptions {
    * (sync/refresh loops) still leave a record. Never alters control flow.
    */
   onError?: (error: OfApiError, context: { url: string; purpose: OfApiPurpose }) => void;
+  onRequestEvent?: (event: OfApiRequestEvent) => void;
+}
+
+export type OfApiRequestEvent =
+  | OfApiRequestQueuedEvent
+  | OfApiRequestStartedEvent
+  | OfApiRequestResponseEvent;
+
+interface OfApiRequestEventBase {
+  phase: 'queued' | 'started' | 'response';
+  accountKey: string;
+  method: 'GET' | 'POST' | 'DELETE';
+  path: string;
+  query: Record<string, QueryValue>;
+  purpose: OfApiPurpose;
+  priority: QueuePriority;
+  retry: RetryPolicy;
+  attempt: number;
+}
+
+export interface OfApiRequestQueuedEvent extends OfApiRequestEventBase {
+  phase: 'queued';
+}
+
+export interface OfApiRequestStartedEvent extends OfApiRequestEventBase {
+  phase: 'started';
+  queueWaitMs: number;
+}
+
+export interface OfApiRequestResponseEvent extends OfApiRequestEventBase {
+  phase: 'response';
+  status: number;
+  elapsedMs: number;
+  willRetry: boolean;
+  retryKind?: 'rate-limit' | 'server-error';
+  retryDelayMs?: number;
 }
 
 /**
@@ -120,6 +156,7 @@ export interface OfApiClientOptions {
  */
 export interface PurposeTagged {
   purpose: OfApiPurpose;
+  priority?: QueuePriority;
 }
 
 export interface ListChatsParams extends PurposeTagged {
@@ -136,6 +173,7 @@ export interface ListMessagesParams extends PurposeTagged {
   accountId: string;
   chatId: string;
   limit?: number;
+  retry?: RetryPolicy;
   /** Scrollback into history (order=desc, boundary-inclusive). */
   firstId?: string;
   /** Ascending tail from a cached boundary (order=asc, boundary-inclusive — dedupe!). */
@@ -362,10 +400,38 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     retry: RetryPolicy;
     /** Call-site purpose — drives the per-purpose credit/request tallies. */
     purpose: OfApiPurpose;
+    priority?: QueuePriority;
   }
 
   async function requestJson(spec: RequestSpec): Promise<unknown> {
     const url = buildUrl(spec.path, spec.query ?? {});
+    const query = spec.query ?? {};
+    const priority = spec.priority ?? 'normal';
+    const emitRequestEvent = (
+      event:
+        | { phase: 'queued'; attempt: number }
+        | { phase: 'started'; attempt: number; queueWaitMs: number }
+        | {
+            phase: 'response';
+            attempt: number;
+            status: number;
+            elapsedMs: number;
+            willRetry: boolean;
+            retryKind?: 'rate-limit' | 'server-error';
+            retryDelayMs?: number;
+          },
+    ): void => {
+      options.onRequestEvent?.({
+        accountKey: spec.accountKey,
+        method: spec.method,
+        path: spec.path,
+        query,
+        purpose: spec.purpose,
+        priority,
+        retry: spec.retry,
+        ...event,
+      } as OfApiRequestEvent);
+    };
     const requestHeaders: Record<string, string> = {
       authorization: `Bearer ${options.apiKey}`,
       accept: 'application/json',
@@ -386,7 +452,34 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
                 : {}),
             signal: AbortSignal.timeout(spec.timeoutMs ?? requestTimeoutMs),
           }),
-        { retry: spec.retry },
+        {
+          retry: spec.retry,
+          ...(spec.priority !== undefined ? { priority: spec.priority } : {}),
+          onAttemptQueued: ({ attempt }) => {
+            emitRequestEvent({ phase: 'queued', attempt });
+          },
+          onAttemptStarted: ({ attempt, queueWaitMs }) => {
+            emitRequestEvent({ phase: 'started', attempt, queueWaitMs });
+          },
+          onAttemptResponse: ({
+            attempt,
+            status,
+            elapsedMs,
+            willRetry,
+            retryKind,
+            retryDelayMs,
+          }) => {
+            emitRequestEvent({
+              phase: 'response',
+              attempt,
+              status,
+              elapsedMs,
+              willRetry,
+              ...(retryKind !== undefined ? { retryKind } : {}),
+              ...(retryDelayMs !== undefined ? { retryDelayMs } : {}),
+            });
+          },
+        },
       );
     } catch (error) {
       const mapped = mapOfApiNetworkError(error, url);
@@ -450,8 +543,18 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     purpose: OfApiPurpose,
     path: string,
     query: Record<string, QueryValue> = {},
+    priority?: QueuePriority,
+    retry: RetryPolicy = 'idempotent',
   ): Promise<unknown> {
-    return requestJson({ accountKey, method: 'GET', path, query, retry: 'idempotent', purpose });
+    return requestJson({
+      accountKey,
+      method: 'GET',
+      path,
+      query,
+      retry,
+      purpose,
+      ...(priority !== undefined ? { priority } : {}),
+    });
   }
 
   function parseWith<T>(schema: z.ZodType<T>, value: unknown, url: string): T {
@@ -554,7 +657,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         first_id: params.firstId,
         last_id: params.lastId,
         skip_users: params.skipUsers ?? 'all',
-      });
+      }, params.priority, params.retry);
       const { data, nextPageUrl } = unwrapEnvelope(payload, path);
       return { messages: parseWith(z.array(ofapiMessageSchema), data, path), nextPageUrl };
     },

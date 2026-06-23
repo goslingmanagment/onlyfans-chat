@@ -16,6 +16,7 @@ function chat(overrides: Partial<ChatListItemVM> & { chatId: string }): ChatList
     fanName: `Fan ${overrides.chatId}`,
     avatarUrl: null,
     lastMessageAt: '2026-06-10T12:00:00.000Z',
+    lastMessageId: null,
     lastMessagePreview: 'hey',
     lastMessageIsSentByMe: false,
     unreadCount: 0,

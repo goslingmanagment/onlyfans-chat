@@ -792,6 +792,8 @@ function makeFakePolling(): FakePolling {
       return Promise.resolve(polling.ingestResult);
     },
     readChatTailForUserOpen: () => Promise.resolve(),
+    loadOlderMessagesForUserOpen: () =>
+      Promise.resolve({ returned: 0, fresh: 0, hasOlder: false }),
     ensureChat: () => Promise.resolve(true),
     openConversation: () => Promise.resolve(),
     closeConversation: () => undefined,

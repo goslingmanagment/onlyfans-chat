@@ -809,6 +809,8 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     refreshChat: (accountId, chatId, purpose) => polling.refreshChat(accountId, chatId, purpose),
     readChatTailForUserOpen: (accountId, chatId, purpose) =>
       polling.readChatTailForUserOpen(accountId, chatId, purpose),
+    loadOlderMessagesForUserOpen: (accountId, chatId) =>
+      polling.loadOlderMessagesForUserOpen(accountId, chatId),
     ensureChat: (accountId, chatId, hint) => polling.ensureChat(accountId, chatId, hint),
     openConversation: (accountId, chatId) => polling.openConversation(accountId, chatId),
     closeConversation: (accountId, chatId) => polling.closeConversation(accountId, chatId),

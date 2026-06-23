@@ -29,29 +29,36 @@ export interface RateLimiterOptions {
 }
 
 export interface RateLimiter {
-  run<T>(accountKey: string, task: () => Promise<T>): Promise<T>;
+  run<T>(accountKey: string, task: () => Promise<T>, priority?: QueuePriority): Promise<T>;
 }
 
+export type QueuePriority = 'normal' | 'user';
+
 interface Semaphore {
-  acquire(): Promise<void>;
+  acquire(priority?: QueuePriority): Promise<void>;
   release(): void;
 }
 
 function createSemaphore(limit: number): Semaphore {
   let active = 0;
-  const waiters: Array<() => void> = [];
+  const userWaiters: Array<() => void> = [];
+  const normalWaiters: Array<() => void> = [];
   return {
-    acquire(): Promise<void> {
+    acquire(priority = 'normal'): Promise<void> {
       if (active < limit) {
         active += 1;
         return Promise.resolve();
       }
       return new Promise<void>((resolve) => {
-        waiters.push(resolve);
+        if (priority === 'user') {
+          userWaiters.push(resolve);
+        } else {
+          normalWaiters.push(resolve);
+        }
       });
     },
     release(): void {
-      const next = waiters.shift();
+      const next = userWaiters.shift() ?? normalWaiters.shift();
       if (next) {
         // Hand the slot directly to the next waiter; `active` stays constant.
         next();
@@ -94,11 +101,15 @@ export function createRateLimiter(options: RateLimiterOptions = {}): RateLimiter
   }
 
   return {
-    async run<T>(accountKey: string, task: () => Promise<T>): Promise<T> {
-      await globalGate.acquire();
+    async run<T>(
+      accountKey: string,
+      task: () => Promise<T>,
+      priority: QueuePriority = 'normal',
+    ): Promise<T> {
+      await globalGate.acquire(priority);
       try {
         const gate = accountGate(accountKey);
-        await gate.acquire();
+        await gate.acquire(priority);
         try {
           const waitMs = reserveDelayMs();
           if (waitMs > 0) await sleep(waitMs);
@@ -124,6 +135,17 @@ export type RetryPolicy = 'idempotent' | 'none';
 
 export interface ExecuteOptions {
   retry: RetryPolicy;
+  priority?: QueuePriority;
+  onAttemptQueued?: (event: { attempt: number }) => void;
+  onAttemptStarted?: (event: { attempt: number; queueWaitMs: number }) => void;
+  onAttemptResponse?: (event: {
+    attempt: number;
+    status: number;
+    elapsedMs: number;
+    willRetry: boolean;
+    retryKind?: 'rate-limit' | 'server-error';
+    retryDelayMs?: number;
+  }) => void;
 }
 
 export interface RequestExecutor {
@@ -137,8 +159,10 @@ export interface RequestExecutor {
 export function createRequestExecutor(input: {
   limiter: RateLimiter;
   sleep?: SleepFn;
+  now?: () => number;
 }): RequestExecutor {
   const sleep = input.sleep ?? defaultSleep;
+  const now = input.now ?? Date.now;
   return {
     async execute<R extends RetryableResponse>(
       accountKey: string,
@@ -146,25 +170,85 @@ export function createRequestExecutor(input: {
       options: ExecuteOptions,
     ): Promise<R> {
       if (options.retry === 'none') {
-        return input.limiter.run(accountKey, doFetch);
+        const queuedAt = now();
+        options.onAttemptQueued?.({ attempt: 1 });
+        let startedAt = queuedAt;
+        const response = await input.limiter.run(
+          accountKey,
+          () => {
+            startedAt = now();
+            options.onAttemptStarted?.({
+              attempt: 1,
+              queueWaitMs: Math.max(0, startedAt - queuedAt),
+            });
+            return doFetch();
+          },
+          options.priority,
+        );
+        options.onAttemptResponse?.({
+          attempt: 1,
+          status: response.status,
+          elapsedMs: Math.max(0, now() - startedAt),
+          willRetry: false,
+        });
+        return response;
       }
       let rateLimitRetries = 0;
       let serverErrorRetries = 0;
+      let attempt = 0;
       for (;;) {
-        const response = await input.limiter.run(accountKey, doFetch);
+        attempt += 1;
+        const queuedAt = now();
+        options.onAttemptQueued?.({ attempt });
+        let startedAt = queuedAt;
+        const response = await input.limiter.run(
+          accountKey,
+          () => {
+            startedAt = now();
+            options.onAttemptStarted?.({
+              attempt,
+              queueWaitMs: Math.max(0, startedAt - queuedAt),
+            });
+            return doFetch();
+          },
+          options.priority,
+        );
         if (response.status === 429 && rateLimitRetries < RATE_LIMIT_BACKOFF_MS.length) {
           const backoffMs = RATE_LIMIT_BACKOFF_MS[rateLimitRetries] ?? 8_000;
           const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
+          const retryDelayMs = Math.max(backoffMs, retryAfterMs ?? 0);
+          options.onAttemptResponse?.({
+            attempt,
+            status: response.status,
+            elapsedMs: Math.max(0, now() - startedAt),
+            willRetry: true,
+            retryKind: 'rate-limit',
+            retryDelayMs,
+          });
           rateLimitRetries += 1;
-          await sleep(Math.max(backoffMs, retryAfterMs ?? 0));
+          await sleep(retryDelayMs);
           continue;
         }
         if (response.status >= 500 && serverErrorRetries < SERVER_ERROR_RETRY_DELAYS_MS.length) {
           const delayMs = SERVER_ERROR_RETRY_DELAYS_MS[serverErrorRetries] ?? 4_000;
+          options.onAttemptResponse?.({
+            attempt,
+            status: response.status,
+            elapsedMs: Math.max(0, now() - startedAt),
+            willRetry: true,
+            retryKind: 'server-error',
+            retryDelayMs: delayMs,
+          });
           serverErrorRetries += 1;
           await sleep(delayMs);
           continue;
         }
+        options.onAttemptResponse?.({
+          attempt,
+          status: response.status,
+          elapsedMs: Math.max(0, now() - startedAt),
+          willRetry: false,
+        });
         return response;
       }
     },

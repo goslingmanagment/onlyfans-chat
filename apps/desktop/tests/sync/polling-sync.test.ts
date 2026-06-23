@@ -106,7 +106,14 @@ interface StubClient {
     skipUsers?: string;
     purpose?: string;
   }[];
-  listMessagesCalls: { lastId?: string; order?: string; limit?: number; purpose?: string }[];
+  listMessagesCalls: {
+    firstId?: string;
+    lastId?: string;
+    order?: string;
+    limit?: number;
+    purpose?: string;
+    priority?: string;
+  }[];
   listTransactionsCalls: { limit?: number; purpose?: string; startDate?: string }[];
   setChats(chats: OfApiChat[]): void;
   setMessages(messages: OfApiMessage[]): void;
@@ -193,12 +200,21 @@ function makeStubClient(): StubClient {
       },
       ),
       listMessages: vi.fn(
-        async (params: { lastId?: string; order?: string; limit?: number; purpose?: string }) => {
+        async (params: {
+          firstId?: string;
+          lastId?: string;
+          order?: string;
+          limit?: number;
+          purpose?: string;
+          priority?: string;
+        }) => {
           state.listMessagesCalls.push({
+            ...(params.firstId != null ? { firstId: params.firstId } : {}),
             ...(params.lastId != null ? { lastId: params.lastId } : {}),
             ...(params.order != null ? { order: params.order } : {}),
             ...(params.limit != null ? { limit: params.limit } : {}),
             ...(params.purpose != null ? { purpose: params.purpose } : {}),
+            ...(params.priority != null ? { priority: params.priority } : {}),
           });
           return { messages, nextPageUrl: null };
         },
@@ -402,7 +418,87 @@ describe('PollingSync', () => {
     expect(events.filter((e) => e.type === 'messageSent')).toHaveLength(0);
 
     await sync.openConversation(ACCT, '101');
+    expect(stub.listMessagesCalls.at(-1)).toEqual({
+      order: 'desc',
+      limit: 30,
+      purpose: 'message-tail',
+      priority: 'user',
+    });
     expect(data.messages.count(ACCT, '101')).toBe(2);
+    sync.stop();
+  });
+
+  it('loadOlderMessagesForUserOpen fetches one older first_id page from the local oldest row', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 11 })]);
+    stub.setMessages([makeMessage({ id: 10 }), makeMessage({ id: 11 })]);
+
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    await sync.openConversation(ACCT, '101');
+    expect(data.messages.count(ACCT, '101')).toBe(2);
+
+    stub.setMessages([makeMessage({ id: 9 }), makeMessage({ id: 10 })]);
+    await expect(sync.loadOlderMessagesForUserOpen(ACCT, '101')).resolves.toEqual({
+      returned: 2,
+      fresh: 1,
+      hasOlder: false,
+    });
+
+    expect(stub.listMessagesCalls.at(-1)).toEqual({
+      firstId: '10',
+      order: 'desc',
+      limit: 30,
+      purpose: 'message-tail',
+      priority: 'user',
+    });
+    expect(data.messages.count(ACCT, '101')).toBe(3);
+    sync.stop();
+  });
+
+  it('openConversation reloads the recent desc window when only a tiny local cache exists', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 30 })]);
+    stub.setMessages(
+      Array.from({ length: 30 }, (_, index) =>
+        makeMessage({
+          id: index + 1,
+          createdAt: `2026-06-11T10:${String(index).padStart(2, '0')}:00+00:00`,
+        }),
+      ),
+    );
+
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    data.messages.upsertMany([
+      {
+        accountId: ACCT,
+        chatId: '101',
+        messageId: '30',
+        createdAt: '2026-06-11T10:29:00.000Z',
+        isSentByMe: false,
+        textHtml: '<p>cached</p>',
+        textPlain: 'cached',
+        price: 0,
+        isOpened: null,
+        isNew: false,
+        isTip: false,
+        tipAmount: null,
+        tipText: null,
+        replyTo: null,
+        media: [],
+        deleted: false,
+        raw: {},
+      },
+    ]);
+
+    const before = stub.listMessagesCalls.length;
+    await sync.openConversation(ACCT, '101');
+
+    expect(stub.listMessagesCalls.slice(before)).toEqual([
+      { order: 'desc', limit: 30, purpose: 'message-tail', priority: 'user' },
+    ]);
+    expect(data.messages.count(ACCT, '101')).toBe(30);
     sync.stop();
   });
 
@@ -1059,7 +1155,7 @@ describe('PollingSync', () => {
       sync.stop();
     });
 
-    it('readChatTailForUserOpen writes the tail rows and is ONE limit-100 GET (non-empty page)', async () => {
+    it('readChatTailForUserOpen writes the first visible tail rows with a small priority GET', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: null as unknown as number })]);
       stub.setMessages([makeMessage({ id: 5 }), makeMessage({ id: 6 })]);
       const sync = makeSync();
@@ -1072,11 +1168,57 @@ describe('PollingSync', () => {
       expect(stub.listMessagesCalls.length).toBe(callsBefore + 1);
       expect(stub.listMessagesCalls.at(-1)).toEqual({
         order: 'desc',
-        limit: 100,
+        limit: 30,
         purpose: 'message-tail',
+        priority: 'user',
       });
       expect(data.messages.count(ACCT, '101')).toBe(2); // rows landed → history appears
       expect(data.threadFetchLog.get(ACCT, '101')).not.toBeNull();
+      sync.stop();
+    });
+
+    it('readChatTailForUserOpen reloads the recent desc window when only a tiny local cache exists', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 30 })]);
+      stub.setMessages(
+        Array.from({ length: 30 }, (_, index) =>
+          makeMessage({
+            id: index + 1,
+            createdAt: `2026-06-11T10:${String(index).padStart(2, '0')}:00+00:00`,
+          }),
+        ),
+      );
+      const sync = makeSync();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      data.messages.upsertMany([
+        {
+          accountId: ACCT,
+          chatId: '101',
+          messageId: '30',
+          createdAt: '2026-06-11T10:29:00.000Z',
+          isSentByMe: false,
+          textHtml: '<p>cached</p>',
+          textPlain: 'cached',
+          price: 0,
+          isOpened: null,
+          isNew: false,
+          isTip: false,
+          tipAmount: null,
+          tipText: null,
+          replyTo: null,
+          media: [],
+          deleted: false,
+          raw: {},
+        },
+      ]);
+
+      const before = stub.listMessagesCalls.length;
+      await sync.readChatTailForUserOpen(ACCT, '101', 'chat-refresh');
+
+      expect(stub.listMessagesCalls.slice(before)).toEqual([
+        { order: 'desc', limit: 30, purpose: 'chat-refresh', priority: 'user' },
+      ]);
+      expect(data.messages.count(ACCT, '101')).toBe(30);
       sync.stop();
     });
 
@@ -1196,8 +1338,9 @@ describe('PollingSync', () => {
       expect(stub.listMessagesCalls.length).toBe(callsBefore + 1);
       expect(stub.listMessagesCalls.at(-1)).toEqual({
         order: 'desc',
-        limit: 100,
+        limit: 30,
         purpose: 'message-tail',
+        priority: 'user',
       });
       expect(data.messages.count(ACCT, '101')).toBe(2);
       expect(data.threadFetchLog.get(ACCT, '101')).not.toBeNull();

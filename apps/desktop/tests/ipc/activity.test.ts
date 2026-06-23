@@ -45,6 +45,7 @@ function fakeSync(overrides: Partial<ActivitySync> = {}): ActivitySync {
     subscribe: () => () => undefined,
     refreshChat: () => Promise.resolve(),
     readChatTailForUserOpen: () => Promise.resolve(),
+    loadOlderMessagesForUserOpen: () => Promise.resolve({ returned: 0, fresh: 0, hasOlder: false }),
     ensureChat: () => Promise.resolve(true),
     openConversation: () => Promise.resolve(),
     closeConversation: () => undefined,

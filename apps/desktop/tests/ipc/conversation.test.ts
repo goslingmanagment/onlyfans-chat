@@ -38,6 +38,7 @@ function makeSyncStub(): ActivitySync {
     subscribe: vi.fn(() => () => undefined),
     refreshChat: vi.fn(async () => undefined),
     readChatTailForUserOpen: vi.fn(async () => undefined),
+    loadOlderMessagesForUserOpen: vi.fn(async () => ({ returned: 0, fresh: 0, hasOlder: false })),
     ensureChat: vi.fn(async () => true),
     openConversation: vi.fn(async () => undefined),
     closeConversation: vi.fn(),

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAccounts, useChat, useFan } from '../../bridge/queries';
 import { getBridge } from '../../bridge/bridge';
 import { useUiStore } from '../../state/uiStore';
@@ -8,6 +8,7 @@ import { Kbd } from '../../design/Kbd';
 import { ConversationHeader } from './ConversationHeader';
 import { ConversationView } from './ConversationView';
 import { FULL_CHAT_FEATURES } from './conversationFeatures';
+import type { ThreadHistoryLoadState } from './Thread';
 import { handleConversationChange } from '../ai/aiStore';
 import { resetVaultForConversation } from '../vault/vaultStore';
 import { useT } from '../../lib/i18n';
@@ -19,6 +20,22 @@ export function ConversationPane(): React.JSX.Element {
   const typing = useUiStore((s) => s.typing);
   const setTyping = useUiStore((s) => s.setTyping);
   const setView = useUiStore((s) => s.setView);
+  const [historyLoadResult, setHistoryLoadResult] = useState<{
+    key: string;
+    state: Extract<ThreadHistoryLoadState, 'ready' | 'error'>;
+  } | null>(null);
+  const [historyRetryNonce, setHistoryRetryNonce] = useState(0);
+  const retryHistory = useCallback(() => {
+    setHistoryRetryNonce((value) => value + 1);
+  }, []);
+  const conversationLoadKey =
+    accountId === null || chatId === null ? null : `${accountId}/${chatId}/${historyRetryNonce}`;
+  const historyLoadState: ThreadHistoryLoadState =
+    conversationLoadKey === null
+      ? 'idle'
+      : historyLoadResult?.key === conversationLoadKey
+        ? historyLoadResult.state
+        : 'loading';
 
   // expire the typing indicator client-side
   useEffect(() => {
@@ -46,12 +63,29 @@ export function ConversationPane(): React.JSX.Element {
 
   // tell main which conversation to poll aggressively
   useEffect(() => {
-    if (accountId === null || chatId === null) return;
-    void getBridge().invoke('cmd:conversation.open', { accountId, chatId });
+    if (accountId === null || chatId === null || conversationLoadKey === null) return;
+    let cancelled = false;
+    void getBridge()
+      .invoke('cmd:conversation.open', { accountId, chatId })
+      .then(
+        (result) => {
+          if (cancelled) return;
+          setHistoryLoadResult({
+            key: conversationLoadKey,
+            state: result.localCountAfter !== null && result.localCountAfter > 0 ? 'ready' : 'error',
+          });
+        },
+        () => {
+          if (!cancelled) {
+            setHistoryLoadResult({ key: conversationLoadKey, state: 'error' });
+          }
+        },
+      );
     return () => {
+      cancelled = true;
       void getBridge().invoke('cmd:conversation.close', { accountId, chatId });
     };
-  }, [accountId, chatId]);
+  }, [accountId, chatId, conversationLoadKey]);
 
   // mark-as-read on open + on window focus regained (main owns debounce/gating, SPEC §7.9)
   useEffect(() => {
@@ -117,6 +151,9 @@ export function ConversationPane(): React.JSX.Element {
         features={FULL_CHAT_FEATURES}
         density="comfortable"
         scrollMode="stick"
+        historyLoadState={historyLoadState}
+        lastMessageId={chat.lastMessageId}
+        onRetryHistory={retryHistory}
       />
     </section>
   );

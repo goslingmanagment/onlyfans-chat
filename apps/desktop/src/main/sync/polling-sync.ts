@@ -63,6 +63,9 @@ const MEDIA_READY_POLL_MS = 15_000;
 const MEDIA_READY_POLL_CAP_MS = 10 * 60_000;
 const FAN_DETAIL_TTL_MS = 5 * 60_000;
 const OFFLINE_AFTER_FAILURES = 3;
+const USER_OPEN_COLD_PAGE_LIMIT = 30;
+const USER_BACKFILL_PAGE_LIMIT = 30;
+const USER_OPEN_BACKFILL_THRESHOLD = 30;
 // Fan-spend sweep (DESIGN §1 30-day figure): the first walk pulls the full
 // -30days transactions window once; every later sweep starts at the newest
 // cached row minus an overlap, so steady state is ~1 page per sweep. Page
@@ -130,6 +133,14 @@ export interface PollingSyncOptions {
   now?: () => number;
   /** Inter-page pacing during multi-page chat walks (injectable for tests). */
   sleep?: SleepFn;
+  /** DIAGNOSTIC (temporary, 2026-06-23): structured log sink for open-tail outcome. */
+  onLog?: (
+    level: 'debug' | 'info' | 'warn' | 'error',
+    message: string,
+    fields?: Record<string, unknown>,
+  ) => void;
+  /** DIAGNOSTIC (temporary, 2026-06-23): current OFAPI read transport label. */
+  readTransport?: () => string | null | undefined;
 }
 
 type PollDepth = 'hot' | 'deep';
@@ -155,6 +166,11 @@ interface PendingHubListRefresh {
   reject: (error: unknown) => void;
 }
 
+interface ThreadHistoryCoverage {
+  hasOlder: boolean;
+  lastErrorCode: string | null;
+}
+
 /** Persisted per account (settings table) so restarts resume, never rewalk. */
 const hydrationStateSchema = z.object({
   nextOffset: z.number().int().nonnegative(),
@@ -167,6 +183,51 @@ const FRESH_HYDRATION: HydrationState = { nextOffset: 0, pagesWalked: 0, done: f
 
 function hydrationKey(accountId: string): string {
   return `sync.chatHydration.${accountId}`;
+}
+
+function safeErrorOutcome(error: unknown): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  if (error instanceof Error) {
+    fields['errorName'] = error.name;
+  }
+  if (error === null || typeof error !== 'object') {
+    fields['valueType'] = typeof error;
+    return fields;
+  }
+  const record = error as Record<string, unknown>;
+  if (typeof record['code'] === 'string') {
+    fields['errorCode'] = record['code'];
+  }
+  if (typeof record['upstreamStatus'] === 'number') {
+    fields['upstreamStatus'] = record['upstreamStatus'];
+  }
+  const detail = record['detail'];
+  if (detail !== null && typeof detail === 'object') {
+    const detailRecord = detail as Record<string, unknown>;
+    if (typeof detailRecord['status'] === 'number') {
+      fields['httpStatus'] = detailRecord['status'];
+    }
+    if (typeof detailRecord['retryAfterMs'] === 'number') {
+      fields['retryAfterMs'] = detailRecord['retryAfterMs'];
+    }
+  }
+  return fields;
+}
+
+function safeMessageCount(data: DataLayer, accountId: string, chatId: string): number | null {
+  try {
+    return data.messages.count(accountId, chatId);
+  } catch {
+    return null;
+  }
+}
+
+function safeChatLastMessageId(data: DataLayer, accountId: string, chatId: string): string | null {
+  try {
+    return data.chats.get(accountId, chatId)?.lastMessageId ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
@@ -195,6 +256,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     options.unreadReconcileSettings ?? ((): Partial<UnreadReconcileSettings> | undefined => undefined);
   const sleep: SleepFn =
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const onLog = options.onLog ?? ((): void => undefined);
+  const readTransport = options.readTransport ?? ((): string | null | undefined => undefined);
 
   const listeners = new Set<SyncListener>();
   const loops = new Map<string, AccountLoop>();
@@ -208,6 +271,11 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   let sweepLastChangeAt = 0;
   const mediaPollers = new Map<string, { startedAt: number; timer: ReturnType<typeof setTimeout> }>();
   const hubListRefreshes = new Map<string, PendingHubListRefresh>();
+  const historyCoverage = new Map<string, ThreadHistoryCoverage>();
+
+  function historyKey(accountId: string, chatId: string): string {
+    return `${accountId}/${chatId}`;
+  }
 
   function emit(event: SyncEvent): void {
     for (const listener of listeners) {
@@ -388,27 +456,126 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     // read when autoRead is OFF), so the follow-up media polling must run even
     // when background reads are gated off.
     force = false,
+    options: {
+      priority?: 'user';
+      coldLimit?: number;
+      recentWindow?: boolean;
+      retry?: 'idempotent' | 'none';
+    } = {},
   ): Promise<{ freshIds: string[]; hadCachedMessages: boolean }> {
     const cachedPage = data.messages.page({ accountId, chatId, limit: 1 });
-    const newestCached = cachedPage.items.at(-1)?.messageId;
-    const { messages } = newestCached
-      ? await client.listMessages({
+    const newestCached = options.recentWindow === true ? undefined : cachedPage.items.at(-1)?.messageId;
+    const diagCountBefore = safeMessageCount(data, accountId, chatId); // DIAGNOSTIC (temporary)
+    const diagMode =
+      options.recentWindow === true ? 'recent-desc' : newestCached === undefined ? 'cold-desc' : 'asc-since';
+    const requestLimit = newestCached === undefined ? (options.coldLimit ?? 100) : 100;
+    const diagHeadLastMessageId = safeChatLastMessageId(data, accountId, chatId);
+    const diagStart = now(); // DIAGNOSTIC (temporary)
+    const { messages } = await (async (): ReturnType<typeof client.listMessages> => {
+      try {
+        return newestCached
+          ? await client.listMessages({
+              accountId,
+              chatId,
+              lastId: newestCached,
+              order: 'asc',
+              limit: requestLimit,
+              purpose,
+              ...(options.retry !== undefined ? { retry: options.retry } : {}),
+              ...(options.priority !== undefined ? { priority: options.priority } : {}),
+            })
+          : await client.listMessages({
+              accountId,
+              chatId,
+              order: 'desc',
+              limit: requestLimit,
+              purpose,
+              ...(options.retry !== undefined ? { retry: options.retry } : {}),
+              ...(options.priority !== undefined ? { priority: options.priority } : {}),
+            });
+      } catch (error) {
+        onLog('warn', 'diag openTail', {
           accountId,
           chatId,
-          lastId: newestCached,
-          order: 'asc',
-          limit: 100,
           purpose,
-        })
-      : await client.listMessages({ accountId, chatId, order: 'desc', limit: 100, purpose });
+          force,
+          result: 'failed',
+          mode: diagMode,
+          cursor: options.recentWindow === true ? null : (newestCached ?? null),
+          limit: requestLimit,
+          transport: readTransport() ?? null,
+          hadCached: newestCached !== undefined,
+          countBefore: diagCountBefore,
+          chatLastMessageId: diagHeadLastMessageId,
+          elapsedMs: now() - diagStart,
+          ...safeErrorOutcome(error),
+        });
+        throw error;
+      }
+    })();
     data.threadFetchLog.stamp(accountId, chatId, new Date(now()).toISOString());
 
-    const fresh = messages.filter(
-      (message) => data.messages.get(accountId, chatId, String(message.id)) === null,
-    );
-    const upserts = messages.map((message) => mapMessage(accountId, chatId, message, toMediaUrl));
-    data.messages.upsertMany(upserts);
-    data.messages.prune(accountId, chatId); // retention (SPEC §10: 5,000/chat default)
+    let fresh: typeof messages;
+    let upserts: MessageUpsert[];
+    try {
+      fresh = messages.filter(
+        (message) => data.messages.get(accountId, chatId, String(message.id)) === null,
+      );
+      upserts = messages.map((message) => mapMessage(accountId, chatId, message, toMediaUrl));
+      data.messages.upsertMany(upserts);
+      data.messages.prune(accountId, chatId); // retention (SPEC §10: 5,000/chat default)
+    } catch (error) {
+      onLog('warn', 'diag openTail', {
+        accountId,
+        chatId,
+        purpose,
+        force,
+        result: 'failed-after-response',
+        mode: diagMode,
+        cursor: options.recentWindow === true ? null : (newestCached ?? null),
+        limit: requestLimit,
+        transport: readTransport() ?? null,
+        returned: messages.length,
+        hadCached: newestCached !== undefined,
+        countBefore: diagCountBefore,
+        countAfter: safeMessageCount(data, accountId, chatId),
+        chatLastMessageId: diagHeadLastMessageId,
+        elapsedMs: now() - diagStart,
+        ...safeErrorOutcome(error),
+      });
+      throw error;
+    }
+    const diagCountAfter = safeMessageCount(data, accountId, chatId);
+    const diagResult =
+      messages.length === 0
+        ? 'empty'
+        : diagCountBefore !== null && diagCountAfter !== null && diagCountAfter > diagCountBefore
+          ? 'inserted'
+          : 'no-change';
+    // DIAGNOSTIC (temporary — empty-thread investigation 2026-06-23). Counts only,
+    // never message text. Failed reads are logged in the catch path above.
+    onLog('info', 'diag openTail', {
+      accountId,
+      chatId,
+      purpose,
+      force,
+      result: diagResult,
+      mode: diagMode,
+      cursor: options.recentWindow === true ? null : (newestCached ?? null),
+      limit: requestLimit,
+      transport: readTransport() ?? null,
+      returned: messages.length,
+      fresh: fresh.length,
+      returnedIncludesChatLastMessageId:
+        diagHeadLastMessageId === null
+          ? null
+          : messages.some((message) => String(message.id) === diagHeadLastMessageId),
+      hadCached: newestCached !== undefined,
+      countBefore: diagCountBefore,
+      countAfter: diagCountAfter,
+      chatLastMessageId: diagHeadLastMessageId,
+      elapsedMs: now() - diagStart,
+    });
     // Media polling (client.getMessage) is itself a message-body read — only
     // enroll it for an explicit open (force) or when auto-read is enabled.
     if (force || autoReadEnabled()) {
@@ -418,6 +585,129 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       freshIds: fresh.map((message) => String(message.id)),
       hadCachedMessages: newestCached !== undefined,
     };
+  }
+
+  async function backfillOlder(
+    accountId: string,
+    chatId: string,
+  ): Promise<{ returned: number; fresh: number; hasOlder: boolean }> {
+    const key = historyKey(accountId, chatId);
+    const coverage = historyCoverage.get(key);
+    if (coverage?.hasOlder === false) {
+      return { returned: 0, fresh: 0, hasOlder: false };
+    }
+
+    const oldest = data.messages.oldest(accountId, chatId);
+    if (oldest === null) {
+      return { returned: 0, fresh: 0, hasOlder: false };
+    }
+
+    const countBefore = safeMessageCount(data, accountId, chatId);
+    const startedAt = now();
+    let messages: Awaited<ReturnType<typeof client.listMessages>>['messages'];
+    try {
+      ({ messages } = await client.listMessages({
+        accountId,
+        chatId,
+        firstId: oldest.messageId,
+        order: 'desc',
+        limit: USER_BACKFILL_PAGE_LIMIT,
+        purpose: 'message-tail',
+        priority: 'user',
+        retry: 'none',
+      }));
+    } catch (error) {
+      const fields = safeErrorOutcome(error);
+      historyCoverage.set(key, {
+        hasOlder: true,
+        lastErrorCode: typeof fields['errorCode'] === 'string' ? fields['errorCode'] : null,
+      });
+      onLog('warn', 'diag backfillOlder', {
+        accountId,
+        chatId,
+        result: 'failed',
+        cursor: oldest.messageId,
+        limit: USER_BACKFILL_PAGE_LIMIT,
+        transport: readTransport() ?? null,
+        countBefore,
+        elapsedMs: now() - startedAt,
+        ...fields,
+      });
+      throw error;
+    }
+
+    let fresh: typeof messages;
+    try {
+      fresh = messages.filter(
+        (message) => data.messages.get(accountId, chatId, String(message.id)) === null,
+      );
+      const upserts = messages.map((message) => mapMessage(accountId, chatId, message, toMediaUrl));
+      data.messages.upsertMany(upserts);
+      data.messages.prune(accountId, chatId);
+    } catch (error) {
+      onLog('warn', 'diag backfillOlder', {
+        accountId,
+        chatId,
+        result: 'failed-after-response',
+        cursor: oldest.messageId,
+        limit: USER_BACKFILL_PAGE_LIMIT,
+        transport: readTransport() ?? null,
+        returned: messages.length,
+        countBefore,
+        countAfter: safeMessageCount(data, accountId, chatId),
+        elapsedMs: now() - startedAt,
+        ...safeErrorOutcome(error),
+      });
+      throw error;
+    }
+
+    const hasOlder = messages.length >= USER_BACKFILL_PAGE_LIMIT && fresh.length > 0;
+    historyCoverage.set(key, { hasOlder, lastErrorCode: null });
+    const countAfter = safeMessageCount(data, accountId, chatId);
+    onLog('info', 'diag backfillOlder', {
+      accountId,
+      chatId,
+      result: fresh.length > 0 ? 'inserted' : 'empty',
+      cursor: oldest.messageId,
+      limit: USER_BACKFILL_PAGE_LIMIT,
+      transport: readTransport() ?? null,
+      returned: messages.length,
+      fresh: fresh.length,
+      hasOlder,
+      countBefore,
+      countAfter,
+      elapsedMs: now() - startedAt,
+    });
+    return { returned: messages.length, fresh: fresh.length, hasOlder };
+  }
+
+  async function backfillSmallLocalWindow(accountId: string, chatId: string): Promise<void> {
+    const count = safeMessageCount(data, accountId, chatId);
+    if (count === null || count <= 0 || count >= USER_OPEN_BACKFILL_THRESHOLD) {
+      return;
+    }
+    await backfillOlder(accountId, chatId);
+  }
+
+  async function readHistoryForExplicitUserOpen(
+    accountId: string,
+    chatId: string,
+    purpose: OfApiPurpose = 'message-tail',
+  ): Promise<void> {
+    const countBeforeOpenFetch = safeMessageCount(data, accountId, chatId);
+    const smallLocalWindow =
+      countBeforeOpenFetch !== null &&
+      countBeforeOpenFetch > 0 &&
+      countBeforeOpenFetch < USER_OPEN_BACKFILL_THRESHOLD;
+    await fetchChatTail(accountId, chatId, purpose, /* force */ true, {
+      priority: 'user',
+      retry: 'none',
+      coldLimit: USER_OPEN_COLD_PAGE_LIMIT,
+      recentWindow: smallLocalWindow,
+    });
+    if (smallLocalWindow) {
+      await backfillSmallLocalWindow(accountId, chatId);
+    }
   }
 
   function trackUnreadyMedia(
@@ -1242,8 +1532,11 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       // Deliberate single-chat user read (QuickLook/open-like): use the same
       // force path as openConversation so history loads even with auto-read
       // OFF, without setting openConversation or arming the read-state sweep.
-      await fetchChatTail(accountId, chatId, purpose, /* force */ true);
+      await readHistoryForExplicitUserOpen(accountId, chatId, purpose);
       emit({ type: 'chatListUpdated', accountId });
+    },
+    async loadOlderMessagesForUserOpen(accountId, chatId) {
+      return backfillOlder(accountId, chatId);
     },
     ensureChat,
     async openConversation(accountId, chatId) {
@@ -1281,10 +1574,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       }
       // openConversation is the ONE sanctioned message-body read when auto-read
       // is OFF — force the tail fetch (and its media polling) unconditionally.
-      await Promise.all([
-        fetchChatTail(accountId, chatId, 'message-tail', /* force */ true),
-        refreshFanDetail(accountId, chatId),
-      ]);
+      await readHistoryForExplicitUserOpen(accountId, chatId, 'message-tail');
+      void refreshFanDetail(accountId, chatId);
     },
     closeConversation(accountId, chatId) {
       if (
