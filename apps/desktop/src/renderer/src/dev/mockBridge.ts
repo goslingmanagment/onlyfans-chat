@@ -38,6 +38,7 @@ import {
   BUILTIN_MESSAGE_GUARD_POLICY,
   DEFAULT_AGENCY_HUB_BASE_URL,
   compileGuard,
+  effectiveMessageGuardPolicy,
   scanText,
 } from '@chatgoose/shared';
 import { applyChatFilter, sortChatsByRecency } from '../lib/filters';
@@ -1035,7 +1036,7 @@ export function createMockBridge(): ChatGooseBridge {
   };
 
   function mockGuardScan(text: string) {
-    return scanText(compileGuard(store.settings.messageGuardPolicy), text);
+    return scanText(compileGuard(effectiveMessageGuardPolicy(store.settings.messageGuardPolicy)), text);
   }
 
   function assertMockGuardAllowed(text: string): void {
@@ -1177,12 +1178,12 @@ export function createMockBridge(): ChatGooseBridge {
       sentMissingFromMessages: [],
       cleanSends: 142,
     }),
-    'query:guard.config': () => store.settings.messageGuardPolicy,
+    'query:guard.config': () => effectiveMessageGuardPolicy(store.settings.messageGuardPolicy),
     'cmd:guard.config.update': (policy) => {
       store.settings = { ...store.settings, messageGuardPolicy: policy };
       emit('db:changed', { scope: 'guard' });
       emit('db:changed', { scope: 'settings' });
-      return policy;
+      return effectiveMessageGuardPolicy(policy);
     },
     'query:guard.scan': ({ text }) => mockGuardScan(text),
     'query:guard.blocks': () => ({

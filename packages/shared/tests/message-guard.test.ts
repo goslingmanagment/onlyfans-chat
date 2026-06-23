@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   BUILTIN_MESSAGE_GUARD_POLICY,
   compileGuard,
+  effectiveMessageGuardPolicy,
+  MESSAGE_GUARD_DISABLED_POLICY_VERSION,
   normalizeWithMap,
   scanText,
   type GuardRule,
@@ -112,5 +114,29 @@ describe('message guard whitelist and verdict resolution', () => {
     };
     expect(scan('maybe', policy([yellow])).decision).toBe('block');
     expect(scan('maybe', { ...policy([yellow]), yellowMode: 'warn' }).decision).toBe('warn');
+  });
+});
+
+describe('message guard runtime policy switch', () => {
+  it('exposes a disabled effective policy without mutating the saved policy', () => {
+    const saved = policy([
+      {
+        id: 'test-red',
+        category: 'red',
+        action: 'block',
+        label: 'Red test',
+        reasonKey: 'guard.reason.red',
+        kind: 'term',
+        value: 'telegram',
+        enabled: true,
+      },
+    ]);
+
+    const effective = effectiveMessageGuardPolicy(saved);
+
+    expect(saved.rules.some((rule) => rule.enabled && rule.value === 'telegram')).toBe(true);
+    expect(effective.version).toBe(MESSAGE_GUARD_DISABLED_POLICY_VERSION);
+    expect(effective.structural.altPay).toBe(false);
+    expect(scanText(compileGuard(effective), 'telegram @name paypal me').decision).toBe('allow');
   });
 });

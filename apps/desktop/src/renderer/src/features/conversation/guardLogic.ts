@@ -1,5 +1,6 @@
 import {
   compileGuard,
+  effectiveMessageGuardPolicy,
   scanText,
   type CompiledMessageGuardPolicy,
   type GuardCategory,
@@ -27,7 +28,7 @@ export function compileRendererGuardPolicy(policy: MessageGuardPolicy | null): R
     return { kind: 'unavailable' };
   }
   try {
-    return { kind: 'ready', compiled: compileGuard(policy) };
+    return { kind: 'ready', compiled: compileGuard(effectiveMessageGuardPolicy(policy)) };
   } catch {
     return { kind: 'unavailable' };
   }

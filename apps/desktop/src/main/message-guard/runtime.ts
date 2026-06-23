@@ -4,6 +4,7 @@ import {
   BUILTIN_MESSAGE_GUARD_POLICY,
   CgError,
   compileGuard,
+  effectiveMessageGuardPolicy,
   messageGuardPolicySchema,
   scanText,
   type CompiledMessageGuardPolicy,
@@ -98,10 +99,11 @@ export function createMessageGuardRuntime(options: {
       if (compiled !== null) return compiled;
       throw errorFromPolicyUnavailable();
     }
-    const key = `${parsed.data.version}|${parsed.data.builtInVersion}|${JSON.stringify(parsed.data)}`;
+    const policy = effectiveMessageGuardPolicy(parsed.data);
+    const key = `${policy.version}|${policy.builtInVersion}|${JSON.stringify(policy)}`;
     if (compiled !== null && compiledKey === key) return compiled;
     try {
-      compiled = compileGuard(parsed.data);
+      compiled = compileGuard(policy);
       compiledKey = key;
       return compiled;
     } catch (error) {
@@ -168,10 +170,11 @@ export function createMessageGuardRuntime(options: {
     updatePolicy(policy) {
       const parsed = messageGuardPolicySchema.parse(policy);
       data.settings.set(POLICY_KEY, parsed);
-      compiled = compileGuard(parsed);
-      compiledKey = `${parsed.version}|${parsed.builtInVersion}|${JSON.stringify(parsed)}`;
+      const effective = effectiveMessageGuardPolicy(parsed);
+      compiled = compileGuard(effective);
+      compiledKey = `${effective.version}|${effective.builtInVersion}|${JSON.stringify(effective)}`;
       data.bus.publish({ scope: 'guard' });
-      return parsed;
+      return effective;
     },
 
     scan(text) {

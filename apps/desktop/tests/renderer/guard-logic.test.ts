@@ -18,14 +18,14 @@ describe('renderer message guard logic', () => {
     expect(scanTextForSend('caption')).toBe('unavailable');
   });
 
-  it('blocks draft parts synchronously for send attempts', () => {
+  it('allows all draft parts while guard enforcement is temporarily disabled', () => {
     setCurrentGuardPolicy(BUILTIN_MESSAGE_GUARD_POLICY);
     expect(scanDraftPartsForSend('hello')).toBe('allow');
-    expect(scanDraftPartsForSend('hello[NEXT]paypal me')).toBe('block');
-    expect(scanTextForSend('c a $ h a p p')).toBe('block');
+    expect(scanDraftPartsForSend('hello[NEXT]paypal me')).toBe('allow');
+    expect(scanTextForSend('c a $ h a p p')).toBe('allow');
   });
 
-  it('maps highlighted spans back to the original draft', () => {
+  it('suppresses highlighted spans while guard enforcement is temporarily disabled', () => {
     const red: GuardRule = {
       id: 'test-red',
       category: 'red',
@@ -44,7 +44,7 @@ describe('renderer message guard logic', () => {
     const draft = 'try t.e.l.e.g.r.a.m';
     const verdict = scanDraftForDisplay(guard, draft);
     const segments = verdictToSegments(draft, verdict);
-    expect(verdict?.decision).toBe('block');
-    expect(segments.find((segment) => segment.span !== null)?.text).toBe('t.e.l.e.g.r.a.m');
+    expect(verdict?.decision).toBe('allow');
+    expect(segments.find((segment) => segment.span !== null)).toBeUndefined();
   });
 });

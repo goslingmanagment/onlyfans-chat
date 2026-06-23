@@ -52,3 +52,34 @@ export const BUILTIN_MESSAGE_GUARD_POLICY: MessageGuardPolicy = {
     },
   ],
 };
+
+// Temporary owner-requested kill switch (2026-06-24): keep the saved policy
+// intact, but make runtime/renderer enforcement a no-op until the guard is
+// tuned enough for chatter shifts.
+export const MESSAGE_GUARD_ENFORCEMENT_ENABLED = false;
+export const MESSAGE_GUARD_DISABLED_POLICY_VERSION = 'mg-disabled-2026-06-24';
+
+export const DISABLED_MESSAGE_GUARD_POLICY: MessageGuardPolicy = {
+  ...BUILTIN_MESSAGE_GUARD_POLICY,
+  version: MESSAGE_GUARD_DISABLED_POLICY_VERSION,
+  yellowMode: 'warn',
+  customDefaultAction: 'allow',
+  blockBareHandles: false,
+  structural: {
+    url: false,
+    domain: false,
+    email: false,
+    phone: false,
+    wallet: false,
+    handle: false,
+    altPay: false,
+  },
+  rules: BUILTIN_MESSAGE_GUARD_POLICY.rules.map((rule) => ({
+    ...rule,
+    enabled: false,
+  })),
+};
+
+export function effectiveMessageGuardPolicy(policy: MessageGuardPolicy): MessageGuardPolicy {
+  return MESSAGE_GUARD_ENFORCEMENT_ENABLED ? policy : DISABLED_MESSAGE_GUARD_POLICY;
+}
