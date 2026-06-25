@@ -435,15 +435,16 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       return;
     }
     const useSnapshotHead = snapshotHeadIsCurrent(thread, existing?.lastMessageAt ?? null);
+    const hasUnreadTips = useSnapshotHead
+      ? (thread.hasUnreadTips ?? (thread.unreadCount === 0 ? false : (existing?.hasUnreadTips ?? false)))
+      : (existing?.hasUnreadTips ?? false);
     data.chats.upsert({
       accountId,
       chatId: thread.chatId,
       fanName: existing?.fanName ?? thread.fanName,
       avatar: existing?.avatar ?? null,
       unreadCount: useSnapshotHead ? thread.unreadCount : (existing?.unreadCount ?? 0),
-      hasUnreadTips: useSnapshotHead && thread.unreadCount === 0
-        ? false
-        : (existing?.hasUnreadTips ?? false),
+      hasUnreadTips,
       lastMessageAt: useSnapshotHead ? thread.lastMessageAt : (existing?.lastMessageAt ?? null),
       lastMessagePreview: useSnapshotHead
         ? thread.lastMessagePreview

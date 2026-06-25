@@ -667,8 +667,8 @@ describe('send engine (SPEC §7)', () => {
     engine.dispose();
   });
 
-  it('markRead: debounced 1.5 s per chat, zeroes the unread count on success', async () => {
-    seedChat(data, { unreadCount: 3 });
+  it('markRead: debounced 1.5 s per chat, zeroes unread badges on success', async () => {
+    seedChat(data, { unreadCount: 3, hasUnreadTips: true });
     const { engine } = makeEngine();
     await engine.markRead(ACCT, CHAT);
     await vi.advanceTimersByTimeAsync(1000);
@@ -679,6 +679,7 @@ describe('send engine (SPEC §7)', () => {
     await vi.advanceTimersByTimeAsync(100); // 1.5 s after the second call
     expect(stub.markReadCalls).toBe(1);
     expect(data.chats.get(ACCT, CHAT)?.unreadCount).toBe(0);
+    expect(data.chats.get(ACCT, CHAT)?.hasUnreadTips).toBe(false);
     engine.dispose();
   });
 

@@ -1060,6 +1060,7 @@ describe('createHubAwareSync (provider composition)', () => {
           chatId: '101',
           fanName: 'Snapshot fan',
           unreadCount: 2,
+          hasUnreadTips: false,
           lastMessageId: 'new',
           lastMessageAt: '2026-06-19T18:00:00.000Z',
           lastMessageIsSentByMe: false,
@@ -1132,6 +1133,7 @@ describe('createHubAwareSync (provider composition)', () => {
     });
     expect(data.chats.get(ACCT, '101')).toMatchObject({
       unreadCount: 2,
+      hasUnreadTips: false,
       lastMessageId: 'new',
       lastMessagePreview: 'new body',
     });

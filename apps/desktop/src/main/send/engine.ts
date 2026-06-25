@@ -487,7 +487,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
   function zeroUnread(accountId: string, chatId: string): void {
     data.db
       .prepare(
-        `UPDATE chats SET unread_count = 0, updated_at = @updated_at
+        `UPDATE chats SET unread_count = 0, has_unread_tips = 0, updated_at = @updated_at
          WHERE account_id = @account_id AND chat_id = @chat_id`,
       )
       .run({ account_id: accountId, chat_id: chatId, updated_at: nowIso() });
