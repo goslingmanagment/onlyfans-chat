@@ -19,7 +19,6 @@ import { readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { resolveUiLocale, uiMessage, type UiLocale } from '@chatgoose/shared/i18n/index';
 import { errorToFields } from '@chatgoose/shared/diagnostics/log';
-import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 import { createKeychain, type Keychain, type SecretName } from './secrets/keychain';
 import { createDataLayer, readSchemaVersion, type DataLayer } from './db/index';
 import { createLogger, type Logger } from './diagnostics/logger';
@@ -73,6 +72,7 @@ import {
   isAllowedDevRendererUrl,
   isAllowedExternalOpenUrl,
 } from './platform/navigation';
+import { messageNotificationBody } from './notifications';
 import type { UnreadReconcileSettingsVM, UpdateStatusVM } from '../preload/contract';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
@@ -184,27 +184,6 @@ function startPackagedAutoUpdater(): void {
     .catch((error: unknown) => {
       logger?.warn('updates', 'failed to initialize auto-updater', errorToFields(error));
     });
-}
-
-function messageNotificationBody(
-  locale: UiLocale,
-  event: Extract<SyncEvent, { type: 'messageReceived' }>,
-): string {
-  const message = event.message;
-  if (message === undefined) {
-    return uiMessage(locale, 'notif.sentYou');
-  }
-  if (message.isTip === true) {
-    return uiMessage(locale, 'notif.tip');
-  }
-  const text = message.text.trim();
-  if (text !== '') {
-    return text;
-  }
-  if ((message.mediaCount ?? message.media?.length ?? 0) > 0) {
-    return uiMessage(locale, 'notif.media');
-  }
-  return uiMessage(locale, 'notif.sentYou');
 }
 
 /**
