@@ -565,6 +565,18 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     return result.data;
   }
 
+  function parseMessageList(value: unknown, url: string): OfApiMessage[] {
+    const rows = parseWith(z.array(z.unknown()), value, url);
+    const messages: OfApiMessage[] = [];
+    for (const row of rows) {
+      const parsed = ofapiMessageSchema.safeParse(row);
+      if (parsed.success) {
+        messages.push(parsed.data);
+      }
+    }
+    return messages;
+  }
+
   /** Account-scoped operations: unwrap the {data,_meta,_pagination} envelope. */
   function unwrapEnvelope(payload: unknown, url: string): {
     data: unknown;
@@ -659,7 +671,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         skip_users: params.skipUsers ?? 'all',
       }, params.priority, params.retry);
       const { data, nextPageUrl } = unwrapEnvelope(payload, path);
-      return { messages: parseWith(z.array(ofapiMessageSchema), data, path), nextPageUrl };
+      return { messages: parseMessageList(data, path), nextPageUrl };
     },
 
     async getMessage(params): Promise<OfApiMessage> {

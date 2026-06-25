@@ -116,6 +116,29 @@ describe('listMessages (recorded fixture)', () => {
     expect(requests).toHaveLength(1);
   });
 
+  it('skips malformed message rows without rejecting the whole page', async () => {
+    const fixture = JSON.parse(JSON.stringify(loadFixture('list-messages.json'))) as {
+      data: Array<Record<string, unknown>>;
+    };
+    const missingSender = fixture.data[1];
+    const missingCreatedAt = fixture.data[2];
+    if (missingSender === undefined || missingCreatedAt === undefined) {
+      throw new Error('fixture shape changed');
+    }
+    const missingSenderId = missingSender['id'];
+    const missingCreatedAtId = missingCreatedAt['id'];
+    delete missingSender['isSentByMe'];
+    delete missingCreatedAt['createdAt'];
+    const { client } = makeClient([() => jsonResponse(fixture)]);
+
+    const result = await client.listMessages({ purpose: 'message-tail', accountId: ACCOUNT_ID, chatId: '1000039' });
+
+    expect(result.messages).toHaveLength(10);
+    expect(result.messages.map((message) => message.id)).not.toContain(missingSenderId);
+    expect(result.messages.map((message) => message.id)).not.toContain(missingCreatedAtId);
+    expect(result.nextPageUrl).toContain('first_id=');
+  });
+
   it('emits request lifecycle diagnostics for message history reads', async () => {
     const fixture = loadFixture('list-messages.json');
     const events: OfApiRequestEvent[] = [];
