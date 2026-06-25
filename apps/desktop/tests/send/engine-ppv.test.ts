@@ -1,7 +1,7 @@
 // PPV send path (PRD F7, SPEC §7): pre-enqueue validation (an invalid PPV
 // never creates an outbox row), the single-row guarantee (sequences never
 // apply), the Hub command payload (price/mediaFiles/previews/lockedText), the
-// failure semantics shared with text sends, and the caption-less verifier
+// failure semantics shared with text sends, and the caption-less local verifier
 // match (price + media count + window — designed and pinned here).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -26,9 +26,9 @@ import {
   makeSentMessage,
   makeStubHubCommandClient,
   makeStubClient,
-  makeTailMessage,
   memoryDataLayer,
   seedChat,
+  seedMessage,
   toMediaUrl,
 } from './helpers';
 import type { StubSendClient } from './helpers';
@@ -277,11 +277,11 @@ describe('send engine — PPV path (PRD F7)', () => {
     const { localId } = engine.sendPpv(ppvArgs());
     await drain();
     expect(data.outbox.get(localId)).toMatchObject({ state: 'unconfirmed', errorCode: 'CG-OF-06' });
-    // the scheduled verifier pass reads the tail; it must never re-POST
-    stub.setTail([]);
+    // The scheduled verifier pass must never read message bodies or re-POST.
     await vi.advanceTimersByTimeAsync(VERIFY_WINDOW_AFTER_MS);
     await drain();
     expect(stub.sendCalls).toHaveLength(1);
+    expect(stub.listMessagesCalls).toBe(0);
     expect(data.outbox.get(localId)?.state).toBe('unconfirmed');
     engine.dispose();
   });
@@ -319,34 +319,66 @@ describe('send engine — PPV path (PRD F7)', () => {
     return localId;
   }
 
+  function seedPpvCandidate({
+    id,
+    text = '',
+    price = 25,
+    mediaCount = 2,
+    createdAt = new Date().toISOString(),
+    fromMe = true,
+  }: {
+    id: number;
+    text?: string;
+    price?: number;
+    mediaCount?: number;
+    createdAt?: string;
+    fromMe?: boolean;
+  }): void {
+    seedMessage(data, {
+      messageId: String(id),
+      createdAt,
+      isSentByMe: fromMe,
+      textHtml: text,
+      textPlain: text,
+      price,
+      media: Array.from({ length: mediaCount }, (_, index) => ({
+        id: `media-${id}-${index}`,
+        type: 'photo',
+        thumbUrl: null,
+        fullUrl: null,
+        isReady: true,
+        locked: price > 0,
+        durationSeconds: null,
+      })),
+    });
+  }
+
   it('caption-less row matches an own empty-text message with the same price + media count in the window', async () => {
     const engine = makeEngine();
     const localId = unconfirmedPpvRow({ text: '' });
 
-    stub.setTail([
-      // decoys: same price wrong count; same count wrong price; a text message
-      makeTailMessage({ id: 801, text: '', price: 25, mediaIds: [1] }),
-      makeTailMessage({ id: 802, text: '', price: 10, mediaIds: [1, 2] }),
-      makeTailMessage({ id: 803, text: '<p>hello there</p>' }),
-      // the real delivery: empty text, price 25, two media
-      makeTailMessage({ id: 804, text: '', price: 25, mediaIds: [51, 52] }),
-    ]);
+    // decoys: same price wrong count; same count wrong price; a text message
+    seedPpvCandidate({ id: 801, price: 25, mediaCount: 1 });
+    seedPpvCandidate({ id: 802, price: 10, mediaCount: 2 });
+    seedPpvCandidate({ id: 803, text: 'hello there', price: 0, mediaCount: 0 });
+    // the real delivery: empty text, price 25, two media
+    seedPpvCandidate({ id: 804, price: 25, mediaCount: 2 });
     await engine.verifyChat(ACCT, CHAT);
 
     expect(data.outbox.get(localId)).toMatchObject({ state: 'sent', messageId: '804' });
+    expect(stub.listMessagesCalls).toBe(0);
     engine.dispose();
   });
 
   it('caption-less row stays unconfirmed when only mismatching candidates exist', async () => {
     const engine = makeEngine();
     const localId = unconfirmedPpvRow({ text: '' });
-    stub.setTail([
-      makeTailMessage({ id: 811, text: '', price: 25, mediaIds: [1] }), // wrong count
-      makeTailMessage({ id: 812, text: '', price: 30, mediaIds: [1, 2] }), // wrong price
-      makeTailMessage({ id: 813, text: '', price: 25, mediaIds: [1, 2], fromMe: false }), // not ours
-    ]);
+    seedPpvCandidate({ id: 811, price: 25, mediaCount: 1 }); // wrong count
+    seedPpvCandidate({ id: 812, price: 30, mediaCount: 2 }); // wrong price
+    seedPpvCandidate({ id: 813, price: 25, mediaCount: 2, fromMe: false }); // not ours
     await engine.verifyChat(ACCT, CHAT);
     expect(data.outbox.get(localId)?.state).toBe('unconfirmed');
+    expect(stub.listMessagesCalls).toBe(0);
     engine.dispose();
   });
 
@@ -354,22 +386,22 @@ describe('send engine — PPV path (PRD F7)', () => {
     const engine = makeEngine();
     const localId = unconfirmedPpvRow({ text: '' });
     const tooLate = new Date(Date.now() + VERIFY_WINDOW_AFTER_MS + 60_000).toISOString();
-    stub.setTail([makeTailMessage({ id: 821, text: '', price: 25, mediaIds: [51, 52], createdAt: tooLate })]);
+    seedPpvCandidate({ id: 821, price: 25, mediaCount: 2, createdAt: tooLate });
     await engine.verifyChat(ACCT, CHAT);
     expect(data.outbox.get(localId)?.state).toBe('unconfirmed');
+    expect(stub.listMessagesCalls).toBe(0);
     engine.dispose();
   });
 
   it('captioned PPV row matches by caption AND pins price/media count (no cross-claim of a text twin)', async () => {
     const engine = makeEngine();
     const localId = unconfirmedPpvRow(); // caption 'just for you 🖤', $25, 2 media
-    stub.setTail([
-      // a plain TEXT message with the identical wording must not be claimed
-      makeTailMessage({ id: 831, text: '<p>just for you 🖤</p>' }),
-      makeTailMessage({ id: 832, text: '<p>just for you 🖤</p>', price: 25, mediaIds: [51, 52] }),
-    ]);
+    // a plain TEXT message with the identical wording must not be claimed
+    seedPpvCandidate({ id: 831, text: 'just for you 🖤', price: 0, mediaCount: 0 });
+    seedPpvCandidate({ id: 832, text: 'just for you 🖤', price: 25, mediaCount: 2 });
     await engine.verifyChat(ACCT, CHAT);
     expect(data.outbox.get(localId)).toMatchObject({ state: 'sent', messageId: '832' });
+    expect(stub.listMessagesCalls).toBe(0);
     engine.dispose();
   });
 
@@ -377,24 +409,24 @@ describe('send engine — PPV path (PRD F7)', () => {
     const engine = makeEngine();
     const first = unconfirmedPpvRow({ text: '' });
     const second = unconfirmedPpvRow({ text: '' });
-    stub.setTail([
-      makeTailMessage({ id: 841, text: '', price: 25, mediaIds: [51, 52] }),
-      makeTailMessage({ id: 842, text: '', price: 25, mediaIds: [51, 52] }),
-    ]);
+    seedPpvCandidate({ id: 841, price: 25, mediaCount: 2 });
+    seedPpvCandidate({ id: 842, price: 25, mediaCount: 2 });
     await engine.verifyChat(ACCT, CHAT);
     const ids = [data.outbox.get(first)?.messageId, data.outbox.get(second)?.messageId];
     expect(new Set(ids).size).toBe(2);
     expect(ids).toContain('841');
     expect(ids).toContain('842');
+    expect(stub.listMessagesCalls).toBe(0);
     engine.dispose();
   });
 
   it('plain text rows are unaffected by the PPV discriminators (price-0 candidates still match)', async () => {
     const engine = makeEngine();
     const localId = insertLegacyDirectUnconfirmed({ text: 'hey you', price: 0, mediaFiles: [], previews: [] });
-    stub.setTail([makeTailMessage({ id: 851, text: '<p>hey you</p>' })]);
+    seedMessage(data, { messageId: '851', textHtml: '<p>hey you</p>', textPlain: 'hey you' });
     await engine.verifyChat(ACCT, CHAT);
     expect(data.outbox.get(localId)).toMatchObject({ state: 'sent', messageId: '851' });
+    expect(stub.listMessagesCalls).toBe(0);
     engine.dispose();
   });
 });

@@ -25,7 +25,6 @@ import {
   makeSentMessage,
   makeStubHubCommandClient,
   makeStubClient,
-  makeTailMessage,
   memoryDataLayer,
   seedChat,
   seedMessage,
@@ -255,17 +254,18 @@ describe('send engine (SPEC §7)', () => {
 
   // ── Verifier ─────────────────────────────────────────────────────────────
 
-  it('verifier promotes on tail match: normalized text equality + time window', async () => {
+  it('verifier promotes from local sync evidence: normalized text equality + time window', async () => {
     const { engine } = makeEngine();
     const localId = insertLegacyDirectUnconfirmed({ text: 'hello   world ' }); // normalization must match
 
-    stub.setTail([makeTailMessage({ id: 555, text: '<p>hello world</p>', fromMe: true })]);
+    seedMessage(data, { messageId: '555', textHtml: '<p>hello world</p>', textPlain: 'hello world' });
     await engine.verifyChat(ACCT, CHAT);
 
     expect(data.outbox.get(localId)).toMatchObject({
       state: 'sent',
       messageId: '555',
     });
+    expect(stub.listMessagesCalls).toBe(0);
     expect(stub.sendCalls).toHaveLength(0);
     engine.dispose();
   });
@@ -278,15 +278,16 @@ describe('send engine (SPEC §7)', () => {
     expect(rowState(secondId)).toBe('unconfirmed');
 
     // ONE matching own message: only the oldest row may claim it.
-    stub.setTail([makeTailMessage({ id: 700, text: 'dup' })]);
+    seedMessage(data, { messageId: '700', textHtml: '<p>dup</p>', textPlain: 'dup' });
     await engine.verifyChat(ACCT, CHAT);
     expect(data.outbox.get(firstId)).toMatchObject({ state: 'sent', messageId: '700' });
     expect(rowState(secondId)).toBe('unconfirmed');
 
     // A second matching message appears: the second row claims the OTHER id.
-    stub.setTail([makeTailMessage({ id: 700, text: 'dup' }), makeTailMessage({ id: 701, text: 'dup' })]);
+    seedMessage(data, { messageId: '701', textHtml: '<p>dup</p>', textPlain: 'dup' });
     await engine.verifyChat(ACCT, CHAT);
     expect(data.outbox.get(secondId)).toMatchObject({ state: 'sent', messageId: '701' });
+    expect(stub.listMessagesCalls).toBe(0);
     engine.dispose();
   });
 
@@ -294,19 +295,24 @@ describe('send engine (SPEC §7)', () => {
     const { engine } = makeEngine();
     const localId = insertLegacyDirectUnconfirmed({ text: 'exact text' });
 
-    stub.setTail([
-      makeTailMessage({ id: 801, text: 'different text' }),
+    seedMessage(data, { messageId: '801', textHtml: '<p>different text</p>', textPlain: 'different text' });
+    seedMessage(data, {
       // right text but 30 min after the row — outside [−2 min, +10 min]
-      makeTailMessage({
-        id: 802,
-        text: 'exact text',
-        createdAt: new Date(Date.now() + 30 * 60_000).toISOString(),
-      }),
+      messageId: '802',
+      textHtml: '<p>exact text</p>',
+      textPlain: 'exact text',
+      createdAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+    });
+    seedMessage(data, {
       // right text but from the fan
-      makeTailMessage({ id: 803, text: 'exact text', fromMe: false }),
-    ]);
+      messageId: '803',
+      textHtml: '<p>exact text</p>',
+      textPlain: 'exact text',
+      isSentByMe: false,
+    });
     await engine.verifyChat(ACCT, CHAT);
     expect(rowState(localId)).toBe('unconfirmed');
+    expect(stub.listMessagesCalls).toBe(0);
     engine.dispose();
   });
 
@@ -331,7 +337,7 @@ describe('send engine (SPEC §7)', () => {
     await engine.reconcileOnBoot();
 
     await vi.advanceTimersByTimeAsync(2 * VERIFY_INTERVAL_MS);
-    expect(stub.listMessagesCalls).toBeGreaterThanOrEqual(2);
+    expect(stub.listMessagesCalls).toBe(0);
 
     // Beyond the 10-minute auto window the chain goes quiet…
     await vi.advanceTimersByTimeAsync(15 * 60_000);
@@ -339,11 +345,17 @@ describe('send engine (SPEC §7)', () => {
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect(stub.listMessagesCalls).toBe(callsWhenStale);
 
-    // …but manual verifyNow still works and can promote.
-    stub.setTail([makeTailMessage({ id: 920, text: 'lost', createdAt: new Date('2026-06-11T12:00:01.000Z').toISOString() })]);
+    // …but manual verifyNow still works with already-synced local evidence.
+    seedMessage(data, {
+      messageId: '920',
+      textHtml: '<p>lost</p>',
+      textPlain: 'lost',
+      createdAt: new Date('2026-06-11T12:00:01.000Z').toISOString(),
+    });
     await engine.verifyChat(ACCT, CHAT);
     const rows = data.outbox.listForChat(ACCT, CHAT);
     expect(rows[0]).toMatchObject({ state: 'sent', messageId: '920' });
+    expect(stub.listMessagesCalls).toBe(0);
     engine.dispose();
   });
 

@@ -4,10 +4,10 @@
 // reach 'sending' exclusively through the atomic outbox.claimNextQueued
 // (queued→sending persisted BEFORE command intake);
 // no transition re-queues a row; restarts park 'sending' as 'unconfirmed'; and
-// recovery is verification (read-only) or a NEW row (retry of a definite
+// recovery is Hub status / local sync evidence or a NEW row (retry of a definite
 // failure) — never a second attempt on the same row. Indeterminate outcomes
 // (timeout / reset-after-send / 5xx) are NEVER auto-retried — the verifier
-// promotes them on evidence (messages.sent event or tail-fetch match) only.
+// promotes them on evidence (Hub command status or messages.sent/local DB match) only.
 
 import { randomUUID } from 'node:crypto';
 import { CgError } from '@chatgoose/shared';
@@ -22,7 +22,7 @@ import type {
 } from '../db/index';
 import type { OfApiClient } from '../ofapi/client';
 import type { SleepFn } from '../ofapi/rate-limiter';
-import { mapMessage, type ToMediaUrl } from '../sync/mappers';
+import type { ToMediaUrl } from '../sync/mappers';
 import type { MessageGuardRuntime } from '../message-guard/runtime';
 
 // Multi-part pacing (SPEC §7.7): randomized so sequences don't read as a bot.
@@ -37,7 +37,6 @@ export const VERIFY_AUTO_STOP_AGE_MS = 10 * 60_000;
 // behind, delivery-latency tolerant ahead).
 export const VERIFY_WINDOW_BEFORE_MS = 2 * 60_000;
 export const VERIFY_WINDOW_AFTER_MS = 10 * 60_000;
-const VERIFY_TAIL_LIMIT = 50;
 // Typing endpoint is free but rate-courteous: min 2.5 s between calls per chat.
 export const TYPING_MIN_INTERVAL_MS = 2500;
 // SPEC §7.9: mark-as-read debounced 1.5 s per chat, gated on the settings toggle.
@@ -93,7 +92,7 @@ export interface SendEngine {
   dismiss(args: { accountId: string; localId: string }): void;
   /** Remaining queued rows → cancelled; an in-flight part finishes its own course. */
   cancelSequence(args: { accountId: string; sequenceId: string }): void;
-  /** Tail-fetch + match pass over the chat's unconfirmed rows (also user-triggered). */
+  /** Hub status + local match pass over the chat's unconfirmed rows (also user-triggered). */
   verifyChat(accountId: string, chatId: string): Promise<void>;
   /** messages.sent for a chat with unconfirmed rows → local-only match (no network). */
   handleSyncEvent(event: SyncEvent): void;
@@ -152,7 +151,7 @@ function hubFailureCode(error: unknown, unavailable: boolean): 'CG-HUB-01' | 'CG
 }
 
 export function createSendEngine(options: SendEngineOptions): SendEngine {
-  const { client, data, messageGuard, toMediaUrl, getSettings } = options;
+  const { data, messageGuard, getSettings } = options;
   const hubCommandClient = options.hubCommandClient;
   const now = options.now ?? Date.now;
   const sleep: SleepFn =
@@ -608,22 +607,6 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         // Core or network still unavailable; the periodic status pass retries.
       }
     }
-    const directRows = data.outbox
-      .listByStateForChat(accountId, chatId, 'unconfirmed')
-      .filter((row) => row.transport === 'direct');
-    if (directRows.length === 0) {
-      return;
-    }
-    const { messages } = await client.listMessages({
-      accountId,
-      chatId,
-      order: 'desc',
-      limit: VERIFY_TAIL_LIMIT,
-      purpose: 'send',
-    });
-    data.messages.upsertMany(
-      messages.map((message) => mapMessage(accountId, chatId, message, toMediaUrl)),
-    );
     matchUnconfirmed(accountId, chatId);
   }
 
