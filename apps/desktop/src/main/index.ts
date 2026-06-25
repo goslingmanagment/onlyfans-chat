@@ -68,6 +68,11 @@ import {
   type AppUpdaterLike,
   type UpdateController,
 } from './platform/updater';
+import {
+  appendSearchToUrl,
+  isAllowedDevRendererUrl,
+  isAllowedExternalOpenUrl,
+} from './platform/navigation';
 import type { UnreadReconcileSettingsVM, UpdateStatusVM } from '../preload/contract';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
@@ -257,9 +262,9 @@ function loadWindowContent(win: BrowserWindow): void {
   const openView = !app.isPackaged ? process.env['CHATGOOSE_OPEN_VIEW'] : undefined;
   const search =
     openView === 'settings' || openView === 'spenders' ? `view=${openView}` : null;
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    const url = process.env['ELECTRON_RENDERER_URL'];
-    void win.loadURL(search !== null ? `${url}?${search}` : url);
+  const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
+  if (!app.isPackaged && isAllowedDevRendererUrl(rendererUrl)) {
+    void win.loadURL(appendSearchToUrl(rendererUrl, search));
   } else {
     void win.loadFile(join(import.meta.dirname, '../renderer/index.html'), {
       ...(search !== null ? { search } : {}),
@@ -295,8 +300,19 @@ function createWindow(options: { load?: boolean } = {}): BrowserWindow {
   win.webContents.on('did-finish-load', () => {
     win.webContents.setZoomFactor(uiScale);
   });
+  win.webContents.on('will-navigate', (event) => {
+    event.preventDefault();
+  });
+  win.webContents.on('will-redirect', (event) => {
+    event.preventDefault();
+  });
+  win.webContents.on('will-attach-webview', (event) => {
+    event.preventDefault();
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isAllowedExternalOpenUrl(url)) {
+      void shell.openExternal(url);
+    }
     return { action: 'deny' };
   });
   if (options.load ?? true) {
