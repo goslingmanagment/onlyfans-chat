@@ -21,7 +21,11 @@ export const MEDIA_SCHEME_PRIVILEGES = {
   privileges: { supportFetchAPI: true, stream: true },
 } as const;
 
-// ─── Host allowlist (https + OnlyFans hosts only) ────────────────────────
+// ─── Host allowlist (https + OF/FansAPI media hosts only) ────────────────
+
+function isHostOrSubdomain(hostname: string, base: string): boolean {
+  return hostname === base || hostname.endsWith(`.${base}`);
+}
 
 export function isAllowedMediaUrl(remoteUrl: string): boolean {
   let url: URL;
@@ -31,7 +35,8 @@ export function isAllowedMediaUrl(remoteUrl: string): boolean {
     return false;
   }
   if (url.protocol !== 'https:') return false;
-  return url.hostname === 'onlyfans.com' || url.hostname.endsWith('.onlyfans.com');
+  return isHostOrSubdomain(url.hostname, 'onlyfans.com') ||
+    isHostOrSubdomain(url.hostname, 'fansapi.com');
 }
 
 // ─── Token mapping ────────────────────────────────────────────────────────

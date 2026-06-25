@@ -19,6 +19,9 @@ const ALLOWED_URLS = [
   'https://cdn2.onlyfans.com/files/v/video.mp4?ses=1&sig=a%2Fb',
   'https://public.onlyfans.com/files/avatar.jpg',
   'https://onlyfans.com/files/bare-host.jpg',
+  'https://cdn.fansapi.com/files/cached-thumb.jpg',
+  'https://dl.fansapi.com/files/proxy-stream.mp4',
+  'https://cdn2.fansapi.com/files/mixed-cache.jpg',
 ];
 
 // Every shape the legacy reversible scheme would have happily round-tripped.
@@ -28,8 +31,11 @@ const REJECTED_URLS = [
   'http://127.0.0.1/x',
   'http://10.0.0.1/x',
   'http://thumbs.onlyfans.com/no-https.jpg', // https only, even on an OF host
+  'http://cdn.fansapi.com/no-https.jpg',
   'https://evilonlyfans.com/x.jpg', // suffix must match a label boundary
   'https://onlyfans.com.evil.test/x.jpg',
+  'https://evilfansapi.com/x.jpg',
+  'https://fansapi.com.evil.test/x.jpg',
   'data:text/html,<script>alert(1)</script>',
   'file:///etc/passwd',
   'ftp://h/x',
