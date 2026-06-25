@@ -57,6 +57,9 @@ const REPLY_TONE_VALUES = [
   'spicy',
 ] as const satisfies readonly ReplyTone[];
 
+const LOOPBACK_HUB_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+const PROD_HUB_ORIGIN = new URL(DEFAULT_AGENCY_HUB_BASE_URL).origin;
+
 // ─── Persisted state ────────────────────────────────────────────────────
 
 export type PersistedSettings = Omit<
@@ -112,6 +115,37 @@ const unreadReconcileSettingsSchema = z.strictObject({
   hiddenMaxPages: z.number().int().min(1).max(50),
 });
 
+function normalizeHubBaseUrl(rawValue: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawValue.trim());
+  } catch {
+    return null;
+  }
+  const isProdHub = parsed.origin === PROD_HUB_ORIGIN;
+  const isLoopback = LOOPBACK_HUB_HOSTS.has(parsed.hostname);
+  if (!isProdHub && !isLoopback) return null;
+  if (isProdHub && parsed.protocol !== 'https:') return null;
+  if (isLoopback && parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  if (parsed.pathname !== '' && parsed.pathname !== '/') return null;
+  parsed.pathname = '';
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.origin;
+}
+
+const hubBaseUrlSchema = z.string().min(1).transform((value, ctx) => {
+  const normalized = normalizeHubBaseUrl(value);
+  if (normalized === null) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Hub URL must be https://gosling-agency.ru or a loopback dev URL.',
+    });
+    return z.NEVER;
+  }
+  return normalized;
+}).nullable();
+
 const persistedFieldSchemas = {
   featureModels: z.record(z.enum(MODEL_SELECTABLE_FEATURES), z.string().min(1)),
   featureReasoning: z.record(z.enum(MODEL_SELECTABLE_FEATURES), z.enum(REASONING_EFFORT_VALUES)),
@@ -135,7 +169,7 @@ const persistedFieldSchemas = {
   // Owner-chosen left-rail account order (account ids, top→bottom); drag-sorted.
   accountOrder: z.array(z.string().min(1)).max(200),
   // Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off.
-  hubBaseUrl: z.string().min(1).nullable(),
+  hubBaseUrl: hubBaseUrlSchema,
   // C6 custody bridge: GETs may be direct or hub.
   ofapiReadTransport: z.enum(OFAPI_READ_TRANSPORTS),
   // C6b+ hard invariant: all app writes go through Hub commands.
@@ -433,6 +467,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
 
     async update(patch: unknown): Promise<SettingsVM> {
       const parsed = settingsPatchSchema.parse(patch);
+      const before = readPersisted();
 
       if (parsed.ofapiKey !== undefined) await applySecret('ofapiKey', parsed.ofapiKey);
       if (parsed.anthropicKey !== undefined) await applySecret('anthropicKey', parsed.anthropicKey);
@@ -440,6 +475,13 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
         await applySecret('openRouterKey', parsed.openRouterKey);
       }
       if (parsed.hubApiKey !== undefined) await applySecret('hubApiKey', parsed.hubApiKey);
+      if (
+        parsed.hubBaseUrl !== undefined &&
+        parsed.hubBaseUrl !== before.hubBaseUrl &&
+        parsed.hubApiKey === undefined
+      ) {
+        await applySecret('hubApiKey', '');
+      }
 
       for (const key of PERSISTED_SETTINGS_KEYS) {
         const value = parsed[key];

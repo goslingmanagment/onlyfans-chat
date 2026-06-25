@@ -283,10 +283,10 @@ describe('settings store', () => {
   it('routes the hub chatter key to the keychain and persists hubBaseUrl (round-trip)', async () => {
     const { store, queries, secrets } = createStore();
     const vm = await store.update({
-      hubBaseUrl: 'https://hub.example.com',
+      hubBaseUrl: 'http://localhost:4000',
       hubApiKey: 'agency_hub_core_secret',
     });
-    expect(vm.hubBaseUrl).toBe('https://hub.example.com');
+    expect(vm.hubBaseUrl).toBe('http://localhost:4000');
     expect(vm.hasHubKey).toBe(true);
     expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_secret');
 
@@ -298,7 +298,7 @@ describe('settings store', () => {
 
     const reread = createSettingsStore({ queries, secrets });
     const again = await reread.get();
-    expect(again.hubBaseUrl).toBe('https://hub.example.com');
+    expect(again.hubBaseUrl).toBe('http://localhost:4000');
     expect(again.hasHubKey).toBe(true);
   });
 
@@ -308,10 +308,50 @@ describe('settings store', () => {
     expect(initial.hubBaseUrl).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
     expect(initial.hasHubKey).toBe(false);
 
-    await store.update({ hubBaseUrl: 'https://hub.example.com' });
+    await store.update({ hubBaseUrl: 'http://localhost:4000/' });
+    expect((await store.get()).hubBaseUrl).toBe('http://localhost:4000');
     const cleared = await store.update({ hubBaseUrl: null });
     expect(cleared.hubBaseUrl).toBeNull();
     await expect(store.update({ hubBaseUrl: '' })).rejects.toThrow();
+  });
+
+  it('rejects non-allowlisted Hub URLs before they can receive the hub key', async () => {
+    const { store, secrets } = createStore();
+    await expect(
+      store.update({ hubBaseUrl: 'https://evil.example.com', hubApiKey: 'agency_hub_core_secret' }),
+    ).rejects.toThrow();
+    await expect(store.update({ hubBaseUrl: 'http://gosling-agency.ru' })).rejects.toThrow();
+    await expect(store.update({ hubBaseUrl: 'https://gosling-agency.ru.evil.test' })).rejects.toThrow();
+    expect(secrets.values.has('hubApiKey')).toBe(false);
+  });
+
+  it('clears the hub key when the Hub host changes without a replacement key', async () => {
+    const { store, secrets } = createStore();
+    await store.update({
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      hubApiKey: 'agency_hub_core_secret',
+    });
+    expect((await store.get()).hasHubKey).toBe(true);
+
+    const vm = await store.update({ hubBaseUrl: 'http://127.0.0.1:4000' });
+    expect(vm.hubBaseUrl).toBe('http://127.0.0.1:4000');
+    expect(vm.hasHubKey).toBe(false);
+    expect(secrets.values.has('hubApiKey')).toBe(false);
+  });
+
+  it('keeps the hub key when the Hub host changes with a replacement key', async () => {
+    const { store, secrets } = createStore();
+    await store.update({
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      hubApiKey: 'agency_hub_core_old',
+    });
+
+    const vm = await store.update({
+      hubBaseUrl: 'http://localhost:4000',
+      hubApiKey: 'agency_hub_core_new',
+    });
+    expect(vm.hasHubKey).toBe(true);
+    expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_new');
   });
 
   it('persists accountPageLabels overrides (round-trip) and rejects bad shapes', async () => {
