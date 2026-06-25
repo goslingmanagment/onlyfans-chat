@@ -121,6 +121,19 @@ describe('messages tombstone', () => {
     expect(page.items.map((item) => item.deleted)).toEqual([false, true, false]);
   });
 
+  it('keeps tombstones monotonic across later upserts', () => {
+    layer.messages.upsertMany([sampleMessage({ messageId: 'm002', deleted: false })]);
+    layer.messages.markDeleted('acct_1', '101', ['m002']);
+    layer.messages.upsertMany([sampleMessage({ messageId: 'm002', textPlain: 'resynced', deleted: false })]);
+    expect(layer.messages.get('acct_1', '101', 'm002')).toMatchObject({
+      textPlain: 'resynced',
+      deleted: true,
+    });
+
+    layer.messages.upsertMany([sampleMessage({ messageId: 'm003', deleted: true })]);
+    expect(layer.messages.get('acct_1', '101', 'm003')?.deleted).toBe(true);
+  });
+
   it('is a no-op (and publishes nothing) for unknown ids', () => {
     seed(1);
     layer.bus.flushNow();

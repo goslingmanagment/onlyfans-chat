@@ -37,7 +37,7 @@ ON CONFLICT (account_id, chat_id, message_id) DO UPDATE SET
   tip_text = excluded.tip_text,
   reply_to = excluded.reply_to,
   media = excluded.media,
-  deleted = excluded.deleted,
+  deleted = (messages.deleted OR excluded.deleted),
   raw = excluded.raw`;
 
 export interface MessagePage {
