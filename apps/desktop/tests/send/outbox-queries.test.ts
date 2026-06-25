@@ -53,6 +53,7 @@ describe('outbox queries', () => {
       textHighlights: [],
       attempts: 0,
       retryOf: 'L0',
+      coreCommandId: null,
       price: 0,
       mediaFiles: [],
       previews: [],
@@ -97,6 +98,16 @@ describe('outbox queries', () => {
     expect(second?.localId).toBe('L2');
     expect(data.outbox.claimNextQueued(ACCT, CHAT)).toBeNull();
     expect(data.outbox.claimNextQueued(ACCT, 'other-chat')).toBeNull();
+  });
+
+  it('records a core command id once and keeps the original value', () => {
+    insert(data, { localId: 'L1' });
+    expect(data.outbox.setCoreCommandId('L1', 'cmd-1')).toBe(true);
+    expect(data.outbox.get('L1')).toMatchObject({ coreCommandId: 'cmd-1' });
+
+    expect(data.outbox.setCoreCommandId('L1', 'cmd-2')).toBe(true);
+    expect(data.outbox.get('L1')).toMatchObject({ coreCommandId: 'cmd-1' });
+    expect(data.outbox.setCoreCommandId('missing', 'cmd-3')).toBe(false);
   });
 
   it('transition is guarded: wrong from-state is a no-op returning false', () => {

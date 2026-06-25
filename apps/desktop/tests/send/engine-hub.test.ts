@@ -456,7 +456,10 @@ describe('send engine hub command transport', () => {
 
     const first = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello'] }).localIds[0]!;
     await drain();
-    expect(data.outbox.get(first)?.state).toBe('failed');
+    expect(data.outbox.get(first)).toMatchObject({
+      state: 'failed',
+      coreCommandId: originalCoreId,
+    });
 
     const retry = engine.retry({ accountId: ACCT, localId: first, text: 'hello again' }).localId;
     await drain();
@@ -469,6 +472,68 @@ describe('send engine hub command transport', () => {
       }),
     });
     expect(direct.sendCalls).toHaveLength(0);
+    engine.dispose();
+  });
+
+  it('retries a pre-intake auth failure as fresh lineage without re-posting the original', async () => {
+    const direct = makeStubClient();
+    const createOfapiCommand = vi
+      .fn()
+      .mockRejectedValueOnce(new HubError('auth', { message: 'chatter key expired' }))
+      .mockImplementationOnce(async ({ command: request }) =>
+        command(request.clientCommandId, 'confirmed', {
+          commandId: '44444444-4444-4444-8444-444444444444',
+          platformMessageId: '9003',
+        }),
+      );
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: {
+        createOfapiCommand,
+        getOfapiCommand: vi.fn(),
+      },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+
+    const original = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['stale text'] })
+      .localIds[0]!;
+    await drain();
+    expect(data.outbox.get(original)).toMatchObject({
+      state: 'failed',
+      coreCommandId: null,
+      errorCode: 'CG-HUB-01',
+    });
+
+    const retry = engine.retry({ accountId: ACCT, localId: original, text: 'edited text' }).localId;
+    await drain();
+
+    expect(createOfapiCommand).toHaveBeenCalledTimes(2);
+    expect(createOfapiCommand.mock.calls.map(([arg]) => arg.command.clientCommandId)).toEqual([
+      original,
+      retry,
+    ]);
+    expect(createOfapiCommand).toHaveBeenLastCalledWith({
+      command: expect.objectContaining({
+        clientCommandId: retry,
+        payload: { text: 'edited text' },
+        retryOfCommandId: null,
+      }),
+    });
+    expect(data.outbox.get(original)).toMatchObject({
+      state: 'cancelled',
+      coreCommandId: null,
+    });
+    expect(data.outbox.get(retry)).toMatchObject({
+      state: 'sent',
+      coreCommandId: '44444444-4444-4444-8444-444444444444',
+      messageId: '9003',
+    });
+    expect(direct.sendCalls).toHaveLength(0);
+    expect(direct.listMessagesCalls).toBe(0);
     engine.dispose();
   });
 });

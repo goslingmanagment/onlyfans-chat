@@ -41,6 +41,8 @@ export interface OutboxRow {
   textHighlights: string[];
   attempts: number;
   retryOf: string | null;
+  /** Server command id returned after Hub accepted this row's clientCommandId. */
+  coreCommandId: string | null;
   /** PPV price in dollars; 0 = plain text or free media message (v5). */
   price: number;
   /** Attached media ids; non-empty ⇒ this row is a media/PPV send (v5). */
@@ -70,8 +72,8 @@ export interface OutboxInsert {
 
 const COLUMNS =
   'local_id, account_id, chat_id, text, transport, state, sequence_id, part_index, message_id, ' +
-  'error_code, error_message, text_highlights, attempts, retry_of, price, media_files, ' +
-  'previews, created_at, updated_at';
+  'error_code, error_message, text_highlights, attempts, retry_of, core_command_id, price, ' +
+  'media_files, previews, created_at, updated_at';
 
 const outboxSqlSchema = z.object({
   local_id: z.string(),
@@ -89,6 +91,8 @@ const outboxSqlSchema = z.object({
   text_highlights: z.string(),
   attempts: z.number().int(),
   retry_of: z.string().nullable(),
+  // Audit/export queries created before v16 may omit this additive column.
+  core_command_id: z.string().nullable().default(null),
   price: z.number(),
   media_files: z.string(),
   previews: z.string(),
@@ -119,6 +123,7 @@ export function decodeOutboxRow(value: unknown): OutboxRow {
     textHighlights: highlightsSchema.parse(highlightsJson),
     attempts: row.attempts,
     retryOf: row.retry_of,
+    coreCommandId: row.core_command_id,
     price: row.price,
     mediaFiles: mediaIdsSchema.parse(mediaFilesJson),
     previews: mediaIdsSchema.parse(previewsJson),
@@ -143,6 +148,8 @@ export interface OutboxQueries {
   get(localId: string): OutboxRow | null;
   /** Guarded transition; false (no write) when the row is missing or not in `from`. */
   transition(args: OutboxTransitionArgs): boolean;
+  /** Records the Hub command id once core accepted this row's clientCommandId. */
+  setCoreCommandId(localId: string, coreCommandId: string): boolean;
   /** Most recent `limit` rows for the chat, chronological (insertion order) within the page. */
   listForChat(accountId: string, chatId: string, limit?: number): OutboxRow[];
   listByState(state: OutboxState): OutboxRow[];
@@ -251,6 +258,30 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
            WHERE local_id = @local_id AND state IN (${fromPlaceholders})`,
         )
         .run(params);
+      if (changes === 0) {
+        return false;
+      }
+      publish(row.accountId, row.chatId);
+      return true;
+    },
+
+    setCoreCommandId(localId, coreCommandId) {
+      const row = getOne(localId);
+      if (row === null) {
+        return false;
+      }
+      const { changes } = db
+        .prepare(
+          `UPDATE outbox
+           SET core_command_id = COALESCE(core_command_id, @core_command_id),
+               updated_at = @updated_at
+           WHERE local_id = @local_id`,
+        )
+        .run({
+          local_id: localId,
+          core_command_id: coreCommandId,
+          updated_at: new Date().toISOString(),
+        });
       if (changes === 0) {
         return false;
       }

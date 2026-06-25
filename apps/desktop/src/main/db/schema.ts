@@ -396,6 +396,14 @@ CREATE INDEX idx_message_guard_events_account_chat ON message_guard_events (acco
 CREATE INDEX idx_message_guard_events_hash ON message_guard_events (message_hash);
 `;
 
+// v16 — Core command lineage for Hub sends (audit-final H1). The row's local_id
+// is still the stable clientCommandId, but retries must reference the server's
+// accepted command id only when intake actually succeeded. Rows that failed
+// before core accepted them keep NULL and retry as fresh lineage.
+export const SCHEMA_V16 = `
+ALTER TABLE outbox ADD COLUMN core_command_id TEXT;
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',

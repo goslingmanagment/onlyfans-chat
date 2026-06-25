@@ -326,11 +326,14 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     if (hubCommandClient === undefined) {
       throw hubWriteUnavailable();
     }
+    if (row.coreCommandId !== null) {
+      return hubCommandClient.getOfapiCommand({ commandId: row.coreCommandId });
+    }
     let retryOfCommandId: string | null = null;
     if (row.retryOf !== null) {
       const original = data.outbox.get(row.retryOf);
       if (original !== null && original.transport === 'hub') {
-        retryOfCommandId = (await ensureHubCommand(original)).commandId;
+        retryOfCommandId = original.coreCommandId;
       }
     }
     const command =
@@ -356,9 +359,11 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
             payload: { text: row.text },
             retryOfCommandId,
           } as const);
-    return hubCommandClient.createOfapiCommand({
+    const accepted = await hubCommandClient.createOfapiCommand({
       command,
     });
+    data.outbox.setCoreCommandId(row.localId, accepted.commandId);
+    return accepted;
   }
 
   async function waitForHubCommand(command: HubOfapiCommand): Promise<HubOfapiCommand> {

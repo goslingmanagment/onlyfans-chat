@@ -35,7 +35,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
       expect(indexes).toContain('idx_message_guard_events_occurred');
       expect(indexes).toContain('idx_message_guard_events_hash');
-      expect(SCHEMA_VERSION).toBe(15);
+      expect(SCHEMA_VERSION).toBe(16);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       const guardCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('message_guard_events')")
@@ -86,6 +86,7 @@ describe('migration runner', () => {
         'text_highlights',
         'attempts',
         'retry_of',
+        'core_command_id',
         'price',
         'media_files',
         'previews',
@@ -97,6 +98,10 @@ describe('migration runner', () => {
         .prepare("SELECT dflt_value FROM pragma_table_info('outbox') WHERE name = 'transport'")
         .get();
       expect(transportDefault).toEqual({ dflt_value: "'hub'" });
+      const coreCommandDefault = layer.db
+        .prepare("SELECT dflt_value FROM pragma_table_info('outbox') WHERE name = 'core_command_id'")
+        .get();
+      expect(coreCommandDefault).toEqual({ dflt_value: null });
     } finally {
       layer.close();
     }
