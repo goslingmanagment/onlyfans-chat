@@ -167,6 +167,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
   const markReadTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const typingLastAt = new Map<string, number>();
   const pendingHubUnsends = new Map<string, Promise<void>>();
+  const submittedHubUnsends = new Set<string>();
   let disposed = false;
 
   function chatKey(accountId: string, chatId: string): string {
@@ -425,35 +426,52 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       throw hubWriteUnavailable();
     }
     const key = `${accountId}|${chatId}|${messageId}`;
+    if (data.messages.get(accountId, chatId, messageId)?.deleted === true) {
+      submittedHubUnsends.delete(key);
+      return;
+    }
     const pending = pendingHubUnsends.get(key);
     if (pending !== undefined) {
       return pending;
     }
+    if (submittedHubUnsends.has(key)) {
+      return;
+    }
+    submittedHubUnsends.add(key);
 
     const task = (async () => {
-      const command = await waitForHubCommand(
-        await hubCommandClient.createOfapiCommand({
-          command: {
-            clientCommandId: randomUUID(),
-            kind: 'unsend_message_v1',
-            accountId,
-            conversationId: chatId,
-            payload: { messageId },
-          },
-        }),
-      );
-      switch (command.state) {
-        case 'confirmed':
-          data.messages.markDeleted(accountId, chatId, [messageId]);
-          return;
-        case 'queued':
-        case 'in_flight':
-        case 'indeterminate':
-          return;
-        case 'failed_retryable':
-        case 'failed_terminal':
-        case 'cancelled':
-          throw new Error(command.lastErrorCode ?? `Hub unsend command ended as ${command.state}`);
+      try {
+        const command = await waitForHubCommand(
+          await hubCommandClient.createOfapiCommand({
+            command: {
+              clientCommandId: randomUUID(),
+              kind: 'unsend_message_v1',
+              accountId,
+              conversationId: chatId,
+              payload: { messageId },
+            },
+          }),
+        );
+        switch (command.state) {
+          case 'confirmed':
+            data.messages.markDeleted(accountId, chatId, [messageId]);
+            submittedHubUnsends.delete(key);
+            return;
+          case 'queued':
+          case 'in_flight':
+          case 'indeterminate':
+            return;
+          case 'failed_retryable':
+          case 'failed_terminal':
+          case 'cancelled':
+            submittedHubUnsends.delete(key);
+            throw new Error(command.lastErrorCode ?? `Hub unsend command ended as ${command.state}`);
+        }
+      } catch (error) {
+        if (isHubWriteUnavailable(error)) {
+          submittedHubUnsends.delete(key);
+        }
+        throw error;
       }
     })();
     pendingHubUnsends.set(key, task);

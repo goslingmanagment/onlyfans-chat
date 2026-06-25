@@ -346,8 +346,10 @@ describe('send engine hub command transport', () => {
 
     resolveCreate?.(command('unused', 'queued', { kind: 'unsend_message_v1' }));
     await Promise.all([first, second]);
+    await engine.unsend(ACCT, CHAT, '9001');
 
     expect(direct.deleteCalls).toHaveLength(0);
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
     expect(data.messages.get(ACCT, CHAT, '9001')).toMatchObject({ deleted: false });
     engine.dispose();
   });
