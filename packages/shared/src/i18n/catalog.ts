@@ -789,6 +789,9 @@ export const UI_MESSAGES = {
   'toast.sentYou': { en: 'sent you a message', ru: 'прислал(а) сообщение' },
   'toast.dismiss': { en: 'Dismiss', ru: 'Закрыть' },
   'notif.newMessage': { en: 'New message', ru: 'Новое сообщение' },
+  'notif.sentYou': { en: 'sent you a message', ru: 'прислал(а) сообщение' },
+  'notif.media': { en: 'Media', ru: 'Медиа' },
+  'notif.tip': { en: 'Tip', ru: 'Чаевые' },
   'notif.budgetTitle': { en: 'Credit budget at 80%', ru: 'Бюджет кредитов: 80%' },
   'notif.budgetBody': {
     en: '{used} of {budget} credits used this shift.',

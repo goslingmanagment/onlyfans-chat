@@ -19,6 +19,7 @@ import { readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { resolveUiLocale, uiMessage, type UiLocale } from '@chatgoose/shared/i18n/index';
 import { errorToFields } from '@chatgoose/shared/diagnostics/log';
+import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 import { createKeychain, type Keychain, type SecretName } from './secrets/keychain';
 import { createDataLayer, readSchemaVersion, type DataLayer } from './db/index';
 import { createLogger, type Logger } from './diagnostics/logger';
@@ -98,6 +99,10 @@ let recheckHubConfig: (() => void) | null = null;
  *  creation (zoom) and main-side notifications (locale). */
 let uiScale = 1;
 let uiLocale: UiLocale = 'en';
+let notificationPrefs = {
+  notificationsEnabled: true,
+  soundEnabled: true,
+};
 
 /** Pre-paint window background per resolved theme — must equal the CSS
  *  --color-bg0 values in renderer/src/styles/index.css or reload/resize
@@ -174,6 +179,27 @@ function startPackagedAutoUpdater(): void {
     .catch((error: unknown) => {
       logger?.warn('updates', 'failed to initialize auto-updater', errorToFields(error));
     });
+}
+
+function messageNotificationBody(
+  locale: UiLocale,
+  event: Extract<SyncEvent, { type: 'messageReceived' }>,
+): string {
+  const message = event.message;
+  if (message === undefined) {
+    return uiMessage(locale, 'notif.sentYou');
+  }
+  if (message.isTip === true) {
+    return uiMessage(locale, 'notif.tip');
+  }
+  const text = message.text.trim();
+  if (text !== '') {
+    return text;
+  }
+  if ((message.mediaCount ?? message.media?.length ?? 0) > 0) {
+    return uiMessage(locale, 'notif.media');
+  }
+  return uiMessage(locale, 'notif.sentYou');
 }
 
 /**
@@ -456,6 +482,8 @@ async function initOfapi(
     hubModeOverride: 'auto' | 'polling' | 'hub';
     spendSweepRollbackToLegacy: boolean;
     unreadReconcile: UnreadReconcileSettingsVM;
+    notificationsEnabled: boolean;
+    soundEnabled: boolean;
   } | null = initialSettings;
 
   // Hub config fingerprint: reconfigure the SSE connection only when the base
@@ -656,12 +684,13 @@ function reattachEventForwarding(): void {
         event.type === 'messageReceived' &&
         mainWindow &&
         (!mainWindow.isVisible() || !mainWindow.isFocused()) &&
+        notificationPrefs.notificationsEnabled &&
         Notification.isSupported()
       ) {
         const chat = liveData.chats.get(event.accountId, event.chatId);
         new Notification({
           title: chat?.fanName ?? uiMessage(uiLocale, 'notif.newMessage'),
-          body: chat?.lastMessagePreview ?? '',
+          body: messageNotificationBody(uiLocale, event),
           silent: true,
         }).show();
       }
@@ -771,6 +800,10 @@ async function boot(): Promise<void> {
     const vm = await settingsStore.get();
     uiScale = vm.uiScale;
     uiLocale = resolveUiLocale(vm.uiLocale, app.getLocale());
+    notificationPrefs = {
+      notificationsEnabled: vm.notificationsEnabled,
+      soundEnabled: vm.soundEnabled,
+    };
     // Steers prefers-color-scheme in the renderer (the .dark applier) AND
     // native chrome (menus/dialogs). 'system' | 'light' | 'dark' map 1:1.
     nativeTheme.themeSource = vm.uiTheme;
