@@ -93,6 +93,7 @@ describe('chat list fan-value join (DESIGN §1)', () => {
     layer.fanTransactions.upsertMany([
       tx({ txId: 'in-window-1', amount: 100, net: 80, createdAt: isoDaysAgo(2) }),
       tx({ txId: 'in-window-2', amount: 20.5, net: 16.4, createdAt: isoDaysAgo(29) }),
+      tx({ txId: 'refund', amount: -10, net: -8, createdAt: isoDaysAgo(1) }),
       tx({ txId: 'out-of-window', amount: 500, net: 400, createdAt: isoDaysAgo(31) }),
       tx({ txId: 'other-fan', fanId: '999', amount: 77, net: 61.6, createdAt: isoDaysAgo(1) }),
     ]);
@@ -100,8 +101,8 @@ describe('chat list fan-value join (DESIGN §1)', () => {
     const items = layer.chats.list({ accountId: 'acct_1', filter: 'all' }).items;
     const marcus = items.find((c) => c.chatId === '101');
     expect(marcus?.lifetimeSpend).toBeCloseTo(1284.4);
-    // 80 + 16.4 — the join sums net, never the gross amount column
-    expect(marcus?.spend30d).toBeCloseTo(96.4);
+    // 80 + 16.4 - 8 — the join sums signed net, never the gross amount column
+    expect(marcus?.spend30d).toBeCloseTo(88.4);
   });
 
   it('renders silence honestly: no fan row / no transactions → nulls', () => {

@@ -167,6 +167,7 @@ describe('createContextLoader', () => {
         transactions: [
           tx({ amount: 15, type: 'tip', createdAt: '2026-05-02T10:00:00+00:00' }),
           tx({ amount: 20, type: 'chat_messages', createdAt: '2026-05-15T10:00:00+00:00' }),
+          tx({ amount: 5, type: 'tip', status: 'undo', createdAt: '2026-05-18T10:00:00+00:00' }),
           // другой фан — must be filtered out
           tx({ amount: 99, user: { id: 1 } }),
         ],
@@ -183,8 +184,8 @@ describe('createContextLoader', () => {
     expect(block).toContain('Total gross (all-time): $120.00');
     expect(block).toContain('- Tips: $60.00');
     expect(block).toContain('Monthly totals:');
-    expect(block).toContain('- May 2026: $35.00');
-    expect(block).toContain('Paid messages $20.00, Tips $15.00');
+    expect(block).toContain('- May 2026: $30.00');
+    expect(block).toContain('Paid messages $20.00, Tips $10.00');
     expect(block).not.toContain('$99.00');
   });
 

@@ -107,6 +107,32 @@ describe('mapFanTransaction', () => {
     }
   });
 
+  it('maps refund-like transaction rows as negative adjustments', () => {
+    expect(
+      mapFanTransaction('acct_test', {
+        ...base,
+        id: 'refund-status',
+        status: 'pending_return',
+      } as OfApiTransaction),
+    ).toMatchObject({ amount: -19.99, net: -15.99 });
+    expect(
+      mapFanTransaction('acct_test', {
+        ...base,
+        id: 'refund-type',
+        type: 'chargeback',
+        net: null,
+      } as OfApiTransaction),
+    ).toMatchObject({ amount: -19.99, net: -15.99 });
+    expect(
+      mapFanTransaction('acct_test', {
+        ...base,
+        id: 'negative-amount',
+        amount: -19.99,
+        net: -15.99,
+      } as OfApiTransaction),
+    ).toMatchObject({ amount: -19.99, net: -15.99 });
+  });
+
   it('stringifies numeric tx ids and tolerates a missing type', () => {
     const row = mapFanTransaction('acct_test', { ...base, id: 77, type: null } as OfApiTransaction);
     expect(row?.txId).toBe('77');
@@ -118,8 +144,7 @@ describe('mapFanTransaction', () => {
       { ...base, user: null }, // payout fees etc. — no fan
       { ...base, user: {} }, // fan object without id
       { ...base, amount: null },
-      { ...base, amount: 0 }, // non-positive never counts toward spend
-      { ...base, amount: -5 },
+      { ...base, amount: 0 },
       { ...base, createdAt: null },
       { ...base, createdAt: 'not a date' },
     ];

@@ -36,6 +36,7 @@ import type { OfApiPurpose } from '@chatgoose/shared/activity/index';
 import type { DataLayer, FanRow, MessageRow } from '../db/index';
 import type { OfApiClient } from '../ofapi/client';
 import type { OfApiSubscribedOnData, OfApiUser } from '../ofapi/schemas';
+import { signedTransactionAmounts } from '../ofapi/transactions';
 
 export interface ContextLoaderOptions {
   data: Pick<DataLayer, 'messages' | 'fans' | 'chats'>;
@@ -354,13 +355,14 @@ export function createContextLoader(options: ContextLoaderOptions): ContextLoade
         });
         fetchedAnyPage = true;
         for (const tx of result.transactions) {
+          const signed = signedTransactionAmounts(tx);
           if (
             tx.user?.id != null &&
             String(tx.user.id) === chatId &&
-            typeof tx.amount === 'number' &&
+            signed !== null &&
             tx.createdAt != null
           ) {
-            rows.push({ type: tx.type ?? '', amount: tx.amount, date: tx.createdAt });
+            rows.push({ type: tx.type ?? '', amount: signed.amount, date: tx.createdAt });
           }
         }
         if (result.hasMore !== true || result.nextMarker === null) {
