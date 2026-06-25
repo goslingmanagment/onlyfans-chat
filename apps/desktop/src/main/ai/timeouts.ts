@@ -68,6 +68,16 @@ export function createStagedTimeouts(options: StagedTimeoutsOptions): StagedTime
     }
   }
 
+  function armDeepStreamCoverage(): void {
+    if (bucket !== 'deep') {
+      return;
+    }
+    arm('llm-idle', DEEP_OPERATION_LLM_IDLE_TIMEOUT_MS);
+    if (!timers.has('llm-max-stream')) {
+      arm('llm-max-stream', DEEP_OPERATION_LLM_MAX_STREAM_TIMEOUT_MS);
+    }
+  }
+
   return {
     start() {
       if (bucket === 'quick') {
@@ -86,20 +96,16 @@ export function createStagedTimeouts(options: StagedTimeoutsOptions): StagedTime
 
     providerActivity() {
       clear('llm-ttfb');
+      armDeepStreamCoverage();
     },
 
     firstChunk() {
       clear('llm-ttfb');
-      if (bucket === 'deep') {
-        arm('llm-idle', DEEP_OPERATION_LLM_IDLE_TIMEOUT_MS);
-        arm('llm-max-stream', DEEP_OPERATION_LLM_MAX_STREAM_TIMEOUT_MS);
-      }
+      armDeepStreamCoverage();
     },
 
     chunk() {
-      if (bucket === 'deep' && timers.has('llm-idle')) {
-        arm('llm-idle', DEEP_OPERATION_LLM_IDLE_TIMEOUT_MS);
-      }
+      armDeepStreamCoverage();
     },
 
     clearAll() {

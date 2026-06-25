@@ -517,6 +517,30 @@ describe('AiCoordinator P4 features', () => {
     expect(errorCodes()).toEqual(['CG-NET-02']);
   });
 
+  it('deep idle timeout covers progress-only provider activity before text', async () => {
+    seedMessages(data, 40);
+    build(makeSettingsVM({ deepMessageCount: 40 }));
+    await startSummaryAndReachStream();
+
+    gateway.cb?.onProgress?.();
+    await vi.advanceTimersByTimeAsync(DEEP_OPERATION_LLM_IDLE_TIMEOUT_MS);
+
+    expect(errorCodes()).toEqual(['CG-NET-02']);
+    expect(gateway.cancelCount).toBe(1);
+  });
+
+  it('deep idle timeout covers reasoning-only provider activity before text', async () => {
+    seedMessages(data, 40);
+    build(makeSettingsVM({ deepMessageCount: 40 }));
+    await startSummaryAndReachStream();
+
+    gateway.cb?.onReasoningObserved?.('reasoning_delta');
+    await vi.advanceTimersByTimeAsync(DEEP_OPERATION_LLM_IDLE_TIMEOUT_MS);
+
+    expect(errorCodes()).toEqual(['CG-NET-02']);
+    expect(gateway.cancelCount).toBe(1);
+  });
+
   it('a completed deep stream beats the idle timer (no late CG-NET-02)', async () => {
     seedMessages(data, 40);
     build(makeSettingsVM({ deepMessageCount: 40 }));
