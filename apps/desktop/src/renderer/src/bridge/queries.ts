@@ -41,6 +41,8 @@ import { getBridge } from './bridge';
 export const qk = {
   accounts: ['accounts'] as const,
   chats: (accountId: string, filter: ChatFilter) => ['chats', accountId, filter] as const,
+  chatsPaged: (accountId: string, filter: ChatFilter) =>
+    ['chats-paged', accountId, filter] as const,
   chat: (accountId: string, chatId: string) => ['chat', accountId, chatId] as const,
   chatsSearch: (accountId: string, query: string) => ['chats-search', accountId, query] as const,
   messages: (accountId: string, chatId: string) => ['messages', accountId, chatId] as const,
@@ -85,6 +87,43 @@ export function useChats(accountId: string | null, filter: ChatFilter) {
       }),
     enabled: accountId !== null,
   });
+}
+
+const CHAT_LIST_PAGE_SIZE = 500;
+
+export interface ChatListPage {
+  items: ChatListItemVM[];
+  hasMore: boolean;
+}
+
+export function usePagedChats(accountId: string | null, filter: ChatFilter) {
+  const query = useInfiniteQuery<
+    ChatListPage,
+    Error,
+    InfiniteData<ChatListPage>,
+    readonly string[],
+    number
+  >({
+    queryKey: accountId === null ? ['chats-paged', 'none', filter] : qk.chatsPaged(accountId, filter),
+    queryFn: ({ pageParam }) =>
+      getBridge().invoke('query:chats.list', {
+        accountId: accountId ?? '',
+        filter,
+        limit: CHAT_LIST_PAGE_SIZE,
+        offset: pageParam,
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, pages) => {
+      if (!lastPage.hasMore || lastPage.items.length === 0) return undefined;
+      return pages.reduce((total, page) => total + page.items.length, 0);
+    },
+    enabled: accountId !== null,
+  });
+  const items = useMemo(
+    () => query.data?.pages.flatMap((page) => page.items) ?? [],
+    [query.data?.pages],
+  );
+  return { ...query, items };
 }
 
 export function useChat(accountId: string | null, chatId: string | null) {

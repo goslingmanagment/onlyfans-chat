@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { UiMessageKey } from '@chatgoose/shared/i18n/index';
 import type { ChatFilter } from '../../../../preload/contract';
-import { useChats, useReconcileUnread, useSettings } from '../../bridge/queries';
+import { useChats, usePagedChats, useReconcileUnread, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { chatFilterCounts } from '../../lib/filters';
 import { useT } from '../../lib/i18n';
@@ -35,14 +35,15 @@ export function ChatListPane(): React.JSX.Element {
   const setChatFilter = useUiStore((s) => s.setChatFilter);
   const selectChat = useUiStore((s) => s.selectChat);
 
-  const chats = useChats(accountId, chatFilter);
+  const chats = usePagedChats(accountId, chatFilter);
   const allChats = useChats(accountId, 'all'); // counts for the filter chips
-  const counts = chatFilterCounts(allChats.data?.items ?? []);
+  const countItems = chatFilter === 'all' ? chats.items : (allChats.data?.items ?? []);
+  const counts = chatFilterCounts(countItems);
   const settings = useSettings();
   const spendStyle = settings.data?.spendStyle ?? 'figure';
   const { mutate: reconcileUnread } = useReconcileUnread();
 
-  const items = chats.data?.items ?? [];
+  const items = chats.items;
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({
@@ -59,6 +60,19 @@ export function ChatListPane(): React.JSX.Element {
     },
     [accountId, selectChat],
   );
+
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (
+      el === null ||
+      chats.hasNextPage !== true ||
+      chats.isFetchingNextPage ||
+      el.scrollHeight - el.scrollTop - el.clientHeight > ROW_HEIGHT * 8
+    ) {
+      return;
+    }
+    void chats.fetchNextPage();
+  }, [chats]);
 
   useEffect(() => {
     const unreadReconcile = settings.data?.unreadReconcile;
@@ -92,7 +106,7 @@ export function ChatListPane(): React.JSX.Element {
           </Chip>
         ))}
       </div>
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
         {chats.isPending && <SkeletonRows />}
         {!chats.isPending && items.length === 0 && (
           <EmptyState

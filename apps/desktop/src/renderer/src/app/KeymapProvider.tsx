@@ -3,13 +3,13 @@
 // inside their components; everything global routes through here.
 
 import { useEffect, useMemo } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { createKeymap, type KeyEventLike } from '../lib/keymap';
 import { nextChatId, nextUnreadChatId, nthChatId } from '../lib/filters';
 import { KEY_BINDINGS } from './keymapBindings';
 import { useUiStore } from '../state/uiStore';
 import { useNavOverlayStore } from '../state/navOverlayStore';
-import { qk } from '../bridge/queries';
+import { qk, type ChatListPage } from '../bridge/queries';
 import type { ChatListItemVM, SettingsVM } from '../../../preload/contract';
 import {
   useAiStore,
@@ -52,6 +52,11 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
 
   useEffect(() => {
     function chatItems(accountId: string, filter: 'all' | 'unread' | 'with_tips'): ChatListItemVM[] {
+      const paged = queryClient.getQueryData<InfiniteData<ChatListPage>>(
+        qk.chatsPaged(accountId, filter),
+      );
+      const pagedItems = paged?.pages.flatMap((page) => page.items) ?? [];
+      if (pagedItems.length > 0) return pagedItems;
       const data = queryClient.getQueryData<{ items: ChatListItemVM[] }>(qk.chats(accountId, filter));
       return data?.items ?? [];
     }

@@ -53,6 +53,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
   function invalidateChats(accountId: string): void {
     // all filters of this account's list
     queueInvalidate(['chats', accountId]);
+    queueInvalidate(['chats-paged', accountId]);
   }
 
   function invalidateSpenders(accountId: string): void {
