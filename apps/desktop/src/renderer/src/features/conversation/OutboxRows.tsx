@@ -11,7 +11,12 @@ import { getBridge } from '../../bridge/bridge';
 import { setDraftText, useAiStore } from '../ai/aiStore';
 import { appendToDraft } from '../ai/dockLogic';
 import { focusComposer } from './composerDom';
-import { deriveOutboxRow, restrictedSegments, type OutboxRowView } from './sendLogic';
+import {
+  deriveOutboxRow,
+  formatOutboxPpvPrefix,
+  restrictedSegments,
+  type OutboxRowView,
+} from './sendLogic';
 import { useT } from '../../lib/i18n';
 
 const LABEL_TONES: Record<OutboxRowView['tone'], string> = {
@@ -114,7 +119,7 @@ export const OutboxRow = memo(function OutboxRow({
           <span>{formatClock(new Date(item.createdAt))}</span>
           {item.mediaCount > 0 && (
             <span className={item.price > 0 ? 'font-semibold text-amber' : undefined}>
-              {item.price > 0 ? `PPV $${item.price} · ` : ''}
+              {formatOutboxPpvPrefix(item.price)}
               {t('conv.mediaCount', { n: item.mediaCount })}
             </span>
           )}

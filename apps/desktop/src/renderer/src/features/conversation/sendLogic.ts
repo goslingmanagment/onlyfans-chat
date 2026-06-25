@@ -6,10 +6,15 @@
 
 import type { OutboxItemVM } from '../../../../preload/contract';
 import type { ThreadRow } from '../../lib/messages';
+import { formatDollars } from '../../lib/money';
 
 // ─── Draft → parts ───────────────────────────────────────────────────────
 
 export const MAX_SEND_PARTS = 10;
+
+export function formatOutboxPpvPrefix(price: number): string {
+  return price > 0 ? `PPV ${formatDollars(price)} · ` : '';
+}
 
 /** [NEXT] splits a draft into a send sequence; parts are trimmed, empties dropped. */
 export function splitDraftParts(draft: string): string[] {

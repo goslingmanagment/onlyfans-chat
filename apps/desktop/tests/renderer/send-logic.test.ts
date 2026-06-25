@@ -6,6 +6,7 @@ import {
   activeSequence,
   createTypingThrottle,
   deriveOutboxRow,
+  formatOutboxPpvPrefix,
   mergeOutboxRows,
   restrictedSegments,
   splitDraftParts,
@@ -71,6 +72,15 @@ describe('splitDraftParts ([NEXT] rule)', () => {
       'line one\nline two',
       'part two',
     ]);
+  });
+});
+
+describe('formatOutboxPpvPrefix', () => {
+  it('pads fractional prices with cents in outbox rows', () => {
+    expect(formatOutboxPpvPrefix(9.5)).toBe('PPV $9.50 · ');
+    expect(formatOutboxPpvPrefix(9.99)).toBe('PPV $9.99 · ');
+    expect(formatOutboxPpvPrefix(10)).toBe('PPV $10 · ');
+    expect(formatOutboxPpvPrefix(0)).toBe('');
   });
 });
 
