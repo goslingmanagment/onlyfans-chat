@@ -4,11 +4,14 @@
 // not create a second send (main's single-flight queue starts at the row,
 // which only exists after the invoke is accepted).
 
+import { uiMessage } from '@chatgoose/shared/i18n/index';
 import { getBridge } from '../../bridge/bridge';
+import { currentLocale } from '../../lib/i18n';
+import { useUiStore } from '../../state/uiStore';
 import { setDraftText, useAiStore } from '../ai/aiStore';
 import { useVaultStore } from '../vault/vaultStore';
 import { scanDraftPartsForSend } from './guardLogic';
-import { splitDraftParts } from './sendLogic';
+import { MAX_SEND_PARTS, splitDraftParts } from './sendLogic';
 
 const inFlight = new Set<string>();
 
@@ -26,6 +29,17 @@ export function sendCurrentDraft(args: {
   const draft = useAiStore.getState().draftText;
   const parts = splitDraftParts(draft);
   if (parts.length === 0) return;
+  if (parts.length > MAX_SEND_PARTS) {
+    const locale = currentLocale();
+    useUiStore.getState().pushToast({
+      title: uiMessage(locale, 'toast.sendTooManyPartsTitle'),
+      body: uiMessage(locale, 'toast.sendTooManyPartsBody', {
+        count: parts.length,
+        max: MAX_SEND_PARTS,
+      }),
+    });
+    return;
+  }
   if (scanDraftPartsForSend(draft) !== 'allow') return;
   inFlight.add(key);
   void getBridge()

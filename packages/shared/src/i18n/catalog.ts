@@ -788,6 +788,11 @@ export const UI_MESSAGES = {
   'toast.newMessage': { en: 'New message', ru: 'Новое сообщение' },
   'toast.sentYou': { en: 'sent you a message', ru: 'прислал(а) сообщение' },
   'toast.dismiss': { en: 'Dismiss', ru: 'Закрыть' },
+  'toast.sendTooManyPartsTitle': { en: 'Too many message parts', ru: 'Слишком много частей сообщения' },
+  'toast.sendTooManyPartsBody': {
+    en: 'Draft has {count} parts. Keep it to {max} or fewer [NEXT] parts.',
+    ru: 'В черновике {count} частей. Оставьте не больше {max} частей [NEXT].',
+  },
   'notif.newMessage': { en: 'New message', ru: 'Новое сообщение' },
   'notif.sentYou': { en: 'sent you a message', ru: 'прислал(а) сообщение' },
   'notif.media': { en: 'Media', ru: 'Медиа' },

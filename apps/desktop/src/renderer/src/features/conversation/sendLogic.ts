@@ -9,6 +9,8 @@ import type { ThreadRow } from '../../lib/messages';
 
 // ─── Draft → parts ───────────────────────────────────────────────────────
 
+export const MAX_SEND_PARTS = 10;
+
 /** [NEXT] splits a draft into a send sequence; parts are trimmed, empties dropped. */
 export function splitDraftParts(draft: string): string[] {
   return draft
