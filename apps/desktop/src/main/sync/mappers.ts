@@ -21,7 +21,6 @@ import type {
   OfApiTransaction,
   OfApiUser,
 } from '../ofapi/schemas';
-import { signedTransactionAmounts } from '../ofapi/transactions';
 
 /** Mints an opaque media:// token; null when the remote URL is not an
  *  allowlisted OF media URL (such URLs must never reach the renderer). */
@@ -296,8 +295,7 @@ export function avatarMediaUrl(user: OfApiUser, toMediaUrl: ToMediaUrl): string 
 
 /** Transaction → fan_transactions row (DESIGN §1 30-day spend). Null when the
  *  row can't feed the per-fan aggregate: no fan id (payout fees etc.), no
- *  parseable date, or a zero/invalid amount. Refund/reversal-like rows are
- *  stored as negative adjustments. created_at normalizes to ISO-UTC
+ *  parseable date, or a non-positive amount. created_at normalizes to ISO-UTC
  *  so string comparisons against cutoffs are sound (OFAPI mixes offsets).
  *  net = creator earnings (tx.net); missing/implausible net falls back to
  *  0.8 × amount — OnlyFans' universal 20% platform cut. */
@@ -306,20 +304,23 @@ export function mapFanTransaction(
   tx: OfApiTransaction,
 ): FanTransactionUpsert | null {
   const fanId = tx.user?.id;
-  const signed = signedTransactionAmounts(tx);
-  if (fanId == null || signed === null || tx.createdAt == null) {
+  if (fanId == null || typeof tx.amount !== 'number' || tx.amount <= 0 || tx.createdAt == null) {
     return null;
   }
   const createdMs = Date.parse(tx.createdAt);
   if (Number.isNaN(createdMs)) {
     return null;
   }
+  const net =
+    typeof tx.net === 'number' && tx.net > 0 && tx.net <= tx.amount
+      ? tx.net
+      : Math.round(tx.amount * 80) / 100;
   return {
     accountId,
     txId: String(tx.id),
     fanId: String(fanId),
-    amount: signed.amount,
-    net: signed.net,
+    amount: tx.amount,
+    net,
     type: tx.type ?? null,
     createdAt: new Date(createdMs).toISOString(),
   };
