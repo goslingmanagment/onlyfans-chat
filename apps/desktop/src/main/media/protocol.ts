@@ -1,6 +1,6 @@
 // media:// protocol (SPEC §4): the renderer references media only as
-// media://<sha256-hex-of-remote-URL> — an opaque token, non-reversible by
-// construction. Minting registers the remote URL in media_urls; the request
+// media://<sha256-hex-of-stable-media-URL> — an opaque token, non-reversible by
+// construction. Minting registers the newest signed URL in media_urls; the request
 // handler resolves only registered tokens (unknown → 404, never fetched)
 // through the encrypted disk cache, falling back to the injected fetchRemote
 // (direct signed-URL fetch first — 0 credits — then OFAPI download endpoint;
@@ -43,9 +43,11 @@ export function isAllowedMediaUrl(remoteUrl: string): boolean {
 
 /** url_hash → remote URL registry (db module: media_urls table). */
 export interface MediaUrlRegistry {
-  /** INSERT OR IGNORE semantics: re-registering a known hash is a no-op. */
+  /** Latest signed URL wins for a stable media hash. */
   register(urlHash: string, url: string): void;
   lookup(urlHash: string): string | undefined;
+  delete(urlHash: string): void;
+  clear(): void;
 }
 
 /**
@@ -173,7 +175,7 @@ export interface RegisterMediaProtocolOptions {
   /** 32-byte mediaCacheKey from the keychain. */
   encryptionKey: Buffer;
   queries: MediaCacheQueries;
-  registry: Pick<MediaUrlRegistry, 'lookup'>;
+  registry: Pick<MediaUrlRegistry, 'lookup' | 'delete' | 'clear'>;
   fetchRemote: FetchRemote;
   maxCacheBytes?: number;
 }
@@ -191,6 +193,8 @@ export function registerMediaProtocol(
     encryptionKey: options.encryptionKey,
     queries: options.queries,
     maxBytes: options.maxCacheBytes ?? MEDIA_CACHE_MAX_BYTES,
+    onPruneUrlHash: (urlHash) => options.registry.delete(urlHash),
+    onClear: () => options.registry.clear(),
   });
   const handler = createMediaRequestHandler({
     registry: options.registry,

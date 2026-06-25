@@ -45,8 +45,15 @@ function assertKey(key: Buffer): void {
   }
 }
 
+export function stableRemoteUrlKey(remoteUrl: string): string {
+  const url = new URL(remoteUrl);
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
+
 export function hashRemoteUrl(remoteUrl: string): string {
-  return createHash('sha256').update(remoteUrl, 'utf8').digest('hex');
+  return createHash('sha256').update(stableRemoteUrlKey(remoteUrl), 'utf8').digest('hex');
 }
 
 // ─── media_cache rows ────────────────────────────────────────────────────
@@ -94,6 +101,8 @@ export interface MediaCacheOptions {
   queries: MediaCacheQueries;
   maxBytes?: number;
   now?: () => Date;
+  onPruneUrlHash?: (urlHash: string) => void;
+  onClear?: () => void;
 }
 
 export function createMediaCache(options: MediaCacheOptions): MediaCache {
@@ -116,6 +125,7 @@ export function createMediaCache(options: MediaCacheOptions): MediaCache {
       await rm(join(cacheDir, row.path), { force: true });
     }
     queries.delete(row.urlHash);
+    options.onPruneUrlHash?.(row.urlHash);
   }
 
   async function evict(keepUrlHash: string): Promise<void> {
@@ -144,7 +154,7 @@ export function createMediaCache(options: MediaCacheOptions): MediaCache {
       try {
         encrypted = await readFile(filePath);
       } catch {
-        queries.delete(row.urlHash);
+        await dropEntry(row);
         return null;
       }
 
@@ -180,6 +190,7 @@ export function createMediaCache(options: MediaCacheOptions): MediaCache {
 
     async clear() {
       queries.clear();
+      options.onClear?.();
       await rm(cacheDir, { recursive: true, force: true });
     },
   };

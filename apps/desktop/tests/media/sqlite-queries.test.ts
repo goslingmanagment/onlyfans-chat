@@ -114,12 +114,27 @@ describe('createMediaUrlsQueries', () => {
     }
   });
 
-  it('INSERT OR IGNORE: re-registering a hash is a no-op (first write wins)', () => {
+  it('refreshes the URL when a stable hash is re-registered', () => {
     const layer = memoryDataLayer();
     try {
       layer.mediaUrls.register('h1', 'https://thumbs.onlyfans.com/a.jpg');
       layer.mediaUrls.register('h1', 'https://thumbs.onlyfans.com/OTHER.jpg');
-      expect(layer.mediaUrls.lookup('h1')).toBe('https://thumbs.onlyfans.com/a.jpg');
+      expect(layer.mediaUrls.lookup('h1')).toBe('https://thumbs.onlyfans.com/OTHER.jpg');
+    } finally {
+      layer.close();
+    }
+  });
+
+  it('deletes and clears registry rows for cache pruning', () => {
+    const layer = memoryDataLayer();
+    try {
+      layer.mediaUrls.register('h1', 'https://thumbs.onlyfans.com/a.jpg');
+      layer.mediaUrls.register('h2', 'https://thumbs.onlyfans.com/b.jpg');
+      layer.mediaUrls.delete('h1');
+      expect(layer.mediaUrls.lookup('h1')).toBeUndefined();
+      expect(layer.mediaUrls.lookup('h2')).toBe('https://thumbs.onlyfans.com/b.jpg');
+      layer.mediaUrls.clear();
+      expect(layer.mediaUrls.lookup('h2')).toBeUndefined();
     } finally {
       layer.close();
     }

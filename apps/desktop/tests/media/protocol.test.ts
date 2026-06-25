@@ -11,6 +11,7 @@ import {
   parseMediaToken,
   registerMediaProtocol,
 } from '@main/media/protocol';
+import { hashRemoteUrl } from '@main/media/cache';
 import type { MediaRequestHandler } from '@main/media/protocol';
 import { createInMemoryMediaCacheQueries, createInMemoryMediaUrlRegistry } from './helpers';
 
@@ -56,12 +57,12 @@ describe('host allowlist', () => {
 });
 
 describe('media:// token minting', () => {
-  it('mints opaque 64-hex tokens (sha256 of the remote URL) and registers the URL', () => {
+  it('mints opaque stable tokens and registers the signed URL', () => {
     const registry = createInMemoryMediaUrlRegistry();
     const toMediaUrl = createToMediaUrl(registry);
     for (const url of ALLOWED_URLS) {
       const mediaUrl = toMediaUrl(url);
-      expect(mediaUrl).toBe(`${MEDIA_SCHEME}://${sha256Hex(url)}`);
+      expect(mediaUrl).toBe(`${MEDIA_SCHEME}://${hashRemoteUrl(url)}`);
       const token = (mediaUrl ?? '').slice(`${MEDIA_SCHEME}://`.length);
       expect(token).toMatch(TOKEN_RE);
       // non-reversible: the token carries no URL bytes in any encoding
@@ -83,13 +84,15 @@ describe('media:// token minting', () => {
     expect(registry.rows.size).toBe(0);
   });
 
-  it('is idempotent: re-minting yields the same token and a single row', () => {
+  it('keeps one stable token and refreshes rotated signed URLs', () => {
     const registry = createInMemoryMediaUrlRegistry();
     const toMediaUrl = createToMediaUrl(registry);
-    const url = ALLOWED_URLS[0];
-    if (url === undefined) throw new Error('unreachable');
-    expect(toMediaUrl(url)).toBe(toMediaUrl(url));
+    const first = 'https://thumbs.onlyfans.com/a/thumb.jpg?sig=old';
+    const rotated = 'https://thumbs.onlyfans.com/a/thumb.jpg?sig=new';
+    const firstMedia = toMediaUrl(first);
+    expect(toMediaUrl(rotated)).toBe(firstMedia);
     expect(registry.rows.size).toBe(1);
+    expect(registry.lookup(hashRemoteUrl(first))).toBe(rotated);
   });
 });
 
@@ -178,6 +181,28 @@ describe('media request handler', () => {
     const second = await handler({ url: mediaUrl });
     expect(second.headers.get('x-chatgoose-cache')).toBe('hit');
     expect(fetchRemote).toHaveBeenCalledTimes(1);
+  });
+
+  it('fetches the latest signed URL registered for a stable token', async () => {
+    const registry = createInMemoryMediaUrlRegistry();
+    const first = 'https://thumbs.onlyfans.com/t.jpg?sig=old';
+    const rotated = 'https://thumbs.onlyfans.com/t.jpg?sig=new';
+    const mediaUrl = createToMediaUrl(registry)(first);
+    expect(createToMediaUrl(registry)(rotated)).toBe(mediaUrl);
+    if (mediaUrl === null) throw new Error('unreachable');
+
+    const fetchRemote = vi
+      .fn<(url: string) => Promise<{ data: Uint8Array; contentType: string | null } | null>>()
+      .mockResolvedValue({ data: Buffer.from('fresh-bytes'), contentType: 'image/png' });
+    const handler = createMediaRequestHandler({
+      registry,
+      cache: createFakeCache(),
+      fetchRemote,
+    });
+
+    const res = await handler({ url: mediaUrl });
+    expect(res.status).toBe(200);
+    expect(fetchRemote).toHaveBeenCalledExactlyOnceWith(rotated);
   });
 
   it('responds 404 to an unknown (unregistered) token and never fetches', async () => {
@@ -311,6 +336,53 @@ describe('registerMediaProtocol (end-to-end with the real encrypted cache)', () 
     expect(res2.headers.get('x-chatgoose-cache')).toBe('hit');
     expect(Buffer.from(await res2.arrayBuffer()).toString('utf8')).toBe('proto-bytes');
     expect(fetchRemote).toHaveBeenCalledTimes(1);
+  });
+
+  it('prunes registry rows when encrypted cache eviction drops a token', async () => {
+    const registered: Array<{ scheme: string; handler: MediaRequestHandler }> = [];
+    const session = {
+      protocol: {
+        handle: (scheme: string, handler: MediaRequestHandler) => {
+          registered.push({ scheme, handler });
+        },
+      },
+    };
+    const registry = createInMemoryMediaUrlRegistry();
+    const fetchRemote = vi.fn().mockResolvedValue({
+      data: Buffer.alloc(100, 7),
+      contentType: 'image/jpeg',
+    });
+    registerMediaProtocol({
+      session,
+      cacheDir,
+      encryptionKey: randomBytes(32),
+      queries: createInMemoryMediaCacheQueries(),
+      registry,
+      fetchRemote,
+      maxCacheBytes: 128,
+    });
+    const handler = registered[0]?.handler;
+    if (handler === undefined) throw new Error('unreachable');
+
+    const urls = [
+      'https://thumbs.onlyfans.com/a/1.jpg?sig=1',
+      'https://thumbs.onlyfans.com/a/2.jpg?sig=2',
+      'https://thumbs.onlyfans.com/a/3.jpg?sig=3',
+    ] as const;
+    const toMediaUrl = createToMediaUrl(registry);
+    const tokens = urls.map((url) => {
+      const mediaUrl = toMediaUrl(url);
+      if (mediaUrl === null) throw new Error('unreachable');
+      return mediaUrl.slice('media://'.length);
+    });
+    for (const token of tokens) {
+      const res = await handler({ url: `media://${token}` });
+      expect(res.status).toBe(200);
+    }
+
+    expect(registry.lookup(tokens[0] ?? '')).toBeUndefined();
+    expect(registry.lookup(tokens[1] ?? '')).toBeUndefined();
+    expect(registry.lookup(tokens[2] ?? '')).toBe(urls[2]);
   });
 
   it('never serves or fetches non-allowlisted URLs end-to-end', async () => {

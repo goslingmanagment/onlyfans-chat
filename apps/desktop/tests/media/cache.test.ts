@@ -8,6 +8,7 @@ import {
   decryptBlob,
   encryptBlob,
   hashRemoteUrl,
+  stableRemoteUrlKey,
 } from '@main/media/cache';
 import { createInMemoryMediaCacheQueries, createTickingClock } from './helpers';
 
@@ -84,6 +85,21 @@ describe('media cache', () => {
     expect(await cache.get('https://example.com/none.jpg')).toBeNull();
   });
 
+  it('keys signed media by stable URL identity', async () => {
+    const { cache, queries } = setup();
+    const first = 'https://cdn2.onlyfans.com/files/x/full.jpg?sig=old#fragment';
+    const rotated = 'https://cdn2.onlyfans.com/files/x/full.jpg?sig=new';
+    const data = randomBytes(32);
+
+    expect(stableRemoteUrlKey(first)).toBe('https://cdn2.onlyfans.com/files/x/full.jpg');
+    expect(hashRemoteUrl(first)).toBe(hashRemoteUrl(rotated));
+
+    await cache.put(first, data, 'image/jpeg');
+    const hit = await cache.get(rotated);
+    expect(hit?.data.equals(Buffer.from(data))).toBe(true);
+    expect(queries.rows.size).toBe(1);
+  });
+
   it('stores only encrypted bytes on disk (encrypt-at-rest proof)', async () => {
     const { cache, queries } = setup();
     const url = 'https://cdn2.onlyfans.com/files/x/full.jpg';
@@ -121,6 +137,31 @@ describe('media cache', () => {
     const files = await readdir(cacheDir);
     expect(files).not.toContain(`${hashRemoteUrl('https://m/2')}.bin`);
     expect(files.length).toBe(3);
+  });
+
+  it('notifies registry pruning when cache rows are evicted or healed', async () => {
+    const queries = createInMemoryMediaCacheQueries();
+    const pruned: string[] = [];
+    const cache = createMediaCache({
+      cacheDir,
+      encryptionKey: KEY,
+      queries,
+      maxBytes: 128 * 2,
+      now: createTickingClock(),
+      onPruneUrlHash: (urlHash) => pruned.push(urlHash),
+    });
+
+    await cache.put('https://m/1', randomBytes(100), 'image/png');
+    await cache.put('https://m/2', randomBytes(100), 'image/png');
+    await cache.put('https://m/3', randomBytes(100), 'image/png');
+
+    expect(pruned).toEqual([hashRemoteUrl('https://m/1')]);
+
+    const row = queries.rows.get(hashRemoteUrl('https://m/2'));
+    if (row === undefined) throw new Error('unreachable');
+    await rm(join(cacheDir, row.path));
+    expect(await cache.get('https://m/2')).toBeNull();
+    expect(pruned).toEqual([hashRemoteUrl('https://m/1'), hashRemoteUrl('https://m/2')]);
   });
 
   it('never evicts the entry just written, even when oversized', async () => {
@@ -168,11 +209,21 @@ describe('media cache', () => {
   });
 
   it('clear() empties rows and removes the cache dir contents', async () => {
-    const { cache, queries } = setup();
+    const queries = createInMemoryMediaCacheQueries();
+    let cleared = false;
+    const cache = createMediaCache({
+      cacheDir,
+      encryptionKey: KEY,
+      queries,
+      onClear: () => {
+        cleared = true;
+      },
+    });
     await cache.put('https://m/a', randomBytes(10), null);
     await cache.put('https://m/b', randomBytes(10), null);
     await cache.clear();
     expect(queries.rows.size).toBe(0);
+    expect(cleared).toBe(true);
     await expect(readdir(cacheDir)).rejects.toThrow(); // dir removed
   });
 });

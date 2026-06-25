@@ -5,16 +5,22 @@ export interface InMemoryMediaUrlRegistry extends MediaUrlRegistry {
   rows: Map<string, string>;
 }
 
-/** INSERT OR IGNORE semantics, like the media_urls table. */
+/** Latest URL wins, like the media_urls table. */
 export function createInMemoryMediaUrlRegistry(): InMemoryMediaUrlRegistry {
   const rows = new Map<string, string>();
   return {
     rows,
     register(urlHash, url) {
-      if (!rows.has(urlHash)) rows.set(urlHash, url);
+      rows.set(urlHash, url);
     },
     lookup(urlHash) {
       return rows.get(urlHash);
+    },
+    delete(urlHash) {
+      rows.delete(urlHash);
+    },
+    clear() {
+      rows.clear();
     },
   };
 }
