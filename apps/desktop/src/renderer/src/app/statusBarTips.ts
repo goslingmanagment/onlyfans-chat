@@ -39,22 +39,23 @@ export interface StatusBarMode {
   tip: string;
 }
 
-/** Sync state outranks the hub badge: a degraded poller is the louder fact. */
+/** Live hub SSE is the primary signal; polling failures are secondary there. */
 export function statusBarMode(
   state: SyncStatusVM['state'],
   hub: SyncStatusVM['hub'],
   override: SyncStatusVM['hubModeOverride'] = 'auto',
 ): StatusBarMode {
+  if (hub === 'live') {
+    return { word: 'HUB LIVE', tone: 'ok', tip: STATUS_BAR_TIPS.hubLive };
+  }
   if (state === 'offline') {
     return { word: 'OFFLINE', tone: 'bad', tip: STATUS_BAR_TIPS.offline };
   }
-  if (override === 'hub' && hub !== 'live') {
+  if (override === 'hub') {
     return { word: 'DEGRADED', tone: 'warn', tip: STATUS_BAR_TIPS.forcedHub };
   }
   if (state === 'degraded') {
     return { word: 'DEGRADED', tone: 'warn', tip: STATUS_BAR_TIPS.degraded };
   }
-  return hub === 'live'
-    ? { word: 'HUB LIVE', tone: 'ok', tip: STATUS_BAR_TIPS.hubLive }
-    : { word: 'POLLING', tone: 'ok', tip: STATUS_BAR_TIPS.polling };
+  return { word: 'POLLING', tone: 'ok', tip: STATUS_BAR_TIPS.polling };
 }

@@ -433,6 +433,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('query:sync.status', (): SyncStatusVM => {
     const snapshot = deps.creditMeter?.snapshot() ?? null;
     const syncStatus = deps.sync?.status() ?? { freshness: {}, state: 'offline' as const };
+    const hubStatus = deps.sync?.hubStatus?.() ?? 'off';
     const hubActivity = deps.sync?.hubActivity?.() ?? null;
     const today = utcDayOf(Date.now());
     return {
@@ -441,8 +442,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       rpmRemaining: snapshot?.rpmRemaining ?? null,
       freshness: syncStatus.freshness,
       listVerifiedAt: syncStatus.listVerifiedAt ?? syncStatus.freshness,
-      state: syncStatus.state,
-      hub: deps.sync?.hubStatus?.() ?? 'off',
+      state: hubStatus === 'live' ? 'live' : syncStatus.state,
+      hub: hubStatus,
       hubMode: deps.sync?.hubMode?.() ?? 'off',
       hubModeOverride: deps.sync?.hubModeOverride?.() ?? 'auto',
       hubLastEventAt:

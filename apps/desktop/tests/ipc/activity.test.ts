@@ -248,6 +248,7 @@ describe('buildActivitySummary', () => {
     });
 
     expect(vm.mode).toBe('hub-live');
+    expect(vm.syncState).toBe('live');
     expect(vm.hub).toEqual({
       status: 'live',
       lastEventAt: new Date(NOW - 3_000).toISOString(),
@@ -279,6 +280,27 @@ describe('buildActivitySummary', () => {
     });
     // hub-live suspension shows through as no active automatic polling cadence
     expect(vm.accounts[0]?.pollIntervalMs).toBeNull();
+  });
+
+  it('keeps hub-live activity online when suspended polling has auxiliary failures', () => {
+    const vm = buildActivitySummary({
+      data,
+      sync: fakeSync({
+        hubStatus: () => 'live',
+        status: () => ({
+          freshness: { acct_free: '2026-06-11T19:58:00.000Z' },
+          state: 'offline',
+          pollIntervalsMs: { acct_free: null },
+          deepSweepEveryMs: 300_000,
+        }),
+      }),
+      creditMeter: fakeMeter(null, null),
+      aiKeys: { hasAnthropicKey: true, hasOpenRouterKey: false },
+      now: () => NOW,
+    });
+
+    expect(vm.mode).toBe('hub-live');
+    expect(vm.syncState).toBe('live');
   });
 
   it('renders empty-but-valid with no sync, no meter, no data (fresh install)', () => {

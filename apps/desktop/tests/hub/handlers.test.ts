@@ -34,7 +34,10 @@ async function invoke(channel: string, args?: unknown): Promise<unknown> {
   return handler({}, args);
 }
 
-function makeSyncStub(hubState: HubSyncStatus | null): IpcDeps['sync'] {
+function makeSyncStub(
+  hubState: HubSyncStatus | null,
+  syncState: 'live' | 'degraded' | 'offline' = 'live',
+): IpcDeps['sync'] {
   const provider: SyncProvider = {
     start: () => undefined,
     stop: () => undefined,
@@ -49,7 +52,7 @@ function makeSyncStub(hubState: HubSyncStatus | null): IpcDeps['sync'] {
     setWindowVisible: () => undefined,
     forceRefresh: async () => undefined,
     reconcileUnread: async () => undefined,
-    status: () => ({ freshness: {}, state: 'live' as const }),
+    status: () => ({ freshness: {}, state: syncState }),
   };
   return {
     ...provider,
@@ -135,6 +138,7 @@ describe('hub IPC wiring', () => {
     register(data, { sync: makeSyncStub('live') });
     const status = (await invoke('query:sync.status')) as SyncStatusVM;
     expect(status.hub).toBe('live');
+    expect(status.state).toBe('live');
     expect(status.hubMode).toBe('live');
     expect(status.hubModeOverride).toBe('auto');
     expect(status.hubLastEventAt).toBe('2026-06-11T12:00:00.000Z');
@@ -159,6 +163,13 @@ describe('hub IPC wiring', () => {
     const failed = (await invoke('query:sync.status')) as SyncStatusVM;
     expect(failed.hub).toBe('auth-failed');
     expect(failed.hubMode).toBe('degraded');
+  });
+
+  it('keeps hub-live status live when suspended polling has auxiliary failures', async () => {
+    register(data, { sync: makeSyncStub('live', 'offline') });
+    const status = (await invoke('query:sync.status')) as SyncStatusVM;
+    expect(status.hub).toBe('live');
+    expect(status.state).toBe('live');
   });
 
   it("reports hub 'off' when sync is absent, hub-unaware, or unconfigured", async () => {

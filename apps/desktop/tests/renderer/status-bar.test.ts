@@ -65,9 +65,14 @@ describe('statusBarMode (mode word matches the panel badge)', () => {
     });
   });
 
-  it('sync trouble outranks the hub badge', () => {
-    expect(statusBarMode('degraded', 'live')).toMatchObject({ word: 'DEGRADED', tone: 'warn' });
-    expect(statusBarMode('offline', 'live')).toMatchObject({ word: 'OFFLINE', tone: 'bad' });
+  it('hub live outranks auxiliary polling trouble', () => {
+    expect(statusBarMode('degraded', 'live')).toMatchObject({ word: 'HUB LIVE', tone: 'ok' });
+    expect(statusBarMode('offline', 'live')).toMatchObject({ word: 'HUB LIVE', tone: 'ok' });
+  });
+
+  it('polling trouble is shown when hub is not live', () => {
+    expect(statusBarMode('degraded', 'off')).toMatchObject({ word: 'DEGRADED', tone: 'warn' });
+    expect(statusBarMode('offline', 'off')).toMatchObject({ word: 'OFFLINE', tone: 'bad' });
   });
 
   it('force-hub shows degraded while the hub is not live', () => {

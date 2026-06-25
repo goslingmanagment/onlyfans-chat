@@ -121,6 +121,7 @@ export function buildActivitySummary(deps: ActivityDeps): ActivityVM {
   // ── data flow ──────────────────────────────────────────────────────────
   const syncStatus = sync?.status() ?? { freshness: {}, state: 'offline' as const };
   const hubStatus = sync?.hubStatus?.() ?? null;
+  const syncState = hubStatus === 'live' ? 'live' : syncStatus.state;
   const hubActivity = sync?.hubActivity?.() ?? null;
   const accounts = data.accounts.list().map((account) => ({
     accountId: account.id,
@@ -180,7 +181,7 @@ export function buildActivitySummary(deps: ActivityDeps): ActivityVM {
 
   return {
     mode: hubStatus === 'live' ? 'hub-live' : 'polling',
-    syncState: syncStatus.state,
+    syncState,
     accounts,
     deepSweepEveryMs: syncStatus.deepSweepEveryMs ?? null,
     hub: {
