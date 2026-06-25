@@ -20,10 +20,15 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-function fakeResponse(status: number, headers: Record<string, string> = {}): RetryableResponse {
+function fakeResponse(
+  status: number,
+  headers: Record<string, string> = {},
+  overrides: Partial<RetryableResponse> = {},
+): RetryableResponse {
   return {
     status,
     headers: { get: (name: string) => headers[name.toLowerCase()] ?? null },
+    ...overrides,
   };
 }
 
@@ -223,6 +228,38 @@ describe('request executor retry policy: idempotent', () => {
     expect(result.status).toBe(200);
     expect(sleeps).toEqual([RETRY_AFTER_CAP_MS]);
     expect(observedRetryDelays).toEqual([RETRY_AFTER_CAP_MS]);
+  });
+
+  it('drains retry response bodies before the next attempt', async () => {
+    const drained: number[] = [];
+    const executor = createRequestExecutor({
+      limiter: passthroughLimiter,
+      sleep: () => Promise.resolve(),
+    });
+    const responses = [
+      fakeResponse(500, {}, { arrayBuffer: async () => {
+        drained.push(500);
+        return new ArrayBuffer(0);
+      } }),
+      fakeResponse(429, { 'retry-after': '1' }, { arrayBuffer: async () => {
+        drained.push(429);
+        return new ArrayBuffer(0);
+      } }),
+      fakeResponse(200, {}, { arrayBuffer: async () => {
+        drained.push(200);
+        return new ArrayBuffer(0);
+      } }),
+    ];
+    let call = 0;
+
+    const result = await executor.execute(
+      'acct',
+      () => Promise.resolve(responses[call++] ?? fakeResponse(200)),
+      { retry: 'idempotent' },
+    );
+
+    expect(result.status).toBe(200);
+    expect(drained).toEqual([500, 429]);
   });
 
   it('5xx: retries up to 3 times (idempotent GETs) then returns the error', async () => {

@@ -312,16 +312,6 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     recordDailyFallbackReason(reason);
   }
 
-  function recordDailyDropped(reason: HubFallbackReason, eventType: string): void {
-    eventStats = {
-      ...eventStats,
-      dropped: eventStats.dropped + 1,
-      droppedByType: bumpMap(eventStats.droppedByType, eventType),
-      lastFallbackReason: reason,
-    };
-    recordLifetime('dropped', eventType);
-  }
-
   function recordDailyApplied(eventType: string): void {
     eventStats = {
       ...eventStats,
@@ -371,17 +361,6 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     recordDailyFallback(reason, eventType);
     persistEventStats();
     onLog('info', `hub fallback: ${reason}`, { reason, ...fields });
-  }
-
-  function recordDropped(
-    reason: HubFallbackReason,
-    eventType: string,
-    fields?: Record<string, unknown>,
-  ): void {
-    ensureStatsForToday();
-    recordDailyDropped(reason, eventType);
-    persistEventStats();
-    onLog('warn', `hub event dropped: ${reason}`, { reason, ...fields });
   }
 
   function emit(event: SyncEvent): void {
@@ -638,10 +617,6 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
           } catch {
             // transient fetch failure: the next hub activity/degrade refresh reconciles
           }
-          recordDropped('unknown-delete-head-refresh', event.type, {
-            accountId: event.accountId,
-            messageId: event.messageId,
-          });
           return; // unknown message: nothing to tombstone, drop silently
         }
         // Tombstone (deleted=1) publishes bus scope 'messages' for the chat.

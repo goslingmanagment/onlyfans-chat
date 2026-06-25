@@ -1266,7 +1266,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           HYDRATION_PAGES_PER_TICK,
           'hydration',
         );
-        upsertChatRows(accountId, chunk.chats);
+        upsertChatRows(accountId, chunk.chats, { preserveLocalHead: true });
         const pagesWalked = hydration.pagesWalked + chunk.pages;
         const nextHydration = {
           nextOffset: chunk.nextOffset,

@@ -194,6 +194,48 @@ describe('buildActivitySummary', () => {
     expect(vm.ai).toEqual({ hasAnthropicKey: true, hasOpenRouterKey: false });
   });
 
+  it('does not label the top AI run when fan ids collide across accounts', () => {
+    data.aiSpendLog.recordRun({
+      day: TODAY,
+      feature: 'fan-summary',
+      isCacheHit: false,
+      inputTokens: 1,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 1,
+      costMicroUsd: 100_000,
+      chatId: '777',
+    });
+    for (const [accountId, name] of [
+      ['acct_free', 'Free Charles'],
+      ['acct_vip', 'VIP Charles'],
+    ] as const) {
+      data.fans.upsert({
+        accountId,
+        fanId: '777',
+        username: `${accountId}_charles`,
+        name,
+        customName: null,
+        avatar: null,
+        about: null,
+        lastSeen: null,
+        spending: null,
+        subscription: null,
+        fetchedAt: new Date(NOW).toISOString(),
+      });
+    }
+
+    const vm = buildActivitySummary({
+      data,
+      sync: fakeSync(),
+      creditMeter: null,
+      aiKeys: { hasAnthropicKey: false, hasOpenRouterKey: false },
+      now: () => NOW,
+    });
+
+    expect(vm.aiSpend.topRun).toEqual({ feature: 'fan-summary', costUsd: 0.1, fanLabel: null });
+  });
+
   it('state B (hub live): hub badge, event counters, queues, synced summaries', () => {
     data.db
       .prepare(

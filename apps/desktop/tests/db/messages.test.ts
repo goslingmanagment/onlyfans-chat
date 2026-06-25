@@ -220,6 +220,23 @@ describe('messages paging', () => {
     expect(older.items.map((item) => item.messageId)).toEqual(['a']);
   });
 
+  it('orders numeric platform message ids numerically within created_at ties', () => {
+    layer.messages.upsertMany([
+      sampleMessage({ messageId: '2', createdAt: at(1) }),
+      sampleMessage({ messageId: '10', createdAt: at(1) }),
+      sampleMessage({ messageId: '1', createdAt: at(1) }),
+    ]);
+    const page = layer.messages.page({ accountId: 'acct_1', chatId: '101', limit: 2 });
+    expect(page.items.map((item) => item.messageId)).toEqual(['2', '10']);
+    const older = layer.messages.page({
+      accountId: 'acct_1',
+      chatId: '101',
+      limit: 2,
+      beforeId: '2',
+    });
+    expect(older.items.map((item) => item.messageId)).toEqual(['1']);
+  });
+
   it('returns an empty page for an unknown beforeId', () => {
     seed(3);
     const page = layer.messages.page({

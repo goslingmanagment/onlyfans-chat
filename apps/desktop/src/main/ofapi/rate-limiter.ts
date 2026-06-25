@@ -130,6 +130,7 @@ export function createRateLimiter(options: RateLimiterOptions = {}): RateLimiter
 export interface RetryableResponse {
   status: number;
   headers: { get(name: string): string | null };
+  arrayBuffer?: () => Promise<ArrayBuffer>;
 }
 
 /** 'idempotent': 429 backoff + 5xx ≤3. 'none': exactly one attempt, no retry of any kind. */
@@ -165,6 +166,15 @@ export function createRequestExecutor(input: {
 }): RequestExecutor {
   const sleep = input.sleep ?? defaultSleep;
   const now = input.now ?? Date.now;
+
+  async function drainRetryBody(response: RetryableResponse): Promise<void> {
+    try {
+      await response.arrayBuffer?.();
+    } catch {
+      // Retry scheduling should not fail because an error response body is unreadable.
+    }
+  }
+
   return {
     async execute<R extends RetryableResponse>(
       accountKey: string,
@@ -231,6 +241,7 @@ export function createRequestExecutor(input: {
             retryDelayMs,
           });
           rateLimitRetries += 1;
+          await drainRetryBody(response);
           await sleep(retryDelayMs);
           continue;
         }
@@ -245,6 +256,7 @@ export function createRequestExecutor(input: {
             retryDelayMs: delayMs,
           });
           serverErrorRetries += 1;
+          await drainRetryBody(response);
           await sleep(delayMs);
           continue;
         }

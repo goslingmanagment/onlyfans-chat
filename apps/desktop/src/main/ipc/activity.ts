@@ -53,7 +53,7 @@ function toIso(epochMs: number | null | undefined): string | null {
 
 const countRowSchema = z.object({ n: z.number() });
 const stateCountSchema = z.object({ state: z.string(), n: z.number() });
-const fanNameRowSchema = z.object({ custom_name: z.string().nullable(), name: z.string() });
+const fanTopRunLabelRowSchema = z.object({ matches: z.number(), label: z.string().nullable() });
 
 function countOne(data: DataLayer, sql: string, params: Record<string, string>): number {
   const row: unknown = data.db.prepare(sql).get(params);
@@ -169,11 +169,17 @@ export function buildActivitySummary(deps: ActivityDeps): ActivityVM {
     let fanLabel: string | null = null;
     if (aiLedger.topRun.chatId !== null) {
       const row: unknown = data.db
-        .prepare('SELECT custom_name, name FROM fans WHERE fan_id = @id LIMIT 1')
+        .prepare(
+          `SELECT
+             COUNT(*) AS matches,
+             MAX(COALESCE(NULLIF(custom_name, ''), NULLIF(name, ''))) AS label
+           FROM fans
+           WHERE fan_id = @id`,
+        )
         .get({ id: aiLedger.topRun.chatId });
       if (row !== undefined) {
-        const fan = fanNameRowSchema.parse(row);
-        fanLabel = fan.custom_name ?? (fan.name !== '' ? fan.name : null);
+        const fan = fanTopRunLabelRowSchema.parse(row);
+        fanLabel = fan.matches === 1 ? fan.label : null;
       }
     }
     topRun = { feature: aiLedger.topRun.feature, costUsd: aiLedger.topRun.costUsd, fanLabel };

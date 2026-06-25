@@ -40,6 +40,8 @@ ON CONFLICT (account_id, chat_id, message_id) DO UPDATE SET
   deleted = (messages.deleted OR excluded.deleted),
   raw = excluded.raw`;
 
+const MESSAGE_ORDER_DESC = 'created_at DESC, CAST(message_id AS INTEGER) DESC, message_id DESC';
+
 export interface MessagePage {
   /** Chronological (oldest → newest) within the page. */
   items: MessageRow[];
@@ -150,7 +152,7 @@ export function createMessagesQueries(db: ChatGooseDb, bus: DbChangeBus): Messag
           .prepare(
             `SELECT ${COLUMNS} FROM messages
              WHERE account_id = @account_id AND chat_id = @chat_id
-             ORDER BY created_at DESC, message_id DESC LIMIT @limit`,
+             ORDER BY ${MESSAGE_ORDER_DESC} LIMIT @limit`,
           )
           .all({ ...base, limit: limit + 1 });
       } else {
@@ -163,8 +165,14 @@ export function createMessagesQueries(db: ChatGooseDb, bus: DbChangeBus): Messag
             `SELECT ${COLUMNS} FROM messages
              WHERE account_id = @account_id AND chat_id = @chat_id
                AND (created_at < @before_at
-                 OR (created_at = @before_at AND message_id < @before_id))
-             ORDER BY created_at DESC, message_id DESC LIMIT @limit`,
+                 OR (created_at = @before_at AND (
+                   CAST(message_id AS INTEGER) < CAST(@before_id AS INTEGER)
+                   OR (
+                     CAST(message_id AS INTEGER) = CAST(@before_id AS INTEGER)
+                     AND message_id < @before_id
+                   )
+                 )))
+             ORDER BY ${MESSAGE_ORDER_DESC} LIMIT @limit`,
           )
           .all({ ...base, before_at: anchor.createdAt, before_id: beforeId, limit: limit + 1 });
       }
