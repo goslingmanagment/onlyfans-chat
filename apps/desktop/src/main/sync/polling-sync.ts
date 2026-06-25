@@ -1543,14 +1543,14 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       openConversation = { accountId, chatId };
       sweepLastChangeAt = now(); // re-arm the idle window on every open
       scheduleSweep();
-      // Optimistic local unread-clear (body-free; runs in BOTH modes). Fixes the
+      // openConversation is the ONE sanctioned message-body read when auto-read
+      // is OFF — force the tail fetch (and its media polling) unconditionally.
+      await readHistoryForExplicitUserOpen(accountId, chatId, 'message-tail');
+      // Local unread-clear (body-free; runs in BOTH modes). Fixes the
       // stuck-unread bug: reading a chat in OnlyMonster does not change its
       // lastMessage, so the hot poll never re-surfaces it and the cached
-      // unread_count stays stale. Clearing on open repaints the badge without a
-      // POST mark-as-read or any body read — and keeps the account-rail
-      // SUM(unread_count) honest. We re-upsert the existing row with the unread
-      // fields zeroed and every other list field preserved. (OnlyMonster-side
-      // reads still reconcile fully via the deep sweep's listChats walk.)
+      // unread_count stays stale. Clearing only after the read succeeds prevents
+      // failed opens from hiding still-unread chats locally.
       const cached = data.chats.get(accountId, chatId);
       if (cached !== null && (cached.unreadCount > 0 || cached.hasUnreadTips)) {
         data.chats.upsert({
@@ -1572,9 +1572,6 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         });
         scheduleUnreadReconcile(accountId);
       }
-      // openConversation is the ONE sanctioned message-body read when auto-read
-      // is OFF — force the tail fetch (and its media polling) unconditionally.
-      await readHistoryForExplicitUserOpen(accountId, chatId, 'message-tail');
       void refreshFanDetail(accountId, chatId);
     },
     closeConversation(accountId, chatId) {

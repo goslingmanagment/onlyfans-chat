@@ -428,6 +428,20 @@ describe('PollingSync', () => {
     sync.stop();
   });
 
+  it('openConversation keeps unread state when the user-open tail read fails', async () => {
+    upsertLocalChat({ unread: 3, hasUnreadTips: true });
+    vi.spyOn(stub.client, 'listMessages').mockRejectedValueOnce(new Error('tail failed'));
+
+    const sync = makeSync();
+
+    await expect(sync.openConversation(ACCT, '101')).rejects.toThrow('tail failed');
+
+    const chat = data.chats.get(ACCT, '101');
+    expect(chat?.unreadCount).toBe(3);
+    expect(chat?.hasUnreadTips).toBe(true);
+    sync.stop();
+  });
+
   it('loadOlderMessagesForUserOpen fetches one older first_id page from the local oldest row', async () => {
     stub.setChats([makeChat({ fanId: 101, lastMessageId: 11 })]);
     stub.setMessages([makeMessage({ id: 10 }), makeMessage({ id: 11 })]);
