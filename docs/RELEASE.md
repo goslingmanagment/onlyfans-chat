@@ -94,10 +94,12 @@ check → download → install flow so the UX is demoable without a real feed.
 
 1. Bump `version` in `apps/desktop/package.json`, commit.
 2. `git tag v<version> && git push origin main --tags`.
-3. The `windows-build` workflow builds the installer and its `publish` job
-   uploads `ChatGoose-Setup-<version>.exe` + `.blockmap` + `latest.yml` to the
-   feed (blockmaps make updates differential — clients download only changed
-   chunks). Done — apps pick it up within 4 h or on next launch.
+3. The `windows-build` workflow builds the installer on Windows and uploads
+   `ChatGoose-Setup-<version>.exe` + `.blockmap` + `latest.yml` directly to the
+   feed from the Windows runner (blockmaps make updates differential — clients
+   download only changed chunks). The Actions artifact upload is best-effort
+   only, with short retention, so GitHub artifact quota cannot block feed
+   publication. Done — apps pick it up within 4 h or on next launch.
 
 **Feed infrastructure:** static nginx site `chatgoose-updates` on the agency
 VPS `45.8.230.111`, serving `/srv/chatgoose-updates` at

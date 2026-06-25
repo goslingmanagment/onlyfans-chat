@@ -13,8 +13,14 @@ name: windows-build
 
 on:
   workflow_dispatch:
+    inputs:
+      publishFeed:
+        description: "Upload this build to the Windows auto-update feed"
+        required: false
+        default: false
+        type: boolean
   push:
-    tags: ['v*']
+    tags: ["v*"]
 
 jobs:
   build:
@@ -37,34 +43,14 @@ jobs:
       - name: Build Windows installer
         run: pnpm dist:win
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: chatgoose-windows-installer
-          path: |
-            apps/desktop/release/ChatGoose-Setup-*.exe
-            apps/desktop/release/ChatGoose-Setup-*.exe.blockmap
-            apps/desktop/release/latest.yml
-          if-no-files-found: error
-
-  # Pushes the build onto the auto-update feed (electron-builder.yml `publish`).
-  # Runs only for v* tags and only when the UPDATES_SSH_KEY secret is set
-  # (private key of the `cgupdates` user on the feed host — docs/RELEASE.md).
-  publish:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: chatgoose-windows-installer
-          path: feed
-
       - name: Upload to the update feed
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        shell: bash
         env:
           SSH_KEY: ${{ secrets.UPDATES_SSH_KEY }}
         run: |
           if [ -z "$SSH_KEY" ]; then
-            echo "::notice::UPDATES_SSH_KEY secret not set — feed upload skipped (installer is still in the artifacts)"
+            echo "::notice::UPDATES_SSH_KEY secret not set — feed upload skipped"
             exit 0
           fi
           mkdir -p ~/.ssh
@@ -74,6 +60,17 @@ jobs:
           echo "45.8.230.111 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKVfAxl4anwdXe3m+tK5yajpXDZD7iD1D1uc6A+y6o9Y" > ~/.ssh/known_hosts
           # latest.yml goes LAST: clients polling mid-upload must never see a
           # manifest that points at a not-yet-uploaded installer.
-          scp feed/*.exe feed/*.blockmap cgupdates@45.8.230.111:/srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3/
-          scp feed/latest.yml cgupdates@45.8.230.111:/srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3/
+          scp apps/desktop/release/*.exe apps/desktop/release/*.blockmap cgupdates@45.8.230.111:/srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3/
+          scp apps/desktop/release/latest.yml cgupdates@45.8.230.111:/srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3/
           echo "feed updated"
+
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: chatgoose-windows-installer
+          retention-days: 3
+          path: |
+            apps/desktop/release/ChatGoose-Setup-*.exe
+            apps/desktop/release/ChatGoose-Setup-*.exe.blockmap
+            apps/desktop/release/latest.yml
+          if-no-files-found: error
