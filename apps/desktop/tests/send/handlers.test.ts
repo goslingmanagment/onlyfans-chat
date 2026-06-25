@@ -231,4 +231,64 @@ describe('send-channel IPC handlers', () => {
       invoke('cmd:draft.set', { accountId: ACCT, chatId: CHAT, text: 42 }),
     ).rejects.toThrow();
   });
+
+  it('cmd:ai.feedback counts one accepted operation using persisted payload state', async () => {
+    const operationId = '00000000-0000-4000-8000-000000000012';
+    data.aiSpendLog.recordRun({
+      day: '2026-06-11',
+      feature: 'fast-reply',
+      isCacheHit: false,
+      inputTokens: 100,
+      cacheWriteTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 20,
+      costMicroUsd: 1_000,
+      chatId: CHAT,
+    });
+    data.db
+      .prepare(
+        `INSERT INTO usage_events (client_event_id, payload, created_at, attempts)
+         VALUES (@id, @payload, @created_at, 0)`,
+      )
+      .run({
+        id: operationId,
+        payload: JSON.stringify({
+          clientEventId: operationId,
+          feature: 'fast-reply',
+          model: 'test-model',
+          inputTokens: 100,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+          outputTokens: 20,
+          totalTokens: 120,
+          chatId: CHAT,
+          durationMs: 500,
+          isCacheHit: false,
+          isRegeneration: false,
+          completedAt: '2026-06-11T12:00:00.000Z',
+        }),
+        created_at: '2026-06-11T12:00:00.000Z',
+      });
+
+    await invoke('cmd:ai.feedback', {
+      operationId,
+      action: 'inserted',
+      partIndex: 0,
+      feature: 'ping',
+    });
+    register(data, engine); // restart/re-register: no in-memory accepted set survives
+    await invoke('cmd:ai.feedback', {
+      operationId,
+      action: 'inserted',
+      partIndex: 1,
+      feature: 'ping',
+    });
+
+    expect(data.aiSpendLog.rowsSince('2026-06-11')[0]?.inserted).toBe(1);
+    const row = data.db
+      .prepare('SELECT payload FROM usage_events WHERE client_event_id = @id')
+      .get({ id: operationId }) as { payload: string } | undefined;
+    expect(row).toBeDefined();
+    expect(JSON.parse(row?.payload ?? '{}')).toMatchObject({ accepted: 1, acceptedPart: 1 });
+  });
 });

@@ -208,6 +208,28 @@ const aiFeedbackSchema = z.object({
     ])
     .optional(),
 });
+const usageFeedbackPayloadSchema = z
+  .object({
+    feature: z.string(),
+    completedAt: z.string(),
+    accepted: z.union([z.boolean(), z.number()]).optional(),
+  })
+  .passthrough();
+const usageFeedbackRowSchema = z.object({ payload: z.string() });
+
+function parseUsageFeedbackPayload(row: unknown): z.infer<typeof usageFeedbackPayloadSchema> | null {
+  const usageRow = usageFeedbackRowSchema.safeParse(row);
+  if (!usageRow.success) return null;
+  try {
+    return usageFeedbackPayloadSchema.parse(JSON.parse(usageRow.data.payload));
+  } catch {
+    return null;
+  }
+}
+
+function hasAcceptedFeedback(payload: z.infer<typeof usageFeedbackPayloadSchema>): boolean {
+  return payload.accepted === true || payload.accepted === 1;
+}
 
 // ── Send pipeline (SPEC §7) ──
 const sendTextSchema = z.string().min(1).max(20_000);
@@ -372,9 +394,6 @@ export function loadPersonalities(data: DataLayer): Personality[] {
 
 export function registerIpcHandlers(deps: IpcDeps): void {
   const { data, settingsStore } = deps;
-  /** Ops already counted into ai_spend_log.inserted — one accept per run,
-   *  however many parts the chatter inserts/copies. */
-  const acceptedOps = new Set<string>();
 
   ipcMain.handle('query:accounts.list', async () => {
     const settings = await settingsStore.get();
@@ -810,6 +829,11 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   // ai_spend_log inserted counter (Activity panel "inserted" column).
   ipcMain.handle('cmd:ai.feedback', (_event, rawArgs: unknown) => {
     const args = aiFeedbackSchema.parse(rawArgs);
+    const payload = parseUsageFeedbackPayload(
+      data.db
+        .prepare('SELECT payload FROM usage_events WHERE client_event_id = @id')
+        .get({ id: args.operationId }),
+    );
     // payload is the pending hub event JSON; acceptance rides alongside it
     data.db
       .prepare(
@@ -818,30 +842,11 @@ export function registerIpcHandlers(deps: IpcDeps): void {
          WHERE client_event_id = @id`,
       )
       .run({ part: args.partIndex ?? null, id: args.operationId });
-    // The queue row is authoritative for (feature, day) but drains once the
-    // hub is configured — fall back to the renderer-reported feature + today.
-    const row: unknown = data.db
-      .prepare('SELECT payload FROM usage_events WHERE client_event_id = @id')
-      .get({ id: args.operationId });
-    const payload = z
-      .object({ payload: z.string() })
-      .transform((value) => {
-        try {
-          return JSON.parse(value.payload) as unknown;
-        } catch {
-          return null;
-        }
-      })
-      .pipe(z.object({ feature: z.string(), completedAt: z.string() }).nullable().catch(null))
-      .safeParse(row);
-    const feature = payload.success && payload.data !== null ? payload.data.feature : args.feature;
-    const day =
-      payload.success && payload.data !== null
-        ? payload.data.completedAt.slice(0, 10)
-        : new Date().toISOString().slice(0, 10);
-    if (feature !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(day) && !acceptedOps.has(args.operationId)) {
-      acceptedOps.add(args.operationId);
-      data.aiSpendLog.markInserted(day, feature);
+    if (payload !== null && !hasAcceptedFeedback(payload)) {
+      const day = payload.completedAt.slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+        data.aiSpendLog.markInserted(day, payload.feature);
+      }
     }
   });
 
