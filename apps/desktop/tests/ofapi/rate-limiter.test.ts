@@ -7,6 +7,7 @@ import {
   createRateLimiter,
   createRequestExecutor,
   RATE_LIMIT_BACKOFF_MS,
+  RETRY_AFTER_CAP_MS,
   SERVER_ERROR_RETRY_DELAYS_MS,
 } from '@main/ofapi/rate-limiter';
 import type { RetryableResponse } from '@main/ofapi/rate-limiter';
@@ -190,6 +191,38 @@ describe('request executor retry policy: idempotent', () => {
     expect(result.status).toBe(429);
     expect(calls).toBe(1 + RATE_LIMIT_BACKOFF_MS.length);
     expect(sleeps).toEqual([...RATE_LIMIT_BACKOFF_MS]);
+  });
+
+  it('429: caps an oversized retry-after header', async () => {
+    const sleeps: number[] = [];
+    const observedRetryDelays: number[] = [];
+    const executor = createRequestExecutor({
+      limiter: passthroughLimiter,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+    });
+    const responses = [
+      fakeResponse(429, { 'retry-after': '3600' }),
+      fakeResponse(200),
+    ];
+    let call = 0;
+    const result = await executor.execute(
+      'acct',
+      () => Promise.resolve(responses[call++] ?? fakeResponse(200)),
+      {
+        retry: 'idempotent',
+        onAttemptResponse: (event) => {
+          if (event.retryDelayMs !== undefined) {
+            observedRetryDelays.push(event.retryDelayMs);
+          }
+        },
+      },
+    );
+    expect(result.status).toBe(200);
+    expect(sleeps).toEqual([RETRY_AFTER_CAP_MS]);
+    expect(observedRetryDelays).toEqual([RETRY_AFTER_CAP_MS]);
   });
 
   it('5xx: retries up to 3 times (idempotent GETs) then returns the error', async () => {

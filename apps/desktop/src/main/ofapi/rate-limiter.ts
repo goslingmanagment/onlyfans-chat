@@ -1,7 +1,8 @@
 // Client-side throttling for OFAPI (SPEC §5): token bucket well under plan RPM
 // (default 300 RPM, burst 20), per-account concurrency 4, global 12. Retry policy
 // is EXPLICIT and REQUIRED per request: 'idempotent' (GETs) gets 429 backoff
-// honoring retry-after (1/2/4/8 s) and ≤3 retries on 5xx; 'none' (non-idempotent
+// honoring retry-after up to a 60s cap (1/2/4/8 s floor) and ≤3 retries on 5xx;
+// 'none' (non-idempotent
 // writes, SPEC §7 — OFAPI has no idempotency keys, a retried send can
 // double-message a fan) gets EXACTLY ONE attempt: 429/5xx/timeouts surface
 // immediately and the outbox decides what is safe.
@@ -17,6 +18,7 @@ export const DEFAULT_BURST = 20;
 export const DEFAULT_PER_ACCOUNT_CONCURRENCY = 4;
 export const DEFAULT_GLOBAL_CONCURRENCY = 12;
 export const RATE_LIMIT_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000] as const;
+export const RETRY_AFTER_CAP_MS = 60_000;
 export const SERVER_ERROR_RETRY_DELAYS_MS = [1_000, 2_000, 4_000] as const;
 
 export interface RateLimiterOptions {
@@ -216,7 +218,10 @@ export function createRequestExecutor(input: {
         if (response.status === 429 && rateLimitRetries < RATE_LIMIT_BACKOFF_MS.length) {
           const backoffMs = RATE_LIMIT_BACKOFF_MS[rateLimitRetries] ?? 8_000;
           const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
-          const retryDelayMs = Math.max(backoffMs, retryAfterMs ?? 0);
+          const retryDelayMs = Math.max(
+            backoffMs,
+            Math.min(retryAfterMs ?? 0, RETRY_AFTER_CAP_MS),
+          );
           options.onAttemptResponse?.({
             attempt,
             status: response.status,
