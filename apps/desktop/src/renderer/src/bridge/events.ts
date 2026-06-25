@@ -75,6 +75,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
           queueInvalidate(
             event.chatId !== undefined ? qk.chat(event.accountId, event.chatId) : ['chat', event.accountId],
           );
+          queueInvalidate(qk.accounts);
           // also fires on fan_transactions sweeps — the 30-day board figure
           invalidateSpenders(event.accountId);
         } else queueInvalidate(['chats']);
