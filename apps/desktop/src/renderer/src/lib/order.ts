@@ -24,6 +24,15 @@ export function applyOrder<T>(
   return [...ranked, ...rest];
 }
 
+export function firstOrderedId<T>(
+  items: readonly T[],
+  getId: (item: T) => string,
+  orderedIds: readonly string[],
+): string | null {
+  const [first] = applyOrder(items, getId, orderedIds);
+  return first === undefined ? null : getId(first);
+}
+
 /** Move the element at `from` to index `to`, returning a new array. */
 export function arrayMove<T>(arr: readonly T[], from: number, to: number): T[] {
   const next = [...arr];

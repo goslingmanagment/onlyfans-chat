@@ -4,6 +4,7 @@ import { getBridge } from '../bridge/bridge';
 import { useUiStore } from '../state/uiStore';
 import { useSettingsCache } from '../state/settingsCache';
 import { applyThemeSetting } from '../lib/theme';
+import { firstOrderedId } from '../lib/order';
 import { Titlebar } from './Titlebar';
 import { StatusBar } from './StatusBar';
 import { CommandPalette } from './CommandPalette';
@@ -32,10 +33,11 @@ export function AppShell(): React.JSX.Element {
   // view switch (a boot into Settings must stay there)
   useEffect(() => {
     if (selectedAccountId === null) {
-      const first = accounts.data?.[0];
-      if (first !== undefined) setDefaultAccount(first.id);
+      if (accounts.data === undefined || settings.data === undefined) return;
+      const firstId = firstOrderedId(accounts.data, (account) => account.id, settings.data.accountOrder);
+      if (firstId !== null) setDefaultAccount(firstId);
     }
-  }, [accounts.data, selectedAccountId, setDefaultAccount]);
+  }, [accounts.data, selectedAccountId, setDefaultAccount, settings.data]);
 
   // mirror notification-relevant settings for the event layer
   useEffect(() => {

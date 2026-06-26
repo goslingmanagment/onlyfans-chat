@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyOrder, arrayMove, computeReorder } from '../../src/renderer/src/lib/order';
+import { applyOrder, arrayMove, computeReorder, firstOrderedId } from '../../src/renderer/src/lib/order';
 
 const id = (x: string): string => x;
 
@@ -30,6 +30,21 @@ describe('applyOrder', () => {
   it('works on objects via getId', () => {
     const items = [{ id: 'x' }, { id: 'y' }, { id: 'z' }];
     expect(applyOrder(items, (o) => o.id, ['z', 'x']).map((o) => o.id)).toEqual(['z', 'x', 'y']);
+  });
+});
+
+describe('firstOrderedId', () => {
+  it('picks the first item after the saved account order is applied', () => {
+    const accounts = [{ id: 'free' }, { id: 'vip' }];
+    expect(firstOrderedId(accounts, (account) => account.id, ['vip', 'free'])).toBe('vip');
+  });
+
+  it('falls back to input order when no saved order exists', () => {
+    expect(firstOrderedId(['free', 'vip'], id, [])).toBe('free');
+  });
+
+  it('returns null for an empty item list', () => {
+    expect(firstOrderedId([], id, ['vip'])).toBeNull();
   });
 });
 
