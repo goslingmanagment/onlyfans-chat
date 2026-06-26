@@ -107,6 +107,7 @@ function PaletteBody(): React.JSX.Element {
       { id: 'act:ai-review', title: t('palette.aiReview', { combo: modCombo('E') }), run: () => startAiFromGlobal('chat-review', queryClient) },
       // Entry point for the Spenders board (PLAN item 12; recorded in DESIGN §1)
       { id: 'act:spenders', title: t('palette.spenders'), run: () => setView('spenders') },
+      { id: 'act:online', title: t('palette.online'), run: () => setView('online') },
       { id: 'act:settings', title: t('sp.openSettings'), run: () => setView('settings') },
       { id: 'act:refresh', title: t('palette.forceRefresh'), run: () => forceRefresh.mutate(undefined) },
       { id: 'act:panel', title: t('palette.togglePanel'), run: togglePanel },

@@ -403,6 +403,10 @@ export interface SettingsVM {
    * board shelves (PLAN item 12). Spenders outside mapped lists → «Без тира».
    */
   spendersListMappings: Record<string, string[]>;
+  /** Online surface (variant C): «Только спендеры» default — server filter[total_spent]. */
+  onlineOnlySpenders: boolean;
+  /** Online surface sort tab: lifetime spend ('spend') or last-seen recency ('recent'). */
+  onlineSort: 'spend' | 'recent';
   /** Desktop Message Guard policy. Local-first in P1/P2; shaped for core later. */
   messageGuardPolicy: MessageGuardPolicy;
   /** Guard config source transport seam; P1/P2 use local only. */
@@ -649,6 +653,37 @@ export interface SpendersFreshnessVM {
   } | null;
 }
 
+// ─── Online surface (variant C, flat; mockup docs/mockups/experiments/online-flat.html) ──
+
+/** One online-now row. Extends the Spenders row VM (identical left columns:
+ *  avatar / name / waiting-dot / lifetime / 30-day / preview) with the fan's
+ *  last-seen stamp — the one datum Online adds, driving «онлайн N мин» and the
+ *  «кто только зашёл» sort. */
+export interface OnlineRowVM extends SpenderRowVM {
+  /** ISO of the fan's last-seen (OFAPI /fans/active); null when absent. */
+  lastSeen: string | null;
+}
+
+/** Snapshot counts for the surface header + the rail badge. */
+export interface OnlineCountsVM {
+  /** Fans in the snapshot (all online — filter[online]=1). */
+  online: number;
+  /** Of those, fans with lifetime spend > 0. */
+  spenders: number;
+  /** Of those, fans waiting on a reply (clay dot). */
+  waiting: number;
+}
+
+/** One Online snapshot — shared by the cached read + the forced refresh. */
+export interface OnlineSnapshotVM {
+  rows: OnlineRowVM[];
+  counts: OnlineCountsVM;
+  /** ISO of the last successful refresh for this (account, filter); null = never. */
+  fetchedAt: string | null;
+  /** true ⇒ more online fans existed than the page cap fetched. */
+  truncated: boolean;
+}
+
 // ─── Vault & PPV (PRD F7) ────────────────────────────────────────────────
 
 export interface VaultItemVM {
@@ -871,6 +906,28 @@ export interface InvokeChannels {
    */
   'cmd:spenders.refreshScope': { args: { accountId: string; scope: string }; result: void };
   'cmd:spenders.refreshStop': { args: { accountId: string }; result: void };
+  // ── Online surface (variant C; mockup docs/mockups/experiments/online-flat.html) ──
+  /**
+   * Cached last snapshot for (account, spendersOnly) — 0 credits (no OFAPI
+   * call). Returns the in-memory snapshot when present, else an empty snapshot
+   * carrying the persisted «обновлено N назад» stamp (null when never
+   * refreshed). The surface shows the «нажмите Обновить» CTA whenever rows is
+   * empty; it NEVER auto-fetches.
+   */
+  'query:online.snapshot': {
+    args: { accountId: string; spendersOnly: boolean };
+    result: OnlineSnapshotVM;
+  };
+  /**
+   * «Обновить»: ONE forced GET /fans/active?filter[online]=1[&filter[total_spent]=1],
+   * read-only (does NOT mark chats read), paginated up to a small cap
+   * (1 credit/page, ≤20 fans/page), tagged purpose 'online'. Returns the fresh
+   * snapshot. No timers, no background polling (owner: «автопарс жрёт кредиты»).
+   */
+  'cmd:online.refresh': {
+    args: { accountId: string; spendersOnly: boolean };
+    result: OnlineSnapshotVM;
+  };
   // ── Vault & PPV (PRD F7, P5 — additive) ──
   /** Offset-paginated (OFAPI vault pagination is limit/offset + hasMore). */
   'query:vault.list': {
@@ -1019,6 +1076,8 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:spenders.freshness': true,
   'cmd:spenders.refreshScope': true,
   'cmd:spenders.refreshStop': true,
+  'query:online.snapshot': true,
+  'cmd:online.refresh': true,
   'query:vault.list': true,
   'query:vault.albums': true,
   'query:chat.gallery': true,

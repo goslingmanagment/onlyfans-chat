@@ -25,7 +25,8 @@ import {
 } from '../ai/dockLogic';
 import { pingGateKey } from '../ai/pingGate';
 import { COMPOSER_TEXTAREA_ID } from '../conversation/composerDom';
-import { previewRow, useSpendersStore } from './spendersStore';
+import { previewRow } from './spendersStore';
+import { activeBoardStore, isBoardView } from './boardStores';
 
 // ── On-open thread hydration (PLAN item 13: EVERY open hydrates). One
 // read-only tail GET per quick-look open — the same fetch a full chat open
@@ -54,7 +55,7 @@ export function hydratePreviewFan(
 
 export async function ensureAndOpenPreviewChat(row: SpenderRowVM): Promise<boolean> {
   const ui = useUiStore.getState();
-  if (ui.view !== 'spenders' || ui.selectedAccountId === null) return false;
+  if (!isBoardView(ui.view) || ui.selectedAccountId === null) return false;
   const accountId = ui.selectedAccountId;
   const result = await getBridge().invoke('cmd:spenders.hydrate', {
     accountId,
@@ -79,16 +80,18 @@ export type PreviewAiFeature = 'ping' | 'fast-reply' | 'hi-greeting' | 'improve-
 
 export function startAiFromPreview(feature: PreviewAiFeature, queryClient: QueryClient): void {
   const ui = useUiStore.getState();
-  const spenders = useSpendersStore.getState();
-  const row = previewRow(spenders);
-  if (ui.view !== 'spenders' || ui.selectedAccountId === null || row === null) return;
+  const board = activeBoardStore();
+  if (board === null || ui.selectedAccountId === null) return;
+  const state = board.getState();
+  const row = previewRow(state);
+  if (row === null) return;
   // Generation is NOT gated on canSendMessage — matching the shared pills and
   // the full chat: you can draft for an un-messageable fan (the dock copy-
   // degrades, the composer blocks the actual send). Only the AI / ping / hi
   // feature gates below apply, so the hotkey path and the pill path agree.
   const accountId = ui.selectedAccountId;
   const fanId = row.fanId;
-  if (spenders.previewAiBlocked?.fanId === fanId) return;
+  if (state.previewAiBlocked?.fanId === fanId) return;
 
   const settings = queryClient.getQueryData<SettingsVM>(qk.settings);
   const account = queryClient

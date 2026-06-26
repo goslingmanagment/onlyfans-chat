@@ -48,6 +48,7 @@ import { createSendEngine, type SendEngine } from './send/engine';
 import { createMessageGuardRuntime, type MessageGuardRuntime } from './message-guard/runtime';
 import { createVaultService, type VaultService } from './media/vault';
 import { createSpendersService, type SpendersService } from './spenders/service';
+import { createOnlineService, type OnlineService } from './online/service';
 import { createSpendersRefresh, type SpendersRefreshService } from './spenders/refresh';
 import { createPollingSync, syncAccounts } from './sync/polling-sync';
 import { createBudgetGuard } from './sync/budget-guard';
@@ -92,6 +93,7 @@ let sendEngine: SendEngine | null = null;
 let messageGuard: MessageGuardRuntime | null = null;
 let vaultService: VaultService | null = null;
 let spendersService: SpendersService | null = null;
+let onlineService: OnlineService | null = null;
 let spendersRefresh: SpendersRefreshService | null = null;
 let hub: HubModule | null = null;
 let disposeEventForwarding: (() => void) | null = null;
@@ -236,11 +238,13 @@ function buildAppMenu(): void {
 }
 
 function loadWindowContent(win: BrowserWindow): void {
-  // Dev convenience: CHATGOOSE_OPEN_VIEW=settings|spenders boots straight
+  // Dev convenience: CHATGOOSE_OPEN_VIEW=settings|spenders|online boots straight
   // into that view (e.g. documenting a live run). No effect packaged.
   const openView = !app.isPackaged ? process.env['CHATGOOSE_OPEN_VIEW'] : undefined;
   const search =
-    openView === 'settings' || openView === 'spenders' ? `view=${openView}` : null;
+    openView === 'settings' || openView === 'spenders' || openView === 'online'
+      ? `view=${openView}`
+      : null;
   const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
   if (!app.isPackaged && isAllowedDevRendererUrl(rendererUrl)) {
     void win.loadURL(appendSearchToUrl(rendererUrl, search));
@@ -603,6 +607,10 @@ async function initOfapi(
     getMappedListIds: async (accountId) =>
       (await settingsStore.get()).spendersListMappings[accountId] ?? [],
   });
+  // Online-now surface (variant C, flat): explicit-refresh-only /fans/active
+  // reads through the metered client (purpose 'online'); local joins reuse the
+  // Spenders machinery. NO background polling (owner: «автопарс жрёт кредиты»).
+  onlineService = createOnlineService({ client, data: dataLayer, toMediaUrl });
   // Spenders freshness (PLAN item 13): quick-look hydrate TTL guard + the
   // scoped refresh queue — the lowest-priority OFAPI consumer, pauses first
   // on budget exhaustion, resumes persisted queues after sync starts.
@@ -909,6 +917,9 @@ async function boot(): Promise<void> {
     },
     get spenders() {
       return spendersService;
+    },
+    get online() {
+      return onlineService;
     },
     get spendersRefresh() {
       return spendersRefresh;

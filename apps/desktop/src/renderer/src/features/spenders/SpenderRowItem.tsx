@@ -21,12 +21,20 @@ export const SpenderRowItem = memo(function SpenderRowItem({
   active,
   t,
   onOpen,
+  online = false,
+  onlineLabel,
 }: {
   row: SpenderRowVM;
   /** Cursor row or open-preview row — bg + clay left bar (.lrow.open). */
   active: boolean;
   t: UiTranslator;
   onOpen: (fanId: string) => void;
+  /** Online variant (variant C): render the green online dot on the avatar. */
+  online?: boolean;
+  /** When set, replaces the silence + МОДЕЛЬ/ФАН right column with the
+   *  «онлайн N мин» label — the ONLY per-row difference vs Spenders. A plain
+   *  string keeps the memo intact. */
+  onlineLabel?: string;
 }): React.JSX.Element {
   const lifetime =
     row.lifetimeSpend !== null && Math.round(row.lifetimeSpend) > 0
@@ -46,7 +54,7 @@ export const SpenderRowItem = memo(function SpenderRowItem({
       )}
     >
       {active && <span className="absolute top-0 bottom-0 left-0 w-[3px] bg-clay" />}
-      <Avatar name={row.name} url={row.avatarUrl} />
+      <Avatar name={row.name} url={row.avatarUrl} online={online} />
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="min-w-0 truncate text-[14px] font-semibold">{row.name}</span>
@@ -74,19 +82,23 @@ export const SpenderRowItem = memo(function SpenderRowItem({
       </div>
       <div className="flex flex-col items-end gap-1 whitespace-nowrap">
         <span className="num min-h-[13px] text-[10px] font-semibold text-green">{flow30d ?? ''}</span>
-        <span className="num flex items-center gap-[5px] text-[9.5px] tracking-[0.06em] text-ink-low">
-          {row.silence !== 'none' && (
-            <span
-              className={cx(
-                'h-[7px] w-[7px] flex-none rounded-full',
-                row.silence === 'warm' ? 'bg-amber' : 'bg-clay-deep',
-              )}
-            />
-          )}
-          {t('sp.model')} <b className="font-semibold text-ink-mid">{dayCounter(t, row.modelDays)}</b>
-          {' · '}
-          {t('sp.fan')} <b className="font-semibold text-ink-mid">{dayCounter(t, row.fanDays)}</b>
-        </span>
+        {onlineLabel !== undefined ? (
+          <span className="num text-[9.5px] font-semibold tracking-[0.05em] text-online">{onlineLabel}</span>
+        ) : (
+          <span className="num flex items-center gap-[5px] text-[9.5px] tracking-[0.06em] text-ink-low">
+            {row.silence !== 'none' && (
+              <span
+                className={cx(
+                  'h-[7px] w-[7px] flex-none rounded-full',
+                  row.silence === 'warm' ? 'bg-amber' : 'bg-clay-deep',
+                )}
+              />
+            )}
+            {t('sp.model')} <b className="font-semibold text-ink-mid">{dayCounter(t, row.modelDays)}</b>
+            {' · '}
+            {t('sp.fan')} <b className="font-semibold text-ink-mid">{dayCounter(t, row.fanDays)}</b>
+          </span>
+        )}
       </div>
     </button>
   );

@@ -99,3 +99,12 @@ export function isOnline(lastSeenIso: string | null, now: Date): boolean {
   if (lastSeenIso === null) return false;
   return now.getTime() - new Date(lastSeenIso).getTime() < 5 * 60_000;
 }
+
+/** Whole minutes since `lastSeenIso` (floored, min 0); null when unknown.
+ *  Drives the «онлайн N мин» / «только зашёл» Online-row label. */
+export function onlineMinutes(lastSeenIso: string | null, now: Date): number | null {
+  if (lastSeenIso === null) return null;
+  const ms = Date.parse(lastSeenIso);
+  if (!Number.isFinite(ms)) return null;
+  return Math.max(0, Math.floor((now.getTime() - ms) / 60_000));
+}

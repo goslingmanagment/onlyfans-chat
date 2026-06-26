@@ -16,6 +16,7 @@ export const OFAPI_PURPOSES = [
   'spend-sweep',
   'spenders',
   'spenders-refresh',
+  'online',
 ] as const;
 
 export type OfApiPurpose = (typeof OFAPI_PURPOSES)[number];
@@ -41,6 +42,7 @@ export const OFAPI_PURPOSE_LABELS: Readonly<Record<string, string>> = {
   'spend-sweep': 'Fan-spend sweeps',
   'spenders': 'Spenders board (tier lists)',
   'spenders-refresh': 'Spenders refresh (thread backfill)',
+  'online': 'Online now (active-fans refresh)',
   [UNTAGGED_PURPOSE]: 'Untagged (recorded before this update)',
 };
 

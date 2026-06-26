@@ -8,6 +8,7 @@ import {
   formatLastSeen,
   formatListTime,
   isOnline,
+  onlineMinutes,
   sameDay,
 } from '../../src/renderer/src/lib/time';
 
@@ -97,5 +98,18 @@ describe('formatLastSeen / isOnline', () => {
   it('handles null honestly', () => {
     expect(formatLastSeen(null, NOW, t)).toBe('last seen unknown');
     expect(isOnline(null, NOW)).toBe(false);
+  });
+});
+
+describe('onlineMinutes', () => {
+  const now = new Date(2026, 5, 10, 19, 30);
+  it('floors whole minutes since lastSeen, min 0', () => {
+    expect(onlineMinutes(new Date(now.getTime() - 2 * 60_000).toISOString(), now)).toBe(2);
+    expect(onlineMinutes(new Date(now.getTime() - 59_000).toISOString(), now)).toBe(0); // <1 min ⇒ «только зашёл»
+    expect(onlineMinutes(new Date(now.getTime() + 5_000).toISOString(), now)).toBe(0); // clamp
+  });
+  it('null/garbage → null', () => {
+    expect(onlineMinutes(null, now)).toBeNull();
+    expect(onlineMinutes('not-a-date', now)).toBeNull();
   });
 });

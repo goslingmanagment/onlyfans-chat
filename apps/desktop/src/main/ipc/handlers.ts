@@ -16,6 +16,7 @@ import { auditOutbox } from '../send/audit';
 import type { VaultService } from '../media/vault';
 import type { SpendersService } from '../spenders/service';
 import type { SpendersRefreshService } from '../spenders/refresh';
+import type { OnlineService } from '../online/service';
 import type { Logger } from '../diagnostics/logger';
 import type { MessageGuardRuntime } from '../message-guard/runtime';
 import type {
@@ -257,6 +258,9 @@ const spendersHydrateSchema = z.object({
 // scope = 'all' | mapped OM list id (PLAN item 13 refresh queue)
 const spendersScopeSchema = z.object({ accountId: idSchema, scope: idSchema });
 
+// ── Online surface (variant C, flat) ──
+const onlineSnapshotSchema = z.object({ accountId: idSchema, spendersOnly: z.boolean() });
+
 // ── Vault & PPV (PRD F7) ──
 const vaultListSchema = z.object({
   accountId: idSchema,
@@ -340,6 +344,8 @@ export interface IpcDeps {
   spenders?: SpendersService | null;
   /** Spenders freshness: hydrate TTL guard + scoped refresh queue (PLAN item 13). */
   spendersRefresh?: SpendersRefreshService | null;
+  /** Online-now surface (variant C); null/absent until an OFAPI read transport exists. */
+  online?: OnlineService | null;
   purge: () => Promise<void>;
   /** Settings "Test" buttons; probes the STORED key. Optional like vault. */
   testKey?: (provider: KeyTestProvider) => Promise<KeyTestResultVM>;
@@ -982,6 +988,31 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('cmd:spenders.refreshStop', (_event, rawArgs: unknown) => {
     const args = spendersListsSchema.parse(rawArgs);
     requireSpendersRefresh().stop(args.accountId);
+  });
+
+  // ── Online surface (variant C, flat; read-only /fans/active) ──
+
+  function requireOnline(): OnlineService {
+    if (!deps.online) {
+      throw new Error('The online surface is not available yet — configure OFAPI read access in Settings.');
+    }
+    return deps.online;
+  }
+
+  ipcMain.handle('query:online.snapshot', (_event, rawArgs: unknown) => {
+    const args = onlineSnapshotSchema.parse(rawArgs);
+    // 0 credits — cached snapshot only. Degrade gracefully before an OFAPI
+    // transport exists so the always-mounted rail-badge query never throws
+    // (same shape as query:spenders.freshness's null-service path).
+    if (!deps.online) {
+      return { rows: [], counts: { online: 0, spenders: 0, waiting: 0 }, fetchedAt: null, truncated: false };
+    }
+    return deps.online.snapshot(args.accountId, args.spendersOnly);
+  });
+
+  ipcMain.handle('cmd:online.refresh', (_event, rawArgs: unknown) => {
+    const args = onlineSnapshotSchema.parse(rawArgs);
+    return requireOnline().refresh(args.accountId, args.spendersOnly);
   });
 
   // ── Vault & PPV (PRD F7) ──

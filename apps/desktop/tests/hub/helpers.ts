@@ -74,6 +74,8 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     },
     spendStyle: 'figure',
     spendersListMappings: {},
+    onlineOnlySpenders: true,
+    onlineSort: 'spend',
     messageGuardPolicy: BUILTIN_MESSAGE_GUARD_POLICY,
     guardConfigTransport: 'local',
     uiLocale: 'system',

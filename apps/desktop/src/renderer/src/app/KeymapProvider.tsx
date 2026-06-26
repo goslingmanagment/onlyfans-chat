@@ -21,7 +21,8 @@ import {
 import { startAiFromGlobal } from '../features/ai/globalStart';
 import { sendCurrentDraft } from '../features/conversation/sendController';
 import { COMPOSER_TEXTAREA_ID } from '../features/conversation/composerDom';
-import { previewRow, useSpendersStore } from '../features/spenders/spendersStore';
+import { previewRow } from '../features/spenders/spendersStore';
+import { boardStoreForView, isBoardView } from '../features/spenders/boardStores';
 import {
   ensureAndOpenPreviewChat,
   focusPreviewComposer,
@@ -104,12 +105,12 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
         case 'dismiss': {
           if (ui.paletteOpen) ui.setPaletteOpen(false);
           else if (ui.cheatsheetOpen) ui.setCheatsheetOpen(false);
-          else if (ui.view === 'spenders' && useSpendersStore.getState().previewFanId !== null) {
+          else if (isBoardView(ui.view) && (boardStoreForView(ui.view)?.getState().previewFanId ?? null) !== null) {
             // mockup: ESC closes the quick look; AI keeps running unless explicitly cancelled
-            useSpendersStore.getState().closePreview();
+            boardStoreForView(ui.view)?.getState().closePreview();
           } else if (useAiStore.getState().op !== null) dismissDock();
           else if (ui.view === 'settings') ui.setView('workspace');
-          else if (ui.view === 'spenders') ui.setView('workspace');
+          else if (isBoardView(ui.view)) ui.setView('workspace');
           else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
           return;
         }
@@ -139,10 +140,11 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
         return;
       }
 
-      // ── Spenders board scope (PLAN item 12) ──
-      if (ui.view === 'spenders' && ui.selectedAccountId !== null) {
+      // ── Board scope (Spenders + Online variant C share J/K/SPACE/O/Ping) ──
+      const boardStore = boardStoreForView(ui.view);
+      if (boardStore !== null && ui.selectedAccountId !== null) {
         const accountId = ui.selectedAccountId;
-        const spd = useSpendersStore.getState();
+        const spd = boardStore.getState();
         switch (action) {
           case 'next-chat':
           case 'prev-chat':
@@ -210,9 +212,10 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
             cancelActiveOperation();
             return;
           case 'board-stats':
-            // S — compact stats column ⇄ full grid (owner v2 layout)
+            // S — Spenders-only: compact stats column ⇄ full grid. Online has
+            // no stats panel, so the key is a no-op there.
             e.preventDefault();
-            spd.toggleStatsExpanded();
+            if (ui.view === 'spenders') spd.toggleStatsExpanded();
             return;
           default:
             return;

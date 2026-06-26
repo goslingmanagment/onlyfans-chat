@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountVM } from '../../../../preload/contract';
-import { useAccounts, useSettings, useUpdateSettings } from '../../bridge/queries';
+import { useAccounts, useOnlineSnapshot, useSettings, useUpdateSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { initialsOf } from '../../lib/messages';
 import { applyOrder, computeReorder } from '../../lib/order';
@@ -28,6 +28,12 @@ export function AccountRail(): React.JSX.Element {
   const selectAccount = useUiStore((s) => s.selectAccount);
   const view = useUiStore((s) => s.view);
   const setView = useUiStore((s) => s.setView);
+  // Online-now badge: counts.online of the selected account's cached snapshot
+  // (0 credits — reads the in-memory main snapshot). Shares the surface's cache
+  // key so a «Обновить» updates the badge instantly.
+  const onlineOnlySpenders = useSettings().data?.onlineOnlySpenders ?? true;
+  const onlineCount =
+    useOnlineSnapshot(selectedAccountId, onlineOnlySpenders).data?.counts.online ?? 0;
 
   // Owner-chosen order (drag-sorted); unlisted accounts keep alpha order after.
   const ordered = useMemo(
@@ -114,6 +120,24 @@ export function AccountRail(): React.JSX.Element {
         +
       </button>
       <div className="flex-1" />
+      {/* Online-now page entry (variant C; sibling of Spenders, above it) */}
+      <button
+        type="button"
+        title={t('online.title')}
+        onClick={() => setView(view === 'online' ? 'workspace' : 'online')}
+        className={cx(
+          'relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px]',
+          view === 'online' ? 'bg-clay-bg text-clay' : 'text-ink-low hover:text-ink-mid',
+        )}
+      >
+        {/* the ONE allowed semantic accent — the green online dot */}
+        <span className="h-3 w-3 rounded-full bg-online" />
+        {onlineCount > 0 && (
+          <span className="num absolute -top-[5px] -right-[6px] flex h-4 min-w-4 items-center justify-center rounded-full border-2 border-bg1 bg-online px-1 text-micro font-semibold text-white">
+            {onlineCount > 99 ? '99' : onlineCount}
+          </span>
+        )}
+      </button>
       {/* Spenders page entry (owner 2026-06-13: a visible button, not just ⌘K) */}
       <button
         type="button"

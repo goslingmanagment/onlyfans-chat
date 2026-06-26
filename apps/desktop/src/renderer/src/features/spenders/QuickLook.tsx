@@ -21,7 +21,7 @@ import { PREVIEW_FEATURES } from '../conversation/conversationFeatures';
 import { handleConversationChange } from '../ai/aiStore';
 import { resetVaultForConversation } from '../vault/vaultStore';
 import { presenceKey, useUiStore } from '../../state/uiStore';
-import { useSpendersStore } from './spendersStore';
+import type { BoardStore } from './spendersStore';
 import { dayCounter } from './SpenderRowItem';
 import { hydratePreviewFan, ensureAndOpenPreviewChat } from './previewActions';
 import {
@@ -50,15 +50,20 @@ export function QuickLook({
   accountId,
   fanId,
   row,
+  store,
 }: {
   accountId: string;
   fanId: string;
   row: SpenderRowVM | null;
+  /** The active board store (Spenders or Online) — injected so the overlay is
+   *  not hard-bound to useSpendersStore. Zustand stores are hooks, so calling
+   *  store((s)=>…) below obeys the rules of hooks (the prop is a stable singleton). */
+  store: BoardStore;
 }): React.JSX.Element {
   const t = useT();
-  const closePreview = useSpendersStore((s) => s.closePreview);
-  const setPreviewAiBlocked = useSpendersStore((s) => s.setPreviewAiBlocked);
-  const clearPreviewAiBlocked = useSpendersStore((s) => s.clearPreviewAiBlocked);
+  const closePreview = store((s) => s.closePreview);
+  const setPreviewAiBlocked = store((s) => s.setPreviewAiBlocked);
+  const clearPreviewAiBlocked = store((s) => s.clearPreviewAiBlocked);
   const pushToast = useUiStore((s) => s.pushToast);
   const refresh = useRefreshConversation();
   const [openingChat, setOpeningChat] = useState(false);

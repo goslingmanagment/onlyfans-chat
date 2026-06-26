@@ -592,6 +592,10 @@ export const UI_MESSAGES = {
     en: 'Hydration (chat-list backfill, fan details)',
     ru: 'Догрузка (список чатов, анкеты фанов)',
   },
+  'purpose.online': {
+    en: 'Online now (active-fans refresh)',
+    ru: 'Сейчас онлайн (обновление активных фанов)',
+  },
   'purpose.message-tail': { en: 'Message fetches (changed chats)', ru: 'Загрузка сообщений (изменённые чаты)' },
   'purpose.chat-refresh': { en: 'Manual chat refresh', ru: 'Ручное обновление чата' },
   'purpose.media': { en: 'Media downloads', ru: 'Загрузка медиа' },
@@ -620,6 +624,39 @@ export const UI_MESSAGES = {
   'sb.listVerified': { en: 'LIST', ru: 'СПИСОК' },
   'sb.ago': { en: 'AGO', ru: 'НАЗАД' },
   'sb.shortcuts': { en: 'SHORTCUTS', ru: 'КЛАВИШИ' },
+
+  // ── Online surface (variant C, flat; RU pinned to mockups/experiments/online-flat.html) ──
+  'online.title': { en: 'Online now', ru: 'Сейчас онлайн' },
+  'online.counts': { en: '{spenders} spenders · {online} online', ru: '{spenders} спендеров · {online} онлайн' },
+  'online.refresh': { en: '↻ Refresh', ru: '↻ Обновить' },
+  'online.refreshing': { en: '⟳ Refreshing', ru: '⟳ Обновление' },
+  'online.cost': { en: '· 1 credit/page', ru: '· 1 кредит/стр' },
+  'online.refreshTip': {
+    en: 'OFAPI /fans/active · ≤20 fans/page · 1 credit per page · read-only',
+    ru: 'OFAPI /fans/active · ≤20 фанов/стр · 1 кредит за страницу · только чтение',
+  },
+  'online.updatedAgo': { en: 'updated {when} ago', ru: 'обновлено {when} назад' },
+  'online.neverUpdated': { en: 'NOT REFRESHED YET', ru: 'ЕЩЁ НЕ ОБНОВЛЯЛИ' },
+  'online.onlySpenders': { en: 'Spenders only', ru: 'Только спендеры' },
+  'online.sortBySpend': { en: 'by spend', ru: 'по тратам' },
+  'online.sortByRecent': { en: 'just joined', ru: 'кто только зашёл' },
+  'online.onlineMin': { en: 'online {n} min', ru: 'онлайн {n} мин' },
+  'online.justJoined': { en: 'just joined', ru: 'только зашёл' },
+  'online.footPing': { en: 'ping', ru: 'пинг' },
+  'online.footSnapshot': {
+    en: 'snapshot · no auto-refresh — press «Refresh» (1 credit/page)',
+    ru: 'снимок · без автообновления — жмите «Обновить» (1 кредит/стр)',
+  },
+  'online.empty': { en: 'No one online right now', ru: 'Сейчас никого нет онлайн' },
+  'online.emptyFirst': { en: 'No snapshot yet', ru: 'Снимок ещё не загружали' },
+  'online.emptyHint': {
+    en: 'Press «Refresh» to pull who is active right now (1 credit/page).',
+    ru: 'Нажмите «Обновить», чтобы подтянуть, кто активен прямо сейчас (1 кредит/стр).',
+  },
+  'online.truncated': {
+    en: 'showing the first {n} online — refresh again for more',
+    ru: 'показаны первые {n} онлайн — обновите ещё раз',
+  },
 
   // ── Spenders board (PLAN item 12; RU pinned to mockups/supporters.html) ──
   'sp.title': { en: 'Spenders', ru: 'Спендеры' },
@@ -848,6 +885,7 @@ export const UI_MESSAGES = {
   'palette.aiScan': { en: 'AI: Scan — deep fan profile ({combo})', ru: 'ИИ: Scan — глубокий профиль фана ({combo})' },
   'palette.aiReview': { en: 'AI: Chat review — rate this conversation ({combo})', ru: 'ИИ: Chat review — оценить переписку ({combo})' },
   'palette.spenders': { en: 'Spenders — board of top spenders', ru: 'Спендеры — борд топовых спендеров' },
+  'palette.online': { en: 'Online now — fans active right now', ru: 'Сейчас онлайн — кто активен прямо сейчас' },
   'palette.forceRefresh': { en: 'Force refresh', ru: 'Принудительно обновить' },
   'palette.togglePanel': { en: 'Toggle fan panel', ru: 'Скрыть/показать панель фана' },
   'palette.toggleList': { en: 'Toggle chat list', ru: 'Скрыть/показать список чатов' },

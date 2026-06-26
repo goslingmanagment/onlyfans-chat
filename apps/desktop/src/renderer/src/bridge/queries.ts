@@ -26,6 +26,7 @@ import type {
   SettingsPatch,
   SettingsVM,
   SpenderListVM,
+  OnlineSnapshotVM,
   SpenderRowVM,
   SpenderStatsVM,
   SpendersFreshnessVM,
@@ -63,6 +64,7 @@ export const qk = {
   spendersUntiered: (accountId: string) => ['spenders-untiered', accountId] as const,
   spendersStats: (accountId: string) => ['spenders-stats', accountId] as const,
   spendersFreshness: (accountId: string) => ['spenders-freshness', accountId] as const,
+  online: (accountId: string, spendersOnly: boolean) => ['online', accountId, spendersOnly] as const,
   vault: (accountId: string, albumId: string | null, query: string) =>
     ['vault', accountId, albumId ?? 'all', query] as const,
   vaultAlbums: (accountId: string) => ['vault-albums', accountId] as const,
@@ -411,6 +413,33 @@ export function useSpendersFreshness(accountId: string | null, enabled: boolean)
     queryKey: accountId === null ? ['spenders-freshness', 'none'] : qk.spendersFreshness(accountId),
     queryFn: () => getBridge().invoke('query:spenders.freshness', { accountId: accountId ?? '' }),
     enabled: enabled && accountId !== null,
+  });
+}
+
+// ─── Online surface (variant C, flat) ───────────────────────────────────────
+// Snapshot is an in-memory main cache (0 credits, staleTime ∞ — only changes on
+// an explicit refresh). «Обновить» is the only OFAPI call (1 credit/page) and
+// writes the fresh snapshot straight into the cache (same idiom as
+// useCheckUpdates). No polling, no auto-fetch (owner: «автопарс жрёт кредиты»).
+
+export function useOnlineSnapshot(accountId: string | null, spendersOnly: boolean, enabled = true) {
+  return useQuery<OnlineSnapshotVM>({
+    queryKey: accountId === null ? ['online', 'none', spendersOnly] : qk.online(accountId, spendersOnly),
+    queryFn: () =>
+      getBridge().invoke('query:online.snapshot', { accountId: accountId ?? '', spendersOnly }),
+    enabled: enabled && accountId !== null,
+    staleTime: Infinity,
+  });
+}
+
+export function useRefreshOnline() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { accountId: string; spendersOnly: boolean }) =>
+      getBridge().invoke('cmd:online.refresh', vars),
+    onSuccess: (snapshot, vars) => {
+      queryClient.setQueryData(qk.online(vars.accountId, vars.spendersOnly), snapshot);
+    },
   });
 }
 

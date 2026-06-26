@@ -338,7 +338,7 @@ export function SpendersSurface(): React.JSX.Element {
       </div>
       <StatsPanel stats={stats.data} expanded={statsExpanded} loading={stats.isLoading} />
       {accountId !== null && previewFanId !== null && (
-        <QuickLook accountId={accountId} fanId={previewFanId} row={previewRowVM} />
+        <QuickLook accountId={accountId} fanId={previewFanId} row={previewRowVM} store={useSpendersStore} />
       )}
     </section>
   );

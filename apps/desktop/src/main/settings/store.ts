@@ -94,6 +94,8 @@ export const PERSISTED_SETTINGS_KEYS = [
   'accountPageLabels',
   'spendStyle',
   'spendersListMappings',
+  'onlineOnlySpenders',
+  'onlineSort',
   'messageGuardPolicy',
   'guardConfigTransport',
   'uiLocale',
@@ -187,6 +189,9 @@ const persistedFieldSchemas = {
   spendStyle: z.enum(['figure', 'chip']),
   // Spenders board: per-account ordered OM list ids → shelves (PLAN item 12).
   spendersListMappings: z.record(z.string(), z.array(z.string().min(1).max(64)).max(50)),
+  // Online surface (variant C): «Только спендеры» default + sort tab.
+  onlineOnlySpenders: z.boolean(),
+  onlineSort: z.enum(['spend', 'recent']),
   // Message Guard: local-first policy cache. P3 editor/core transport can update this.
   messageGuardPolicy: messageGuardPolicySchema,
   guardConfigTransport: z.enum(['local', 'hub']),
@@ -249,6 +254,9 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   accountPageLabels: {},
   spendStyle: 'figure',
   spendersListMappings: {},
+  // Owner: «Только спендеры» ships ON; default sort by lifetime spend.
+  onlineOnlySpenders: true,
+  onlineSort: 'spend',
   messageGuardPolicy: BUILTIN_MESSAGE_GUARD_POLICY,
   guardConfigTransport: 'local',
   uiLocale: 'system',
@@ -286,6 +294,8 @@ export const settingsPatchSchema = z.strictObject({
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
   spendStyle: persistedFieldSchemas.spendStyle.optional(),
   spendersListMappings: persistedFieldSchemas.spendersListMappings.optional(),
+  onlineOnlySpenders: persistedFieldSchemas.onlineOnlySpenders.optional(),
+  onlineSort: persistedFieldSchemas.onlineSort.optional(),
   messageGuardPolicy: persistedFieldSchemas.messageGuardPolicy.optional(),
   guardConfigTransport: persistedFieldSchemas.guardConfigTransport.optional(),
   uiLocale: persistedFieldSchemas.uiLocale.optional(),
@@ -404,6 +414,8 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       accountPageLabels: readField('accountPageLabels'),
       spendStyle: readField('spendStyle'),
       spendersListMappings: readField('spendersListMappings'),
+      onlineOnlySpenders: readField('onlineOnlySpenders'),
+      onlineSort: readField('onlineSort'),
       messageGuardPolicy: readField('messageGuardPolicy'),
       guardConfigTransport: readField('guardConfigTransport'),
       uiLocale: readField('uiLocale'),

@@ -56,60 +56,67 @@ interface SpendersState {
   resetTransient: () => void;
 }
 
-export const useSpendersStore = create<SpendersState>((set) => ({
-  chip: 'all',
-  expanded: {},
-  untieredOpen: false,
-  cursorFanId: null,
-  previewFanId: null,
-  previewAiBlocked: null,
-  visibleRows: [],
-  statsExpanded: false,
-  statsRows: [],
-  refresh: null,
+export function createBoardStore() {
+  return create<SpendersState>((set) => ({
+    chip: 'all',
+    expanded: {},
+    untieredOpen: false,
+    cursorFanId: null,
+    previewFanId: null,
+    previewAiBlocked: null,
+    visibleRows: [],
+    statsExpanded: false,
+    statsRows: [],
+    refresh: null,
 
-  setChip: (chip) => set({ chip, cursorFanId: null, previewFanId: null }),
-  expandList: (listId) => set((s) => ({ expanded: { ...s.expanded, [listId]: true } })),
-  setUntieredOpen: (open) => set({ untieredOpen: open }),
-  setCursor: (fanId) => set({ cursorFanId: fanId }),
-  moveCursor: (delta) =>
-    set((s) => {
-      if (s.visibleRows.length === 0) return s;
-      const index = s.visibleRows.findIndex((row) => row.fanId === s.cursorFanId);
-      const next =
-        index === -1
-          ? delta === 1
-            ? 0
-            : s.visibleRows.length - 1
-          : Math.min(Math.max(index + delta, 0), s.visibleRows.length - 1);
-      const fanId = s.visibleRows[next]?.fanId ?? null;
-      // While the quick look is open, J/K walks fans WITHOUT closing it.
-      return {
-        cursorFanId: fanId,
-        ...(s.previewFanId !== null && fanId !== null ? { previewFanId: fanId } : {}),
-      };
-    }),
-  openPreview: (fanId) => set({ previewFanId: fanId, cursorFanId: fanId }),
-  closePreview: () => set({ previewFanId: null, previewAiBlocked: null }),
-  setPreviewAiBlocked: (fanId, reason) => set({ previewAiBlocked: { fanId, reason } }),
-  clearPreviewAiBlocked: (fanId) =>
-    set((s) =>
-      fanId === undefined || s.previewAiBlocked?.fanId === fanId
-        ? { previewAiBlocked: null }
-        : s,
-    ),
-  setVisibleRows: (rows) =>
-    set((s) => {
-      // keep cursor valid as data refreshes; drop it if the fan left the view
-      // (the preview deliberately survives refreshes — it holds its own fanId)
-      const cursorOk = s.cursorFanId !== null && rows.some((r) => r.fanId === s.cursorFanId);
-      return { visibleRows: rows, ...(cursorOk ? {} : { cursorFanId: null }) };
-    }),
-  setStatsRows: (rows) => set({ statsRows: rows }),
-  setRefresh: (refresh) => set({ refresh }),
-  toggleStatsExpanded: () => set((s) => ({ statsExpanded: !s.statsExpanded })),
-  resetTransient: () => set({ cursorFanId: null, previewFanId: null, previewAiBlocked: null }),
-}));
+    setChip: (chip) => set({ chip, cursorFanId: null, previewFanId: null }),
+    expandList: (listId) => set((s) => ({ expanded: { ...s.expanded, [listId]: true } })),
+    setUntieredOpen: (open) => set({ untieredOpen: open }),
+    setCursor: (fanId) => set({ cursorFanId: fanId }),
+    moveCursor: (delta) =>
+      set((s) => {
+        if (s.visibleRows.length === 0) return s;
+        const index = s.visibleRows.findIndex((row) => row.fanId === s.cursorFanId);
+        const next =
+          index === -1
+            ? delta === 1
+              ? 0
+              : s.visibleRows.length - 1
+            : Math.min(Math.max(index + delta, 0), s.visibleRows.length - 1);
+        const fanId = s.visibleRows[next]?.fanId ?? null;
+        // While the quick look is open, J/K walks fans WITHOUT closing it.
+        return {
+          cursorFanId: fanId,
+          ...(s.previewFanId !== null && fanId !== null ? { previewFanId: fanId } : {}),
+        };
+      }),
+    openPreview: (fanId) => set({ previewFanId: fanId, cursorFanId: fanId }),
+    closePreview: () => set({ previewFanId: null, previewAiBlocked: null }),
+    setPreviewAiBlocked: (fanId, reason) => set({ previewAiBlocked: { fanId, reason } }),
+    clearPreviewAiBlocked: (fanId) =>
+      set((s) =>
+        fanId === undefined || s.previewAiBlocked?.fanId === fanId
+          ? { previewAiBlocked: null }
+          : s,
+      ),
+    setVisibleRows: (rows) =>
+      set((s) => {
+        // keep cursor valid as data refreshes; drop it if the fan left the view
+        // (the preview deliberately survives refreshes — it holds its own fanId)
+        const cursorOk = s.cursorFanId !== null && rows.some((r) => r.fanId === s.cursorFanId);
+        return { visibleRows: rows, ...(cursorOk ? {} : { cursorFanId: null }) };
+      }),
+    setStatsRows: (rows) => set({ statsRows: rows }),
+    setRefresh: (refresh) => set({ refresh }),
+    toggleStatsExpanded: () => set((s) => ({ statsExpanded: !s.statsExpanded })),
+    resetTransient: () => set({ cursorFanId: null, previewFanId: null, previewAiBlocked: null }),
+  }));
+}
+
+/** The Spenders board is one instance; the Online surface is a second
+ *  (features/online/onlineStore). Same shape ⇒ shared QuickLook + keymap. */
+export const useSpendersStore = createBoardStore();
+export type BoardStore = typeof useSpendersStore;
 
 /** Row VM of the open preview — board rows first, then the stats queues
  *  (a preview opened from «ждут ответа» may target a shelf not loaded yet). */

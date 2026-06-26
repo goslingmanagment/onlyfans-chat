@@ -196,6 +196,10 @@ export interface ListFansParams extends PurposeTagged {
   limit?: number;
   offset?: number;
   query?: string;
+  /** filter[online]=1 — only fans active right now (/fans/active). */
+  online?: boolean;
+  /** filter[total_spent] server-side threshold (dollars, >= bound; send 1 for spenders-only). */
+  minTotalSpent?: number;
 }
 
 // ── User lists (Spenders board, PLAN item 12) — READ-ONLY ──────────────
@@ -610,6 +614,18 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       limit: params.limit,
       offset: params.offset,
       query: params.query,
+      // Laravel/Spatie bracket notation on the wire. The OpenAPI + ofapi.gen.ts
+      // document these as dotted (filter.online) — that's Scribe's doc convention
+      // for nested query params, NOT the wire format: PHP parse_str collapses a
+      // dotted top-level key (filter.online → filter_online), so only the bracket
+      // form parses into the `filter` array Spatie reads. buildUrl passes the key
+      // verbatim; URLSearchParams percent-encodes [ ] → %5B %5D. undefined values
+      // are dropped, so no conditional spread is needed and listFansAll callers
+      // (which never set these) are unaffected.
+      // Asserted by tests/ofapi/fans-active.test.ts (encoded-URL); confirm once
+      // against a live /fans/active response before the pilot gate.
+      'filter[online]': params.online === true ? 1 : undefined,
+      'filter[total_spent]': params.minTotalSpent,
     });
     const { data } = unwrapEnvelope(payload, path);
     const parsed = parseWith(ofapiFansDataSchema, data, path);

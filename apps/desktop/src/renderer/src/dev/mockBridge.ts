@@ -481,6 +481,8 @@ function buildStore(): MockStore {
     accountOrder: [],
     accountPageLabels: {},
     spendersListMappings: { acct_lora: ['9001', '9002'] },
+    onlineOnlySpenders: true,
+    onlineSort: 'spend',
   };
 
   const freshness: Record<string, string> = {};
@@ -831,6 +833,46 @@ export function createMockBridge(): ChatGooseBridge {
   let localSeq = 0;
   // Spenders freshness (PLAN item 13): per-scope stamps + a simulated queue.
   const mockRefreshStamps: Record<string, string> = {};
+  const mockOnlineStamps: Record<string, string> = {};
+  function buildOnlineSnapshot(accountId: string, spendersOnly: boolean, fetchedAt: string | null) {
+    // Mirror the real service: no stamp ⇒ no in-memory snapshot ⇒ empty (CTA).
+    if (fetchedAt === null) {
+      return { rows: [], counts: { online: 0, spenders: 0, waiting: 0 }, fetchedAt: null, truncated: false };
+    }
+    const all = store.chats.get(accountId) ?? [];
+    // Believable "online" subset drawn from the REAL mock chats (so opening a row's
+    // QuickLook always finds a backing chat). Take every other chat; ≤20 = one page.
+    const pool = all.filter((_, i) => i % 2 === 0);
+    let rows = pool.slice(0, 20).map((c, i) => ({
+      fanId: c.chatId,
+      name: c.fanName,
+      username: null,
+      avatarUrl: c.avatarUrl,
+      lifetimeSpend: c.lifetimeSpend,
+      spend30d: c.spend30d,
+      lastMessagePreview: c.lastMessagePreview,
+      lastMessageIsSentByMe: c.lastMessageIsSentByMe,
+      fanWaiting: c.fanWaiting,
+      modelDays: null,
+      fanDays: null,
+      silence: 'none' as const,
+      canSendMessage: c.canSendMessage,
+      canNotSendReason: c.canNotSendReason,
+      hasChat: true,
+      lastSeen: new Date(Date.now() - (1 + i) * 60_000).toISOString(),
+    }));
+    if (spendersOnly) rows = rows.filter((r) => (r.lifetimeSpend ?? 0) > 0);
+    let spenders = 0;
+    let waiting = 0;
+    for (const r of rows) {
+      if ((r.lifetimeSpend ?? 0) > 0) spenders += 1;
+      if (r.fanWaiting) waiting += 1;
+    }
+    // Honest truncation: more eligible chats than fit one page. (Full multi-page
+    // truncation is not faithfully previewable under the mock without fabricating
+    // fanIds that would break QuickLook — verify on live OFAPI.)
+    return { rows, counts: { online: rows.length, spenders, waiting }, fetchedAt, truncated: pool.length > 20 };
+  }
   let mockRefreshActive: {
     scope: string;
     state: 'running' | 'paused';
@@ -1508,6 +1550,25 @@ export function createMockBridge(): ChatGooseBridge {
       return { items: page.map((i) => ({ ...i })), hasMore, nextOffset: hasMore ? start + page.length : null };
     },
     'query:vault.albums': () => vaultAlbums.map((a) => ({ ...a })),
+    // ── Online surface (variant C, flat): snapshot derived from mock chats ──
+    'query:online.snapshot': ({ accountId, spendersOnly }) =>
+      buildOnlineSnapshot(accountId, spendersOnly, mockOnlineStamps[`${accountId}|${spendersOnly ? '1' : '0'}`] ?? null),
+    'cmd:online.refresh': ({ accountId, spendersOnly }) => {
+      const key = `${accountId}|${spendersOnly ? '1' : '0'}`;
+      const iso = new Date().toISOString();
+      mockOnlineStamps[key] = iso;
+      // One press = 1 credit (matches the per-page cost label). NO timer.
+      store.creditsToday += 1;
+      store.sync.creditsUsedToday = store.creditsToday;
+      if (store.sync.creditsBalance !== null) store.sync.creditsBalance -= 1;
+      emit('sync:event', {
+        type: 'creditBalance',
+        balance: store.sync.creditsBalance,
+        usedToday: store.sync.creditsUsedToday,
+        rpmRemaining: store.sync.rpmRemaining,
+      });
+      return buildOnlineSnapshot(accountId, spendersOnly, iso);
+    },
     // ── Spenders board (PLAN item 12): rows derived from the mock chat list ──
     'query:spenders.lists': () => ({
       lists: [
