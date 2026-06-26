@@ -15,6 +15,9 @@ Desktop chat client for OnlyFans agency chatters with built-in AI assistance (re
 | `docs/research/legacy-chatgoose.md` | Complete behavioral inventory of the predecessor (features, prompts, exact constants/timeouts, lessons). Normative for ported behavior |
 | `docs/research/onlyfansapi.md` | OFAPI capability map, real-time strategy, credits/pricing, gotchas, key docs URLs |
 | `docs/research/agency-hub-core.md` | Capability map of the Agency Hub "core" backend (`~/code/core`) — the live ChatMuse contract, auth model, what P6 adds there |
+| `docs/research/reactivation-guide.md` | Agency reactivation playbook — ping templates (A1–A11 / B1–B5) byte-for-byte + normative tone rules for any reactivation-message generation |
+| `docs/SESSIONS.md` | Session runbook — restartable per-phase session prompts, the "one session per repo" rule |
+| `docs/RELEASE.md` | How to build/ship the desktop installer: a `v*` tag → auto-update reaching all users (hands off to `WINDOWS-GUIDE.html`) |
 | `docs/vendor/onlyfansapi/` | Vendored API docs: `openapi.json` (field-level source of truth — query with `jq`), `llms-full.txt` (grep, don't read whole), see its README |
 
 ## Hard rules
