@@ -2,7 +2,7 @@
 
 Desktop chat client for OnlyFans agency chatters with built-in AI assistance (reply generation, coaching, fan summaries, reactivation pings). Successor to the ChatGoose Firefox extension for Fansly. We cannot inject into OnlyFans, so this app renders its own chat interface on top of the third-party OnlyFans API (onlyfansapi.com, "OFAPI") — OnlyFans accounts are connected through OFAPI, and the desktop reaches OFAPI through the Agency Hub "core" (reads proxied via the hub read-gateway, writes via the command outbox).
 
-**Current state (2026-06-11): implementation underway — the Electron app lives in `apps/desktop`. Phases 0–5 are built; the P3–P5 gates await owner/pilot evidence; P6 (AI gateway, core-side) is deferred (owner decision 2026-06-11).** Start any implementation work from the plan's current phase — the per-phase status notes in `docs/PLAN.md` are the source of truth, not this line.
+**Current state (2026-06-26): in pilot/rollout, not greenfield. The Electron app (`apps/desktop`) is code-complete through Phases 0–6 (`pnpm check` green) and ships to real users via auto-update. It runs Hub-first by default — reads via the core read-gateway, writes (text/typing/unsend/mark-read/media) via the command outbox, with Direct (local OFAPI key) as the Settings rollback. Core's read, command, and AI gateways are deployed and production-enabled; Desktop AI still runs Direct by default until Hub-AI rollout is accepted (core M7 open). What remains is owner/pilot evidence to close the PRD §12 gates, not new engineering.** Start any implementation work from the plan's current phase — the per-phase status notes in `docs/PLAN.md` are the source of truth, not this line.
 
 ## Read these before designing or building anything
 
