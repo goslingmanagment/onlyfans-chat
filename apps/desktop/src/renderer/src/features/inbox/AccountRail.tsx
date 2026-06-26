@@ -101,7 +101,7 @@ export function AccountRail(): React.JSX.Element {
         <AccountTile
           key={account.id}
           account={account}
-          active={view === 'workspace' && account.id === selectedAccountId}
+          active={account.id === selectedAccountId}
           onSelect={selectAccount}
           draggable={draggable}
           dragging={account.id === dragId}

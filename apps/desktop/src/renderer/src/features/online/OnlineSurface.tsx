@@ -11,7 +11,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { refreshCostUsd } from '@chatgoose/shared';
 import type { UiTranslator } from '@chatgoose/shared/i18n/index';
 import type { OnlineRowVM } from '../../../../preload/contract';
-import { useOnlineSnapshot, useRefreshOnline, useSettings, useUpdateSettings } from '../../bridge/queries';
+import { useAccounts, useOnlineSnapshot, useRefreshOnline, useSettings, useUpdateSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { useT } from '../../lib/i18n';
 import { cx } from '../../lib/cx';
@@ -38,9 +38,11 @@ export function OnlineSurface(): React.JSX.Element {
   const t = useT();
 
   const settings = useSettings();
+  const accounts = useAccounts();
   const { mutate: saveSettings } = useUpdateSettings();
   const spendersOnly = settings.data?.onlineOnlySpenders ?? true;
   const sort: OnlineSort = settings.data?.onlineSort ?? 'spend';
+  const account = accounts.data?.find((candidate) => candidate.id === accountId) ?? null;
 
   const snapshotQuery = useOnlineSnapshot(accountId, spendersOnly);
   const refreshOnline = useRefreshOnline();
@@ -50,6 +52,12 @@ export function OnlineSurface(): React.JSX.Element {
   const openPreview = useOnlineStore((s) => s.openPreview);
   const setVisibleRows = useOnlineStore((s) => s.setVisibleRows);
   const resetTransient = useOnlineStore((s) => s.resetTransient);
+
+  // Account switches can now stay on the board surface; drop cursor/preview
+  // instead of carrying a fan id from the previous page/account.
+  useEffect(() => {
+    resetTransient();
+  }, [accountId, resetTransient]);
 
   // Leaving the surface clears cursor/preview (mirrors SpendersSurface).
   useEffect(() => () => resetTransient(), [resetTransient]);
@@ -119,6 +127,11 @@ export function OnlineSurface(): React.JSX.Element {
         <span className="num text-[11px] tracking-[0.04em] text-ink-low">
           {t('online.counts', { spenders: counts.spenders, online: counts.online })}
         </span>
+        {account !== null && (
+          <span className="num max-w-[220px] truncate rounded-full border border-line-strong bg-bg1 px-[9px] py-[2px] text-micro tracking-[0.08em] text-ink-mid uppercase">
+            {account.displayName}
+          </span>
+        )}
         <span className="flex-1" />
         <UpdatedAgo iso={snapshot?.fetchedAt ?? null} t={t} />
         <button

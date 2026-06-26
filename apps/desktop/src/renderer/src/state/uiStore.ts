@@ -93,11 +93,11 @@ export const useUiStore = create<UiState>((set) => ({
 
   setView: (view) => set({ view }),
   selectAccount: (accountId) =>
-    set((s) =>
-      s.selectedAccountId === accountId
-        ? s
-        : { selectedAccountId: accountId, selectedChatId: null, view: 'workspace' },
-    ),
+    set((s) => {
+      if (s.selectedAccountId === accountId) return s;
+      const accountScopedView = s.view === 'spenders' || s.view === 'online' ? s.view : 'workspace';
+      return { selectedAccountId: accountId, selectedChatId: null, view: accountScopedView };
+    }),
   setDefaultAccount: (accountId) =>
     set((s) => (s.selectedAccountId === null ? { selectedAccountId: accountId } : s)),
   selectChat: (accountId, chatId) =>

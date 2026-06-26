@@ -68,6 +68,12 @@ export function SpendersSurface(): React.JSX.Element {
   const freshness = useSpendersFreshness(accountId, true);
   const storeRefresh = useSpendersStore((s) => s.refresh);
 
+  // Account switches can stay on the board surface; drop cursor/preview instead
+  // of carrying a fan id from the previous page/account.
+  useEffect(() => {
+    resetTransient();
+  }, [accountId, resetTransient]);
+
   useEffect(() => () => resetTransient(), [resetTransient]);
 
   const mapping = useMemo(
