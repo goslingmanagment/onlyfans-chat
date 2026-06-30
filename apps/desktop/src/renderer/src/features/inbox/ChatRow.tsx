@@ -71,7 +71,15 @@ export const ChatRow = memo(function ChatRow({
             </span>
           )}
         </div>
-        <div className="mt-[2px] truncate text-[13px] text-ink-mid">
+        <div
+          className={cx(
+            'mt-[2px] truncate text-[13px]',
+            // Whose turn: fan wrote last → full ink + medium (act now);
+            // you wrote last → muted, recedes (handled). DESIGN: weight/tone,
+            // no colour. Drives the "кому ответил, кому нет" scan.
+            chat.lastMessageIsSentByMe ? 'text-ink-low' : 'text-ink font-medium',
+          )}
+        >
           {chat.lastMessageIsSentByMe && <span className="text-ink-low">{t('inbox.youPrefix')}</span>}
           {chat.lastMessagePreview}
         </div>

@@ -67,7 +67,18 @@ export const SpenderRowItem = memo(function SpenderRowItem({
             </span>
           )}
         </div>
-        <div className="mt-[2px] truncate text-[13px] text-ink-mid">
+        <div
+          className={cx(
+            'mt-[2px] truncate text-[13px]',
+            // Same whose-turn tone as the inbox row: fan wrote last → full ink +
+            // medium; you wrote last → muted. Empty (no thread yet) keeps mid.
+            row.lastMessagePreview === ''
+              ? 'text-ink-mid'
+              : row.lastMessageIsSentByMe
+                ? 'text-ink-low'
+                : 'text-ink font-medium',
+          )}
+        >
           {row.lastMessagePreview === '' ? (
             // thread never fetched: honest italic hint, cured by the first
             // refresh / quick-look open (freshness mockup — no per-row marks)
