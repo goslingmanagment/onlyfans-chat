@@ -71,7 +71,8 @@ export const SpenderRowItem = memo(function SpenderRowItem({
           className={cx(
             'mt-[2px] truncate text-[13px]',
             // Same whose-turn tone as the inbox row: fan wrote last → full ink +
-            // medium; you wrote last → muted. Empty (no thread yet) keeps mid.
+            // medium; you wrote last → muted (tone is the sole cue, no «вы:»
+            // label). Empty (no thread yet) keeps mid.
             row.lastMessagePreview === ''
               ? 'text-ink-mid'
               : row.lastMessageIsSentByMe
@@ -84,10 +85,7 @@ export const SpenderRowItem = memo(function SpenderRowItem({
             // refresh / quick-look open (freshness mockup — no per-row marks)
             <span className="text-ink-low italic">{t('sp.noThreadYet')}</span>
           ) : (
-            <>
-              {row.lastMessageIsSentByMe && <span className="text-ink-low">{t('sp.you')} </span>}
-              {row.lastMessagePreview}
-            </>
+            row.lastMessagePreview
           )}
         </div>
       </div>
