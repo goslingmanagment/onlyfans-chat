@@ -64,6 +64,12 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     queueInvalidate(['spenders-stats', accountId]);
   }
 
+  function invalidateOnline(accountId: string): void {
+    // Active-member ids stay cached in main; row previews/waiting/sendability
+    // are local DB joins and must refresh without another /fans/active read.
+    queueInvalidate(['online', accountId]);
+  }
+
   function handleDbChanged(event: z.infer<typeof dbChangedSchema>): void {
     switch (event.scope) {
       case 'accounts':
@@ -78,6 +84,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
           queueInvalidate(qk.accounts);
           // also fires on fan_transactions sweeps — the 30-day board figure
           invalidateSpenders(event.accountId);
+          invalidateOnline(event.accountId);
         } else queueInvalidate(['chats']);
         break;
       case 'messages':
@@ -87,7 +94,10 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
           queueInvalidate(['messages']);
         }
         // spenders rows carry МОДЕЛЬ/ФАН counters from the message DB
-        if (event.accountId !== undefined) invalidateSpenders(event.accountId);
+        if (event.accountId !== undefined) {
+          invalidateSpenders(event.accountId);
+          invalidateOnline(event.accountId);
+        }
         break;
       case 'outbox':
         // outbox refetches ONLY on this event — no polling (DESIGN §3)
@@ -109,6 +119,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
         }
         if (event.scope === 'fans' && event.accountId !== undefined) {
           invalidateSpenders(event.accountId); // lifetime spend lives on fans
+          invalidateOnline(event.accountId);
         }
         break;
       case 'settings':

@@ -47,6 +47,7 @@ describe('attachBridgeEvents', () => {
     await vi.advanceTimersByTimeAsync(50);
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: qk.accounts });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['online', 'acct_1'] });
     detach();
   });
 });
