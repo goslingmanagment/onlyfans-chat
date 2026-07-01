@@ -366,9 +366,14 @@ export interface IpcDeps {
   /** Called when settings.update sets an OFAPI key while sync is offline. */
   onOfapiKeyConfigured?: () => void;
   /**
-   * Called after any settings.update that touched hubApiKey/hubBaseUrl. Key
-   * writes go to the keychain and publish no settings-table change, so this
-   * hook is the only reconnect signal for key-only edits.
+   * Called after any settings.update that can change the selected OFAPI read
+   * client. Key writes go to the keychain and publish no payload-specific
+   * settings event, so the composition root handles active-client rebuilds here.
+   */
+  onOfapiReadConfigChanged?: () => void;
+  /**
+   * Called after hub configuration changed without changing the selected read
+   * client, e.g. support toggles hubModeOverride.
    */
   onHubConfigChanged?: () => void;
   /** Diagnostics log sink (SPEC §11); absent in builds without a logger (tests). */
@@ -741,25 +746,37 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('cmd:settings.update', async (_event, rawPatch: unknown) => {
     const before = await settingsStore.get();
     const result = await settingsStore.update(rawPatch);
-    if (!before.hasOfapiKey && result.hasOfapiKey) {
+    const rawPatchObject =
+      typeof rawPatch === 'object' && rawPatch !== null ? rawPatch : null;
+    const touchedOfapiRead =
+      rawPatchObject !== null &&
+      ('ofapiKey' in rawPatchObject ||
+        'hubApiKey' in rawPatchObject ||
+        'hubBaseUrl' in rawPatchObject ||
+        'ofapiReadTransport' in rawPatchObject);
+    if (touchedOfapiRead) {
+      if (deps.onOfapiReadConfigChanged !== undefined) {
+        deps.onOfapiReadConfigChanged();
+      } else {
+        deps.onHubConfigChanged?.();
+      }
+    } else if (!before.hasOfapiKey && result.hasOfapiKey) {
       deps.onOfapiKeyConfigured?.();
     }
     // Fires on any patch carrying hub config (incl. key replacement, which is
     // invisible in before/after VM comparison) — but only after validation.
     const touchedHub =
-      typeof rawPatch === 'object' &&
-      rawPatch !== null &&
-      ('hubApiKey' in rawPatch ||
-        'hubBaseUrl' in rawPatch ||
-        'hubModeOverride' in rawPatch ||
-        'ofapiReadTransport' in rawPatch);
-    if (touchedHub) {
+      rawPatchObject !== null &&
+      ('hubApiKey' in rawPatchObject ||
+        'hubBaseUrl' in rawPatchObject ||
+        'hubModeOverride' in rawPatchObject ||
+        'ofapiReadTransport' in rawPatchObject);
+    if (touchedHub && !touchedOfapiRead) {
       deps.onHubConfigChanged?.();
     }
     const touchedGuard =
-      typeof rawPatch === 'object' &&
-      rawPatch !== null &&
-      ('messageGuardPolicy' in rawPatch || 'guardConfigTransport' in rawPatch);
+      rawPatchObject !== null &&
+      ('messageGuardPolicy' in rawPatchObject || 'guardConfigTransport' in rawPatchObject);
     if (touchedGuard) {
       data.bus.publish({ scope: 'guard' });
     }

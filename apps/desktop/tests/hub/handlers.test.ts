@@ -85,9 +85,16 @@ function makeSyncStub(
   };
 }
 
-function register(data: DataLayer, overrides: Partial<IpcDeps> = {}): { onHubConfigChanged: ReturnType<typeof vi.fn> } {
+function register(
+  data: DataLayer,
+  overrides: Partial<IpcDeps> = {},
+): {
+  onHubConfigChanged: ReturnType<typeof vi.fn>;
+  onOfapiReadConfigChanged: ReturnType<typeof vi.fn>;
+} {
   handlers.clear();
   const onHubConfigChanged = vi.fn();
+  const onOfapiReadConfigChanged = vi.fn();
   const secrets = {
     hasSecret: async () => false,
     setSecret: async () => undefined,
@@ -102,9 +109,10 @@ function register(data: DataLayer, overrides: Partial<IpcDeps> = {}): { onHubCon
     send: null,
     purge: async () => undefined,
     onHubConfigChanged,
+    onOfapiReadConfigChanged,
     ...overrides,
   });
-  return { onHubConfigChanged };
+  return { onHubConfigChanged, onOfapiReadConfigChanged };
 }
 
 describe('hub IPC wiring', () => {
@@ -181,21 +189,26 @@ describe('hub IPC wiring', () => {
     expect(((await invoke('query:sync.status')) as SyncStatusVM).hub).toBe('off');
   });
 
-  it('onHubConfigChanged fires on key, URL, read transport, override, and combined patches', async () => {
-    const { onHubConfigChanged } = register(data);
+  it('splits read-runtime rebuilds from hub-mode-only reconfigures', async () => {
+    const { onHubConfigChanged, onOfapiReadConfigChanged } = register(data);
     await invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_x' });
-    expect(onHubConfigChanged).toHaveBeenCalledTimes(1);
+    expect(onOfapiReadConfigChanged).toHaveBeenCalledTimes(1);
+    expect(onHubConfigChanged).not.toHaveBeenCalled();
     await invoke('cmd:settings.update', { hubBaseUrl: 'http://localhost:4000' });
-    expect(onHubConfigChanged).toHaveBeenCalledTimes(2);
+    expect(onOfapiReadConfigChanged).toHaveBeenCalledTimes(2);
+    expect(onHubConfigChanged).not.toHaveBeenCalled();
     await invoke('cmd:settings.update', { ofapiReadTransport: 'hub' });
-    expect(onHubConfigChanged).toHaveBeenCalledTimes(3);
+    expect(onOfapiReadConfigChanged).toHaveBeenCalledTimes(3);
+    expect(onHubConfigChanged).not.toHaveBeenCalled();
     await invoke('cmd:settings.update', { hubModeOverride: 'polling' });
-    expect(onHubConfigChanged).toHaveBeenCalledTimes(4);
+    expect(onOfapiReadConfigChanged).toHaveBeenCalledTimes(3);
+    expect(onHubConfigChanged).toHaveBeenCalledTimes(1);
     await invoke('cmd:settings.update', {
       hubBaseUrl: 'http://127.0.0.1:4000',
       hubApiKey: 'agency_hub_core_y',
     });
-    expect(onHubConfigChanged).toHaveBeenCalledTimes(5);
+    expect(onOfapiReadConfigChanged).toHaveBeenCalledTimes(4);
+    expect(onHubConfigChanged).toHaveBeenCalledTimes(1);
   });
 
   it('onHubConfigChanged stays silent on unrelated or invalid patches', async () => {

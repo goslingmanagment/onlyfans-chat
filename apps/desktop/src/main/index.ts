@@ -74,7 +74,7 @@ import {
   isAllowedExternalOpenUrl,
 } from './platform/navigation';
 import { messageNotificationBody } from './notifications';
-import type { UnreadReconcileSettingsVM, UpdateStatusVM } from '../preload/contract';
+import type { SettingsVM, UnreadReconcileSettingsVM, UpdateStatusVM } from '../preload/contract';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 
@@ -102,6 +102,11 @@ let disposeEventForwarding: (() => void) | null = null;
 let updateController: UpdateController | null = null;
 /** Set by initOfapi; lets cmd:settings.update trigger a hub-config recheck. */
 let recheckHubConfig: (() => void) | null = null;
+/** The selected read client is stateful; changes to its active key/base URL
+ *  require rebuilding sync/send/vault/spenders/online/coordinator services. */
+let currentOfapiReadFingerprint: string | null = null;
+let disposeOfapiSettingsListener: (() => void) | null = null;
+let ofapiRuntimeRefresh: Promise<void> = Promise.resolve();
 /** UI prefs mirrored from settings by boot()'s bus watcher — read by window
  *  creation (zoom) and main-side notifications (locale). */
 let uiScale = 1;
@@ -304,6 +309,121 @@ function createWindow(options: { load?: boolean } = {}): BrowserWindow {
   return win;
 }
 
+function ofapiReadFingerprintFor(
+  settings: Pick<SettingsVM, 'ofapiReadTransport' | 'hubBaseUrl'>,
+  directKey: string | null,
+  hubKey: string | null,
+): string {
+  if (settings.ofapiReadTransport === 'hub') {
+    return ['hub', settings.hubBaseUrl ?? '', hubKey ?? ''].join('\n');
+  }
+  return ['direct', directKey ?? ''].join('\n');
+}
+
+async function readOfapiReadFingerprint(
+  keychain: Keychain,
+  settingsStore: SettingsStore,
+): Promise<string> {
+  const [settings, directKey, hubKey] = await Promise.all([
+    settingsStore.get(),
+    keychain.getSecret('ofapiKey'),
+    keychain.getSecret('hubApiKey'),
+  ]);
+  return ofapiReadFingerprintFor(settings, directKey, hubKey);
+}
+
+function disposeOfapiRuntime(): void {
+  disposeEventForwarding?.();
+  disposeEventForwarding = null;
+  disposeOfapiSettingsListener?.();
+  disposeOfapiSettingsListener = null;
+  recheckHubConfig = null;
+  sync?.stop();
+  spendersRefresh?.dispose();
+  sendEngine?.dispose();
+  coordinator?.dispose();
+  hub?.dispose();
+  sync = null;
+  client = null;
+  coordinator = null;
+  sendEngine = null;
+  vaultService = null;
+  spendersService = null;
+  onlineService = null;
+  spendersRefresh = null;
+  hub = null;
+  currentOfapiReadFingerprint = null;
+}
+
+function initAiCoordinatorForRuntime(
+  keychain: Keychain,
+  dataLayer: DataLayer,
+  settingsStore: SettingsStore,
+): void {
+  coordinator?.dispose();
+  coordinator = null;
+  if (client === null) {
+    return;
+  }
+  coordinator = createAiCoordinator({
+    data: dataLayer,
+    client,
+    settingsStore,
+    keychain,
+    ...(hub !== null
+      ? {
+          gateway: createSelectableAiGateway({
+            direct: createDirectGateway({ keychain }),
+            hub: hub.aiGateway,
+          }),
+        }
+      : {}),
+    // Hooks delegate through the hub module — unconfigured hub stays inert.
+    ...(hub !== null
+      ? { summaryHub: hub.summaryHub, onUsageEvent: (event) => hub?.onUsageEvent(event) }
+      : {}),
+  });
+}
+
+async function refreshOfapiRuntime(
+  keychain: Keychain,
+  dataLayer: DataLayer,
+  settingsStore: SettingsStore,
+): Promise<void> {
+  const nextFingerprint = await readOfapiReadFingerprint(keychain, settingsStore);
+  if (client !== null && nextFingerprint === currentOfapiReadFingerprint) {
+    recheckHubConfig?.();
+    emitSyncStatusFrame();
+    return;
+  }
+  logger?.info('ofapi', 'read transport runtime rebuild', {
+    hadClient: client !== null,
+  });
+  disposeOfapiRuntime();
+  try {
+    await initOfapi(keychain, dataLayer, settingsStore);
+    initAiCoordinatorForRuntime(keychain, dataLayer, settingsStore);
+    reattachEventForwarding();
+  } catch (error) {
+    disposeOfapiRuntime();
+    throw error;
+  }
+}
+
+function scheduleOfapiRuntimeRefresh(
+  keychain: Keychain,
+  dataLayer: DataLayer,
+  settingsStore: SettingsStore,
+): void {
+  ofapiRuntimeRefresh = ofapiRuntimeRefresh
+    .catch(() => undefined)
+    .then(() => refreshOfapiRuntime(keychain, dataLayer, settingsStore))
+    .catch((error: unknown) => {
+      logger?.error('ofapi', 'read transport runtime rebuild failed', errorToFields(error));
+      emitSyncStatusFrame();
+    });
+}
+
 async function initOfapi(
   keychain: Keychain,
   dataLayer: DataLayer,
@@ -317,6 +437,7 @@ async function initOfapi(
     keychain.getSecret('ofapiKey'),
     keychain.getSecret('hubApiKey'),
   ]);
+  currentOfapiReadFingerprint = ofapiReadFingerprintFor(initialSettings, apiKey, hubApiKey);
   const creditMeter = createCreditMeter();
   const onError =
     (transport: 'direct' | 'hub'): NonNullable<OfApiClientOptions['onError']> =>
@@ -477,6 +598,7 @@ async function initOfapi(
   let settingsCache: {
     creditBudgetPerShift: number | null;
     autoReadChats: boolean;
+    ofapiReadTransport: 'direct' | 'hub';
     ofapiWriteTransport: 'hub';
     hubModeOverride: 'auto' | 'polling' | 'hub';
     spendSweepRollbackToLegacy: boolean;
@@ -509,7 +631,8 @@ async function initOfapi(
     });
   };
 
-  dataLayer.bus.subscribe((events) => {
+  disposeOfapiSettingsListener?.();
+  disposeOfapiSettingsListener = dataLayer.bus.subscribe((events) => {
     if (events.some((event) => event.scope === 'settings')) {
       void settingsStore.get().then((vm) => {
         settingsCache = vm;
@@ -533,7 +656,7 @@ async function initOfapi(
     autoReadEnabled: () => settingsCache?.autoReadChats ?? false,
     spendSweepRollbackToLegacy: () => settingsCache?.spendSweepRollbackToLegacy ?? false,
     unreadReconcileSettings: () => settingsCache?.unreadReconcile,
-    readTransport: () => initialSettings.ofapiReadTransport,
+    readTransport: () => settingsCache?.ofapiReadTransport ?? initialSettings.ofapiReadTransport,
   });
 
   const lastEventIdSchema = z.number().int().nonnegative();
@@ -865,26 +988,7 @@ async function boot(): Promise<void> {
 
   await initOfapi(keychain, data, settingsStore);
 
-  if (client) {
-    coordinator = createAiCoordinator({
-      data,
-      client,
-      settingsStore,
-      keychain,
-      ...(hub !== null
-        ? {
-            gateway: createSelectableAiGateway({
-              direct: createDirectGateway({ keychain }),
-              hub: hub.aiGateway,
-            }),
-          }
-        : {}),
-      // Hooks delegate through the hub module — unconfigured hub stays inert.
-      ...(hub !== null
-        ? { summaryHub: hub.summaryHub, onUsageEvent: (event) => hub?.onUsageEvent(event) }
-        : {}),
-    });
-  }
+  initAiCoordinatorForRuntime(keychain, data, settingsStore);
 
   let purging = false;
   registerIpcHandlers({
@@ -949,16 +1053,17 @@ async function boot(): Promise<void> {
     },
     onOfapiKeyConfigured: () => {
       if (data) {
-        void initOfapi(keychain, data, settingsStore).then(() => reattachEventForwarding());
+        scheduleOfapiRuntimeRefresh(keychain, data, settingsStore);
+      }
+    },
+    onOfapiReadConfigChanged: () => {
+      if (data) {
+        scheduleOfapiRuntimeRefresh(keychain, data, settingsStore);
       }
     },
     onHubConfigChanged: () => {
       recheckHubConfig?.();
-      if (client === null && data !== null) {
-        void initOfapi(keychain, data, settingsStore).then(() => reattachEventForwarding());
-      } else {
-        emitSyncStatusFrame();
-      }
+      emitSyncStatusFrame();
     },
     getCoreCreditsSummary: () => hub?.getOfapiCreditsSummary() ?? Promise.resolve(null),
     ...(logger !== null ? { logger } : {}),
