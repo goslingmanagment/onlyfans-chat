@@ -100,6 +100,7 @@ describe('send engine hub command transport', () => {
     expect(data.messages.get(ACCT, CHAT, '9001')).toMatchObject({
       textPlain: 'hello',
       isSentByMe: true,
+      isNew: true,
     });
     engine.dispose();
   });
@@ -164,7 +165,23 @@ describe('send engine hub command transport', () => {
     expect(data.messages.get(ACCT, CHAT, '9002')).toMatchObject({
       textPlain: 'media caption',
       price: 25,
+      isOpened: false,
       isSentByMe: true,
+      isNew: true,
+      media: [
+        {
+          id: '3866342509',
+          locked: false,
+          thumbUrl: null,
+          fullUrl: null,
+        },
+        {
+          id: 'ofapi_media_abc123',
+          locked: true,
+          thumbUrl: null,
+          fullUrl: null,
+        },
+      ],
     });
     engine.dispose();
   });
