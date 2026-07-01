@@ -28,5 +28,6 @@ coverage/
 # playwright artifacts
 .playwright-mcp/
 
-# design scratch (binding mockup is docs/mockups/workspace.html; experiments stay local)
-docs/mockups/experiments/
+# design scratch; keep the status-bar binding fixture tracked for tests
+docs/mockups/experiments/*
+!docs/mockups/experiments/activity-panel.html
