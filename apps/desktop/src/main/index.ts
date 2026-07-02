@@ -97,11 +97,13 @@ let onlineService: OnlineService | null = null;
 let spendersRefresh: SpendersRefreshService | null = null;
 let hub: HubModule | null = null;
 let disposeEventForwarding: (() => void) | null = null;
+let disposeRuntimeSettingsWatcher: (() => void) | null = null;
+let rebuildOfapiRuntimeInFlight: Promise<void> | null = null;
 /** Set once electron-updater is dynamic-imported (win32 packaged only); null
  *  everywhere else — the IPC layer then reports phase 'unsupported'. */
 let updateController: UpdateController | null = null;
 /** Set by initOfapi; lets cmd:settings.update trigger a hub-config recheck. */
-let recheckHubConfig: (() => void) | null = null;
+let recheckHubConfig: (() => Promise<void>) | null = null;
 /** UI prefs mirrored from settings by boot()'s bus watcher — read by window
  *  creation (zoom) and main-side notifications (locale). */
 let uiScale = 1;
@@ -309,14 +311,36 @@ async function initOfapi(
   dataLayer: DataLayer,
   settingsStore: SettingsStore,
 ): Promise<void> {
-  if (client) {
-    return;
+  if (rebuildOfapiRuntimeInFlight !== null) {
+    try {
+      await rebuildOfapiRuntimeInFlight;
+    } catch {
+      // A new call should validate the latest persisted settings instead of
+      // being permanently blocked by the previous failed candidate.
+    }
   }
+  const rebuild = rebuildOfapiRuntime(keychain, dataLayer, settingsStore);
+  rebuildOfapiRuntimeInFlight = rebuild;
+  try {
+    await rebuild;
+  } finally {
+    if (rebuildOfapiRuntimeInFlight === rebuild) {
+      rebuildOfapiRuntimeInFlight = null;
+    }
+  }
+}
+
+async function rebuildOfapiRuntime(
+  keychain: Keychain,
+  dataLayer: DataLayer,
+  settingsStore: SettingsStore,
+): Promise<void> {
   const [initialSettings, apiKey, hubApiKey] = await Promise.all([
     settingsStore.get(),
     keychain.getSecret('ofapiKey'),
     keychain.getSecret('hubApiKey'),
   ]);
+  const hadActiveRuntime = client !== null;
   const creditMeter = createCreditMeter();
   const onError =
     (transport: 'direct' | 'hub'): NonNullable<OfApiClientOptions['onError']> =>
@@ -395,6 +419,9 @@ async function initOfapi(
         hasHubBaseUrl: initialSettings.hubBaseUrl !== null,
         hasHubKey: hubApiKey !== null && hubApiKey.length > 0,
       });
+      if (hadActiveRuntime) {
+        throw new Error('Hub read transport is not configured');
+      }
       return;
     }
     readClient = createOfApiClient({
@@ -412,16 +439,19 @@ async function initOfapi(
       transport: initialSettings.ofapiReadTransport,
       reason: 'missing-direct-key',
     });
+    if (hadActiveRuntime) {
+      throw new Error('Direct OFAPI read transport is not configured');
+    }
     return;
   }
-  client = createOfApiTransportClient(readClient);
+  const nextClient = createOfApiTransportClient(readClient);
   logger?.info('ofapi', 'read transport selected', {
     transport: initialSettings.ofapiReadTransport,
     directReadAvailable: directClient !== null,
   });
 
   const utcDay = new Date().toISOString().slice(0, 10);
-  client.creditMeter.hydrate({
+  nextClient.creditMeter.hydrate({
     utcDay,
     usedToday: dataLayer.creditLog.usedOn(utcDay),
     usedTodayByPurpose: Object.fromEntries(
@@ -433,7 +463,7 @@ async function initOfapi(
 
   const budgetGuard = createBudgetGuard({
     getBudget: () => settingsCache?.creditBudgetPerShift ?? null,
-    getUsedToday: () => client?.creditMeter.snapshot().usedToday ?? 0,
+    getUsedToday: () => nextClient.creditMeter.snapshot().usedToday,
     onWarning: (used, budget) => {
       if (Notification.isSupported()) {
         new Notification({
@@ -452,7 +482,7 @@ async function initOfapi(
       .byPurposeOn(utcDay)
       .map((row) => [row.purpose, { requests: row.requests, credits: row.credits }]),
   );
-  client.creditMeter.subscribe((snapshot) => {
+  const unsubscribeCreditMeter = nextClient.creditMeter.subscribe((snapshot) => {
     if (snapshot.utcDay !== persistedDay) {
       persistedDay = snapshot.utcDay;
       persistedByPurpose.clear();
@@ -497,32 +527,11 @@ async function initOfapi(
   }
   let hubFingerprint = await hubConfigFingerprint();
 
-  // Shared by the settings-bus watcher and the IPC onHubConfigChanged hook
-  // (key-only writes hit the keychain and never publish a bus event).
-  recheckHubConfig = () => {
-    void hubConfigFingerprint().then((next) => {
-      if (next !== hubFingerprint) {
-        hubFingerprint = next;
-        void sync?.reconfigureHub();
-        void hub?.reconfigure();
-      }
-    });
-  };
-
-  dataLayer.bus.subscribe((events) => {
-    if (events.some((event) => event.scope === 'settings')) {
-      void settingsStore.get().then((vm) => {
-        settingsCache = vm;
-      });
-      recheckHubConfig?.();
-    }
-  });
-
   // Minting registers the remote URL in media_urls; only registered tokens
   // resolve through the media:// handler (SPEC §4).
   const toMediaUrl = createToMediaUrl(dataLayer.mediaUrls);
   const polling = createPollingSync({
-    client,
+    client: nextClient,
     data: dataLayer,
     toMediaUrl,
     // DIAGNOSTIC (temporary — empty-thread investigation 2026-06-23): scope 'diag'.
@@ -537,7 +546,7 @@ async function initOfapi(
   });
 
   const lastEventIdSchema = z.number().int().nonnegative();
-  sync = createHubAwareSync({
+  const nextSync = createHubAwareSync({
     polling,
     data: dataLayer,
     onLog: (level, message, fields) => logger?.log(level, 'sync', message, fields),
@@ -572,36 +581,51 @@ async function initOfapi(
 
   // Hub REST cluster (SPEC §8.5/§8.6): summary prefetch/push + usage reporter.
   // Inert until hub config exists; rebuilt by recheckHubConfig on changes.
-  hub = createHubModule({
+  const nextHub = createHubModule({
     data: dataLayer,
     settingsStore,
     keychain,
     onWarn: (message, fields) => logger?.warn('hub', message, fields),
   });
-  void hub.reconfigure();
+  await nextHub.reconfigure();
+
+  const recheckNextHubConfig = async (): Promise<void> => {
+    const next = await hubConfigFingerprint();
+    if (next !== hubFingerprint) {
+      hubFingerprint = next;
+      await Promise.all([nextSync.reconfigureHub(), nextHub.reconfigure()]);
+    }
+  };
+  const attachRuntimeSettingsWatcher = (): (() => void) =>
+    dataLayer.bus.subscribe((events) => {
+      if (events.some((event) => event.scope === 'settings')) {
+        void settingsStore.get().then((vm) => {
+          settingsCache = vm;
+        });
+      }
+    });
 
   // Hub-supported writes (text, typing, unsend, mark-read, media/PPV) are the
   // only app write path. The local OFAPI key may still back Direct reads, but it
   // is never passed to the send engine.
   const engine = createSendEngine({
-    client,
-    hubCommandClient: hub.commandClient,
+    client: nextClient,
+    hubCommandClient: nextHub.commandClient,
     data: dataLayer,
     messageGuard: messageGuard ?? createMessageGuardRuntime({ data: dataLayer }),
     toMediaUrl,
     getSettings: () => settingsStore.get(),
   });
-  sendEngine = engine;
   // Vault & PPV (PRD F7): vault/gallery thumbs are OF CDN URLs — minted into
   // media:// tokens through the same registering toMediaUrl seam as sync.
-  vaultService = createVaultService({
-    client,
+  const nextVaultService = createVaultService({
+    client: nextClient,
     toMediaUrl,
   });
   // Spenders board (PLAN item 12): OM tier lists read-only via the metered
   // client; all spend/counter joins stay on the local DB.
-  spendersService = createSpendersService({
-    client,
+  const nextSpendersService = createSpendersService({
+    client: nextClient,
     data: dataLayer,
     toMediaUrl,
     getMappedListIds: async (accountId) =>
@@ -610,13 +634,13 @@ async function initOfapi(
   // Online-now surface (variant C, flat): explicit-refresh-only /fans/active
   // reads through the metered client (purpose 'online'); local joins reuse the
   // Spenders machinery. NO background polling (owner: «автопарс жрёт кредиты»).
-  onlineService = createOnlineService({ client, data: dataLayer, toMediaUrl });
+  const nextOnlineService = createOnlineService({ client: nextClient, data: dataLayer, toMediaUrl });
   // Spenders freshness (PLAN item 13): quick-look hydrate TTL guard + the
   // scoped refresh queue — the lowest-priority OFAPI consumer, pauses first
   // on budget exhaustion, resumes persisted queues after sync starts.
-  const spendersSvc = spendersService;
-  const hubAwareSync = sync;
-  spendersRefresh = createSpendersRefresh({
+  const spendersSvc = nextSpendersService;
+  const hubAwareSync = nextSync;
+  const nextSpendersRefresh = createSpendersRefresh({
     data: dataLayer,
     refreshChat: (accountId, chatId, purpose) =>
       hubAwareSync.refreshChat(accountId, chatId, purpose),
@@ -631,20 +655,72 @@ async function initOfapi(
     // never marks fans read on OnlyFans (ensureChat/listChats stay, they don't).
     getAutoRead: () => settingsCache?.autoReadChats ?? false,
   });
-  if (engine !== null) {
-    sync.subscribe((event) => engine.handleSyncEvent(event));
+  const unsubscribeSendSync = nextSync.subscribe((event) => engine.handleSyncEvent(event));
+  const nextCoordinator = createAiCoordinator({
+    data: dataLayer,
+    client: nextClient,
+    settingsStore,
+    keychain,
+    gateway: createSelectableAiGateway({
+      direct: createDirectGateway({ keychain }),
+      hub: nextHub.aiGateway,
+    }),
+    summaryHub: nextHub.summaryHub,
+    onUsageEvent: (event) => nextHub.onUsageEvent(event),
+  });
+
+  let committed = false;
+  try {
     // Awaited on purpose (adversarial review 2026-06-11): the "reconciliation
     // before any send" guarantee must hold even for a fast first user action.
     // reconcileOnBoot swallows network errors internally, so this never blocks
     // startup on connectivity.
     await engine.reconcileOnBoot();
-  }
 
-  const accountIds = await syncAccounts(client, dataLayer, toMediaUrl);
-  sync.start(accountIds);
-  // A refresh interrupted by quit/crash continues here; the per-fan TTL skip
-  // makes the replayed tail of the persisted queue free.
-  spendersRefresh.resume(accountIds);
+    const accountIds = await syncAccounts(nextClient, dataLayer, toMediaUrl);
+
+    disposeEventForwarding?.();
+    disposeEventForwarding = null;
+    disposeRuntimeSettingsWatcher?.();
+    disposeRuntimeSettingsWatcher = null;
+    sync?.stop();
+    spendersRefresh?.dispose();
+    sendEngine?.dispose();
+    coordinator?.dispose();
+    hub?.dispose();
+
+    client = nextClient;
+    sync = nextSync;
+    hub = nextHub;
+    sendEngine = engine;
+    coordinator = nextCoordinator;
+    vaultService = nextVaultService;
+    spendersService = nextSpendersService;
+    onlineService = nextOnlineService;
+    spendersRefresh = nextSpendersRefresh;
+    recheckHubConfig = recheckNextHubConfig;
+    disposeRuntimeSettingsWatcher = attachRuntimeSettingsWatcher();
+
+    nextSync.start(accountIds);
+    // A refresh interrupted by quit/crash continues here; the per-fan TTL skip
+    // makes the replayed tail of the persisted queue free.
+    nextSpendersRefresh.resume(accountIds);
+    committed = true;
+
+    logger?.info('ofapi', 'runtime activated', {
+      transport: initialSettings.ofapiReadTransport,
+      accounts: accountIds.length,
+    });
+  } finally {
+    if (!committed) {
+      unsubscribeSendSync();
+      unsubscribeCreditMeter();
+      nextSpendersRefresh.dispose();
+      engine.dispose();
+      nextCoordinator.dispose();
+      nextHub.dispose();
+    }
+  }
 }
 
 function emitSyncStatusFrame(): void {
@@ -865,26 +941,19 @@ async function boot(): Promise<void> {
 
   await initOfapi(keychain, data, settingsStore);
 
-  if (client) {
-    coordinator = createAiCoordinator({
-      data,
-      client,
-      settingsStore,
-      keychain,
-      ...(hub !== null
-        ? {
-            gateway: createSelectableAiGateway({
-              direct: createDirectGateway({ keychain }),
-              hub: hub.aiGateway,
-            }),
-          }
-        : {}),
-      // Hooks delegate through the hub module — unconfigured hub stays inert.
-      ...(hub !== null
-        ? { summaryHub: hub.summaryHub, onUsageEvent: (event) => hub?.onUsageEvent(event) }
-        : {}),
-    });
-  }
+  const rebuildOfapiRuntimeFromSettings = async (): Promise<void> => {
+    if (data === null) {
+      return;
+    }
+    try {
+      await initOfapi(keychain, data, settingsStore);
+      reattachEventForwarding();
+      emitSyncStatusFrame();
+    } catch (error) {
+      logger?.error('ofapi', 'runtime activation failed', errorToFields(error));
+      throw error;
+    }
+  };
 
   let purging = false;
   registerIpcHandlers({
@@ -934,6 +1003,8 @@ async function boot(): Promise<void> {
       purging = true;
       disposeEventForwarding?.();
       disposeEventForwarding = null;
+      disposeRuntimeSettingsWatcher?.();
+      disposeRuntimeSettingsWatcher = null;
       sync?.stop();
       spendersRefresh?.dispose();
       sendEngine?.dispose();
@@ -947,18 +1018,11 @@ async function boot(): Promise<void> {
       app.relaunch();
       app.exit(0);
     },
-    onOfapiKeyConfigured: () => {
-      if (data) {
-        void initOfapi(keychain, data, settingsStore).then(() => reattachEventForwarding());
-      }
-    },
-    onHubConfigChanged: () => {
-      recheckHubConfig?.();
-      if (client === null && data !== null) {
-        void initOfapi(keychain, data, settingsStore).then(() => reattachEventForwarding());
-      } else {
-        emitSyncStatusFrame();
-      }
+    onOfapiRuntimeConfigChanged: rebuildOfapiRuntimeFromSettings,
+    onOfapiKeyConfigured: rebuildOfapiRuntimeFromSettings,
+    onHubConfigChanged: async () => {
+      await recheckHubConfig?.();
+      emitSyncStatusFrame();
     },
     getCoreCreditsSummary: () => hub?.getOfapiCreditsSummary() ?? Promise.resolve(null),
     ...(logger !== null ? { logger } : {}),
@@ -1208,6 +1272,7 @@ app.on('window-all-closed', () => {
 app.on('quit', () => {
   logger?.info('app', 'quit');
   void logger?.flush();
+  disposeRuntimeSettingsWatcher?.();
   sync?.stop();
   sendEngine?.dispose();
   coordinator?.dispose();

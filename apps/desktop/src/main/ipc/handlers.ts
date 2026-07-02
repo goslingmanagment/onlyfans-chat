@@ -363,14 +363,16 @@ export interface IpcDeps {
     check: () => Promise<UpdateStatusVM>;
     install: () => void;
   } | null;
+  /** Called when settings.update changes direct/hub read-runtime credentials. */
+  onOfapiRuntimeConfigChanged?: () => void | Promise<void>;
   /** Called when settings.update sets an OFAPI key while sync is offline. */
-  onOfapiKeyConfigured?: () => void;
+  onOfapiKeyConfigured?: () => void | Promise<void>;
   /**
    * Called after any settings.update that touched hubApiKey/hubBaseUrl. Key
    * writes go to the keychain and publish no settings-table change, so this
    * hook is the only reconnect signal for key-only edits.
    */
-  onHubConfigChanged?: () => void;
+  onHubConfigChanged?: () => void | Promise<void>;
   /** Diagnostics log sink (SPEC §11); absent in builds without a logger (tests). */
   logger?: Logger;
   getCoreCreditsSummary?: () => Promise<ActivityVM['credits']['core'] | null>;
@@ -741,20 +743,26 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('cmd:settings.update', async (_event, rawPatch: unknown) => {
     const before = await settingsStore.get();
     const result = await settingsStore.update(rawPatch);
-    if (!before.hasOfapiKey && result.hasOfapiKey) {
-      deps.onOfapiKeyConfigured?.();
+    const rawPatchObject = typeof rawPatch === 'object' && rawPatch !== null;
+    const touchedReadRuntime =
+      rawPatchObject &&
+      ('ofapiKey' in rawPatch ||
+        'hubApiKey' in rawPatch ||
+        'hubBaseUrl' in rawPatch ||
+        'ofapiReadTransport' in rawPatch);
+    if (touchedReadRuntime) {
+      await deps.onOfapiRuntimeConfigChanged?.();
+    } else if (!before.hasOfapiKey && result.hasOfapiKey) {
+      await deps.onOfapiKeyConfigured?.();
     }
-    // Fires on any patch carrying hub config (incl. key replacement, which is
-    // invisible in before/after VM comparison) — but only after validation.
-    const touchedHub =
+    // Fires on hub-mode override patches only. Hub URL/key/read-transport edits
+    // rebuild the read runtime above, after account-bootstrap validation.
+    const touchedHubOverride =
       typeof rawPatch === 'object' &&
       rawPatch !== null &&
-      ('hubApiKey' in rawPatch ||
-        'hubBaseUrl' in rawPatch ||
-        'hubModeOverride' in rawPatch ||
-        'ofapiReadTransport' in rawPatch);
-    if (touchedHub) {
-      deps.onHubConfigChanged?.();
+      'hubModeOverride' in rawPatch;
+    if (touchedHubOverride) {
+      await deps.onHubConfigChanged?.();
     }
     const touchedGuard =
       typeof rawPatch === 'object' &&
