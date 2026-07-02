@@ -16,6 +16,7 @@ import { uiMessage } from '@chatgoose/shared/i18n/index';
 import { currentLocale } from '../lib/i18n';
 import { handleAiOperationEvent } from '../features/ai/aiStore';
 import { syncStatusInvalidationKeysForEvent } from './syncInvalidation';
+import { dbChangedInvalidationKeysForEvent } from './dbInvalidation';
 
 const dbChangedSchema = z.object({
   scope: z.enum(['accounts', 'chats', 'messages', 'fans', 'summaries', 'settings', 'outbox', 'guard']),
@@ -56,71 +57,9 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     queueInvalidate(['chats-paged', accountId]);
   }
 
-  function invalidateSpenders(accountId: string): void {
-    // Board row joins (spend / preview / counters) recompute from the local
-    // DB; the OM roster ids behind them stay TTL-cached in main (0 credits).
-    queueInvalidate(['spenders-roster', accountId]);
-    queueInvalidate(['spenders-untiered', accountId]);
-    queueInvalidate(['spenders-stats', accountId]);
-  }
-
   function handleDbChanged(event: z.infer<typeof dbChangedSchema>): void {
-    switch (event.scope) {
-      case 'accounts':
-        queueInvalidate(qk.accounts);
-        break;
-      case 'chats':
-        if (event.accountId !== undefined) {
-          invalidateChats(event.accountId);
-          queueInvalidate(
-            event.chatId !== undefined ? qk.chat(event.accountId, event.chatId) : ['chat', event.accountId],
-          );
-          queueInvalidate(qk.accounts);
-          // also fires on fan_transactions sweeps — the 30-day board figure
-          invalidateSpenders(event.accountId);
-        } else queueInvalidate(['chats']);
-        break;
-      case 'messages':
-        if (event.accountId !== undefined && event.chatId !== undefined) {
-          queueInvalidate(qk.messages(event.accountId, event.chatId));
-        } else {
-          queueInvalidate(['messages']);
-        }
-        // spenders rows carry МОДЕЛЬ/ФАН counters from the message DB
-        if (event.accountId !== undefined) invalidateSpenders(event.accountId);
-        break;
-      case 'outbox':
-        // outbox refetches ONLY on this event — no polling (DESIGN §3)
-        if (event.accountId !== undefined && event.chatId !== undefined) {
-          queueInvalidate(qk.outbox(event.accountId, event.chatId));
-        } else {
-          queueInvalidate(['outbox']);
-        }
-        // status-bar SENDS + the Activity panel's sends row
-        queueInvalidate(qk.syncStatus);
-        queueInvalidate(qk.activity);
-        break;
-      case 'fans':
-      case 'summaries':
-        if (event.accountId !== undefined && event.chatId !== undefined) {
-          queueInvalidate(qk.fan(event.accountId, event.chatId));
-        } else {
-          queueInvalidate(['fan']);
-        }
-        if (event.scope === 'fans' && event.accountId !== undefined) {
-          invalidateSpenders(event.accountId); // lifetime spend lives on fans
-        }
-        break;
-      case 'settings':
-        queueInvalidate(qk.settings);
-        queueInvalidate(qk.personalities);
-        queueInvalidate(qk.guardConfig);
-        break;
-      case 'guard':
-        queueInvalidate(qk.guardConfig);
-        queueInvalidate(qk.guardBlocks(event.accountId));
-        queueInvalidate(qk.activity);
-        break;
+    for (const key of dbChangedInvalidationKeysForEvent(event)) {
+      queueInvalidate(key);
     }
   }
 
