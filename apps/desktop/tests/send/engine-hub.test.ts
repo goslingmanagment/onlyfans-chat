@@ -104,6 +104,69 @@ describe('send engine hub command transport', () => {
     engine.dispose();
   });
 
+  it('settles a hub confirmation without downgrading an enriched messageSent row', async () => {
+    seedMessage(data, {
+      messageId: '9001',
+      textHtml: '<p>enriched from hub</p>',
+      textPlain: 'enriched from hub',
+      price: 30,
+      isOpened: true,
+      media: [
+        {
+          id: 'media-1',
+          type: 'photo',
+          thumbUrl: 'media://thumb-1',
+          fullUrl: null,
+          isReady: true,
+          locked: true,
+          durationSeconds: null,
+        },
+      ],
+      raw: { source: 'hub-sse' },
+    });
+    const direct = makeStubClient();
+    const createOfapiCommand = vi.fn(async ({ command: request }) =>
+      command(request.clientCommandId, 'confirmed', {
+        platformMessageId: '9001',
+        attemptFinishedAt: '2026-06-20T00:00:02.000Z',
+        updatedAt: '2026-06-20T00:00:02.000Z',
+      }),
+    );
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: {
+        createOfapiCommand,
+        getOfapiCommand: vi.fn(),
+      },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+
+    const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['stub text'] });
+    await drain();
+
+    expect(data.outbox.get(localIds[0] ?? '')).toMatchObject({
+      state: 'sent',
+      messageId: '9001',
+    });
+    expect(data.messages.get(ACCT, CHAT, '9001')).toMatchObject({
+      textPlain: 'enriched from hub',
+      price: 30,
+      isOpened: true,
+      media: [
+        expect.objectContaining({
+          id: 'media-1',
+          locked: true,
+        }),
+      ],
+    });
+    expect(direct.listMessagesCalls).toBe(0);
+    engine.dispose();
+  });
+
   it('routes media sends through core command intake without a Direct client', async () => {
     const direct = makeStubClient();
     const getOfapiCommand = vi.fn(async ({ commandId }: { commandId: string }) =>

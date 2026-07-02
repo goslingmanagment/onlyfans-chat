@@ -256,7 +256,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     if (command.platformMessageId === null) {
       throw new Error('Hub confirmed command omitted platformMessageId');
     }
-    data.messages.upsertMany([
+    data.messages.insertManyIfAbsent([
       {
         accountId: row.accountId,
         chatId: row.chatId,

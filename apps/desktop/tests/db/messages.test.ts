@@ -108,6 +108,65 @@ describe('messages upsert', () => {
       { scope: 'messages', accountId: 'acct_1', chatId: '202' },
     ]);
   });
+
+  it('inserts stubs only when absent and never downgrades an existing row', () => {
+    layer.messages.upsertMany([
+      sampleMessage({
+        messageId: 'm1',
+        textPlain: 'authoritative body',
+        price: 25,
+        isOpened: true,
+        media: [
+          {
+            id: 'media1',
+            type: 'photo',
+            thumbUrl: 'media://thumb1',
+            fullUrl: null,
+            isReady: true,
+            locked: true,
+            durationSeconds: null,
+          },
+        ],
+        raw: { source: 'hub-sse' },
+      }),
+    ]);
+    layer.bus.flushNow();
+    flushed = [];
+
+    const inserted = layer.messages.insertManyIfAbsent([
+      sampleMessage({
+        messageId: 'm1',
+        textPlain: 'stub',
+        price: 0,
+        isOpened: null,
+        media: [],
+        raw: { source: 'hub-command' },
+      }),
+      sampleMessage({
+        messageId: 'm2',
+        textPlain: 'new stub',
+        raw: { source: 'hub-command' },
+      }),
+    ]);
+
+    expect(inserted).toBe(1);
+    expect(layer.messages.get('acct_1', '101', 'm1')).toMatchObject({
+      textPlain: 'authoritative body',
+      price: 25,
+      isOpened: true,
+      media: [
+        expect.objectContaining({
+          id: 'media1',
+          locked: true,
+        }),
+      ],
+    });
+    expect(layer.messages.get('acct_1', '101', 'm2')).toMatchObject({
+      textPlain: 'new stub',
+    });
+    layer.bus.flushNow();
+    expect(flushed).toEqual([{ scope: 'messages', accountId: 'acct_1', chatId: '101' }]);
+  });
 });
 
 describe('messages tombstone', () => {

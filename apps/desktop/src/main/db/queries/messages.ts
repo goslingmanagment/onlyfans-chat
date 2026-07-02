@@ -40,6 +40,16 @@ ON CONFLICT (account_id, chat_id, message_id) DO UPDATE SET
   deleted = (messages.deleted OR excluded.deleted),
   raw = excluded.raw`;
 
+const INSERT_IF_ABSENT_SQL = `
+INSERT INTO messages (
+  account_id, chat_id, message_id, created_at, is_sent_by_me, text_html, text_plain,
+  price, is_opened, is_new, is_tip, tip_amount, tip_text, reply_to, media, deleted, raw
+) VALUES (
+  @account_id, @chat_id, @message_id, @created_at, @is_sent_by_me, @text_html, @text_plain,
+  @price, @is_opened, @is_new, @is_tip, @tip_amount, @tip_text, @reply_to, @media, @deleted, @raw
+)
+ON CONFLICT (account_id, chat_id, message_id) DO NOTHING`;
+
 const MESSAGE_ORDER_DESC = 'created_at DESC, CAST(message_id AS INTEGER) DESC, message_id DESC';
 
 export interface MessagePage {
@@ -59,6 +69,7 @@ export interface LastBySender {
 
 export interface MessagesQueries {
   upsertMany(messages: readonly MessageUpsert[]): void;
+  insertManyIfAbsent(messages: readonly MessageUpsert[]): number;
   get(accountId: string, chatId: string, messageId: string): MessageRow | null;
   oldest(accountId: string, chatId: string): MessageRow | null;
   page(args: { accountId: string; chatId: string; beforeId?: string; limit?: number }): MessagePage;
@@ -129,6 +140,41 @@ export function createMessagesQueries(db: ChatGooseDb, bus: DbChangeBus): Messag
         }
       });
       publishChats(messages);
+    },
+
+    insertManyIfAbsent(messages) {
+      if (messages.length === 0) {
+        return 0;
+      }
+      const inserted: MessageUpsert[] = [];
+      db.transaction(() => {
+        for (const message of messages) {
+          const result = db.prepare(INSERT_IF_ABSENT_SQL).run({
+            account_id: message.accountId,
+            chat_id: message.chatId,
+            message_id: message.messageId,
+            created_at: message.createdAt,
+            is_sent_by_me: toSqlBool(message.isSentByMe),
+            text_html: message.textHtml,
+            text_plain: message.textPlain,
+            price: message.price,
+            is_opened: message.isOpened === null ? null : toSqlBool(message.isOpened),
+            is_new: toSqlBool(message.isNew),
+            is_tip: toSqlBool(message.isTip),
+            tip_amount: message.tipAmount,
+            tip_text: message.tipText,
+            reply_to: message.replyTo === null ? null : toJson(message.replyTo),
+            media: toJson(message.media),
+            deleted: toSqlBool(message.deleted),
+            raw: toJson(message.raw),
+          });
+          if (result.changes > 0) {
+            inserted.push(message);
+          }
+        }
+      });
+      publishChats(inserted);
+      return inserted.length;
     },
 
     get: getOne,
