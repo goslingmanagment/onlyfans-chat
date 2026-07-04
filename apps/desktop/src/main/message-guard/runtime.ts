@@ -15,7 +15,9 @@ import type { DataLayer, MessageGuardBlocksReport } from '../db/index';
 import type { Logger } from '../diagnostics/logger';
 
 const POLICY_KEY = 'messageGuardPolicy';
-const TTL_MS = 90 * 24 * 60 * 60 * 1000;
+// Stage 4 stop-loss: effectively disabled (10 y) — guard-audit rows are the
+// send-safety evidence trail; prune machinery kept, horizon raised.
+const TTL_MS = 3650 * 24 * 60 * 60 * 1000;
 const LONG_SCAN_MS = 16;
 
 export interface MessageGuardAssertArgs {

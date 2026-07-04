@@ -10,7 +10,9 @@ import { decodeMessageRow, toJson, toSqlBool } from '../rows';
 import type { MessageRow, MessageUpsert } from '../rows';
 import { chunked } from './fans';
 
-export const MESSAGE_RETENTION_DEFAULT = 5000;
+// Stage 4 stop-loss: ~10× the legacy cap — the kernel holds no copy of local
+// messages yet (Stages 7/11), so the desktop must stop destroying them.
+export const MESSAGE_RETENTION_DEFAULT = 50000;
 
 const COLUMNS =
   'account_id, chat_id, message_id, created_at, is_sent_by_me, text_html, text_plain, ' +

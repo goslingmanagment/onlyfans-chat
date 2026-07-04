@@ -229,4 +229,42 @@ describe('fan-spend sweep', () => {
     expect(spendOf('101').spend30d).toBeNull();
     sync.stop();
   });
+
+  it('prunes at the 310-day stop-loss horizon, not the legacy 31 d (Stage 4)', async () => {
+    stub.setTransactions([tx('fresh', 101, 10, 1)]);
+    // Rows the legacy 31 d rule would have destroyed (100 d) and one beyond
+    // the raised horizon (400 d).
+    data.fanTransactions.upsertMany([
+      {
+        accountId: ACCT,
+        txId: 'kept-by-stage-4',
+        fanId: '101',
+        amount: 5,
+        net: 4,
+        type: 'tips',
+        createdAt: new Date(Date.now() - 100 * DAY_MS).toISOString(),
+      },
+      {
+        accountId: ACCT,
+        txId: 'past-horizon',
+        fanId: '101',
+        amount: 5,
+        net: 4,
+        type: 'tips',
+        createdAt: new Date(Date.now() - 400 * DAY_MS).toISOString(),
+      },
+    ]);
+
+    const sync = makeSync();
+    await bootAndSweep(sync);
+
+    const ids = (
+      data.db.prepare('SELECT tx_id AS id FROM fan_transactions ORDER BY tx_id').all() as Array<{
+        id: string;
+      }>
+    ).map((row) => row.id);
+    expect(ids).toContain('kept-by-stage-4');
+    expect(ids).not.toContain('past-horizon');
+    sync.stop();
+  });
 });

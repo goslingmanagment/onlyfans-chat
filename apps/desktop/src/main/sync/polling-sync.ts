@@ -77,8 +77,12 @@ const REDUCED_SPEND_SWEEP_INTERVAL_MS = 60 * 60_000;
 const SPEND_TX_PAGE_LIMIT = 10;
 const SPEND_SWEEP_MAX_PAGES = 100;
 const SPEND_SWEEP_OVERLAP_MS = 60 * 60_000;
-/** Retention horizon: window (30d) + 1d slack; the cutoff is read-time. */
-const SPEND_RETENTION_MS = 31 * 24 * 60 * 60_000;
+/**
+ * Retention horizon (Stage 4 stop-loss: ~10× the legacy 31 d) — transactions
+ * are business facts and the kernel holds no copy yet; the read window stays
+ * 30 d, only the prune cutoff moved.
+ */
+const SPEND_RETENTION_MS = 310 * 24 * 60 * 60_000;
 
 export interface UnreadReconcileSettings {
   enabled: boolean;

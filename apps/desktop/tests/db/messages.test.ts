@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DataLayer, DbChangedEvent, MessageUpsert } from '@main/db/index';
+import { MESSAGE_RETENTION_DEFAULT } from '@main/db/queries/messages';
 import { memoryDataLayer, sampleMessage } from './helpers';
 
 // Re-exported type sanity: DbChangedEvent comes from the pinned preload contract.
@@ -225,6 +226,10 @@ describe('messages retention pruning', () => {
   it('returns 0 when under the limit', () => {
     seed(3);
     expect(layer.messages.prune('acct_1', '101', 5000)).toBe(0);
+  });
+
+  it('keeps 50,000 messages per chat by default (Stage 4 stop-loss: ~10× the legacy cap)', () => {
+    expect(MESSAGE_RETENTION_DEFAULT).toBe(50000);
   });
 
   it('rejects a negative keep value', () => {
