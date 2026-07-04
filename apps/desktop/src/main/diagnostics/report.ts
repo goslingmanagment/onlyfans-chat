@@ -35,6 +35,12 @@ export interface DiagnosticsInputs {
   db: { schemaVersion: number | null; counts: Record<string, number> };
   outboxAudit: unknown;
   messageGuardAudit?: unknown;
+  /**
+   * Quarantined usage events (HTTP-400 rejections; never resent). Count plus
+   * full payloads — usage telemetry carries no message text, and exporting is
+   * the only way these facts leave the machine (Stage 4 kept-but-exportable).
+   */
+  usageQuarantine?: unknown;
   /** error-level CG-* code → count over the in-memory log ring. */
   errorCounts: Record<string, number>;
   /** Structured recent records from the in-memory ring (current session). */

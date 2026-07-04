@@ -2,9 +2,15 @@
 // the desktop additions: persisted queue (crash-safe via an injected store
 // seam), HTTP-400 quarantine (never blind-retry; CG-HUB-02), and completedAt
 // clamped to server time so core's >5-min-future rejection cannot trigger.
-// Legacy-tuned constants are normative: 1 s debounce, 100/batch, retry 5 s /
-// 15 s, drop after the 3rd failed attempt. Core dedupes upstream by
-// (userId, clientEventId) — the reporter does no local dedupe.
+// Legacy-tuned constants kept: 1 s debounce, 100/batch. The legacy
+// drop-after-3-failures rule is RETIRED (kernel Stage 4 stop-loss): usage
+// events are business facts and a failed flush never deletes them. After the
+// 3rd failed attempt an event moves to the dead-letter tier — retried only on
+// app start and on an hourly sweep, so a poisoned event cannot busy-loop the
+// hot queue, but it is never removed. Removal happens only for 2xx-confirmed
+// events and rows that fail the wire contract at load. Core dedupes upstream
+// by (userId, clientEventId) — the reporter does no local dedupe, and longer
+// retry horizons therefore cannot double-count spend.
 
 import type { CgErrorDetail } from '../errors/index';
 import { CgError } from '../errors/index';
@@ -14,8 +20,19 @@ import { HUB_USAGE_BATCH_MAX_EVENTS, HubError, hubUsageEventSchema } from './cli
 // ─── Legacy constants (normative; research §7.4) ──────────────────────────
 
 export const HUB_USAGE_REPORT_DEBOUNCE_MS = 1_000;
-export const HUB_USAGE_REPORT_MAX_ATTEMPTS = 3;
-export const HUB_USAGE_REPORT_RETRY_DELAYS_MS = [5_000, 15_000] as const;
+/** Failed attempts after which an event parks in the dead-letter tier (never deleted). */
+export const HUB_USAGE_DEAD_LETTER_AFTER_ATTEMPTS = 3;
+/** Capped backoff; the last value repeats for every later attempt. */
+export const HUB_USAGE_REPORT_RETRY_DELAYS_MS = [
+  5_000,
+  15_000,
+  60_000,
+  300_000,
+  900_000,
+  3_600_000,
+] as const;
+/** Dead-letter events re-enter the queue on app start and on this sweep interval. */
+export const HUB_USAGE_DEAD_LETTER_SWEEP_MS = 3_600_000;
 
 // ─── Store seam (desktop main wires this to the usage_events table) ───────
 
@@ -24,7 +41,7 @@ export interface PendingUsageEvent {
   id: string;
   /** Wire-ready event: feature already mapped to core's enum. completedAt is clamped at flush time, not here. */
   event: HubUsageEvent;
-  /** Failed flush attempts so far; persisted so the drop-after-3 rule survives restarts. */
+  /** Failed flush attempts so far; persisted so the dead-letter tier survives restarts. */
   attempts: number;
   /** Rejected by core with HTTP 400 (or failed contract validation); never resent. */
   quarantined: boolean;
@@ -71,8 +88,8 @@ export interface UsageReporterEventInput {
 // ─── Reporter ──────────────────────────────────────────────────────────────
 
 export interface UsageReporterErrorContext {
-  /** 'quarantined' = HTTP 400 path; 'dropped' = 3rd failed attempt; 'rejected' = failed validation at enqueue. */
-  kind: 'quarantined' | 'dropped' | 'rejected';
+  /** 'quarantined' = HTTP 400 path; 'rejected' = failed validation at enqueue. Failed flushes never drop events (Stage 4). */
+  kind: 'quarantined' | 'rejected';
   clientEventIds: string[];
 }
 
@@ -91,7 +108,10 @@ export interface UsageReporter {
   enqueue(event: UsageReporterEventInput): void;
   /** Cancels any pending timer and flushes immediately (shutdown path). No-op while a flush is running. */
   flushNow(): Promise<void>;
+  /** Undelivered events: hot queue plus the dead-letter tier. */
   getPendingCount(): number;
+  /** Events parked after HUB_USAGE_DEAD_LETTER_AFTER_ATTEMPTS failures; retried on start + hourly. */
+  getDeadLetterCount(): number;
   getQuarantined(): readonly PendingUsageEvent[];
   /** Cancels timers; queued events stay persisted for the next session. */
   dispose(): void;
@@ -125,8 +145,10 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
   const clearTimeoutImpl = options.clearTimeoutImpl ?? ((handle) => timerGlobals.clearTimeout(handle));
 
   const queue: PendingUsageEvent[] = [];
+  const deadLetter: PendingUsageEvent[] = [];
   const quarantined: PendingUsageEvent[] = [];
   let timer: unknown = null;
+  let sweepTimer: unknown = null;
   let flushing = false;
   let disposed = false;
 
@@ -159,6 +181,24 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
       timer = null;
       void flush();
     }, delayMs);
+  }
+
+  // Dead-letter tier (Stage 4): events past the attempt threshold leave the
+  // hot loop but are never deleted — they re-enter the queue on the hourly
+  // sweep (and on app start, because load() puts every non-quarantined row
+  // back into the hot queue).
+  function scheduleDeadLetterSweep(): void {
+    if (sweepTimer !== null || disposed || deadLetter.length === 0) {
+      return;
+    }
+    sweepTimer = setTimeoutImpl(() => {
+      sweepTimer = null;
+      if (disposed || deadLetter.length === 0) {
+        return;
+      }
+      queue.push(...deadLetter.splice(0));
+      schedule(HUB_USAGE_REPORT_DEBOUNCE_MS);
+    }, HUB_USAGE_DEAD_LETTER_SWEEP_MS);
   }
 
   /** completedAt may not lie in core's future (>5 min ahead 400s the batch — SPEC §8.6). */
@@ -205,23 +245,19 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
             continue;
           }
 
-          // Network / timeout / 5xx / auth: retry 5 s then 15 s, drop after
-          // the 3rd failed attempt (legacy rule; attempts persisted).
+          // Network / timeout / 5xx / auth: capped backoff, never delete
+          // (Stage 4 stop-loss). Attempts persist; past the threshold the
+          // event parks in the dead-letter tier for the start/hourly retries.
           store.incrementAttempts(ids);
           queue.splice(0, batch.length);
           const requeued: PendingUsageEvent[] = [];
-          const droppedIds: string[] = [];
           for (const pending of batch) {
             pending.attempts += 1;
-            if (pending.attempts >= HUB_USAGE_REPORT_MAX_ATTEMPTS) {
-              droppedIds.push(pending.id);
+            if (pending.attempts >= HUB_USAGE_DEAD_LETTER_AFTER_ATTEMPTS) {
+              deadLetter.push(pending);
             } else {
               requeued.push(pending);
             }
-          }
-          if (droppedIds.length > 0) {
-            store.remove(droppedIds);
-            onError?.(toCgError(error), { kind: 'dropped', clientEventIds: droppedIds });
           }
           if (requeued.length > 0) {
             queue.unshift(...requeued);
@@ -237,6 +273,7 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
       if (queue.length > 0) {
         schedule(retryDelayMs ?? HUB_USAGE_REPORT_DEBOUNCE_MS);
       }
+      scheduleDeadLetterSweep();
     }
   }
 
@@ -292,7 +329,11 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
     },
 
     getPendingCount() {
-      return queue.length;
+      return queue.length + deadLetter.length;
+    },
+
+    getDeadLetterCount() {
+      return deadLetter.length;
     },
 
     getQuarantined() {
@@ -304,6 +345,10 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
       if (timer !== null) {
         clearTimeoutImpl(timer);
         timer = null;
+      }
+      if (sweepTimer !== null) {
+        clearTimeoutImpl(sweepTimer);
+        sweepTimer = null;
       }
     },
   };

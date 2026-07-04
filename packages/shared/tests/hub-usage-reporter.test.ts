@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HubError, type HubUsageBatchResult, type HubUsageEvent } from '../src/hub/client';
 import {
   createUsageReporter,
+  HUB_USAGE_DEAD_LETTER_SWEEP_MS,
   HUB_USAGE_REPORT_DEBOUNCE_MS,
   type PendingUsageEvent,
   type UsageEventStore,
@@ -158,7 +159,7 @@ describe('createUsageReporter', () => {
     expect(reporter.getPendingCount()).toBe(0);
   });
 
-  it('retries after 5 s then 15 s, persisting attempts, and drops after the 3rd failure', async () => {
+  it('retries after 5 s then 15 s, then parks in the dead-letter tier without ever deleting (Stage 4)', async () => {
     const { store, calls, rows } = memoryStore();
     const { client, batches } = stubHubClient({ outcomes: [networkError(), networkError(), networkError()] });
     const { errors, onError } = errorCollector();
@@ -177,20 +178,68 @@ describe('createUsageReporter', () => {
     expect(batches).toHaveLength(2);
     expect(calls.incrementAttempts).toEqual([['a'], ['a']]);
 
-    // Second retry waits 15 s; its failure is the 3rd attempt → drop.
+    // Second retry waits 15 s; its failure is the 3rd attempt → dead-letter,
+    // never removal: the event stays persisted with attempts=3.
     await vi.advanceTimersByTimeAsync(14_999);
     expect(batches).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(1);
     expect(batches).toHaveLength(3);
+    expect(calls.remove).toEqual([]);
+    expect(rows.get('a')?.attempts).toBe(3);
+    expect(reporter.getPendingCount()).toBe(1);
+    expect(reporter.getDeadLetterCount()).toBe(1);
+    expect(errors).toHaveLength(0);
+
+    // The hot loop stays quiet until the hourly sweep — a poisoned event
+    // cannot busy-loop the queue.
+    await vi.advanceTimersByTimeAsync(HUB_USAGE_DEAD_LETTER_SWEEP_MS - 60_000);
+    expect(batches).toHaveLength(3);
+  });
+
+  it('retries dead-letter events on the hourly sweep and drains them exactly once on success', async () => {
+    const { store, calls, rows } = memoryStore();
+    const { client, batches } = stubHubClient({ outcomes: [networkError(), networkError(), networkError()] });
+    const reporter = createUsageReporter({ client, store });
+
+    reporter.enqueue(makeEvent('a'));
+    // 3 failures: t=1s, +5s, +15s → dead-letter.
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(batches).toHaveLength(3);
+    expect(reporter.getDeadLetterCount()).toBe(1);
+
+    // The hourly sweep requeues; the next outcome is 'ok' → delivered and
+    // removed exactly once.
+    await vi.advanceTimersByTimeAsync(HUB_USAGE_DEAD_LETTER_SWEEP_MS + HUB_USAGE_REPORT_DEBOUNCE_MS);
+    expect(batches).toHaveLength(4);
     expect(calls.remove).toEqual([['a']]);
     expect(rows.has('a')).toBe(false);
     expect(reporter.getPendingCount()).toBe(0);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]?.context).toEqual({ kind: 'dropped', clientEventIds: ['a'] });
+    expect(reporter.getDeadLetterCount()).toBe(0);
 
-    // Nothing left to retry.
-    await vi.advanceTimersByTimeAsync(120_000);
+    // Nothing left: no further batches on later sweeps.
+    await vi.advanceTimersByTimeAsync(2 * HUB_USAGE_DEAD_LETTER_SWEEP_MS);
+    expect(batches).toHaveLength(4);
+  });
+
+  it('survives 10 consecutive failures and still delivers exactly once', async () => {
+    const { store, calls, rows } = memoryStore();
+    const outcomes: BatchOutcome[] = Array.from({ length: 10 }, () => networkError());
+    const { client, batches } = stubHubClient({ outcomes });
+    const reporter = createUsageReporter({ client, store });
+
+    reporter.enqueue(makeEvent('a'));
+    // Hot loop: attempts 1-3 (1 s, +5 s, +15 s), then hourly sweeps for the rest.
+    await vi.advanceTimersByTimeAsync(21_000);
     expect(batches).toHaveLength(3);
+    for (let sweep = 0; sweep < 8; sweep += 1) {
+      await vi.advanceTimersByTimeAsync(HUB_USAGE_DEAD_LETTER_SWEEP_MS + HUB_USAGE_REPORT_DEBOUNCE_MS);
+    }
+
+    // 10 failures + 1 success = 11 batch calls; drained exactly once.
+    expect(batches).toHaveLength(11);
+    expect(calls.remove).toEqual([['a']]);
+    expect(rows.has('a')).toBe(false);
+    expect(reporter.getPendingCount()).toBe(0);
   });
 
   it('quarantines on HTTP 400 without retrying and surfaces CG-HUB-02', async () => {

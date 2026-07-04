@@ -153,7 +153,7 @@ describe('reporter over the sqlite store (integration)', () => {
     restarted.dispose();
   });
 
-  it('attempts persist across restarts and the row drops after the 3rd failure', async () => {
+  it('attempts persist across restarts and the row survives the 3rd failure in the dead-letter tier (Stage 4)', async () => {
     const data = memoryDataLayer();
     const failing = {
       postUsageBatch: vi.fn().mockRejectedValue(new HubError('http', { message: '503' })),
@@ -168,10 +168,31 @@ describe('reporter over the sqlite store (integration)', () => {
     const second = createUsageReporter({ client: failing, store: createSqliteUsageEventStore(data.db) });
     expect(second.getPendingCount()).toBe(1);
     await second.flushNow(); // attempt 2
-    await second.flushNow(); // attempt 3 → dropped (legacy rule)
-    expect(second.getPendingCount()).toBe(0);
-    expect(usageEventRowCount(data)).toBe(0);
+    await second.flushNow(); // attempt 3 → dead-letter, NEVER deleted
+    expect(second.getPendingCount()).toBe(1);
+    expect(second.getDeadLetterCount()).toBe(1);
+    expect(usageEventRowCount(data)).toBe(1);
+    expect(createSqliteUsageEventStore(data.db).load()[0]?.attempts).toBe(3);
     second.dispose();
+
+    // A restart puts the dead-letter row back into the hot queue; a working
+    // hub then drains it exactly once.
+    const recovered = {
+      postUsageBatch: vi.fn().mockResolvedValue({
+        receivedCount: 1,
+        insertedCount: 1,
+        invalidCount: 0,
+        dedupedCount: 0,
+      }),
+      getServerTimeOffsetMs: () => null,
+    };
+    const third = createUsageReporter({ client: recovered, store: createSqliteUsageEventStore(data.db) });
+    expect(third.getPendingCount()).toBe(1);
+    await third.flushNow();
+    expect(recovered.postUsageBatch).toHaveBeenCalledTimes(1);
+    expect(third.getPendingCount()).toBe(0);
+    expect(usageEventRowCount(data)).toBe(0);
+    third.dispose();
   });
 
   it('a successful flush posts mapped coordinator rows and clears the table', async () => {
