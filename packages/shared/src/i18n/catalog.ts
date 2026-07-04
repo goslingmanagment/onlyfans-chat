@@ -396,8 +396,16 @@ export const UI_MESSAGES = {
   },
   'danger.purgeBtn': { en: 'Purge local data…', ru: 'Очистить локальные данные…' },
   'danger.confirmQuestion': {
-    en: 'Purge all locally cached data? The next sync rebuilds it from OFAPI.',
-    ru: 'Удалить весь локальный кэш? Следующая синхронизация заново соберёт его из OFAPI.',
+    en: 'Purge all locally cached data?',
+    ru: 'Удалить весь локальный кэш?',
+  },
+  'danger.purgeKernelWarning': {
+    en: 'The server holds no copy of local messages, transactions, or telemetry yet — purging deletes them permanently. Recent chats re-sync from OFAPI; older history does not.',
+    ru: 'На сервере ещё нет копии локальных сообщений, транзакций и телеметрии — очистка удалит их безвозвратно. Свежие чаты пересинхронизируются из OFAPI, старая история — нет.',
+  },
+  'danger.purgeExportFirst': {
+    en: 'Export diagnostics first',
+    ru: 'Сначала выгрузить диагностику',
   },
   'danger.typeToConfirm': { en: 'Type {word} to confirm', ru: 'Введите {word} для подтверждения' },
   'danger.yesPurge': { en: 'Yes, purge', ru: 'Да, очистить' },

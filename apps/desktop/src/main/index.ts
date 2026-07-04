@@ -585,6 +585,9 @@ async function rebuildOfapiRuntime(
     data: dataLayer,
     settingsStore,
     keychain,
+    // Stage 4 / Proposal 4.1: every hub request carries x-client-version, the
+    // fleet-version exit signal (and Stage 11's producer version upstream).
+    clientVersion: app.getVersion(),
     onWarn: (message, fields) => logger?.warn('hub', message, fields),
   });
   await nextHub.reconfigure();
@@ -1106,6 +1109,37 @@ async function boot(): Promise<void> {
         } catch {
           guardAudit = null;
         }
+        // Stage 4: quarantined usage events (HTTP-400 rejections) are never
+        // resent — export count + payloads so nothing is silently lost. Usage
+        // telemetry carries no message text; read straight from the table so
+        // the section is present even while the hub module is off.
+        let usageQuarantine: { count: number; events: unknown[] } | null;
+        try {
+          const rows = (data?.db
+            .prepare('SELECT client_event_id AS id, payload, attempts FROM usage_events ORDER BY rowid ASC')
+            .all() ?? []) as Array<{ id?: unknown; payload?: unknown; attempts?: unknown }>;
+          const events: unknown[] = [];
+          for (const row of rows) {
+            if (typeof row.payload !== 'string') {
+              continue;
+            }
+            try {
+              const json = JSON.parse(row.payload) as unknown;
+              if (
+                typeof json === 'object' &&
+                json !== null &&
+                (json as Record<string, unknown>)['quarantined'] === true
+              ) {
+                events.push({ id: row.id, attempts: row.attempts, payload: json });
+              }
+            } catch {
+              // Corrupt payloads fail wire validation at load; not a quarantine row.
+            }
+          }
+          usageQuarantine = { count: events.length, events };
+        } catch {
+          usageQuarantine = null;
+        }
         // Flush then read the DURABLE on-disk log so a crash from a PRIOR
         // session is in the export even though the in-memory ring restarted.
         await logger?.flush();
@@ -1161,6 +1195,7 @@ async function boot(): Promise<void> {
                 }
               : null,
             messageGuardAudit: guardAudit,
+            usageQuarantine,
             errorCounts: logger?.errorCounts() ?? {},
             logs: logger?.snapshot() ?? [],
             fileLog,

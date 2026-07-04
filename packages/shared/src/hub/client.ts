@@ -534,6 +534,13 @@ export interface HubClientOptions {
   baseUrl: string;
   /** Chatter API key (`agency_hub_core_…`); sent as a Bearer token. */
   apiKey: string;
+  /**
+   * App version sent as `x-client-version` on every hub request (kernel
+   * Stage 4 / Proposal 4.1 — core's Stage 11 capture lane reads it as the
+   * producer version). Injected by the caller: the shared package stays
+   * platform-pure and never reads process/electron versions itself.
+   */
+  clientVersion?: string;
   fetchImpl?: HubFetch;
   /** Epoch ms clock; seam for the server-time offset computation. */
   now?: () => number;
@@ -583,6 +590,9 @@ export function createHubClient(options: HubClientOptions): HubClient {
   const fetchImpl = options.fetchImpl ?? defaultFetch;
   const now = options.now ?? (() => Date.now());
   const timeoutSignal = options.timeoutSignal ?? defaultTimeoutSignal;
+  const clientVersion = options.clientVersion?.trim() ?? '';
+  const versionHeader: Record<string, string> =
+    clientVersion.length > 0 ? { 'x-client-version': clientVersion } : {};
 
   let serverTimeOffsetMs: number | null = null;
 
@@ -610,6 +620,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
       headers: {
         authorization: `Bearer ${apiKey}`,
         accept: 'application/json',
+        ...versionHeader,
         ...(args.body !== undefined ? { 'content-type': 'application/json' } : {}),
       },
       ...(args.body !== undefined ? { body: JSON.stringify(args.body) } : {}),
@@ -886,6 +897,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
           authorization: `Bearer ${apiKey}`,
           accept: 'text/event-stream',
           'content-type': 'application/json',
+          ...versionHeader,
         },
         body: JSON.stringify(requestBody.data),
         ...(signal !== undefined ? { signal } : {}),

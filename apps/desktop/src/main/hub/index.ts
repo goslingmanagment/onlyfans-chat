@@ -30,8 +30,10 @@ export interface HubModuleOptions {
   data: DataLayer;
   settingsStore: SettingsStore;
   keychain: Pick<Keychain, 'getSecret'>;
+  /** App version forwarded as the x-client-version header (Stage 4 / Proposal 4.1). */
+  clientVersion?: string;
   /** Test seam over createHubClient — no live network in tests. */
-  createClient?: (args: { baseUrl: string; apiKey: string }) => HubClient;
+  createClient?: (args: { baseUrl: string; apiKey: string; clientVersion?: string }) => HubClient;
   /** Telemetry-failure sink (defaults to console.warn); wired to the logger in main. */
   onWarn?: (message: string, fields?: Record<string, unknown>) => void;
 }
@@ -167,7 +169,11 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       if (vm.hubBaseUrl === null || apiKey === null || apiKey.trim().length === 0) {
         return; // hub off — delegators stay inert
       }
-      const client = createClient({ baseUrl: vm.hubBaseUrl, apiKey });
+      const client = createClient({
+        baseUrl: vm.hubBaseUrl,
+        apiKey,
+        ...(options.clientVersion !== undefined ? { clientVersion: options.clientVersion } : {}),
+      });
       const resolver = createPageLabelResolver({
         listPages: () => client.listPages(),
         getAccountUsername: (accountId) => data.accounts.get(accountId)?.username ?? null,

@@ -89,6 +89,12 @@ export function DangerZone(): React.JSX.Element {
         {arming ? (
           <div className="space-y-2 border-t border-line pt-3">
             <p className="text-[12.5px] font-semibold text-bad">{t('danger.confirmQuestion')}</p>
+            {/* Stage 4 interim warning: until the kernel capture lane exists
+                (Stage 11), purge is permanent loss of local-only facts. */}
+            <p className="text-[11.5px] text-bad">{t('danger.purgeKernelWarning')}</p>
+            <Button size="sm" disabled={exportDiag.isPending} onClick={() => exportDiag.mutate()}>
+              {t('danger.purgeExportFirst')}
+            </Button>
             <div className="flex items-center gap-3">
               <span className="text-[11.5px] text-ink-low">
                 {t('danger.typeToConfirm', { word: CONFIRM_WORD })}

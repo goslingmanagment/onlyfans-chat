@@ -154,6 +154,32 @@ describe('createHubClient', () => {
     expect(() => createHubClient({ baseUrl: 'https://hub.example.com', apiKey: '  ', fetchImpl })).toThrow();
   });
 
+  it('sends x-client-version on every request when the version is injected (Stage 4 / Proposal 4.1)', async () => {
+    const { calls, fetchImpl } = stubFetch(jsonResponse(200, [PAGE]));
+    const client = createHubClient({
+      baseUrl: 'https://hub.example.com',
+      apiKey: 'agency_hub_core_testkey',
+      clientVersion: '0.1.29',
+      fetchImpl,
+    });
+
+    await client.listPages();
+    expect(calls[0]?.init.headers['x-client-version']).toBe('0.1.29');
+  });
+
+  it('omits x-client-version when no version is injected (blank stays off the wire)', async () => {
+    const { calls, fetchImpl } = stubFetch(jsonResponse(200, [PAGE]));
+    const client = createHubClient({
+      baseUrl: 'https://hub.example.com',
+      apiKey: 'agency_hub_core_testkey',
+      clientVersion: '   ',
+      fetchImpl,
+    });
+
+    await client.listPages();
+    expect(calls[0]?.init.headers).not.toHaveProperty('x-client-version');
+  });
+
   describe('listPages', () => {
     it('issues GET /api/v1/pages with bearer auth and the default timeout', async () => {
       const { calls, fetchImpl } = stubFetch(jsonResponse(200, [PAGE]));
