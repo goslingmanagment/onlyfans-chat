@@ -1,8 +1,9 @@
 import type { OfApiClient } from './client';
 import { OfApiError } from './errors';
 
-export const OFAPI_READ_TRANSPORTS = ['direct', 'hub'] as const;
-export type OfApiReadTransport = (typeof OFAPI_READ_TRANSPORTS)[number];
+// Stage 24 / DP 8: reads are hub-only; the transport enum died with the
+// direct branch (the settings field is a literal now).
+export type OfApiReadTransport = 'hub';
 
 export function buildHubOfApiReadBaseUrl(hubBaseUrl: string): string {
   const base = hubBaseUrl.trim().replace(/\/+$/, '');

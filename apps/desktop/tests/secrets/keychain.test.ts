@@ -34,11 +34,25 @@ describe('keychain', () => {
     await rm(secretsDir, { recursive: true, force: true });
   });
 
+  it('deletes decommissioned legacy secrets on request (Stage 24: ofapiKey)', async () => {
+    const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
+    // Simulate a pre-Stage-24 install holding the team-wide direct-read key.
+    await keychain.setSecret('anthropicKey', 'keep-me');
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(join(secretsDir, 'ofapiKey.secret'), Buffer.from('enc:legacy'));
+
+    await keychain.deleteDecommissionedSecrets();
+
+    const { readFile } = await import('node:fs/promises');
+    await expect(readFile(join(secretsDir, 'ofapiKey.secret'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await keychain.getSecret('anthropicKey')).toBe('keep-me');
+  });
+
   it('roundtrips a secret through the fake safeStorage', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await keychain.setSecret('ofapiKey', 'sk-ofapi-test-123');
-    expect(await keychain.getSecret('ofapiKey')).toBe('sk-ofapi-test-123');
-    expect(await keychain.hasSecret('ofapiKey')).toBe(true);
+    await keychain.setSecret('anthropicKey', 'sk-ofapi-test-123');
+    expect(await keychain.getSecret('anthropicKey')).toBe('sk-ofapi-test-123');
+    expect(await keychain.hasSecret('anthropicKey')).toBe(true);
   });
 
   it('persists encrypted bytes on disk (file !== plaintext)', async () => {
@@ -65,20 +79,20 @@ describe('keychain', () => {
 
   it('deletes a secret (idempotently)', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await keychain.setSecret('ofapiKey', 'to-be-deleted');
-    await keychain.deleteSecret('ofapiKey');
-    expect(await keychain.getSecret('ofapiKey')).toBeNull();
-    await expect(keychain.deleteSecret('ofapiKey')).resolves.toBeUndefined();
+    await keychain.setSecret('anthropicKey', 'to-be-deleted');
+    await keychain.deleteSecret('anthropicKey');
+    expect(await keychain.getSecret('anthropicKey')).toBeNull();
+    await expect(keychain.deleteSecret('anthropicKey')).resolves.toBeUndefined();
   });
 
   it('rejects empty secret values', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await expect(keychain.setSecret('ofapiKey', '')).rejects.toThrow();
+    await expect(keychain.setSecret('anthropicKey', '')).rejects.toThrow();
   });
 
   it('refuses to persist when OS encryption is unavailable', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(false), secretsDir });
-    await expect(keychain.setSecret('ofapiKey', 'value')).rejects.toThrow(/unavailable/);
+    await expect(keychain.setSecret('anthropicKey', 'value')).rejects.toThrow(/unavailable/);
     expect(await readdir(secretsDir)).toEqual([]);
   });
 

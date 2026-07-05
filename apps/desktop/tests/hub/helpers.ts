@@ -49,7 +49,6 @@ export function seedAccount(data: DataLayer, username = 'loravie', id = ACCT): v
 
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
-    hasOfapiKey: false,
     hasAnthropicKey: true,
     hasOpenRouterKey: false,
     hasHubKey: true,
@@ -84,7 +83,6 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     uiScale: 1,
     uiTheme: 'light',
     keyMeta: {
-      ofapi: null,
       anthropic: null,
       openRouter: null,
       hub: { last4: 'core', setAt: 0 },

@@ -20,7 +20,6 @@ import {
   messageGuardPolicySchema,
 } from '@chatgoose/shared/message-guard/index';
 import { HUB_MODE_OVERRIDE_SETTINGS } from '@chatgoose/shared/hub/mode';
-import { OFAPI_READ_TRANSPORTS } from '../ofapi/transport';
 import type {
   ModelSelectableFeature,
   ReasoningEffort,
@@ -64,7 +63,7 @@ const PROD_HUB_ORIGIN = new URL(DEFAULT_AGENCY_HUB_BASE_URL).origin;
 
 export type PersistedSettings = Omit<
   SettingsVM,
-  'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey' | 'hasHubDeviceToken' | 'keyMeta'
+  'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey' | 'hasHubDeviceToken' | 'keyMeta'
 >;
 
 export const PERSISTED_SETTINGS_KEYS = [
@@ -174,7 +173,9 @@ const persistedFieldSchemas = {
   // Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off.
   hubBaseUrl: hubBaseUrlSchema,
   // C6 custody bridge: GETs may be direct or hub.
-  ofapiReadTransport: z.enum(OFAPI_READ_TRANSPORTS),
+  // Stage 24 / DP 8: reads are hub-only. Stored 'direct' values fail this
+  // literal and coerce to the default on load (readField falls back).
+  ofapiReadTransport: z.literal('hub'),
   // C6b+ hard invariant: all app writes go through Hub commands.
   ofapiWriteTransport: z.literal('hub'),
   // C6c AI custody bridge: provider calls stay direct unless hub is selected explicitly.
@@ -310,7 +311,6 @@ export const settingsPatchSchema = z.strictObject({
   uiScale: persistedFieldSchemas.uiScale.optional(),
   uiTheme: persistedFieldSchemas.uiTheme.optional(),
   // Secret material: routed to the keychain, never stored in the settings table.
-  ofapiKey: z.string().optional(),
   anthropicKey: z.string().optional(),
   openRouterKey: z.string().optional(),
   hubApiKey: z.string().optional(),
@@ -329,16 +329,14 @@ const keyMetaEntrySchema = z.object({
 });
 
 const keyMetaSchema = z.object({
-  ofapi: keyMetaEntrySchema.nullable(),
   anthropic: keyMetaEntrySchema.nullable(),
   openRouter: keyMetaEntrySchema.nullable(),
   hub: keyMetaEntrySchema.nullable(),
 });
 
-const EMPTY_KEY_META: KeyMetaVM = { ofapi: null, anthropic: null, openRouter: null, hub: null };
+const EMPTY_KEY_META: KeyMetaVM = { anthropic: null, openRouter: null, hub: null };
 
 const SECRET_META_KEYS: Partial<Record<SecretName, keyof KeyMetaVM>> = {
-  ofapiKey: 'ofapi',
   anthropicKey: 'anthropic',
   openRouterKey: 'openRouter',
   hubApiKey: 'hub',
@@ -454,15 +452,13 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
   }
 
   async function buildVm(): Promise<SettingsVM> {
-    const [hasOfapiKey, hasAnthropicKey, hasOpenRouterKey, hasHubKey, hasHubDeviceToken] = await Promise.all([
-      secrets.hasSecret('ofapiKey'),
+    const [hasAnthropicKey, hasOpenRouterKey, hasHubKey, hasHubDeviceToken] = await Promise.all([
       secrets.hasSecret('anthropicKey'),
       secrets.hasSecret('openRouterKey'),
       secrets.hasSecret('hubApiKey'),
       secrets.hasSecret('hubDeviceToken'),
     ]);
     return {
-      hasOfapiKey,
       hasAnthropicKey,
       hasOpenRouterKey,
       hasHubKey,
@@ -492,7 +488,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       const parsed = settingsPatchSchema.parse(patch);
       const before = readPersisted();
 
-      if (parsed.ofapiKey !== undefined) await applySecret('ofapiKey', parsed.ofapiKey);
+
       if (parsed.anthropicKey !== undefined) await applySecret('anthropicKey', parsed.anthropicKey);
       if (parsed.openRouterKey !== undefined) {
         await applySecret('openRouterKey', parsed.openRouterKey);

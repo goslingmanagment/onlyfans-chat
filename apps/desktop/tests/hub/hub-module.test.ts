@@ -40,7 +40,7 @@ describe('createHubModule', () => {
         makeSettingsVM({
           hubBaseUrl: null,
           hasHubKey: false,
-          keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
+          keyMeta: { anthropic: null, openRouter: null, hub: null },
         }),
       ),
       keychain: makeKeychain('agency_hub_core_x'),
@@ -148,7 +148,7 @@ describe('createHubModule', () => {
         makeSettingsVM({
           hubBaseUrl: null,
           hasHubKey: false,
-          keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
+          keyMeta: { anthropic: null, openRouter: null, hub: null },
         }),
       ),
       keychain: makeKeychain(null),
@@ -192,7 +192,7 @@ describe('createHubModule', () => {
         makeSettingsVM({
           hubBaseUrl: null,
           hasHubKey: false,
-          keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
+          keyMeta: { anthropic: null, openRouter: null, hub: null },
         }),
       ),
       keychain: makeKeychain('agency_hub_core_x'),
@@ -243,7 +243,7 @@ describe('createHubModule', () => {
     current = makeSettingsVM({
       hubBaseUrl: null,
       hasHubKey: false,
-      keyMeta: { ofapi: null, anthropic: null, openRouter: null, hub: null },
+      keyMeta: { anthropic: null, openRouter: null, hub: null },
     });
     await module.reconfigure();
 

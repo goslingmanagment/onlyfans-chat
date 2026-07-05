@@ -102,8 +102,7 @@ describe('settings store', () => {
     expect(vm.uiLocale).toBe('system');
     expect(vm.uiScale).toBe(1);
     expect(vm.uiTheme).toBe('light');
-    expect(vm.keyMeta).toEqual({ ofapi: null, anthropic: null, openRouter: null, hub: null });
-    expect(vm.hasOfapiKey).toBe(false);
+    expect(vm.keyMeta).toEqual({ anthropic: null, openRouter: null, hub: null });
     expect(vm.hasAnthropicKey).toBe(false);
     expect(vm.hasOpenRouterKey).toBe(false);
   });
@@ -180,7 +179,6 @@ describe('settings store', () => {
 
     const vm = await store.update({ anthropicKey: 'sk-ant-secret-a4f2' });
     expect(vm.keyMeta.anthropic).toEqual({ last4: 'a4f2', setAt: 1_750_000_000_000 });
-    expect(vm.keyMeta.ofapi).toBeNull();
 
     // last4 is the only key-derived material allowed in the table.
     const tableDump = JSON.stringify([...queries.rows.entries()]);
@@ -240,6 +238,14 @@ describe('settings store', () => {
     await expect(store.update({ featureModels: { 'fast-reply': 'x' } })).rejects.toThrow();
   });
 
+  it("coerces a persisted 'direct' read transport to 'hub' on load (Stage 24 / DP 8)", async () => {
+    const { store, queries } = createStore();
+    // A machine that had flipped the (now removed) toggle before upgrading.
+    queries.set('ofapiReadTransport', 'direct');
+    const vm = await store.get();
+    expect(vm.ofapiReadTransport).toBe('hub');
+  });
+
   it('a rejected patch persists nothing', async () => {
     const { store, queries } = createStore();
     await expect(
@@ -250,20 +256,17 @@ describe('settings store', () => {
 
   it('routes API keys to the keychain, never to the settings table', async () => {
     const { store, queries } = createStore();
-    const vm = await store.update({ ofapiKey: 'sk-ofapi-secret', anthropicKey: 'sk-ant-secret' });
-    expect(vm.hasOfapiKey).toBe(true);
+    const vm = await store.update({ anthropicKey: 'sk-ant-secret' });
     expect(vm.hasAnthropicKey).toBe(true);
     expect(vm.hasOpenRouterKey).toBe(false);
 
     const tableDump = JSON.stringify([...queries.rows.entries()]);
-    expect(tableDump).not.toContain('sk-ofapi-secret');
     expect(tableDump).not.toContain('sk-ant-secret');
 
     // VM never carries key material
     const vmDump = JSON.stringify(vm);
-    expect(vmDump).not.toContain('sk-ofapi-secret');
     expect(vmDump).not.toContain('sk-ant-secret');
-    expect(Object.keys(vm)).not.toContain('ofapiKey');
+    expect(Object.keys(vm)).not.toContain('anthropicKey');
   });
 
   it('clears a key when the patch value is empty/whitespace', async () => {
@@ -276,8 +279,8 @@ describe('settings store', () => {
 
   it('trims key material before storing', async () => {
     const { store, secrets } = createStore();
-    await store.update({ ofapiKey: '  sk-padded  ' });
-    expect(secrets.values.get('ofapiKey')).toBe('sk-padded');
+    await store.update({ anthropicKey: '  sk-padded  ' });
+    expect(secrets.values.get('anthropicKey')).toBe('sk-padded');
   });
 
   it('routes the hub chatter key to the keychain and persists hubBaseUrl (round-trip)', async () => {

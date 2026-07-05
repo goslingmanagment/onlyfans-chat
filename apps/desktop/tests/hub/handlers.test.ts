@@ -196,16 +196,18 @@ describe('hub IPC wiring', () => {
     expect(onHubConfigChanged).not.toHaveBeenCalled();
     await invoke('cmd:settings.update', { hubBaseUrl: 'http://localhost:4000' });
     expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(2);
+    // Stage 24: ofapiReadTransport is a frozen 'hub' literal — patching it is
+    // a no-op and must NOT rebuild the runtime.
     await invoke('cmd:settings.update', { ofapiReadTransport: 'hub' });
-    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(3);
+    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(2);
     await invoke('cmd:settings.update', { hubModeOverride: 'polling' });
     expect(onHubConfigChanged).toHaveBeenCalledTimes(1);
-    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(3);
+    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(2);
     await invoke('cmd:settings.update', {
       hubBaseUrl: 'http://127.0.0.1:4000',
       hubApiKey: 'agency_hub_core_y',
     });
-    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(4);
+    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(3);
     expect(onHubConfigChanged).toHaveBeenCalledTimes(1);
   });
 

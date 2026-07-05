@@ -6,8 +6,6 @@ import { toUserFacing } from '@chatgoose/shared/errors/index';
 import type { KeyTestProvider, KeyTestResultVM } from '../../preload/contract';
 import type { SecretName } from '../secrets/keychain';
 import type { SettingsStore } from '../settings/store';
-import type { OfApiWhoami } from '../ofapi/schemas';
-import { createOfApiClient } from '../ofapi/client';
 import { probeAnthropicKey, probeOpenRouterKey, type ProbeFetch } from '../ai/providers/key-probe';
 import { probeHubConnection } from '../hub/test-connection';
 
@@ -17,19 +15,12 @@ export interface KeyTestDeps {
   /** GET-fetch seam for the anthropic/openrouter/hub probes (tests). */
   fetchImpl?: ProbeFetch;
   /** OFAPI probe seam; defaults to a throwaway client's /whoami. */
-  ofapiProbe?: (apiKey: string) => Promise<OfApiWhoami>;
 }
 
 function notConfigured(): KeyTestResultVM {
   return { ok: false, code: 'NOT_CONFIGURED', message: 'No key saved yet.' };
 }
 
-async function defaultOfapiProbe(apiKey: string): Promise<OfApiWhoami> {
-  // Throwaway client: probes the key exactly as stored, with the client's full
-  // CG-OF-* error mapping. /whoami is team-level (no account scope, uncharged).
-  const client = createOfApiClient({ apiKey });
-  return client.whoami({ purpose: 'hydration' });
-}
 
 export async function runKeyTest(
   provider: KeyTestProvider,
@@ -37,12 +28,6 @@ export async function runKeyTest(
 ): Promise<KeyTestResultVM> {
   try {
     switch (provider) {
-      case 'ofapi': {
-        const key = await deps.keychain.getSecret('ofapiKey');
-        if (key === null || key.length === 0) return notConfigured();
-        const who = await (deps.ofapiProbe ?? defaultOfapiProbe)(key);
-        return { ok: true, code: null, message: '', team: who.team?.name ?? null };
-      }
       case 'anthropic': {
         const key = await deps.keychain.getSecret('anthropicKey');
         if (key === null || key.length === 0) return notConfigured();

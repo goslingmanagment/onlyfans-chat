@@ -330,7 +330,6 @@ export interface UnreadReconcileSettingsVM {
 }
 
 export interface SettingsVM {
-  hasOfapiKey: boolean;
   hasAnthropicKey: boolean;
   hasOpenRouterKey: boolean;
   hasHubKey: boolean;
@@ -366,9 +365,11 @@ export interface SettingsVM {
   /** Agency Hub core base URL (SPEC §6.2/§9); null = hub mode off. */
   hubBaseUrl: string | null;
   /**
-   * OFAPI GET transport. `hub` routes reads through core with the chatter key.
+   * OFAPI GET transport — hub-only since Stage 24 (DP 8): reads route through
+   * core's read gateway with the hub credential. The literal keeps the wire
+   * shape while making a direct branch unrepresentable.
    */
-  ofapiReadTransport: 'direct' | 'hub';
+  ofapiReadTransport: 'hub';
   /**
    * OFAPI write transport. All app writes use supported versioned Hub commands
    * (text, typing, unsend, mark-read, media/PPV). Direct writes are not exposed.
@@ -439,13 +440,12 @@ export interface KeyMetaEntry {
 }
 
 export interface KeyMetaVM {
-  ofapi: KeyMetaEntry | null;
   anthropic: KeyMetaEntry | null;
   openRouter: KeyMetaEntry | null;
   hub: KeyMetaEntry | null;
 }
 
-export type KeyTestProvider = 'ofapi' | 'anthropic' | 'openrouter' | 'hub';
+export type KeyTestProvider = 'anthropic' | 'openrouter' | 'hub';
 
 /** Result of the one-time hub device-token sign-in (Stage 24). Never carries the token. */
 export interface HubDeviceTokenResultVM {
@@ -525,9 +525,8 @@ export interface AiFeatureCostsVM {
 }
 
 export type SettingsPatch = Partial<
-  Omit<SettingsVM, 'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey' | 'keyMeta'>
+  Omit<SettingsVM, 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey' | 'hasHubDeviceToken' | 'keyMeta'>
 > & {
-  ofapiKey?: string;
   anthropicKey?: string;
   openRouterKey?: string;
   /** Chatter key (`agency_hub_core_…`) — write-only into the keychain. */

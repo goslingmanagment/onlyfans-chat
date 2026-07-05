@@ -124,14 +124,6 @@ export function KeySettings({
     <Section title={t('keys.title')} hint={t('keys.hint')}>
       <div className="divide-y divide-line">
         <KeyRow
-          provider="ofapi"
-          label={t('keys.ofapi.label')}
-          hint={t('keys.ofapi.hint')}
-          configured={settings.hasOfapiKey}
-          meta={settings.keyMeta.ofapi}
-          onSave={(v) => patch({ ofapiKey: v })}
-        />
-        <KeyRow
           provider="anthropic"
           label={t('keys.anthropic.label')}
           hint={t('keys.anthropic.hint')}

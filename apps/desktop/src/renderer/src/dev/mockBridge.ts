@@ -416,7 +416,6 @@ function buildStore(): MockStore {
   ];
 
   const settings: SettingsVM = {
-    hasOfapiKey: false,
     hasAnthropicKey: true,
     hasOpenRouterKey: false,
     hasHubKey: true,
@@ -448,7 +447,6 @@ function buildStore(): MockStore {
     uiScale: 1,
     uiTheme: 'light',
     keyMeta: {
-      ofapi: null,
       anthropic: { last4: 'a4f2', setAt: Date.now() - 5 * 86_400_000 },
       openRouter: null,
       hub: { last4: 'h8b2', setAt: Date.now() - 12 * 86_400_000 },
@@ -1252,8 +1250,7 @@ export function createMockBridge(): ChatGooseBridge {
       expiresAt: new Date(Date.now() + 90 * 24 * 3_600_000).toISOString(),
     }),
     'cmd:keys.test': ({ provider }) => {
-      // Mock: OFAPI/anthropic succeed, openrouter rejects, hub depends on config.
-      if (provider === 'ofapi') return { ok: true, code: null, message: '', team: 'Goose Team' };
+      // Mock: OFAPI/anthropic succeed, openrouter rejects, hub depends on config.;
       if (provider === 'anthropic') return { ok: true, code: null, message: '' };
       if (provider === 'hub') {
         return store.settings.hubBaseUrl !== null && store.settings.hasHubKey
@@ -1402,9 +1399,8 @@ export function createMockBridge(): ChatGooseBridge {
     },
     'cmd:sync.focusAccount': () => undefined,
     'cmd:settings.update': (patch) => {
-      const { ofapiKey, anthropicKey, openRouterKey, hubApiKey, ...rest } = patch;
+      const { anthropicKey, openRouterKey, hubApiKey, ...rest } = patch;
       store.settings = { ...store.settings, ...rest };
-      if (ofapiKey !== undefined) store.settings.hasOfapiKey = ofapiKey.length > 0;
       if (anthropicKey !== undefined) store.settings.hasAnthropicKey = anthropicKey.length > 0;
       if (openRouterKey !== undefined) store.settings.hasOpenRouterKey = openRouterKey.length > 0;
       if (hubApiKey !== undefined) store.settings.hasHubKey = hubApiKey.trim().length > 0;

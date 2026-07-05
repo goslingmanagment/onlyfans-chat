@@ -27,8 +27,6 @@ export const UI_MESSAGES = {
     en: 'Optional local keys for Direct reads and direct AI. OFAPI writes always use Agency Hub.',
     ru: 'Опциональные локальные ключи для Direct-чтения и прямого ИИ. Записи OFAPI всегда идут через Agency Hub.',
   },
-  'keys.ofapi.label': { en: 'OFAPI key', ru: 'Ключ OFAPI' },
-  'keys.ofapi.hint': { en: 'Direct reads only; never app writes', ru: 'только Direct-чтение; не записи' },
   'keys.anthropic.label': { en: 'Anthropic key', ru: 'Ключ Anthropic' },
   'keys.anthropic.hint': { en: 'direct AI provider', ru: 'основной ИИ-провайдер' },
   'keys.openrouter.label': { en: 'OpenRouter key', ru: 'Ключ OpenRouter' },
@@ -127,17 +125,6 @@ export const UI_MESSAGES = {
     ru: 'Токен устройства выдан ({prefix}…) для {label}',
   },
   'hub.deviceToken.failed': { en: 'Sign-in failed', ru: 'Не удалось войти' },
-  'hub.ofapiReads.label': { en: 'OFAPI reads', ru: 'Чтение OFAPI' },
-  'hub.ofapiReads.hint': {
-    en: 'Agency Hub is the normal keyless path; Direct is rollback only',
-    ru: 'Agency Hub — обычный путь без локального ключа; Direct только для отката',
-  },
-  'hub.ofapiReads.direct': { en: 'Direct', ru: 'Напрямую' },
-  'hub.ofapiReads.hub': { en: 'Agency Hub', ru: 'Agency Hub' },
-  'hub.ofapiReads.restart': {
-    en: 'Restart required. Hub is the production default.',
-    ru: 'Нужен перезапуск. Hub — production default.',
-  },
   'hub.aiGateway.label': { en: 'AI generation', ru: 'Генерация ИИ' },
   'hub.ofapiWrites.label': { en: 'OFAPI writes', ru: 'Записи OFAPI' },
   'hub.ofapiWrites.hint': {

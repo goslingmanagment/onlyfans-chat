@@ -36,7 +36,6 @@ export function memoryDataLayer(): DataLayer {
 
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
-    hasOfapiKey: false,
     hasAnthropicKey: true,
     hasOpenRouterKey: false,
     hasHubKey: true,
@@ -71,7 +70,6 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     uiScale: 1,
     uiTheme: 'light',
     keyMeta: {
-      ofapi: null,
       anthropic: null,
       openRouter: null,
       hub: { last4: 'core', setAt: 0 },
@@ -131,6 +129,7 @@ export function makeKeychain(secrets: Record<string, string>): Keychain {
       store.set(name, 'generated-key');
       return Promise.resolve('generated-key');
     },
+    deleteDecommissionedSecrets: () => Promise.resolve(),
   };
 }
 

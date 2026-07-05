@@ -51,7 +51,7 @@ import {
 
 const idSchema = z.string().min(1).max(64);
 const keysTestSchema = z.object({
-  provider: z.enum(['ofapi', 'anthropic', 'openrouter', 'hub']),
+  provider: z.enum(['anthropic', 'openrouter', 'hub']),
 });
 const hubIssueDeviceTokenSchema = z.object({
   username: z.string().min(1).max(120),
@@ -781,19 +781,14 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   ipcMain.handle('cmd:settings.update', async (_event, rawPatch: unknown) => {
-    const before = await settingsStore.get();
     const result = await settingsStore.update(rawPatch);
     const rawPatchObject = typeof rawPatch === 'object' && rawPatch !== null;
     const touchedReadRuntime =
       rawPatchObject &&
-      ('ofapiKey' in rawPatch ||
-        'hubApiKey' in rawPatch ||
-        'hubBaseUrl' in rawPatch ||
-        'ofapiReadTransport' in rawPatch);
+      ('hubApiKey' in rawPatch ||
+        'hubBaseUrl' in rawPatch);
     if (touchedReadRuntime) {
       await deps.onOfapiRuntimeConfigChanged?.();
-    } else if (!before.hasOfapiKey && result.hasOfapiKey) {
-      await deps.onOfapiKeyConfigured?.();
     }
     // Fires on hub-mode override patches only. Hub URL/key/read-transport edits
     // rebuild the read runtime above, after account-bootstrap validation.

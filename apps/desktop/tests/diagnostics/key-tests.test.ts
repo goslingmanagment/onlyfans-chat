@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { CgError } from '@chatgoose/shared/errors/index';
 import { runKeyTest, type KeyTestDeps } from '../../src/main/diagnostics/key-tests';
 import type { ProbeFetch } from '../../src/main/ai/providers/key-probe';
 import type { SettingsStore } from '../../src/main/settings/store';
@@ -16,7 +15,6 @@ function deps(overrides: Partial<KeyTestDeps> & { secrets?: Record<string, strin
     keychain: { getSecret: (name) => Promise.resolve(secrets[name] ?? null) },
     settingsStore,
     ...(overrides.fetchImpl !== undefined ? { fetchImpl: overrides.fetchImpl } : {}),
-    ...(overrides.ofapiProbe !== undefined ? { ofapiProbe: overrides.ofapiProbe } : {}),
   };
 }
 
@@ -56,26 +54,6 @@ describe('runKeyTest', () => {
     expect(bad.message).toBe('OpenRouter API key is invalid.');
   });
 
-  it('ofapi: returns the team name on success and CG-OF-01 on a rejected key', async () => {
-    const ok = await runKeyTest(
-      'ofapi',
-      deps({
-        secrets: { ofapiKey: 'of-k' },
-        ofapiProbe: () => Promise.resolve({ team: { name: 'Goose Team', slug: 'goose' }, api_key: null }),
-      }),
-    );
-    expect(ok).toEqual({ ok: true, code: null, message: '', team: 'Goose Team' });
-
-    const bad = await runKeyTest(
-      'ofapi',
-      deps({
-        secrets: { ofapiKey: 'of-k' },
-        ofapiProbe: () => Promise.reject(new CgError('CG-OF-01')),
-      }),
-    );
-    expect(bad.ok).toBe(false);
-    expect(bad.code).toBe('CG-OF-01');
-  });
 
   it('hub: returns the principal on success, HUB_NOT_CONFIGURED without a key', async () => {
     const body = JSON.stringify({

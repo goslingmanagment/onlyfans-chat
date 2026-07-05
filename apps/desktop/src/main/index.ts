@@ -346,16 +346,15 @@ async function rebuildOfapiRuntime(
   dataLayer: DataLayer,
   settingsStore: SettingsStore,
 ): Promise<void> {
-  const [initialSettings, apiKey, hubApiKey] = await Promise.all([
+  const [initialSettings, hubApiKey] = await Promise.all([
     settingsStore.get(),
-    keychain.getSecret('ofapiKey'),
     // Stage 24: device token preferred; chatter key = fallback.
     resolveHubCredential(keychain),
   ]);
   const hadActiveRuntime = client !== null;
   const creditMeter = createCreditMeter();
   const onError =
-    (transport: 'direct' | 'hub'): NonNullable<OfApiClientOptions['onError']> =>
+    (transport: 'hub'): NonNullable<OfApiClientOptions['onError']> =>
     (error, context): void =>
       logger?.warn('ofapi', `${context.purpose} ${error.code}`, {
         code: error.code,
@@ -364,7 +363,7 @@ async function rebuildOfapiRuntime(
         ...errorToFields(error),
       });
   const onRequestEvent =
-    (transport: 'direct' | 'hub'): NonNullable<OfApiClientOptions['onRequestEvent']> =>
+    (transport: 'hub'): NonNullable<OfApiClientOptions['onRequestEvent']> =>
     (event: OfApiRequestEvent): void => {
       const match = /^\/([^/]+)\/chats\/([^/]+)\/messages$/.exec(event.path);
       if (!match) return;
@@ -406,61 +405,36 @@ async function rebuildOfapiRuntime(
       );
     };
 
-  const directClient =
-    apiKey === null || apiKey.length === 0
-      ? null
-      : createOfApiClient({
-          apiKey,
-          requestTimeoutMs: HUB_OFAPI_READ_TIMEOUT_MS,
-          creditMeter,
-          // Background sync/refresh loops swallow OFAPI failures; observe them
-          // here so outages and rate limits remain visible in diagnostics.
-          onError: onError('direct'),
-          onRequestEvent: onRequestEvent('direct'),
-        });
-
-  let readClient: OfApiClient | null = directClient;
-  if (initialSettings.ofapiReadTransport === 'hub') {
-    if (
-      initialSettings.hubBaseUrl === null ||
-      hubApiKey === null ||
-      hubApiKey.length === 0
-    ) {
-      logger?.warn('ofapi', 'hub read transport not configured', {
-        transport: 'hub',
-        hasHubBaseUrl: initialSettings.hubBaseUrl !== null,
-        hasHubKey: hubApiKey !== null && hubApiKey.length > 0,
-      });
-      if (hadActiveRuntime) {
-        throw new Error('Hub read transport is not configured');
-      }
-      return;
-    }
-    readClient = createOfApiClient({
-      apiKey: hubApiKey,
-      baseUrl: buildHubOfApiReadBaseUrl(initialSettings.hubBaseUrl),
-      authErrorCode: 'CG-HUB-01',
-      requestTimeoutMs: HUB_OFAPI_READ_TIMEOUT_MS,
-      creditMeter,
-      onError: onError('hub'),
-      onRequestEvent: onRequestEvent('hub'),
-    });
-  }
-  if (readClient === null) {
-    logger?.info('ofapi', 'read transport unavailable', {
-      transport: initialSettings.ofapiReadTransport,
-      reason: 'missing-direct-key',
+  // Stage 24 / DP 8: reads are hub-only — the direct construction branch and
+  // its team-wide key are gone. Break-glass during a kernel outage is an ops
+  // runbook (owner issues a temporary key); reads meanwhile come from the
+  // local SQLite cache.
+  if (
+    initialSettings.hubBaseUrl === null ||
+    hubApiKey === null ||
+    hubApiKey.length === 0
+  ) {
+    logger?.warn('ofapi', 'hub read transport not configured', {
+      transport: 'hub',
+      hasHubBaseUrl: initialSettings.hubBaseUrl !== null,
+      hasHubKey: hubApiKey !== null && hubApiKey.length > 0,
     });
     if (hadActiveRuntime) {
-      throw new Error('Direct OFAPI read transport is not configured');
+      throw new Error('Hub read transport is not configured');
     }
     return;
   }
-  const nextClient = createOfApiTransportClient(readClient);
-  logger?.info('ofapi', 'read transport selected', {
-    transport: initialSettings.ofapiReadTransport,
-    directReadAvailable: directClient !== null,
+  const readClient = createOfApiClient({
+    apiKey: hubApiKey,
+    baseUrl: buildHubOfApiReadBaseUrl(initialSettings.hubBaseUrl),
+    authErrorCode: 'CG-HUB-01',
+    requestTimeoutMs: HUB_OFAPI_READ_TIMEOUT_MS,
+    creditMeter,
+    onError: onError('hub'),
+    onRequestEvent: onRequestEvent('hub'),
   });
+  const nextClient = createOfApiTransportClient(readClient);
+  logger?.info('ofapi', 'read transport selected', { transport: 'hub' });
 
   const utcDay = new Date().toISOString().slice(0, 10);
   nextClient.creditMeter.hydrate({
@@ -836,19 +810,15 @@ async function boot(): Promise<void> {
     secretsDir: join(userData, 'secrets'),
   });
 
-  // Dev convenience: import the spike key once so a fresh dev install can run
-  // against the live account without manual settings entry.
-  if (!app.isPackaged && process.env['ONLYFANSAPI_API_KEY']) {
-    if (!(await keychain.hasSecret('ofapiKey'))) {
-      await keychain.setSecret('ofapiKey', process.env['ONLYFANSAPI_API_KEY']);
-    }
-  }
+  // Stage 24 / DP 8: the team-wide direct-read OFAPI key is decommissioned —
+  // deleted on boot, deliberately unrecoverable by version rollback.
+  await keychain.deleteDecommissionedSecrets();
 
   // Mirror the live secret values into the log redactor + the export's final
   // pass. Refreshed on every settings write (a key save also writes its keyMeta
   // fingerprint, so it fires the settings bus event below).
   const refreshRedactionSecrets = async (): Promise<void> => {
-    const names: SecretName[] = ['ofapiKey', 'anthropicKey', 'openRouterKey', 'hubApiKey'];
+    const names: SecretName[] = ['anthropicKey', 'openRouterKey', 'hubApiKey', 'hubDeviceToken'];
     const values = await Promise.all(names.map((name) => keychain.getSecret(name)));
     redactionSecrets = values.filter((value): value is string => typeof value === 'string' && value.length > 0);
     logger?.setRedactionSecrets(redactionSecrets);

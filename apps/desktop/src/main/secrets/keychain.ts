@@ -8,7 +8,6 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 export const SECRET_NAMES = [
-  'ofapiKey',
   'anthropicKey',
   'openRouterKey',
   'hubApiKey',
@@ -40,7 +39,17 @@ export interface Keychain {
   hasSecret(name: SecretName): Promise<boolean>;
   /** Returns the persisted generated key, creating it exactly once. */
   getOrCreateGeneratedKey(name: GeneratedKeyName): Promise<string>;
+  /**
+   * Stage 24 / DP 8: removes secrets this version no longer recognizes (the
+   * team-wide direct-read ofapiKey). Runs on every boot; deliberately
+   * irreversible on this machine — a version rollback cannot restore direct
+   * reads (the owner rotates the team key kernel-side after fleet confirm).
+   */
+  deleteDecommissionedSecrets(): Promise<void>;
 }
+
+/** Legacy secret files removed on boot (Stage 24: direct OFAPI reads died). */
+const DECOMMISSIONED_SECRET_FILES = ['ofapiKey.secret'] as const;
 
 /** 32-byte random key as 64 hex chars (DB / media-cache encryption keys). */
 export function generateDbKey(): string {
@@ -90,6 +99,12 @@ export function createKeychain(options: KeychainOptions): Keychain {
     return value !== null && value.length > 0;
   }
 
+  async function deleteDecommissionedSecrets(): Promise<void> {
+    for (const file of DECOMMISSIONED_SECRET_FILES) {
+      await rm(join(secretsDir, file), { force: true });
+    }
+  }
+
   // Serialized per name so concurrent callers cannot generate two different keys.
   const pendingCreates = new Map<GeneratedKeyName, Promise<string>>();
 
@@ -109,7 +124,7 @@ export function createKeychain(options: KeychainOptions): Keychain {
     return created;
   }
 
-  return { getSecret, setSecret, deleteSecret, hasSecret, getOrCreateGeneratedKey };
+  return { getSecret, setSecret, deleteSecret, hasSecret, getOrCreateGeneratedKey, deleteDecommissionedSecrets };
 }
 
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {
