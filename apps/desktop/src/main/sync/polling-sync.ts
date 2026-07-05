@@ -132,6 +132,12 @@ export interface PollingSyncOptions {
    * The future reduced-cadence branch must be gated behind false.
    */
   spendSweepRollbackToLegacy?: () => boolean;
+  /**
+   * Stage 12: while a harvest is incomplete, retention prunes are frozen —
+   * a prune could delete rows the harvest walk has not reached yet, losing
+   * them before they ever hit the kernel. Rows only accumulate meanwhile.
+   */
+  isPruneFrozen?: () => boolean;
   /** Body-free list-only read-state reconcile for hub-live unread drift. */
   unreadReconcileSettings?: () => Partial<UnreadReconcileSettings> | undefined;
   now?: () => number;
@@ -256,6 +262,12 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   const autoReadEnabled = options.autoReadEnabled ?? ((): boolean => false);
   const spendSweepRollbackToLegacy =
     options.spendSweepRollbackToLegacy ?? ((): boolean => false);
+  const isPruneFrozen = options.isPruneFrozen ?? ((): boolean => false);
+  const pruneMessages = (accountId: string, chatId: string): void => {
+    if (!isPruneFrozen()) {
+      data.messages.prune(accountId, chatId);
+    }
+  };
   const unreadReconcileSettings =
     options.unreadReconcileSettings ?? ((): Partial<UnreadReconcileSettings> | undefined => undefined);
   const sleep: SleepFn =
@@ -527,7 +539,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       );
       upserts = messages.map((message) => mapMessage(accountId, chatId, message, toMediaUrl));
       data.messages.upsertMany(upserts);
-      data.messages.prune(accountId, chatId); // retention (SPEC §10: 5,000/chat default)
+      pruneMessages(accountId, chatId); // retention (SPEC §10: 5,000/chat default)
     } catch (error) {
       onLog('warn', 'diag openTail', {
         accountId,
@@ -647,7 +659,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       );
       const upserts = messages.map((message) => mapMessage(accountId, chatId, message, toMediaUrl));
       data.messages.upsertMany(upserts);
-      data.messages.prune(accountId, chatId);
+      pruneMessages(accountId, chatId);
     } catch (error) {
       onLog('warn', 'diag backfillOlder', {
         accountId,
@@ -1137,7 +1149,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
 
     const existed = existing !== null;
     data.messages.upsertMany([upsert]);
-    data.messages.prune(accountId, chatId);
+    pruneMessages(accountId, chatId);
     if (autoReadEnabled()) {
       trackUnreadyMedia(accountId, chatId, [upsert]);
     }

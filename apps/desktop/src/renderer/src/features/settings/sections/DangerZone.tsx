@@ -196,6 +196,13 @@ export function DangerZone(): React.JSX.Element {
             </Button>
           </div>
         )}
+        {purge.isError && (
+          <p className="text-[11.5px] text-bad">
+            {t('danger.purgeFailed', {
+              error: purge.error instanceof Error ? purge.error.message : String(purge.error),
+            })}
+          </p>
+        )}
       </div>
     </Section>
   );

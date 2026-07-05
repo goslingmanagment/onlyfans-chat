@@ -430,6 +430,7 @@ export const UI_MESSAGES = {
   },
   'danger.typeToConfirm': { en: 'Type {word} to confirm', ru: 'Введите {word} для подтверждения' },
   'danger.yesPurge': { en: 'Yes, purge', ru: 'Да, очистить' },
+  'danger.purgeFailed': { en: 'Purge failed: {error}', ru: 'Очистка не выполнена: {error}' },
   'danger.openFolder': { en: 'Open data folder', ru: 'Открыть папку данных' },
   'danger.exportDiagnostics': { en: 'Export diagnostics', ru: 'Выгрузить диагностику' },
   'danger.diagHint': {

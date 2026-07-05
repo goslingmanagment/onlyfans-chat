@@ -1,13 +1,13 @@
 // Stage 12 harvest: deterministic ids, cursor resume without loss, manifest
 // counts, purge guard, and the excluded-table pin.
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { DataLayer } from '@main/db/index';
-import type { HubIngestObservationEvent } from '@chatgoose/shared/hub/index';
+import { HubError, type HubIngestObservationEvent } from '@chatgoose/shared/hub/index';
 import {
   createHarvestModule,
   HARVEST_TABLES,
@@ -146,6 +146,87 @@ describe('harvest module', () => {
       tables: Array<{ table: string; walked: number }>;
     };
     expect(manifest.tables.find((entry) => entry.table === 'messages')).toMatchObject({ walked: 5 });
+  });
+
+  it('quarantines a hub 400 without retrying and without advancing the cursor', async () => {
+    seedMessage('1');
+    seedMessage('2');
+
+    let calls = 0;
+    const rejecting = {
+      async postIngestObservations(): Promise<{ accepted: number; duplicates: number }> {
+        calls += 1;
+        throw new HubError('bad-request', { message: 'schema drift' });
+      },
+    };
+    const harvest = buildModule(rejecting);
+    await expect(harvest.run()).rejects.toThrow('quarantined to');
+    // Deterministic rejection: exactly one POST, no retry ladder.
+    expect(calls).toBe(1);
+    expect(harvest.isIncomplete()).toBe(true);
+
+    const quarantineFiles = readdirSync(manifestDir)
+      .filter((name) => name.startsWith('chatgoose-harvest-quarantine-'));
+    expect(quarantineFiles).toHaveLength(1);
+    const quarantined = JSON.parse(
+      readFileSync(join(manifestDir, quarantineFiles[0]!), 'utf8'),
+    ) as { events: HubIngestObservationEvent[] };
+    expect(quarantined.events).toHaveLength(2);
+  });
+
+  it('does not arm the purge guard when the uploader cannot even be created', async () => {
+    seedMessage('1');
+    const harvest = createHarvestModule({
+      data,
+      createUploader: () => {
+        throw new Error('Hub is not configured');
+      },
+      appVersion: '0.1.29',
+      schemaVersion: 16,
+      manifestDir,
+      batchSize: 2,
+      paceMs: 0,
+      sleep: async () => {},
+    });
+    await expect(harvest.run()).rejects.toThrow('Hub is not configured');
+    expect(harvest.status().state).toBe('error');
+    // Zero-progress attempt: purge must stay available.
+    expect(harvest.isIncomplete()).toBe(false);
+  });
+
+  it('splits oversized rows out of the batch instead of tripping the hub body cap', async () => {
+    seedMessage('1');
+    // A row whose serialized event alone exceeds the byte budget.
+    data.db
+      .prepare(
+        'INSERT INTO messages (account_id, chat_id, message_id, created_at, is_sent_by_me, text_plain, raw, deleted) ' +
+          "VALUES ('acct_hv', '555', '2', '2026-01-02T00:00:00.000Z', 0, @text, '{}', 0)",
+      )
+      .run({ text: 'x'.repeat(950_000) });
+
+    const { batches, uploader } = collectingUploader();
+    const harvest = buildModule(uploader);
+    const { manifestPath } = await harvest.run();
+
+    const uploadedMessageIds = batches
+      .flat()
+      .filter((event) => event.kind === 'harvest.messages')
+      .map((event) => (event.payload.row as { message_id: string }).message_id);
+    expect(uploadedMessageIds).toEqual(['1']);
+    // The oversize row is preserved for manual replay, not silently dropped.
+    const quarantineFiles = readdirSync(manifestDir)
+      .filter((name) => name.startsWith('chatgoose-harvest-quarantine-'));
+    expect(quarantineFiles).toHaveLength(1);
+    // The run itself completes; the manifest's walked>uploaded gap is what
+    // the core-side reconcile flags.
+    expect(manifestPath).not.toBeNull();
+    const manifest = JSON.parse(readFileSync(manifestPath!, 'utf8')) as {
+      tables: Array<{ table: string; walked: number; uploaded: number }>;
+    };
+    expect(manifest.tables.find((entry) => entry.table === 'messages')).toMatchObject({
+      walked: 2,
+      uploaded: 1,
+    });
   });
 
   it('never touches excluded tables and keeps the harvested set pinned', () => {

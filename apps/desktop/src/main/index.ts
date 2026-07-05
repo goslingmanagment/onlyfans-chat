@@ -84,6 +84,12 @@ protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 const HUB_OFAPI_READ_TIMEOUT_MS = 75_000;
 
 let mainWindow: BrowserWindow | null = null;
+
+// Stage 12: retention prunes freeze while a harvest is incomplete (history
+// must reach the kernel before it may die locally). Bound in boot() once the
+// harvest module exists; polling loops read it through this indirection
+// because rebuildOfapiRuntime can run before AND after boot creates it.
+let harvestIsIncomplete: () => boolean = () => false;
 /** Diagnostics logger — created first thing in boot() so even early failures land. */
 let logger: Logger | null = null;
 /** Live secret values, mirrored to the logger redactor and the export's final pass. */
@@ -546,6 +552,9 @@ async function rebuildOfapiRuntime(
     spendSweepRollbackToLegacy: () => settingsCache?.spendSweepRollbackToLegacy ?? false,
     unreadReconcileSettings: () => settingsCache?.unreadReconcile,
     readTransport: () => initialSettings.ofapiReadTransport,
+    // Stage 12: retention prunes freeze while a harvest is incomplete so the
+    // walk never races row deletion (history must reach the kernel first).
+    isPruneFrozen: () => harvestIsIncomplete(),
   });
 
   const lastEventIdSchema = z.number().int().nonnegative();
@@ -876,6 +885,7 @@ async function boot(): Promise<void> {
         : {};
     })(),
   });
+  harvestIsIncomplete = () => harvestModule.isIncomplete();
 
   // Runtime seed for local/prod evidence builds. The secret is supplied by the
   // launcher and then persisted through the normal encrypted keychain path.

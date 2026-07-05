@@ -14,12 +14,15 @@ import { createHash, randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { HubIngestObservationEvent } from '@chatgoose/shared/hub/index';
+import { HubError, type HubIngestObservationEvent } from '@chatgoose/shared/hub/index';
 import type { DataLayer } from '../db/index';
 
 export const HARVEST_BATCH_SIZE = 100;
 export const HARVEST_BATCH_PACE_MS = 2_000;
 const HARVEST_RETRY_DELAYS_MS = [5_000, 30_000, 120_000];
+// The hub's ingest route caps bodies at 1 MiB; batches are split to stay
+// under this serialized-bytes budget (headroom covers the JSON envelope).
+export const HARVEST_MAX_BATCH_BYTES = 900_000;
 
 const INSTALL_ID_KEY = 'harvest.install_id';
 const CURSOR_KEY_PREFIX = 'harvest.cursor.';
@@ -178,7 +181,18 @@ export function createHarvestModule(options: HarvestModuleOptions) {
     };
   }
 
-  async function uploadBatch(
+  async function writeQuarantineFile(
+    reason: string,
+    events: HubIngestObservationEvent[],
+  ): Promise<string> {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const suffix = events.length === 1 ? `-${events[0]!.clientEventId}` : '';
+    const file = join(options.manifestDir, `chatgoose-harvest-quarantine-${stamp}${suffix}.json`);
+    await writeFile(file, JSON.stringify({ error: reason, events }, null, 2), 'utf8');
+    return file;
+  }
+
+  async function postChunk(
     uploader: HarvestUploader,
     events: HubIngestObservationEvent[],
   ): Promise<{ accepted: number; duplicates: number }> {
@@ -188,13 +202,10 @@ export function createHarvestModule(options: HarvestModuleOptions) {
         return await uploader.postIngestObservations({ events });
       } catch (error) {
         // 400 = contract bug, never retriable verbatim: quarantine + halt.
+        // (Same HubError classification as the usage reporter's spool.)
         const name = error instanceof Error ? error.message : String(error);
-        const isBadRequest = error instanceof Error &&
-          'kind' in error && (error as { kind?: string }).kind === 'bad-request';
-        if (isBadRequest) {
-          const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-          const file = join(options.manifestDir, `chatgoose-harvest-quarantine-${stamp}.json`);
-          await writeFile(file, JSON.stringify({ error: name, events }, null, 2), 'utf8');
+        if (error instanceof HubError && error.reason === 'bad-request') {
+          const file = await writeQuarantineFile(name, events);
           throw new Error(`Harvest batch rejected (400); quarantined to ${file}`, { cause: error });
         }
         if (attempt >= HARVEST_RETRY_DELAYS_MS.length) {
@@ -204,6 +215,45 @@ export function createHarvestModule(options: HarvestModuleOptions) {
         attempt += 1;
       }
     }
+  }
+
+  async function uploadBatch(
+    uploader: HarvestUploader,
+    events: HubIngestObservationEvent[],
+  ): Promise<{ accepted: number; duplicates: number }> {
+    // Split by serialized size so no POST can trip the hub's 1 MiB body cap
+    // (a 413 is not retriable and would wedge the walk on this batch forever).
+    const totals = { accepted: 0, duplicates: 0 };
+    let chunk: HubIngestObservationEvent[] = [];
+    let chunkBytes = 0;
+    const flush = async () => {
+      if (chunk.length === 0) {
+        return;
+      }
+      const result = await postChunk(uploader, chunk);
+      totals.accepted += result.accepted;
+      totals.duplicates += result.duplicates;
+      chunk = [];
+      chunkBytes = 0;
+    };
+    for (const event of events) {
+      const size = Buffer.byteLength(JSON.stringify(event), 'utf8');
+      if (size > HARVEST_MAX_BATCH_BYTES) {
+        // A single event the hub can never accept: quarantine it and keep
+        // walking — the reconcile manifest surfaces the gap (walked > counted)
+        // and the file preserves the payload for manual replay.
+        const file = await writeQuarantineFile('event exceeds max batch bytes', [event]);
+        log('harvest event quarantined (oversize)', { clientEventId: event.clientEventId, file });
+        continue;
+      }
+      if (chunk.length > 0 && chunkBytes + size > HARVEST_MAX_BATCH_BYTES) {
+        await flush();
+      }
+      chunk.push(event);
+      chunkBytes += size;
+    }
+    await flush();
+    return totals;
   }
 
   async function walkTable(spec: HarvestTableSpec, uploader: HarvestUploader, machine: string) {
@@ -328,10 +378,13 @@ export function createHarvestModule(options: HarvestModuleOptions) {
       lastError = null;
       try {
         const machine = machineId();
+        // Validate the uploader BEFORE persisting the started marker: a Start
+        // click with the Hub unconfigured must not arm the purge guard (a
+        // zero-progress attempt has captured nothing worth guarding).
+        const uploader = await options.createUploader();
         if (typeof data.settings.get(STARTED_KEY) !== 'string') {
           data.settings.set(STARTED_KEY, new Date().toISOString());
         }
-        const uploader = await options.createUploader();
         for (const spec of HARVEST_TABLES) {
           await walkTable(spec, uploader, machine);
           if (pauseRequested) {
