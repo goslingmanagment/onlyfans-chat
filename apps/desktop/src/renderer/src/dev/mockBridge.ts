@@ -423,6 +423,7 @@ function buildStore(): MockStore {
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
+    hubSyncProtocol: 'v2',
     aiGatewayTransport: 'direct',
     hubModeOverride: 'auto',
     spendSweepRollbackToLegacy: true,

@@ -26,6 +26,7 @@ const HUB_FALLBACK_REASONS = [
   'hub-notification-fallback',
   'hub-ingest-error-fallback',
   'hub-replay-gap-snapshot',
+  'hub-v2-gap-cursor-rebaseline',
   'unknown-delete-head-refresh',
 ] as const;
 
@@ -64,6 +65,9 @@ export interface HubFactoryCallbacks {
     oldestAvailableSeq: number | null;
     currentSeq: number;
   }) => void;
+  /** Stage 24: v2 gap recovery installed a fresh cursor — polling reconciles
+   *  the missed window (the v2 snapshot carries no projection pages). */
+  onV2GapRecovered: () => Promise<void>;
 }
 
 export interface HubAwareSyncOptions {
@@ -529,6 +533,24 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     });
   }
 
+  /** Stage 24 v2 gap recovery: the stream re-baselined to "now"; the missed
+   * window reconciles through the authoritative polling path (list-only head
+   * refresh per handled account — same reconciliation the per-event fallback
+   * uses). */
+  async function handleV2GapRecovered(): Promise<void> {
+    recordFallback('hub-v2-gap-cursor-rebaseline', 'syncSnapshotRequired', {
+      accounts: handledAccountIds.length,
+    });
+    for (const accountId of handledAccountIds) {
+      try {
+        await polling.refreshAccountHead(accountId);
+      } catch {
+        // transient fetch failure: polling cadence reconciles later
+      }
+      emit({ type: 'chatListUpdated', accountId });
+    }
+  }
+
   async function handleHubEvent(event: SyncEvent): Promise<void> {
     recordHubEvent(event);
     switch (event.type) {
@@ -713,6 +735,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         onSnapshotRequired: (input) => {
           recordFallback('hub-replay-gap-snapshot', 'syncSnapshotRequired', input);
         },
+        onV2GapRecovered: handleV2GapRecovered,
       },
       handledAccountIds,
     );

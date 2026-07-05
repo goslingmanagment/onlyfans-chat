@@ -558,6 +558,7 @@ async function rebuildOfapiRuntime(
   });
 
   const lastEventIdSchema = z.number().int().nonnegative();
+  const v2CursorSchema = z.string().min(1);
   const nextSync = createHubAwareSync({
     polling,
     data: dataLayer,
@@ -566,7 +567,7 @@ async function rebuildOfapiRuntime(
     // Resolved per (re)connect attempt so settings edits take effect on
     // reconfigureHub without re-running OFAPI init. Null = hub mode off.
     createHub: async (
-      { onEvent, onStatusChange, onSnapshot, onSnapshotRequired },
+      { onEvent, onStatusChange, onSnapshot, onSnapshotRequired, onV2GapRecovered },
       accountIds,
     ) => {
       const vm = await settingsStore.get();
@@ -577,16 +578,25 @@ async function rebuildOfapiRuntime(
       return createHubSync({
         baseUrl: vm.hubBaseUrl,
         apiKey: hubKey,
+        // Stage 24: v2 by default; 'v1' is the rollout-window-only fallback
+        // (settings-file flip, no UI).
+        protocol: vm.hubSyncProtocol,
         accountIds,
         onEvent,
         onSnapshot,
         onSnapshotRequired,
+        onV2GapRecovered,
         onStatusChange,
         onWarn: (message, fields) => logger?.warn('hub-sse', message, fields),
-        // Resume checkpoint is global per chatter key (core fanout_seq).
+        // v1 resume checkpoint is global per chatter key (core fanout_seq);
+        // the v2 cursor is opaque and lives under its own key — lastEventId
+        // is retained untouched for the fallback window.
         getLastEventId: () =>
           dataLayer.settings.getParsed('hubSync.lastEventId', lastEventIdSchema) ?? null,
         setLastEventId: (id) => dataLayer.settings.set('hubSync.lastEventId', id),
+        getV2Cursor: () =>
+          dataLayer.settings.getParsed('hubSync.v2Cursor', v2CursorSchema) ?? null,
+        setV2Cursor: (cursor) => dataLayer.settings.set('hubSync.v2Cursor', cursor),
       });
     },
   });

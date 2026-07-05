@@ -89,6 +89,7 @@ export const PERSISTED_SETTINGS_KEYS = [
   'ofapiWriteTransport',
   'aiGatewayTransport',
   'hubModeOverride',
+  'hubSyncProtocol',
   'spendSweepRollbackToLegacy',
   'unreadReconcile',
   'accountPageLabels',
@@ -180,6 +181,11 @@ const persistedFieldSchemas = {
   aiGatewayTransport: z.enum(['direct', 'hub']),
   // Dev/support-only override for D3 diagnostics. Default auto.
   hubModeOverride: z.enum(HUB_MODE_OVERRIDE_SETTINGS),
+  // Kernel Stage 24 rollout-window-only fallback: 'v1' re-points the SSE
+  // consumer at the legacy stream. NOT surfaced in UI — flip via the settings
+  // file per the ops runbook; the field and the v1 path are deleted after
+  // fleet confirmation.
+  hubSyncProtocol: z.enum(['v2', 'v1']),
   // D6 rollback guard: true forces the old 10-minute fan-spend sweep.
   spendSweepRollbackToLegacy: z.boolean(),
   unreadReconcile: unreadReconcileSettingsSchema,
@@ -237,6 +243,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   ofapiWriteTransport: 'hub',
   aiGatewayTransport: 'direct',
   hubModeOverride: 'auto',
+  hubSyncProtocol: 'v2',
   spendSweepRollbackToLegacy: false,
   unreadReconcile: {
     enabled: true,
@@ -289,6 +296,7 @@ export const settingsPatchSchema = z.strictObject({
   ofapiWriteTransport: persistedFieldSchemas.ofapiWriteTransport.optional(),
   aiGatewayTransport: persistedFieldSchemas.aiGatewayTransport.optional(),
   hubModeOverride: persistedFieldSchemas.hubModeOverride.optional(),
+  hubSyncProtocol: persistedFieldSchemas.hubSyncProtocol.optional(),
   spendSweepRollbackToLegacy: persistedFieldSchemas.spendSweepRollbackToLegacy.optional(),
   unreadReconcile: persistedFieldSchemas.unreadReconcile.optional(),
   accountPageLabels: persistedFieldSchemas.accountPageLabels.optional(),
@@ -409,6 +417,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       ofapiWriteTransport: readField('ofapiWriteTransport'),
       aiGatewayTransport: readField('aiGatewayTransport'),
       hubModeOverride: readField('hubModeOverride'),
+      hubSyncProtocol: readField('hubSyncProtocol'),
       spendSweepRollbackToLegacy: readField('spendSweepRollbackToLegacy'),
       unreadReconcile: readField('unreadReconcile'),
       accountPageLabels: readField('accountPageLabels'),

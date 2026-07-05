@@ -58,6 +58,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     ofapiWriteTransport: 'hub',
     aiGatewayTransport: 'direct',
     hubModeOverride: 'auto',
+    hubSyncProtocol: 'v2',
     spendSweepRollbackToLegacy: true,
     unreadReconcile: {
       enabled: true,

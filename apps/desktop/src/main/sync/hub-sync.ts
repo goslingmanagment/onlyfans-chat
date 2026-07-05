@@ -10,6 +10,10 @@
 // parsing is a small dedicated SSE-spec parser below, unit-tested directly.
 
 import {
+  domainSnapshotRequiredSchema,
+  domainSnapshotResponseSchema,
+  mapDomainFrame,
+  parseDomainEventFrame,
   parseSyncEvent,
   syncSnapshotRequiredSchema,
   syncSnapshotResponseSchema,
@@ -21,6 +25,10 @@ import type { SleepFn } from '../ofapi/rate-limiter';
 
 export const HUB_SSE_PATH = '/api/v1/events/stream';
 export const HUB_SNAPSHOT_PATH = '/api/v1/events/snapshot';
+/** Kernel Stage 24: domain-event stream v2 (opaque per-account cursor). */
+export const HUB_V2_SSE_PATH = '/api/v1/events/v2/stream';
+export const HUB_V2_SNAPSHOT_PATH = '/api/v1/events/v2/snapshot';
+export type HubSyncProtocol = 'v2' | 'v1';
 /** Server announces `retry: 3000` on connect; floor until it does. */
 export const HUB_DEFAULT_RETRY_MS = 3_000;
 export const HUB_RECONNECT_CAP_MS = 30_000;
@@ -158,6 +166,12 @@ export interface HubSyncOptions {
   baseUrl: string;
   /** Chatter API key (`agency_hub_core_…`) — bearer token. */
   apiKey: string;
+  /**
+   * Stream protocol (Stage 24). Default 'v2'; 'v1' is the rollout-window-only
+   * fallback, flippable per machine via the settings file — the v1 path (and
+   * this flag) are deleted after fleet confirmation.
+   */
+  protocol?: HubSyncProtocol;
   fetchImpl?: HubSseFetch;
   now?: () => number;
   /** Backoff delays only — the watchdog uses real timers (abortable). */
@@ -174,6 +188,16 @@ export interface HubSyncOptions {
   onWarn?: (message: string, fields?: Record<string, unknown>) => void;
   getLastEventId: () => number | null;
   setLastEventId: (id: number) => void;
+  /** v2 opaque cursor (persisted under its OWN key — hubSync.lastEventId is
+   *  retained untouched for the v1 fallback window). */
+  getV2Cursor?: () => string | null;
+  setV2Cursor?: (cursor: string) => void;
+  /**
+   * v2 gap recovery applied a fresh cursor (the v2 snapshot is a cursor
+   * handshake, not projection pages — decision #92): the caller reconciles
+   * the missed window through its authoritative polling path.
+   */
+  onV2GapRecovered?: () => void | Promise<void>;
 }
 
 export interface HubSync {
@@ -189,7 +213,8 @@ type ConnectionOutcome =
   | { kind: 'error' }
   | { kind: 'auth' }
   | { kind: 'stopped' }
-  | { kind: 'snapshot'; requirement: SyncSnapshotRequired };
+  | { kind: 'snapshot'; requirement: SyncSnapshotRequired }
+  | { kind: 'snapshot-v2' };
 
 export function createHubSync(options: HubSyncOptions): HubSync {
   const baseUrl = options.baseUrl.trim().replace(/\/+$/, '');
@@ -197,6 +222,11 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   const fetchImpl: HubSseFetch = options.fetchImpl ?? ((url, init) => fetch(url, init));
   const sleep: SleepFn =
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+
+  const protocol: HubSyncProtocol = options.protocol ?? 'v2';
+  if (protocol === 'v2' && (options.getV2Cursor === undefined || options.setV2Cursor === undefined)) {
+    throw new Error('createHubSync: protocol v2 requires getV2Cursor/setV2Cursor');
+  }
 
   let running = false;
   let status: HubSyncStatus = 'stopped';
@@ -220,12 +250,20 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   }
 
   function streamUrl(): string {
+    if (protocol === 'v2') {
+      const cursor = options.getV2Cursor!();
+      const resume = cursor !== null ? `?cursor=${encodeURIComponent(cursor)}` : '';
+      return `${baseUrl}${HUB_V2_SSE_PATH}${resume}`;
+    }
     const lastEventId = options.getLastEventId();
     const resume = lastEventId !== null ? `?lastEventId=${encodeURIComponent(lastEventId)}` : '';
     return `${baseUrl}${HUB_SSE_PATH}${resume}`;
   }
 
   async function handleFrame(frame: SseFrame): Promise<void> {
+    if (protocol === 'v2') {
+      return handleV2Frame(frame);
+    }
     if (frame.event !== 'sync') {
       return; // unknown event names are forward-compat noise, not errors
     }
@@ -250,6 +288,93 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     if (frame.id !== null && /^\d+$/.test(frame.id)) {
       options.setLastEventId(Number(frame.id));
     }
+  }
+
+  async function handleV2Frame(frame: SseFrame): Promise<void> {
+    if (frame.event === 'ephemeral') {
+      // Serve-time-only lane (typing) — apply, never checkpoint.
+      let json: unknown;
+      try {
+        json = JSON.parse(frame.data);
+      } catch {
+        dropped += 1;
+        return;
+      }
+      const event = parseSyncEvent(json);
+      if (event === null) {
+        dropped += 1;
+        return;
+      }
+      if (allowedAccountIds !== null && !allowedAccountIds.has(event.accountId)) {
+        dropped += 1;
+        return;
+      }
+      await options.onEvent(event);
+      return;
+    }
+    if (frame.event !== 'domain') {
+      return; // unknown event names are forward-compat noise, not errors
+    }
+    let json: unknown;
+    try {
+      json = JSON.parse(frame.data);
+    } catch {
+      dropped += 1;
+      return;
+    }
+    const domainFrame = parseDomainEventFrame(json);
+    if (domainFrame === null) {
+      dropped += 1;
+      return;
+    }
+    const event = mapDomainFrame(domainFrame);
+    if (event !== null && (allowedAccountIds === null || allowedAccountIds.has(event.accountId))) {
+      await options.onEvent(event);
+    }
+    // Checkpoint AFTER handling so a crash mid-handle replays, never skips.
+    // Unmapped/unknown types checkpoint too — that is the forward-compat
+    // contract (the cursor must advance past events this client ignores).
+    if (frame.id !== null && frame.id.length > 0) {
+      options.setV2Cursor!(frame.id);
+    }
+  }
+
+  /** v2 gap recovery: the snapshot is a fresh-cursor handshake (decision
+   * #92) — persist it, then hand reconciliation of the missed window to the
+   * caller's authoritative polling path. */
+  async function recoverV2Cursor(): Promise<void> {
+    const snapshotAbort = new AbortController();
+    abort = snapshotAbort;
+    let response: Awaited<ReturnType<HubSseFetch>>;
+    try {
+      response = await fetchImpl(`${baseUrl}${HUB_V2_SNAPSHOT_PATH}`, {
+        method: 'GET',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          accept: 'application/json',
+        },
+        signal: snapshotAbort.signal,
+      });
+    } finally {
+      if (abort === snapshotAbort) {
+        abort = null;
+      }
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`hub v2 snapshot authorization failed (${response.status})`);
+    }
+    if (response.status !== 200 || response.json === undefined) {
+      throw new Error(`hub v2 snapshot request failed (${response.status})`);
+    }
+    const parsed = domainSnapshotResponseSchema.safeParse(await response.json());
+    if (!parsed.success) {
+      throw new Error('hub v2 snapshot response failed validation');
+    }
+    if (!running) {
+      throw new Error('hub v2 snapshot recovery stopped');
+    }
+    options.setV2Cursor!(parsed.data.cursor);
+    await options.onV2GapRecovered?.();
   }
 
   async function recoverSnapshots(requirement: SyncSnapshotRequired): Promise<void> {
@@ -363,6 +488,16 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         return { kind: 'auth' };
       }
       if (response.status === 409 && response.json !== undefined) {
+        if (protocol === 'v2') {
+          const parsed = domainSnapshotRequiredSchema.safeParse(await response.json());
+          if (parsed.success) {
+            options.onWarn?.('hub v2 cursor cannot be replayed; requesting fresh cursor', {
+              accounts: parsed.data.accounts,
+            });
+            return { kind: 'snapshot-v2' };
+          }
+          return { kind: 'error' };
+        }
         const parsed = syncSnapshotRequiredSchema.safeParse(await response.json());
         if (parsed.success) {
           options.onSnapshotRequired?.(parsed.data);
@@ -442,6 +577,18 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         // through a restore/demote cycle every 15 minutes.
         await sleep(retryFloorMs);
         continue;
+      }
+      if (outcome.kind === 'snapshot-v2') {
+        setStatus('degraded');
+        try {
+          await recoverV2Cursor();
+          failures = 0;
+          continue;
+        } catch (error) {
+          options.onWarn?.('hub v2 cursor recovery failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
       if (outcome.kind === 'snapshot') {
         setStatus('degraded');

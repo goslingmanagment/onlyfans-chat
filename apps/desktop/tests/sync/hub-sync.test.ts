@@ -229,6 +229,7 @@ describe('createHubSync', () => {
     const sleeps: number[] = [];
     let lastEventId: number | null = options.initialLastEventId ?? null;
     const sync = createHubSync({
+      protocol: 'v1',
       baseUrl: 'https://hub.test/',
       apiKey: 'agency_hub_core_k1',
       fetchImpl,
@@ -395,6 +396,7 @@ describe('createHubSync', () => {
     let call = 0;
     let lastEventId = 7;
     const sync = createHubSync({
+      protocol: 'v1',
       baseUrl: 'https://hub.test',
       apiKey: 'k',
       accountIds: [ACCT],
@@ -470,6 +472,7 @@ describe('createHubSync', () => {
     let lastEventId = 7;
     const warnings: string[] = [];
     const sync = createHubSync({
+      protocol: 'v1',
       baseUrl: 'https://hub.test',
       apiKey: 'k',
       accountIds: [ACCT],
@@ -551,6 +554,7 @@ describe('createHubSync', () => {
     const sleeps: number[] = [];
     let failures = 0;
     const sync = createHubSync({
+      protocol: 'v1',
       baseUrl: 'https://hub.test',
       apiKey: 'k',
       fetchImpl: (url, init) => {
@@ -580,6 +584,7 @@ describe('createHubSync', () => {
     let phase = 0;
     const sleeps: number[] = [];
     const sync = createHubSync({
+      protocol: 'v1',
       baseUrl: 'https://hub.test',
       apiKey: 'k',
       fetchImpl: () => {
@@ -682,6 +687,7 @@ describe('createHubSync', () => {
     const events: SyncEvent[] = [];
     const { fetchImpl } = makeHarness([{ status: 200, stream }]);
     const sync = createHubSync({
+      protocol: 'v1',
       baseUrl: 'https://hub.test',
       apiKey: 'k',
       fetchImpl,

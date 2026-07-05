@@ -382,6 +382,12 @@ export interface SettingsVM {
   /** Dev/support-only sync override. Default 'auto'; non-auto persists across restarts. */
   hubModeOverride: HubModeOverrideSetting;
   /**
+   * Kernel Stage 24 rollout-window-only fallback: 'v1' re-points the hub SSE
+   * consumer at the legacy stream. Not surfaced in UI (settings-file flip per
+   * the ops runbook); deleted with the v1 path after fleet confirmation.
+   */
+  hubSyncProtocol: 'v2' | 'v1';
+  /**
    * D6 rollback guard. True forces the legacy 10-minute desktop fan-spend
    * sweep; the accepted production default is hourly reconciliation.
    */

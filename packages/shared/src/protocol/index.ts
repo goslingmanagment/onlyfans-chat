@@ -412,3 +412,157 @@ export function parseSyncEvent(value: unknown): SyncEvent | null {
   const parsed = syncEventSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
+
+// ─── Kernel event stream v2 (Stage 24) ─────────────────────────────────────
+// The desktop consumes `/api/v1/events/v2/stream`: ledger-ordered domain
+// frames (opaque per-account cursor in the SSE id line) plus serve-time-only
+// `event: ephemeral` frames (typing — never ledgered, never checkpointed).
+// mapDomainFrame translates the canonical vocabulary onto the existing local
+// SyncEvent union so handleHubEvent and everything below it stay untouched.
+
+export const domainEventFrameSchema = z.object({
+  accountId: z.number().int(),
+  accountSeq: z.number().int(),
+  // Canonical vocabulary — deliberately open: unknown types are ignored by
+  // contract (the v1 union's forward-compat rule, now explicit).
+  type: z.string().min(1),
+  occurredAt: z.string(),
+  data: z.unknown(),
+  // Stage 24 serve-time fields (optional on the wire).
+  fanRef: z.string().nullable().optional(),
+  conversationRef: z.string().nullable().optional(),
+  messageRef: z.string().nullable().optional(),
+  /** The page's OFAPI account ref; null = not an OFAPI-mapped page (dropped here). */
+  accountRef: z.string().nullable().optional(),
+  /** Normalized message payload on message.received/sent (same shape as v1). */
+  payload: z.unknown().optional(),
+});
+export type DomainEventFrame = z.infer<typeof domainEventFrameSchema>;
+
+export const domainSnapshotRequiredSchema = z.object({
+  error: z.literal('sync_snapshot_required'),
+  statusCode: z.literal(409),
+  version: z.literal(2),
+  accounts: z.array(z.object({
+    accountId: z.number().int(),
+    requestedSeq: z.number().int().nonnegative(),
+    oldestAvailableSeq: z.number().int().nullable(),
+    currentSeq: z.number().int().nonnegative(),
+  })),
+  snapshotPath: z.string(),
+});
+export type DomainSnapshotRequired = z.infer<typeof domainSnapshotRequiredSchema>;
+
+export const domainSnapshotResponseSchema = z.object({
+  /** Fresh opaque cursor over the granted accounts ("now" watermarks). */
+  cursor: z.string().min(1),
+  accounts: z.array(z.object({
+    accountId: z.number().int(),
+    currentSeq: z.number().int().nonnegative(),
+  })),
+});
+export type DomainSnapshotResponse = z.infer<typeof domainSnapshotResponseSchema>;
+
+const AUTH_OK_STATUSES = new Set(['connected', 'reconnected', 'session_expired']);
+
+function nonNegativeNumberOf(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function frameDataRecord(frame: DomainEventFrame): Record<string, unknown> {
+  return typeof frame.data === 'object' && frame.data !== null
+    ? (frame.data as Record<string, unknown>)
+    : {};
+}
+
+/**
+ * Canonical v2 frame → local SyncEvent. Null = not consumable here (unknown
+ * type, non-OFAPI account, or a ref the mapping requires is missing) — the
+ * caller still checkpoints the cursor past it (forward-compat rule).
+ * The 10 v1-era members: messageReceived/messageSent/messageDeleted/
+ * ppvUnlocked/tipReceived/presence/chatListUpdated/accountAuthChanged map
+ * here; typing rides the ephemeral lane; readStateChanged was always
+ * synthesized locally (the server never sent it).
+ */
+export function mapDomainFrame(frame: DomainEventFrame): SyncEvent | null {
+  const accountId = frame.accountRef ?? null;
+  if (accountId === null) {
+    return null; // not an OFAPI-mapped page — nothing local to apply
+  }
+  const data = frameDataRecord(frame);
+  switch (frame.type) {
+    case 'message.received':
+    case 'message.sent': {
+      const chatId = frame.conversationRef ?? null;
+      const messageId = frame.messageRef ?? null;
+      if (chatId === null || messageId === null) {
+        return null;
+      }
+      const message = tolerantNormalizedSyncMessageSchema.parse(frame.payload);
+      return {
+        type: frame.type === 'message.received' ? 'messageReceived' : 'messageSent',
+        accountId,
+        chatId,
+        messageId,
+        ...(message !== undefined ? { message } : {}),
+      };
+    }
+    case 'message.deleted': {
+      const messageId = frame.messageRef ?? null;
+      return messageId === null ? null : { type: 'messageDeleted', accountId, messageId };
+    }
+    case 'message.ppv_unlocked': {
+      const chatId = frame.conversationRef ?? null;
+      return chatId === null
+        ? null
+        : {
+            type: 'ppvUnlocked',
+            accountId,
+            chatId,
+            ...(frame.messageRef ? { messageId: frame.messageRef } : {}),
+          };
+    }
+    case 'tip.received': {
+      const chatId = frame.conversationRef ?? null;
+      const amountUsd = nonNegativeNumberOf(data.amountGross);
+      return chatId === null
+        ? null
+        : {
+            type: 'tipReceived',
+            accountId,
+            chatId,
+            ...(amountUsd !== undefined ? { amountUsd } : {}),
+          };
+    }
+    case 'presence.online':
+    case 'presence.offline': {
+      const chatId = frame.fanRef ?? null;
+      if (chatId === null) {
+        return null;
+      }
+      const lastSeenRaw = typeof data.lastSeenOnlineAt === 'string' ? Date.parse(data.lastSeenOnlineAt) : Number.NaN;
+      return {
+        type: 'presence',
+        accountId,
+        chatId,
+        online: frame.type === 'presence.online',
+        ...(Number.isFinite(lastSeenRaw) ? { lastSeenAt: lastSeenRaw } : {}),
+      };
+    }
+    case 'subscription.started':
+      return { type: 'chatListUpdated', accountId };
+    case 'account.auth_changed': {
+      const status = typeof data.status === 'string' ? data.status : null;
+      return status === null
+        ? null
+        : { type: 'accountAuthChanged', accountId, authenticated: AUTH_OK_STATUSES.has(status) };
+    }
+    default:
+      return null;
+  }
+}
+
+export function parseDomainEventFrame(value: unknown): DomainEventFrame | null {
+  const parsed = domainEventFrameSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
