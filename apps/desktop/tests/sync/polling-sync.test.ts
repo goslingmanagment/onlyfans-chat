@@ -1404,6 +1404,31 @@ describe('PollingSync', () => {
       sync.stop();
     });
 
+    it('freezes retention prunes while a harvest is incomplete (Stage 12)', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      const pruneSpy = vi.spyOn(data.messages, 'prune');
+      let frozen = true;
+      const sync = createPollingSync({
+        client: stub.client,
+        data,
+        toMediaUrl: (url) => `media://${Buffer.from(url).toString('base64url')}`,
+        autoReadEnabled: () => false,
+        isPruneFrozen: () => frozen,
+        sleep: async () => {},
+      });
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      await sync.ingestHubMessage(ACCT, '101', makeHubMessage({ id: '6' }));
+      expect(pruneSpy).not.toHaveBeenCalled();
+
+      frozen = false;
+      await sync.ingestHubMessage(ACCT, '101', makeHubMessage({ id: '7' }));
+      expect(pruneSpy).toHaveBeenCalledTimes(1);
+      sync.stop();
+      pruneSpy.mockRestore();
+    });
+
     it('duplicate/replayed hub messages do not double-increment unread', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
       const sync = makeSyncOff();

@@ -156,7 +156,12 @@ export function createHarvestModule(options: HarvestModuleOptions) {
     if (value === null) {
       return new Date(0).toISOString();
     }
-    return spec.dayGranularity ? `${value}T00:00:00.000Z` : value;
+    const candidate = spec.dayGranularity ? `${value}T00:00:00.000Z` : value;
+    // The hub rejects a WHOLE batch over one unparseable observedAt
+    // (whole-batch atomic), and a deterministic 400 halts the harvest with
+    // no auto-recovery — so garbage local timestamps degrade to epoch here.
+    // The row's real value still rides untouched inside payload.row.
+    return Number.isNaN(new Date(candidate).getTime()) ? new Date(0).toISOString() : candidate;
   }
 
   function toEvent(
@@ -205,7 +210,19 @@ export function createHarvestModule(options: HarvestModuleOptions) {
         // (Same HubError classification as the usage reporter's spool.)
         const name = error instanceof Error ? error.message : String(error);
         if (error instanceof HubError && error.reason === 'bad-request') {
-          const file = await writeQuarantineFile(name, events);
+          let file: string;
+          try {
+            file = await writeQuarantineFile(name, events);
+          } catch (writeError) {
+            // A failed quarantine write (disk full/permission) must not
+            // mask WHY the batch halted — the 400 reason stays in the
+            // message; the write failure rides as the cause.
+            throw new Error(
+              `Harvest batch rejected (400): ${name}; quarantine file write also failed: ` +
+                `${writeError instanceof Error ? writeError.message : String(writeError)}`,
+              { cause: writeError },
+            );
+          }
           throw new Error(`Harvest batch rejected (400); quarantined to ${file}`, { cause: error });
         }
         if (attempt >= HARVEST_RETRY_DELAYS_MS.length) {

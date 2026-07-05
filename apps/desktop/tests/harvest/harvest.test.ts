@@ -229,6 +229,34 @@ describe('harvest module', () => {
     });
   });
 
+  it('degrades a garbage local timestamp to epoch instead of poisoning the batch', async () => {
+    // One unparseable observedAt would 400 the WHOLE hub batch (whole-batch
+    // atomic) and halt the harvest with no recovery — the walker must never
+    // emit one.
+    data.db
+      .prepare(
+        'INSERT INTO messages (account_id, chat_id, message_id, created_at, is_sent_by_me, text_plain, raw, deleted) ' +
+          "VALUES ('acct_hv', '555', '1', 'garbage-not-a-date', 0, 'old row', '{}', 0)",
+      )
+      .run();
+    seedMessage('2');
+
+    const { batches, uploader } = collectingUploader();
+    const harvest = buildModule(uploader);
+    await harvest.run();
+
+    const events = batches.flat().filter((event) => event.kind === 'harvest.messages');
+    expect(events).toHaveLength(2);
+    const byRow = new Map(
+      events.map((event) => [(event.payload.row as { message_id: string }).message_id, event]),
+    );
+    expect(byRow.get('1')!.observedAt).toBe(new Date(0).toISOString());
+    // The raw value still rides in the payload for later canonicalization.
+    expect((byRow.get('1')!.payload.row as { created_at: string }).created_at)
+      .toBe('garbage-not-a-date');
+    expect(byRow.get('2')!.observedAt).not.toBe(new Date(0).toISOString());
+  });
+
   it('never touches excluded tables and keeps the harvested set pinned', () => {
     expect(HARVEST_TABLES.map((spec) => spec.table).sort()).toEqual([
       'ai_spend_log',
