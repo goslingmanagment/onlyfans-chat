@@ -136,14 +136,25 @@ export function hubPage(overrides: Partial<HubPage> = {}): HubPage {
     modelName: 'Lora Vie',
     username: 'loravie',
     displayName: 'Lora Vie',
+    followerCount: { value: 0, available: true },
+    subscriberCount: { value: 0, available: true },
+    lastLightSyncAt: null,
+    lastFollowerSyncAt: null,
     ...overrides,
   };
 }
 
 export function hubProfile(body: string, createdAt: string): HubFanProfile {
   return {
-    fan: { platform: 'onlyfans', platformUserId: FAN },
-    profile: { version: 1, body, source: 'chatmuse', createdAt },
+    fan: {
+      platform: 'onlyfans',
+      platformUserId: FAN,
+      username: null,
+      displayName: null,
+      createdAtExternal: null,
+      pageAlias: null,
+    },
+    profile: { version: 1, body, source: 'chatmuse', createdAt, createdByUserId: null },
   };
 }
 

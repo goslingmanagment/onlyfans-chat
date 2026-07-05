@@ -261,16 +261,18 @@ describe('HubClient OFAPI command outbox', () => {
     } satisfies Partial<HubError>);
   });
 
-  it('fails closed if core ever echoes raw command payload text', async () => {
+  it('strips an echoed raw command payload so it never reaches desktop state', async () => {
+    // Pre-SDK the client REJECTED a payload echo outright; the contract
+    // schema now strips undeclared keys instead (Stage 24) — the invariant
+    // that payload text never lands in desktop state holds by construction.
     const fetchImpl: HubFetch = () => Promise.resolve(jsonResponse({
       ...commandResponse(),
       payload: { text: 'must not reach desktop state' },
     }));
     const client = createHubClient({ baseUrl: 'https://hub.example.com', apiKey: 'k', fetchImpl });
 
-    await expect(client.getOfapiCommand({ commandId: COMMAND_ID })).rejects.toMatchObject({
-      code: 'CG-HUB-02',
-      reason: 'invalid-response',
-    } satisfies Partial<HubError>);
+    const command = await client.getOfapiCommand({ commandId: COMMAND_ID });
+    expect(command.commandId).toBe(COMMAND_ID);
+    expect(command).not.toHaveProperty('payload');
   });
 });

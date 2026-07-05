@@ -25,6 +25,10 @@ const PAGE = {
   modelName: 'Stella Sky',
   username: 'stellasky',
   displayName: 'Stella',
+  followerCount: { value: 120, available: true },
+  subscriberCount: { value: 45, available: true },
+  lastLightSyncAt: '2026-06-11T11:00:00.000Z',
+  lastFollowerSyncAt: null,
 };
 
 const PROFILE_VERSION = {
@@ -198,20 +202,23 @@ describe('createHubClient', () => {
       expect(pages).toEqual([PAGE]);
     });
 
-    it('tolerates null/absent username and unknown extra fields', async () => {
+    it('tolerates null username/displayName and unknown extra fields', async () => {
+      // Pre-SDK the client tolerated ABSENT fields too; the contract schema
+      // now requires every declared field (Stage 24) — absence is drift and
+      // fails loudly (see the drifted-shape test below). Unknown extras are
+      // still stripped, and nullable fields still pass as null.
       const { fetchImpl } = stubFetch(
         jsonResponse(200, [
-          { id: 1, label: 'a', platform: 'onlyfans', modelSlug: 's', modelName: 'S', username: null, followerCount: { value: 5 } },
-          { id: 2, label: 'b', platform: 'fansly', modelSlug: 't', modelName: 'T' },
+          { ...PAGE, id: 1, label: 'a', username: null, displayName: null, unknownExtra: 'ignored' },
         ]),
       );
       const { client } = makeClient(fetchImpl);
 
       const pages = await client.listPages();
 
-      expect(pages.map((page) => page.label)).toEqual(['a', 'b']);
+      expect(pages.map((page) => page.label)).toEqual(['a']);
       expect(pages[0]?.username).toBeNull();
-      expect(pages[1]?.username).toBeUndefined();
+      expect(pages[0]).not.toHaveProperty('unknownExtra');
     });
 
     it('rejects a drifted page shape as invalid-response (CG-HUB-02)', async () => {
@@ -331,12 +338,12 @@ describe('createHubClient', () => {
       expect(result).toEqual(BATCH_RESPONSE);
     });
 
-    it('defaults invalidCount to 0 for pre-patch cores', async () => {
+    it('rejects a response missing invalidCount as contract drift (Stage 24: no more pre-patch tolerance)', async () => {
       const { fetchImpl } = stubFetch(jsonResponse(200, { receivedCount: 1, insertedCount: 1, dedupedCount: 0 }));
       const { client } = makeClient(fetchImpl);
 
-      const result = await client.postUsageBatch({ events: [USAGE_EVENT] });
-      expect(result.invalidCount).toBe(0);
+      const error = await captureHubError(client.postUsageBatch({ events: [USAGE_EVENT] }));
+      expect(error.reason).toBe('invalid-response');
     });
 
     it('rejects more than 100 events before the wire', async () => {

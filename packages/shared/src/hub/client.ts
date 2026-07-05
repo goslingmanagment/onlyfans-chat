@@ -1,19 +1,34 @@
-// Agency Hub ("core") REST client — SPEC §8.5/§8.6/§9.1. Fresh code to the
-// legacy behavioral spec (legacy research §7); response shapes verified against
-// core's OpenAPI snapshot (~/code/core/reference/agency-hub.openapi.json) and
-// the live contract check of 2026-06-11. Platform-pure: fetch + AbortSignal only,
-// typed structurally (lib "ES2023" has no DOM types). Instantiated in the
-// Electron main process only — never import from the renderer (SPEC §15).
+// Agency Hub ("core") REST client — SPEC §8.5/§8.6/§9.1. Since kernel
+// Stage 24 the operations are thin delegations to the pinned @kernel/sdk
+// (vendored, contract-hash pinned): the SDK's typed operations + runtime
+// validation replace the hand-mirrored schemas this file used to carry, so
+// contract drift now fails loudly instead of silently tolerating shape decay.
+// The public `HubClient` interface, `HubError` taxonomy, per-call timeout
+// budgets, and the structural fetch seam are unchanged — callers (send
+// engine, usage reporter, hub module) do not change. Platform-pure: fetch +
+// AbortSignal only, typed structurally (lib "ES2023" has no DOM types).
+// Instantiated in the Electron main process only (SPEC §15).
 
 import { z } from 'zod';
+import {
+  KernelApiError,
+  createClient,
+  routeSchemas,
+  streamAiGateway as sdkStreamAiGateway,
+  type AiGatewayStreamFrame,
+  type KernelClient,
+  type KernelClientOptions,
+  type KernelOperationResponse,
+} from '@kernel/sdk';
 import type { CgErrorDetail } from '../errors/index';
 import { CgError } from '../errors/index';
 import type { LlmUsageMetrics } from '../llm/sse';
-import { parseSseEventBlock } from '../llm/sse';
 
-// Minimal ambient type for the WHATWG TextDecoder global (lib "ES2023" has no DOM types).
-declare class TextDecoder {
-  decode(input?: Uint8Array, options?: { stream?: boolean }): string;
+// Minimal ambient type for the WHATWG AbortController global (lib "ES2023"
+// has no DOM types; Electron main / Node 22 provide the real one).
+declare class AbortController {
+  readonly signal: HubAbortSignalLike & { aborted: boolean };
+  abort(): void;
 }
 
 // ─── Timeouts & limits (legacy constants are normative; research §7) ─────
@@ -113,100 +128,75 @@ export class HubError extends CgError {
   }
 }
 
-function classifyFetchFailure(error: unknown): 'timeout' | 'network' {
-  if (typeof error === 'object' && error !== null && 'name' in error) {
-    const name = (error as { name?: unknown }).name;
-    // AbortSignal.timeout rejects with DOMException 'TimeoutError'; some
-    // runtimes surface plain 'AbortError' for an aborted signal.
-    if (name === 'TimeoutError' || name === 'AbortError') {
-      return 'timeout';
-    }
-  }
-  return 'network';
-}
-
 function errorMessageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// ─── Response schemas (zod at the trust boundary; SPEC §15) ───────────────
+/** KernelApiError → the desktop taxonomy. The send engine's indeterminate-
+ * outcome discipline rides this mapping: timeouts and 5xx land in the same
+ * classes as before ('timeout'/'http'), never a retryable-looking success. */
+function toHubError(error: unknown): HubError {
+  if (error instanceof HubError) {
+    return error;
+  }
+  if (error instanceof KernelApiError) {
+    const detail = kernelErrorDetail(error);
+    switch (error.category) {
+      case 'auth':
+        return new HubError('auth', { detail });
+      case 'validation':
+        return new HubError('bad-request', { detail });
+      case 'network':
+        return new HubError(error.code === 'timeout' || error.code === 'aborted' ? 'timeout' : 'network', {
+          message: error.message,
+          detail: { providerMessage: error.message },
+        });
+      case 'contract':
+        return new HubError('invalid-response', {
+          message: error.message,
+          detail: { providerMessage: error.message.slice(0, 400), ...(error.status !== null ? { status: error.status } : {}) },
+        });
+      default:
+        // not_found / conflict / rate_limit / server — plain HTTP failures.
+        return new HubError('http', { detail });
+    }
+  }
+  return new HubError('network', {
+    message: errorMessageOf(error),
+    detail: { providerMessage: errorMessageOf(error) },
+  });
+}
 
-const hubPageSchema = z.object({
-  id: z.number().int().positive(),
-  label: z.string().min(1),
-  platform: z.enum(['fansly', 'onlyfans']),
-  modelSlug: z.string(),
-  modelName: z.string(),
-  // Present per OpenAPI but nullable, and the live 2026-06-11 check did not
-  // confirm them — treat as optional so page-list parsing never breaks mapping.
-  username: z.string().nullish(),
-  displayName: z.string().nullish(),
-});
+function kernelErrorDetail(error: KernelApiError): CgErrorDetail {
+  const snippet = typeof error.body === 'string'
+    ? error.body
+    : error.body !== null && error.body !== undefined
+      ? JSON.stringify(error.body)
+      : '';
+  return {
+    ...(error.status !== null ? { status: error.status } : {}),
+    ...(snippet ? { responseSnippet: snippet.slice(0, 400) } : {}),
+  };
+}
 
-const hubPagesResponseSchema = z.array(hubPageSchema);
+function badRequestBeforeWire(message: string, issue: string): HubError {
+  return new HubError('bad-request', {
+    message,
+    detail: { providerMessage: issue.slice(0, 400) },
+  });
+}
 
-export type HubPage = z.infer<typeof hubPageSchema>;
+// ─── Contract-derived types (the SDK registry is the single source) ───────
 
-const hubProfileVersionSchema = z.object({
-  version: z.number().int().positive(),
-  body: z.string(),
-  // Core stamps 'chatmuse' today; do not over-constrain a label we only display.
-  source: z.string(),
-  createdAt: z.string(),
-  createdByUserId: z.number().int().nullish(),
-});
-
-export type HubProfileVersion = z.infer<typeof hubProfileVersionSchema>;
-
-const hubFanProfileResponseSchema = z.object({
-  fan: z.object({
-    platform: z.enum(['fansly', 'onlyfans']),
-    platformUserId: z.string(),
-    username: z.string().nullish(),
-    displayName: z.string().nullish(),
-    createdAtExternal: z.string().nullish(),
-    pageAlias: z.string().nullish(),
-  }),
-  profile: hubProfileVersionSchema.nullable(),
-});
-
-export type HubFanProfile = z.infer<typeof hubFanProfileResponseSchema>;
-
-const hubUsageBatchResponseSchema = z.object({
-  receivedCount: z.number().int().nonnegative(),
-  insertedCount: z.number().int().nonnegative(),
-  // Added by the 2026-06-11 core patch (per-event invalid skip); default for older cores.
-  invalidCount: z.number().int().nonnegative().default(0),
-  dedupedCount: z.number().int().nonnegative(),
-});
-
-export type HubUsageBatchResult = z.infer<typeof hubUsageBatchResponseSchema>;
-
-const hubOfapiCreditsWindowSchema = z.object({
-  from: z.string(),
-  to: z.string(),
-  restCredits: z.number().int().nonnegative(),
-  webhook: z.object({
-    eventCount: z.number().int().nonnegative(),
-    estimatedCredits: z.number().int().nonnegative(),
-  }),
-  totalEstimatedCredits: z.number().int().nonnegative(),
-});
-
-const hubOfapiCreditsSummarySchema = z.object({
-  enabled: z.boolean(),
-  scope: z.object({
-    pageIds: z.array(z.number().int().positive()),
-    pageCount: z.number().int().nonnegative(),
-  }),
-  today: z.object({ day: z.string() }).merge(hubOfapiCreditsWindowSchema),
-  last7d: hubOfapiCreditsWindowSchema,
-  limitations: z.array(z.string()),
-});
-
-export type HubOfapiCreditsSummary = z.infer<typeof hubOfapiCreditsSummarySchema>;
-
-// ─── OFAPI command outbox (core C6b; default-off desktop transport) ──────
+export type HubPage = KernelOperationResponse<'pages'>[number];
+export type HubFanProfile = KernelOperationResponse<'pageFanProfile'>;
+export type HubProfileVersion = KernelOperationResponse<'upsertFanProfile'>;
+export type HubUsageBatchResult = KernelOperationResponse<'aiUsageBatch'>;
+export type HubOfapiCreditsSummary = KernelOperationResponse<'ofapiCreditsChatterSummary'>;
+export type HubOfapiCommand = KernelOperationResponse<'getOfapiCommand'>;
+export type HubOfapiCommandCreateRequest = z.input<(typeof routeSchemas)['createOfapiCommand']['body']>;
+export type HubIngestBatchResult = KernelOperationResponse<'ingestObservations'>;
+export type HubAiGatewayStreamRequest = z.input<(typeof routeSchemas)['aiGatewayStream']['body']>;
 
 export const HUB_OFAPI_COMMAND_STATES = [
   'queued',
@@ -217,170 +207,6 @@ export const HUB_OFAPI_COMMAND_STATES = [
   'indeterminate',
   'cancelled',
 ] as const;
-
-const hubOfapiCommandStateSchema = z.enum(HUB_OFAPI_COMMAND_STATES);
-
-const hubOfapiCommandKindSchema = z.enum([
-  'send_text_message_v1',
-  'send_media_message_v1',
-  'typing_active_v1',
-  'unsend_message_v1',
-  'mark_chat_read_v1',
-]);
-
-const hubOfapiCommandBaseFields = {
-  clientCommandId: z.string().uuid(),
-  accountId: z.string().regex(/^acct_[A-Za-z0-9]+$/),
-  conversationId: z.string().regex(/^[0-9]{1,30}$/),
-};
-
-const hubOfapiCommandMediaIdSchema = z.string().regex(
-  /^(?:[0-9]{1,30}|ofapi_media_[A-Za-z0-9_-]{1,128})$/,
-);
-
-const hubOfapiCommandPriceSchema = z.number().int().min(0).max(200).refine(
-  (price) => price === 0 || price >= 3,
-  { message: 'Price must be 0 or an integer from 3 to 200' },
-);
-
-const hubSendMediaMessagePayloadSchema = z.strictObject({
-  text: z.string().max(10_000),
-  price: hubOfapiCommandPriceSchema,
-  mediaFiles: z.array(hubOfapiCommandMediaIdSchema).min(1).max(50),
-  previews: z.array(hubOfapiCommandMediaIdSchema).max(50),
-}).superRefine((payload, ctx) => {
-  const attached = new Set<string>();
-  for (const id of payload.mediaFiles) {
-    if (attached.has(id)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['mediaFiles'],
-        message: 'mediaFiles must not contain duplicates',
-      });
-      break;
-    }
-    attached.add(id);
-  }
-
-  const previews = new Set<string>();
-  for (const id of payload.previews) {
-    if (previews.has(id)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['previews'],
-        message: 'previews must not contain duplicates',
-      });
-      break;
-    }
-    previews.add(id);
-    if (!attached.has(id)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['previews'],
-        message: 'previews must be a subset of mediaFiles',
-      });
-      break;
-    }
-  }
-});
-
-const hubOfapiCommandCreateRequestSchema = z.discriminatedUnion('kind', [
-  z.strictObject({
-    ...hubOfapiCommandBaseFields,
-    kind: z.literal('send_text_message_v1'),
-    payload: z.strictObject({
-      text: z.string().min(1).max(10_000).refine((text) => text.trim().length > 0, {
-        message: 'Message text must not be blank',
-      }),
-    }),
-    retryOfCommandId: z.string().uuid().nullable().optional(),
-  }),
-  z.strictObject({
-    ...hubOfapiCommandBaseFields,
-    kind: z.literal('send_media_message_v1'),
-    payload: hubSendMediaMessagePayloadSchema,
-    retryOfCommandId: z.string().uuid().nullable().optional(),
-  }),
-  z.strictObject({
-    ...hubOfapiCommandBaseFields,
-    kind: z.literal('typing_active_v1'),
-    payload: z.strictObject({}),
-    retryOfCommandId: z.null().optional(),
-  }),
-  z.strictObject({
-    ...hubOfapiCommandBaseFields,
-    kind: z.literal('unsend_message_v1'),
-    payload: z.strictObject({
-      messageId: z.string().regex(/^[0-9]{1,30}$/),
-    }),
-    retryOfCommandId: z.null().optional(),
-  }),
-  z.strictObject({
-    ...hubOfapiCommandBaseFields,
-    kind: z.literal('mark_chat_read_v1'),
-    payload: z.strictObject({}),
-    retryOfCommandId: z.null().optional(),
-  }),
-]);
-
-const hubOfapiCommandResponseFields = {
-  commandId: z.string().uuid(),
-  clientCommandId: z.string().uuid(),
-  kind: hubOfapiCommandKindSchema,
-  accountId: z.string(),
-  conversationId: z.string(),
-  state: hubOfapiCommandStateSchema,
-  payloadHash: z.string().regex(/^[0-9a-f]{64}$/),
-  retryOfCommandId: z.string().uuid().nullable(),
-  attemptCount: z.number().int().min(0),
-  lastErrorCode: z.string().nullable(),
-  lastErrorClass: z.string().nullable(),
-  verifierResult: z.record(z.string(), z.unknown()).nullable(),
-  platformMessageId: z.string().nullable(),
-  attemptStartedAt: z.string().nullable(),
-  attemptFinishedAt: z.string().nullable(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  deduplicated: z.boolean(),
-};
-
-const hubOfapiCommandResponseSchema = z
-  .object(hubOfapiCommandResponseFields)
-  .passthrough()
-  .superRefine((value, ctx) => {
-    if (Object.prototype.hasOwnProperty.call(value, 'payload')) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['payload'],
-        message: 'Command responses must not include command payloads',
-      });
-    }
-  })
-  .transform((value) => ({
-    commandId: value.commandId,
-    clientCommandId: value.clientCommandId,
-    kind: value.kind,
-    accountId: value.accountId,
-    conversationId: value.conversationId,
-    state: value.state,
-    payloadHash: value.payloadHash,
-    retryOfCommandId: value.retryOfCommandId,
-    attemptCount: value.attemptCount,
-    lastErrorCode: value.lastErrorCode,
-    lastErrorClass: value.lastErrorClass,
-    verifierResult: value.verifierResult,
-    platformMessageId: value.platformMessageId,
-    attemptStartedAt: value.attemptStartedAt,
-    attemptFinishedAt: value.attemptFinishedAt,
-    createdAt: value.createdAt,
-    updatedAt: value.updatedAt,
-    deduplicated: value.deduplicated,
-  }));
-
-export type HubOfapiCommandCreateRequest = z.infer<typeof hubOfapiCommandCreateRequestSchema>;
-export type HubOfapiCommand = z.infer<typeof hubOfapiCommandResponseSchema>;
-
-// ─── Usage event (outbound; mirrors core's closed contract) ───────────────
 
 /** Core's closed aiUsageFeatures enum — extending it requires a core change first (SPEC §8.6). */
 export const HUB_USAGE_FEATURES = [
@@ -396,139 +222,21 @@ export const HUB_USAGE_FEATURES = [
 
 export type HubUsageFeature = (typeof HUB_USAGE_FEATURES)[number];
 
-const usageTokenCount = z.number().int().min(0).max(100_000_000);
-
-/**
- * Wire shape of one usage event. Validated before sending so a request core
- * would 400 never leaves the client (one malformed REQUEST still fails the
- * whole batch at core's zod layer even after the per-event-skip patch).
- * isCacheHit/isRegeneration are required by core's OpenAPI snapshot; the
- * reporter defaults them to false.
- */
-export const hubUsageEventSchema = z.object({
-  clientEventId: z.string().min(1).max(255),
-  feature: z.enum(HUB_USAGE_FEATURES),
-  model: z.string().min(1).max(100),
-  inputTokens: usageTokenCount,
-  outputTokens: usageTokenCount,
-  cacheWriteTokens: usageTokenCount,
-  cacheReadTokens: usageTokenCount,
-  conversationId: z.string().min(1).max(255).nullish(),
-  durationMs: z.number().int().nonnegative().nullish(),
-  isCacheHit: z.boolean(),
-  isRegeneration: z.boolean(),
-  // Core rejects completedAt >5 min in the future; the reporter clamps to
-  // server time, which requires a parseable instant.
-  completedAt: z
-    .string()
-    .min(1)
-    .refine((value) => Number.isFinite(Date.parse(value)), 'completedAt must be a parseable ISO timestamp'),
-});
-
+/** The contract's usage-event element plus the desktop's stricter completedAt
+ * gate: core accepts an unparseable completedAt on the wire but silently
+ * burns the event as invalidCount — the reporter/mapper reject it pre-wire
+ * instead (SPEC §8.6; the clamp logic needs a parseable instant anyway). */
+export const hubUsageEventSchema = routeSchemas.aiUsageBatch.body.shape.events.element.refine(
+  (event) => Number.isFinite(Date.parse(event.completedAt)),
+  { message: 'completedAt must be a parseable ISO timestamp', path: ['completedAt'] },
+);
 export type HubUsageEvent = z.infer<typeof hubUsageEventSchema>;
 
 const hubUsageBatchRequestSchema = z.object({
   events: z.array(hubUsageEventSchema).min(1).max(HUB_USAGE_BATCH_MAX_EVENTS),
 });
 
-// ─── Stage 11/12 capture lane (core POST /api/v1/ingest/observations) ──────
-
-const hubIngestObservationEventSchema = z.object({
-  clientEventId: z.uuid(),
-  kind: z.string().min(1).max(120),
-  observedAt: z
-    .string()
-    .min(1)
-    .refine((value) => Number.isFinite(Date.parse(value)), 'observedAt must be a parseable ISO timestamp'),
-  payload: z.record(z.string(), z.unknown()),
-  pageLabel: z.string().min(1).max(120).optional(),
-});
-
-export type HubIngestObservationEvent = z.infer<typeof hubIngestObservationEventSchema>;
-
-const hubIngestBatchRequestSchema = z.object({
-  events: z.array(hubIngestObservationEventSchema).min(1).max(100),
-});
-
-const hubIngestBatchResponseSchema = z.object({
-  accepted: z.number().int().nonnegative(),
-  duplicates: z.number().int().nonnegative(),
-});
-
-export type HubIngestBatchResult = z.infer<typeof hubIngestBatchResponseSchema>;
-
-// ─── AI gateway stream (core C6c/R4; outbound + inbound contract) ─────────
-
-const hubAiGatewayPromptBlockSchema = z.object({
-  text: z.string().min(1).max(100_000),
-  cache: z.enum(['1h', '5m', 'none']),
-});
-
-const hubAiGatewayStreamRequestSchema = z.object({
-  clientRequestId: z.uuid(),
-  feature: z.enum(HUB_USAGE_FEATURES),
-  pageLabel: z.string().min(1).max(120),
-  platform: z.enum(['onlyfans', 'fansly']),
-  platformUserId: z.string().min(1).max(255),
-  conversationId: z.string().min(1).max(255).nullable().optional(),
-  model: z.string().min(1).max(100),
-  reasoningEffort: z.enum(['off', 'low', 'medium', 'high', 'max']),
-  temperature: z.number().min(0).max(2).optional(),
-  maxTokens: z.number().int().positive().max(100_000).optional(),
-  isRegeneration: z.boolean(),
-  prompt: z.object({
-    systemBlocks: z.array(hubAiGatewayPromptBlockSchema).min(1).max(64),
-    userBlocks: z.array(hubAiGatewayPromptBlockSchema).min(1).max(64),
-  }),
-});
-
-export type HubAiGatewayStreamRequest = z.infer<typeof hubAiGatewayStreamRequestSchema>;
-
-const hubAiGatewayUsageSchema = z.object({
-  inputTokens: z.number().int().nonnegative(),
-  outputTokens: z.number().int().nonnegative(),
-  cacheWriteTokens: z.number().int().nonnegative(),
-  cacheReadTokens: z.number().int().nonnegative(),
-  costMicroUsd: z.number().int().nonnegative(),
-  costApproximate: z.boolean(),
-});
-
-const hubAiGatewayQuotaSchema = z.object({
-  accepted: z.boolean(),
-  remainingRequestsToday: z.number().int().nonnegative().nullable(),
-  remainingMicroUsdToday: z.number().int().nonnegative().nullable(),
-});
-
-const hubAiGatewayStreamFrameSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('meta'),
-    requestId: z.uuid(),
-    clientRequestId: z.uuid(),
-    feature: z.enum(HUB_USAGE_FEATURES),
-    pageLabel: z.string(),
-    model: z.string(),
-    provider: z.enum(['anthropic', 'openrouter']),
-    providerResponseId: z.string().nullable(),
-    quota: hubAiGatewayQuotaSchema,
-  }),
-  z.object({ type: z.literal('content_delta'), text: z.string() }),
-  z.object({ type: z.literal('reasoning_delta'), text: z.string() }),
-  z.object({
-    type: z.literal('usage'),
-    usage: hubAiGatewayUsageSchema,
-    providerResponseId: z.string().nullable(),
-    cacheHit: z.boolean(),
-  }),
-  z.object({
-    type: z.literal('error'),
-    code: z.string().min(1).max(100),
-    message: z.string().min(1).max(500),
-    retryAfterMs: z.number().int().nonnegative().nullable(),
-  }),
-  z.object({ type: z.literal('done'), stopReason: z.string().nullable() }),
-]);
-
-type HubAiGatewayStreamFrame = z.infer<typeof hubAiGatewayStreamFrameSchema>;
+export type HubIngestObservationEvent = z.infer<typeof routeSchemas.ingestObservations.body.shape.events.element>;
 
 export interface HubAiGatewayStreamCallbacks {
   onText: (text: string) => void;
@@ -538,20 +246,15 @@ export interface HubAiGatewayStreamCallbacks {
   onStopReason?: (stopReason: string | null) => void;
 }
 
-function mapGatewayUsage(usage: z.infer<typeof hubAiGatewayUsageSchema>): LlmUsageMetrics {
+type AiGatewayUsageFrame = Extract<AiGatewayStreamFrame, { type: 'usage' }>;
+
+function mapGatewayUsage(usage: AiGatewayUsageFrame['usage']): LlmUsageMetrics {
   return {
     input_tokens: usage.inputTokens,
     cache_creation_input_tokens: usage.cacheWriteTokens,
     cache_read_input_tokens: usage.cacheReadTokens,
     output_tokens: usage.outputTokens,
   };
-}
-
-function frameParseError(message: string, detail?: CgErrorDetail): HubError {
-  return new HubError('invalid-response', {
-    message,
-    ...(detail !== undefined ? { detail } : {}),
-  });
 }
 
 // ─── Client ───────────────────────────────────────────────────────────────
@@ -612,6 +315,15 @@ export interface HubClient {
   getServerTimeOffsetMs(): number | null;
 }
 
+/** What the SDK actually passes to its fetch option (typed structurally —
+ * lib "ES2023" has no RequestInit). */
+interface SdkRequestInitLike {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  signal?: HubAbortSignalLike;
+}
+
 export function createHubClient(options: HubClientOptions): HubClient {
   const baseUrl = options.baseUrl.trim().replace(/\/+$/, '');
   const apiKey = options.apiKey.trim();
@@ -639,186 +351,118 @@ export function createHubClient(options: HubClientOptions): HubClient {
     }
   }
 
-  async function request(args: {
-    method: string;
-    path: string;
-    timeoutMs: number;
-    body?: unknown;
-    /** 404 is a domain result (fan/profile unknown), not an error, for this call. */
-    allow404?: boolean;
-  }): Promise<{ status: number; text: string }> {
-    const init: HubRequestInit = {
-      method: args.method,
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        accept: 'application/json',
-        ...versionHeader,
-        ...(args.body !== undefined ? { 'content-type': 'application/json' } : {}),
-      },
-      ...(args.body !== undefined ? { body: JSON.stringify(args.body) } : {}),
-    };
-    const signal = timeoutSignal(args.timeoutMs);
-    if (signal !== undefined) {
-      init.signal = signal;
-    }
-
-    let response: HubResponseLike;
-    try {
-      response = await fetchImpl(`${baseUrl}${args.path}`, init);
-    } catch (error) {
-      throw new HubError(classifyFetchFailure(error), {
-        message: errorMessageOf(error),
-        detail: { providerMessage: errorMessageOf(error) },
-      });
-    }
-
-    // Server time is server time — capture it from error responses too.
-    recordServerTime(response);
-
-    let text = '';
-    try {
-      text = await response.text();
-    } catch {
-      // Body read failures fall through to status routing with an empty snippet.
-    }
-
-    if (response.status === 401 || response.status === 403) {
-      throw new HubError('auth', { detail: buildHttpDetail(response.status, text) });
-    }
-    if (response.status === 400) {
-      throw new HubError('bad-request', { detail: buildHttpDetail(response.status, text) });
-    }
-    if (response.status < 200 || response.status >= 300) {
-      if (!(response.status === 404 && args.allow404 === true)) {
-        throw new HubError('http', { detail: buildHttpDetail(response.status, text) });
-      }
-    }
-    return { status: response.status, text };
-  }
-
-  function buildHttpDetail(status: number, text: string): CgErrorDetail {
-    return { status, ...(text ? { responseSnippet: text.slice(0, 400) } : {}) };
-  }
-
-  function parseBody<T>(schema: z.ZodType<T>, raw: { status: number; text: string }): T {
-    let json: unknown;
-    try {
-      json = JSON.parse(raw.text);
-    } catch {
-      throw new HubError('invalid-response', {
-        message: 'hub response was not JSON',
-        detail: buildHttpDetail(raw.status, raw.text),
-      });
-    }
-    const parsed = schema.safeParse(json);
-    if (!parsed.success) {
-      throw new HubError('invalid-response', {
-        message: 'hub response failed schema validation',
-        detail: { status: raw.status, providerMessage: parsed.error.message.slice(0, 400) },
-      });
-    }
-    return parsed.data;
-  }
-
-  async function readTextSafely(response: HubResponseLike): Promise<string> {
-    try {
-      return await response.text();
-    } catch {
-      return '';
-    }
-  }
-
-  function dispatchAiGatewayFrame(
-    frame: HubAiGatewayStreamFrame,
-    callbacks: HubAiGatewayStreamCallbacks,
-    state: { rawText: string; doneSeen: boolean },
-  ): void {
-    callbacks.onProgress?.();
-    switch (frame.type) {
-      case 'meta':
-        return;
-      case 'content_delta':
-        state.rawText += frame.text;
-        callbacks.onText(frame.text);
-        return;
-      case 'reasoning_delta':
-        callbacks.onReasoningDelta?.(frame.text);
-        return;
-      case 'usage':
-        callbacks.onUsage?.(mapGatewayUsage(frame.usage));
-        return;
-      case 'error':
-        throw new HubError('http', {
-          message: frame.message,
-          detail: {
-            providerMessage: frame.code,
-            ...(frame.retryAfterMs !== null ? { retryAfterMs: frame.retryAfterMs } : {}),
+  /** Wrap a HubResponseLike into the surface the SDK consumes (ok/status/
+   * headers.get/text/json/body.getReader). Invalid JSON on a 2xx becomes the
+   * SDK's contract category → HubError 'invalid-response', as before. */
+  function toSdkResponse(like: HubResponseLike): unknown {
+    const bodyLike = like.body;
+    return {
+      ok: like.status >= 200 && like.status < 300,
+      status: like.status,
+      headers: like.headers,
+      // The seam's reader contract makes releaseLock optional; the SDK's
+      // parser calls it unconditionally — bridge the gap.
+      body: bodyLike
+        ? {
+          getReader: () => {
+            const reader = bodyLike.getReader();
+            return {
+              read: () => reader.read(),
+              cancel: () => reader.cancel(),
+              releaseLock: () => reader.releaseLock?.(),
+            };
           },
-        });
-      case 'done':
-        state.doneSeen = true;
-        callbacks.onStopReason?.(frame.stopReason);
-        return;
+        }
+        : null,
+      text: () => like.text(),
+      json: async () => {
+        const text = await like.text();
+        try {
+          return JSON.parse(text) as unknown;
+        } catch {
+          throw new KernelApiError('hub response was not JSON', 'contract', like.status, 'invalid_json', text.slice(0, 400));
+        }
+      },
+    };
+  }
+
+  /** Bridge the SDK's standard-fetch expectation onto the HubFetch seam. A
+   * fixed per-request timeout budget is baked into each bridge (clients are
+   * memoized per budget below), so concurrent calls can never race a shared
+   * timeout slot. `null` budget = no timeout (the AI stream owns its abort). */
+  function bridgedFetch(timeoutMs: number | null) {
+    return async (input: unknown, init?: SdkRequestInitLike): Promise<unknown> => {
+      const url = typeof input === 'string' ? input : String(input);
+      const headers: Record<string, string> = { accept: 'application/json', ...init?.headers };
+      const hubInit: HubRequestInit = {
+        method: init?.method ?? 'GET',
+        headers,
+        ...(init?.body !== undefined ? { body: init.body } : {}),
+      };
+      const signal = init?.signal ?? (timeoutMs !== null ? timeoutSignal(timeoutMs) : undefined);
+      if (signal !== undefined) {
+        hubInit.signal = signal;
+      }
+      const response = await fetchImpl(url, hubInit);
+      // Server time is server time — capture it from error responses too.
+      recordServerTime(response);
+      return toSdkResponse(response);
+    };
+  }
+
+  function sdkOptions(timeoutMs: number | null): KernelClientOptions {
+    return {
+      baseUrl,
+      auth: { mode: 'bearer', token: () => apiKey },
+      headers: versionHeader,
+      fetch: bridgedFetch(timeoutMs) as NonNullable<KernelClientOptions['fetch']>,
+    };
+  }
+
+  // One typed client per timeout budget (the budget set is tiny and static).
+  const clients = new Map<number, KernelClient>();
+  function clientFor(timeoutMs: number): KernelClient {
+    let client = clients.get(timeoutMs);
+    if (client === undefined) {
+      client = createClient(sdkOptions(timeoutMs));
+      clients.set(timeoutMs, client);
+    }
+    return client;
+  }
+
+  async function delegate<T>(call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch (error) {
+      throw toHubError(error);
     }
   }
 
-  function drainAiGatewayBlocks(
-    raw: string,
-    callbacks: HubAiGatewayStreamCallbacks,
-    state: { rawText: string; doneSeen: boolean },
-  ): string {
-    const blocks = raw.split(/\r?\n\r?\n/);
-    const remainder = blocks.pop() ?? '';
-    for (const block of blocks) {
-      const event = parseSseEventBlock(block);
-      if (event === null || event.data === '[DONE]') {
-        continue;
-      }
-      if (event.event !== 'ai') {
-        continue;
-      }
-      let json: unknown;
-      try {
-        json = JSON.parse(event.data);
-      } catch {
-        throw frameParseError('hub AI stream frame was not JSON');
-      }
-      const frame = hubAiGatewayStreamFrameSchema.safeParse(json);
-      if (!frame.success) {
-        throw frameParseError('hub AI stream frame failed schema validation', {
-          providerMessage: frame.error.message.slice(0, 400),
-        });
-      }
-      dispatchAiGatewayFrame(frame.data, callbacks, state);
+  function requireCommandId(commandId: string): string {
+    const result = z.uuid().safeParse(commandId);
+    if (!result.success) {
+      throw badRequestBeforeWire('OFAPI command id failed contract validation', result.error.message);
     }
-    return remainder;
-  }
-
-  function profilePath(pageLabel: string, fanId: string): string {
-    return `/api/v1/pages/${encodeURIComponent(pageLabel)}/fans/${encodeURIComponent(fanId)}/profile`;
+    return result.data;
   }
 
   return {
     async listPages(listOptions) {
-      const raw = await request({
-        method: 'GET',
-        path: '/api/v1/pages',
-        timeoutMs: listOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS,
-      });
-      return parseBody(hubPagesResponseSchema, raw);
+      return delegate(() => clientFor(listOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).pages());
     },
 
     async getFanProfile({ pageLabel, fanId, timeoutMs }) {
-      const raw = await request({
-        method: 'GET',
-        path: profilePath(pageLabel, fanId),
-        timeoutMs: timeoutMs ?? HUB_PROFILE_GET_TIMEOUT_MS,
-        allow404: true,
-      });
-      if (raw.status === 404) {
-        return null;
+      try {
+        return await clientFor(timeoutMs ?? HUB_PROFILE_GET_TIMEOUT_MS).pageFanProfile({
+          params: { pageLabel, platformUserId: fanId },
+        });
+      } catch (error) {
+        // 404 is a domain result (fan/profile unknown), not an error, here.
+        if (error instanceof KernelApiError && error.status === 404) {
+          return null;
+        }
+        throw toHubError(error);
       }
-      return parseBody(hubFanProfileResponseSchema, raw);
     },
 
     async putFanProfile({ pageLabel, fanId, body, timeoutMs }) {
@@ -828,199 +472,127 @@ export function createHubClient(options: HubClientOptions): HubClient {
           message: `profile body must be 1..${HUB_PROFILE_MAX_CHARS} characters (got ${body.length})`,
         });
       }
-      // No allow404: an unknown page label is an error here (fan auto-create
-      // only covers fans — SPEC §9.1), so 404 maps to HubError 'http'.
-      const raw = await request({
-        method: 'PUT',
-        path: profilePath(pageLabel, fanId),
-        timeoutMs: timeoutMs ?? HUB_PROFILE_PUT_TIMEOUT_MS,
+      // An unknown page label is an error here (fan auto-create only covers
+      // fans — SPEC §9.1), so 404 maps to HubError 'http'.
+      return delegate(() => clientFor(timeoutMs ?? HUB_PROFILE_PUT_TIMEOUT_MS).upsertFanProfile({
+        params: { pageLabel, platformUserId: fanId },
         body: { body },
-      });
-      return parseBody(hubProfileVersionSchema, raw);
+      }));
     },
 
     async postUsageBatch({ events, timeoutMs }) {
       const requestBody = hubUsageBatchRequestSchema.safeParse({ events });
       if (!requestBody.success) {
-        throw new HubError('bad-request', {
-          message: 'usage batch failed contract validation',
-          detail: { providerMessage: requestBody.error.message.slice(0, 400) },
-        });
+        throw badRequestBeforeWire('usage batch failed contract validation', requestBody.error.message);
       }
-      const raw = await request({
-        method: 'POST',
-        path: '/api/v1/ai-usage/batch',
-        timeoutMs: timeoutMs ?? HUB_USAGE_BATCH_TIMEOUT_MS,
+      return delegate(() => clientFor(timeoutMs ?? HUB_USAGE_BATCH_TIMEOUT_MS).aiUsageBatch({
         body: requestBody.data,
-      });
-      return parseBody(hubUsageBatchResponseSchema, raw);
+      }));
     },
 
     async postIngestObservations({ events, timeoutMs }) {
-      const requestBody = hubIngestBatchRequestSchema.safeParse({ events });
+      const requestBody = routeSchemas.ingestObservations.body.safeParse({ events });
       if (!requestBody.success) {
-        throw new HubError('bad-request', {
-          message: 'ingest batch failed contract validation',
-          detail: { providerMessage: requestBody.error.message.slice(0, 400) },
-        });
+        throw badRequestBeforeWire('ingest batch failed contract validation', requestBody.error.message);
       }
-      const raw = await request({
-        method: 'POST',
-        path: '/api/v1/ingest/observations',
-        timeoutMs: timeoutMs ?? HUB_USAGE_BATCH_TIMEOUT_MS,
+      return delegate(() => clientFor(timeoutMs ?? HUB_USAGE_BATCH_TIMEOUT_MS).ingestObservations({
         body: requestBody.data,
-      });
-      return parseBody(hubIngestBatchResponseSchema, raw);
+      }));
     },
 
     async getOfapiCreditsSummary(summaryOptions) {
-      const raw = await request({
-        method: 'GET',
-        path: '/api/v1/ofapi/credits/summary',
-        timeoutMs: summaryOptions?.timeoutMs ?? HUB_OFAPI_CREDITS_TIMEOUT_MS,
-      });
-      return parseBody(hubOfapiCreditsSummarySchema, raw);
+      return delegate(() => clientFor(summaryOptions?.timeoutMs ?? HUB_OFAPI_CREDITS_TIMEOUT_MS).ofapiCreditsChatterSummary());
     },
 
     async createOfapiCommand({ command, timeoutMs }) {
-      const requestBody = hubOfapiCommandCreateRequestSchema.safeParse(command);
+      const requestBody = routeSchemas.createOfapiCommand.body.safeParse(command);
       if (!requestBody.success) {
-        throw new HubError('bad-request', {
-          message: 'OFAPI command request failed contract validation',
-          detail: { providerMessage: requestBody.error.message.slice(0, 400) },
-        });
+        throw badRequestBeforeWire('OFAPI command request failed contract validation', requestBody.error.message);
       }
-      const raw = await request({
-        method: 'POST',
-        path: '/api/v1/ofapi/commands',
-        timeoutMs: timeoutMs ?? HUB_OFAPI_COMMAND_TIMEOUT_MS,
+      return delegate(() => clientFor(timeoutMs ?? HUB_OFAPI_COMMAND_TIMEOUT_MS).createOfapiCommand({
         body: requestBody.data,
-      });
-      return parseBody(hubOfapiCommandResponseSchema, raw);
+      }));
     },
 
     async getOfapiCommand({ commandId, timeoutMs }) {
-      const commandIdResult = z.string().uuid().safeParse(commandId);
-      if (!commandIdResult.success) {
-        throw new HubError('bad-request', {
-          message: 'OFAPI command id failed contract validation',
-          detail: { providerMessage: commandIdResult.error.message.slice(0, 400) },
-        });
-      }
-      const raw = await request({
-        method: 'GET',
-        path: `/api/v1/ofapi/commands/${encodeURIComponent(commandIdResult.data)}`,
-        timeoutMs: timeoutMs ?? HUB_OFAPI_COMMAND_TIMEOUT_MS,
-      });
-      return parseBody(hubOfapiCommandResponseSchema, raw);
+      const validId = requireCommandId(commandId);
+      return delegate(() => clientFor(timeoutMs ?? HUB_OFAPI_COMMAND_TIMEOUT_MS).getOfapiCommand({
+        params: { commandId: validId },
+      }));
     },
 
     async cancelOfapiCommand({ commandId, timeoutMs }) {
-      const commandIdResult = z.string().uuid().safeParse(commandId);
-      if (!commandIdResult.success) {
-        throw new HubError('bad-request', {
-          message: 'OFAPI command id failed contract validation',
-          detail: { providerMessage: commandIdResult.error.message.slice(0, 400) },
-        });
-      }
-      const raw = await request({
-        method: 'POST',
-        path: `/api/v1/ofapi/commands/${encodeURIComponent(commandIdResult.data)}/cancel`,
-        timeoutMs: timeoutMs ?? HUB_OFAPI_COMMAND_TIMEOUT_MS,
-      });
-      return parseBody(hubOfapiCommandResponseSchema, raw);
+      const validId = requireCommandId(commandId);
+      return delegate(() => clientFor(timeoutMs ?? HUB_OFAPI_COMMAND_TIMEOUT_MS).cancelOfapiCommand({
+        params: { commandId: validId },
+      }));
     },
 
     async streamAiGateway({ request: streamRequest, signal }, callbacks) {
-      const requestBody = hubAiGatewayStreamRequestSchema.safeParse(streamRequest);
+      const requestBody = routeSchemas.aiGatewayStream.body.safeParse(streamRequest);
       if (!requestBody.success) {
-        throw new HubError('bad-request', {
-          message: 'AI gateway stream request failed contract validation',
-          detail: { providerMessage: requestBody.error.message.slice(0, 400) },
-        });
+        throw badRequestBeforeWire('AI gateway stream request failed contract validation', requestBody.error.message);
       }
 
-      const init: HubRequestInit = {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${apiKey}`,
-          accept: 'text/event-stream',
-          'content-type': 'application/json',
-          ...versionHeader,
-        },
-        body: JSON.stringify(requestBody.data),
-        ...(signal !== undefined ? { signal } : {}),
-      };
-
-      let response: HubResponseLike;
-      try {
-        response = await fetchImpl(`${baseUrl}/api/v1/ai/gateway/stream`, init);
-      } catch (error) {
-        throw new HubError(classifyFetchFailure(error), {
-          message: errorMessageOf(error),
-          detail: { providerMessage: errorMessageOf(error) },
-        });
+      // Adapt the structural abort seam onto a real AbortSignal for the SDK.
+      const controller = new AbortController();
+      const onAbort = (): void => controller.abort();
+      if (signal?.aborted) {
+        controller.abort();
       }
-
-      recordServerTime(response);
-
-      if (response.status === 401 || response.status === 403) {
-        throw new HubError('auth', {
-          detail: buildHttpDetail(response.status, await readTextSafely(response)),
-        });
-      }
-      if (response.status === 400) {
-        throw new HubError('bad-request', {
-          detail: buildHttpDetail(response.status, await readTextSafely(response)),
-        });
-      }
-      if (response.status < 200 || response.status >= 300) {
-        throw new HubError('http', {
-          detail: buildHttpDetail(response.status, await readTextSafely(response)),
-        });
-      }
-
-      const body = response.body;
-      if (body === null || body === undefined) {
-        throw frameParseError('hub AI stream response had no body');
-      }
-
-      const reader = body.getReader();
-      const decoder = new TextDecoder();
-      const state = { rawText: '', doneSeen: false };
-      let buffer = '';
-      const onAbort = (): void => {
-        void reader.cancel().catch(() => {});
-      };
       signal?.addEventListener?.('abort', onAbort, { once: true });
 
+      const state = { rawText: '', doneSeen: false };
+      const handle = sdkStreamAiGateway(sdkOptions(null), {
+        body: requestBody.data,
+        signal: controller.signal as never,
+        onFrame: (frame) => {
+          callbacks.onProgress?.();
+          switch (frame.type) {
+            case 'meta':
+              return;
+            case 'content_delta':
+              state.rawText += frame.text;
+              callbacks.onText(frame.text);
+              return;
+            case 'reasoning_delta':
+              callbacks.onReasoningDelta?.(frame.text);
+              return;
+            case 'usage':
+              callbacks.onUsage?.(mapGatewayUsage(frame.usage));
+              return;
+            case 'error':
+              throw new HubError('http', {
+                message: frame.message,
+                detail: {
+                  providerMessage: frame.code,
+                  ...(frame.retryAfterMs !== null ? { retryAfterMs: frame.retryAfterMs } : {}),
+                },
+              });
+            case 'done':
+              state.doneSeen = true;
+              callbacks.onStopReason?.(frame.stopReason);
+              return;
+          }
+        },
+      });
+
       try {
-        while (true) {
-          if (signal?.aborted) {
-            throw new Error('Operation aborted');
-          }
-          const { done, value } = await reader.read();
-          if (signal?.aborted) {
-            throw new Error('Operation aborted');
-          }
-          if (done) {
-            break;
-          }
-          if (value !== undefined) {
-            buffer = drainAiGatewayBlocks(
-              buffer + decoder.decode(value, { stream: true }),
-              callbacks,
-              state,
-            );
-          }
-        }
+        await handle.done;
+      } catch (error) {
+        throw toHubError(error);
       } finally {
         signal?.removeEventListener?.('abort', onAbort);
-        reader.releaseLock?.();
       }
 
+      // Parity with the pre-SDK client: a caller abort surfaces as a plain
+      // Error (never a HubError — nothing failed), checked after the stream
+      // settles because the SDK helper resolves quietly on abort.
+      if (signal?.aborted) {
+        throw new Error('Operation aborted');
+      }
       if (!state.doneSeen) {
-        throw frameParseError('hub AI stream ended without a done frame');
+        throw new HubError('invalid-response', { message: 'hub AI stream ended without a done frame' });
       }
       return state.rawText;
     },
