@@ -15,6 +15,7 @@ import { HubError, type HubClient, type HubOfapiCommand } from '@chatgoose/share
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 import type {
   DataLayer,
+  MessageMediaItem,
   MessageRow,
   OutboxMediaId,
   OutboxRow,
@@ -150,6 +151,19 @@ function hubFailureCode(error: unknown, unavailable: boolean): 'CG-HUB-01' | 'CG
     : 'CG-HUB-02';
 }
 
+function mediaStubForConfirmedRow(row: OutboxRow, mediaId: OutboxMediaId): MessageMediaItem {
+  const previewIds = new Set(row.previews.map(String));
+  return {
+    id: String(mediaId),
+    type: 'other',
+    thumbUrl: null,
+    fullUrl: null,
+    isReady: true,
+    locked: row.price > 0 && !previewIds.has(String(mediaId)),
+    durationSeconds: null,
+  };
+}
+
 export function createSendEngine(options: SendEngineOptions): SendEngine {
   const { data, messageGuard, getSettings } = options;
   const hubCommandClient = options.hubCommandClient;
@@ -266,13 +280,16 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         textHtml: row.text,
         textPlain: row.text,
         price: row.price,
-        isOpened: null,
-        isNew: false,
+        // A Core command confirmation proves send acceptance, not purchase/read
+        // state. Keep PPV as not-purchased and own messages as SENT until a real
+        // message body/read-state sweep supplies stronger evidence.
+        isOpened: row.price > 0 ? false : null,
+        isNew: true,
         isTip: false,
         tipAmount: null,
         tipText: null,
         replyTo: null,
-        media: [],
+        media: row.mediaFiles.map((mediaId) => mediaStubForConfirmedRow(row, mediaId)),
         deleted: false,
         raw: {
           source: 'hub-command',

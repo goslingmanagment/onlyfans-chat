@@ -189,6 +189,35 @@ describe('online service — snapshot cache + stamp', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('snapshot() rebuilds local joins without another OFAPI refresh', async () => {
+    const calls: StubCall[] = [];
+    data.chats.upsertMany([
+      sampleChat({
+        chatId: '1',
+        lastMessagePreview: 'old preview',
+        unreadCount: 0,
+        lastMessageIsSentByMe: true,
+      }),
+    ]);
+    const service = makeService(stubClient({ pages: [[activeUser({ id: 1, totalSumm: 100 })]], calls }));
+    await service.refresh(ACCOUNT, true);
+
+    data.chats.upsertMany([
+      sampleChat({
+        chatId: '1',
+        lastMessagePreview: 'fresh fan reply',
+        unreadCount: 1,
+        lastMessageIsSentByMe: false,
+      }),
+    ]);
+
+    const cached = service.snapshot(ACCOUNT, true);
+    expect(cached.rows[0]?.lastMessagePreview).toBe('fresh fan reply');
+    expect(cached.rows[0]?.fanWaiting).toBe(true);
+    expect(cached.counts.waiting).toBe(1);
+    expect(calls).toHaveLength(1);
+  });
+
   it('persists the per-(account,filter) stamp across a service restart (rows gone, stamp kept)', async () => {
     const calls: StubCall[] = [];
     const first = makeService(stubClient({ pages: [[activeUser({ id: 1, totalSumm: 100 })]], calls }));

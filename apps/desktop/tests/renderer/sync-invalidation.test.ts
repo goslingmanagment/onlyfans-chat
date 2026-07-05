@@ -23,6 +23,7 @@ describe('dbChangedInvalidationKeysForEvent', () => {
         ['spenders-roster', 'acct_1'],
         ['spenders-untiered', 'acct_1'],
         ['spenders-stats', 'acct_1'],
+        ['online', 'acct_1'],
       ],
     ],
     [
@@ -32,6 +33,7 @@ describe('dbChangedInvalidationKeysForEvent', () => {
         ['spenders-roster', 'acct_1'],
         ['spenders-untiered', 'acct_1'],
         ['spenders-stats', 'acct_1'],
+        ['online', 'acct_1'],
       ],
     ],
     [
@@ -41,6 +43,7 @@ describe('dbChangedInvalidationKeysForEvent', () => {
         ['spenders-roster', 'acct_1'],
         ['spenders-untiered', 'acct_1'],
         ['spenders-stats', 'acct_1'],
+        ['online', 'acct_1'],
       ],
     ],
   ])('%s invalidates account-scoped read models', (event, expected) => {

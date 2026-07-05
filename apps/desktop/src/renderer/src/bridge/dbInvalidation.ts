@@ -31,6 +31,12 @@ function chatListInvalidationKeys(accountId: string): InvalidationKey[] {
   ];
 }
 
+// Active-member ids stay cached in main; row previews/waiting/sendability are
+// local DB joins and must refresh without another /fans/active read.
+function onlineInvalidationKeys(accountId: string): InvalidationKey[] {
+  return [['online', accountId]];
+}
+
 export function dbChangedInvalidationKeysForEvent(
   event: DbInvalidationEvent,
 ): InvalidationKey[] {
@@ -48,13 +54,16 @@ export function dbChangedInvalidationKeysForEvent(
           : ['chat', event.accountId, event.chatId],
         ['accounts'],
         ...spendersInvalidationKeys(event.accountId),
+        ...onlineInvalidationKeys(event.accountId),
       ];
     case 'messages':
       return [
         event.accountId !== undefined && event.chatId !== undefined
           ? ['messages', event.accountId, event.chatId]
           : ['messages'],
-        ...(event.accountId === undefined ? [] : spendersInvalidationKeys(event.accountId)),
+        ...(event.accountId === undefined
+          ? []
+          : [...spendersInvalidationKeys(event.accountId), ...onlineInvalidationKeys(event.accountId)]),
       ];
     case 'outbox':
       return [
@@ -71,7 +80,7 @@ export function dbChangedInvalidationKeysForEvent(
           ? ['fan', event.accountId, event.chatId]
           : ['fan'],
         ...(event.scope === 'fans' && event.accountId !== undefined
-          ? spendersInvalidationKeys(event.accountId)
+          ? [...spendersInvalidationKeys(event.accountId), ...onlineInvalidationKeys(event.accountId)]
           : []),
       ];
     case 'settings':

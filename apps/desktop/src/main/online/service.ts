@@ -5,10 +5,11 @@
 // tagged purpose 'online'. /fans/active is a Hybrid fans-list read — it does
 // NOT mark OnlyFans chats read (unlike GET /messages). Everything money/preview/
 // waiting-shaped joins from the LOCAL SQLite stores (0 credits), reusing the
-// exact Spenders join (db queries + deriveFanWaiting + silence bucket). The rows
-// snapshot lives in memory; only a per-(account,filter) freshness stamp persists
-// (settings table — same key-value seam as spenders.refreshedAt.*) so «обновлено
-// N назад» survives a restart even though the rows are gone.
+// exact Spenders join (db queries + deriveFanWaiting + silence bucket). Only the
+// active-member snapshot lives in memory; local row joins are rebuilt on read.
+// A per-(account,filter) freshness stamp persists (settings table — same
+// key-value seam as spenders.refreshedAt.*) so «обновлено N назад» survives a
+// restart even though the member rows are gone.
 
 import { daysSince, fanSilenceBucket } from '@chatgoose/shared';
 import { z } from 'zod';
@@ -39,8 +40,7 @@ interface OnlineMember {
 }
 
 interface OnlineSnapshotEntry {
-  rows: OnlineRowVM[];
-  counts: OnlineCountsVM;
+  members: OnlineMember[];
   truncated: boolean;
   fetchedAtMs: number;
 }
@@ -207,9 +207,10 @@ export function createOnlineService(options: OnlineServiceOptions): OnlineServic
         truncated: false,
       };
     }
+    const rows = buildRows(accountId, entry.members);
     return {
-      rows: entry.rows,
-      counts: entry.counts,
+      rows,
+      counts: countRows(rows),
       fetchedAt: new Date(entry.fetchedAtMs).toISOString(),
       truncated: entry.truncated,
     };
@@ -242,8 +243,7 @@ export function createOnlineService(options: OnlineServiceOptions): OnlineServic
       offset += ONLINE_PAGE_LIMIT;
       if (page === ONLINE_MAX_PAGES - 1) truncated = true;
     }
-    const rows = buildRows(accountId, members);
-    return { rows, counts: countRows(rows), truncated, fetchedAtMs: now() };
+    return { members, truncated, fetchedAtMs: now() };
   }
 
   return {
