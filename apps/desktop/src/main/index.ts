@@ -61,6 +61,8 @@ import { registerIpcHandlers } from './ipc/handlers';
 import { runKeyTest } from './diagnostics/key-tests';
 import { createAiCoordinator, createDirectGateway, createSelectableAiGateway, type AiCoordinator } from './ai/index';
 import { createHubModule, type HubModule } from './hub/index';
+import { hostname } from 'node:os';
+import { issueHubDeviceToken, resolveHubCredential } from './hub/device-token';
 import { attachEventForwarding } from './ipc/events';
 import { focusExistingWindow } from './platform/single-instance';
 import { badgePng } from './platform/badge';
@@ -347,7 +349,8 @@ async function rebuildOfapiRuntime(
   const [initialSettings, apiKey, hubApiKey] = await Promise.all([
     settingsStore.get(),
     keychain.getSecret('ofapiKey'),
-    keychain.getSecret('hubApiKey'),
+    // Stage 24: device token preferred; chatter key = fallback.
+    resolveHubCredential(keychain),
   ]);
   const hadActiveRuntime = client !== null;
   const creditMeter = createCreditMeter();
@@ -531,8 +534,8 @@ async function rebuildOfapiRuntime(
   async function hubConfigFingerprint(): Promise<string> {
     const vm = await settingsStore.get();
     settingsCache = vm;
-    const hubKey = await keychain.getSecret('hubApiKey');
-    return `${vm.hubBaseUrl ?? ''}\n${hubKey ?? ''}\n${vm.hubModeOverride}`;
+    const hubKey = await resolveHubCredential(keychain);
+    return `${vm.hubBaseUrl ?? ''}\n${hubKey ?? ''}\n${vm.hubModeOverride}\n${vm.hubSyncProtocol}`;
   }
   let hubFingerprint = await hubConfigFingerprint();
 
@@ -571,7 +574,7 @@ async function rebuildOfapiRuntime(
       accountIds,
     ) => {
       const vm = await settingsStore.get();
-      const hubKey = await keychain.getSecret('hubApiKey');
+      const hubKey = await resolveHubCredential(keychain);
       if (vm.hubBaseUrl === null || hubKey === null || hubKey.length === 0) {
         return null;
       }
@@ -875,7 +878,7 @@ async function boot(): Promise<void> {
     data,
     createUploader: async () => {
       const vm = await settingsStore.get();
-      const hubApiKey = await keychain.getSecret('hubApiKey');
+      const hubApiKey = await resolveHubCredential(keychain);
       if (!vm.hubBaseUrl || !hubApiKey) {
         throw new Error('Hub is not configured — set the hub base URL and API key first.');
       }
@@ -1096,6 +1099,29 @@ async function boot(): Promise<void> {
       install: () => updateController?.install(),
     },
     testKey: (provider) => runKeyTest(provider, { keychain, settingsStore }),
+    // Stage 24: one-time device-token sign-in (Settings → Hub). The token
+    // lands in the keychain; the config recheck swings every hub consumer
+    // (REST, SSE, read gateway) onto it without a restart.
+    hubAuth: {
+      issueDeviceToken: async ({ username, password }) => {
+        const vm = await settingsStore.get();
+        if (vm.hubBaseUrl === null) {
+          throw new Error('Set the hub base URL first.');
+        }
+        const issued = await issueHubDeviceToken({
+          baseUrl: vm.hubBaseUrl,
+          username,
+          password,
+          label: hostname(),
+          keychain,
+        });
+        // The fingerprint includes the resolved credential, so this recheck
+        // reconfigures both the REST module and the SSE connection.
+        await recheckHubConfig?.();
+        emitSyncStatusFrame();
+        return issued;
+      },
+    },
     harvest: {
       start: () => harvestModule.run(),
       pause: () => harvestModule.pause(),

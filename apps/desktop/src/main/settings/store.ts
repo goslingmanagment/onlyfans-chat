@@ -64,7 +64,7 @@ const PROD_HUB_ORIGIN = new URL(DEFAULT_AGENCY_HUB_BASE_URL).origin;
 
 export type PersistedSettings = Omit<
   SettingsVM,
-  'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey' | 'keyMeta'
+  'hasOfapiKey' | 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey' | 'hasHubDeviceToken' | 'keyMeta'
 >;
 
 export const PERSISTED_SETTINGS_KEYS = [
@@ -454,17 +454,19 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
   }
 
   async function buildVm(): Promise<SettingsVM> {
-    const [hasOfapiKey, hasAnthropicKey, hasOpenRouterKey, hasHubKey] = await Promise.all([
+    const [hasOfapiKey, hasAnthropicKey, hasOpenRouterKey, hasHubKey, hasHubDeviceToken] = await Promise.all([
       secrets.hasSecret('ofapiKey'),
       secrets.hasSecret('anthropicKey'),
       secrets.hasSecret('openRouterKey'),
       secrets.hasSecret('hubApiKey'),
+      secrets.hasSecret('hubDeviceToken'),
     ]);
     return {
       hasOfapiKey,
       hasAnthropicKey,
       hasOpenRouterKey,
       hasHubKey,
+      hasHubDeviceToken,
       keyMeta: readKeyMeta(),
       ...readPersisted(),
     };

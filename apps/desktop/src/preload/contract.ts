@@ -381,6 +381,8 @@ export interface SettingsVM {
   aiGatewayTransport: 'direct' | 'hub';
   /** Dev/support-only sync override. Default 'auto'; non-auto persists across restarts. */
   hubModeOverride: HubModeOverrideSetting;
+  /** Stage 24: a device-bound hub token is stored (preferred over the chatter key). */
+  hasHubDeviceToken: boolean;
   /**
    * Kernel Stage 24 rollout-window-only fallback: 'v1' re-points the hub SSE
    * consumer at the legacy stream. Not surfaced in UI (settings-file flip per
@@ -444,6 +446,13 @@ export interface KeyMetaVM {
 }
 
 export type KeyTestProvider = 'ofapi' | 'anthropic' | 'openrouter' | 'hub';
+
+/** Result of the one-time hub device-token sign-in (Stage 24). Never carries the token. */
+export interface HubDeviceTokenResultVM {
+  keyPrefix: string;
+  label: string;
+  expiresAt: string;
+}
 
 /** Result of probing a STORED key (cmd:keys.test). Never carries key material. */
 export interface KeyTestResultVM {
@@ -786,6 +795,11 @@ export interface InvokeChannels {
   'query:ai.featureCosts': { args: void; result: AiFeatureCostsVM };
   /** Settings "Test" buttons — probes the STORED key/connection (no args carry keys). */
   'cmd:keys.test': { args: { provider: KeyTestProvider }; result: KeyTestResultVM };
+  /** Stage 24: one-time hub sign-in — trades username+password for a keychain-held device token. */
+  'cmd:hub.issueDeviceToken': {
+    args: { username: string; password: string };
+    result: HubDeviceTokenResultVM;
+  };
   /** Danger zone: encrypted local cache footprint. */
   'query:localData.stats': { args: void; result: LocalDataStatsVM };
   'cmd:localData.openFolder': { args: void; result: void };
@@ -1062,6 +1076,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:guard.blocks': true,
   'query:ai.featureCosts': true,
   'cmd:keys.test': true,
+  'cmd:hub.issueDeviceToken': true,
   'query:localData.stats': true,
   'cmd:localData.openFolder': true,
   'cmd:localData.exportDiagnostics': true,

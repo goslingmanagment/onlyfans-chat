@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import type { KeyTestResultVM, SettingsVM, SyncStatusVM } from '../../../../../preload/contract';
 import type { UiLocale, UiTranslator } from '@chatgoose/shared/i18n/index';
-import { useAccounts, useKeyTest, useSyncStatus } from '../../../bridge/queries';
+import { useAccounts, useHubDeviceTokenIssue, useKeyTest, useSyncStatus } from '../../../bridge/queries';
 import { localizedErrorText, useLocale, useT } from '../../../lib/i18n';
 import { Badge } from '../../../design/Badge';
 import { Button } from '../../../design/Button';
@@ -48,6 +48,9 @@ export function HubSettings({
 }): React.JSX.Element {
   const [baseUrl, setBaseUrl] = useState(settings.hubBaseUrl ?? '');
   const [key, setKey] = useState('');
+  const [signInUser, setSignInUser] = useState('');
+  const [signInPassword, setSignInPassword] = useState('');
+  const deviceToken = useHubDeviceTokenIssue();
   const [labels, setLabels] = useState<Record<string, string>>(settings.accountPageLabels);
   const accounts = useAccounts();
   const syncStatus = useSyncStatus();
@@ -118,6 +121,57 @@ export function HubSettings({
             className="min-w-0 flex-1 rounded-chip border border-line bg-bg1 px-3 py-1.5 text-[13px] outline-none placeholder:text-ink-low focus:border-clay-line"
           />
         </div>
+        <div className="flex items-center gap-3 py-1">
+          <div className="w-44 flex-none">
+            <div className="text-[13px] font-semibold">{t('hub.deviceToken.label')}</div>
+            <div className="text-[11px] text-ink-low">{t('hub.deviceToken.hint')}</div>
+          </div>
+          <Badge tone={settings.hasHubDeviceToken ? 'green' : 'neutral'}>
+            {settings.hasHubDeviceToken ? t('common.configured') : t('common.notSet')}
+          </Badge>
+          <input
+            type="text"
+            value={signInUser}
+            onChange={(e) => setSignInUser(e.target.value)}
+            placeholder={t('hub.deviceToken.username')}
+            autoComplete="off"
+            spellCheck={false}
+            className="min-w-0 flex-1 rounded-chip border border-line bg-bg1 px-3 py-1.5 text-[13px] outline-none placeholder:text-ink-low focus:border-clay-line"
+          />
+          <input
+            type="password"
+            value={signInPassword}
+            onChange={(e) => setSignInPassword(e.target.value)}
+            placeholder={t('hub.deviceToken.password')}
+            autoComplete="off"
+            spellCheck={false}
+            className="min-w-0 flex-1 rounded-chip border border-line bg-bg1 px-3 py-1.5 text-[13px] outline-none placeholder:text-ink-low focus:border-clay-line"
+          />
+          <Button
+            disabled={signInUser.trim() === '' || signInPassword === '' || deviceToken.isPending}
+            onClick={() => {
+              deviceToken.mutate(
+                { username: signInUser.trim(), password: signInPassword },
+                { onSuccess: () => setSignInPassword('') },
+              );
+            }}
+          >
+            {deviceToken.isPending ? t('hub.deviceToken.signingIn') : t('hub.deviceToken.signIn')}
+          </Button>
+        </div>
+        {deviceToken.isSuccess && (
+          <div className="pl-47 text-[11px] text-ink-low">
+            {t('hub.deviceToken.issued', {
+              prefix: deviceToken.data.keyPrefix,
+              label: deviceToken.data.label,
+            })}
+          </div>
+        )}
+        {deviceToken.isError && (
+          <div className="pl-47 text-[11px] text-bad">
+            {deviceToken.error instanceof Error ? deviceToken.error.message : t('hub.deviceToken.failed')}
+          </div>
+        )}
         <div className="flex items-center gap-3 py-1">
           <div className="w-44 flex-none">
             <div className="text-[13px] font-semibold">{t('hub.ofapiReads.label')}</div>

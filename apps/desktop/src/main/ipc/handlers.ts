@@ -25,6 +25,7 @@ import type {
   ConversationOpenResultVM,
   HarvestStatusVM,
   KeyTestProvider,
+  HubDeviceTokenResultVM,
   KeyTestResultVM,
   LocalDataStatsVM,
   OutboxItemVM,
@@ -51,6 +52,10 @@ import {
 const idSchema = z.string().min(1).max(64);
 const keysTestSchema = z.object({
   provider: z.enum(['ofapi', 'anthropic', 'openrouter', 'hub']),
+});
+const hubIssueDeviceTokenSchema = z.object({
+  username: z.string().min(1).max(120),
+  password: z.string().min(1).max(500),
 });
 
 const EMPTY_HUB_TELEMETRY: HubTelemetryVM = {
@@ -350,6 +355,10 @@ export interface IpcDeps {
   purge: () => Promise<void>;
   /** Settings "Test" buttons; probes the STORED key. Optional like vault. */
   testKey?: (provider: KeyTestProvider) => Promise<KeyTestResultVM>;
+  /** Stage 24: one-time hub device-token sign-in (Settings → Hub). */
+  hubAuth?: {
+    issueDeviceToken: (args: { username: string; password: string }) => Promise<HubDeviceTokenResultVM>;
+  } | null;
   /** Danger-zone capabilities (paths/shell live only in the composition root). */
   localData?: {
     stats: () => Promise<LocalDataStatsVM>;
@@ -561,6 +570,14 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       throw new Error('Key testing is not available in this build.');
     }
     return deps.testKey(args.provider);
+  });
+
+  ipcMain.handle('cmd:hub.issueDeviceToken', (_event, rawArgs: unknown) => {
+    const args = hubIssueDeviceTokenSchema.parse(rawArgs);
+    if (!deps.hubAuth) {
+      throw new Error('Hub sign-in is not available in this build.');
+    }
+    return deps.hubAuth.issueDeviceToken(args);
   });
 
   function requireLocalData(): NonNullable<IpcDeps['localData']> {

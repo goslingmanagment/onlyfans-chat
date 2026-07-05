@@ -314,6 +314,18 @@ export function useKeyTest() {
   });
 }
 
+/** Stage 24: one-time hub sign-in — main trades the credentials for a keychain-held device token. */
+export function useHubDeviceTokenIssue() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { username: string; password: string }) =>
+      getBridge().invoke('cmd:hub.issueDeviceToken', args),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['settings'] });
+    },
+  });
+}
+
 export function useOpenDataFolder() {
   return useMutation({
     mutationFn: () => getBridge().invoke('cmd:localData.openFolder', undefined),

@@ -11,6 +11,7 @@ import type { SummaryHubHooks, UsageEventRecord } from '../ai/index';
 import type { DataLayer } from '../db/index';
 import type { SettingsStore } from '../settings/store';
 import type { Keychain } from '../secrets/keychain';
+import { resolveHubCredential } from './device-token';
 import { createPageLabelResolver } from './page-resolver';
 import { createSqliteUsageEventStore } from './usage-store';
 import { createSummaryHubHooks } from './summary-hooks';
@@ -160,7 +161,8 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       const myGeneration = generation;
       const [vm, apiKey] = await Promise.all([
         settingsStore.get(),
-        keychain.getSecret('hubApiKey'),
+        // Stage 24: device token preferred; chatter key = fallback.
+        resolveHubCredential(keychain),
       ]);
       if (disposed || myGeneration !== generation) {
         return;

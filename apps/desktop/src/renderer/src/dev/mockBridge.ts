@@ -420,6 +420,7 @@ function buildStore(): MockStore {
     hasAnthropicKey: true,
     hasOpenRouterKey: false,
     hasHubKey: true,
+    hasHubDeviceToken: false,
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
@@ -1244,6 +1245,11 @@ export function createMockBridge(): ChatGooseBridge {
         'fan-summary': { runs: 4, usd: 0.46 },
         ping: { runs: 9, usd: 0.18 },
       },
+    }),
+    'cmd:hub.issueDeviceToken': ({ username }) => ({
+      keyPrefix: 'agency_hub_device_mock',
+      label: `mock-${username}`,
+      expiresAt: new Date(Date.now() + 90 * 24 * 3_600_000).toISOString(),
     }),
     'cmd:keys.test': ({ provider }) => {
       // Mock: OFAPI/anthropic succeed, openrouter rejects, hub depends on config.

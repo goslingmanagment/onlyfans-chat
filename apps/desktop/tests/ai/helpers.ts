@@ -40,6 +40,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hasAnthropicKey: true,
     hasOpenRouterKey: false,
     hasHubKey: true,
+    hasHubDeviceToken: false,
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',

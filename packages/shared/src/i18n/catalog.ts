@@ -113,6 +113,20 @@ export const UI_MESSAGES = {
   'hub.baseUrl.hint': { en: "your agency's core server", ru: 'core-сервер вашего агентства' },
   'hub.key.label': { en: 'Chatter API key', ru: 'API-ключ чаттера' },
   'hub.key.hint': { en: 'agency_hub_core_… — set-only', ru: 'agency_hub_core_… — только запись' },
+  'hub.deviceToken.label': { en: 'Device sign-in', ru: 'Вход устройства' },
+  'hub.deviceToken.hint': {
+    en: 'One-time login; issues a device token held in the keychain',
+    ru: 'Одноразовый вход; выдаёт токен устройства в связке ключей',
+  },
+  'hub.deviceToken.username': { en: 'Username', ru: 'Логин' },
+  'hub.deviceToken.password': { en: 'Password', ru: 'Пароль' },
+  'hub.deviceToken.signIn': { en: 'Sign in', ru: 'Войти' },
+  'hub.deviceToken.signingIn': { en: 'Signing in…', ru: 'Вход…' },
+  'hub.deviceToken.issued': {
+    en: 'Device token issued ({prefix}…) for {label}',
+    ru: 'Токен устройства выдан ({prefix}…) для {label}',
+  },
+  'hub.deviceToken.failed': { en: 'Sign-in failed', ru: 'Не удалось войти' },
   'hub.ofapiReads.label': { en: 'OFAPI reads', ru: 'Чтение OFAPI' },
   'hub.ofapiReads.hint': {
     en: 'Agency Hub is the normal keyless path; Direct is rollback only',

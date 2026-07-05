@@ -12,6 +12,9 @@ export const SECRET_NAMES = [
   'anthropicKey',
   'openRouterKey',
   'hubApiKey',
+  // Stage 24: device-bound hub credential (agency_hub_device_…); preferred
+  // over hubApiKey when present. Issued via Settings → Hub sign-in.
+  'hubDeviceToken',
   'dbKey',
   'mediaCacheKey',
 ] as const;
