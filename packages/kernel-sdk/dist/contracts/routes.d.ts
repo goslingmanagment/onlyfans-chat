@@ -8128,6 +8128,11 @@ export declare const domainEventFrameSchema: z.ZodObject<{
     type: z.ZodString;
     occurredAt: z.ZodString;
     data: z.ZodUnknown;
+    fanRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    conversationRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    messageRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    accountRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    payload: z.ZodOptional<z.ZodUnknown>;
 }, z.core.$strip>;
 export declare const domainEventsSnapshotRequiredAccountSchema: z.ZodObject<{
     accountId: z.ZodNumber;

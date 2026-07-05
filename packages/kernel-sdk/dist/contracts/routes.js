@@ -2540,7 +2540,26 @@ export const domainEventFrameSchema = z.object({
     type: z.string().min(1),
     occurredAt: isoTimestamp,
     data: z.unknown(),
+    // Stage 24 serve-time additions (all optional — pre-Stage-24 frames and the
+    // smoke consumer's persisted expectations stay valid):
+    // the ledger's platform-native refs, surfaced so clients can route events
+    // without re-deriving them from `data`...
+    fanRef: z.string().nullable().optional(),
+    conversationRef: z.string().nullable().optional(),
+    messageRef: z.string().nullable().optional(),
+    // ...the page's OFAPI account ref (null for unmapped/Fansly pages), so
+    // OFAPI-keyed clients (the desktop) filter without numeric-id translation...
+    accountRef: z.string().nullable().optional(),
+    // ...and, on message.received/message.sent frames whose source observation
+    // is an OFAPI webhook message, the same normalized message payload the v1
+    // fanout serves — projection-grade ingest without a read-gateway round
+    // trip (decision #92's "payloads ride Stage 24"). Shape-tolerant clients
+    // validate it themselves (it is upstream-derived, not a kernel contract).
+    payload: z.unknown().optional(),
 });
+// The v2 stream may interleave `event: ephemeral` frames (no id line — they
+// never advance the cursor): serve-time-only events that are deliberately
+// NOT ledgered (typing indicators). data = a v1 SyncEvent JSON object.
 export const domainEventsSnapshotRequiredAccountSchema = z.object({
     accountId: z.number().int().positive(),
     requestedSeq: z.number().int().nonnegative(),
