@@ -90,8 +90,19 @@ export async function executeKernelRequest(input) {
         return await fetchImpl(url, requestInit);
     }
     catch (error) {
-        throw new KernelApiError(`Network error calling ${def.method} ${def.path}: ${error instanceof Error ? error.message : "unknown"}`, "network", null, "network_error", null);
+        throw new KernelApiError(`Network error calling ${def.method} ${def.path}: ${error instanceof Error ? error.message : "unknown"}`, "network", null, networkErrorCode(error), null);
     }
+}
+/** Preserve the abort/timeout distinction through the network wrap — clients
+ * with retry discipline (the desktop) must not blind-retry what a caller
+ * deliberately aborted, and must classify timeouts as such. */
+function networkErrorCode(error) {
+    const name = error instanceof Error ? error.name : typeof error === "object" && error !== null && "name" in error ? String(error.name) : null;
+    if (name === "TimeoutError")
+        return "timeout";
+    if (name === "AbortError")
+        return "aborted";
+    return "network_error";
 }
 async function throwForErrorResponse(def, response, options, operation) {
     let body = null;

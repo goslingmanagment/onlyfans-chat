@@ -2,6 +2,9 @@
 import { createKernelClient } from "./contracts/index";
 import { kernelOperations } from "./operations";
 export { KernelApiError, SDK_EXCLUDED_OPERATIONS, createKernelClient, } from "./contracts/index";
+// Runtime surface for out-of-workspace consumers (Stage 24: client repos
+// cannot reach @agency_hub_core/contracts the way the dashboard does).
+export { decodeDomainEventCursor, ofapiRead, routeSchemas, streamAiGateway, subscribeDomainEvents, subscribeSyncEvents, } from "./contracts/index";
 export { kernelOperations } from "./operations";
 export { KERNEL_CONTRACT_HASH, KERNEL_SDK_VERSION } from "./meta";
 export function createClient(options) {
