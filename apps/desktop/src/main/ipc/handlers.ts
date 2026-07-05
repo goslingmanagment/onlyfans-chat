@@ -23,6 +23,7 @@ import type {
   ActivityVM,
   AiStartRequest,
   ConversationOpenResultVM,
+  HarvestStatusVM,
   KeyTestProvider,
   KeyTestResultVM,
   LocalDataStatsVM,
@@ -355,6 +356,12 @@ export interface IpcDeps {
     openFolder: () => Promise<void>;
     exportDiagnostics: () => Promise<{ path: string }>;
   } | null;
+  /** Stage 12: one-time local-history harvest (Settings → Danger Zone). */
+  harvest?: {
+    start: () => Promise<{ manifestPath: string | null }>;
+    pause: () => void;
+    status: () => HarvestStatusVM;
+  } | null;
   /** Settings → Updates (PLAN item 11). Always present; returns `unsupported`
    *  off win32-packaged builds. status/check/install read the lazily-created
    *  update controller in the composition root. */
@@ -566,6 +573,22 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('query:localData.stats', () => requireLocalData().stats());
   ipcMain.handle('cmd:localData.openFolder', () => requireLocalData().openFolder());
   ipcMain.handle('cmd:localData.exportDiagnostics', () => requireLocalData().exportDiagnostics());
+
+  function requireHarvest(): NonNullable<IpcDeps['harvest']> {
+    if (!deps.harvest) {
+      throw new Error('History harvest is not available in this build.');
+    }
+    return deps.harvest;
+  }
+
+  ipcMain.handle('query:harvest.status', () => requireHarvest().status());
+  // Fire-and-forget on purpose: the run outlives any sane IPC timeout; the
+  // renderer polls query:harvest.status for progress. Errors land in status().
+  ipcMain.handle('cmd:harvest.start', () => {
+    void requireHarvest().start().catch(() => undefined);
+    return { manifestPath: null };
+  });
+  ipcMain.handle('cmd:harvest.pause', () => requireHarvest().pause());
 
   // Renderer log feed: render crashes, unhandled rejections and failed IPC calls
   // funnel here so renderer-side problems share the exported log file (SPEC §11).

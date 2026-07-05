@@ -395,6 +395,27 @@ export const UI_MESSAGES = {
     ru: 'База {db} · медиа-кэш {media} ({files})',
   },
   'danger.purgeBtn': { en: 'Purge local data…', ru: 'Очистить локальные данные…' },
+  'danger.harvestTitle': { en: 'Upload history to kernel', ru: 'Выгрузка истории в ядро' },
+  'danger.harvestHint': {
+    en: 'One-time upload of local history (messages, transactions, audit) to the agency server. Safe to pause and resume; re-runs skip already-uploaded rows.',
+    ru: 'Одноразовая выгрузка локальной истории (сообщения, транзакции, аудит) на сервер агентства. Можно ставить на паузу; повторный запуск пропускает уже выгруженное.',
+  },
+  'danger.harvestStart': { en: 'Upload history to kernel', ru: 'Выгрузить историю в ядро' },
+  'danger.harvestResume': { en: 'Resume upload', ru: 'Продолжить выгрузку' },
+  'danger.harvestPause': { en: 'Pause', ru: 'Пауза' },
+  'danger.harvestRunning': {
+    en: 'Uploading {table}… {uploaded} uploaded, {duplicates} already on the server.',
+    ru: 'Выгружается {table}… {uploaded} загружено, {duplicates} уже на сервере.',
+  },
+  'danger.harvestComplete': {
+    en: 'History uploaded. Manifest saved to the data folder — send it to the owner.',
+    ru: 'История выгружена. Манифест сохранён в папке данных — отправьте его владельцу.',
+  },
+  'danger.harvestError': { en: 'Upload stopped: {error}', ru: 'Выгрузка остановлена: {error}' },
+  'danger.harvestPurgeBlocked': {
+    en: 'Purge is blocked until the history upload completes.',
+    ru: 'Очистка заблокирована, пока выгрузка истории не завершена.',
+  },
   'danger.confirmQuestion': {
     en: 'Purge all locally cached data?',
     ru: 'Удалить весь локальный кэш?',

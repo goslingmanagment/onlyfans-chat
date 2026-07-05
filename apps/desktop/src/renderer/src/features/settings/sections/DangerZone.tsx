@@ -6,6 +6,9 @@
 import { useState } from 'react';
 import {
   useExportDiagnostics,
+  useHarvestPause,
+  useHarvestStart,
+  useHarvestStatus,
   useLocalDataStats,
   useOpenDataFolder,
   usePurgeData,
@@ -28,6 +31,9 @@ export function DangerZone(): React.JSX.Element {
   const stats = useLocalDataStats(true);
   const openFolder = useOpenDataFolder();
   const exportDiag = useExportDiagnostics();
+  const harvestStatus = useHarvestStatus();
+  const harvestStart = useHarvestStart();
+  const harvestPause = useHarvestPause();
   const t = useT();
   const locale = useLocale();
   const [arming, setArming] = useState(false);
@@ -85,6 +91,56 @@ export function DangerZone(): React.JSX.Element {
             </button>
           </div>
         )}
+
+        {/* Stage 12: one-time history upload to the kernel. Progress is
+            status-polled; the run is resumable — deterministic ids make
+            re-uploads free. */}
+        <div className="space-y-2 border-t border-line pt-3">
+          <p className="text-[12.5px] font-semibold">{t('danger.harvestTitle')}</p>
+          <p className="text-[11.5px] text-ink-low">{t('danger.harvestHint')}</p>
+          {harvestStatus.data?.state === 'running' ? (
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={() => harvestPause.mutate()}>
+                {t('danger.harvestPause')}
+              </Button>
+              <span className="num text-[11.5px] text-ink-mid">
+                {t('danger.harvestRunning', {
+                  table: harvestStatus.data.currentTable ?? '…',
+                  uploaded: String(
+                    Object.values(harvestStatus.data.tables).reduce((sum, p) => sum + p.uploaded, 0),
+                  ),
+                  duplicates: String(
+                    Object.values(harvestStatus.data.tables).reduce((sum, p) => sum + p.duplicates, 0),
+                  ),
+                })}
+              </span>
+            </div>
+          ) : harvestStatus.data?.state === 'complete' ? (
+            <p className="text-[11.5px] text-green">{t('danger.harvestComplete')}</p>
+          ) : (
+            <div className="space-y-1">
+              {harvestStatus.data?.state === 'error' && harvestStatus.data.error !== null && (
+                <p className="text-[11.5px] text-bad">
+                  {t('danger.harvestError', { error: harvestStatus.data.error })}
+                </p>
+              )}
+              <Button
+                size="sm"
+                disabled={harvestStart.isPending}
+                onClick={() => harvestStart.mutate()}
+              >
+                {harvestStatus.data?.state === 'paused' || harvestStatus.data?.state === 'error'
+                  ? t('danger.harvestResume')
+                  : t('danger.harvestStart')}
+              </Button>
+            </div>
+          )}
+          {harvestStatus.data !== undefined &&
+            harvestStatus.data.state !== 'idle' &&
+            harvestStatus.data.state !== 'complete' && (
+              <p className="text-[11px] text-ink-low">{t('danger.harvestPurgeBlocked')}</p>
+            )}
+        </div>
 
         {arming ? (
           <div className="space-y-2 border-t border-line pt-3">

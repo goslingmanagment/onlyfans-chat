@@ -461,6 +461,24 @@ export interface LocalDataStatsVM {
   mediaFiles: number;
 }
 
+/** Stage 12: one-time local-history harvest progress (Settings → Danger Zone). */
+export interface HarvestTableProgressVM {
+  walked: number;
+  uploaded: number;
+  duplicates: number;
+  minObservedAt: string | null;
+  maxObservedAt: string | null;
+  completed: boolean;
+}
+
+export interface HarvestStatusVM {
+  state: 'idle' | 'running' | 'paused' | 'error' | 'complete';
+  machineId: string | null;
+  currentTable: string | null;
+  error: string | null;
+  tables: Record<string, HarvestTableProgressVM>;
+}
+
 /** Auto-update state for Settings → Updates (PLAN item 11; main/platform/updater.ts).
  *  `unsupported` = not a win32 packaged build (macOS / dev), so no feed exists. */
 export type UpdatePhaseVM =
@@ -765,6 +783,10 @@ export interface InvokeChannels {
   /** Danger zone: encrypted local cache footprint. */
   'query:localData.stats': { args: void; result: LocalDataStatsVM };
   'cmd:localData.openFolder': { args: void; result: void };
+  /** Stage 12: one-time local-history harvest to the kernel capture lane. */
+  'query:harvest.status': { args: void; result: HarvestStatusVM };
+  'cmd:harvest.start': { args: void; result: { manifestPath: string | null } };
+  'cmd:harvest.pause': { args: void; result: void };
   /** Writes a secrets-free JSON report (incl. the recent log) under userData and reveals it. */
   'cmd:localData.exportDiagnostics': { args: void; result: { path: string } };
   /** Renderer → main log feed (errors, error-boundary, query/mutation failures)
@@ -1037,6 +1059,9 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:localData.stats': true,
   'cmd:localData.openFolder': true,
   'cmd:localData.exportDiagnostics': true,
+  'query:harvest.status': true,
+  'cmd:harvest.start': true,
+  'cmd:harvest.pause': true,
   'cmd:diag.logClient': true,
   'query:updates.status': true,
   'cmd:updates.check': true,

@@ -326,6 +326,38 @@ export function useExportDiagnostics() {
   });
 }
 
+// ─── Stage 12: local-history harvest (Danger Zone) ─────────────────────────
+// Self-polls while a run is active; the start command is fire-and-forget on
+// the main side, so status is the single source of progress truth.
+
+export function useHarvestStatus() {
+  return useQuery({
+    queryKey: ['harvest', 'status'],
+    queryFn: () => getBridge().invoke('query:harvest.status', undefined),
+    refetchInterval: (query) => (query.state.data?.state === 'running' ? 2_000 : false),
+  });
+}
+
+export function useHarvestStart() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => getBridge().invoke('cmd:harvest.start', undefined),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['harvest'] });
+    },
+  });
+}
+
+export function useHarvestPause() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => getBridge().invoke('cmd:harvest.pause', undefined),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['harvest'] });
+    },
+  });
+}
+
 // ─── Settings → Updates (PLAN item 11) ─────────────────────────────────────
 // No db:changed signal drives update state, so this query self-polls while a
 // check/download is in flight (downloading/checking) and idles otherwise.

@@ -1264,6 +1264,15 @@ export function createMockBridge(): ChatGooseBridge {
     'cmd:localData.exportDiagnostics': () => ({
       path: '/Users/dev/Library/Application Support/chatgoose/chatgoose-diagnostics-mock.json',
     }),
+    'query:harvest.status': () => ({
+      state: 'idle',
+      machineId: null,
+      currentTable: null,
+      error: null,
+      tables: {},
+    }),
+    'cmd:harvest.start': () => ({ manifestPath: null }),
+    'cmd:harvest.pause': () => undefined,
     'cmd:diag.logClient': () => undefined,
     'query:updates.status': () => {
       // Advance the simulated download a notch on each poll.

@@ -21,6 +21,9 @@ import { resolveUiLocale, uiMessage, type UiLocale } from '@chatgoose/shared/i18
 import { errorToFields } from '@chatgoose/shared/diagnostics/log';
 import { createKeychain, type Keychain, type SecretName } from './secrets/keychain';
 import { createDataLayer, readSchemaVersion, type DataLayer } from './db/index';
+import { SCHEMA_VERSION } from './db/migrations';
+import { createHarvestModule, type HarvestModule } from './harvest/index';
+import { createHubClient } from '@chatgoose/shared/hub/index';
 import { createLogger, type Logger } from './diagnostics/logger';
 import { buildDiagnosticsReport } from './diagnostics/report';
 import { auditOutbox } from './send/audit';
@@ -846,6 +849,34 @@ async function boot(): Promise<void> {
 
   const settingsStore = createSettingsStore({ queries: data.settings, secrets: keychain });
 
+  // Stage 12: one-time local-history harvest to the kernel capture lane.
+  // The uploader is built per run (its own client instance so x-client-version
+  // is 'harvest-<version>' → core stamps producer='desktop-harvest@<version>').
+  const harvestModule: HarvestModule = createHarvestModule({
+    data,
+    createUploader: async () => {
+      const vm = await settingsStore.get();
+      const hubApiKey = await keychain.getSecret('hubApiKey');
+      if (!vm.hubBaseUrl || !hubApiKey) {
+        throw new Error('Hub is not configured — set the hub base URL and API key first.');
+      }
+      return createHubClient({
+        baseUrl: vm.hubBaseUrl,
+        apiKey: hubApiKey,
+        clientVersion: `harvest-${app.getVersion()}`,
+      });
+    },
+    appVersion: app.getVersion(),
+    schemaVersion: SCHEMA_VERSION,
+    manifestDir: userData,
+    ...((): { log?: (message: string, detail?: Record<string, unknown>) => void } => {
+      const harvestLogger = logger;
+      return harvestLogger !== null
+        ? { log: (message, detail) => harvestLogger.log('info', 'harvest', message, detail) }
+        : {};
+    })(),
+  });
+
   // Runtime seed for local/prod evidence builds. The secret is supplied by the
   // launcher and then persisted through the normal encrypted keychain path.
   const hubBaseUrlEnv = process.env['CHATGOOSE_HUB_BASE_URL']?.trim();
@@ -1003,6 +1034,13 @@ async function boot(): Promise<void> {
       if (purging) {
         return;
       }
+      // Stage 12 ordering rule (insurance before surgery): once a harvest has
+      // STARTED, local history must reach the kernel before it may die here.
+      if (harvestModule.isIncomplete()) {
+        throw new Error(
+          'A history harvest is incomplete — finish uploading to the kernel before purging local data.',
+        );
+      }
       purging = true;
       disposeEventForwarding?.();
       disposeEventForwarding = null;
@@ -1038,6 +1076,11 @@ async function boot(): Promise<void> {
       install: () => updateController?.install(),
     },
     testKey: (provider) => runKeyTest(provider, { keychain, settingsStore }),
+    harvest: {
+      start: () => harvestModule.run(),
+      pause: () => harvestModule.pause(),
+      status: () => harvestModule.status(),
+    },
     localData: {
       stats: async () => {
         const sizeOf = async (path: string): Promise<number> => {

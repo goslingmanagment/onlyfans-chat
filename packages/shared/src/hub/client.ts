@@ -431,6 +431,32 @@ const hubUsageBatchRequestSchema = z.object({
   events: z.array(hubUsageEventSchema).min(1).max(HUB_USAGE_BATCH_MAX_EVENTS),
 });
 
+// ─── Stage 11/12 capture lane (core POST /api/v1/ingest/observations) ──────
+
+const hubIngestObservationEventSchema = z.object({
+  clientEventId: z.uuid(),
+  kind: z.string().min(1).max(120),
+  observedAt: z
+    .string()
+    .min(1)
+    .refine((value) => Number.isFinite(Date.parse(value)), 'observedAt must be a parseable ISO timestamp'),
+  payload: z.record(z.string(), z.unknown()),
+  pageLabel: z.string().min(1).max(120).optional(),
+});
+
+export type HubIngestObservationEvent = z.infer<typeof hubIngestObservationEventSchema>;
+
+const hubIngestBatchRequestSchema = z.object({
+  events: z.array(hubIngestObservationEventSchema).min(1).max(100),
+});
+
+const hubIngestBatchResponseSchema = z.object({
+  accepted: z.number().int().nonnegative(),
+  duplicates: z.number().int().nonnegative(),
+});
+
+export type HubIngestBatchResult = z.infer<typeof hubIngestBatchResponseSchema>;
+
 // ─── AI gateway stream (core C6c/R4; outbound + inbound contract) ─────────
 
 const hubAiGatewayPromptBlockSchema = z.object({
@@ -560,6 +586,12 @@ export interface HubClient {
     timeoutMs?: number;
   }): Promise<HubProfileVersion>;
   postUsageBatch(args: { events: HubUsageEvent[]; timeoutMs?: number }): Promise<HubUsageBatchResult>;
+  /** Stage 11/12 capture lane. Whole-batch atomic server-side; resend the
+   *  whole batch until 2xx — clientEventId dedup makes overlap free. */
+  postIngestObservations(args: {
+    events: HubIngestObservationEvent[];
+    timeoutMs?: number;
+  }): Promise<HubIngestBatchResult>;
   getOfapiCreditsSummary(options?: { timeoutMs?: number }): Promise<HubOfapiCreditsSummary>;
   createOfapiCommand(args: {
     command: HubOfapiCommandCreateRequest;
@@ -822,6 +854,23 @@ export function createHubClient(options: HubClientOptions): HubClient {
         body: requestBody.data,
       });
       return parseBody(hubUsageBatchResponseSchema, raw);
+    },
+
+    async postIngestObservations({ events, timeoutMs }) {
+      const requestBody = hubIngestBatchRequestSchema.safeParse({ events });
+      if (!requestBody.success) {
+        throw new HubError('bad-request', {
+          message: 'ingest batch failed contract validation',
+          detail: { providerMessage: requestBody.error.message.slice(0, 400) },
+        });
+      }
+      const raw = await request({
+        method: 'POST',
+        path: '/api/v1/ingest/observations',
+        timeoutMs: timeoutMs ?? HUB_USAGE_BATCH_TIMEOUT_MS,
+        body: requestBody.data,
+      });
+      return parseBody(hubIngestBatchResponseSchema, raw);
     },
 
     async getOfapiCreditsSummary(summaryOptions) {

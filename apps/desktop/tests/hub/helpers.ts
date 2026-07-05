@@ -256,11 +256,14 @@ export function makeFakeHubClient(
     updatedAt: '2026-06-19T22:00:00.000Z',
     deduplicated: false,
   };
+  const postIngestObservationsMock = vi.fn((args: { events: unknown[] }) =>
+    Promise.resolve({ accepted: args.events.length, duplicates: 0 }));
   return {
     listPages: listPagesMock,
     getFanProfile: getFanProfileMock,
     putFanProfile: putFanProfileMock,
     postUsageBatch: postUsageBatchMock,
+    postIngestObservations: postIngestObservationsMock,
     getOfapiCreditsSummary: getOfapiCreditsSummaryMock,
     createOfapiCommand: vi.fn(() => Promise.resolve(commandResponse)),
     getOfapiCommand: vi.fn(() => Promise.resolve(commandResponse)),
