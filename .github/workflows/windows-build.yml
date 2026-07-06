@@ -38,6 +38,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Release hygiene (0.1.31 audit): refuse a mistagged build BEFORE anything
+      # is built or uploaded — the post-upload assert then only guards the feed.
+      - name: Assert tag == package.json before building
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          pkg_version=$(node -p "require('./apps/desktop/package.json').version")
+          tag_version="${GITHUB_REF#refs/tags/v}"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::Tag v$tag_version != package.json ($pkg_version) — bump before tagging"; exit 1
+          fi
+
       - name: Build Windows installer
         run: pnpm dist:win
 

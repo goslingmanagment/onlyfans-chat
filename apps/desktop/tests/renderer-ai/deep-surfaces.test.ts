@@ -164,12 +164,12 @@ describe('Ping / Hi pill gates (precedence: unmapped → no-key → feature gate
   it('missing LLM key outranks the feature gates', () => {
     expect(evaluatePingGate(NO_KEY_GATE, false)).toEqual({
       enabled: false,
-      reason: 'Add a direct AI key or configure Hub AI in Settings',
+      reason: 'Connect Agency Hub in Settings (sign in or add the hub key)',
       code: 'no-key',
     });
     expect(evaluateHiGate(NO_KEY_GATE, true)).toEqual({
       enabled: false,
-      reason: 'Add a direct AI key or configure Hub AI in Settings',
+      reason: 'Connect Agency Hub in Settings (sign in or add the hub key)',
       code: 'no-key',
     });
   });

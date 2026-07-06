@@ -585,7 +585,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       creditMeter: deps.creditMeter,
       coreCredits,
       // Stage 31: AI is the kernel feature lane — configured = hub transport up.
-      ai: { gatewayConfigured: settings.hubBaseUrl !== null && settings.hasHubKey },
+      ai: { gatewayConfigured: settings.hubBaseUrl !== null && (settings.hasHubKey || settings.hasHubDeviceToken) },
     });
   });
 
@@ -927,7 +927,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('ai:start', (_event, rawArgs: unknown) => {
     const parsed = aiStartSchema.parse(rawArgs);
     if (!deps.coordinator) {
-      throw new Error('AI is not available yet — configure an LLM API key in Settings.');
+      throw new Error('AI is not available yet — connect Agency Hub in Settings.');
     }
     const req: AiStartRequest = {
       operationId: parsed.operationId,
