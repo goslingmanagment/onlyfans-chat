@@ -18,6 +18,8 @@ import { createSummaryHubHooks } from './summary-hooks';
 import { mapUsagePayloadToHubEvent } from './usage-mapper';
 import { createHubAiGateway } from './ai-gateway';
 import { createFeatureAiGateway } from './ai-feature-gateway';
+import { createAcceptanceReporter, createAcceptanceTracker } from './acceptance-reporter';
+import type { AcceptanceEventInput, AcceptanceReporter, AcceptanceTracker } from './acceptance-reporter';
 import type { AiFeatureGateway, AiGateway } from '../ai/gateway';
 
 export { createPageLabelResolver, PAGE_LIST_CACHE_TTL_MS } from './page-resolver';
@@ -50,6 +52,12 @@ export interface HubModule {
   aiGateway: AiGateway;
   /** Stage 31: the kernel feature-service lane (AI mode 'feature'). */
   aiFeatureGateway: AiFeatureGateway;
+  /** Stage 31: acceptance lifecycle spool (KV-backed; drains when active). */
+  acceptance: AcceptanceReporter;
+  /** Stage 31: inserted-suggestion tracker for the sent/edited signal. */
+  acceptanceTracker: AcceptanceTracker;
+  /** Coordinator onAcceptanceEvent target ('shown'). */
+  onAcceptanceEvent: (event: AcceptanceEventInput) => void;
   /** Stable delegator for C6b text-command intake/status recovery. */
   commandClient: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand' | 'cancelOfapiCommand'>;
   /** Coordinator onUsageEvent target: raw payload → wire event → reporter. */
@@ -76,6 +84,12 @@ export function createHubModule(options: HubModuleOptions): HubModule {
   const store = createSqliteUsageEventStore(data.db);
 
   let active: ActiveHub | null = null;
+  const acceptance = createAcceptanceReporter({
+    data,
+    getClient: () => active?.client ?? null,
+    onWarn,
+  });
+  const acceptanceTracker = createAcceptanceTracker();
   /** Invalidates in-flight reconfigures (config can change mid-await). */
   let generation = 0;
   let disposed = false;
@@ -106,6 +120,10 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         return active.aiGateway.stream(req, cb);
       },
     },
+
+    acceptance,
+    acceptanceTracker,
+    onAcceptanceEvent: (event) => acceptance.enqueue(event),
 
     aiFeatureGateway: {
       stream(req, cb) {
@@ -231,6 +249,7 @@ export function createHubModule(options: HubModuleOptions): HubModule {
 
     dispose() {
       disposed = true;
+      acceptance.dispose();
       teardown();
     },
   };

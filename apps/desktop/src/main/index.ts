@@ -670,6 +670,7 @@ async function rebuildOfapiRuntime(
     featureGateway: nextHub.aiFeatureGateway,
     summaryHub: nextHub.summaryHub,
     onUsageEvent: (event) => nextHub.onUsageEvent(event),
+    onAcceptanceEvent: (event) => nextHub.onAcceptanceEvent(event),
   });
 
   let committed = false;
@@ -1002,6 +1003,18 @@ async function boot(): Promise<void> {
     },
     get coordinator() {
       return coordinator;
+    },
+    get acceptance() {
+      if (hub === null) {
+        return null;
+      }
+      const module = hub;
+      return {
+        enqueue: (event: Parameters<typeof module.acceptance.enqueue>[0]) =>
+          module.acceptance.enqueue(event),
+        trackInserted: module.acceptanceTracker.trackInserted,
+        consumeForSend: module.acceptanceTracker.consumeForSend,
+      };
     },
     get send() {
       return sendEngine;

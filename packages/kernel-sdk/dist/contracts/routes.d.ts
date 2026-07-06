@@ -3868,6 +3868,7 @@ export declare const aiRestrictedGenerationsResponseSchema: z.ZodObject<{
 export declare const aiRestrictedAcceptanceEventSchema: z.ZodObject<{
     lifecycle: z.ZodEnum<{
         shown: "shown";
+        copied: "copied";
         inserted: "inserted";
         edited: "edited";
         sent: "sent";
@@ -3895,6 +3896,7 @@ export declare const aiRestrictedGenerationDetailResponseSchema: z.ZodObject<{
     acceptance: z.ZodArray<z.ZodObject<{
         lifecycle: z.ZodEnum<{
             shown: "shown";
+            copied: "copied";
             inserted: "inserted";
             edited: "edited";
             sent: "sent";
@@ -17169,6 +17171,7 @@ export declare const routeSchemas: {
                 acceptance: z.ZodArray<z.ZodObject<{
                     lifecycle: z.ZodEnum<{
                         shown: "shown";
+                        copied: "copied";
                         inserted: "inserted";
                         edited: "edited";
                         sent: "sent";

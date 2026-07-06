@@ -56,6 +56,9 @@ export interface AiGatewayRequest extends LlmStreamRequest {
 export interface AiGatewayCallbacks extends StreamCallbacks {
   /** Fired exactly once with the full raw text after the stream completes. */
   onComplete: (rawText: string) => void;
+  /** Stage 31: kernel lanes surface the gateway generation ref (meta frame
+   * requestId) — the acceptance correlation anchor. Absent on direct. */
+  onGenerationRef?: (requestId: string) => void;
 }
 
 export interface AiGateway {

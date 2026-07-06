@@ -19,6 +19,8 @@ import type { SpendersRefreshService } from '../spenders/refresh';
 import type { OnlineService } from '../online/service';
 import type { Logger } from '../diagnostics/logger';
 import type { MessageGuardRuntime } from '../message-guard/runtime';
+import { observeSendForAcceptance, reportFeedbackAcceptance } from '../hub/acceptance-reporter';
+import type { AcceptanceSeam } from '../hub/acceptance-reporter';
 import type {
   ActivityVM,
   AiStartRequest,
@@ -330,6 +332,15 @@ export interface AiCoordinatorLike {
   cancel(operationId: string): void;
   conversationOpened(accountId: string, chatId: string): void;
   conversationClosed(accountId: string, chatId: string): void;
+  /** Stage 31: completed-op lookup for acceptance correlation. */
+  getOperationContext?(operationId: string): {
+    operationId: string;
+    requestId: string | null;
+    feature: string;
+    accountId: string;
+    chatId: string;
+    parts: string[];
+  } | null;
 }
 
 export interface IpcDeps {
@@ -339,6 +350,9 @@ export interface IpcDeps {
   sync: ActivitySync | null;
   creditMeter: CreditMeter | null;
   coordinator: AiCoordinatorLike | null;
+  /** Stage 31 acceptance lifecycle: copied/inserted (feedback) and
+   * sent+edited (send-path observer) enqueue here; absent = lane off. */
+  acceptance?: AcceptanceSeam | null;
   /** Null until an OFAPI read transport exists (same lifecycle as sync). */
   send: SendEngine | null;
   /** Synchronous Message Guard runtime; created at DB boot. */
@@ -897,6 +911,20 @@ export function registerIpcHandlers(deps: IpcDeps): void {
         data.aiSpendLog.markInserted(day, payload.feature);
       }
     }
+
+    // Stage 31 acceptance: the same action also rides the capture lane,
+    // correlated through the coordinator's completed-op registry (the
+    // kernel lanes no longer write usage_events rows).
+    const context = deps.coordinator?.getOperationContext?.(args.operationId) ?? null;
+    if (deps.acceptance && context !== null) {
+      reportFeedbackAcceptance(
+        deps.acceptance,
+        context,
+        args.action,
+        args.partIndex ?? null,
+        new Date().toISOString(),
+      );
+    }
   });
 
   // ── Send pipeline (SPEC §7) ──
@@ -915,6 +943,16 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:send.message', (_event, rawArgs: unknown) => {
     const args = sendMessageSchema.parse(rawArgs);
+    // Stage 31 acceptance ('sent'): observe-only by construction — the hook
+    // receives no send engine (see acceptance-reporter.ts); the send call
+    // below is byte-identical either way.
+    if (deps.acceptance) {
+      try {
+        observeSendForAcceptance(deps.acceptance, args, new Date().toISOString());
+      } catch {
+        // Telemetry must never block a send.
+      }
+    }
     return requireSend().sendParts(args);
   });
 

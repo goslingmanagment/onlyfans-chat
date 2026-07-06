@@ -172,6 +172,49 @@ describe('AI feature lane (Stage 31)', () => {
     expect(request.personaKey).toBeUndefined();
   });
 
+  it("emits 'shown' with the generation ref at first token (Stage 31 Task 2)", async () => {
+    const acceptance: Array<Record<string, unknown>> = [];
+    coordinator = createAiCoordinator({
+      data,
+      client: stub.client,
+      settingsStore: makeSettingsStore(makeSettingsVM({ aiGatewayTransport: 'feature' })),
+      keychain: makeKeychain({}),
+      gateway: gateway.gateway,
+      featureGateway: featureGateway.gateway,
+      onAcceptanceEvent: (event) => acceptance.push(event as never),
+    });
+    coordinator.subscribe((event) => frames.push(event));
+    coordinator.start(startRequest());
+    await flushAsync();
+
+    featureGateway.cb?.onGenerationRef?.('gen-abc');
+    featureGateway.cb?.onText('hey');
+    await vi.advanceTimersByTimeAsync(STREAM_CHUNK_FLUSH_MS);
+    featureGateway.cb?.onComplete('hey');
+    await flushAsync();
+
+    expect(acceptance).toHaveLength(1);
+    expect(acceptance[0]).toMatchObject({
+      operationId: 'op-1',
+      requestId: 'gen-abc',
+      feature: 'fast-reply',
+      action: 'shown',
+      accountId: ACCT,
+      conversationId: CHAT,
+    });
+
+    // The completed-op registry serves the acceptance IPC path after settle.
+    const context = coordinator.getOperationContext('op-1');
+    expect(context).toMatchObject({
+      operationId: 'op-1',
+      requestId: 'gen-abc',
+      feature: 'fast-reply',
+      accountId: ACCT,
+      chatId: CHAT,
+    });
+    expect(context?.parts).toEqual(['hey']);
+  });
+
   it('cancel reaches the feature stream', async () => {
     build();
     coordinator.start(startRequest());

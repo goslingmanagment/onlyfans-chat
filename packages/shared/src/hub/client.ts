@@ -247,6 +247,9 @@ export interface HubAiGatewayStreamCallbacks {
   onProgress?: () => void;
   onReasoningDelta?: (text: string) => void;
   onStopReason?: (stopReason: string | null) => void;
+  /** Stage 31: the gateway meta frame — requestId is the generation ref
+   * (the acceptance correlation key kernel-side). */
+  onMeta?: (meta: { requestId: string; clientRequestId: string }) => void;
 }
 
 type AiGatewayUsageFrame = Extract<AiGatewayStreamFrame, { type: 'usage' }>;
@@ -560,6 +563,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
           callbacks.onProgress?.();
           switch (frame.type) {
             case 'meta':
+              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId });
               return;
             case 'content_delta':
               state.rawText += frame.text;
@@ -629,6 +633,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
           callbacks.onProgress?.();
           switch (frame.type) {
             case 'meta':
+              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId });
               return;
             case 'content_delta':
               state.rawText += frame.text;

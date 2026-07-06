@@ -133,11 +133,36 @@ export interface AiCoordinatorDeps {
    * table write stays the persistence — this hook is delivery only.
    */
   onUsageEvent?: (event: UsageEventRecord) => void;
+  /** Stage 31: acceptance lifecycle delivery ('shown' fires here; the IPC
+   * layer emits copied/inserted/sent through the same reporter). */
+  onAcceptanceEvent?: (event: {
+    operationId: string;
+    requestId: string | null;
+    feature: string;
+    action: 'shown';
+    accountId: string;
+    conversationId: string;
+    at: string;
+  }) => void;
+}
+
+export interface CompletedOperationContext {
+  operationId: string;
+  requestId: string | null;
+  feature: OperationFeature;
+  accountId: string;
+  chatId: string;
+  /** Sanitized result parts (reply features) — the sent/edited comparison
+   * and feedback correlation read these; empty for analysis features. */
+  parts: string[];
 }
 
 export interface AiCoordinator {
   start(req: AiStartRequest): void;
   cancel(operationId: string): void;
+  /** Stage 31: bounded registry of recently completed operations — the
+   * acceptance IPC path correlates feedback/sends after ops settle. */
+  getOperationContext(operationId: string): CompletedOperationContext | null;
   conversationOpened(accountId: string, chatId: string): void;
   conversationClosed(accountId: string, chatId: string): void;
   subscribe(listener: (event: OperationEvent) => void): () => void;
@@ -232,6 +257,8 @@ interface OperationState {
   chunkTimer: ReturnType<typeof setTimeout> | null;
   startedAtMs: number;
   aiGatewayTransport: AiGatewayTransport;
+  /** Gateway generation ref (meta frame requestId); kernel lanes only. */
+  generationRef: string | null;
   /** Set only on a fan-summary cache miss; null for every other feature. */
   summarySeed: SummaryCacheSeed | null;
 }
@@ -431,6 +458,34 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     }
   }
 
+  // Stage 31: bounded registry of completed operations (acceptance
+  // correlation after settle). Insertion-ordered Map, oldest evicted.
+  const completedOps = new Map<string, CompletedOperationContext>();
+  const COMPLETED_OPS_CAP = 50;
+
+  function rememberCompleted(op: OperationState, result: FeatureResultPayload): void {
+    const parts = Array.isArray((result as { parts?: unknown }).parts)
+      ? ((result as { parts: unknown[] }).parts.filter(
+          (part): part is string => typeof part === 'string',
+        ))
+      : [];
+    completedOps.set(op.operationId, {
+      operationId: op.operationId,
+      requestId: op.generationRef,
+      feature: op.feature,
+      accountId: op.accountId,
+      chatId: op.chatId,
+      parts,
+    });
+    while (completedOps.size > COMPLETED_OPS_CAP) {
+      const oldest = completedOps.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      completedOps.delete(oldest);
+    }
+  }
+
   function settleComplete(op: OperationState, rawText: string): void {
     if (!beginSettle(op)) {
       return;
@@ -456,6 +511,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
 
     const spend = op.usage !== null ? trySpendSummary(op.modelId, op.usage) : undefined;
     recordUsageEvent(op, spend);
+    rememberCompleted(op, result);
 
     const profiling = op.profiler.snapshot();
     emit({
@@ -1002,6 +1058,11 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
           op.timeouts.providerActivity();
         }
       },
+      onGenerationRef: (requestId: string) => {
+        if (!op.settled) {
+          op.generationRef = requestId;
+        }
+      },
       onText: (text: string) => {
         if (op.settled) {
           return;
@@ -1012,6 +1073,20 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
           op.ttfbStage = null;
           op.streamStage = op.profiler.stage('llm-stream');
           op.timeouts.firstChunk();
+          // Stage 31 acceptance: first token rendered = 'shown'.
+          try {
+            deps.onAcceptanceEvent?.({
+              operationId: op.operationId,
+              requestId: op.generationRef,
+              feature: op.feature,
+              action: 'shown',
+              accountId: op.accountId,
+              conversationId: op.chatId,
+              at: new Date().toISOString(),
+            });
+          } catch {
+            // Telemetry must never break a stream.
+          }
         } else {
           op.timeouts.chunk();
         }
@@ -1088,6 +1163,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         chunkTimer: null,
         startedAtMs: Date.now(),
         aiGatewayTransport: 'direct',
+        generationRef: null,
         summarySeed: null,
       };
 
@@ -1108,6 +1184,10 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       if (op !== undefined) {
         discard(op, 'cancelled');
       }
+    },
+
+    getOperationContext(operationId) {
+      return completedOps.get(operationId) ?? null;
     },
 
     conversationOpened(_accountId, _chatId) {

@@ -71,6 +71,7 @@ export function createHubAiGateway(options: HubAiGatewayOptions): AiGateway {
               onReasoningDelta: (text) => cb.onReasoningDelta?.(text),
               onStopReason: (stopReason) => cb.onStopReason?.(stopReason),
               onUsage: (usage) => cb.onUsage?.(usage),
+              onMeta: (meta) => cb.onGenerationRef?.(meta.requestId),
               onText: (text) => cb.onText(text),
             },
           );
