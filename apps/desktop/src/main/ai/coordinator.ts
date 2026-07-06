@@ -75,9 +75,11 @@ export interface SummaryHubHooks {
 }
 
 /**
- * Raw usage payload — exactly what recordUsageEvent persists to usage_events
- * and hands to the optional onUsageEvent hook. Field names follow the LLM
- * usage metrics (cacheCreationInputTokens…), not core's wire contract; the hub
+ * Legacy usage_events payload shape (drain era). Stage 31: the coordinator no
+ * longer writes these — the type survives so the hub module can keep mapping
+ * and flushing rows PARKED by pre-cutover releases (one-release drain; the
+ * diagnostics export counts what is left). Field names follow the LLM usage
+ * metrics (cacheCreationInputTokens…), not core's wire contract; the hub
  * module owns the mapping (src/main/hub/usage-mapper.ts). `chatId` is the raw
  * OnlyFans id (`chat_id === fan.id`) backing core's conversationId.
  */
@@ -600,11 +602,6 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     };
   }
 
-  /**
-   * usage_events row, pending the P4 hub flush (dedupe key = clientEventId =
-   * operationId) — PLUS the durable ai_spend_log daily counters the Activity
-   * panel aggregates (usage_events drains once the hub is configured).
-   */
   /** Stage 31: the gateway ledger is authoritative — no local usage_events
    * row, no client-reported delivery. ai_spend_log keeps feeding the local
    * Activity panel from the gateway-reported cost. */

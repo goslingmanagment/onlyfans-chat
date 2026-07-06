@@ -219,7 +219,8 @@ export interface ActivityVM {
     pendingSummaries: number;
     syncedSummariesToday: number;
   };
-  ai: { hasAnthropicKey: boolean; hasOpenRouterKey: boolean };
+  /** Stage 31: AI rides the kernel gateway; configured = hub transport up. */
+  ai: { gatewayConfigured: boolean };
   /** Today's outbox transitions (UTC). */
   sends: { sent: number; failed: number; unconfirmed: number };
   credits: {
@@ -330,8 +331,6 @@ export interface UnreadReconcileSettingsVM {
 }
 
 export interface SettingsVM {
-  hasAnthropicKey: boolean;
-  hasOpenRouterKey: boolean;
   hasHubKey: boolean;
   featureModels: Record<ModelSelectableFeature, string>;
   featureReasoning: Record<ModelSelectableFeature, ReasoningEffort>;
@@ -440,12 +439,11 @@ export interface KeyMetaEntry {
 }
 
 export interface KeyMetaVM {
-  anthropic: KeyMetaEntry | null;
-  openRouter: KeyMetaEntry | null;
   hub: KeyMetaEntry | null;
 }
 
-export type KeyTestProvider = 'anthropic' | 'openrouter' | 'hub';
+/** Stage 31: vendor keys retired — the hub connection is the only probe left. */
+export type KeyTestProvider = 'hub';
 
 /** Result of the one-time hub device-token sign-in (Stage 24). Never carries the token. */
 export interface HubDeviceTokenResultVM {
@@ -525,10 +523,8 @@ export interface AiFeatureCostsVM {
 }
 
 export type SettingsPatch = Partial<
-  Omit<SettingsVM, 'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey' | 'hasHubDeviceToken' | 'keyMeta'>
+  Omit<SettingsVM, 'hasHubKey' | 'hasHubDeviceToken' | 'keyMeta'>
 > & {
-  anthropicKey?: string;
-  openRouterKey?: string;
   /** Chatter key (`agency_hub_core_…`) — write-only into the keychain. */
   hubApiKey?: string;
 };

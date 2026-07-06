@@ -250,19 +250,14 @@ function HubRow({ vm, t }: { vm: ActivityVM; t: UiTranslator }): React.JSX.Eleme
 }
 
 function AiRow({ vm, t }: { vm: ActivityVM; t: UiTranslator }): React.JSX.Element {
-  const configured = vm.ai.hasAnthropicKey || vm.ai.hasOpenRouterKey;
-  const provider = vm.ai.hasAnthropicKey ? 'Anthropic' : 'OpenRouter';
+  const configured = vm.ai.gatewayConfigured;
   return (
     <FlowRow label={t('activity.rowAi')}>
       <Dot on={configured} />
       {configured ? (
         <>
-          <Badge>DIRECT</Badge>{' '}
-          <span className="text-ink-mid">
-            {vm.mode === 'hub-live'
-              ? t('activity.aiDirectHubLive', { provider })
-              : t('activity.aiDirect', { provider })}
-          </span>
+          <Badge>KERNEL</Badge>{' '}
+          <span className="text-ink-mid">{t('activity.aiKernel')}</span>
         </>
       ) : (
         <>

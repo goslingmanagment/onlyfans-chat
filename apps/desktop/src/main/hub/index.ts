@@ -64,7 +64,9 @@ export interface HubModule {
   onAcceptanceEvent: (event: AcceptanceEventInput) => void;
   /** Stable delegator for C6b text-command intake/status recovery. */
   commandClient: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand' | 'cancelOfapiCommand'>;
-  /** Coordinator onUsageEvent target: raw payload → wire event → reporter. */
+  /** DRAIN-ONLY (Stage 31): nothing calls this post-cutover — the coordinator
+   * stopped writing usage_events. It stays one release so rows parked by
+   * pre-cutover versions still map and flush; remove with the drain lane. */
   onUsageEvent: (event: UsageEventRecord) => void;
   /** Page-scoped core OFAPI spend summary for Activity/diagnostics; null when hub is off/unreachable. */
   getOfapiCreditsSummary(): Promise<HubOfapiCreditsSummary | null>;
@@ -236,6 +238,10 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         getAccountUsername: (accountId) => data.accounts.get(accountId)?.username ?? null,
         getOverrides: async () => (await settingsStore.get()).accountPageLabels,
       });
+      // Stage 31 drain mode: no producer remains (the kernel gateway ledger is
+      // authoritative); the reporter only flushes usage_events rows parked by
+      // pre-cutover releases. Planned removal once the fleet's diagnostics
+      // show the drain counter at zero (§5).
       const reporter = createUsageReporter({
         client,
         store,

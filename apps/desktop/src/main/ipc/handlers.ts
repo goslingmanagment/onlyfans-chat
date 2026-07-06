@@ -51,8 +51,9 @@ import {
 } from './viewmodels';
 
 const idSchema = z.string().min(1).max(64);
+// Stage 31: vendor keys retired — only the hub connection probe remains.
 const keysTestSchema = z.object({
-  provider: z.enum(['anthropic', 'openrouter', 'hub']),
+  provider: z.literal('hub'),
 });
 const hubIssueDeviceTokenSchema = z.object({
   username: z.string().min(1).max(120),
@@ -583,10 +584,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       sync: deps.sync,
       creditMeter: deps.creditMeter,
       coreCredits,
-      aiKeys: {
-        hasAnthropicKey: settings.hasAnthropicKey,
-        hasOpenRouterKey: settings.hasOpenRouterKey,
-      },
+      // Stage 31: AI is the kernel feature lane — configured = hub transport up.
+      ai: { gatewayConfigured: settings.hubBaseUrl !== null && settings.hasHubKey },
     });
   });
 

@@ -26,6 +26,7 @@ import { createHarvestModule, type HarvestModule } from './harvest/index';
 import { createHubClient } from '@chatgoose/shared/hub/index';
 import { createLogger, type Logger } from './diagnostics/logger';
 import { buildDiagnosticsReport } from './diagnostics/report';
+import { runKeyTest } from './diagnostics/key-tests';
 import { auditOutbox } from './send/audit';
 import { createSettingsStore, type SettingsStore } from './settings/store';
 import {
@@ -804,15 +805,16 @@ async function boot(): Promise<void> {
     secretsDir: join(userData, 'secrets'),
   });
 
-  // Stage 24 / DP 8: the team-wide direct-read OFAPI key is decommissioned —
-  // deleted on boot, deliberately unrecoverable by version rollback.
+  // Stage 24 / DP 8: the team-wide direct-read OFAPI key; Stage 31: the local
+  // anthropic/openrouter vendor keys (generation rides the kernel gateway).
+  // Deleted on boot, deliberately unrecoverable by version rollback.
   await keychain.deleteDecommissionedSecrets();
 
   // Mirror the live secret values into the log redactor + the export's final
   // pass. Refreshed on every settings write (a key save also writes its keyMeta
   // fingerprint, so it fires the settings bus event below).
   const refreshRedactionSecrets = async (): Promise<void> => {
-    const names: SecretName[] = ['anthropicKey', 'openRouterKey', 'hubApiKey', 'hubDeviceToken'];
+    const names: SecretName[] = ['hubApiKey', 'hubDeviceToken'];
     const values = await Promise.all(names.map((name) => keychain.getSecret(name)));
     redactionSecrets = values.filter((value): value is string => typeof value === 'string' && value.length > 0);
     logger?.setRedactionSecrets(redactionSecrets);
@@ -1077,6 +1079,7 @@ async function boot(): Promise<void> {
         updateStatusVM(updateController ? await updateController.check() : null),
       install: () => updateController?.install(),
     },
+    testKey: (provider) => runKeyTest(provider, { keychain, settingsStore }),
     // Stage 24: one-time device-token sign-in (Settings → Hub). The token
     // lands in the keychain; the config recheck swings every hub consumer
     // (REST, SSE, read gateway) onto it without a restart.
@@ -1249,6 +1252,10 @@ async function boot(): Promise<void> {
                 summaries: countRows('summaries'),
                 outbox: countRows('outbox'),
                 messageGuardEvents: countRows('message_guard_events'),
+                // Stage 31 drain watch: legacy usage_events parked for core.
+                // The old reporter keeps flushing for one release; §5 exit
+                // criterion is this count reaching (and staying at) zero.
+                usageEvents: countRows('usage_events'),
               },
             },
             outboxAudit: audit

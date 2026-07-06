@@ -144,7 +144,7 @@ describe('buildActivitySummary', () => {
       data,
       sync: fakeSync(),
       creditMeter: fakeMeter(96_246, 4_969),
-      aiKeys: { hasAnthropicKey: true, hasOpenRouterKey: false },
+      ai: { gatewayConfigured: true },
       now: () => NOW,
     });
 
@@ -191,7 +191,7 @@ describe('buildActivitySummary', () => {
     expect(vm.aiSpend.sevenDayUsd).toBe(0.122);
 
     expect(vm.sends).toEqual({ sent: 2, failed: 1, unconfirmed: 0 });
-    expect(vm.ai).toEqual({ hasAnthropicKey: true, hasOpenRouterKey: false });
+    expect(vm.ai).toEqual({ gatewayConfigured: true });
   });
 
   it('does not label the top AI run when fan ids collide across accounts', () => {
@@ -229,7 +229,7 @@ describe('buildActivitySummary', () => {
       data,
       sync: fakeSync(),
       creditMeter: null,
-      aiKeys: { hasAnthropicKey: false, hasOpenRouterKey: false },
+      ai: { gatewayConfigured: false },
       now: () => NOW,
     });
 
@@ -285,7 +285,7 @@ describe('buildActivitySummary', () => {
         }),
       }),
       creditMeter: fakeMeter(null, null),
-      aiKeys: { hasAnthropicKey: true, hasOpenRouterKey: false },
+      ai: { gatewayConfigured: true },
       now: () => NOW,
     });
 
@@ -337,7 +337,7 @@ describe('buildActivitySummary', () => {
         }),
       }),
       creditMeter: fakeMeter(null, null),
-      aiKeys: { hasAnthropicKey: true, hasOpenRouterKey: false },
+      ai: { gatewayConfigured: true },
       now: () => NOW,
     });
 
@@ -350,7 +350,7 @@ describe('buildActivitySummary', () => {
       data,
       sync: null,
       creditMeter: null,
-      aiKeys: { hasAnthropicKey: false, hasOpenRouterKey: false },
+      ai: { gatewayConfigured: false },
       now: () => NOW,
     });
     expect(vm.mode).toBe('polling');

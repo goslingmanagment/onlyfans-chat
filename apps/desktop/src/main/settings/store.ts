@@ -63,7 +63,7 @@ const PROD_HUB_ORIGIN = new URL(DEFAULT_AGENCY_HUB_BASE_URL).origin;
 
 export type PersistedSettings = Omit<
   SettingsVM,
-  'hasAnthropicKey' | 'hasOpenRouterKey' | 'hasHubKey' | 'hasHubDeviceToken' | 'keyMeta'
+  'hasHubKey' | 'hasHubDeviceToken' | 'keyMeta'
 >;
 
 export const PERSISTED_SETTINGS_KEYS = [
@@ -313,9 +313,10 @@ export const settingsPatchSchema = z.strictObject({
   uiLocale: persistedFieldSchemas.uiLocale.optional(),
   uiScale: persistedFieldSchemas.uiScale.optional(),
   uiTheme: persistedFieldSchemas.uiTheme.optional(),
-  // Secret material: routed to the keychain, never stored in the settings table.
-  anthropicKey: z.string().optional(),
-  openRouterKey: z.string().optional(),
+  // Secret material: routed to the keychain, never stored in the settings
+  // table. Stage 31: vendor keys (anthropicKey/openRouterKey) are gone — the
+  // kernel gateway holds provider credentials; the strict schema rejects any
+  // patch still carrying them (renderer and main ship in lockstep).
   hubApiKey: z.string().optional(),
 });
 
@@ -331,17 +332,15 @@ const keyMetaEntrySchema = z.object({
   setAt: z.number().int().nonnegative(),
 });
 
+// Stage 31: hub only — persisted rows may still carry stale anthropic/
+// openRouter entries; zod's default strip mode drops them on read.
 const keyMetaSchema = z.object({
-  anthropic: keyMetaEntrySchema.nullable(),
-  openRouter: keyMetaEntrySchema.nullable(),
   hub: keyMetaEntrySchema.nullable(),
 });
 
-const EMPTY_KEY_META: KeyMetaVM = { anthropic: null, openRouter: null, hub: null };
+const EMPTY_KEY_META: KeyMetaVM = { hub: null };
 
 const SECRET_META_KEYS: Partial<Record<SecretName, keyof KeyMetaVM>> = {
-  anthropicKey: 'anthropic',
-  openRouterKey: 'openRouter',
   hubApiKey: 'hub',
 };
 
@@ -455,15 +454,11 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
   }
 
   async function buildVm(): Promise<SettingsVM> {
-    const [hasAnthropicKey, hasOpenRouterKey, hasHubKey, hasHubDeviceToken] = await Promise.all([
-      secrets.hasSecret('anthropicKey'),
-      secrets.hasSecret('openRouterKey'),
+    const [hasHubKey, hasHubDeviceToken] = await Promise.all([
       secrets.hasSecret('hubApiKey'),
       secrets.hasSecret('hubDeviceToken'),
     ]);
     return {
-      hasAnthropicKey,
-      hasOpenRouterKey,
       hasHubKey,
       hasHubDeviceToken,
       keyMeta: readKeyMeta(),
@@ -492,10 +487,6 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       const before = readPersisted();
 
 
-      if (parsed.anthropicKey !== undefined) await applySecret('anthropicKey', parsed.anthropicKey);
-      if (parsed.openRouterKey !== undefined) {
-        await applySecret('openRouterKey', parsed.openRouterKey);
-      }
       if (parsed.hubApiKey !== undefined) await applySecret('hubApiKey', parsed.hubApiKey);
       if (
         parsed.hubBaseUrl !== undefined &&
