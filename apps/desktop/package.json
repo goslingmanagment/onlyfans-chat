@@ -1,7 +1,7 @@
 {
   "name": "@chatgoose/desktop",
   "private": true,
-  "version": "0.1.29",
+  "version": "0.1.30",
   "description": "ChatGoose Desktop \u2014 Electron app",
   "author": "ChatGoose",
   "type": "module",
