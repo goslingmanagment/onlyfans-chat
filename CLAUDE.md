@@ -11,7 +11,7 @@ Desktop chat client for OnlyFans agency chatters with built-in AI assistance (re
 | `docs/decisions.md` | This repo's decision log (D1–D5 quick-ref) + the family law; cross-repo rulings live in core's log and are referenced by number |
 | `docs/generated/` | Regenerated post-migration codebase maps (Stage 35) — machine-generated, banner says how to regenerate; the Pass 1 originals in `docs/project-kernel/` are superseded history |
 | `docs/PRD.md` | What we're building, for whom, feature requirements, UX principles, risks |
-| `docs/SPEC.md` | Architecture, stack, security model, sync/send/AI design, invariants (§15) |
+| `docs/SPEC.md` | Architecture, stack, security model, sync/send/AI design, invariants (§15) — §6.2 and §8.6 carry SUPERSEDED banners (stream v2 + kernel-only AI shipped); when SPEC and `docs/decisions.md`/`docs/generated/` disagree, the latter win |
 | `docs/PLAN.md` | Phase order, exit criteria, current next actions |
 | `docs/DESIGN.md` | UI/UX brief: workspace anatomy, hotkeys, **performance-engineering checklist (review-blocking for renderer PRs)**, visual direction |
 | `docs/research/legacy-chatgoose.md` | Complete behavioral inventory of the predecessor (features, prompts, exact constants/timeouts, lessons). Normative for ported behavior |
