@@ -207,9 +207,21 @@ export declare const kernelOperations: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/pages/:pageLabel/verify";
     };
+    readonly aiFeatureStream: {
+        readonly method: "POST";
+        readonly path: "/api/v1/ai/features/:feature";
+    };
     readonly aiGatewayStream: {
         readonly method: "POST";
         readonly path: "/api/v1/ai/gateway/stream";
+    };
+    readonly aiRestrictedGenerationDetail: {
+        readonly method: "GET";
+        readonly path: "/api/v1/ai/restricted/generations/:generationRef";
+    };
+    readonly aiRestrictedGenerations: {
+        readonly method: "GET";
+        readonly path: "/api/v1/ai/restricted/generations";
     };
     readonly aiUsageBatch: {
         readonly method: "POST";

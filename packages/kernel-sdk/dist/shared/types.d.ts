@@ -58,7 +58,7 @@ export declare const creatableUserRoles: readonly ["owner", "team_lead", "chatte
 export type CreatableUserRole = (typeof creatableUserRoles)[number];
 export declare const fanFlagTypes: readonly ["whale", "vip", "risky"];
 export type FanFlagType = (typeof fanFlagTypes)[number];
-export declare const aiUsageFeatures: readonly ["fast-reply", "improve-draft", "help-me", "fan-summary", "chat-review", "scan", "ping", "hi-greeting"];
+export declare const aiUsageFeatures: readonly ["fast-reply", "improve-draft", "help-me", "fan-summary", "chat-review", "scan", "ping", "hi-greeting", "workboard-closing"];
 export type AiUsageFeature = (typeof aiUsageFeatures)[number];
 export interface FanslySessionBundle {
     authorization: string;
