@@ -1,3 +1,7 @@
+> **SUPERSEDED (Stage 35, 2026-07-07):** this is the Pass 1 (pre-migration)
+> codebase map, kept as the migration's historical record. The regenerated
+> post-migration maps live in `docs/generated/` in this repo.
+
 # Stage 11 wire contract — desktop capture uploader (3c input, fixed by core)
 
 Written 2026-07-05 by the core Stage 11 build session. This is the §2 desktop

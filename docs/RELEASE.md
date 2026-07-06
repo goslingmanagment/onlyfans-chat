@@ -127,3 +127,12 @@ authorized deploy key, the Let's Encrypt cert) is reproduced by
 3. Launch the app a second time while it runs ⇒ no second window; the existing
    one is focused (single-instance lock).
 4. Windows additionally: full helper checklist in `docs/WINDOWS-VERIFICATION.md`.
+
+## Post-publish assert (Stage 35)
+
+The windows-build workflow's publish path ends with a checked step: the SERVED
+feed `latest.yml` version must equal `apps/desktop/package.json` and (on tag
+builds) the `v*` tag. A mismatch fails the run — the feed never silently
+serves a version that isn't the release you think you shipped. Recovery path
+if it fires: the stage-04 artifact-diff ritual (compare the served installer
+and manifest against the run's artifacts, re-upload latest.yml LAST).
