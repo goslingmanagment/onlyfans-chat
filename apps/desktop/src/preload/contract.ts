@@ -379,7 +379,7 @@ export interface SettingsVM {
    * AI generation transport. `direct` uses local provider keys; `hub` streams
    * through core's default-off AI gateway with DirectGateway as the rollback.
    */
-  aiGatewayTransport: 'direct' | 'hub' | 'feature';
+  aiGatewayTransport: 'feature';
   /** Dev/support-only sync override. Default 'auto'; non-auto persists across restarts. */
   hubModeOverride: HubModeOverrideSetting;
   /** Stage 24: a device-bound hub token is stored (preferred over the chatter key). */

@@ -17103,6 +17103,31 @@ export declare const routeSchemas: {
             }, z.core.$strip>;
         };
     };
+    readonly aiPersonaArchive: {
+        readonly auth: {
+            readonly kind: "apiKey";
+        };
+        readonly tags: readonly ["usage"];
+        readonly summary: "Archive a kernel AI persona (soft retire)";
+        readonly params: z.ZodObject<{
+            key: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                archived: z.ZodBoolean;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
     readonly aiFeatureStream: {
         readonly auth: {
             readonly kind: "apiKey";

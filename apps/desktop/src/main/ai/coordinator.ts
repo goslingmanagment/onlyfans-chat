@@ -12,27 +12,12 @@
 // must not add a second retry layer on top.
 
 import { z } from 'zod';
-import {
-  DEFAULT_FEATURE_MODELS,
-  DEFAULT_FEATURE_REASONING,
-  HI_GREETING_MAX_TRANSCRIPT,
-  HI_GREETING_MESSAGE_COUNT,
-  STREAM_CHUNK_FLUSH_MS,
-} from '@chatgoose/shared/constants';
-import {
-  getFeaturePolicy,
-  isDeepFeature,
-  resolveFeatureModelFeature,
-} from '@chatgoose/shared/features';
+import { STREAM_CHUNK_FLUSH_MS } from '@chatgoose/shared/constants';
+import { getFeaturePolicy } from '@chatgoose/shared/features';
 import type { OperationFeature } from '@chatgoose/shared/features';
 import { CgError, toUserFacing } from '@chatgoose/shared/errors/index';
 import type { UserFacingError } from '@chatgoose/shared/errors/index';
-import { getModelEntry } from '@chatgoose/shared/llm/model-registry';
-import { buildLlmSpendSummary } from '@chatgoose/shared/llm/cost';
-import type { LlmUsageMetrics } from '@chatgoose/shared/llm/sse';
-import { buildPrompt, stripPromptCache } from '@chatgoose/shared/prompts/builder';
-import type { PromptBlock } from '@chatgoose/shared/prompts/builder';
-import { createBundledPersonalities } from '@chatgoose/shared/prompts/personalities';
+import type { LlmUsageMetrics } from '@chatgoose/shared/usage-metrics';
 import {
   normalizeReplyParts,
   normalizeSingleReplyPart,
@@ -41,8 +26,7 @@ import {
 import { parseChatReviewXml, parseHelpMeXml } from '@chatgoose/shared/output/xml';
 import { isValidSummaryCacheEntry } from '@chatgoose/shared/summary/validity';
 import type { SummaryCacheEntry } from '@chatgoose/shared/summary/validity';
-import { analyzePingSegment, formatTranscript } from '@chatgoose/shared/transcript/index';
-import type { FeatureType, Personality, PingSegment, ReplyMode, ReplyTone } from '@chatgoose/shared/types';
+import type { FeatureType, ReplyMode, ReplyTone } from '@chatgoose/shared/types';
 import {
   replyModeSchema,
   replyToneSchema,
@@ -56,13 +40,8 @@ import type {
 } from '@chatgoose/shared/protocol/index';
 import type { AiStartRequest, SettingsVM } from '../../preload/contract';
 import type { DataLayer } from '../db/index';
-import type { OfApiClient } from '../ofapi/client';
 import type { SettingsStore } from '../settings/store';
-import type { Keychain, SecretName } from '../secrets/keychain';
-import { createDirectGateway } from './gateway';
-import type { AiFeatureGateway, AiGateway, AiGatewayTransport, CancelFn } from './gateway';
-import { createContextLoader } from './context-loader';
-import type { ContextLoader } from './context-loader';
+import type { AiFeatureGateway, CancelFn } from './gateway';
 import { createOperationProfiler, NO_OP_PROFILER } from './profiler';
 import type { OperationProfiler, ProfilerStageHandle } from './profiler';
 import { createStagedTimeouts } from './timeouts';
@@ -120,11 +99,8 @@ export interface UsageEventRecord {
 
 export interface AiCoordinatorDeps {
   data: DataLayer;
-  client: OfApiClient;
   settingsStore: SettingsStore;
-  keychain: Keychain;
-  gateway?: AiGateway;
-  /** Stage 31: the kernel feature-service lane (transport 'feature'). */
+  /** Stage 31: the kernel feature-service lane — the ONLY generation lane. */
   featureGateway?: AiFeatureGateway;
   summaryHub?: SummaryHubHooks;
   /**
@@ -132,7 +108,6 @@ export interface AiCoordinatorDeps {
    * written so fresh events reach the hub usage reporter immediately. The
    * table write stays the persistence — this hook is delivery only.
    */
-  onUsageEvent?: (event: UsageEventRecord) => void;
   /** Stage 31: acceptance lifecycle delivery ('shown' fires here; the IPC
    * layer emits copied/inserted/sent through the same reporter). */
   onAcceptanceEvent?: (event: {
@@ -171,6 +146,12 @@ export interface AiCoordinator {
 
 // ─── Trust-boundary schema (IPC args may be anything at runtime) ─────────
 
+/** Stage 31: summary-cache key sentinels — persona content and model live
+ * kernel-side; a persona edit no longer invalidates the local summary cache
+ * (refresh regenerates; recorded trade). */
+const KERNEL_MODEL_ID = 'kernel';
+const KERNEL_PERSONA_UPDATED_AT = 0;
+
 const FEATURE_TYPES = [
   'fast-reply',
   'improve-draft',
@@ -204,16 +185,6 @@ const operationIdOnlySchema = z.object({ operationId: z.string().min(1) });
  */
 export const PERSONALITIES_SETTINGS_KEY = 'personalities';
 
-const personalityListSchema = z.array(
-  z.object({
-    id: z.string().min(1),
-    name: z.string(),
-    content: z.string().min(1),
-    updatedAt: z.number(),
-    builtin: z.boolean().optional(),
-    builtinVersion: z.number().optional(),
-  }),
-);
 
 // ─── Internal operation state ─────────────────────────────────────────────
 
@@ -250,14 +221,12 @@ interface OperationState {
   ttfbStage: ProfilerStageHandle | null;
   streamStage: ProfilerStageHandle | null;
   settled: boolean;
-  modelId: string;
   usage: LlmUsageMetrics | null;
   sawFirstChunk: boolean;
   chunkBuffer: string;
   chunkTimer: ReturnType<typeof setTimeout> | null;
   startedAtMs: number;
-  aiGatewayTransport: AiGatewayTransport;
-  /** Gateway generation ref (meta frame requestId); kernel lanes only. */
+  /** Gateway generation ref (meta frame requestId). */
   generationRef: string | null;
   /** Set only on a fan-summary cache miss; null for every other feature. */
   summarySeed: SummaryCacheSeed | null;
@@ -292,22 +261,6 @@ function compareDeferredError(feature: FeatureType): UserFacingErrorPayload {
     message: `${feature} arrives in P4.`,
     description: 'This feature is not available yet in this build.',
   };
-}
-
-function resolveMessageCount(feature: OperationFeature, settings: SettingsVM): number {
-  switch (getFeaturePolicy(feature).messageCountBucket) {
-    case 'deep':
-      return settings.deepMessageCount;
-    case 'ping':
-      return settings.pingMessageCount;
-    case 'improve':
-      return settings.improveMessageCount;
-    case 'hi':
-      // Fixed at one API page; deliberately not a user setting (research §1.1).
-      return HI_GREETING_MESSAGE_COUNT;
-    case 'quick':
-      return settings.quickMessageCount;
-  }
 }
 
 /** Sanitizer/XML result pipeline (runs only on the complete raw text — never on partials). */
@@ -352,8 +305,6 @@ export function buildFeatureResult(
 // ─── Coordinator ──────────────────────────────────────────────────────────
 
 export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
-  const gateway = deps.gateway ?? createDirectGateway({ keychain: deps.keychain });
-  const loader: ContextLoader = createContextLoader({ data: deps.data, client: deps.client });
 
   const listeners = new Set<(event: OperationEvent) => void>();
   const byConversation = new Map<string, OperationState>();
@@ -509,7 +460,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       pushFanSummary(op, rawText, generatedAt);
     }
 
-    const spend = op.usage !== null ? trySpendSummary(op.modelId, op.usage) : undefined;
+    const spend = op.usage !== null ? trySpendSummary(op.usage) : undefined;
     recordUsageEvent(op, spend);
     rememberCompleted(op, result);
 
@@ -541,7 +492,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       generatedAt,
       spendingVerified: true,
       subscriptionVerified: true,
-      modelId: op.modelId,
+      modelId: KERNEL_MODEL_ID,
     };
     try {
       // summaries.put publishes the 'summaries' bus event → fan panel refresh.
@@ -624,15 +575,29 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     });
   }
 
-  function trySpendSummary(
-    modelId: string,
-    usage: LlmUsageMetrics,
-  ): ReturnType<typeof buildLlmSpendSummary> | undefined {
-    try {
-      return buildLlmSpendSummary(modelId, usage);
-    } catch {
-      return undefined; // unknown model pricing — spend stays absent, never fatal
+  /** Stage 31: spend comes from the gateway usage frame (cost_micro_usd) —
+   * the local price tables died with llm/. Absent cost = absent spend. */
+  function trySpendSummary(usage: LlmUsageMetrics) {
+    if (typeof usage.cost_micro_usd !== 'number') {
+      return undefined;
     }
+    const totalUsd = usage.cost_micro_usd / 1_000_000;
+    return {
+      totalTokens:
+        usage.input_tokens + usage.cache_creation_input_tokens +
+        usage.cache_read_input_tokens + usage.output_tokens,
+      inputTokens: usage.input_tokens,
+      cacheWriteTokens: usage.cache_creation_input_tokens,
+      cacheReadTokens: usage.cache_read_input_tokens,
+      outputTokens: usage.output_tokens,
+      totalUsd,
+      uncachedUsd: totalUsd,
+      cacheEffectUsd: 0,
+      cacheEffectKind: 'neutral' as const,
+      cacheWriteUsd: 0,
+      cacheReadUsd: 0,
+      approximate: true,
+    };
   }
 
   /**
@@ -640,118 +605,44 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
    * operationId) — PLUS the durable ai_spend_log daily counters the Activity
    * panel aggregates (usage_events drains once the hub is configured).
    */
+  /** Stage 31: the gateway ledger is authoritative — no local usage_events
+   * row, no client-reported delivery. ai_spend_log keeps feeding the local
+   * Activity panel from the gateway-reported cost. */
   function recordUsageEvent(
     op: OperationState,
     spend: { totalTokens: number; totalUsd: number } | undefined,
     flags: { isCacheHit?: boolean } = {},
   ): void {
     const usage = op.usage;
-    const payload: UsageEventRecord = {
-      clientEventId: op.operationId,
-      // Feature ids are wire-stable ('fan-summary', never 'scan' — SPEC §8.6).
-      feature: op.feature,
-      model: op.modelId,
-      inputTokens: usage?.input_tokens ?? 0,
-      cacheCreationInputTokens: usage?.cache_creation_input_tokens ?? 0,
-      cacheReadInputTokens: usage?.cache_read_input_tokens ?? 0,
-      outputTokens: usage?.output_tokens ?? 0,
-      totalTokens: spend?.totalTokens ?? 0,
-      chatId: op.chatId,
-      durationMs: Math.max(0, Date.now() - op.startedAtMs),
-      isCacheHit: flags.isCacheHit === true,
-      isRegeneration: op.params.forceRegenerate === true,
-      completedAt: new Date().toISOString(),
-    };
-    if (op.aiGatewayTransport === 'direct') {
-      try {
-        deps.data.db
-          .prepare(
-            'INSERT INTO usage_events (client_event_id, payload, created_at, attempts) ' +
-              'VALUES (@client_event_id, @payload, @created_at, 0) ' +
-              'ON CONFLICT (client_event_id) DO NOTHING',
-          )
-          .run({
-            client_event_id: op.operationId,
-            payload: JSON.stringify(payload),
-            created_at: payload.completedAt,
-          });
-      } catch {
-        // Usage bookkeeping must never fail a completed operation.
-      }
-    }
+    const completedAt = new Date().toISOString();
     try {
       deps.data.aiSpendLog.recordRun({
-        day: payload.completedAt.slice(0, 10),
-        feature: payload.feature,
-        isCacheHit: payload.isCacheHit,
-        inputTokens: payload.inputTokens,
-        cacheWriteTokens: payload.cacheCreationInputTokens,
-        cacheReadTokens: payload.cacheReadInputTokens,
-        outputTokens: payload.outputTokens,
+        day: completedAt.slice(0, 10),
+        // Feature ids are wire-stable ('fan-summary', never 'scan' — SPEC §8.6).
+        feature: op.feature,
+        isCacheHit: flags.isCacheHit === true,
+        inputTokens: usage?.input_tokens ?? 0,
+        cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
+        cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+        outputTokens: usage?.output_tokens ?? 0,
         costMicroUsd: Math.round((spend?.totalUsd ?? 0) * 1_000_000),
-        chatId: payload.chatId,
+        chatId: op.chatId,
       });
     } catch {
       // Ledger bookkeeping must never fail a completed operation.
-    }
-    if (op.aiGatewayTransport === 'direct') {
-      try {
-        deps.onUsageEvent?.(payload);
-      } catch {
-        // Same guarantee for a throwing hook.
-      }
     }
   }
 
   // ── personality / model / key gates ──────────────────────────────────────
 
-  function resolvePersonality(settings: SettingsVM, accountId: string): Personality {
-    const stored = deps.data.settings.getParsed(PERSONALITIES_SETTINGS_KEY, personalityListSchema);
-    const list: Personality[] =
-      stored === undefined
-        ? createBundledPersonalities()
-        : stored.map((entry) => ({
-            id: entry.id,
-            name: entry.name,
-            content: entry.content,
-            updatedAt: entry.updatedAt,
-            ...(entry.builtin !== undefined ? { builtin: entry.builtin } : {}),
-            ...(entry.builtinVersion !== undefined
-              ? { builtinVersion: entry.builtinVersion }
-              : {}),
-          }));
-    if (list.length === 0) {
-      throw new CgError('CG-FLOW-01');
-    }
+  /** Stage 31: the desktop resolves only the persona MAPPING — persona
+   * content is kernel config. CG-FLOW-02 when the account has no mapping. */
+  function resolvePersonaKey(settings: SettingsVM, accountId: string): string {
     const mappedId = settings.accountMappings[accountId];
     if (mappedId === undefined || mappedId === '') {
       throw new CgError('CG-FLOW-02');
     }
-    const personality = list.find((entry) => entry.id === mappedId);
-    if (personality === undefined) {
-      throw new CgError('CG-FLOW-02');
-    }
-    return personality;
-  }
-
-  async function checkProviderKey(modelId: string, transport: AiGatewayTransport): Promise<void> {
-    if (transport === 'feature') {
-      // Kernel lane: model choice and provider keys are kernel config.
-      return;
-    }
-    const entry = getModelEntry(modelId);
-    if (entry === null) {
-      throw new CgError('CG-API-03');
-    }
-    if (transport === 'hub') {
-      return;
-    }
-    const secretName: SecretName =
-      entry.provider === 'anthropic' ? 'anthropicKey' : 'openRouterKey';
-    const hasKey = await deps.keychain.hasSecret(secretName);
-    if (!hasKey) {
-      throw new CgError('CG-AUTH-01', { detail: { provider: entry.provider } });
-    }
+    return mappedId;
   }
 
   /** Best-effort hub prefetch — any hook failure means "no hub profile". */
@@ -781,18 +672,11 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     }
 
     const identityStage = op.profiler.stage('resolve-identity');
-    const personality = resolvePersonality(settings, op.accountId);
+    // Stage 31: model choice, provider keys, prompts, and context are kernel
+    // config — the desktop resolves only the persona MAPPING for this
+    // account (CG-FLOW-02 when unmapped; the key rides the feature call).
+    const personaKey = resolvePersonaKey(settings, op.accountId);
     const policy = getFeaturePolicy(op.feature);
-    const modelFeature = resolveFeatureModelFeature(op.feature);
-    const modelId = settings.featureModels[modelFeature] ?? DEFAULT_FEATURE_MODELS[modelFeature];
-    const reasoningEffort =
-      settings.featureReasoning[modelFeature] ?? DEFAULT_FEATURE_REASONING[modelFeature];
-    op.modelId = modelId;
-    op.aiGatewayTransport = settings.aiGatewayTransport;
-    await checkProviderKey(modelId, op.aiGatewayTransport);
-    if (op.settled) {
-      return;
-    }
     identityStage.complete();
 
     if (policy.requiresDraft && (op.params.draftText ?? '').trim() === '') {
@@ -808,7 +692,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         deps.data.summaries.remove(op.accountId, op.chatId);
       } else {
         const entry = deps.data.summaries.get(op.accountId, op.chatId);
-        if (isValidSummaryCacheEntry(entry, personality.id, personality.updatedAt, modelId)) {
+        if (isValidSummaryCacheEntry(entry, personaKey, KERNEL_PERSONA_UPDATED_AT, KERNEL_MODEL_ID)) {
           cacheStage.complete('cache hit');
           settleCachedSummary(op, entry);
           return;
@@ -820,13 +704,13 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         if (prefetched !== null) {
           const entry: SummaryCacheEntry = {
             body: prefetched.body,
-            personalityId: personality.id,
-            personalityUpdatedAt: personality.updatedAt,
+            personalityId: personaKey,
+            personalityUpdatedAt: KERNEL_PERSONA_UPDATED_AT,
             generatedAt: prefetched.generatedAt,
             // A hub-adopted profile counts as verified (legacy prefetch rule).
             spendingVerified: true,
             subscriptionVerified: true,
-            modelId,
+            modelId: KERNEL_MODEL_ID,
           };
           deps.data.summaries.put(op.accountId, op.chatId, entry);
           cacheStage.complete('hub hit');
@@ -835,211 +719,39 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         }
       }
       cacheStage.complete(op.params.forceRegenerate === true ? 'forced refresh' : 'cache miss');
+      // Kernel context is ledger-backed (Stage 30) — verified by definition;
+      // the legacy degraded-context guard belonged to the local loaders.
       op.summarySeed = {
-        personalityId: personality.id,
-        personalityUpdatedAt: personality.updatedAt,
-        spendingVerified: false,
-        subscriptionVerified: false,
+        personalityId: personaKey,
+        personalityUpdatedAt: KERNEL_PERSONA_UPDATED_AT,
+        spendingVerified: true,
+        subscriptionVerified: true,
       };
     }
 
-    // ── Stage 31 feature lane: the kernel loads context and assembles the
-    // (parity-signed) prompt — the desktop sends refs and streams. The
-    // migrated product gates (CG-FLOW-03/05/09, draft) are enforced
-    // kernel-side and mapped back to their CG codes by the adapter. The
-    // fan-summary cache above still short-circuits before any kernel call.
-    if (op.aiGatewayTransport === 'feature') {
-      const featureGateway = deps.featureGateway;
-      if (featureGateway === undefined) {
-        throw new CgError('CG-HUB-02', { message: 'AI feature lane is not wired' });
-      }
-      emitProgress(op, 'generating');
-      op.timeouts.llmRequestStarted();
-      op.ttfbStage = op.profiler.stage('llm-ttfb');
-      op.cancelStream = featureGateway.stream(
-        {
-          feature: op.feature,
-          clientRequestId: op.operationId,
-          accountId: op.accountId,
-          chatId: op.chatId,
-          tone: policy.supportsReplyTone ? (op.params.tone ?? settings.defaultReplyTone) : undefined,
-          mode: policy.supportsReplyMode ? op.params.mode : undefined,
-          draftText: op.params.draftText,
-          // Kernel personas: the bundled id ('builtin:lora') is seeded
-          // kernel-side; LOCAL custom personas are not kernel-known until
-          // Task 3's persona sync — they fall back to the kernel default
-          // (recorded limitation; this lane is not the default yet).
-          personaKey: personality.builtin === true ? personality.id : undefined,
-          isRegeneration: op.params.forceRegenerate === true,
-        },
-        streamCallbacks(op),
-      );
-      return;
+    // ── Stage 31: the kernel loads context and assembles the parity-signed
+    // prompt — the desktop sends refs and streams. The migrated product
+    // gates (CG-FLOW-03/05/09, draft) are enforced kernel-side and mapped
+    // back to their CG codes by the adapter. The fan-summary cache above
+    // still short-circuits before any kernel call.
+    const featureGateway = deps.featureGateway;
+    if (featureGateway === undefined) {
+      throw new CgError('CG-HUB-02', { message: 'AI feature lane is not wired' });
     }
-
-    // Context: transcript (db, fetch-through when short; deep = gap-only)…
-    const deep = isDeepFeature(op.feature);
-    emitProgress(op, 'loading-messages');
-    const loadStage = op.profiler.stage('load-messages');
-    const transcriptMessages = await loader.loadTranscript({
-      accountId: op.accountId,
-      chatId: op.chatId,
-      count: resolveMessageCount(op.feature, settings),
-      deep,
-      signal: op.abort.signal,
-      // Auto-read OFF ⇒ AI works from cached transcript only (never marks a fan read).
-      allowFetchThrough: settings.autoReadChats,
-      onPage: (currentPage, targetPages) =>
-        emitProgress(op, 'loading-messages', {
-          currentPage,
-          targetPages,
-          // Deep loads surface page progress in the panel (legacy wording).
-          ...(deep ? { message: `Loading messages… ${currentPage}/${targetPages} pages` } : {}),
-        }),
-    });
-    if (op.settled) {
-      return;
-    }
-    loadStage.complete(`${transcriptMessages.length} messages`);
-
-    if (policy.minMessages > 0 && transcriptMessages.length < policy.minMessages) {
-      throw new CgError('CG-FLOW-03');
-    }
-    if (op.feature === 'hi-greeting' && transcriptMessages.length > HI_GREETING_MAX_TRANSCRIPT) {
-      throw new CgError('CG-FLOW-09');
-    }
-
-    let pingSegment: PingSegment | undefined;
-    if (policy.usesPingSegment) {
-      const pingStage = op.profiler.stage('ping-analysis');
-      const analysis = analyzePingSegment(transcriptMessages, Date.now());
-      if (analysis.segment === 'active') {
-        pingStage.complete('active — blocked');
-        throw new CgError('CG-FLOW-05');
-      }
-      pingSegment = analysis.segment;
-      pingStage.complete(analysis.segment);
-    }
-
-    const transcript = formatTranscript(transcriptMessages);
-    const transcriptPreview =
-      transcript.length > 2000 ? `${transcript.slice(0, 2000)}\n...` : transcript;
-    const fanDisplayName = loader.resolveFanDisplayName(op.accountId, op.chatId);
-
-    let fanBio: string | undefined;
-    if (op.feature === 'hi-greeting') {
-      const bioStage = op.profiler.stage('account-name-lookup');
-      fanBio = await loader.loadFanBio({
-        accountId: op.accountId,
-        chatId: op.chatId,
-        signal: op.abort.signal,
-      });
-      if (op.settled) {
-        return;
-      }
-      bioStage.complete(fanBio !== undefined ? 'bio found' : 'no bio');
-    }
-
-    // …then spending/subscription blocks (optional stages — loader degrades).
-    let fanSpendingData = '';
-    let fanSubscriptionData = '';
-    if (policy.includesEarnings) {
-      emitProgress(op, 'loading-earnings');
-      const earningsStage = op.profiler.stage('earnings');
-      const spending = await loader.loadSpendingBlock({
-        accountId: op.accountId,
-        chatId: op.chatId,
-        deep,
-        signal: op.abort.signal,
-      });
-      if (op.settled) {
-        return;
-      }
-      fanSpendingData = spending.block;
-      earningsStage.complete(spending.verified ? 'verified' : 'unverified');
-      const subscriptionStage = op.profiler.stage('subscription-lookup');
-      const subscription = await loader.loadSubscriptionBlock({
-        accountId: op.accountId,
-        chatId: op.chatId,
-        deep,
-        signal: op.abort.signal,
-      });
-      if (op.settled) {
-        return;
-      }
-      fanSubscriptionData = subscription.block;
-      subscriptionStage.complete(subscription.verified ? 'verified' : 'unverified');
-      if (op.summarySeed !== null) {
-        op.summarySeed.spendingVerified = spending.verified;
-        op.summarySeed.subscriptionVerified = subscription.verified;
-      }
-    }
-
     emitProgress(op, 'generating');
-    const promptStage = op.profiler.stage('prompt-build');
-    const replyTone = policy.supportsReplyTone
-      ? (op.params.tone ?? settings.defaultReplyTone)
-      : undefined;
-    const replyMode = policy.supportsReplyMode ? op.params.mode : undefined;
-    const prompt = buildPrompt({
-      feature: op.feature,
-      personality,
-      transcript,
-      fanSpendingData,
-      fanSubscriptionData,
-      fanDisplayName,
-      fanBio,
-      draftText: op.params.draftText,
-      pingSegment,
-      replyMode,
-      replyTone,
-    });
-    let systemBlocks: PromptBlock[] = prompt.systemBlocks;
-    let userBlocks: PromptBlock[] = prompt.userBlocks;
-    if (!settings.promptCachingEnabled) {
-      systemBlocks = stripPromptCache(systemBlocks);
-      userBlocks = stripPromptCache(userBlocks);
-    }
-    promptStage.complete();
-
-    if (settings.debugMode) {
-      // Prompt inspector (SPEC §12): the exact blocks + cache flags, pre-call.
-      emit({
-        type: 'operation:debugPrompt',
-        operationId: op.operationId,
-        feature: op.feature,
-        snapshot: {
-          modelId,
-          reasoningEffort,
-          promptCachingEnabled: settings.promptCachingEnabled,
-          transcript: {
-            messageCount: transcriptMessages.length,
-            charCount: transcript.length,
-            preview: transcriptPreview,
-          },
-          systemBlocks,
-          userBlocks,
-        },
-      });
-    }
-    if (op.settled) {
-      return;
-    }
-
     op.timeouts.llmRequestStarted();
     op.ttfbStage = op.profiler.stage('llm-ttfb');
-    op.cancelStream = gateway.stream(
+    op.cancelStream = featureGateway.stream(
       {
         feature: op.feature,
-        modelId,
-        systemBlocks,
-        userBlocks,
-        reasoningEffort,
         clientRequestId: op.operationId,
         accountId: op.accountId,
         chatId: op.chatId,
+        tone: policy.supportsReplyTone ? (op.params.tone ?? settings.defaultReplyTone) : undefined,
+        mode: policy.supportsReplyMode ? op.params.mode : undefined,
+        draftText: op.params.draftText,
+        personaKey,
         isRegeneration: op.params.forceRegenerate === true,
-        transport: op.aiGatewayTransport,
       },
       streamCallbacks(op),
     );
@@ -1156,13 +868,11 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         ttfbStage: null,
         streamStage: null,
         settled: false,
-        modelId: DEFAULT_FEATURE_MODELS[resolveFeatureModelFeature(feature)],
         usage: null,
         sawFirstChunk: false,
         chunkBuffer: '',
         chunkTimer: null,
         startedAtMs: Date.now(),
-        aiGatewayTransport: 'direct',
         generationRef: null,
         summarySeed: null,
       };

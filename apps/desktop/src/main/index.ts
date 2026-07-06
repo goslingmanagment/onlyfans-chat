@@ -58,8 +58,7 @@ import { createBudgetGuard } from './sync/budget-guard';
 import { createHubSync } from './sync/hub-sync';
 import { createHubAwareSync, type HubAwareSync } from './sync/hub-provider';
 import { registerIpcHandlers } from './ipc/handlers';
-import { runKeyTest } from './diagnostics/key-tests';
-import { createAiCoordinator, createDirectGateway, createSelectableAiGateway, type AiCoordinator } from './ai/index';
+import { createAiCoordinator, type AiCoordinator } from './ai/index';
 import { createHubModule, type HubModule } from './hub/index';
 import { hostname } from 'node:os';
 import { issueHubDeviceToken, resolveHubCredential } from './hub/device-token';
@@ -660,16 +659,9 @@ async function rebuildOfapiRuntime(
   const unsubscribeSendSync = nextSync.subscribe((event) => engine.handleSyncEvent(event));
   const nextCoordinator = createAiCoordinator({
     data: dataLayer,
-    client: nextClient,
     settingsStore,
-    keychain,
-    gateway: createSelectableAiGateway({
-      direct: createDirectGateway({ keychain }),
-      hub: nextHub.aiGateway,
-    }),
     featureGateway: nextHub.aiFeatureGateway,
     summaryHub: nextHub.summaryHub,
-    onUsageEvent: (event) => nextHub.onUsageEvent(event),
     onAcceptanceEvent: (event) => nextHub.onAcceptanceEvent(event),
   });
 
@@ -1004,6 +996,9 @@ async function boot(): Promise<void> {
     get coordinator() {
       return coordinator;
     },
+    get personas() {
+      return hub?.personas ?? null;
+    },
     get acceptance() {
       if (hub === null) {
         return null;
@@ -1082,7 +1077,6 @@ async function boot(): Promise<void> {
         updateStatusVM(updateController ? await updateController.check() : null),
       install: () => updateController?.install(),
     },
-    testKey: (provider) => runKeyTest(provider, { keychain, settingsStore }),
     // Stage 24: one-time device-token sign-in (Settings → Hub). The token
     // lands in the keychain; the config recheck swings every hub consumer
     // (REST, SSE, read gateway) onto it without a restart.

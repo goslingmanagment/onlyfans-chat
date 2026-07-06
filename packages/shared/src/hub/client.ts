@@ -23,7 +23,7 @@ import {
 } from '@kernel/sdk';
 import type { CgErrorDetail } from '../errors/index';
 import { CgError } from '../errors/index';
-import type { LlmUsageMetrics } from '../llm/sse';
+import type { LlmUsageMetrics } from '../usage-metrics';
 
 // Minimal ambient type for the WHATWG AbortController global (lib "ES2023"
 // has no DOM types; Electron main / Node 22 provide the real one).
@@ -322,6 +322,7 @@ export interface HubClient {
     systemBlock: string;
     timeoutMs?: number;
   }): Promise<HubAiPersona>;
+  archiveAiPersona(args: { key: string; timeoutMs?: number }): Promise<{ archived: boolean }>;
   /** Stage 31: stream a KERNEL-ASSEMBLED feature generation (Stage 30 route).
    *  Same SSE frames as streamAiGateway; the kernel loads context and builds
    *  the prompt — the desktop sends refs only. */
@@ -633,6 +634,11 @@ export function createHubClient(options: HubClientOptions): HubClient {
           params: { key },
           body: { displayName, systemBlock },
         }));
+    },
+
+    async archiveAiPersona({ key, timeoutMs }) {
+      return delegate(() =>
+        clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaArchive({ params: { key } }));
     },
 
     async streamAiFeature({ feature, request: streamRequest, signal }, callbacks) {

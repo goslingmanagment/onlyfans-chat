@@ -424,7 +424,7 @@ function buildStore(): MockStore {
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
     hubSyncProtocol: 'v2',
-    aiGatewayTransport: 'direct',
+    aiGatewayTransport: 'feature',
     hubModeOverride: 'auto',
     spendSweepRollbackToLegacy: true,
     unreadReconcile: {

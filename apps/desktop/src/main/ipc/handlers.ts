@@ -6,7 +6,6 @@ import { ipcMain } from 'electron';
 import { z } from 'zod';
 import type { Personality } from '@chatgoose/shared/types';
 import { analyzePingSegment } from '@chatgoose/shared/transcript/index';
-import { reconcileBundledPersonalities } from '@chatgoose/shared/prompts/personalities';
 import { messageGuardPolicySchema } from '@chatgoose/shared/message-guard/index';
 import type { DataLayer, OutboxRow } from '../db/index';
 import type { SettingsStore } from '../settings/store';
@@ -353,6 +352,13 @@ export interface IpcDeps {
   /** Stage 31 acceptance lifecycle: copied/inserted (feedback) and
    * sent+edited (send-path observer) enqueue here; absent = lane off. */
   acceptance?: AcceptanceSeam | null;
+  /** Stage 31: kernel persona CRUD (personas are kernel config); null while
+   * the hub is unconfigured — the local KV serves as the offline cache. */
+  personas?: {
+    list: () => Promise<Array<{ key: string; displayName: string; systemBlock: string; updatedAt: string }>>;
+    upsert: (args: { key: string; displayName: string; systemBlock: string }) => Promise<unknown>;
+    archive: (key: string) => Promise<unknown>;
+  } | null;
   /** Null until an OFAPI read transport exists (same lifecycle as sync). */
   send: SendEngine | null;
   /** Synchronous Message Guard runtime; created at DB boot. */
@@ -419,15 +425,42 @@ function normalizePersonality(parsed: z.infer<typeof personalitySchema>): Person
   };
 }
 
+/** Stage 31: personas are kernel config; the local KV is the offline cache.
+ * A fresh install still shows a mappable builtin entry — its content is a
+ * placeholder until the first kernel refresh replaces it. */
 export function loadPersonalities(data: DataLayer): Personality[] {
   const saved = (data.settings.getParsed(PERSONALITIES_KEY, personalitiesStoredSchema) ?? []).map(
     normalizePersonality,
   );
-  const { personalities, changed } = reconcileBundledPersonalities([...saved], Date.now());
-  if (changed) {
-    data.settings.set(PERSONALITIES_KEY, personalities);
+  if (saved.length > 0) {
+    return saved;
   }
-  return personalities;
+  const fallback: Personality[] = [{
+    id: 'builtin:lora',
+    name: 'Lora',
+    content: '(kernel-managed persona — connect Agency Hub to view and edit)',
+    updatedAt: 0,
+    builtin: true,
+  }];
+  data.settings.set(PERSONALITIES_KEY, fallback);
+  return fallback;
+}
+
+/** Kernel → local Personality mapping (the picker/editor VM shape). */
+function kernelPersonaToLocal(persona: {
+  key: string;
+  displayName: string;
+  systemBlock: string;
+  updatedAt: string;
+}): Personality {
+  const updatedAt = Date.parse(persona.updatedAt);
+  return {
+    id: persona.key,
+    name: persona.displayName,
+    content: persona.systemBlock,
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+    ...(persona.key === 'builtin:lora' ? { builtin: true } : {}),
+  };
 }
 
 export function registerIpcHandlers(deps: IpcDeps): void {
@@ -485,7 +518,20 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('query:settings.get', () => settingsStore.get());
 
-  ipcMain.handle('query:personalities.list', () => loadPersonalities(data));
+  ipcMain.handle('query:personalities.list', async () => {
+    if (deps.personas) {
+      try {
+        const remote = (await deps.personas.list()).map(kernelPersonaToLocal);
+        if (remote.length > 0) {
+          data.settings.set(PERSONALITIES_KEY, remote);
+          return remote;
+        }
+      } catch {
+        // Kernel unreachable — the cached copy serves (offline tolerance).
+      }
+    }
+    return loadPersonalities(data);
+  });
 
   ipcMain.handle('query:sync.status', (): SyncStatusVM => {
     const snapshot = deps.creditMeter?.snapshot() ?? null;
@@ -823,8 +869,19 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return result;
   });
 
-  ipcMain.handle('cmd:personalities.save', (_event, rawArgs: unknown) => {
+  ipcMain.handle('cmd:personalities.save', async (_event, rawArgs: unknown) => {
     const personality = normalizePersonality(personalitySchema.parse(rawArgs));
+    if (deps.personas) {
+      try {
+        await deps.personas.upsert({
+          key: personality.id,
+          displayName: personality.name,
+          systemBlock: personality.content,
+        });
+      } catch {
+        // Offline edit: cached locally; the reconfigure sync upserts later.
+      }
+    }
     const existing = loadPersonalities(data);
     const next = existing.some((entry) => entry.id === personality.id)
       ? existing.map((entry) => (entry.id === personality.id ? personality : entry))
@@ -835,6 +892,14 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:personalities.delete', async (_event, rawArgs: unknown) => {
     const { id } = personalityDeleteSchema.parse(rawArgs);
+    if (deps.personas) {
+      try {
+        await deps.personas.archive(id);
+      } catch {
+        // Kernel unreachable — local removal still applies; archive retries
+        // are manual (personas are rarely deleted).
+      }
+    }
     const next = loadPersonalities(data).filter((entry) => entry.id !== id);
     data.settings.set(PERSONALITIES_KEY, next);
     // cascade: drop mappings pointing at the deleted personality (legacy behavior)

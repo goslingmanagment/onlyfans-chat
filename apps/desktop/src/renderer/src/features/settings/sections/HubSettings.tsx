@@ -12,7 +12,6 @@ import { useAccounts, useHubDeviceTokenIssue, useKeyTest, useSyncStatus } from '
 import { localizedErrorText, useLocale, useT } from '../../../lib/i18n';
 import { Badge } from '../../../design/Badge';
 import { Button } from '../../../design/Button';
-import { Chip } from '../../../design/Chip';
 import { Section, type PatchFn } from '../SettingsSurface';
 
 type HubState = SyncStatusVM['hub'];
@@ -172,27 +171,6 @@ export function HubSettings({
             {deviceToken.error instanceof Error ? deviceToken.error.message : t('hub.deviceToken.failed')}
           </div>
         )}
-        <div className="flex items-center gap-3 py-1">
-          <div className="w-44 flex-none">
-            <div className="text-[13px] font-semibold">{t('hub.aiGateway.label')}</div>
-            <div className="text-[11px] text-ink-low">{t('hub.aiGateway.hint')}</div>
-          </div>
-          <div className="flex items-center rounded-full border border-line bg-bg1 p-0.5">
-            <Chip
-              selected={settings.aiGatewayTransport === 'direct'}
-              onClick={() => patch({ aiGatewayTransport: 'direct' })}
-            >
-              {t('hub.aiGateway.direct')}
-            </Chip>
-            <Chip
-              selected={settings.aiGatewayTransport === 'hub'}
-              onClick={() => patch({ aiGatewayTransport: 'hub' })}
-            >
-              {t('hub.aiGateway.hub')}
-            </Chip>
-          </div>
-          <span className="text-[11px] text-ink-low">{t('hub.aiGateway.liveGate')}</span>
-        </div>
         <div className="flex items-center gap-3 py-1">
           <div className="w-44 flex-none">
             <div className="text-[13px] font-semibold">{t('hub.ofapiWrites.label')}</div>

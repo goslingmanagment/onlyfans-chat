@@ -11,11 +11,7 @@ import type { HubAiGatewayStreamCallbacks } from '@chatgoose/shared/hub/index';
 import type { OperationEvent } from '@chatgoose/shared/protocol/index';
 import { createAiCoordinator } from '@main/ai/index';
 import type { AiCoordinator } from '@main/ai/index';
-import type {
-  AiFeatureGateway,
-  AiFeatureGatewayRequest,
-  AiGatewayCallbacks,
-} from '@main/ai/gateway';
+
 import { createFeatureAiGateway } from '@main/hub/ai-feature-gateway';
 import type { DataLayer } from '@main/db/index';
 import {
@@ -23,60 +19,25 @@ import {
   CHAT,
   flushAsync,
   framesOfType,
-  makeKeychain,
   makeSettingsStore,
   makeSettingsVM,
-  makeStubClient,
-  makeStubGateway,
   memoryDataLayer,
-  sampleUser,
-  seedMessages,
   startRequest,
+  makeStubFeatureGateway,
 } from './helpers';
-import type { StubClient, StubGateway } from './helpers';
+import type { StubFeatureGateway } from './helpers';
 import type { SettingsVM } from '../../src/preload/contract';
-
-interface StubFeatureGateway {
-  gateway: AiFeatureGateway;
-  calls: AiFeatureGatewayRequest[];
-  cb: AiGatewayCallbacks | null;
-  cancelCount: number;
-}
-
-function makeStubFeatureGateway(): StubFeatureGateway {
-  const state: StubFeatureGateway = {
-    calls: [],
-    cb: null,
-    cancelCount: 0,
-    gateway: {
-      stream(req, cb) {
-        state.calls.push(req);
-        state.cb = cb;
-        return () => {
-          state.cancelCount += 1;
-        };
-      },
-    },
-  };
-  return state;
-}
 
 describe('AI feature lane (Stage 31)', () => {
   let data: DataLayer;
-  let stub: StubClient;
-  let gateway: StubGateway;
   let featureGateway: StubFeatureGateway;
   let frames: OperationEvent[];
   let coordinator: AiCoordinator;
 
-  function build(settings: SettingsVM = makeSettingsVM({ aiGatewayTransport: 'feature' })): void {
+  function build(settings: SettingsVM = makeSettingsVM()): void {
     coordinator = createAiCoordinator({
       data,
-      client: stub.client,
       settingsStore: makeSettingsStore(settings),
-      // No vendor keys on purpose: the feature lane must not need them.
-      keychain: makeKeychain({}),
-      gateway: gateway.gateway,
       featureGateway: featureGateway.gateway,
     });
     coordinator.subscribe((event) => frames.push(event));
@@ -85,10 +46,6 @@ describe('AI feature lane (Stage 31)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     data = memoryDataLayer();
-    seedMessages(data, 5);
-    stub = makeStubClient();
-    stub.setUser(sampleUser());
-    gateway = makeStubGateway();
     featureGateway = makeStubFeatureGateway();
     frames = [];
   });
@@ -116,11 +73,6 @@ describe('AI feature lane (Stage 31)', () => {
       personaKey: 'builtin:lora',
       isRegeneration: false,
     });
-    // The direct/hub gateway and every local context source stay untouched.
-    expect(gateway.calls).toHaveLength(0);
-    expect(stub.listMessagesCalls).toHaveLength(0);
-    expect(stub.getUsersByIdsCalls).toBe(0);
-    expect(stub.listTransactionsCalls).toHaveLength(0);
 
     featureGateway.cb?.onText('kernel says hey');
     await vi.advanceTimersByTimeAsync(STREAM_CHUNK_FLUSH_MS);
@@ -138,14 +90,10 @@ describe('AI feature lane (Stage 31)', () => {
     expect(rows.n).toBe(0);
   });
 
-  it('keeps the client-side draft gate and default tone; custom personas fall back kernel-side', async () => {
+  it('keeps the client-side draft gate and default tone; custom personas ride their key', async () => {
     build(makeSettingsVM({
-      aiGatewayTransport: 'feature',
       accountMappings: { [ACCT]: 'custom-1' },
     }));
-    data.settings.set('personalities', [
-      { id: 'custom-1', name: 'Custom', content: 'custom persona', updatedAt: 1 },
-    ]);
 
     // improve-draft without a draft fails fast, before any kernel call.
     coordinator.start(startRequest({ operationId: 'op-d', feature: 'improve-draft' }));
@@ -168,18 +116,15 @@ describe('AI feature lane (Stage 31)', () => {
     // improve-draft supports neither tone nor mode.
     expect(request.tone).toBeUndefined();
     expect(request.mode).toBeUndefined();
-    // Local custom persona is not kernel-known yet (Task 3 syncs) → omitted.
-    expect(request.personaKey).toBeUndefined();
+    // Custom personas are kernel-synced (Task 3) — the key rides the call.
+    expect(request.personaKey).toBe('custom-1');
   });
 
   it("emits 'shown' with the generation ref at first token (Stage 31 Task 2)", async () => {
     const acceptance: Array<Record<string, unknown>> = [];
     coordinator = createAiCoordinator({
       data,
-      client: stub.client,
-      settingsStore: makeSettingsStore(makeSettingsVM({ aiGatewayTransport: 'feature' })),
-      keychain: makeKeychain({}),
-      gateway: gateway.gateway,
+      settingsStore: makeSettingsStore(makeSettingsVM()),
       featureGateway: featureGateway.gateway,
       onAcceptanceEvent: (event) => acceptance.push(event as never),
     });
@@ -229,10 +174,7 @@ describe('AI feature lane (Stage 31)', () => {
   it('errors with CG-HUB-02 when the lane is selected but not wired', async () => {
     coordinator = createAiCoordinator({
       data,
-      client: stub.client,
-      settingsStore: makeSettingsStore(makeSettingsVM({ aiGatewayTransport: 'feature' })),
-      keychain: makeKeychain({}),
-      gateway: gateway.gateway,
+      settingsStore: makeSettingsStore(makeSettingsVM()),
     });
     coordinator.subscribe((event) => frames.push(event));
     coordinator.start(startRequest());

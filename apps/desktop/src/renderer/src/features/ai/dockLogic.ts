@@ -250,20 +250,14 @@ export interface AiGateInput {
 }
 
 export interface AiTransportSettings {
-  hasAnthropicKey: boolean;
-  hasOpenRouterKey: boolean;
   hasHubKey: boolean;
   hubBaseUrl: string | null;
-  aiGatewayTransport: 'direct' | 'hub' | 'feature';
 }
 
+/** Stage 31 cutover: the kernel feature lane is the only AI transport —
+ * a hub connection IS the AI configuration (vendor keys retired). */
 export function hasConfiguredAiTransport(settings: AiTransportSettings): boolean {
-  // Stage 31: both kernel lanes (proxy and feature-service) need only the
-  // hub connection — vendor keys are the direct lane's concern.
-  if (settings.aiGatewayTransport === 'hub' || settings.aiGatewayTransport === 'feature') {
-    return settings.hubBaseUrl !== null && settings.hasHubKey;
-  }
-  return settings.hasAnthropicKey || settings.hasOpenRouterKey;
+  return settings.hubBaseUrl !== null && settings.hasHubKey;
 }
 
 export type AiGate =

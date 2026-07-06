@@ -82,7 +82,7 @@ describe('settings store', () => {
     expect(vm.hubBaseUrl).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
     expect(vm.ofapiReadTransport).toBe('hub');
     expect(vm.ofapiWriteTransport).toBe('hub');
-    expect(vm.aiGatewayTransport).toBe('direct');
+    expect(vm.aiGatewayTransport).toBe('feature');
     expect(vm.hubModeOverride).toBe('auto');
     expect(vm.spendSweepRollbackToLegacy).toBe(false);
     expect(vm.unreadReconcile).toEqual({
@@ -115,7 +115,7 @@ describe('settings store', () => {
       uiTheme: 'dark',
       ofapiReadTransport: 'hub',
       ofapiWriteTransport: 'hub',
-      aiGatewayTransport: 'hub',
+      aiGatewayTransport: 'feature',
       hubModeOverride: 'hub',
       spendSweepRollbackToLegacy: false,
       unreadReconcile: {
@@ -137,7 +137,7 @@ describe('settings store', () => {
     expect(vm.uiTheme).toBe('dark');
     expect(vm.ofapiReadTransport).toBe('hub');
     expect(vm.ofapiWriteTransport).toBe('hub');
-    expect(vm.aiGatewayTransport).toBe('hub');
+    expect(vm.aiGatewayTransport).toBe('feature');
     expect(vm.hubModeOverride).toBe('hub');
     expect(vm.spendSweepRollbackToLegacy).toBe(false);
     expect(vm.unreadReconcile.immediateMaxPages).toBe(4);
@@ -150,7 +150,7 @@ describe('settings store', () => {
     expect(again.uiTheme).toBe('dark');
     expect(again.ofapiReadTransport).toBe('hub');
     expect(again.ofapiWriteTransport).toBe('hub');
-    expect(again.aiGatewayTransport).toBe('hub');
+    expect(again.aiGatewayTransport).toBe('feature');
     expect(again.hubModeOverride).toBe('hub');
     expect(again.spendSweepRollbackToLegacy).toBe(false);
     expect(again.unreadReconcile.focusedIntervalMs).toBe(120_000);
@@ -162,7 +162,7 @@ describe('settings store', () => {
     await expect(store.update({ ofapiReadTransport: 'proxy' })).rejects.toThrow();
     await expect(store.update({ ofapiWriteTransport: 'direct' })).rejects.toThrow();
     await expect(store.update({ ofapiWriteTransport: 'proxy' })).rejects.toThrow();
-    await expect(store.update({ aiGatewayTransport: 'proxy' })).rejects.toThrow();
+    await expect(store.update({ aiGatewayTransport: 'hub' })).rejects.toThrow();
     await expect(store.update({ hubModeOverride: 'both' })).rejects.toThrow();
     await expect(store.update({ spendSweepRollbackToLegacy: 'yes' })).rejects.toThrow();
     await expect(

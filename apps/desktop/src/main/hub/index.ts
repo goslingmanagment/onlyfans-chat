@@ -17,11 +17,10 @@ import { createSqliteUsageEventStore } from './usage-store';
 import { createSummaryHubHooks } from './summary-hooks';
 import { mapUsagePayloadToHubEvent } from './usage-mapper';
 import { z } from 'zod';
-import { createHubAiGateway } from './ai-gateway';
 import { createFeatureAiGateway } from './ai-feature-gateway';
 import { createAcceptanceReporter, createAcceptanceTracker } from './acceptance-reporter';
 import type { AcceptanceEventInput, AcceptanceReporter, AcceptanceTracker } from './acceptance-reporter';
-import type { AiFeatureGateway, AiGateway } from '../ai/gateway';
+import type { AiFeatureGateway } from '../ai/gateway';
 
 export { createPageLabelResolver, PAGE_LIST_CACHE_TTL_MS } from './page-resolver';
 export type { PageLabelResolver, PageLabelResolverOptions } from './page-resolver';
@@ -49,10 +48,14 @@ export interface HubModule {
    * reconfiguration internally (absent hub config behaves as absent hooks).
    */
   summaryHub: SummaryHubHooks;
-  /** Future P6 AI transport. Inert until hub config exists and AI mode is set to hub. */
-  aiGateway: AiGateway;
   /** Stage 31: the kernel feature-service lane (AI mode 'feature'). */
   aiFeatureGateway: AiFeatureGateway;
+  /** Stage 31: kernel persona CRUD delegators (null-tolerant at call sites). */
+  personas: {
+    list: () => Promise<Array<{ key: string; displayName: string; systemBlock: string; updatedAt: string }>>;
+    upsert: (args: { key: string; displayName: string; systemBlock: string }) => Promise<unknown>;
+    archive: (key: string) => Promise<unknown>;
+  };
   /** Stage 31: acceptance lifecycle spool (KV-backed; drains when active). */
   acceptance: AcceptanceReporter;
   /** Stage 31: inserted-suggestion tracker for the sent/edited signal. */
@@ -74,7 +77,6 @@ interface ActiveHub {
   client: HubClient;
   reporter: UsageReporter;
   hooks: SummaryHubHooks;
-  aiGateway: AiGateway;
   aiFeatureGateway: AiFeatureGateway;
 }
 
@@ -117,17 +119,24 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       pushSummary: (args) => active?.hooks.pushSummary?.(args) ?? Promise.resolve(),
     },
 
-    aiGateway: {
-      stream(req, cb) {
+    personas: {
+      list: async () => {
         if (active === null) {
-          cb.onError?.(
-            new HubError('bad-request', {
-              message: 'Hub AI gateway is not configured',
-            }),
-          );
-          return () => {};
+          throw new HubError('bad-request', { message: 'Hub personas are not configured' });
         }
-        return active.aiGateway.stream(req, cb);
+        return active.client.listAiPersonas();
+      },
+      upsert: async (args) => {
+        if (active === null) {
+          throw new HubError('bad-request', { message: 'Hub personas are not configured' });
+        }
+        return active.client.upsertAiPersona(args);
+      },
+      archive: async (key) => {
+        if (active === null) {
+          throw new HubError('bad-request', { message: 'Hub personas are not configured' });
+        }
+        return active.client.archiveAiPersona({ key });
       },
     },
 
@@ -271,10 +280,6 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         hooks: createSummaryHubHooks({
           client,
           data,
-          resolvePageLabel: (accountId) => resolver.resolve(accountId),
-        }),
-        aiGateway: createHubAiGateway({
-          client,
           resolvePageLabel: (accountId) => resolver.resolve(accountId),
         }),
         aiFeatureGateway: createFeatureAiGateway({

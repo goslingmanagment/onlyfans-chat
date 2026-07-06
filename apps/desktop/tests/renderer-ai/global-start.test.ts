@@ -45,8 +45,9 @@ function resetAiStore(): void {
 function makeQueryClient(): QueryClient {
   const queryClient = new QueryClient();
   queryClient.setQueryData(qk.settings, {
-    hasAnthropicKey: true,
-    hasOpenRouterKey: false,
+    // Stage 31: a hub connection IS the AI configuration.
+    hasHubKey: true,
+    hubBaseUrl: 'https://hub.example.com',
     defaultReplyTone: 'casual',
   } as SettingsVM);
   queryClient.setQueryData(qk.accounts, [

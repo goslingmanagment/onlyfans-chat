@@ -215,6 +215,10 @@ export declare const kernelOperations: {
         readonly method: "POST";
         readonly path: "/api/v1/ai/gateway/stream";
     };
+    readonly aiPersonaArchive: {
+        readonly method: "DELETE";
+        readonly path: "/api/v1/ai/personas/:key";
+    };
     readonly aiPersonaUpsert: {
         readonly method: "PUT";
         readonly path: "/api/v1/ai/personas/:key";

@@ -56,7 +56,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
-    aiGatewayTransport: 'direct',
+    aiGatewayTransport: 'feature',
     hubModeOverride: 'auto',
     hubSyncProtocol: 'v2',
     spendSweepRollbackToLegacy: true,
@@ -306,6 +306,7 @@ export function makeFakeHubClient(
     streamAiGateway: streamAiGatewayMock,
     streamAiFeature: streamAiFeatureMock,
     listAiPersonas: vi.fn(() => Promise.resolve([])),
+    archiveAiPersona: vi.fn(() => Promise.resolve({ archived: true })),
     upsertAiPersona: vi.fn((args: { key: string; displayName: string; systemBlock: string }) =>
       Promise.resolve({ ...args, updatedAt: new Date().toISOString() })),
     getServerTimeOffsetMs: () => null,

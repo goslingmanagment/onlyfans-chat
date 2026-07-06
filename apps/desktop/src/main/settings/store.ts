@@ -178,8 +178,11 @@ const persistedFieldSchemas = {
   ofapiReadTransport: z.literal('hub'),
   // C6b+ hard invariant: all app writes go through Hub commands.
   ofapiWriteTransport: z.literal('hub'),
-  // C6c AI custody bridge: provider calls stay direct unless hub is selected explicitly.
-  aiGatewayTransport: z.enum(['direct', 'hub', 'feature']),
+  // Stage 31 cutover: the kernel feature-service lane is the ONLY AI lane.
+  // Stored 'direct'/'hub' values fail this literal and coerce to the default
+  // on load (readField falls back) — the ofapiReadTransport precedent, third
+  // and last application. The field itself is removed next release.
+  aiGatewayTransport: z.literal('feature'),
   // Dev/support-only override for D3 diagnostics. Default auto.
   hubModeOverride: z.enum(HUB_MODE_OVERRIDE_SETTINGS),
   // Kernel Stage 24 rollout-window-only fallback: 'v1' re-points the SSE
@@ -242,7 +245,7 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
   ofapiReadTransport: 'hub',
   ofapiWriteTransport: 'hub',
-  aiGatewayTransport: 'direct',
+  aiGatewayTransport: 'feature',
   hubModeOverride: 'auto',
   hubSyncProtocol: 'v2',
   spendSweepRollbackToLegacy: false,

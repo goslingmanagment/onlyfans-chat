@@ -4574,6 +4574,17 @@ export const routeSchemas = {
             401: errorResponseSchema,
         },
     },
+    aiPersonaArchive: {
+        auth: { kind: "apiKey" },
+        tags: ["usage"],
+        summary: "Archive a kernel AI persona (soft retire)",
+        params: aiPersonaUpsertParamsSchema,
+        response: {
+            200: z.object({ archived: z.boolean() }),
+            401: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
     aiFeatureStream: {
         auth: { kind: "apiKey" },
         tags: ["usage"],

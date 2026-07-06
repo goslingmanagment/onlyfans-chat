@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from 'react';
 import { aiFeatureLabel, purposeLabel } from '@chatgoose/shared/activity/index';
-import { formatCompactTokens } from '@chatgoose/shared/llm/cost';
+import { formatCompactTokens } from '@chatgoose/shared/usage-metrics';
 import {
   UI_MESSAGES,
   pluralWord,

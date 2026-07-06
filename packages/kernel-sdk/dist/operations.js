@@ -54,6 +54,7 @@ export const kernelOperations = {
     adminVerifyPage: { method: "POST", path: "/api/v1/admin/pages/:pageLabel/verify" },
     aiFeatureStream: { method: "POST", path: "/api/v1/ai/features/:feature" },
     aiGatewayStream: { method: "POST", path: "/api/v1/ai/gateway/stream" },
+    aiPersonaArchive: { method: "DELETE", path: "/api/v1/ai/personas/:key" },
     aiPersonaUpsert: { method: "PUT", path: "/api/v1/ai/personas/:key" },
     aiPersonasList: { method: "GET", path: "/api/v1/ai/personas" },
     aiRestrictedGenerationDetail: { method: "GET", path: "/api/v1/ai/restricted/generations/:generationRef" },

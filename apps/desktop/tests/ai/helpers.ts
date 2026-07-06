@@ -16,7 +16,7 @@ import type { OfApiClient } from '@main/ofapi/client';
 import type { OfApiMessage, OfApiTransaction, OfApiUser } from '@main/ofapi/schemas';
 import type { SettingsStore } from '@main/settings/store';
 import type { Keychain } from '@main/secrets/keychain';
-import type { AiGateway, AiGatewayCallbacks, AiGatewayRequest } from '@main/ai/gateway';
+import type { AiFeatureGateway, AiFeatureGatewayRequest, AiGatewayCallbacks } from '@main/ai/gateway';
 import type { AiStartRequest, SettingsVM } from '../../src/preload/contract';
 
 export const ACCT = 'acct_test';
@@ -43,7 +43,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
-    aiGatewayTransport: 'direct',
+    aiGatewayTransport: 'feature',
     hubModeOverride: 'auto',
     hubSyncProtocol: 'v2',
     spendSweepRollbackToLegacy: true,
@@ -269,17 +269,17 @@ export function makeStubClient(): StubClient {
   };
 }
 
-// ─── gateway stub ─────────────────────────────────────────────────────────
+// ─── feature-gateway stub (Stage 31: the only generation lane) ───────────
 
-export interface StubGateway {
-  gateway: AiGateway;
-  calls: AiGatewayRequest[];
+export interface StubFeatureGateway {
+  gateway: AiFeatureGateway;
+  calls: AiFeatureGatewayRequest[];
   cb: AiGatewayCallbacks | null;
   cancelCount: number;
 }
 
-export function makeStubGateway(): StubGateway {
-  const state: StubGateway = {
+export function makeStubFeatureGateway(): StubFeatureGateway {
+  const state: StubFeatureGateway = {
     calls: [],
     cb: null,
     cancelCount: 0,
