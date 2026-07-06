@@ -26,6 +26,7 @@ import { createHarvestModule, type HarvestModule } from './harvest/index';
 import { createHubClient } from '@chatgoose/shared/hub/index';
 import { createLogger, type Logger } from './diagnostics/logger';
 import { buildDiagnosticsReport } from './diagnostics/report';
+import { runKeyTest } from './diagnostics/key-tests';
 import { auditOutbox } from './send/audit';
 import { createSettingsStore, type SettingsStore } from './settings/store';
 import {
@@ -58,8 +59,7 @@ import { createBudgetGuard } from './sync/budget-guard';
 import { createHubSync } from './sync/hub-sync';
 import { createHubAwareSync, type HubAwareSync } from './sync/hub-provider';
 import { registerIpcHandlers } from './ipc/handlers';
-import { runKeyTest } from './diagnostics/key-tests';
-import { createAiCoordinator, createDirectGateway, createSelectableAiGateway, type AiCoordinator } from './ai/index';
+import { createAiCoordinator, type AiCoordinator } from './ai/index';
 import { createHubModule, type HubModule } from './hub/index';
 import { hostname } from 'node:os';
 import { issueHubDeviceToken, resolveHubCredential } from './hub/device-token';
@@ -660,15 +660,10 @@ async function rebuildOfapiRuntime(
   const unsubscribeSendSync = nextSync.subscribe((event) => engine.handleSyncEvent(event));
   const nextCoordinator = createAiCoordinator({
     data: dataLayer,
-    client: nextClient,
     settingsStore,
-    keychain,
-    gateway: createSelectableAiGateway({
-      direct: createDirectGateway({ keychain }),
-      hub: nextHub.aiGateway,
-    }),
+    featureGateway: nextHub.aiFeatureGateway,
     summaryHub: nextHub.summaryHub,
-    onUsageEvent: (event) => nextHub.onUsageEvent(event),
+    onAcceptanceEvent: (event) => nextHub.onAcceptanceEvent(event),
   });
 
   let committed = false;
@@ -810,15 +805,16 @@ async function boot(): Promise<void> {
     secretsDir: join(userData, 'secrets'),
   });
 
-  // Stage 24 / DP 8: the team-wide direct-read OFAPI key is decommissioned —
-  // deleted on boot, deliberately unrecoverable by version rollback.
+  // Stage 24 / DP 8: the team-wide direct-read OFAPI key; Stage 31: the local
+  // anthropic/openrouter vendor keys (generation rides the kernel gateway).
+  // Deleted on boot, deliberately unrecoverable by version rollback.
   await keychain.deleteDecommissionedSecrets();
 
   // Mirror the live secret values into the log redactor + the export's final
   // pass. Refreshed on every settings write (a key save also writes its keyMeta
   // fingerprint, so it fires the settings bus event below).
   const refreshRedactionSecrets = async (): Promise<void> => {
-    const names: SecretName[] = ['anthropicKey', 'openRouterKey', 'hubApiKey', 'hubDeviceToken'];
+    const names: SecretName[] = ['hubApiKey', 'hubDeviceToken'];
     const values = await Promise.all(names.map((name) => keychain.getSecret(name)));
     redactionSecrets = values.filter((value): value is string => typeof value === 'string' && value.length > 0);
     logger?.setRedactionSecrets(redactionSecrets);
@@ -1001,6 +997,21 @@ async function boot(): Promise<void> {
     },
     get coordinator() {
       return coordinator;
+    },
+    get personas() {
+      return hub?.personas ?? null;
+    },
+    get acceptance() {
+      if (hub === null) {
+        return null;
+      }
+      const module = hub;
+      return {
+        enqueue: (event: Parameters<typeof module.acceptance.enqueue>[0]) =>
+          module.acceptance.enqueue(event),
+        trackInserted: module.acceptanceTracker.trackInserted,
+        consumeForSend: module.acceptanceTracker.consumeForSend,
+      };
     },
     get send() {
       return sendEngine;
@@ -1241,6 +1252,10 @@ async function boot(): Promise<void> {
                 summaries: countRows('summaries'),
                 outbox: countRows('outbox'),
                 messageGuardEvents: countRows('message_guard_events'),
+                // Stage 31 drain watch: legacy usage_events parked for core.
+                // The old reporter keeps flushing for one release; §5 exit
+                // criterion is this count reaching (and staying at) zero.
+                usageEvents: countRows('usage_events'),
               },
             },
             outboxAudit: audit

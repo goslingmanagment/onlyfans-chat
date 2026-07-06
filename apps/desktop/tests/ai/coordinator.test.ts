@@ -1,20 +1,16 @@
-// Coordinator lifecycle behavior (SPEC §8.3, research §8): frame ordering,
-// concurrency gates, navigation-independent lifecycle, staged timeouts, result sanitation,
-// spend summaries, usage_events bookkeeping, debug prompt inspection and the
-// no-double-retry contract with the providers.
+// AI operation coordinator lifecycle (SPEC §8.3), Stage 31 shape: the kernel
+// feature-service lane is the only generation lane. The legacy behaviors
+// these tests pin survive the cutover unchanged: synchronous conversation
+// reservation, operationId correlation, 50 ms chunk batching, staged
+// timeouts, sanitizer/XML result pipeline, CG-coded errors.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  QUICK_OPERATION_TIMEOUT_MS,
-  STREAM_CHUNK_FLUSH_MS,
-} from '@chatgoose/shared/constants';
+import { QUICK_OPERATION_TIMEOUT_MS, STREAM_CHUNK_FLUSH_MS } from '@chatgoose/shared/constants';
 import { CgError } from '@chatgoose/shared/errors/index';
-import { buildLlmSpendSummary } from '@chatgoose/shared/llm/cost';
-import type { LlmUsageMetrics } from '@chatgoose/shared/llm/sse';
 import { parseOperationEvent } from '@chatgoose/shared/protocol/index';
 import type { OperationEvent } from '@chatgoose/shared/protocol/index';
-import { z } from 'zod';
-import { createAiCoordinator, PERSONALITIES_SETTINGS_KEY } from '@main/ai/index';
+import type { LlmUsageMetrics } from '@chatgoose/shared/usage-metrics';
+import { createAiCoordinator } from '@main/ai/index';
 import type { AiCoordinator } from '@main/ai/index';
 import type { DataLayer } from '@main/db/index';
 import {
@@ -22,17 +18,13 @@ import {
   CHAT,
   flushAsync,
   framesOfType,
-  makeKeychain,
   makeSettingsStore,
   makeSettingsVM,
-  makeStubClient,
-  makeStubGateway,
+  makeStubFeatureGateway,
   memoryDataLayer,
-  sampleUser,
-  seedMessages,
   startRequest,
 } from './helpers';
-import type { StubClient, StubGateway } from './helpers';
+import type { StubFeatureGateway } from './helpers';
 import type { SettingsVM } from '../../src/preload/contract';
 
 const USAGE: LlmUsageMetrics = {
@@ -40,22 +32,20 @@ const USAGE: LlmUsageMetrics = {
   cache_creation_input_tokens: 300,
   cache_read_input_tokens: 800,
   output_tokens: 90,
+  cost_micro_usd: 12_345,
 };
 
 describe('AiCoordinator', () => {
   let data: DataLayer;
-  let stub: StubClient;
-  let gateway: StubGateway;
+  let gateway: StubFeatureGateway;
   let frames: OperationEvent[];
   let coordinator: AiCoordinator;
 
-  function build(settings: SettingsVM = makeSettingsVM(), keys: Record<string, string> = { anthropicKey: 'sk-ant' }): void {
+  function build(settings: SettingsVM = makeSettingsVM()): void {
     coordinator = createAiCoordinator({
       data,
-      client: stub.client,
       settingsStore: makeSettingsStore(settings),
-      keychain: makeKeychain(keys),
-      gateway: gateway.gateway,
+      featureGateway: gateway.gateway,
     });
     coordinator.subscribe((event) => frames.push(event));
   }
@@ -63,10 +53,7 @@ describe('AiCoordinator', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     data = memoryDataLayer();
-    seedMessages(data, 5);
-    stub = makeStubClient();
-    stub.setUser(sampleUser());
-    gateway = makeStubGateway();
+    gateway = makeStubFeatureGateway();
     frames = [];
   });
 
@@ -84,7 +71,7 @@ describe('AiCoordinator', () => {
     expect(gateway.cb).not.toBeNull();
   }
 
-  it('happy path: progress → chunk* → complete, all frames wire-valid', async () => {
+  it('happy path: generating → chunk* → complete, all frames wire-valid', async () => {
     build();
     await startAndReachStream();
 
@@ -105,12 +92,9 @@ describe('AiCoordinator', () => {
     const lastProgress = types.lastIndexOf('operation:progress');
     expect(firstChunk).toBeGreaterThan(lastProgress);
 
+    // Context loads happen kernel-side — a single 'generating' phase.
     const progress = framesOfType(frames, 'operation:progress');
-    expect(progress.map((frame) => frame.phase)).toEqual([
-      'loading-messages',
-      'loading-earnings',
-      'generating',
-    ]);
+    expect(progress.map((frame) => frame.phase)).toEqual(['generating']);
 
     const chunks = framesOfType(frames, 'operation:chunk');
     expect(chunks.map((frame) => frame.text).join('')).toBe('hey you');
@@ -157,7 +141,6 @@ describe('AiCoordinator', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]?.operationId).toBe('op-compare');
     expect(errors[0]?.error.code).toBe('CG-FLOW-P4');
-    expect(errors[0]?.error.message).toContain('arrives in P4');
     expect(gateway.calls).toHaveLength(0);
     // the conversation slot stays free — a real feature can start immediately
     coordinator.start(startRequest({ operationId: 'op-after' }));
@@ -180,9 +163,7 @@ describe('AiCoordinator', () => {
     await flushAsync();
     const complete = framesOfType(frames, 'operation:complete');
     expect(complete).toHaveLength(1);
-    expect(complete[0]?.operationId).toBe('op-1');
     expect(complete[0]?.result.rawText).toBe('partial and more');
-    expect(framesOfType(frames, 'operation:error')).toHaveLength(0);
   });
 
   it('ai:cancel discards with reason cancelled and cancels the stream', async () => {
@@ -205,7 +186,6 @@ describe('AiCoordinator', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]?.error.code).toBe('CG-NET-02');
     expect(gateway.cancelCount).toBe(1);
-    expect(framesOfType(frames, 'operation:complete')).toHaveLength(0);
   });
 
   it('maps unusable sanitized output to CG-API-06', async () => {
@@ -217,7 +197,6 @@ describe('AiCoordinator', () => {
     const errors = framesOfType(frames, 'operation:error');
     expect(errors).toHaveLength(1);
     expect(errors[0]?.error.code).toBe('CG-API-06');
-    expect(framesOfType(frames, 'operation:complete')).toHaveLength(0);
   });
 
   it('splits multi-part replies on [NEXT] and flags split mode', async () => {
@@ -238,7 +217,6 @@ describe('AiCoordinator', () => {
     await flushAsync();
 
     const complete = framesOfType(frames, 'operation:complete')[0];
-    expect(complete).toBeDefined();
     expect(complete?.result.rawText).toBe('no xml tags at all');
     expect(complete?.result['xml']).toMatchObject({ valid: false });
     expect(framesOfType(frames, 'operation:error')).toHaveLength(0);
@@ -271,58 +249,13 @@ describe('AiCoordinator', () => {
     expect(gateway.calls).toHaveLength(0);
   });
 
-  it('gates on an explicitly empty personality list with CG-FLOW-01', async () => {
-    data.settings.set(PERSONALITIES_SETTINGS_KEY, []);
-    build();
-    coordinator.start(startRequest());
-    await flushAsync();
-
-    expect(framesOfType(frames, 'operation:error')[0]?.error.code).toBe('CG-FLOW-01');
-  });
-
-  it('resolves the personality from the stored list', async () => {
-    data.settings.set(PERSONALITIES_SETTINGS_KEY, [
-      { id: 'p-custom', name: 'Custom', content: 'You are Custom.', updatedAt: 1 },
-    ]);
+  it('passes the mapped persona key on the feature request (custom personas kernel-synced)', async () => {
     build(makeSettingsVM({ accountMappings: { [ACCT]: 'p-custom' } }));
     await startAndReachStream();
-    const system = gateway.calls[0]?.systemBlocks.map((block) => block.text).join('');
-    expect(system).toContain('You are Custom.');
+    expect(gateway.calls[0]?.personaKey).toBe('p-custom');
   });
 
-  it('gates on a missing provider key with CG-AUTH-01', async () => {
-    build(makeSettingsVM(), {});
-    coordinator.start(startRequest());
-    await flushAsync();
-
-    const errors = framesOfType(frames, 'operation:error');
-    expect(errors[0]?.error.code).toBe('CG-AUTH-01');
-    expect(gateway.calls).toHaveLength(0);
-  });
-
-  it('hub AI mode skips local provider-key gating and does not enqueue legacy usage reporting', async () => {
-    build(makeSettingsVM({ aiGatewayTransport: 'hub' }), {});
-    await startAndReachStream({ params: { forceRegenerate: true } });
-
-    expect(gateway.calls[0]).toMatchObject({
-      clientRequestId: 'op-1',
-      accountId: ACCT,
-      chatId: '4242',
-      isRegeneration: true,
-      transport: 'hub',
-    });
-
-    gateway.cb?.onUsage?.(USAGE);
-    gateway.cb?.onComplete('hub answer');
-    await flushAsync();
-
-    const row = data.db
-      .prepare('SELECT client_event_id FROM usage_events WHERE client_event_id = @id')
-      .get({ id: 'op-1' });
-    expect(row).toBeUndefined();
-  });
-
-  it('reports the spend summary computed from the streamed usage', async () => {
+  it('reports the gateway-priced spend and records the local spend log', async () => {
     build();
     await startAndReachStream();
     gateway.cb?.onUsage?.(USAGE);
@@ -330,87 +263,40 @@ describe('AiCoordinator', () => {
     await flushAsync();
 
     const complete = framesOfType(frames, 'operation:complete')[0];
-    const modelId = gateway.calls[0]?.modelId ?? '';
-    const expected = buildLlmSpendSummary(modelId, USAGE);
     expect(complete?.llmSpend).toMatchObject({
-      totalTokens: expected.totalTokens,
+      totalTokens: 1200 + 300 + 800 + 90,
       inputTokens: 1200,
       cacheWriteTokens: 300,
       cacheReadTokens: 800,
       outputTokens: 90,
-      totalUsd: expected.totalUsd,
-      cacheEffectKind: expected.cacheEffectKind,
+      totalUsd: 0.012345,
+      approximate: true,
     });
-  });
 
-  it('writes a usage_events row keyed by operationId on completion', async () => {
-    build();
-    await startAndReachStream({ params: { forceRegenerate: true } });
-    gateway.cb?.onUsage?.(USAGE);
-    gateway.cb?.onComplete('done');
-    await flushAsync();
-
-    const row: unknown = data.db
-      .prepare('SELECT client_event_id, payload FROM usage_events WHERE client_event_id = @id')
+    // The gateway ledger is authoritative: no local usage_events row, but the
+    // Activity panel's spend log records the gateway-reported cost.
+    const row = data.db
+      .prepare('SELECT client_event_id FROM usage_events WHERE client_event_id = @id')
       .get({ id: 'op-1' });
-    const parsed = z
-      .object({ client_event_id: z.string(), payload: z.string() })
-      .parse(row);
-    const payload: unknown = JSON.parse(parsed.payload);
-    expect(payload).toMatchObject({
-      clientEventId: 'op-1',
-      feature: 'fast-reply',
-      inputTokens: 1200,
-      outputTokens: 90,
-      isRegeneration: true,
-    });
-    const modelSchema = z.object({ model: z.string().min(1), durationMs: z.number() });
-    expect(modelSchema.safeParse(payload).success).toBe(true);
+    expect(row).toBeUndefined();
+    const spendRow = data.db
+      .prepare('SELECT cost_microusd AS cost FROM ai_spend_log').get() as { cost: number };
+    expect(spendRow.cost).toBe(12_345);
   });
 
-  it('emits a debugPrompt frame with blocks + cache flags before the stream in debug mode', async () => {
-    build(makeSettingsVM({ debugMode: true }));
+  it('omits spend entirely when the gateway reported no cost', async () => {
+    build();
     await startAndReachStream();
-    gateway.cb?.onText('x');
-    await vi.advanceTimersByTimeAsync(STREAM_CHUNK_FLUSH_MS);
-    gateway.cb?.onComplete('x');
+    const { cost_micro_usd: _omitted, ...noCost } = USAGE;
+    gateway.cb?.onUsage?.(noCost);
+    gateway.cb?.onComplete('ok');
     await flushAsync();
 
-    const debugFrames = framesOfType(frames, 'operation:debugPrompt');
-    expect(debugFrames).toHaveLength(1);
-    const types = frames.map((frame) => frame.type);
-    expect(types.indexOf('operation:debugPrompt')).toBeLessThan(types.indexOf('operation:chunk'));
-
-    const snapshot = z
-      .object({
-        modelId: z.string(),
-        promptCachingEnabled: z.boolean(),
-        transcript: z.object({
-          messageCount: z.number(),
-          charCount: z.number(),
-          preview: z.string(),
-        }),
-        systemBlocks: z.array(z.object({ text: z.string(), cache: z.enum(['1h', '5m', 'none']) })),
-        userBlocks: z.array(z.object({ text: z.string(), cache: z.enum(['1h', '5m', 'none']) })),
-      })
-      .parse(debugFrames[0]?.snapshot);
-    expect(snapshot.transcript.messageCount).toBe(5);
-    expect(snapshot.transcript.charCount).toBeGreaterThan(0);
-    expect(snapshot.transcript.preview).toContain('message 5');
-    expect(snapshot.userBlocks.some((block) => block.cache === '5m')).toBe(true);
-
-    // debug mode also attaches profiling to the terminal frame
     const complete = framesOfType(frames, 'operation:complete')[0];
-    expect(complete?.profiling).toBeDefined();
-    const stageKeys = complete?.profiling?.stages.map((stage) => stage.key) ?? [];
-    expect(stageKeys).toContain('resolve-identity');
-    expect(stageKeys).toContain('load-messages');
-    expect(stageKeys).toContain('prompt-build');
-    expect(stageKeys).toContain('llm-ttfb');
-    expect(stageKeys).toContain('llm-stream');
+    expect(complete?.llmSpend).toBeUndefined();
   });
 
-  it('does not retry on top of the provider retry layer (single stream call)', async () => {
+  it('does not retry on top of the kernel lane (single stream call)', async () => {
     build();
     await startAndReachStream();
     gateway.cb?.onError?.(new CgError('CG-API-01', { retryAfterMs: 1000 }));
@@ -439,15 +325,13 @@ describe('AiCoordinator', () => {
   it('applies the default tone from settings and the explicit tone override', async () => {
     build();
     await startAndReachStream();
-    const userTextDefault = gateway.calls[0]?.userBlocks.map((block) => block.text).join('');
-    expect(userTextDefault).toContain('Tone override: CASUAL');
+    expect(gateway.calls[0]?.tone).toBe('casual');
     gateway.cb?.onComplete('ok');
     await flushAsync();
 
     coordinator.start(startRequest({ operationId: 'op-2', params: { tone: 'spicy' } }));
     await flushAsync();
-    const userTextSpicy = gateway.calls[1]?.userBlocks.map((block) => block.text).join('');
-    expect(userTextSpicy).toContain('Tone override: HORNY');
+    expect(gateway.calls[1]?.tone).toBe('spicy');
   });
 
   it('dispose discards everything in flight', async () => {

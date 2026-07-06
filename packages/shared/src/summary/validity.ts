@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { modelSelectionsEquivalent } from '../llm/model-registry';
 
 /** Legacy `SUMMARY_EVICTION_COUNT`: at most this many entries are evicted per quota retry. */
 export const SUMMARY_EVICTION_BATCH = 10;
@@ -80,7 +79,9 @@ export function isValidSummaryCacheEntry(
     entry &&
       entry.personalityId === personalityId &&
       entry.personalityUpdatedAt === personalityUpdatedAt &&
-      modelSelectionsEquivalent(entry.modelId, modelId) &&
+      // Stage 31: model ids are kernel config ('kernel' sentinel locally);
+      // legacy entries carrying real registry ids go stale once and refresh.
+      (entry.modelId ?? null) === (modelId ?? null) &&
       entry.spendingVerified === true &&
       entry.subscriptionVerified === true,
   );

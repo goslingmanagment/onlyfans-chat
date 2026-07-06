@@ -82,7 +82,7 @@ describe('settings store', () => {
     expect(vm.hubBaseUrl).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
     expect(vm.ofapiReadTransport).toBe('hub');
     expect(vm.ofapiWriteTransport).toBe('hub');
-    expect(vm.aiGatewayTransport).toBe('direct');
+    expect(vm.aiGatewayTransport).toBe('feature');
     expect(vm.hubModeOverride).toBe('auto');
     expect(vm.spendSweepRollbackToLegacy).toBe(false);
     expect(vm.unreadReconcile).toEqual({
@@ -102,9 +102,8 @@ describe('settings store', () => {
     expect(vm.uiLocale).toBe('system');
     expect(vm.uiScale).toBe(1);
     expect(vm.uiTheme).toBe('light');
-    expect(vm.keyMeta).toEqual({ anthropic: null, openRouter: null, hub: null });
-    expect(vm.hasAnthropicKey).toBe(false);
-    expect(vm.hasOpenRouterKey).toBe(false);
+    expect(vm.keyMeta).toEqual({ hub: null });
+    expect(vm.hasHubKey).toBe(false);
   });
 
   it('persists UI and hub transport settings (round-trip) and zod-rejects bad values', async () => {
@@ -115,7 +114,7 @@ describe('settings store', () => {
       uiTheme: 'dark',
       ofapiReadTransport: 'hub',
       ofapiWriteTransport: 'hub',
-      aiGatewayTransport: 'hub',
+      aiGatewayTransport: 'feature',
       hubModeOverride: 'hub',
       spendSweepRollbackToLegacy: false,
       unreadReconcile: {
@@ -137,7 +136,7 @@ describe('settings store', () => {
     expect(vm.uiTheme).toBe('dark');
     expect(vm.ofapiReadTransport).toBe('hub');
     expect(vm.ofapiWriteTransport).toBe('hub');
-    expect(vm.aiGatewayTransport).toBe('hub');
+    expect(vm.aiGatewayTransport).toBe('feature');
     expect(vm.hubModeOverride).toBe('hub');
     expect(vm.spendSweepRollbackToLegacy).toBe(false);
     expect(vm.unreadReconcile.immediateMaxPages).toBe(4);
@@ -150,7 +149,7 @@ describe('settings store', () => {
     expect(again.uiTheme).toBe('dark');
     expect(again.ofapiReadTransport).toBe('hub');
     expect(again.ofapiWriteTransport).toBe('hub');
-    expect(again.aiGatewayTransport).toBe('hub');
+    expect(again.aiGatewayTransport).toBe('feature');
     expect(again.hubModeOverride).toBe('hub');
     expect(again.spendSweepRollbackToLegacy).toBe(false);
     expect(again.unreadReconcile.focusedIntervalMs).toBe(120_000);
@@ -162,7 +161,7 @@ describe('settings store', () => {
     await expect(store.update({ ofapiReadTransport: 'proxy' })).rejects.toThrow();
     await expect(store.update({ ofapiWriteTransport: 'direct' })).rejects.toThrow();
     await expect(store.update({ ofapiWriteTransport: 'proxy' })).rejects.toThrow();
-    await expect(store.update({ aiGatewayTransport: 'proxy' })).rejects.toThrow();
+    await expect(store.update({ aiGatewayTransport: 'hub' })).rejects.toThrow();
     await expect(store.update({ hubModeOverride: 'both' })).rejects.toThrow();
     await expect(store.update({ spendSweepRollbackToLegacy: 'yes' })).rejects.toThrow();
     await expect(
@@ -177,16 +176,16 @@ describe('settings store', () => {
     const secrets = createFakeSecrets();
     const store = createSettingsStore({ queries, secrets, now: () => 1_750_000_000_000 });
 
-    const vm = await store.update({ anthropicKey: 'sk-ant-secret-a4f2' });
-    expect(vm.keyMeta.anthropic).toEqual({ last4: 'a4f2', setAt: 1_750_000_000_000 });
+    const vm = await store.update({ hubApiKey: 'agency_hub_core_a4f2' });
+    expect(vm.keyMeta.hub).toEqual({ last4: 'a4f2', setAt: 1_750_000_000_000 });
 
     // last4 is the only key-derived material allowed in the table.
     const tableDump = JSON.stringify([...queries.rows.entries()]);
-    expect(tableDump).not.toContain('sk-ant-secret-a4f2');
+    expect(tableDump).not.toContain('agency_hub_core_a4f2');
     expect(tableDump).toContain('a4f2');
 
-    const cleared = await store.update({ anthropicKey: '' });
-    expect(cleared.keyMeta.anthropic).toBeNull();
+    const cleared = await store.update({ hubApiKey: '' });
+    expect(cleared.keyMeta.hub).toBeNull();
   });
 
   it('keyMeta is read-only: a patch attempting to set it is rejected', async () => {
@@ -256,31 +255,38 @@ describe('settings store', () => {
 
   it('routes API keys to the keychain, never to the settings table', async () => {
     const { store, queries } = createStore();
-    const vm = await store.update({ anthropicKey: 'sk-ant-secret' });
-    expect(vm.hasAnthropicKey).toBe(true);
-    expect(vm.hasOpenRouterKey).toBe(false);
+    const vm = await store.update({ hubApiKey: 'agency_hub_core_secret9' });
+    expect(vm.hasHubKey).toBe(true);
 
     const tableDump = JSON.stringify([...queries.rows.entries()]);
-    expect(tableDump).not.toContain('sk-ant-secret');
+    expect(tableDump).not.toContain('agency_hub_core_secret9');
 
     // VM never carries key material
     const vmDump = JSON.stringify(vm);
-    expect(vmDump).not.toContain('sk-ant-secret');
-    expect(Object.keys(vm)).not.toContain('anthropicKey');
+    expect(vmDump).not.toContain('agency_hub_core_secret9');
+    expect(Object.keys(vm)).not.toContain('hubApiKey');
   });
 
   it('clears a key when the patch value is empty/whitespace', async () => {
     const { store } = createStore();
-    await store.update({ openRouterKey: 'or-key' });
-    expect((await store.get()).hasOpenRouterKey).toBe(true);
-    const vm = await store.update({ openRouterKey: '   ' });
-    expect(vm.hasOpenRouterKey).toBe(false);
+    await store.update({ hubApiKey: 'agency_hub_core_x' });
+    expect((await store.get()).hasHubKey).toBe(true);
+    const vm = await store.update({ hubApiKey: '   ' });
+    expect(vm.hasHubKey).toBe(false);
   });
 
   it('trims key material before storing', async () => {
     const { store, secrets } = createStore();
-    await store.update({ anthropicKey: '  sk-padded  ' });
-    expect(secrets.values.get('anthropicKey')).toBe('sk-padded');
+    await store.update({ hubApiKey: '  sk-padded  ' });
+    expect(secrets.values.get('hubApiKey')).toBe('sk-padded');
+  });
+
+  it('Stage 31: a patch carrying retired vendor keys is rejected outright', async () => {
+    const { store, secrets } = createStore();
+    await expect(
+      store.update({ anthropicKey: 'sk-ant-legacy', openRouterKey: 'or-legacy' } as never),
+    ).rejects.toThrow(/anthropicKey/);
+    expect(secrets.values.size).toBe(0);
   });
 
   it('routes the hub chatter key to the keychain and persists hubBaseUrl (round-trip)', async () => {

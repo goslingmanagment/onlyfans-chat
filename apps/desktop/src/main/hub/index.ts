@@ -16,8 +16,11 @@ import { createPageLabelResolver } from './page-resolver';
 import { createSqliteUsageEventStore } from './usage-store';
 import { createSummaryHubHooks } from './summary-hooks';
 import { mapUsagePayloadToHubEvent } from './usage-mapper';
-import { createHubAiGateway } from './ai-gateway';
-import type { AiGateway } from '../ai/gateway';
+import { z } from 'zod';
+import { createFeatureAiGateway } from './ai-feature-gateway';
+import { createAcceptanceReporter, createAcceptanceTracker } from './acceptance-reporter';
+import type { AcceptanceEventInput, AcceptanceReporter, AcceptanceTracker } from './acceptance-reporter';
+import type { AiFeatureGateway } from '../ai/gateway';
 
 export { createPageLabelResolver, PAGE_LIST_CACHE_TTL_MS } from './page-resolver';
 export type { PageLabelResolver, PageLabelResolverOptions } from './page-resolver';
@@ -45,11 +48,25 @@ export interface HubModule {
    * reconfiguration internally (absent hub config behaves as absent hooks).
    */
   summaryHub: SummaryHubHooks;
-  /** Future P6 AI transport. Inert until hub config exists and AI mode is set to hub. */
-  aiGateway: AiGateway;
+  /** Stage 31: the kernel feature-service lane (AI mode 'feature'). */
+  aiFeatureGateway: AiFeatureGateway;
+  /** Stage 31: kernel persona CRUD delegators (null-tolerant at call sites). */
+  personas: {
+    list: () => Promise<Array<{ key: string; displayName: string; systemBlock: string; updatedAt: string }>>;
+    upsert: (args: { key: string; displayName: string; systemBlock: string }) => Promise<unknown>;
+    archive: (key: string) => Promise<unknown>;
+  };
+  /** Stage 31: acceptance lifecycle spool (KV-backed; drains when active). */
+  acceptance: AcceptanceReporter;
+  /** Stage 31: inserted-suggestion tracker for the sent/edited signal. */
+  acceptanceTracker: AcceptanceTracker;
+  /** Coordinator onAcceptanceEvent target ('shown'). */
+  onAcceptanceEvent: (event: AcceptanceEventInput) => void;
   /** Stable delegator for C6b text-command intake/status recovery. */
   commandClient: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand' | 'cancelOfapiCommand'>;
-  /** Coordinator onUsageEvent target: raw payload → wire event → reporter. */
+  /** DRAIN-ONLY (Stage 31): nothing calls this post-cutover — the coordinator
+   * stopped writing usage_events. It stays one release so rows parked by
+   * pre-cutover versions still map and flush; remove with the drain lane. */
   onUsageEvent: (event: UsageEventRecord) => void;
   /** Page-scoped core OFAPI spend summary for Activity/diagnostics; null when hub is off/unreachable. */
   getOfapiCreditsSummary(): Promise<HubOfapiCreditsSummary | null>;
@@ -62,8 +79,17 @@ interface ActiveHub {
   client: HubClient;
   reporter: UsageReporter;
   hooks: SummaryHubHooks;
-  aiGateway: AiGateway;
+  aiFeatureGateway: AiFeatureGateway;
 }
+
+const personaSyncListSchema = z.array(
+  z.object({
+    id: z.string().min(1),
+    name: z.string(),
+    content: z.string().min(1),
+    builtin: z.boolean().optional(),
+  }).loose(),
+);
 
 export function createHubModule(options: HubModuleOptions): HubModule {
   const { data, settingsStore, keychain } = options;
@@ -72,6 +98,12 @@ export function createHubModule(options: HubModuleOptions): HubModule {
   const store = createSqliteUsageEventStore(data.db);
 
   let active: ActiveHub | null = null;
+  const acceptance = createAcceptanceReporter({
+    data,
+    getClient: () => active?.client ?? null,
+    onWarn,
+  });
+  const acceptanceTracker = createAcceptanceTracker();
   /** Invalidates in-flight reconfigures (config can change mid-await). */
   let generation = 0;
   let disposed = false;
@@ -89,17 +121,42 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       pushSummary: (args) => active?.hooks.pushSummary?.(args) ?? Promise.resolve(),
     },
 
-    aiGateway: {
+    personas: {
+      list: async () => {
+        if (active === null) {
+          throw new HubError('bad-request', { message: 'Hub personas are not configured' });
+        }
+        return active.client.listAiPersonas();
+      },
+      upsert: async (args) => {
+        if (active === null) {
+          throw new HubError('bad-request', { message: 'Hub personas are not configured' });
+        }
+        return active.client.upsertAiPersona(args);
+      },
+      archive: async (key) => {
+        if (active === null) {
+          throw new HubError('bad-request', { message: 'Hub personas are not configured' });
+        }
+        return active.client.archiveAiPersona({ key });
+      },
+    },
+
+    acceptance,
+    acceptanceTracker,
+    onAcceptanceEvent: (event) => acceptance.enqueue(event),
+
+    aiFeatureGateway: {
       stream(req, cb) {
         if (active === null) {
           cb.onError?.(
             new HubError('bad-request', {
-              message: 'Hub AI gateway is not configured',
+              message: 'Hub AI feature lane is not configured',
             }),
           );
           return () => {};
         }
-        return active.aiGateway.stream(req, cb);
+        return active.aiFeatureGateway.stream(req, cb);
       },
     },
 
@@ -181,6 +238,10 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         getAccountUsername: (accountId) => data.accounts.get(accountId)?.username ?? null,
         getOverrides: async () => (await settingsStore.get()).accountPageLabels,
       });
+      // Stage 31 drain mode: no producer remains (the kernel gateway ledger is
+      // authoritative); the reporter only flushes usage_events rows parked by
+      // pre-cutover releases. Planned removal once the fleet's diagnostics
+      // show the drain counter at zero (§5).
       const reporter = createUsageReporter({
         client,
         store,
@@ -192,6 +253,33 @@ export function createHubModule(options: HubModuleOptions): HubModule {
           });
         },
       });
+      // Stage 31 Task 3: one-time custom-persona sync — local personas become
+      // kernel config (upsert is idempotent; builtin is kernel-seeded).
+      // Fire-and-forget: sync failure never blocks reconfigure.
+      void (async () => {
+        try {
+          const stored = data.settings.getParsed(
+            'personalities',
+            personaSyncListSchema,
+          );
+          if (stored === undefined) {
+            return;
+          }
+          for (const persona of stored) {
+            if (persona.builtin === true) {
+              continue;
+            }
+            await client.upsertAiPersona({
+              key: persona.id,
+              displayName: persona.name,
+              systemBlock: persona.content,
+            });
+          }
+        } catch (error) {
+          onWarn(`[hub] persona sync failed (${error instanceof Error ? error.message : String(error)})`);
+        }
+      })();
+
       active = {
         client,
         reporter,
@@ -200,7 +288,7 @@ export function createHubModule(options: HubModuleOptions): HubModule {
           data,
           resolvePageLabel: (accountId) => resolver.resolve(accountId),
         }),
-        aiGateway: createHubAiGateway({
+        aiFeatureGateway: createFeatureAiGateway({
           client,
           resolvePageLabel: (accountId) => resolver.resolve(accountId),
         }),
@@ -209,6 +297,7 @@ export function createHubModule(options: HubModuleOptions): HubModule {
 
     dispose() {
       disposed = true;
+      acceptance.dispose();
       teardown();
     },
   };

@@ -21,21 +21,8 @@ export const UI_MESSAGES = {
   'settings.title': { en: 'Settings', ru: 'Настройки' },
   'settings.back': { en: '← back to workspace', ru: '← назад к работе' },
 
-  // ── Rollback / provider keys ──────────────────────────────────────────────
-  'keys.title': { en: 'Local keys', ru: 'Локальные ключи' },
-  'keys.hint': {
-    en: 'Optional local keys for Direct reads and direct AI. OFAPI writes always use Agency Hub.',
-    ru: 'Опциональные локальные ключи для Direct-чтения и прямого ИИ. Записи OFAPI всегда идут через Agency Hub.',
-  },
-  'keys.anthropic.label': { en: 'Anthropic key', ru: 'Ключ Anthropic' },
-  'keys.anthropic.hint': { en: 'direct AI provider', ru: 'основной ИИ-провайдер' },
-  'keys.openrouter.label': { en: 'OpenRouter key', ru: 'Ключ OpenRouter' },
-  'keys.openrouter.hint': { en: 'alternate AI provider', ru: 'запасной ИИ-провайдер' },
-  'keys.meta': { en: '…{last4} · added {date}', ru: '…{last4} · добавлен {date}' },
-  'keys.test': { en: 'Test', ru: 'Проверить' },
+  // ── Key probes (Stage 31: vendor keys retired — hub test only) ────────────
   'keys.testing': { en: 'Testing…', ru: 'Проверяю…' },
-  'keys.testOk': { en: 'Key works', ru: 'Ключ работает' },
-  'keys.testOkTeam': { en: 'Key works — team {team}', ru: 'Ключ работает — команда {team}' },
 
   // Russian texts for CG-* codes a key/hub test can return. EN failures show
   // the wire message (registry wording incl. provider overrides) — these en
@@ -525,17 +512,13 @@ export const UI_MESSAGES = {
     en: 'Pending upload for core: {list} — will flush on reconnect.',
     ru: 'Ждут отправки в core: {list} — улетят при подключении.',
   },
-  'activity.aiDirect': {
-    en: '— {provider} from this machine, key in keychain',
-    ru: '— {provider} с этой машины, ключ в связке ключей',
-  },
-  'activity.aiDirectHubLive': {
-    en: '— {provider} from this machine (central gateway = P6, deferred)',
-    ru: '— {provider} с этой машины (центральный шлюз = P6, отложен)',
+  'activity.aiKernel': {
+    en: '— generation via the agency kernel gateway',
+    ru: '— генерация через шлюз ядра агентства',
   },
   'activity.aiOff': {
-    en: '— no LLM key yet (Settings → API keys)',
-    ru: '— ключа ИИ ещё нет (Настройки → API-ключи)',
+    en: '— hub not connected yet (Settings → Agency Hub)',
+    ru: '— хаб ещё не подключён (Настройки → Agency Hub)',
   },
   'activity.sendsLine': {
     en: '{sent} sent · {failed} failed · {unconfirmed} unconfirmed',

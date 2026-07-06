@@ -416,15 +416,13 @@ function buildStore(): MockStore {
   ];
 
   const settings: SettingsVM = {
-    hasAnthropicKey: true,
-    hasOpenRouterKey: false,
     hasHubKey: true,
     hasHubDeviceToken: false,
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
     hubSyncProtocol: 'v2',
-    aiGatewayTransport: 'direct',
+    aiGatewayTransport: 'feature',
     hubModeOverride: 'auto',
     spendSweepRollbackToLegacy: true,
     unreadReconcile: {
@@ -447,8 +445,6 @@ function buildStore(): MockStore {
     uiScale: 1,
     uiTheme: 'light',
     keyMeta: {
-      anthropic: { last4: 'a4f2', setAt: Date.now() - 5 * 86_400_000 },
-      openRouter: null,
       hub: { last4: 'h8b2', setAt: Date.now() - 12 * 86_400_000 },
     },
     featureModels: {
@@ -1164,7 +1160,7 @@ export function createMockBridge(): ChatGooseBridge {
         pendingSummaries: 2,
         syncedSummariesToday: 0,
       },
-      ai: { hasAnthropicKey: true, hasOpenRouterKey: false },
+      ai: { gatewayConfigured: store.settings.hubBaseUrl !== null && store.settings.hasHubKey },
       sends: { ...store.sync.sendsToday },
       credits: {
         core: {
@@ -1249,15 +1245,11 @@ export function createMockBridge(): ChatGooseBridge {
       label: `mock-${username}`,
       expiresAt: new Date(Date.now() + 90 * 24 * 3_600_000).toISOString(),
     }),
-    'cmd:keys.test': ({ provider }) => {
-      // Mock: OFAPI/anthropic succeed, openrouter rejects, hub depends on config.;
-      if (provider === 'anthropic') return { ok: true, code: null, message: '' };
-      if (provider === 'hub') {
-        return store.settings.hubBaseUrl !== null && store.settings.hasHubKey
-          ? { ok: true, code: null, message: '', username: 'dasha', role: 'chatter', pages: 2 }
-          : { ok: false, code: 'HUB_NOT_CONFIGURED', message: 'Hub base URL or chatter key missing.' };
-      }
-      return { ok: false, code: 'CG-AUTH-02', message: 'OpenRouter API key is invalid.' };
+    'cmd:keys.test': () => {
+      // Mock: hub probe result depends on the mock config (Stage 31: hub-only).
+      return store.settings.hubBaseUrl !== null && store.settings.hasHubKey
+        ? { ok: true, code: null, message: '', username: 'dasha', role: 'chatter', pages: 2 }
+        : { ok: false, code: 'HUB_NOT_CONFIGURED', message: 'Hub base URL or chatter key missing.' };
     },
     'query:localData.stats': () => ({
       dbBytes: 38_200_000,
@@ -1399,10 +1391,8 @@ export function createMockBridge(): ChatGooseBridge {
     },
     'cmd:sync.focusAccount': () => undefined,
     'cmd:settings.update': (patch) => {
-      const { anthropicKey, openRouterKey, hubApiKey, ...rest } = patch;
+      const { hubApiKey, ...rest } = patch;
       store.settings = { ...store.settings, ...rest };
-      if (anthropicKey !== undefined) store.settings.hasAnthropicKey = anthropicKey.length > 0;
-      if (openRouterKey !== undefined) store.settings.hasOpenRouterKey = openRouterKey.length > 0;
       if (hubApiKey !== undefined) store.settings.hasHubKey = hubApiKey.trim().length > 0;
       // Mock hub: configured = instantly live (exercises the status chip).
       store.sync.hub =

@@ -34,41 +34,47 @@ describe('keychain', () => {
     await rm(secretsDir, { recursive: true, force: true });
   });
 
-  it('deletes decommissioned legacy secrets on request (Stage 24: ofapiKey)', async () => {
+  it('deletes decommissioned legacy secrets on request (Stage 24 ofapiKey + Stage 31 vendor keys)', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    // Simulate a pre-Stage-24 install holding the team-wide direct-read key.
-    await keychain.setSecret('anthropicKey', 'keep-me');
+    // Simulate a pre-cutover install: the team-wide direct-read key plus the
+    // two local AI vendor keys (their names are no longer in SECRET_NAMES, so
+    // they are seeded as raw files the way an old release left them).
+    await keychain.setSecret('hubApiKey', 'keep-me');
     const { writeFile } = await import('node:fs/promises');
     await writeFile(join(secretsDir, 'ofapiKey.secret'), Buffer.from('enc:legacy'));
+    await writeFile(join(secretsDir, 'anthropicKey.secret'), Buffer.from('enc:vendor-a'));
+    await writeFile(join(secretsDir, 'openRouterKey.secret'), Buffer.from('enc:vendor-b'));
 
     await keychain.deleteDecommissionedSecrets();
 
     const { readFile } = await import('node:fs/promises');
     await expect(readFile(join(secretsDir, 'ofapiKey.secret'))).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(await keychain.getSecret('anthropicKey')).toBe('keep-me');
+    await expect(readFile(join(secretsDir, 'anthropicKey.secret'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(secretsDir, 'openRouterKey.secret'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await keychain.getSecret('hubApiKey')).toBe('keep-me');
   });
 
   it('roundtrips a secret through the fake safeStorage', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await keychain.setSecret('anthropicKey', 'sk-ofapi-test-123');
-    expect(await keychain.getSecret('anthropicKey')).toBe('sk-ofapi-test-123');
-    expect(await keychain.hasSecret('anthropicKey')).toBe(true);
+    await keychain.setSecret('hubApiKey', 'sk-ofapi-test-123');
+    expect(await keychain.getSecret('hubApiKey')).toBe('sk-ofapi-test-123');
+    expect(await keychain.hasSecret('hubApiKey')).toBe(true);
   });
 
   it('persists encrypted bytes on disk (file !== plaintext)', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await keychain.setSecret('anthropicKey', 'sk-ant-super-secret');
-    const fileBytes = await readFile(join(secretsDir, 'anthropicKey.secret'));
-    expect(fileBytes.includes(Buffer.from('sk-ant-super-secret', 'utf8'))).toBe(false);
+    await keychain.setSecret('hubApiKey', 'sk-hub-super-secret');
+    const fileBytes = await readFile(join(secretsDir, 'hubApiKey.secret'));
+    expect(fileBytes.includes(Buffer.from('sk-hub-super-secret', 'utf8'))).toBe(false);
     expect(fileBytes.subarray(0, MARKER.length).equals(MARKER)).toBe(true);
   });
 
   it('survives a process restart (new keychain instance, same dir)', async () => {
     const safeStorage = createFakeSafeStorage();
     const first = createKeychain({ safeStorage, secretsDir });
-    await first.setSecret('openRouterKey', 'or-key-1');
+    await first.setSecret('hubDeviceToken', 'device-token-1');
     const second = createKeychain({ safeStorage, secretsDir });
-    expect(await second.getSecret('openRouterKey')).toBe('or-key-1');
+    expect(await second.getSecret('hubDeviceToken')).toBe('device-token-1');
   });
 
   it('returns null / false for missing secrets', async () => {
@@ -79,20 +85,20 @@ describe('keychain', () => {
 
   it('deletes a secret (idempotently)', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await keychain.setSecret('anthropicKey', 'to-be-deleted');
-    await keychain.deleteSecret('anthropicKey');
-    expect(await keychain.getSecret('anthropicKey')).toBeNull();
-    await expect(keychain.deleteSecret('anthropicKey')).resolves.toBeUndefined();
+    await keychain.setSecret('hubApiKey', 'to-be-deleted');
+    await keychain.deleteSecret('hubApiKey');
+    expect(await keychain.getSecret('hubApiKey')).toBeNull();
+    await expect(keychain.deleteSecret('hubApiKey')).resolves.toBeUndefined();
   });
 
   it('rejects empty secret values', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await expect(keychain.setSecret('anthropicKey', '')).rejects.toThrow();
+    await expect(keychain.setSecret('hubApiKey', '')).rejects.toThrow();
   });
 
   it('refuses to persist when OS encryption is unavailable', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(false), secretsDir });
-    await expect(keychain.setSecret('anthropicKey', 'value')).rejects.toThrow(/unavailable/);
+    await expect(keychain.setSecret('hubApiKey', 'value')).rejects.toThrow(/unavailable/);
     expect(await readdir(secretsDir)).toEqual([]);
   });
 

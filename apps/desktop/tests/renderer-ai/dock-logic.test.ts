@@ -265,7 +265,7 @@ describe('evaluateAiGate', () => {
     expect(evaluateAiGate({ mapped: true, hasLlmKey: false })).toEqual({
       ok: false,
       reason: 'no-key',
-      message: 'Add a direct AI key or configure Hub AI in Settings',
+      message: 'Connect Agency Hub in Settings (sign in or add the hub key)',
     });
   });
 
@@ -273,33 +273,24 @@ describe('evaluateAiGate', () => {
     expect(evaluateAiGate({ mapped: true, hasLlmKey: true })).toEqual({ ok: true });
   });
 
-  it('treats hub AI as configured only when hub URL and chatter key exist', () => {
+  it('Stage 31: a hub connection IS the AI configuration (vendor keys retired)', () => {
     expect(
-      hasConfiguredAiTransport({
-        aiGatewayTransport: 'direct',
-        hasAnthropicKey: true,
-        hasOpenRouterKey: false,
-        hasHubKey: false,
-        hubBaseUrl: null,
-      }),
+      hasConfiguredAiTransport({ hasHubKey: true, hasHubDeviceToken: false, hubBaseUrl: 'https://hub.example.com' }),
     ).toBe(true);
     expect(
-      hasConfiguredAiTransport({
-        aiGatewayTransport: 'hub',
-        hasAnthropicKey: false,
-        hasOpenRouterKey: false,
-        hasHubKey: true,
-        hubBaseUrl: 'https://hub.example.com',
-      }),
+      hasConfiguredAiTransport({ hasHubKey: false, hasHubDeviceToken: false, hubBaseUrl: 'https://hub.example.com' }),
+    ).toBe(false);
+    expect(
+      hasConfiguredAiTransport({ hasHubKey: true, hasHubDeviceToken: false, hubBaseUrl: null }),
+    ).toBe(false);
+  });
+
+  it('0.1.31 audit fix: a device token ALONE configures AI (no legacy key needed)', () => {
+    expect(
+      hasConfiguredAiTransport({ hasHubKey: false, hasHubDeviceToken: true, hubBaseUrl: 'https://hub.example.com' }),
     ).toBe(true);
     expect(
-      hasConfiguredAiTransport({
-        aiGatewayTransport: 'hub',
-        hasAnthropicKey: true,
-        hasOpenRouterKey: false,
-        hasHubKey: false,
-        hubBaseUrl: 'https://hub.example.com',
-      }),
+      hasConfiguredAiTransport({ hasHubKey: false, hasHubDeviceToken: true, hubBaseUrl: null }),
     ).toBe(false);
   });
 });

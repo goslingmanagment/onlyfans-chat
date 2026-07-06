@@ -79,6 +79,8 @@ export const aiUsageFeatures = [
     "scan",
     "ping",
     "hi-greeting",
+    // Stage 29: internal gateway lane for the workboard closing classifier.
+    "workboard-closing",
 ];
 export const syncHealthStates = ["healthy", "degraded", "suspicious", "failed"];
 export const httpRequestStates = ["started", "success", "retry", "failed"];

@@ -8,8 +8,6 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 export const SECRET_NAMES = [
-  'anthropicKey',
-  'openRouterKey',
   'hubApiKey',
   // Stage 24: device-bound hub credential (agency_hub_device_…); preferred
   // over hubApiKey when present. Issued via Settings → Hub sign-in.
@@ -40,16 +38,22 @@ export interface Keychain {
   /** Returns the persisted generated key, creating it exactly once. */
   getOrCreateGeneratedKey(name: GeneratedKeyName): Promise<string>;
   /**
-   * Stage 24 / DP 8: removes secrets this version no longer recognizes (the
-   * team-wide direct-read ofapiKey). Runs on every boot; deliberately
-   * irreversible on this machine — a version rollback cannot restore direct
-   * reads (the owner rotates the team key kernel-side after fleet confirm).
+   * Stage 24 / DP 8 (extended in Stage 31): removes secrets this version no
+   * longer recognizes. Runs on every boot; deliberately irreversible on this
+   * machine — a version rollback cannot restore the deleted lane (the owner
+   * rotates/revokes the corresponding upstream credential after fleet confirm).
    */
   deleteDecommissionedSecrets(): Promise<void>;
 }
 
-/** Legacy secret files removed on boot (Stage 24: direct OFAPI reads died). */
-const DECOMMISSIONED_SECRET_FILES = ['ofapiKey.secret'] as const;
+/** Legacy secret files removed on boot: Stage 24 killed direct OFAPI reads;
+ * Stage 31 killed direct AI provider calls (all generation rides the kernel
+ * gateway — vendor keys live kernel-side only). */
+const DECOMMISSIONED_SECRET_FILES = [
+  'ofapiKey.secret',
+  'anthropicKey.secret',
+  'openRouterKey.secret',
+] as const;
 
 /** 32-byte random key as 64 hex chars (DB / media-cache encryption keys). */
 export function generateDbKey(): string {

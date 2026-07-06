@@ -8,9 +8,9 @@
 export type LabelPlatform = string; // a process.platform value
 
 /**
- * The renderer's platform: the preload bridge inside Electron, the host
- * browser in plain-vite dev (mock bridge), darwin under node tests — which
- * keeps the historical ⌘-pinned label assertions meaningful as the default.
+ * The renderer's platform: the preload bridge inside Electron, else the host
+ * navigator (real browsers in plain-vite dev — and node ≥21, which ships a
+ * global navigator, so bare node resolves per-host), else darwin.
  * Accessed via globalThis so the module typechecks under both the DOM
  * (renderer) and node (tests) tsconfigs.
  */

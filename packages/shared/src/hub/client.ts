@@ -14,6 +14,7 @@ import {
   KernelApiError,
   createClient,
   routeSchemas,
+  streamAiFeature as sdkStreamAiFeature,
   streamAiGateway as sdkStreamAiGateway,
   type AiGatewayStreamFrame,
   type KernelClient,
@@ -22,7 +23,7 @@ import {
 } from '@kernel/sdk';
 import type { CgErrorDetail } from '../errors/index';
 import { CgError } from '../errors/index';
-import type { LlmUsageMetrics } from '../llm/sse';
+import type { LlmUsageMetrics } from '../usage-metrics';
 
 // Minimal ambient type for the WHATWG AbortController global (lib "ES2023"
 // has no DOM types; Electron main / Node 22 provide the real one).
@@ -197,6 +198,10 @@ export type HubOfapiCommand = KernelOperationResponse<'getOfapiCommand'>;
 export type HubOfapiCommandCreateRequest = z.input<(typeof routeSchemas)['createOfapiCommand']['body']>;
 export type HubIngestBatchResult = KernelOperationResponse<'ingestObservations'>;
 export type HubAiGatewayStreamRequest = z.input<(typeof routeSchemas)['aiGatewayStream']['body']>;
+/** Stage 31: kernel feature-service request — refs, not assembled blocks. */
+export type HubAiFeatureStreamRequest = z.input<(typeof routeSchemas)['aiFeatureStream']['body']>;
+/** Stage 31: kernel persona record (DP 9-A — personas are kernel config). */
+export type HubAiPersona = z.infer<(typeof routeSchemas)['aiPersonasList']['response'][200]>['personas'][number];
 
 export const HUB_OFAPI_COMMAND_STATES = [
   'queued',
@@ -244,6 +249,9 @@ export interface HubAiGatewayStreamCallbacks {
   onProgress?: () => void;
   onReasoningDelta?: (text: string) => void;
   onStopReason?: (stopReason: string | null) => void;
+  /** Stage 31: the gateway meta frame — requestId is the generation ref
+   * (the acceptance correlation key kernel-side). */
+  onMeta?: (meta: { requestId: string; clientRequestId: string }) => void;
 }
 
 type AiGatewayUsageFrame = Extract<AiGatewayStreamFrame, { type: 'usage' }>;
@@ -254,6 +262,9 @@ function mapGatewayUsage(usage: AiGatewayUsageFrame['usage']): LlmUsageMetrics {
     cache_creation_input_tokens: usage.cacheWriteTokens,
     cache_read_input_tokens: usage.cacheReadTokens,
     output_tokens: usage.outputTokens,
+    // Stage 31: the kernel gateway prices the generation (Stage 29 tables);
+    // local price tables are gone, so this is the only spend source.
+    cost_micro_usd: usage.costMicroUsd,
   };
 }
 
@@ -304,6 +315,22 @@ export interface HubClient {
   cancelOfapiCommand(args: { commandId: string; timeoutMs?: number }): Promise<HubOfapiCommand>;
   streamAiGateway(
     args: { request: HubAiGatewayStreamRequest; signal?: HubAbortSignalLike },
+    callbacks: HubAiGatewayStreamCallbacks,
+  ): Promise<string>;
+  /** Stage 31: kernel persona list/upsert (picker + editor + one-time sync). */
+  listAiPersonas(options?: { timeoutMs?: number }): Promise<HubAiPersona[]>;
+  upsertAiPersona(args: {
+    key: string;
+    displayName: string;
+    systemBlock: string;
+    timeoutMs?: number;
+  }): Promise<HubAiPersona>;
+  archiveAiPersona(args: { key: string; timeoutMs?: number }): Promise<{ archived: boolean }>;
+  /** Stage 31: stream a KERNEL-ASSEMBLED feature generation (Stage 30 route).
+   *  Same SSE frames as streamAiGateway; the kernel loads context and builds
+   *  the prompt — the desktop sends refs only. */
+  streamAiFeature(
+    args: { feature: string; request: HubAiFeatureStreamRequest; signal?: HubAbortSignalLike },
     callbacks: HubAiGatewayStreamCallbacks,
   ): Promise<string>;
   /**
@@ -550,6 +577,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
           callbacks.onProgress?.();
           switch (frame.type) {
             case 'meta':
+              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId });
               return;
             case 'content_delta':
               state.rawText += frame.text;
@@ -593,6 +621,92 @@ export function createHubClient(options: HubClientOptions): HubClient {
       }
       if (!state.doneSeen) {
         throw new HubError('invalid-response', { message: 'hub AI stream ended without a done frame' });
+      }
+      return state.rawText;
+    },
+
+    async listAiPersonas(personaOptions) {
+      const response = await delegate(() =>
+        clientFor(personaOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonasList());
+      return response.personas;
+    },
+
+    async upsertAiPersona({ key, displayName, systemBlock, timeoutMs }) {
+      return delegate(() =>
+        clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaUpsert({
+          params: { key },
+          body: { displayName, systemBlock },
+        }));
+    },
+
+    async archiveAiPersona({ key, timeoutMs }) {
+      return delegate(() =>
+        clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaArchive({ params: { key } }));
+    },
+
+    async streamAiFeature({ feature, request: streamRequest, signal }, callbacks) {
+      const requestBody = routeSchemas.aiFeatureStream.body.safeParse(streamRequest);
+      if (!requestBody.success) {
+        throw badRequestBeforeWire('AI feature stream request failed contract validation', requestBody.error.message);
+      }
+
+      const controller = new AbortController();
+      const onAbort = (): void => controller.abort();
+      if (signal?.aborted) {
+        controller.abort();
+      }
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+
+      const state = { rawText: '', doneSeen: false };
+      const handle = sdkStreamAiFeature(sdkOptions(null), {
+        feature,
+        body: requestBody.data,
+        signal: controller.signal as never,
+        onFrame: (frame) => {
+          callbacks.onProgress?.();
+          switch (frame.type) {
+            case 'meta':
+              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId });
+              return;
+            case 'content_delta':
+              state.rawText += frame.text;
+              callbacks.onText(frame.text);
+              return;
+            case 'reasoning_delta':
+              callbacks.onReasoningDelta?.(frame.text);
+              return;
+            case 'usage':
+              callbacks.onUsage?.(mapGatewayUsage(frame.usage));
+              return;
+            case 'error':
+              throw new HubError('http', {
+                message: frame.message,
+                detail: {
+                  providerMessage: frame.code,
+                  ...(frame.retryAfterMs !== null ? { retryAfterMs: frame.retryAfterMs } : {}),
+                },
+              });
+            case 'done':
+              state.doneSeen = true;
+              callbacks.onStopReason?.(frame.stopReason);
+              return;
+          }
+        },
+      });
+
+      try {
+        await handle.done;
+      } catch (error) {
+        throw toHubError(error);
+      } finally {
+        signal?.removeEventListener?.('abort', onAbort);
+      }
+
+      if (signal?.aborted) {
+        throw new Error('Operation aborted');
+      }
+      if (!state.doneSeen) {
+        throw new HubError('invalid-response', { message: 'hub AI feature stream ended without a done frame' });
       }
       return state.rawText;
     },

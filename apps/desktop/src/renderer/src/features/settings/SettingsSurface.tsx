@@ -16,7 +16,6 @@ import {
   QUICK_MAX_MESSAGE_COUNT,
   QUICK_MIN_MESSAGE_COUNT,
 } from '@chatgoose/shared/constants';
-import { MODEL_GROUPS } from '@chatgoose/shared/llm/model-registry';
 import type { UiMessageKey, UiTranslator } from '@chatgoose/shared/i18n/index';
 import type { SettingsPatch, SettingsVM } from '../../../../preload/contract';
 import { useSettings, useUpdateSettings } from '../../bridge/queries';
@@ -26,9 +25,7 @@ import { useT } from '../../lib/i18n';
 import { Skeleton } from '../../design/Skeleton';
 import { Kbd } from '../../design/Kbd';
 import { ActivitySettings } from './sections/ActivitySettings';
-import { KeySettings } from './sections/KeySettings';
 import { HubSettings } from './sections/HubSettings';
-import { ModelSettings } from './sections/ModelSettings';
 import { PersonalitySettings } from './sections/PersonalitySettings';
 import { BehaviorSettings } from './sections/BehaviorSettings';
 import { SpendersSettings } from './sections/SpendersSettings';
@@ -37,7 +34,6 @@ import { DangerZone } from './sections/DangerZone';
 
 export type Feature = ModelSelectableFeature;
 export const REASONING_EFFORTS: readonly ReasoningEffort[] = ['off', 'low', 'medium', 'high', 'max'];
-export { MODEL_GROUPS };
 
 export const MESSAGE_COUNT_FIELDS: ReadonlyArray<{
   key: 'quickMessageCount' | 'pingMessageCount' | 'improveMessageCount' | 'deepMessageCount';
@@ -73,9 +69,7 @@ export function Section({
 
 const SETTINGS_SECTIONS: ReadonlyArray<{ id: string; titleKey: UiMessageKey }> = [
   { id: 'activity', titleKey: 'activity.title' },
-  { id: 'keys', titleKey: 'keys.title' },
   { id: 'hub', titleKey: 'hub.title' },
-  { id: 'models', titleKey: 'models.title' },
   { id: 'personalities', titleKey: 'personalities.title' },
   { id: 'behavior', titleKey: 'behavior.title' },
   { id: 'spenders', titleKey: 'sp.set.title' },
@@ -257,14 +251,8 @@ function SettingsBody({
       <div id={sectionDomId('activity')} className="scroll-mt-4">
         <ActivitySettings />
       </div>
-      <div id={sectionDomId('keys')} className="scroll-mt-4">
-        <KeySettings settings={settings} patch={patch} />
-      </div>
       <div id={sectionDomId('hub')} className="scroll-mt-4">
         <HubSettings settings={settings} patch={patch} />
-      </div>
-      <div id={sectionDomId('models')} className="scroll-mt-4">
-        <ModelSettings settings={settings} patch={patch} />
       </div>
       <div id={sectionDomId('personalities')} className="scroll-mt-4">
         <PersonalitySettings />

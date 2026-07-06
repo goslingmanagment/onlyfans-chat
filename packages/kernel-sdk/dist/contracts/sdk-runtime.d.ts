@@ -118,6 +118,14 @@ export declare function subscribeSyncEvents(options: KernelClientOptions, input:
  * Stream one AI generation through the gateway
  * (`POST /api/v1/ai/gateway/stream`, `event: ai` frames).
  */
+/** Stage 31: stream a kernel-assembled feature generation (Stage 30 route).
+ * Same SSE framing as the raw gateway stream — one helper per entry path. */
+export declare function streamAiFeature(options: KernelClientOptions, input: {
+    feature: string;
+    body: zod.input<(typeof routeSchemas)["aiFeatureStream"]["body"]>;
+    onFrame: (frame: AiGatewayStreamFrame) => void;
+    signal?: AbortSignal;
+}): KernelStreamHandle;
 export declare function streamAiGateway(options: KernelClientOptions, input: {
     body: zod.input<(typeof routeSchemas)["aiGatewayStream"]["body"]>;
     onFrame: (frame: AiGatewayStreamFrame) => void;

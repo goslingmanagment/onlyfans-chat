@@ -276,6 +276,52 @@ export function subscribeSyncEvents(options, input) {
  * Stream one AI generation through the gateway
  * (`POST /api/v1/ai/gateway/stream`, `event: ai` frames).
  */
+/** Stage 31: stream a kernel-assembled feature generation (Stage 30 route).
+ * Same SSE framing as the raw gateway stream — one helper per entry path. */
+export function streamAiFeature(options, input) {
+    const abort = new AbortController();
+    input.signal?.addEventListener("abort", () => abort.abort(), { once: true });
+    const done = (async () => {
+        const response = await openSseResponse({
+            options,
+            method: "POST",
+            path: `/api/v1/ai/features/${encodeURIComponent(input.feature)}`,
+            body: input.body,
+            signal: abort.signal,
+        });
+        if (!response.ok || !response.body) {
+            let body = null;
+            const text = await response.text().catch(() => "");
+            try {
+                body = text ? JSON.parse(text) : null;
+            }
+            catch {
+                body = text;
+            }
+            const envelope = (body ?? {});
+            throw new KernelApiError(typeof envelope.message === "string" ? envelope.message : `ai/features/${input.feature} failed with ${response.status}`, response.status === 401 || response.status === 403 ? "auth" : response.status >= 500 ? "server" : "validation", response.status, typeof envelope.error === "string" ? envelope.error : null, body);
+        }
+        for await (const frame of parseSseStream(response.body)) {
+            if (frame.event !== "ai" || frame.data === "") {
+                continue;
+            }
+            const parsed = aiGatewayStreamFrameSchema.safeParse(JSON.parse(frame.data));
+            if (!parsed.success) {
+                throw new KernelApiError(`ai frame failed contract validation: ${parsed.error.message}`, "contract", 200, "frame_validation_failed", frame.data);
+            }
+            input.onFrame(parsed.data);
+        }
+    })().catch((error) => {
+        if (abort.signal.aborted) {
+            return;
+        }
+        throw error;
+    });
+    return {
+        done,
+        close: () => abort.abort(),
+    };
+}
 export function streamAiGateway(options, input) {
     const abort = new AbortController();
     input.signal?.addEventListener("abort", () => abort.abort(), { once: true });

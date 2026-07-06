@@ -1,3 +1,7 @@
+> **SUPERSEDED (Stage 35, 2026-07-07):** this is the Pass 1 (pre-migration)
+> codebase map, kept as the migration's historical record. The regenerated
+> post-migration maps live in `docs/generated/` in this repo.
+
 # Hub Integration, Monetization & Activity
 
 ## Scope

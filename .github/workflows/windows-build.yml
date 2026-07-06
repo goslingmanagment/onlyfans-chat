@@ -29,8 +29,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
@@ -39,6 +37,18 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Release hygiene (0.1.31 audit): refuse a mistagged build BEFORE anything
+      # is built or uploaded — the post-upload assert then only guards the feed.
+      - name: Assert tag == package.json before building
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          pkg_version=$(node -p "require('./apps/desktop/package.json').version")
+          tag_version="${GITHUB_REF#refs/tags/v}"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::Tag v$tag_version != package.json ($pkg_version) — bump before tagging"; exit 1
+          fi
 
       - name: Build Windows installer
         run: pnpm dist:win
@@ -63,6 +73,26 @@ jobs:
           scp apps/desktop/release/*.exe apps/desktop/release/*.blockmap cgupdates@45.8.230.111:/srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3/
           scp apps/desktop/release/latest.yml cgupdates@45.8.230.111:/srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3/
           echo "feed updated"
+
+      # Release hygiene (Stage 35): what the feed SERVES must be this release —
+      # served latest.yml version == apps/desktop/package.json == the v* tag.
+      # Recovery if this fires: the stage-04 artifact-diff ritual (docs/RELEASE.md).
+      - name: Assert served feed version == package.json == tag
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        shell: bash
+        run: |
+          pkg_version=$(node -p "require('./apps/desktop/package.json').version")
+          served_version=$(curl -sSk https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3/latest.yml | awk '/^version:/ { print $2; exit }' | tr -d '\r')
+          echo "package.json=$pkg_version served=$served_version ref=$GITHUB_REF"
+          if [ "$served_version" != "$pkg_version" ]; then
+            echo "::error::Served feed version ($served_version) != package.json ($pkg_version)"; exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag_version="${GITHUB_REF#refs/tags/v}"
+            if [ "$tag_version" != "$pkg_version" ]; then
+              echo "::error::Tag v$tag_version != package.json ($pkg_version)"; exit 1
+            fi
+          fi
 
       - uses: actions/upload-artifact@v4
         continue-on-error: true

@@ -250,18 +250,16 @@ export interface AiGateInput {
 }
 
 export interface AiTransportSettings {
-  hasAnthropicKey: boolean;
-  hasOpenRouterKey: boolean;
   hasHubKey: boolean;
+  hasHubDeviceToken: boolean;
   hubBaseUrl: string | null;
-  aiGatewayTransport: 'direct' | 'hub';
 }
 
+/** Stage 31 cutover: the kernel feature lane is the only AI transport —
+ * a hub connection IS the AI configuration (vendor keys retired). Either
+ * credential counts: the device token (preferred) or the legacy chatter key. */
 export function hasConfiguredAiTransport(settings: AiTransportSettings): boolean {
-  if (settings.aiGatewayTransport === 'hub') {
-    return settings.hubBaseUrl !== null && settings.hasHubKey;
-  }
-  return settings.hasAnthropicKey || settings.hasOpenRouterKey;
+  return settings.hubBaseUrl !== null && (settings.hasHubKey || settings.hasHubDeviceToken);
 }
 
 export type AiGate =
@@ -276,7 +274,7 @@ export function evaluateAiGate(input: AiGateInput): AiGate {
     return {
       ok: false,
       reason: 'no-key',
-      message: 'Add a direct AI key or configure Hub AI in Settings',
+      message: 'Connect Agency Hub in Settings (sign in or add the hub key)',
     };
   }
   return { ok: true };

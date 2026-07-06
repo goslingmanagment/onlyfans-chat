@@ -49,14 +49,12 @@ export function seedAccount(data: DataLayer, username = 'loravie', id = ACCT): v
 
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
-    hasAnthropicKey: true,
-    hasOpenRouterKey: false,
     hasHubKey: true,
     hasHubDeviceToken: false,
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
-    aiGatewayTransport: 'direct',
+    aiGatewayTransport: 'feature',
     hubModeOverride: 'auto',
     hubSyncProtocol: 'v2',
     spendSweepRollbackToLegacy: true,
@@ -83,8 +81,6 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     uiScale: 1,
     uiTheme: 'light',
     keyMeta: {
-      anthropic: null,
-      openRouter: null,
       hub: { last4: 'core', setAt: 0 },
     },
     featureModels: {
@@ -165,7 +161,9 @@ export interface FakeHubClient extends HubClient {
   postUsageBatchMock: ReturnType<typeof vi.fn>;
   getOfapiCreditsSummaryMock: ReturnType<typeof vi.fn>;
   streamAiGatewayMock: ReturnType<typeof vi.fn>;
+  streamAiFeatureMock: ReturnType<typeof vi.fn>;
   aiGatewayRequests: HubAiGatewayStreamRequest[];
+  aiFeatureRequests: Array<{ feature: string; request: Record<string, unknown> }>;
   batches: HubUsageEvent[][];
 }
 
@@ -178,6 +176,10 @@ export function makeFakeHubClient(
     getOfapiCreditsSummary: () => Promise<HubOfapiCreditsSummary>;
     streamAiGateway: (
       args: { request: HubAiGatewayStreamRequest },
+      callbacks: HubAiGatewayStreamCallbacks,
+    ) => Promise<string>;
+    streamAiFeature: (
+      args: { feature: string; request: Record<string, unknown> },
       callbacks: HubAiGatewayStreamCallbacks,
     ) => Promise<string>;
   }> = {},
@@ -247,6 +249,24 @@ export function makeFakeHubClient(
         return Promise.resolve('hub reply');
       }),
   );
+  const aiFeatureRequests: Array<{ feature: string; request: Record<string, unknown> }> = [];
+  const streamAiFeatureMock = vi.fn(
+    overrides.streamAiFeature ??
+      ((args: { feature: string; request: Record<string, unknown> },
+        callbacks: HubAiGatewayStreamCallbacks) => {
+        aiFeatureRequests.push({ feature: args.feature, request: args.request });
+        callbacks.onText('kernel ');
+        callbacks.onText('reply');
+        callbacks.onUsage?.({
+          input_tokens: 10,
+          cache_creation_input_tokens: 2,
+          cache_read_input_tokens: 3,
+          output_tokens: 4,
+        });
+        callbacks.onStopReason?.('end_turn');
+        return Promise.resolve('kernel reply');
+      }),
+  );
   const commandResponse: HubOfapiCommand = {
     commandId: '22222222-2222-4222-8222-222222222222',
     clientCommandId: '11111111-1111-4111-8111-111111111111',
@@ -280,6 +300,11 @@ export function makeFakeHubClient(
     getOfapiCommand: vi.fn(() => Promise.resolve(commandResponse)),
     cancelOfapiCommand: vi.fn(() => Promise.resolve({ ...commandResponse, state: 'cancelled' })),
     streamAiGateway: streamAiGatewayMock,
+    streamAiFeature: streamAiFeatureMock,
+    listAiPersonas: vi.fn(() => Promise.resolve([])),
+    archiveAiPersona: vi.fn(() => Promise.resolve({ archived: true })),
+    upsertAiPersona: vi.fn((args: { key: string; displayName: string; systemBlock: string }) =>
+      Promise.resolve({ ...args, updatedAt: new Date().toISOString() })),
     getServerTimeOffsetMs: () => null,
     listPagesMock,
     getFanProfileMock,
@@ -287,7 +312,9 @@ export function makeFakeHubClient(
     postUsageBatchMock,
     getOfapiCreditsSummaryMock,
     streamAiGatewayMock,
+    streamAiFeatureMock,
     aiGatewayRequests,
+    aiFeatureRequests,
     batches,
   } as FakeHubClient;
 }

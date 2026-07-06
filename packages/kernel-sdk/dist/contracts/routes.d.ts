@@ -3594,6 +3594,7 @@ export declare const aiUsageEventInputSchema: z.ZodObject<{
         scan: "scan";
         ping: "ping";
         "hi-greeting": "hi-greeting";
+        "workboard-closing": "workboard-closing";
     }>;
     model: z.ZodString;
     inputTokens: z.ZodNumber;
@@ -3618,6 +3619,7 @@ export declare const aiUsageBatchBodySchema: z.ZodObject<{
             scan: "scan";
             ping: "ping";
             "hi-greeting": "hi-greeting";
+            "workboard-closing": "workboard-closing";
         }>;
         model: z.ZodString;
         inputTokens: z.ZodNumber;
@@ -3688,6 +3690,7 @@ export declare const aiGatewayStreamBodySchema: z.ZodObject<{
         scan: "scan";
         ping: "ping";
         "hi-greeting": "hi-greeting";
+        "workboard-closing": "workboard-closing";
     }>;
     pageLabel: z.ZodString;
     platform: z.ZodEnum<{
@@ -3752,6 +3755,7 @@ export declare const aiGatewayStreamFrameSchema: z.ZodDiscriminatedUnion<[z.ZodO
         scan: "scan";
         ping: "ping";
         "hi-greeting": "hi-greeting";
+        "workboard-closing": "workboard-closing";
     }>;
     pageLabel: z.ZodString;
     model: z.ZodString;
@@ -3792,6 +3796,136 @@ export declare const aiGatewayStreamFrameSchema: z.ZodDiscriminatedUnion<[z.ZodO
     type: z.ZodLiteral<"done">;
     stopReason: z.ZodNullable<z.ZodString>;
 }, z.core.$strict>], "type">;
+export declare const aiPersonaSchema: z.ZodObject<{
+    key: z.ZodString;
+    displayName: z.ZodString;
+    systemBlock: z.ZodString;
+    updatedAt: z.ZodString;
+}, z.core.$strip>;
+export declare const aiPersonasResponseSchema: z.ZodObject<{
+    personas: z.ZodArray<z.ZodObject<{
+        key: z.ZodString;
+        displayName: z.ZodString;
+        systemBlock: z.ZodString;
+        updatedAt: z.ZodString;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const aiPersonaUpsertParamsSchema: z.ZodObject<{
+    key: z.ZodString;
+}, z.core.$strip>;
+export declare const aiPersonaUpsertBodySchema: z.ZodObject<{
+    displayName: z.ZodString;
+    systemBlock: z.ZodString;
+}, z.core.$strict>;
+export declare const aiFeatureStreamParamsSchema: z.ZodObject<{
+    feature: z.ZodString;
+}, z.core.$strip>;
+export declare const aiFeatureStreamBodySchema: z.ZodObject<{
+    clientRequestId: z.ZodString;
+    pageLabel: z.ZodString;
+    platform: z.ZodEnum<{
+        fansly: "fansly";
+        onlyfans: "onlyfans";
+    }>;
+    conversationRef: z.ZodString;
+    fanRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    personaKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    model: z.ZodOptional<z.ZodString>;
+    reasoningEffort: z.ZodOptional<z.ZodEnum<{
+        off: "off";
+        high: "high";
+        low: "low";
+        medium: "medium";
+        max: "max";
+    }>>;
+    replyTone: z.ZodOptional<z.ZodEnum<{
+        none: "none";
+        casual: "casual";
+        flirty: "flirty";
+        upsell: "upsell";
+        spicy: "spicy";
+    }>>;
+    replyMode: z.ZodOptional<z.ZodEnum<{
+        default: "default";
+        preferSplit: "preferSplit";
+    }>>;
+    messageCount: z.ZodOptional<z.ZodNumber>;
+    draftText: z.ZodOptional<z.ZodString>;
+    isRegeneration: z.ZodOptional<z.ZodBoolean>;
+}, z.core.$strict>;
+export declare const aiRestrictedGenerationSchema: z.ZodObject<{
+    generationRef: z.ZodString;
+    feature: z.ZodString;
+    model: z.ZodString;
+    provider: z.ZodString;
+    userId: z.ZodNullable<z.ZodNumber>;
+    pageId: z.ZodNullable<z.ZodNumber>;
+    conversationRef: z.ZodNullable<z.ZodString>;
+    promptBlocks: z.ZodArray<z.ZodUnknown>;
+    completion: z.ZodString;
+    params: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+    createdAt: z.ZodString;
+}, z.core.$strip>;
+export declare const aiRestrictedGenerationsQuerySchema: z.ZodObject<{
+    feature: z.ZodOptional<z.ZodString>;
+    pageId: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+    limit: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+}, z.core.$strip>;
+export declare const aiRestrictedGenerationsResponseSchema: z.ZodObject<{
+    generations: z.ZodArray<z.ZodObject<{
+        generationRef: z.ZodString;
+        feature: z.ZodString;
+        model: z.ZodString;
+        provider: z.ZodString;
+        userId: z.ZodNullable<z.ZodNumber>;
+        pageId: z.ZodNullable<z.ZodNumber>;
+        conversationRef: z.ZodNullable<z.ZodString>;
+        promptBlocks: z.ZodArray<z.ZodUnknown>;
+        completion: z.ZodString;
+        params: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+        createdAt: z.ZodString;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const aiRestrictedAcceptanceEventSchema: z.ZodObject<{
+    lifecycle: z.ZodEnum<{
+        shown: "shown";
+        copied: "copied";
+        inserted: "inserted";
+        edited: "edited";
+        sent: "sent";
+    }>;
+    userId: z.ZodNullable<z.ZodNumber>;
+    occurredAt: z.ZodString;
+}, z.core.$strip>;
+export declare const aiRestrictedGenerationParamsSchema: z.ZodObject<{
+    generationRef: z.ZodString;
+}, z.core.$strip>;
+export declare const aiRestrictedGenerationDetailResponseSchema: z.ZodObject<{
+    generation: z.ZodObject<{
+        generationRef: z.ZodString;
+        feature: z.ZodString;
+        model: z.ZodString;
+        provider: z.ZodString;
+        userId: z.ZodNullable<z.ZodNumber>;
+        pageId: z.ZodNullable<z.ZodNumber>;
+        conversationRef: z.ZodNullable<z.ZodString>;
+        promptBlocks: z.ZodArray<z.ZodUnknown>;
+        completion: z.ZodString;
+        params: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+        createdAt: z.ZodString;
+    }, z.core.$strip>;
+    acceptance: z.ZodArray<z.ZodObject<{
+        lifecycle: z.ZodEnum<{
+            shown: "shown";
+            copied: "copied";
+            inserted: "inserted";
+            edited: "edited";
+            sent: "sent";
+        }>;
+        userId: z.ZodNullable<z.ZodNumber>;
+        occurredAt: z.ZodString;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
 export declare const adminChatterUsageQuerySchema: z.ZodObject<{
     from: z.ZodOptional<z.ZodString>;
     to: z.ZodOptional<z.ZodString>;
@@ -3813,6 +3947,7 @@ export declare const aiUsageTopFeatureSchema: z.ZodObject<{
         scan: "scan";
         ping: "ping";
         "hi-greeting": "hi-greeting";
+        "workboard-closing": "workboard-closing";
     }>;
     requestCount: z.ZodNumber;
     sharePct: z.ZodNumber;
@@ -3827,6 +3962,7 @@ export declare const aiUsageFeatureBreakdownSchema: z.ZodObject<{
         scan: "scan";
         ping: "ping";
         "hi-greeting": "hi-greeting";
+        "workboard-closing": "workboard-closing";
     }>;
     requestCount: z.ZodNumber;
     sharePct: z.ZodNumber;
@@ -3902,6 +4038,7 @@ export declare const adminChatterUsageRowSchema: z.ZodObject<{
             scan: "scan";
             ping: "ping";
             "hi-greeting": "hi-greeting";
+            "workboard-closing": "workboard-closing";
         }>;
         requestCount: z.ZodNumber;
         sharePct: z.ZodNumber;
@@ -3916,6 +4053,7 @@ export declare const adminChatterUsageRowSchema: z.ZodObject<{
             scan: "scan";
             ping: "ping";
             "hi-greeting": "hi-greeting";
+            "workboard-closing": "workboard-closing";
         }>;
         requestCount: z.ZodNumber;
         sharePct: z.ZodNumber;
@@ -3980,6 +4118,7 @@ export declare const adminChatterUsageResponseSchema: z.ZodObject<{
                 scan: "scan";
                 ping: "ping";
                 "hi-greeting": "hi-greeting";
+                "workboard-closing": "workboard-closing";
             }>;
             requestCount: z.ZodNumber;
             sharePct: z.ZodNumber;
@@ -3994,6 +4133,7 @@ export declare const adminChatterUsageResponseSchema: z.ZodObject<{
                 scan: "scan";
                 ping: "ping";
                 "hi-greeting": "hi-greeting";
+                "workboard-closing": "workboard-closing";
             }>;
             requestCount: z.ZodNumber;
             sharePct: z.ZodNumber;
@@ -9441,7 +9581,8 @@ export declare const routeSchemas: {
             readonly kind: "apiKey";
         };
         readonly tags: readonly ["usage"];
-        readonly summary: "Ingest a batch of chatter AI usage events";
+        readonly deprecated: true;
+        readonly summary: "Ingest a batch of chatter AI usage events (deprecated: gateway ledger is authoritative)";
         readonly body: z.ZodObject<{
             events: z.ZodArray<z.ZodObject<{
                 clientEventId: z.ZodString;
@@ -9454,6 +9595,7 @@ export declare const routeSchemas: {
                     scan: "scan";
                     ping: "ping";
                     "hi-greeting": "hi-greeting";
+                    "workboard-closing": "workboard-closing";
                 }>;
                 model: z.ZodString;
                 inputTokens: z.ZodNumber;
@@ -9546,6 +9688,7 @@ export declare const routeSchemas: {
                 scan: "scan";
                 ping: "ping";
                 "hi-greeting": "hi-greeting";
+                "workboard-closing": "workboard-closing";
             }>;
             pageLabel: z.ZodString;
             platform: z.ZodEnum<{
@@ -16906,6 +17049,254 @@ export declare const routeSchemas: {
             }, z.core.$strip>;
         };
     };
+    readonly aiPersonasList: {
+        readonly auth: {
+            readonly kind: "apiKey";
+        };
+        readonly tags: readonly ["usage"];
+        readonly summary: "List kernel AI personas (the desktop picker's source)";
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                personas: z.ZodArray<z.ZodObject<{
+                    key: z.ZodString;
+                    displayName: z.ZodString;
+                    systemBlock: z.ZodString;
+                    updatedAt: z.ZodString;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly aiPersonaUpsert: {
+        readonly auth: {
+            readonly kind: "apiKey";
+        };
+        readonly tags: readonly ["usage"];
+        readonly summary: "Create or update a kernel AI persona";
+        readonly params: z.ZodObject<{
+            key: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            displayName: z.ZodString;
+            systemBlock: z.ZodString;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                key: z.ZodString;
+                displayName: z.ZodString;
+                systemBlock: z.ZodString;
+                updatedAt: z.ZodString;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly aiPersonaArchive: {
+        readonly auth: {
+            readonly kind: "apiKey";
+        };
+        readonly tags: readonly ["usage"];
+        readonly summary: "Archive a kernel AI persona (soft retire)";
+        readonly params: z.ZodObject<{
+            key: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                archived: z.ZodBoolean;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly aiFeatureStream: {
+        readonly auth: {
+            readonly kind: "apiKey";
+        };
+        readonly tags: readonly ["usage"];
+        readonly summary: "Stream a kernel-assembled AI feature generation";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            feature: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            clientRequestId: z.ZodString;
+            pageLabel: z.ZodString;
+            platform: z.ZodEnum<{
+                fansly: "fansly";
+                onlyfans: "onlyfans";
+            }>;
+            conversationRef: z.ZodString;
+            fanRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            personaKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            model: z.ZodOptional<z.ZodString>;
+            reasoningEffort: z.ZodOptional<z.ZodEnum<{
+                off: "off";
+                high: "high";
+                low: "low";
+                medium: "medium";
+                max: "max";
+            }>>;
+            replyTone: z.ZodOptional<z.ZodEnum<{
+                none: "none";
+                casual: "casual";
+                flirty: "flirty";
+                upsell: "upsell";
+                spicy: "spicy";
+            }>>;
+            replyMode: z.ZodOptional<z.ZodEnum<{
+                default: "default";
+                preferSplit: "preferSplit";
+            }>>;
+            messageCount: z.ZodOptional<z.ZodNumber>;
+            draftText: z.ZodOptional<z.ZodString>;
+            isRegeneration: z.ZodOptional<z.ZodBoolean>;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodUnknown;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 429: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 503: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly aiRestrictedGenerations: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "List restricted AI generation content (owner only)";
+        readonly querystring: z.ZodObject<{
+            feature: z.ZodOptional<z.ZodString>;
+            pageId: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+            limit: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                generations: z.ZodArray<z.ZodObject<{
+                    generationRef: z.ZodString;
+                    feature: z.ZodString;
+                    model: z.ZodString;
+                    provider: z.ZodString;
+                    userId: z.ZodNullable<z.ZodNumber>;
+                    pageId: z.ZodNullable<z.ZodNumber>;
+                    conversationRef: z.ZodNullable<z.ZodString>;
+                    promptBlocks: z.ZodArray<z.ZodUnknown>;
+                    completion: z.ZodString;
+                    params: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+                    createdAt: z.ZodString;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly aiRestrictedGenerationDetail: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Get one restricted AI generation with its acceptance lifecycle (owner only)";
+        readonly params: z.ZodObject<{
+            generationRef: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                generation: z.ZodObject<{
+                    generationRef: z.ZodString;
+                    feature: z.ZodString;
+                    model: z.ZodString;
+                    provider: z.ZodString;
+                    userId: z.ZodNullable<z.ZodNumber>;
+                    pageId: z.ZodNullable<z.ZodNumber>;
+                    conversationRef: z.ZodNullable<z.ZodString>;
+                    promptBlocks: z.ZodArray<z.ZodUnknown>;
+                    completion: z.ZodString;
+                    params: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+                    createdAt: z.ZodString;
+                }, z.core.$strip>;
+                acceptance: z.ZodArray<z.ZodObject<{
+                    lifecycle: z.ZodEnum<{
+                        shown: "shown";
+                        copied: "copied";
+                        inserted: "inserted";
+                        edited: "edited";
+                        sent: "sent";
+                    }>;
+                    userId: z.ZodNullable<z.ZodNumber>;
+                    occurredAt: z.ZodString;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
     readonly adminChatterUsage: {
         readonly auth: {
             readonly kind: "owner-session";
@@ -16964,6 +17355,7 @@ export declare const routeSchemas: {
                             scan: "scan";
                             ping: "ping";
                             "hi-greeting": "hi-greeting";
+                            "workboard-closing": "workboard-closing";
                         }>;
                         requestCount: z.ZodNumber;
                         sharePct: z.ZodNumber;
@@ -16978,6 +17370,7 @@ export declare const routeSchemas: {
                             scan: "scan";
                             ping: "ping";
                             "hi-greeting": "hi-greeting";
+                            "workboard-closing": "workboard-closing";
                         }>;
                         requestCount: z.ZodNumber;
                         sharePct: z.ZodNumber;

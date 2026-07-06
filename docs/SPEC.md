@@ -126,6 +126,13 @@ interface SyncProvider {
 - **Read-only toward OFAPI ≠ side-effect-free (clarification).** "Read-only" here means the sync never *posts* content; it does **not** mean zero upstream side effects. Any `GET …/messages` marks that chat read on OnlyFans (the fan sees "seen" instantly). So: automatic background body-reads of *unopened* chats are gated behind `autoReadChats` (default **OFF**), while a *deliberately opened* conversation always issues the GET — the one sanctioned, ungated read — and is expected to mark read. The dedicated `mark_chat_read_v1` command (§7.9) is a separate, also-default-OFF path.
 
 ### 6.2 HubSync (live — default for Hub reads since P3)
+
+> **SUPERSEDED (Stage 35, 2026-07-07):** this section describes stream v1
+> (`/api/v1/events/stream`, `Last-Event-ID`, projection-page snapshots). The
+> shipped default is stream v2 (opaque per-account cursor, snapshot = fresh-
+> cursor handshake reconciled via polling); v1 survives only as a settings
+> fallback. Current truth: `docs/generated/06-sync-and-reads.md` + decisions D3.
+
 - SSE stream from core (`GET /api/v1/events/stream`, bearer chatter API key; SSE per core decision #25 — no websockets there), zod-validated `SyncEvent` frames (same union — renderer code unchanged). `Last-Event-ID` resume against core's event journal; the normal server-side 15-minute stream close reconnects silently with no degraded transition. If the requested cursor has fallen behind journal retention, core returns `409 sync_snapshot_required`: HubSync enters degraded mode (polling resumes), downloads every page of chatter-scoped `GET /api/v1/events/snapshot` for locally handled accounts, applies the hot chat/message state and archive tombstones idempotently, persists the common `snapshotCursor` only after the full apply, then reconnects SSE from that cursor. A partial snapshot (`resumeAllowed=false`), malformed response, account/scope mismatch, or apply failure never advances the cursor. Presence/typing are explicitly omitted as ephemeral state.
 - For ordinary transport degradation or auth failure, the app resumes polling and runs a reconciliation `forceRefresh` (the same 5-page deep sweep as manual refresh), then pauses periodic list polling again once hub returns live. While hub is live and account hydration is complete, periodic chat-list polling is fully paused; read-state/media/spenders/user-open paths remain explicit REST paths.
 - `messages.received` / `messages.sent` frames may carry an optional normalized message body. Complete matching bodies are ingested into SQLite without `GET /messages`; id-only, mismatched, malformed, `ppvUnlocked`, and `tipReceived` notification-shaped frames keep the safe fallback path. With `autoReadChats=false`, that fallback is list-only and never performs a background message-body read.
@@ -208,6 +215,13 @@ Same registry pattern (`features.ts`): surface (`ai-dock` inline vs panel-tab re
 SQLite `summaries` table replacing browser.storage: key `(account, fan_id)`, fields per legacy entry (`body, model_id, personality_id, personality_updated_at, generated_at, spending_verified, subscription_verified, hub_sync_state`). Same staleness rules; refresh = delete + regenerate. Hub prefetch (5 s timeout) before generation and fire-and-forget push (10 s timeout) after — ported Agency Hub client pointed at core, **live from P4**: `GET/PUT /api/v1/pages/{pageLabel}/fans/{platformUserId}/profile` (profile versions are append-only, 50 KB cap; the pre-P4 core patch now auto-creates missing OnlyFans fan/page membership on profile writes). Disabled when core is unconfigured. OFAPI account → core page-label mapping: match `platform === 'onlyfans'` + normalized username (legacy rule: lowercase, strip `@`), with manual override in settings.
 
 ### 8.6 AiGateway seam
+
+> **SUPERSEDED (Stage 35, 2026-07-07):** this section predates the kernel-AI
+> cutover — there is no Direct transport, no local keys, no local prompt
+> assembly; the only lane is core's feature service
+> (`POST /api/v1/ai/features/:feature`, refs-only request). Current truth:
+> `docs/generated/08-ai-pipeline.md` + decisions D4 / core #111.
+
 ```ts
 interface AiGateway { stream(req: LlmRequest, cb: StreamCallbacks): CancelFn }
 ```

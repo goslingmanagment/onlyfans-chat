@@ -33,7 +33,8 @@ export interface ActivityDeps {
   sync: ActivitySync | null;
   creditMeter: CreditMeter | null;
   coreCredits?: ActivityVM['credits']['core'] | null;
-  aiKeys: { hasAnthropicKey: boolean; hasOpenRouterKey: boolean };
+  /** Stage 31: kernel feature lane readiness (hub transport configured). */
+  ai: { gatewayConfigured: boolean };
   now?: () => number;
 }
 
@@ -220,7 +221,7 @@ export function buildActivitySummary(deps: ActivityDeps): ActivityVM {
       pendingSummaries,
       syncedSummariesToday,
     },
-    ai: deps.aiKeys,
+    ai: deps.ai,
     sends: sendsToday(data, today),
     credits: {
       core: deps.coreCredits ?? null,

@@ -40,3 +40,27 @@ as it is now, not as documents say it was or should be.
 Write the documentation in English into docs/project-kernel/ in this repo
 (the folder already exists and holds this prompt file — leave it and any
 other existing files untouched).
+
+---
+
+## Stage 35 regeneration addendum (2026-07-07)
+
+This prompt is re-runnable. When regenerating (Stage 35 and after):
+
+- Write the maps into `docs/generated/` in this repo (create the folder if
+  absent), NOT into `docs/project-kernel/` — that folder now holds the
+  historical Pass 1 originals, which stay untouched and carry superseded
+  banners.
+- Start every generated file with this banner (fill in the current date and
+  `git rev-parse --short HEAD`):
+
+  > Generated <YYYY-MM-DD> from <path to this prompt> at commit <sha>.
+  > Machine-generated reference — regenerate by re-running that prompt in a
+  > fresh session; do not hand-edit.
+
+- Map the tree as it is TODAY (post-kernel-migration). The Pass 1 originals
+  may be consulted as a checklist of territories, but every claim must be
+  re-verified against current code — subsystems that no longer exist are
+  dropped, new ones (whatever the code contains now) are mapped.
+- Keep file naming NN-topic.md with a 00-overview.md index, but let today's
+  codebase dictate the actual breakdown.

@@ -3,7 +3,6 @@
 // media://<sha256> token minted at sync time (SPEC §4 — OF CDN URLs carry
 // expiring signatures and must never reach the renderer, even encoded).
 
-import { getModelDisplayName } from '@chatgoose/shared/llm/model-registry';
 import type { SummaryCacheEntry } from '@chatgoose/shared/summary/validity';
 import type { TranscriptMessage } from '@chatgoose/shared/transcript/index';
 import type {
@@ -16,6 +15,12 @@ import type {
 } from '../../preload/contract';
 import type { AccountListRow, ChatListRow, ChatRow, FanRow, MessageRow } from '../db/index';
 import { parseMediaToken } from '../media/protocol';
+
+/** Stage 31: the model registry died with the kernel cutover — model ids
+ * are kernel config; display the raw id. */
+function modelDisplayName(modelId: string | null): string {
+  return modelId ?? 'kernel';
+}
 
 // ─── media:// mapping ─────────────────────────────────────────────────────
 
@@ -146,7 +151,7 @@ export function summaryToVM(entry: SummaryCacheEntry): NonNullable<FanPanelVM['s
   return {
     body: entry.body,
     generatedAt: new Date(entry.generatedAt).toISOString(),
-    modelLabel: getModelDisplayName(entry.modelId ?? null),
+    modelLabel: modelDisplayName(entry.modelId ?? null),
   };
 }
 

@@ -1,3 +1,7 @@
+> **SUPERSEDED (Stage 35, 2026-07-07):** this is the Pass 1 (pre-migration)
+> codebase map, kept as the migration's historical record. The regenerated
+> post-migration maps live in `docs/generated/` in this repo.
+
 # ChatGoose Desktop — Pass 3 migration overview
 
 **Written 2026-07-04 by Pass 3c** (`core:docs/project-kernel/prompts/prompt-3c-stage-specs-clients.md`).

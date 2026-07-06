@@ -6,7 +6,6 @@ import { ipcMain } from 'electron';
 import { z } from 'zod';
 import type { Personality } from '@chatgoose/shared/types';
 import { analyzePingSegment } from '@chatgoose/shared/transcript/index';
-import { reconcileBundledPersonalities } from '@chatgoose/shared/prompts/personalities';
 import { messageGuardPolicySchema } from '@chatgoose/shared/message-guard/index';
 import type { DataLayer, OutboxRow } from '../db/index';
 import type { SettingsStore } from '../settings/store';
@@ -19,6 +18,8 @@ import type { SpendersRefreshService } from '../spenders/refresh';
 import type { OnlineService } from '../online/service';
 import type { Logger } from '../diagnostics/logger';
 import type { MessageGuardRuntime } from '../message-guard/runtime';
+import { observeSendForAcceptance, reportFeedbackAcceptance } from '../hub/acceptance-reporter';
+import type { AcceptanceSeam } from '../hub/acceptance-reporter';
 import type {
   ActivityVM,
   AiStartRequest,
@@ -50,8 +51,9 @@ import {
 } from './viewmodels';
 
 const idSchema = z.string().min(1).max(64);
+// Stage 31: vendor keys retired — only the hub connection probe remains.
 const keysTestSchema = z.object({
-  provider: z.enum(['anthropic', 'openrouter', 'hub']),
+  provider: z.literal('hub'),
 });
 const hubIssueDeviceTokenSchema = z.object({
   username: z.string().min(1).max(120),
@@ -330,6 +332,15 @@ export interface AiCoordinatorLike {
   cancel(operationId: string): void;
   conversationOpened(accountId: string, chatId: string): void;
   conversationClosed(accountId: string, chatId: string): void;
+  /** Stage 31: completed-op lookup for acceptance correlation. */
+  getOperationContext?(operationId: string): {
+    operationId: string;
+    requestId: string | null;
+    feature: string;
+    accountId: string;
+    chatId: string;
+    parts: string[];
+  } | null;
 }
 
 export interface IpcDeps {
@@ -339,6 +350,16 @@ export interface IpcDeps {
   sync: ActivitySync | null;
   creditMeter: CreditMeter | null;
   coordinator: AiCoordinatorLike | null;
+  /** Stage 31 acceptance lifecycle: copied/inserted (feedback) and
+   * sent+edited (send-path observer) enqueue here; absent = lane off. */
+  acceptance?: AcceptanceSeam | null;
+  /** Stage 31: kernel persona CRUD (personas are kernel config); null while
+   * the hub is unconfigured — the local KV serves as the offline cache. */
+  personas?: {
+    list: () => Promise<Array<{ key: string; displayName: string; systemBlock: string; updatedAt: string }>>;
+    upsert: (args: { key: string; displayName: string; systemBlock: string }) => Promise<unknown>;
+    archive: (key: string) => Promise<unknown>;
+  } | null;
   /** Null until an OFAPI read transport exists (same lifecycle as sync). */
   send: SendEngine | null;
   /** Synchronous Message Guard runtime; created at DB boot. */
@@ -405,15 +426,42 @@ function normalizePersonality(parsed: z.infer<typeof personalitySchema>): Person
   };
 }
 
+/** Stage 31: personas are kernel config; the local KV is the offline cache.
+ * A fresh install still shows a mappable builtin entry — its content is a
+ * placeholder until the first kernel refresh replaces it. */
 export function loadPersonalities(data: DataLayer): Personality[] {
   const saved = (data.settings.getParsed(PERSONALITIES_KEY, personalitiesStoredSchema) ?? []).map(
     normalizePersonality,
   );
-  const { personalities, changed } = reconcileBundledPersonalities([...saved], Date.now());
-  if (changed) {
-    data.settings.set(PERSONALITIES_KEY, personalities);
+  if (saved.length > 0) {
+    return saved;
   }
-  return personalities;
+  const fallback: Personality[] = [{
+    id: 'builtin:lora',
+    name: 'Lora',
+    content: '(kernel-managed persona — connect Agency Hub to view and edit)',
+    updatedAt: 0,
+    builtin: true,
+  }];
+  data.settings.set(PERSONALITIES_KEY, fallback);
+  return fallback;
+}
+
+/** Kernel → local Personality mapping (the picker/editor VM shape). */
+function kernelPersonaToLocal(persona: {
+  key: string;
+  displayName: string;
+  systemBlock: string;
+  updatedAt: string;
+}): Personality {
+  const updatedAt = Date.parse(persona.updatedAt);
+  return {
+    id: persona.key,
+    name: persona.displayName,
+    content: persona.systemBlock,
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+    ...(persona.key === 'builtin:lora' ? { builtin: true } : {}),
+  };
 }
 
 export function registerIpcHandlers(deps: IpcDeps): void {
@@ -471,7 +519,20 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('query:settings.get', () => settingsStore.get());
 
-  ipcMain.handle('query:personalities.list', () => loadPersonalities(data));
+  ipcMain.handle('query:personalities.list', async () => {
+    if (deps.personas) {
+      try {
+        const remote = (await deps.personas.list()).map(kernelPersonaToLocal);
+        if (remote.length > 0) {
+          data.settings.set(PERSONALITIES_KEY, remote);
+          return remote;
+        }
+      } catch {
+        // Kernel unreachable — the cached copy serves (offline tolerance).
+      }
+    }
+    return loadPersonalities(data);
+  });
 
   ipcMain.handle('query:sync.status', (): SyncStatusVM => {
     const snapshot = deps.creditMeter?.snapshot() ?? null;
@@ -523,10 +584,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       sync: deps.sync,
       creditMeter: deps.creditMeter,
       coreCredits,
-      aiKeys: {
-        hasAnthropicKey: settings.hasAnthropicKey,
-        hasOpenRouterKey: settings.hasOpenRouterKey,
-      },
+      // Stage 31: AI is the kernel feature lane — configured = hub transport up.
+      ai: { gatewayConfigured: settings.hubBaseUrl !== null && (settings.hasHubKey || settings.hasHubDeviceToken) },
     });
   });
 
@@ -809,8 +868,19 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return result;
   });
 
-  ipcMain.handle('cmd:personalities.save', (_event, rawArgs: unknown) => {
+  ipcMain.handle('cmd:personalities.save', async (_event, rawArgs: unknown) => {
     const personality = normalizePersonality(personalitySchema.parse(rawArgs));
+    if (deps.personas) {
+      try {
+        await deps.personas.upsert({
+          key: personality.id,
+          displayName: personality.name,
+          systemBlock: personality.content,
+        });
+      } catch {
+        // Offline edit: cached locally; the reconfigure sync upserts later.
+      }
+    }
     const existing = loadPersonalities(data);
     const next = existing.some((entry) => entry.id === personality.id)
       ? existing.map((entry) => (entry.id === personality.id ? personality : entry))
@@ -821,6 +891,14 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:personalities.delete', async (_event, rawArgs: unknown) => {
     const { id } = personalityDeleteSchema.parse(rawArgs);
+    if (deps.personas) {
+      try {
+        await deps.personas.archive(id);
+      } catch {
+        // Kernel unreachable — local removal still applies; archive retries
+        // are manual (personas are rarely deleted).
+      }
+    }
     const next = loadPersonalities(data).filter((entry) => entry.id !== id);
     data.settings.set(PERSONALITIES_KEY, next);
     // cascade: drop mappings pointing at the deleted personality (legacy behavior)
@@ -849,7 +927,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('ai:start', (_event, rawArgs: unknown) => {
     const parsed = aiStartSchema.parse(rawArgs);
     if (!deps.coordinator) {
-      throw new Error('AI is not available yet — configure an LLM API key in Settings.');
+      throw new Error('AI is not available yet — connect Agency Hub in Settings.');
     }
     const req: AiStartRequest = {
       operationId: parsed.operationId,
@@ -897,6 +975,20 @@ export function registerIpcHandlers(deps: IpcDeps): void {
         data.aiSpendLog.markInserted(day, payload.feature);
       }
     }
+
+    // Stage 31 acceptance: the same action also rides the capture lane,
+    // correlated through the coordinator's completed-op registry (the
+    // kernel lanes no longer write usage_events rows).
+    const context = deps.coordinator?.getOperationContext?.(args.operationId) ?? null;
+    if (deps.acceptance && context !== null) {
+      reportFeedbackAcceptance(
+        deps.acceptance,
+        context,
+        args.action,
+        args.partIndex ?? null,
+        new Date().toISOString(),
+      );
+    }
   });
 
   // ── Send pipeline (SPEC §7) ──
@@ -915,6 +1007,16 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:send.message', (_event, rawArgs: unknown) => {
     const args = sendMessageSchema.parse(rawArgs);
+    // Stage 31 acceptance ('sent'): observe-only by construction — the hook
+    // receives no send engine (see acceptance-reporter.ts); the send call
+    // below is byte-identical either way.
+    if (deps.acceptance) {
+      try {
+        observeSendForAcceptance(deps.acceptance, args, new Date().toISOString());
+      } catch {
+        // Telemetry must never block a send.
+      }
+    }
     return requireSend().sendParts(args);
   });
 

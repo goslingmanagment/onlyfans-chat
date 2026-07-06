@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 import { HUB_USAGE_FEATURES, hubUsageEventSchema } from '@chatgoose/shared/hub/index';
-import type { HubUsageEvent } from '@chatgoose/shared/hub/index';
+import type { HubUsageEvent, HubUsageFeature } from '@chatgoose/shared/hub/index';
 
 // 'compare' is reportable but has no core enum entry — each card reports as
 // 'fast-reply' (PLAN P4 decision, mirrored by the shared reporter's enqueue).
@@ -41,7 +41,11 @@ export const usageEventPayloadSchema = z.object({
  * fields are present-or-absent, never null — assignable to both the wire type
  * and the reporter's UsageReporterEventInput.
  */
-export type MappedHubUsageEvent = Omit<HubUsageEvent, 'conversationId' | 'durationMs'> & {
+export type MappedHubUsageEvent = Omit<HubUsageEvent, 'conversationId' | 'durationMs' | 'feature'> & {
+  /** Narrowed to the desktop's reportable set: the wire enum also carries
+   * kernel-internal features (Stage 29's workboard-closing) that this lane
+   * never emits. */
+  feature: HubUsageFeature;
   conversationId?: string;
   durationMs?: number;
 };

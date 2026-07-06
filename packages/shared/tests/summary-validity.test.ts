@@ -1,39 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
-
-// Fallback double for the llm module's modelSelectionsEquivalent (legacy semantics:
-// trim, canonical ids pass through, bare Anthropic provider ids map to canonical
-// `anthropic:` ids, unknown ids normalize to null and never match).
-vi.mock('../src/llm/model-registry', () => {
-  const canonicalIds = new Set([
-    'anthropic:claude-opus-4-6',
-    'anthropic:claude-sonnet-4-6',
-    'openrouter:x-ai/grok-4.3',
-  ]);
-  const bareAnthropicAliases = new Map([
-    ['claude-opus-4-6', 'anthropic:claude-opus-4-6'],
-    ['claude-sonnet-4-6', 'anthropic:claude-sonnet-4-6'],
-  ]);
-  const normalize = (id: string | null | undefined): string | null => {
-    const candidate = id?.trim();
-    if (!candidate) {
-      return null;
-    }
-    if (canonicalIds.has(candidate)) {
-      return candidate;
-    }
-    return bareAnthropicAliases.get(candidate) ?? null;
-  };
-  return {
-    modelSelectionsEquivalent: (
-      left: string | null | undefined,
-      right: string | null | undefined,
-    ): boolean => {
-      const normalizedLeft = normalize(left);
-      const normalizedRight = normalize(right);
-      return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
-    },
-  };
-});
+import { describe, expect, it } from 'vitest';
 
 import {
   SUMMARY_EVICTION_BATCH,
@@ -61,13 +26,24 @@ describe('summary cache staleness matrix', () => {
     expect(isValidSummaryCacheEntry(validEntry, 'p1', 123, 'anthropic:claude-opus-4-6')).toBe(true);
   });
 
-  it('treats legacy bare Claude ids as equivalent to canonical Anthropic selections', () => {
+  it('Stage 31: legacy registry model ids go stale once against the kernel sentinel', () => {
+    // Model equivalence died with the local registry — a legacy entry
+    // carrying a real model id mismatches the 'kernel' sentinel and
+    // regenerates once, then caches stably.
     expect(
       isValidSummaryCacheEntry(
-        { ...validEntry, modelId: 'claude-opus-4-6' },
-        'p1',
-        123,
-        'anthropic:claude-opus-4-6',
+        { ...validEntry, modelId: 'claude-sonnet-4-6' },
+        validEntry.personalityId,
+        validEntry.personalityUpdatedAt,
+        'kernel',
+      ),
+    ).toBe(false);
+    expect(
+      isValidSummaryCacheEntry(
+        { ...validEntry, modelId: 'kernel' },
+        validEntry.personalityId,
+        validEntry.personalityUpdatedAt,
+        'kernel',
       ),
     ).toBe(true);
   });
