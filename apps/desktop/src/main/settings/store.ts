@@ -179,7 +179,7 @@ const persistedFieldSchemas = {
   // C6b+ hard invariant: all app writes go through Hub commands.
   ofapiWriteTransport: z.literal('hub'),
   // C6c AI custody bridge: provider calls stay direct unless hub is selected explicitly.
-  aiGatewayTransport: z.enum(['direct', 'hub']),
+  aiGatewayTransport: z.enum(['direct', 'hub', 'feature']),
   // Dev/support-only override for D3 diagnostics. Default auto.
   hubModeOverride: z.enum(HUB_MODE_OVERRIDE_SETTINGS),
   // Kernel Stage 24 rollout-window-only fallback: 'v1' re-points the SSE

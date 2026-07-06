@@ -16,7 +16,30 @@ import type { Keychain } from '../secrets/keychain';
 
 export type { CancelFn, LlmStreamRequest } from './providers/index';
 
-export type AiGatewayTransport = 'direct' | 'hub';
+export type AiGatewayTransport = 'direct' | 'hub' | 'feature';
+
+/** Stage 31: the kernel feature-service lane — refs, not assembled blocks.
+ * The kernel loads context, builds the (byte-identical) prompt, and streams
+ * through its gateway; the desktop keeps only lifecycle + insertion UX. */
+export interface AiFeatureGatewayRequest {
+  feature: string;
+  /** Stable operation id; core uses it as the gateway idempotency key AND
+   * the acceptance correlation anchor (Stage 31 §2). */
+  clientRequestId: string;
+  /** Local OFAPI account id; resolved to a core page label by the adapter. */
+  accountId: string;
+  /** Raw OnlyFans fan/conversation id. */
+  chatId: string;
+  tone?: string | undefined;
+  mode?: string | undefined;
+  draftText?: string | undefined;
+  personaKey?: string | undefined;
+  isRegeneration: boolean;
+}
+
+export interface AiFeatureGateway {
+  stream(req: AiFeatureGatewayRequest, cb: AiGatewayCallbacks): CancelFn;
+}
 
 export interface AiGatewayRequest extends LlmStreamRequest {
   /** Stable operation/request id; core uses it as the gateway idempotency key. */

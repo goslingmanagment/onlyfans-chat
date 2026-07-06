@@ -14,6 +14,7 @@ import {
   KernelApiError,
   createClient,
   routeSchemas,
+  streamAiFeature as sdkStreamAiFeature,
   streamAiGateway as sdkStreamAiGateway,
   type AiGatewayStreamFrame,
   type KernelClient,
@@ -197,6 +198,8 @@ export type HubOfapiCommand = KernelOperationResponse<'getOfapiCommand'>;
 export type HubOfapiCommandCreateRequest = z.input<(typeof routeSchemas)['createOfapiCommand']['body']>;
 export type HubIngestBatchResult = KernelOperationResponse<'ingestObservations'>;
 export type HubAiGatewayStreamRequest = z.input<(typeof routeSchemas)['aiGatewayStream']['body']>;
+/** Stage 31: kernel feature-service request — refs, not assembled blocks. */
+export type HubAiFeatureStreamRequest = z.input<(typeof routeSchemas)['aiFeatureStream']['body']>;
 
 export const HUB_OFAPI_COMMAND_STATES = [
   'queued',
@@ -304,6 +307,13 @@ export interface HubClient {
   cancelOfapiCommand(args: { commandId: string; timeoutMs?: number }): Promise<HubOfapiCommand>;
   streamAiGateway(
     args: { request: HubAiGatewayStreamRequest; signal?: HubAbortSignalLike },
+    callbacks: HubAiGatewayStreamCallbacks,
+  ): Promise<string>;
+  /** Stage 31: stream a KERNEL-ASSEMBLED feature generation (Stage 30 route).
+   *  Same SSE frames as streamAiGateway; the kernel loads context and builds
+   *  the prompt — the desktop sends refs only. */
+  streamAiFeature(
+    args: { feature: string; request: HubAiFeatureStreamRequest; signal?: HubAbortSignalLike },
     callbacks: HubAiGatewayStreamCallbacks,
   ): Promise<string>;
   /**
@@ -593,6 +603,72 @@ export function createHubClient(options: HubClientOptions): HubClient {
       }
       if (!state.doneSeen) {
         throw new HubError('invalid-response', { message: 'hub AI stream ended without a done frame' });
+      }
+      return state.rawText;
+    },
+
+    async streamAiFeature({ feature, request: streamRequest, signal }, callbacks) {
+      const requestBody = routeSchemas.aiFeatureStream.body.safeParse(streamRequest);
+      if (!requestBody.success) {
+        throw badRequestBeforeWire('AI feature stream request failed contract validation', requestBody.error.message);
+      }
+
+      const controller = new AbortController();
+      const onAbort = (): void => controller.abort();
+      if (signal?.aborted) {
+        controller.abort();
+      }
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+
+      const state = { rawText: '', doneSeen: false };
+      const handle = sdkStreamAiFeature(sdkOptions(null), {
+        feature,
+        body: requestBody.data,
+        signal: controller.signal as never,
+        onFrame: (frame) => {
+          callbacks.onProgress?.();
+          switch (frame.type) {
+            case 'meta':
+              return;
+            case 'content_delta':
+              state.rawText += frame.text;
+              callbacks.onText(frame.text);
+              return;
+            case 'reasoning_delta':
+              callbacks.onReasoningDelta?.(frame.text);
+              return;
+            case 'usage':
+              callbacks.onUsage?.(mapGatewayUsage(frame.usage));
+              return;
+            case 'error':
+              throw new HubError('http', {
+                message: frame.message,
+                detail: {
+                  providerMessage: frame.code,
+                  ...(frame.retryAfterMs !== null ? { retryAfterMs: frame.retryAfterMs } : {}),
+                },
+              });
+            case 'done':
+              state.doneSeen = true;
+              callbacks.onStopReason?.(frame.stopReason);
+              return;
+          }
+        },
+      });
+
+      try {
+        await handle.done;
+      } catch (error) {
+        throw toHubError(error);
+      } finally {
+        signal?.removeEventListener?.('abort', onAbort);
+      }
+
+      if (signal?.aborted) {
+        throw new Error('Operation aborted');
+      }
+      if (!state.doneSeen) {
+        throw new HubError('invalid-response', { message: 'hub AI feature stream ended without a done frame' });
       }
       return state.rawText;
     },

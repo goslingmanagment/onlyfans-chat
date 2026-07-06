@@ -17,7 +17,8 @@ import { createSqliteUsageEventStore } from './usage-store';
 import { createSummaryHubHooks } from './summary-hooks';
 import { mapUsagePayloadToHubEvent } from './usage-mapper';
 import { createHubAiGateway } from './ai-gateway';
-import type { AiGateway } from '../ai/gateway';
+import { createFeatureAiGateway } from './ai-feature-gateway';
+import type { AiFeatureGateway, AiGateway } from '../ai/gateway';
 
 export { createPageLabelResolver, PAGE_LIST_CACHE_TTL_MS } from './page-resolver';
 export type { PageLabelResolver, PageLabelResolverOptions } from './page-resolver';
@@ -47,6 +48,8 @@ export interface HubModule {
   summaryHub: SummaryHubHooks;
   /** Future P6 AI transport. Inert until hub config exists and AI mode is set to hub. */
   aiGateway: AiGateway;
+  /** Stage 31: the kernel feature-service lane (AI mode 'feature'). */
+  aiFeatureGateway: AiFeatureGateway;
   /** Stable delegator for C6b text-command intake/status recovery. */
   commandClient: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand' | 'cancelOfapiCommand'>;
   /** Coordinator onUsageEvent target: raw payload → wire event → reporter. */
@@ -63,6 +66,7 @@ interface ActiveHub {
   reporter: UsageReporter;
   hooks: SummaryHubHooks;
   aiGateway: AiGateway;
+  aiFeatureGateway: AiFeatureGateway;
 }
 
 export function createHubModule(options: HubModuleOptions): HubModule {
@@ -100,6 +104,20 @@ export function createHubModule(options: HubModuleOptions): HubModule {
           return () => {};
         }
         return active.aiGateway.stream(req, cb);
+      },
+    },
+
+    aiFeatureGateway: {
+      stream(req, cb) {
+        if (active === null) {
+          cb.onError?.(
+            new HubError('bad-request', {
+              message: 'Hub AI feature lane is not configured',
+            }),
+          );
+          return () => {};
+        }
+        return active.aiFeatureGateway.stream(req, cb);
       },
     },
 
@@ -201,6 +219,10 @@ export function createHubModule(options: HubModuleOptions): HubModule {
           resolvePageLabel: (accountId) => resolver.resolve(accountId),
         }),
         aiGateway: createHubAiGateway({
+          client,
+          resolvePageLabel: (accountId) => resolver.resolve(accountId),
+        }),
+        aiFeatureGateway: createFeatureAiGateway({
           client,
           resolvePageLabel: (accountId) => resolver.resolve(accountId),
         }),

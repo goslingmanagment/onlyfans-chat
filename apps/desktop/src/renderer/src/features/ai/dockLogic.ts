@@ -254,11 +254,13 @@ export interface AiTransportSettings {
   hasOpenRouterKey: boolean;
   hasHubKey: boolean;
   hubBaseUrl: string | null;
-  aiGatewayTransport: 'direct' | 'hub';
+  aiGatewayTransport: 'direct' | 'hub' | 'feature';
 }
 
 export function hasConfiguredAiTransport(settings: AiTransportSettings): boolean {
-  if (settings.aiGatewayTransport === 'hub') {
+  // Stage 31: both kernel lanes (proxy and feature-service) need only the
+  // hub connection — vendor keys are the direct lane's concern.
+  if (settings.aiGatewayTransport === 'hub' || settings.aiGatewayTransport === 'feature') {
     return settings.hubBaseUrl !== null && settings.hasHubKey;
   }
   return settings.hasAnthropicKey || settings.hasOpenRouterKey;

@@ -667,6 +667,7 @@ async function rebuildOfapiRuntime(
       direct: createDirectGateway({ keychain }),
       hub: nextHub.aiGateway,
     }),
+    featureGateway: nextHub.aiFeatureGateway,
     summaryHub: nextHub.summaryHub,
     onUsageEvent: (event) => nextHub.onUsageEvent(event),
   });

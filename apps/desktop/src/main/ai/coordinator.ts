@@ -60,7 +60,7 @@ import type { OfApiClient } from '../ofapi/client';
 import type { SettingsStore } from '../settings/store';
 import type { Keychain, SecretName } from '../secrets/keychain';
 import { createDirectGateway } from './gateway';
-import type { AiGateway, AiGatewayTransport, CancelFn } from './gateway';
+import type { AiFeatureGateway, AiGateway, AiGatewayTransport, CancelFn } from './gateway';
 import { createContextLoader } from './context-loader';
 import type { ContextLoader } from './context-loader';
 import { createOperationProfiler, NO_OP_PROFILER } from './profiler';
@@ -124,6 +124,8 @@ export interface AiCoordinatorDeps {
   settingsStore: SettingsStore;
   keychain: Keychain;
   gateway?: AiGateway;
+  /** Stage 31: the kernel feature-service lane (transport 'feature'). */
+  featureGateway?: AiFeatureGateway;
   summaryHub?: SummaryHubHooks;
   /**
    * P4 hub wiring seam (SPEC §8.6): fired after the usage_events row is
@@ -604,7 +606,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       isRegeneration: op.params.forceRegenerate === true,
       completedAt: new Date().toISOString(),
     };
-    if (op.aiGatewayTransport !== 'hub') {
+    if (op.aiGatewayTransport === 'direct') {
       try {
         deps.data.db
           .prepare(
@@ -636,7 +638,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     } catch {
       // Ledger bookkeeping must never fail a completed operation.
     }
-    if (op.aiGatewayTransport !== 'hub') {
+    if (op.aiGatewayTransport === 'direct') {
       try {
         deps.onUsageEvent?.(payload);
       } catch {
@@ -677,6 +679,10 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
   }
 
   async function checkProviderKey(modelId: string, transport: AiGatewayTransport): Promise<void> {
+    if (transport === 'feature') {
+      // Kernel lane: model choice and provider keys are kernel config.
+      return;
+    }
     const entry = getModelEntry(modelId);
     if (entry === null) {
       throw new CgError('CG-API-03');
@@ -779,6 +785,40 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         spendingVerified: false,
         subscriptionVerified: false,
       };
+    }
+
+    // ── Stage 31 feature lane: the kernel loads context and assembles the
+    // (parity-signed) prompt — the desktop sends refs and streams. The
+    // migrated product gates (CG-FLOW-03/05/09, draft) are enforced
+    // kernel-side and mapped back to their CG codes by the adapter. The
+    // fan-summary cache above still short-circuits before any kernel call.
+    if (op.aiGatewayTransport === 'feature') {
+      const featureGateway = deps.featureGateway;
+      if (featureGateway === undefined) {
+        throw new CgError('CG-HUB-02', { message: 'AI feature lane is not wired' });
+      }
+      emitProgress(op, 'generating');
+      op.timeouts.llmRequestStarted();
+      op.ttfbStage = op.profiler.stage('llm-ttfb');
+      op.cancelStream = featureGateway.stream(
+        {
+          feature: op.feature,
+          clientRequestId: op.operationId,
+          accountId: op.accountId,
+          chatId: op.chatId,
+          tone: policy.supportsReplyTone ? (op.params.tone ?? settings.defaultReplyTone) : undefined,
+          mode: policy.supportsReplyMode ? op.params.mode : undefined,
+          draftText: op.params.draftText,
+          // Kernel personas: the bundled id ('builtin:lora') is seeded
+          // kernel-side; LOCAL custom personas are not kernel-known until
+          // Task 3's persona sync — they fall back to the kernel default
+          // (recorded limitation; this lane is not the default yet).
+          personaKey: personality.builtin === true ? personality.id : undefined,
+          isRegeneration: op.params.forceRegenerate === true,
+        },
+        streamCallbacks(op),
+      );
+      return;
     }
 
     // Context: transcript (db, fetch-through when short; deep = gap-only)…
@@ -945,45 +985,50 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         isRegeneration: op.params.forceRegenerate === true,
         transport: op.aiGatewayTransport,
       },
-      {
-        onProgress: () => {
-          if (!op.settled) {
-            op.timeouts.providerActivity();
-          }
-        },
-        onReasoningObserved: () => {
-          if (!op.settled) {
-            op.timeouts.providerActivity();
-          }
-        },
-        onText: (text) => {
-          if (op.settled) {
-            return;
-          }
-          if (!op.sawFirstChunk) {
-            op.sawFirstChunk = true;
-            op.ttfbStage?.complete();
-            op.ttfbStage = null;
-            op.streamStage = op.profiler.stage('llm-stream');
-            op.timeouts.firstChunk();
-          } else {
-            op.timeouts.chunk();
-          }
-          bufferChunk(op, text);
-        },
-        onUsage: (usage) => {
-          if (!op.settled) {
-            op.usage = usage;
-          }
-        },
-        onError: (error) => {
-          settleError(op, error);
-        },
-        onComplete: (rawText) => {
-          settleComplete(op, rawText);
-        },
-      },
+      streamCallbacks(op),
     );
+  }
+
+  /** Shared stream lifecycle plumbing — identical for every lane. */
+  function streamCallbacks(op: OperationState) {
+    return {
+      onProgress: () => {
+        if (!op.settled) {
+          op.timeouts.providerActivity();
+        }
+      },
+      onReasoningObserved: () => {
+        if (!op.settled) {
+          op.timeouts.providerActivity();
+        }
+      },
+      onText: (text: string) => {
+        if (op.settled) {
+          return;
+        }
+        if (!op.sawFirstChunk) {
+          op.sawFirstChunk = true;
+          op.ttfbStage?.complete();
+          op.ttfbStage = null;
+          op.streamStage = op.profiler.stage('llm-stream');
+          op.timeouts.firstChunk();
+        } else {
+          op.timeouts.chunk();
+        }
+        bufferChunk(op, text);
+      },
+      onUsage: (usage: LlmUsageMetrics) => {
+        if (!op.settled) {
+          op.usage = usage;
+        }
+      },
+      onError: (error: unknown) => {
+        settleError(op, error);
+      },
+      onComplete: (rawText: string) => {
+        settleComplete(op, rawText);
+      },
+    };
   }
 
   // ── public surface ───────────────────────────────────────────────────────
