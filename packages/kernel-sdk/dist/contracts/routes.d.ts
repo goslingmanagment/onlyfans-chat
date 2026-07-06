@@ -3796,6 +3796,27 @@ export declare const aiGatewayStreamFrameSchema: z.ZodDiscriminatedUnion<[z.ZodO
     type: z.ZodLiteral<"done">;
     stopReason: z.ZodNullable<z.ZodString>;
 }, z.core.$strict>], "type">;
+export declare const aiPersonaSchema: z.ZodObject<{
+    key: z.ZodString;
+    displayName: z.ZodString;
+    systemBlock: z.ZodString;
+    updatedAt: z.ZodString;
+}, z.core.$strip>;
+export declare const aiPersonasResponseSchema: z.ZodObject<{
+    personas: z.ZodArray<z.ZodObject<{
+        key: z.ZodString;
+        displayName: z.ZodString;
+        systemBlock: z.ZodString;
+        updatedAt: z.ZodString;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const aiPersonaUpsertParamsSchema: z.ZodObject<{
+    key: z.ZodString;
+}, z.core.$strip>;
+export declare const aiPersonaUpsertBodySchema: z.ZodObject<{
+    displayName: z.ZodString;
+    systemBlock: z.ZodString;
+}, z.core.$strict>;
 export declare const aiFeatureStreamParamsSchema: z.ZodObject<{
     feature: z.ZodString;
 }, z.core.$strip>;
@@ -17022,6 +17043,60 @@ export declare const routeSchemas: {
                 statusCode: z.ZodNumber;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly aiPersonasList: {
+        readonly auth: {
+            readonly kind: "apiKey";
+        };
+        readonly tags: readonly ["usage"];
+        readonly summary: "List kernel AI personas (the desktop picker's source)";
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                personas: z.ZodArray<z.ZodObject<{
+                    key: z.ZodString;
+                    displayName: z.ZodString;
+                    systemBlock: z.ZodString;
+                    updatedAt: z.ZodString;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly aiPersonaUpsert: {
+        readonly auth: {
+            readonly kind: "apiKey";
+        };
+        readonly tags: readonly ["usage"];
+        readonly summary: "Create or update a kernel AI persona";
+        readonly params: z.ZodObject<{
+            key: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            displayName: z.ZodString;
+            systemBlock: z.ZodString;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                key: z.ZodString;
+                displayName: z.ZodString;
+                systemBlock: z.ZodString;
+                updatedAt: z.ZodString;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;

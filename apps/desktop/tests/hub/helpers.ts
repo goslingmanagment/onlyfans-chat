@@ -305,6 +305,9 @@ export function makeFakeHubClient(
     cancelOfapiCommand: vi.fn(() => Promise.resolve({ ...commandResponse, state: 'cancelled' })),
     streamAiGateway: streamAiGatewayMock,
     streamAiFeature: streamAiFeatureMock,
+    listAiPersonas: vi.fn(() => Promise.resolve([])),
+    upsertAiPersona: vi.fn((args: { key: string; displayName: string; systemBlock: string }) =>
+      Promise.resolve({ ...args, updatedAt: new Date().toISOString() })),
     getServerTimeOffsetMs: () => null,
     listPagesMock,
     getFanProfileMock,

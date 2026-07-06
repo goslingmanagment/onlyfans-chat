@@ -200,6 +200,8 @@ export type HubIngestBatchResult = KernelOperationResponse<'ingestObservations'>
 export type HubAiGatewayStreamRequest = z.input<(typeof routeSchemas)['aiGatewayStream']['body']>;
 /** Stage 31: kernel feature-service request — refs, not assembled blocks. */
 export type HubAiFeatureStreamRequest = z.input<(typeof routeSchemas)['aiFeatureStream']['body']>;
+/** Stage 31: kernel persona record (DP 9-A — personas are kernel config). */
+export type HubAiPersona = z.infer<(typeof routeSchemas)['aiPersonasList']['response'][200]>['personas'][number];
 
 export const HUB_OFAPI_COMMAND_STATES = [
   'queued',
@@ -312,6 +314,14 @@ export interface HubClient {
     args: { request: HubAiGatewayStreamRequest; signal?: HubAbortSignalLike },
     callbacks: HubAiGatewayStreamCallbacks,
   ): Promise<string>;
+  /** Stage 31: kernel persona list/upsert (picker + editor + one-time sync). */
+  listAiPersonas(options?: { timeoutMs?: number }): Promise<HubAiPersona[]>;
+  upsertAiPersona(args: {
+    key: string;
+    displayName: string;
+    systemBlock: string;
+    timeoutMs?: number;
+  }): Promise<HubAiPersona>;
   /** Stage 31: stream a KERNEL-ASSEMBLED feature generation (Stage 30 route).
    *  Same SSE frames as streamAiGateway; the kernel loads context and builds
    *  the prompt — the desktop sends refs only. */
@@ -609,6 +619,20 @@ export function createHubClient(options: HubClientOptions): HubClient {
         throw new HubError('invalid-response', { message: 'hub AI stream ended without a done frame' });
       }
       return state.rawText;
+    },
+
+    async listAiPersonas(personaOptions) {
+      const response = await delegate(() =>
+        clientFor(personaOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonasList());
+      return response.personas;
+    },
+
+    async upsertAiPersona({ key, displayName, systemBlock, timeoutMs }) {
+      return delegate(() =>
+        clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaUpsert({
+          params: { key },
+          body: { displayName, systemBlock },
+        }));
     },
 
     async streamAiFeature({ feature, request: streamRequest, signal }, callbacks) {

@@ -1570,6 +1570,24 @@ export const aiGatewayStreamFrameSchema = z.discriminatedUnion("type", [
     }).strict(),
 ]);
 // Stage 29 restricted capture class (DP 6-A): owner-only reads.
+// Stage 31: personas are kernel config (DP 9-A single-tenant) — the desktop
+// picker/editor reads and writes here; account→persona mappings stay local.
+export const aiPersonaSchema = z.object({
+    key: z.string().min(1).max(120),
+    displayName: z.string().min(1).max(120),
+    systemBlock: z.string().min(1).max(50_000),
+    updatedAt: z.string(),
+});
+export const aiPersonasResponseSchema = z.object({
+    personas: z.array(aiPersonaSchema),
+});
+export const aiPersonaUpsertParamsSchema = z.object({
+    key: z.string().min(1).max(120),
+});
+export const aiPersonaUpsertBodySchema = z.object({
+    displayName: z.string().min(1).max(120),
+    systemBlock: z.string().min(1).max(50_000),
+}).strict();
 // Stage 30 feature services: kernel-side prompt assembly over the gateway.
 export const aiFeatureStreamParamsSchema = z.object({
     feature: z.string().min(1).max(40),
@@ -4533,6 +4551,27 @@ export const routeSchemas = {
             200: z.array(adminUserSchema),
             401: errorResponseSchema,
             403: errorResponseSchema,
+        },
+    },
+    aiPersonasList: {
+        auth: { kind: "apiKey" },
+        tags: ["usage"],
+        summary: "List kernel AI personas (the desktop picker's source)",
+        response: {
+            200: aiPersonasResponseSchema,
+            401: errorResponseSchema,
+        },
+    },
+    aiPersonaUpsert: {
+        auth: { kind: "apiKey" },
+        tags: ["usage"],
+        summary: "Create or update a kernel AI persona",
+        params: aiPersonaUpsertParamsSchema,
+        body: aiPersonaUpsertBodySchema,
+        response: {
+            200: aiPersonaSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
         },
     },
     aiFeatureStream: {

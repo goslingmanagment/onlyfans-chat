@@ -16,6 +16,7 @@ import { createPageLabelResolver } from './page-resolver';
 import { createSqliteUsageEventStore } from './usage-store';
 import { createSummaryHubHooks } from './summary-hooks';
 import { mapUsagePayloadToHubEvent } from './usage-mapper';
+import { z } from 'zod';
 import { createHubAiGateway } from './ai-gateway';
 import { createFeatureAiGateway } from './ai-feature-gateway';
 import { createAcceptanceReporter, createAcceptanceTracker } from './acceptance-reporter';
@@ -76,6 +77,15 @@ interface ActiveHub {
   aiGateway: AiGateway;
   aiFeatureGateway: AiFeatureGateway;
 }
+
+const personaSyncListSchema = z.array(
+  z.object({
+    id: z.string().min(1),
+    name: z.string(),
+    content: z.string().min(1),
+    builtin: z.boolean().optional(),
+  }).loose(),
+);
 
 export function createHubModule(options: HubModuleOptions): HubModule {
   const { data, settingsStore, keychain } = options;
@@ -228,6 +238,33 @@ export function createHubModule(options: HubModuleOptions): HubModule {
           });
         },
       });
+      // Stage 31 Task 3: one-time custom-persona sync — local personas become
+      // kernel config (upsert is idempotent; builtin is kernel-seeded).
+      // Fire-and-forget: sync failure never blocks reconfigure.
+      void (async () => {
+        try {
+          const stored = data.settings.getParsed(
+            'personalities',
+            personaSyncListSchema,
+          );
+          if (stored === undefined) {
+            return;
+          }
+          for (const persona of stored) {
+            if (persona.builtin === true) {
+              continue;
+            }
+            await client.upsertAiPersona({
+              key: persona.id,
+              displayName: persona.name,
+              systemBlock: persona.content,
+            });
+          }
+        } catch (error) {
+          onWarn(`[hub] persona sync failed (${error instanceof Error ? error.message : String(error)})`);
+        }
+      })();
+
       active = {
         client,
         reporter,
