@@ -2,7 +2,7 @@
 // Ctrl+ everywhere else; combos/matching stay identical. Tests pin BOTH
 // renderings by injecting the platform — never by weakening the mac pins.
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appPlatform, modCombo, modKeyLabel } from '../../src/renderer/src/lib/modKey';
 import {
   buildCheatsheetExtras,
@@ -11,9 +11,21 @@ import {
 } from '../../src/renderer/src/app/keymapBindings';
 
 describe('modKey seam', () => {
-  it('node test env (no window/navigator) defaults to darwin — the historical pins', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('defaults to darwin only when no bridge AND no navigator exist (node 22 ships a global navigator, so the bare env resolves per-host)', () => {
+    vi.stubGlobal('navigator', undefined);
     expect(appPlatform()).toBe('darwin');
     expect(modKeyLabel()).toBe('⌘');
+  });
+
+  it('resolves via navigator.platform when the bridge is absent', () => {
+    vi.stubGlobal('navigator', { platform: 'MacIntel' });
+    expect(appPlatform()).toBe('darwin');
+    vi.stubGlobal('navigator', { platform: 'Linux x86_64' });
+    expect(appPlatform()).toBe('win32');
   });
 
   it('renders the mod key per platform', () => {
@@ -31,8 +43,8 @@ describe('modKey seam', () => {
 });
 
 describe('buildKeyBindings per platform', () => {
-  it('darwin build matches the exported default in the node test env', () => {
-    expect(buildKeyBindings('darwin')).toEqual(KEY_BINDINGS);
+  it('the exported default is exactly the ambient-platform build', () => {
+    expect(buildKeyBindings(appPlatform())).toEqual(KEY_BINDINGS);
   });
 
   it('win32 build has no ⌘ anywhere and labels every mod combo with Ctrl+', () => {
