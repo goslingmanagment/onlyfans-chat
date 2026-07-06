@@ -3289,6 +3289,43 @@ export declare const revenueDailyResponseSchema: z.ZodObject<{
         }>>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
+export declare const revenueByModelQuerySchema: z.ZodObject<{
+    period: z.ZodDefault<z.ZodEnum<{
+        today: "today";
+        "7d": "7d";
+        "30d": "30d";
+        all: "all";
+        custom: "custom";
+    }>>;
+    from: z.ZodOptional<z.ZodString>;
+    to: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export declare const revenueByModelItemSchema: z.ZodObject<{
+    modelSlug: z.ZodString;
+    modelName: z.ZodString;
+    pageCount: z.ZodNumber;
+    totalNetAmountMills: z.ZodNumber;
+    transactionCount: z.ZodNumber;
+    series: z.ZodArray<z.ZodObject<{
+        businessDate: z.ZodString;
+        netAmountMills: z.ZodNumber;
+        transactionCount: z.ZodNumber;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const revenueByModelResponseSchema: z.ZodObject<{
+    models: z.ZodArray<z.ZodObject<{
+        modelSlug: z.ZodString;
+        modelName: z.ZodString;
+        pageCount: z.ZodNumber;
+        totalNetAmountMills: z.ZodNumber;
+        transactionCount: z.ZodNumber;
+        series: z.ZodArray<z.ZodObject<{
+            businessDate: z.ZodString;
+            netAmountMills: z.ZodNumber;
+            transactionCount: z.ZodNumber;
+        }, z.core.$strip>>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
 export declare const crossPageTransactionItemSchema: z.ZodObject<{
     transactionId: z.ZodString;
     rawType: z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>;
@@ -7508,6 +7545,7 @@ export declare const notificationsIncidentItemSchema: z.ZodObject<{
         observations_partitions: "observations_partitions";
         wrong_transactions_writer: "wrong_transactions_writer";
         read_gateway_capture: "read_gateway_capture";
+        golden_signal_lag: "golden_signal_lag";
     }>;
     pageLabel: z.ZodString;
     platform: z.ZodEnum<{
@@ -7543,6 +7581,7 @@ export declare const notificationsIncidentsQuerySchema: z.ZodObject<{
         observations_partitions: "observations_partitions";
         wrong_transactions_writer: "wrong_transactions_writer";
         read_gateway_capture: "read_gateway_capture";
+        golden_signal_lag: "golden_signal_lag";
     }>>;
     pageLabel: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -7564,6 +7603,7 @@ export declare const notificationsIncidentsResponseSchema: z.ZodObject<{
             observations_partitions: "observations_partitions";
             wrong_transactions_writer: "wrong_transactions_writer";
             read_gateway_capture: "read_gateway_capture";
+            golden_signal_lag: "golden_signal_lag";
         }>;
         pageLabel: z.ZodString;
         platform: z.ZodEnum<{
@@ -7643,15 +7683,7 @@ export declare const verifyCredentialsBodySchema: z.ZodDiscriminatedUnion<[z.Zod
     }, z.core.$strip>>>;
 }, z.core.$strip>, z.ZodObject<{
     platform: z.ZodLiteral<"onlyfans">;
-    auth: z.ZodObject<{
-        token: z.ZodString;
-    }, z.core.$strip>;
     username: z.ZodString;
-    proxy: z.ZodOptional<z.ZodNullable<z.ZodObject<{
-        url: z.ZodString;
-        username: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-        password: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    }, z.core.$strip>>>;
 }, z.core.$strip>], "platform">;
 export declare const verifyCredentialsResponseSchema: z.ZodObject<{
     valid: z.ZodLiteral<true>;
@@ -7679,15 +7711,7 @@ export declare const createPageBodySchema: z.ZodDiscriminatedUnion<[z.ZodObject<
     label: z.ZodString;
 }, z.core.$strip>, z.ZodObject<{
     platform: z.ZodLiteral<"onlyfans">;
-    auth: z.ZodObject<{
-        token: z.ZodString;
-    }, z.core.$strip>;
     username: z.ZodString;
-    proxy: z.ZodOptional<z.ZodNullable<z.ZodObject<{
-        url: z.ZodString;
-        username: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-        password: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    }, z.core.$strip>>>;
     modelSlug: z.ZodString;
     label: z.ZodString;
 }, z.core.$strip>], "platform">;
@@ -7734,15 +7758,6 @@ export declare const updateCredentialsBodySchema: z.ZodDiscriminatedUnion<[z.Zod
     }, z.core.$strip>>>;
 }, z.core.$strip>, z.ZodObject<{
     platform: z.ZodLiteral<"onlyfans">;
-    auth: z.ZodOptional<z.ZodObject<{
-        token: z.ZodString;
-    }, z.core.$strip>>;
-    username: z.ZodOptional<z.ZodString>;
-    proxy: z.ZodOptional<z.ZodNullable<z.ZodObject<{
-        url: z.ZodString;
-        username: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-        password: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    }, z.core.$strip>>>;
 }, z.core.$strip>], "platform">;
 export declare const verifyPageResponseSchema: z.ZodObject<{
     verified: z.ZodBoolean;
@@ -9087,6 +9102,21 @@ export declare const configStagedResponseSchema: z.ZodObject<{
         version: z.ZodNullable<z.ZodNumber>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
+export declare const opsMetricsResponseSchema: z.ZodObject<{
+    samples: z.ZodArray<z.ZodObject<{
+        metric: z.ZodString;
+        quantile: z.ZodString;
+        valueMs: z.ZodNumber;
+        sampledAt: z.ZodString;
+    }, z.core.$strip>>;
+    thresholdsMs: z.ZodRecord<z.ZodString, z.ZodNumber>;
+    smoke: z.ZodNullable<z.ZodObject<{
+        framesSeen: z.ZodNumber;
+        gapCount: z.ZodNumber;
+        duplicateCount: z.ZodNumber;
+        updatedAt: z.ZodNullable<z.ZodString>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
 export declare const routeSchemas: {
     readonly health: {
         readonly auth: {
@@ -9134,6 +9164,40 @@ export declare const routeSchemas: {
                         error: z.ZodNullable<z.ZodString>;
                     }, z.core.$strip>;
                 }, z.core.$strip>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly opsMetrics: {
+        readonly auth: {
+            readonly kind: "monitoring";
+        };
+        readonly tags: readonly ["system"];
+        readonly summary: "Golden-signal lag samples (Stage 25 acceptance instrument)";
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                samples: z.ZodArray<z.ZodObject<{
+                    metric: z.ZodString;
+                    quantile: z.ZodString;
+                    valueMs: z.ZodNumber;
+                    sampledAt: z.ZodString;
+                }, z.core.$strip>>;
+                thresholdsMs: z.ZodRecord<z.ZodString, z.ZodNumber>;
+                smoke: z.ZodNullable<z.ZodObject<{
+                    framesSeen: z.ZodNumber;
+                    gapCount: z.ZodNumber;
+                    duplicateCount: z.ZodNumber;
+                    updatedAt: z.ZodNullable<z.ZodString>;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
             }, z.core.$strip>;
         };
     };
@@ -16306,6 +16370,50 @@ export declare const routeSchemas: {
             }, z.core.$strip>;
         };
     };
+    readonly overviewRevenueByModel: {
+        readonly auth: {
+            readonly kind: "session";
+        };
+        readonly tags: readonly ["dashboard"];
+        readonly summary: "Get per-model revenue totals and daily series";
+        readonly querystring: z.ZodObject<{
+            period: z.ZodDefault<z.ZodEnum<{
+                today: "today";
+                "7d": "7d";
+                "30d": "30d";
+                all: "all";
+                custom: "custom";
+            }>>;
+            from: z.ZodOptional<z.ZodString>;
+            to: z.ZodOptional<z.ZodString>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                models: z.ZodArray<z.ZodObject<{
+                    modelSlug: z.ZodString;
+                    modelName: z.ZodString;
+                    pageCount: z.ZodNumber;
+                    totalNetAmountMills: z.ZodNumber;
+                    transactionCount: z.ZodNumber;
+                    series: z.ZodArray<z.ZodObject<{
+                        businessDate: z.ZodString;
+                        netAmountMills: z.ZodNumber;
+                        transactionCount: z.ZodNumber;
+                    }, z.core.$strip>>;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
     readonly pageRevenueDaily: {
         readonly auth: {
             readonly kind: "session";
@@ -18312,15 +18420,7 @@ export declare const routeSchemas: {
             label: z.ZodString;
         }, z.core.$strip>, z.ZodObject<{
             platform: z.ZodLiteral<"onlyfans">;
-            auth: z.ZodObject<{
-                token: z.ZodString;
-            }, z.core.$strip>;
             username: z.ZodString;
-            proxy: z.ZodOptional<z.ZodNullable<z.ZodObject<{
-                url: z.ZodString;
-                username: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-                password: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-            }, z.core.$strip>>>;
             modelSlug: z.ZodString;
             label: z.ZodString;
         }, z.core.$strip>], "platform">;
@@ -18502,15 +18602,7 @@ export declare const routeSchemas: {
             }, z.core.$strip>>>;
         }, z.core.$strip>, z.ZodObject<{
             platform: z.ZodLiteral<"onlyfans">;
-            auth: z.ZodObject<{
-                token: z.ZodString;
-            }, z.core.$strip>;
             username: z.ZodString;
-            proxy: z.ZodOptional<z.ZodNullable<z.ZodObject<{
-                url: z.ZodString;
-                username: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-                password: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-            }, z.core.$strip>>>;
         }, z.core.$strip>], "platform">;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -18637,15 +18729,6 @@ export declare const routeSchemas: {
             }, z.core.$strip>>>;
         }, z.core.$strip>, z.ZodObject<{
             platform: z.ZodLiteral<"onlyfans">;
-            auth: z.ZodOptional<z.ZodObject<{
-                token: z.ZodString;
-            }, z.core.$strip>>;
-            username: z.ZodOptional<z.ZodString>;
-            proxy: z.ZodOptional<z.ZodNullable<z.ZodObject<{
-                url: z.ZodString;
-                username: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-                password: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-            }, z.core.$strip>>>;
         }, z.core.$strip>], "platform">;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -19007,6 +19090,7 @@ export declare const routeSchemas: {
                 observations_partitions: "observations_partitions";
                 wrong_transactions_writer: "wrong_transactions_writer";
                 read_gateway_capture: "read_gateway_capture";
+                golden_signal_lag: "golden_signal_lag";
             }>>;
             pageLabel: z.ZodOptional<z.ZodString>;
             limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -19029,6 +19113,7 @@ export declare const routeSchemas: {
                         observations_partitions: "observations_partitions";
                         wrong_transactions_writer: "wrong_transactions_writer";
                         read_gateway_capture: "read_gateway_capture";
+                        golden_signal_lag: "golden_signal_lag";
                     }>;
                     pageLabel: z.ZodString;
                     platform: z.ZodEnum<{

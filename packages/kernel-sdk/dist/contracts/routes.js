@@ -1360,6 +1360,24 @@ export const revenueDailyResponseSchema = z.object({
         canonicalType: transactionTypeEnum.optional(),
     })),
 });
+// Per-model earnings + trends: every visible model's period total and daily
+// series in one call (the dashboard's "By model" comparison view).
+export const revenueByModelQuerySchema = z.object({
+    period: periodEnum.default("30d"),
+    from: businessDate.optional(),
+    to: businessDate.optional(),
+});
+export const revenueByModelItemSchema = z.object({
+    modelSlug: z.string(),
+    modelName: z.string(),
+    pageCount: z.number().int(),
+    totalNetAmountMills: mills,
+    transactionCount: z.number().int(),
+    series: z.array(revenueDailyItemSchema),
+});
+export const revenueByModelResponseSchema = z.object({
+    models: z.array(revenueByModelItemSchema),
+});
 export const crossPageTransactionItemSchema = z.object({
     transactionId: z.string(),
     rawType: z.union([z.number().int(), z.string()]),
@@ -2190,6 +2208,7 @@ const notificationIncidentKindEnum = z.enum([
     "observations_partitions",
     "wrong_transactions_writer",
     "read_gateway_capture",
+    "golden_signal_lag",
 ]);
 const notificationIncidentStatusEnum = z.enum(["open", "resolved"]);
 const deliveryKindEnum = z.enum([
@@ -2304,15 +2323,10 @@ const fanslyCredentialsSchema = z.object({
 });
 const onlyfansCredentialsSchema = z.object({
     platform: z.literal("onlyfans"),
-    auth: z.object({
-        token: z.string().min(1),
-    }),
+    // Stage 18: OnlyMonster retired — OnlyFans pages onboard against the OFAPI
+    // vendor by username (the account must already be connected there); no
+    // pasted credentials, no per-page proxy (egress is vendor-side).
     username: z.string().min(1),
-    proxy: z.object({
-        url: z.string().min(1),
-        username: z.string().nullable().optional(),
-        password: z.string().nullable().optional(),
-    }).nullable().optional(),
 });
 const credentialProxySchema = z.object({
     url: z.string().min(1),
@@ -2378,10 +2392,9 @@ export const updateCredentialsBodySchema = z.discriminatedUnion("platform", [
         proxy: credentialProxySchema,
     }),
     z.object({
+        // Stage 18: OnlyFans pages hold no pasted credentials (OFAPI vendor-side)
+        // — the update route rejects this variant with a clear 400.
         platform: z.literal("onlyfans"),
-        auth: onlyfansCredentialsSchema.shape.auth.optional(),
-        username: z.string().min(1).optional(),
-        proxy: credentialProxySchema,
     }),
 ]);
 export const verifyPageResponseSchema = z.object({
@@ -3319,6 +3332,21 @@ export const configStagedResponseSchema = z.object({
         version: z.number().int().nullable(),
     })),
 });
+export const opsMetricsResponseSchema = z.object({
+    samples: z.array(z.object({
+        metric: z.string(),
+        quantile: z.string(),
+        valueMs: z.number().int(),
+        sampledAt: isoTimestamp,
+    })),
+    thresholdsMs: z.record(z.string(), z.number().int()),
+    smoke: z.object({
+        framesSeen: z.number().int(),
+        gapCount: z.number().int(),
+        duplicateCount: z.number().int(),
+        updatedAt: isoTimestamp.nullable(),
+    }).nullable(),
+});
 export const routeSchemas = {
     health: {
         auth: { kind: "public" },
@@ -3327,6 +3355,16 @@ export const routeSchemas = {
         response: {
             200: healthResponseSchema,
             503: healthResponseSchema,
+        },
+    },
+    opsMetrics: {
+        auth: { kind: "monitoring" },
+        tags: ["system"],
+        summary: "Golden-signal lag samples (Stage 25 acceptance instrument)",
+        response: {
+            200: opsMetricsResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
         },
     },
     healthSync: {
@@ -4314,6 +4352,17 @@ export const routeSchemas = {
         querystring: revenueDailyQuerySchema,
         response: {
             200: revenueDailyResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+        },
+    },
+    overviewRevenueByModel: {
+        auth: { kind: "session" },
+        tags: ["dashboard"],
+        summary: "Get per-model revenue totals and daily series",
+        querystring: revenueByModelQuerySchema,
+        response: {
+            200: revenueByModelResponseSchema,
             401: errorResponseSchema,
             403: errorResponseSchema,
         },

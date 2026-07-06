@@ -367,6 +367,10 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/openapi.json";
     };
+    readonly opsMetrics: {
+        readonly method: "GET";
+        readonly path: "/api/v1/ops/metrics";
+    };
     readonly overview: {
         readonly method: "GET";
         readonly path: "/api/v1/overview";
@@ -378,6 +382,10 @@ export declare const kernelOperations: {
     readonly overviewRevenue: {
         readonly method: "GET";
         readonly path: "/api/v1/overview/revenue";
+    };
+    readonly overviewRevenueByModel: {
+        readonly method: "GET";
+        readonly path: "/api/v1/overview/revenue/by-model";
     };
     readonly overviewRevenueDaily: {
         readonly method: "GET";

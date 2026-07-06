@@ -2,18 +2,32 @@
 // base64url JSON `{v: 2, w: {<accountId>: <highSeq>, …}}`, the per-account
 // high-water map. Shared by the server (modules/events) and the SDK helper so
 // both ends agree byte-for-byte; clients never construct or inspect it.
+// Isomorphic base64url (no Buffer): this file ships to the browser through
+// the SDK (dashboard) as well as to node (server + desktop). btoa/atob are
+// global in both since node 16; TextEncoder/TextDecoder carry the UTF-8 leg.
 function toBase64Url(text) {
-    return Buffer.from(text, "utf8").toString("base64url");
+    const bytes = new TextEncoder().encode(text);
+    let binary = "";
+    for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+    }
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 function fromBase64Url(text) {
     try {
-        const decoded = Buffer.from(text, "base64url");
-        // Round-trip guard: base64url decoding never throws on garbage, it just
-        // truncates — re-encoding catches non-canonical input.
-        if (decoded.toString("base64url") !== text.replace(/=+$/, "")) {
+        const base64 = text.replace(/-/g, "+").replace(/_/g, "/");
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        // Round-trip guard: catches non-canonical input (whitespace, padding
+        // variants, trailing bits) the permissive decoder would silently accept.
+        if (toBase64Url(decoded) !== text.replace(/=+$/, "")) {
             return null;
         }
-        return decoded.toString("utf8");
+        return decoded;
     }
     catch {
         return null;
