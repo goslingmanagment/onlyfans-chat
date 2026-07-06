@@ -23,6 +23,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D3 | 2026-07-06 | Stage 24: SDK client, stream v2, direct reads dead, device tokens (core #95/#101) |
 | D4 | 2026-07-06 | Stage 31: kernel-only AI — local prompt library/providers/vendor keys deleted (core #111) |
 | D5 | 2026-07-06 | Kernel model sentinel: summary cache pins modelId='kernel'; pre-cutover entries invalidate once |
+| D6 | 2026-07-07 | 0.1.31 RELEASED (kernel-AI cutover live); §5 watch, then owner revokes vendor keys |
 
 ## Entries
 
@@ -54,3 +55,14 @@ Spend is gateway-priced (`cost_micro_usd`). Acceptance lifecycle
 sentinel; entries cached under vendor model ids invalidate once after the
 cutover — a recorded trade (one-time regeneration) for deleting the model
 registry.
+
+**D6 (2026-07-07 ~22:55 UTC).** 0.1.31 RELEASED — the kernel-AI cutover
+reaches users. Merge of `kernel/stage-31-ai-cutover` → main, tag v0.1.31,
+windows-build run 28828374142 SUCCESS; the feed serves latest.yml 0.1.31
+(the new pre-build tag assert and post-upload served==tag==package assert
+both ran). Ships the GPT-5.5 audit fixes: the device token alone now
+configures AI (gate accepted only the legacy key before), stale
+direct-key copy replaced. §5 verification window from here: a real
+chatter workday on 0.1.31 (kernel-AI generations, acceptance telemetry
+under producer desktop@0.1.31), THEN the owner revokes the retired vendor
+keys at Anthropic/OpenRouter. Rollback: republish 0.1.30 latest.yml.
