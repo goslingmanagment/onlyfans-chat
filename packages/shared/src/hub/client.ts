@@ -262,6 +262,9 @@ function mapGatewayUsage(usage: AiGatewayUsageFrame['usage']): LlmUsageMetrics {
     cache_creation_input_tokens: usage.cacheWriteTokens,
     cache_read_input_tokens: usage.cacheReadTokens,
     output_tokens: usage.outputTokens,
+    // Stage 31: the kernel gateway prices the generation (Stage 29 tables);
+    // local price tables are gone, so this is the only spend source.
+    cost_micro_usd: usage.costMicroUsd,
   };
 }
 

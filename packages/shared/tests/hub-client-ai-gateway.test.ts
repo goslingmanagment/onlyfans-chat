@@ -109,6 +109,8 @@ describe('HubClient AI gateway stream', () => {
         cache_creation_input_tokens: 2,
         cache_read_input_tokens: 3,
         output_tokens: 4,
+        // Stage 31: the gateway price is the only spend source post-cutover.
+        cost_micro_usd: 50,
       },
     ]);
     expect(reasoning).toEqual(['thinking']);
