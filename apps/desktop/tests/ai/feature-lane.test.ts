@@ -6,8 +6,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STREAM_CHUNK_FLUSH_MS } from '@chatgoose/shared/constants';
-import { HubError } from '@chatgoose/shared/hub/index';
-import type { HubAiGatewayStreamCallbacks } from '@chatgoose/shared/hub/index';
+import { HubError, createHubClient } from '@chatgoose/shared/hub/index';
+import type { HubAiGatewayStreamCallbacks, HubResponseLike } from '@chatgoose/shared/hub/index';
 import type { OperationEvent } from '@chatgoose/shared/protocol/index';
 import { createAiCoordinator } from '@main/ai/index';
 import type { AiCoordinator } from '@main/ai/index';
@@ -254,12 +254,66 @@ describe('feature gateway adapter (Stage 31)', () => {
       ['something else entirely', 'CG-HUB-02'],
     ];
     for (const [message, code] of cases) {
+      // reason: 'bad-request' (not 'http') — this is the shape a real 400
+      // gate rejection takes once it survives toHubError (see the wire-level
+      // test below); a mismatched reason here would let this loop pass while
+      // still exercising a shape the wire never produces.
       const { events } = run(() =>
-        Promise.reject(new HubError('http', { message })));
+        Promise.reject(new HubError('bad-request', { message })));
       await flushAsync();
       const error = events.find((event) => event.kind === 'error');
       expect((error?.value as { code: string }).code, message).toBe(code);
     }
+  });
+
+  // C4 regression guard: the case above rejects with an already-correct
+  // HubError built by hand, so it can never catch toHubError dropping the
+  // gate message — it only proves mapKernelGateError's own string matching.
+  // This test drives the REAL wire path (createHubClient over a stubbed
+  // 400 JSON response) so a regression in toHubError's 'validation' case
+  // fails here even though the loop above stays green.
+  it('a real 400 gate rejection survives toHubError to CG-FLOW-03 (not CG-HUB-02)', async () => {
+    const fetchImpl = (): Promise<HubResponseLike> =>
+      Promise.resolve({
+        status: 400,
+        headers: { get: () => null },
+        body: null,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              error: 'bad_request',
+              message: 'fan-summary requires at least 30 messages in the conversation',
+            }),
+          ),
+      });
+    const client = createHubClient({ baseUrl: 'https://hub.example.com', apiKey: 'k', fetchImpl });
+    const adapter = createFeatureAiGateway({
+      client,
+      resolvePageLabel: () => Promise.resolve('lora-of'),
+    });
+    const events: Array<{ kind: string; value?: unknown }> = [];
+    adapter.stream(
+      {
+        feature: 'fan-summary',
+        clientRequestId: '11111111-1111-4111-8111-111111111111',
+        accountId: ACCT,
+        chatId: CHAT,
+        tone: undefined,
+        mode: undefined,
+        draftText: undefined,
+        personaKey: 'builtin:lora',
+        isRegeneration: false,
+      },
+      {
+        onText: (text) => events.push({ kind: 'text', value: text }),
+        onError: (error) => events.push({ kind: 'error', value: error }),
+        onComplete: (rawText) => events.push({ kind: 'complete', value: rawText }),
+      },
+    );
+    await flushAsync();
+
+    const error = events.find((event) => event.kind === 'error');
+    expect((error?.value as { code: string }).code).toBe('CG-FLOW-03');
   });
 
   it('errors when no page label maps to the account', async () => {

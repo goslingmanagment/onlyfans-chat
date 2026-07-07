@@ -146,7 +146,7 @@ function toHubError(error: unknown): HubError {
       case 'auth':
         return new HubError('auth', { detail });
       case 'validation':
-        return new HubError('bad-request', { detail });
+        return new HubError('bad-request', { message: error.message, detail });
       case 'network':
         return new HubError(error.code === 'timeout' || error.code === 'aborted' ? 'timeout' : 'network', {
           message: error.message,

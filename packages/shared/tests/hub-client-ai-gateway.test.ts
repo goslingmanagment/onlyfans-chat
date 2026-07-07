@@ -145,3 +145,56 @@ describe('HubClient AI gateway stream', () => {
     } satisfies Partial<HubError>);
   });
 });
+
+describe('HubClient AI feature stream', () => {
+  function makeFeatureRequest() {
+    return {
+      clientRequestId: '11111111-1111-4111-8111-111111111111',
+      pageLabel: 'Lora',
+      platform: 'onlyfans' as const,
+      conversationRef: '4242',
+      isRegeneration: false,
+    };
+  }
+
+  /** A pre-stream 400 has no SSE body — the SDK reads response.text() once
+   * and never touches response.body, so a null body is enough here. */
+  function jsonErrorResponse(status: number, payload: unknown): HubResponseLike {
+    return {
+      status,
+      headers: { get: () => null },
+      body: null,
+      text: () => Promise.resolve(JSON.stringify(payload)),
+    };
+  }
+
+  // C4: core's pre-stream gate rejection carries an actionable message
+  // ({error:'bad_request', message:'<gate text>'}); toHubError's 'validation'
+  // case used to drop it, so the dock only ever saw the generic CG-HUB-02
+  // copy instead of e.g. "fan-summary requires at least 30 messages".
+  it('surfaces the kernel gate message from a 400 JSON error as HubError bad-request', async () => {
+    const client = createHubClient({
+      baseUrl: 'https://hub.example.com',
+      apiKey: 'k',
+      fetchImpl: () =>
+        Promise.resolve(
+          jsonErrorResponse(400, {
+            error: 'bad_request',
+            message: 'fan-summary requires at least 30 messages in the conversation',
+          }),
+        ),
+    });
+
+    let caught: unknown;
+    try {
+      await client.streamAiFeature({ feature: 'fan-summary', request: makeFeatureRequest() }, { onText: () => {} });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    const hubError = caught as HubError;
+    expect(hubError.reason).toBe('bad-request');
+    expect(hubError.message).toContain('fan-summary requires at least 30 messages in the conversation');
+  });
+});
