@@ -445,6 +445,46 @@ describe('send engine (SPEC §7)', () => {
     engine.dispose();
   });
 
+  it('boot (isBoot=true): destructive rewrites run even when validation fails offline', async () => {
+    // Prior session left rows behind: first part in flight forever, rest queued.
+    stub.onSend(() => new Promise(() => undefined));
+    const { engine } = makeEngine();
+    const { localIds } = engine.sendParts({
+      accountId: ACCT,
+      chatId: CHAT,
+      parts: ['stale one', 'stale two', 'stale three'],
+    });
+    await drain();
+    const [id1, id2, id3] = [localIds[0] ?? '', localIds[1] ?? '', localIds[2] ?? ''];
+    expect(rowState(id1)).toBe('sending');
+    expect(rowState(id2)).toBe('queued');
+    expect(rowState(id3)).toBe('queued');
+
+    // "Restart" with the hub unreachable (the boot 4b makes non-fatal): the
+    // LOCAL rewrites must still run — a surviving stale 'queued' row would
+    // auto-send on the next pump kick (SPEC §15.5), and a stale 'sending' row
+    // would never be verified (the verify loop only covers 'unconfirmed').
+    const bootStub = makeStubClient();
+    bootStub.onSend(() => Promise.reject(timeoutError())); // verification can't promote
+    const { engine: rebooted } = makeEngine({ stub: bootStub });
+    await expect(
+      validateThenReconcileOnBoot({
+        syncAccounts: () => Promise.reject(new Error('CG-HUB-01 account bootstrap failed')),
+        reconcile: (isBoot) => rebooted.reconcileOnBoot(isBoot),
+        isBoot: true,
+      }),
+    ).rejects.toThrow(/CG-HUB-01/); // validation failure still reaches 4b's handler
+
+    expect(rowState(id2)).toBe('cancelled'); // restart kills pending sequences
+    expect(rowState(id3)).toBe('cancelled');
+    expect(data.outbox.get(id1)).toMatchObject({
+      state: 'unconfirmed', // parked for verification, not left 'sending'
+      errorCode: 'CG-OF-06',
+    });
+    rebooted.dispose();
+    engine.dispose();
+  });
+
   it('settings rebuild (isBoot=false): queued parts survive the rebuild and still send', async () => {
     let releaseFirst: ((value: ReturnType<typeof makeSentMessage>) => void) | undefined;
     stub.onSend((call, index) =>

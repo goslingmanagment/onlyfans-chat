@@ -694,13 +694,16 @@ async function rebuildOfapiRuntime(
 
   let committed = false;
   try {
-    // 4c: validation (syncAccounts) runs BEFORE reconcileOnBoot, both before the
-    // swap. A failed account bootstrap thus aborts the rebuild without the new
-    // engine ever touching the live outbox (no createOfapiCommand, no state
-    // churn — SPEC §15.5). The "reconcile before any send" guarantee (adversarial
-    // review 2026-06-11) still holds: reconcile completes before the new engine
-    // becomes reachable at the swap below. isBoot gates the destructive rewrites
-    // to the real boot only; reconcileOnBoot swallows network errors internally.
+    // 4c: ordering is per-path (see validateThenReconcileOnBoot), both steps
+    // always before the swap. Boot: reconcile FIRST — its destructive rewrites
+    // are local DB ops that must run even when the hub is unreachable (a stale
+    // queued row surviving an offline boot would auto-send on the next pump
+    // kick). Settings rebuild: validation FIRST — a failed candidate must never
+    // touch the live outbox the outgoing engine may still be pumping (no
+    // createOfapiCommand, no state churn — SPEC §15.5). The "reconcile before
+    // any send" guarantee (adversarial review 2026-06-11) holds on both paths:
+    // reconcile completes before the new engine becomes reachable at the swap
+    // below; reconcileOnBoot swallows network errors internally.
     const accountIds = await validateThenReconcileOnBoot({
       syncAccounts: () => syncAccounts(nextClient, dataLayer, toMediaUrl),
       reconcile: (boot) => engine.reconcileOnBoot(boot),

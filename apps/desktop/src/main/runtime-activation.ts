@@ -28,21 +28,35 @@ export async function activateRuntimeNonFatal(
 }
 
 /**
- * 4c: on a read-runtime (re)build, run account-bootstrap validation FIRST, then
- * engine reconciliation — both BEFORE the new engine is swapped in. If
- * validation (syncAccounts) throws, `reconcile` never runs, so a rejected
- * rebuild never touches the live outbox (no createOfapiCommand, no state churn).
- * `isBoot` is forwarded to `reconcile` (true from boot, false from a settings
- * rebuild — see engine.reconcileOnBoot, which gates its destructive transitions
- * on it). Returns the validated account ids for the caller to start sync with.
+ * 4c: order account-bootstrap validation (syncAccounts) and engine
+ * reconciliation per path — both always BEFORE the new engine is swapped in.
+ *
+ * Boot (isBoot=true): reconcile FIRST, then validate — the original boot order.
+ * The destructive rewrites (queued→cancelled, sending→unconfirmed) are LOCAL DB
+ * ops that must run even when the hub is unreachable (exactly the boot 4b makes
+ * non-fatal): a stale 'queued' row surviving an offline boot would auto-send on
+ * the next pump kick, and a stale 'sending' row would never be verified (the
+ * verify loop only covers 'unconfirmed') — SPEC §15.5. A validation failure
+ * still propagates to the caller (4b handles it non-fatally).
+ *
+ * Settings rebuild (isBoot=false): validate FIRST; if syncAccounts throws,
+ * `reconcile` never runs, so a rejected candidate never touches the live outbox
+ * (no createOfapiCommand, no state churn — the outgoing engine may still be
+ * pumping those rows).
+ *
+ * Returns the validated account ids for the caller to start sync with.
  */
 export async function validateThenReconcileOnBoot(params: {
   syncAccounts: () => Promise<readonly string[]>;
   reconcile: (isBoot: boolean) => Promise<void>;
   isBoot: boolean;
 }): Promise<readonly string[]> {
+  if (params.isBoot) {
+    await params.reconcile(true);
+    return params.syncAccounts();
+  }
   const accountIds = await params.syncAccounts();
-  await params.reconcile(params.isBoot);
+  await params.reconcile(false);
   return accountIds;
 }
 
