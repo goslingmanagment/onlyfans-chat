@@ -11,7 +11,11 @@ const sharedAlias = {
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // @kernel/sdk's vendored dist is compiled with moduleResolution:bundler
+    // (extensionless relative imports) — Node's ESM loader can't run it, so it
+    // must be bundled into main, never externalized (0.1.30/0.1.31 shipped
+    // externalized and crashed at load before creating a window).
+    plugins: [externalizeDepsPlugin({ exclude: ['@kernel/sdk'] })],
     resolve: { alias: sharedAlias },
     build: {
       rollupOptions: {
