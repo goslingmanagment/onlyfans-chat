@@ -19,7 +19,7 @@
 | 3 | `chatgoose_desktop_fable` | **Полный клиент** — Phases 3–5 (отправка + SSE-клиент → deep AI + центральные саммари → vault/PPV) | ✅ **сделано** — построено; send-контракт проверен на тестовом фане; гейты ждут owner/пилота |
 
 Остаётся: **owner-чеклист** (PLAN item 8 — live-send проверка, пилотная смена, PPV round-trip, переезд core с ноутбука), затем **№4** (ниже) — OFAPI gateway-прокси в core (key custody; обязателен до масштабирования за пределы пилота — у OFAPI-ключей нет скоупов), затем P6 — AI gateway в core + переключение десктопа в gateway-режим (конфиг + тонкая правка OfApiClient).
-Опционально между этапами — ревью: `Прочитай docs/reviews/review-prompt.md и выполни его`.
+Опционально между этапами — ревью: промпт `docs/reviews/review-prompt.md` удалён (D2, 2026-07-04); при необходимости восстановить: `git show 996fcbb^:docs/reviews/review-prompt.md`.
 
 ## Промпты
 

@@ -11,12 +11,32 @@ describe("vendored @kernel/sdk", () => {
     expect(KERNEL_SDK_VERSION).toBeTruthy();
   });
 
-  it("constructs a client with the operations the hub layer delegates to", () => {
-    const client = createClient({ baseUrl: "http://127.0.0.1:0", auth: { mode: "bearer", token: () => "k" } });
-    for (const op of ["listPages", "getFanProfile", "putFanProfile", "usageBatch", "ofapiCreditsSummary", "ofapiCommandCreate", "ofapiCommandGet", "ofapiCommandCancel"] as const) {
-      void op;
+  it("constructs a client exposing every operation the hub layer delegates to", () => {
+    const client = createClient({
+      baseUrl: "http://127.0.0.1:0",
+      auth: { mode: "bearer", token: () => "k" },
+    }) as unknown as Record<string, unknown>;
+    // The exact SDK methods packages/shared/src/hub/client.ts calls via
+    // clientFor(...) — keep in sync with that file's delegations. These are
+    // SDK operation names, NOT HubClient method names (listPages etc.).
+    const delegatedOps = [
+      "pages",
+      "pageFanProfile",
+      "upsertFanProfile",
+      "aiUsageBatch",
+      "ingestObservations",
+      "ofapiCreditsChatterSummary",
+      "createOfapiCommand",
+      "getOfapiCommand",
+      "cancelOfapiCommand",
+      "aiPersonasList",
+      "aiPersonaUpsert",
+      "aiPersonaArchive",
+    ] as const;
+    for (const op of delegatedOps) {
+      expect(op in kernelOperations, `kernelOperations.${op}`).toBe(true);
+      expect(typeof client[op], `client.${op}`).toBe("function");
     }
-    expect(typeof client).toBe("object");
     expect(Object.keys(kernelOperations).length).toBeGreaterThan(100);
   });
 });

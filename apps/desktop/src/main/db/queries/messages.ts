@@ -1,7 +1,8 @@
 // Message store (SPEC §6.3): upsert keyed by (account, chat, message); deletions
 // tombstone via the `deleted` flag (rendered "deleted", never hard-removed by
-// sync); retention pruning beyond 5000/chat (configurable). Pages are keyset-
-// paginated on (created_at, message_id) and returned in ascending order.
+// sync); retention pruning beyond 50,000/chat (Stage 4 stop-loss ×10, D1;
+// configurable). Pages are keyset-paginated on (created_at, message_id) and
+// returned in ascending order.
 
 import { z } from 'zod';
 import type { ChatGooseDb } from '../database';
