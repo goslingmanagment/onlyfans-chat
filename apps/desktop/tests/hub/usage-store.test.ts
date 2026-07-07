@@ -7,7 +7,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { createUsageReporter, HubError, hubUsageEventSchema } from '@chatgoose/shared/hub/index';
 import type { HubUsageEvent, PendingUsageEvent } from '@chatgoose/shared/hub/index';
-import { createSqliteUsageEventStore } from '@main/hub/usage-store';
+import { createSqliteUsageEventStore, summarizeUsageSpool } from '@main/hub/usage-store';
 import { mapUsagePayloadToHubEvent } from '@main/hub/usage-mapper';
 import type { MappedHubUsageEvent } from '@main/hub/usage-mapper';
 import {
@@ -75,6 +75,35 @@ describe('createSqliteUsageEventStore', () => {
     // The quarantined row's event still parses clean (flag stripped).
     const b = reloaded.find((p) => p.id === 'b');
     expect(hubUsageEventSchema.safeParse(b?.event).success).toBe(true);
+  });
+
+  // B2: "export diagnostics first" must preserve the WHOLE spool — pending
+  // and dead-letter rows included, not just the quarantined slice.
+  it('summarizeUsageSpool reports every undelivered row with its state', () => {
+    const data = memoryDataLayer();
+    const store = createSqliteUsageEventStore(data.db);
+    store.save([
+      pendingOf('hot'),
+      pendingOf('parked', { attempts: 3 }),
+      pendingOf('poisoned'),
+    ]);
+    store.markQuarantined(['poisoned']);
+
+    const rows = data.db
+      .prepare('SELECT client_event_id AS id, payload, attempts FROM usage_events ORDER BY rowid ASC')
+      .all() as Array<{ id?: unknown; payload?: unknown; attempts?: unknown }>;
+    const spool = summarizeUsageSpool(rows);
+
+    expect(spool.counts).toEqual({ pending: 1, deadLetter: 1, quarantined: 1 });
+    expect(spool.events.map((event) => [event.id, event.state])).toEqual([
+      ['hot', 'pending'],
+      ['parked', 'deadLetter'],
+      ['poisoned', 'quarantined'],
+    ]);
+    // Payloads ride along — nothing exports as a bare count.
+    for (const event of spool.events) {
+      expect(event.payload).toMatchObject({ clientEventId: event.id });
+    }
   });
 
   it('loads coordinator-parked raw rows mapped to the wire shape', () => {

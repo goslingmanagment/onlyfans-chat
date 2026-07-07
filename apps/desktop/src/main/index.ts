@@ -61,6 +61,7 @@ import { createHubAwareSync, type HubAwareSync } from './sync/hub-provider';
 import { registerIpcHandlers } from './ipc/handlers';
 import { createAiCoordinator, type AiCoordinator } from './ai/index';
 import { createHubModule, type HubModule } from './hub/index';
+import { summarizeUsageSpool } from './hub/usage-store';
 import { hostname } from 'node:os';
 import {
   effectiveHubBearerAfterPatch,
@@ -1290,36 +1291,20 @@ async function boot(): Promise<void> {
         } catch {
           guardAudit = null;
         }
-        // Stage 4: quarantined usage events (HTTP-400 rejections) are never
-        // resent — export count + payloads so nothing is silently lost. Usage
+        // Stage 4: the usage spool never self-deletes (stop-loss) — export
+        // EVERY undelivered row with its state (pending / dead-letter /
+        // quarantined), so "export diagnostics first" before a purge really
+        // preserves the spool, not just the HTTP-400 quarantine slice. Usage
         // telemetry carries no message text; read straight from the table so
         // the section is present even while the hub module is off.
-        let usageQuarantine: { count: number; events: unknown[] } | null;
+        let usageSpool: ReturnType<typeof summarizeUsageSpool> | null;
         try {
           const rows = (data?.db
             .prepare('SELECT client_event_id AS id, payload, attempts FROM usage_events ORDER BY rowid ASC')
             .all() ?? []) as Array<{ id?: unknown; payload?: unknown; attempts?: unknown }>;
-          const events: unknown[] = [];
-          for (const row of rows) {
-            if (typeof row.payload !== 'string') {
-              continue;
-            }
-            try {
-              const json = JSON.parse(row.payload) as unknown;
-              if (
-                typeof json === 'object' &&
-                json !== null &&
-                (json as Record<string, unknown>)['quarantined'] === true
-              ) {
-                events.push({ id: row.id, attempts: row.attempts, payload: json });
-              }
-            } catch {
-              // Corrupt payloads fail wire validation at load; not a quarantine row.
-            }
-          }
-          usageQuarantine = { count: events.length, events };
+          usageSpool = summarizeUsageSpool(rows);
         } catch {
-          usageQuarantine = null;
+          usageSpool = null;
         }
         // Flush then read the DURABLE on-disk log so a crash from a PRIOR
         // session is in the export even though the in-memory ring restarted.
@@ -1380,7 +1365,7 @@ async function boot(): Promise<void> {
                 }
               : null,
             messageGuardAudit: guardAudit,
-            usageQuarantine,
+            usageSpool,
             errorCounts: logger?.errorCounts() ?? {},
             logs: logger?.snapshot() ?? [],
             fileLog,

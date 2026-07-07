@@ -36,11 +36,12 @@ export interface DiagnosticsInputs {
   outboxAudit: unknown;
   messageGuardAudit?: unknown;
   /**
-   * Quarantined usage events (HTTP-400 rejections; never resent). Count plus
-   * full payloads — usage telemetry carries no message text, and exporting is
-   * the only way these facts leave the machine (Stage 4 kept-but-exportable).
+   * The full undelivered usage spool — pending, dead-letter AND quarantined
+   * rows, each with state + payload. Usage telemetry carries no message text,
+   * and exporting is the only way these facts leave the machine before a
+   * purge (Stage 4 kept-but-exportable).
    */
-  usageQuarantine?: unknown;
+  usageSpool?: unknown;
   /** error-level CG-* code → count over the in-memory log ring. */
   errorCounts: Record<string, number>;
   /** Structured recent records from the in-memory ring (current session). */

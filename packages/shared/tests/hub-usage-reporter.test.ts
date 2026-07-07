@@ -75,7 +75,7 @@ function memoryStore(initial: PendingUsageEvent[] = []) {
   return { store, rows, calls };
 }
 
-type BatchOutcome = 'ok' | Error;
+type BatchOutcome = 'ok' | 'invalid' | Error;
 
 function stubHubClient(options: { offset?: number | null; outcomes?: BatchOutcome[] } = {}) {
   const batches: HubUsageEvent[][] = [];
@@ -86,13 +86,16 @@ function stubHubClient(options: { offset?: number | null; outcomes?: BatchOutcom
       postUsageBatch: ({ events }: { events: HubUsageEvent[] }): Promise<HubUsageBatchResult> => {
         batches.push(events);
         const next = outcomes.shift() ?? 'ok';
-        if (next !== 'ok') {
+        if (next instanceof Error) {
           return Promise.reject(next);
         }
+        // 'invalid': a 200 where core burned one event per-item (bad
+        // completedAt) without identifying which — counts only.
+        const invalidCount = next === 'invalid' ? 1 : 0;
         return Promise.resolve({
           receivedCount: events.length,
-          insertedCount: events.length,
-          invalidCount: 0,
+          insertedCount: events.length - invalidCount,
+          invalidCount,
           dedupedCount: 0,
         });
       },
@@ -265,6 +268,65 @@ describe('createUsageReporter', () => {
     // Never blind-retried.
     await vi.advanceTimersByTimeAsync(600_000);
     expect(batches).toHaveLength(1);
+  });
+
+  // A 200 with invalidCount > 0 means core silently burned events it never
+  // identified — deleting the whole batch locally would destroy the only copy
+  // of business facts (SPEC §8.6 per-item skip).
+  it('keeps the batch when a 200 reports invalidCount > 0 and removes it only after a clean resend', async () => {
+    const { store, calls } = memoryStore();
+    const { client, batches } = stubHubClient({ outcomes: ['invalid', 'ok'] });
+    const { errors, onError } = errorCollector();
+    const reporter = createUsageReporter({ client, store, onError });
+
+    reporter.enqueue(makeEvent('a'));
+    reporter.enqueue(makeEvent('b'));
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    // Invalid response: nothing deleted, nothing quarantined — the batch
+    // stays queued for one resend (core dedupes by clientEventId, and this
+    // response taught us the server-time offset for the clamp).
+    expect(batches).toHaveLength(1);
+    expect(calls.remove).toEqual([]);
+    expect(calls.markQuarantined).toEqual([]);
+    expect(reporter.getPendingCount()).toBe(2);
+
+    // Clean resend: the same two events go out again and are removed.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(batches).toHaveLength(2);
+    expect(batches[1]?.map((event) => event.clientEventId)).toEqual(['a', 'b']);
+    expect(calls.remove).toEqual([['a', 'b']]);
+    expect(reporter.getPendingCount()).toBe(0);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('quarantines the batch when invalidCount persists across the resend limit', async () => {
+    const { store, calls, rows } = memoryStore();
+    const { client, batches } = stubHubClient({ outcomes: ['invalid', 'invalid'] });
+    const { errors, onError } = errorCollector();
+    const reporter = createUsageReporter({ client, store, onError });
+
+    reporter.enqueue(makeEvent('a'));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(batches).toHaveLength(1);
+    expect(reporter.getPendingCount()).toBe(1);
+
+    // Second invalid response in a row: the offset was known and the clamp
+    // still could not repair it — park in quarantine, never delete.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(batches).toHaveLength(2);
+    expect(calls.remove).toEqual([]);
+    expect(calls.markQuarantined).toEqual([['a']]);
+    expect(rows.get('a')?.quarantined).toBe(true);
+    expect(reporter.getPendingCount()).toBe(0);
+    expect(reporter.getQuarantined().map((pending) => pending.id)).toEqual(['a']);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.error.code).toBe('CG-HUB-02');
+    expect(errors[0]?.context).toEqual({ kind: 'quarantined', clientEventIds: ['a'] });
+
+    // Parked for good — no further resends.
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(batches).toHaveLength(2);
   });
 
   it('clamps completedAt to server time when the local clock runs ahead', async () => {

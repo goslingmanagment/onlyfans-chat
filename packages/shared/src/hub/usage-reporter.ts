@@ -8,9 +8,11 @@
 // 3rd failed attempt an event moves to the dead-letter tier — retried only on
 // app start and on an hourly sweep, so a poisoned event cannot busy-loop the
 // hot queue, but it is never removed. Removal happens only for 2xx-confirmed
-// events and rows that fail the wire contract at load. Core dedupes upstream
-// by (userId, clientEventId) — the reporter does no local dedupe, and longer
-// retry horizons therefore cannot double-count spend.
+// events with invalidCount 0 (a 200 that reports per-item invalids keeps the
+// batch queued for one resend, then quarantines it) and rows that fail the
+// wire contract at load. Core dedupes upstream by (userId, clientEventId) —
+// the reporter does no local dedupe, and longer retry horizons (or whole-batch
+// resends) therefore cannot double-count spend.
 
 import type { CgErrorDetail } from '../errors/index';
 import { CgError } from '../errors/index';
@@ -33,6 +35,14 @@ export const HUB_USAGE_REPORT_RETRY_DELAYS_MS = [
 ] as const;
 /** Dead-letter events re-enter the queue on app start and on this sweep interval. */
 export const HUB_USAGE_DEAD_LETTER_SWEEP_MS = 3_600_000;
+/**
+ * Consecutive 200-with-invalidCount flushes tolerated before the batch parks
+ * in quarantine. The first invalid response also teaches the client the
+ * server-time offset, so the resend goes out with completedAt clamped — one
+ * retry is enough to repair clock skew; anything still invalid after that is
+ * unparseable server-side and resending cannot fix it.
+ */
+export const HUB_USAGE_INVALID_RESEND_LIMIT = 2;
 
 // ─── Store seam (desktop main wires this to the usage_events table) ───────
 
@@ -151,6 +161,8 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
   let sweepTimer: unknown = null;
   let flushing = false;
   let disposed = false;
+  /** Consecutive 200s reporting invalidCount > 0 (see HUB_USAGE_INVALID_RESEND_LIMIT). */
+  let consecutiveInvalidFlushes = 0;
 
   // Crash recovery: restore the persisted queue. Rows that no longer satisfy
   // the wire contract (schema drift across app versions) are deleted — they
@@ -228,7 +240,39 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
         const ids = batch.map((pending) => pending.id);
 
         try {
-          await client.postUsageBatch({ events: batch.map((pending) => clampCompletedAt(pending.event)) });
+          const result = await client.postUsageBatch({
+            events: batch.map((pending) => clampCompletedAt(pending.event)),
+          });
+          if (result.invalidCount > 0) {
+            // 200-with-invalid: core burned invalidCount events per-item (bad
+            // completedAt — SPEC §8.6) without identifying which. Deleting the
+            // batch would destroy the only copy of those facts. This response
+            // also recorded the server-time offset, so one resend goes out
+            // clamped; core's (userId, clientEventId) dedupe makes re-posting
+            // the accepted rows free.
+            consecutiveInvalidFlushes += 1;
+            if (consecutiveInvalidFlushes < HUB_USAGE_INVALID_RESEND_LIMIT) {
+              retryDelayMs = HUB_USAGE_REPORT_DEBOUNCE_MS;
+              break;
+            }
+            // The clamped resend still reported invalids (unparseable
+            // completedAt): park the batch like an HTTP 400 — never delete.
+            consecutiveInvalidFlushes = 0;
+            queue.splice(0, batch.length);
+            for (const pending of batch) {
+              pending.quarantined = true;
+            }
+            quarantined.push(...batch);
+            store.markQuarantined(ids);
+            onError?.(
+              new HubError('bad-request', {
+                message: `usage batch kept ${String(result.invalidCount)} invalid event(s) after a clamped resend`,
+              }),
+              { kind: 'quarantined', clientEventIds: ids },
+            );
+            continue;
+          }
+          consecutiveInvalidFlushes = 0;
           queue.splice(0, batch.length);
           store.remove(ids);
         } catch (error) {

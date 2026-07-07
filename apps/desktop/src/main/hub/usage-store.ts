@@ -13,7 +13,7 @@
 //      event on load — local-only, never sent upstream.
 
 import { z } from 'zod';
-import { hubUsageEventSchema } from '@chatgoose/shared/hub/index';
+import { HUB_USAGE_DEAD_LETTER_AFTER_ATTEMPTS, hubUsageEventSchema } from '@chatgoose/shared/hub/index';
 import type { HubUsageEvent, PendingUsageEvent, UsageEventStore } from '@chatgoose/shared/hub/index';
 import type { ChatGooseDb } from '../db/index';
 import { mapUsagePayloadToHubEvent } from './usage-mapper';
@@ -48,6 +48,51 @@ function isQuarantinedPayload(json: unknown): boolean {
     !Array.isArray(json) &&
     (json as Record<string, unknown>)['quarantined'] === true
   );
+}
+
+export type UsageSpoolState = 'pending' | 'deadLetter' | 'quarantined';
+
+export interface UsageSpoolSummary {
+  counts: Record<UsageSpoolState, number>;
+  events: Array<{ id: unknown; attempts: unknown; state: UsageSpoolState; payload: unknown }>;
+}
+
+/**
+ * Diagnostics-export view of the spool: EVERY undelivered row with its state
+ * (pending / dead-letter / quarantined). Stage 4 stop-loss means none of them
+ * may hide behind a quarantined-only filter — "export diagnostics first"
+ * before a purge must actually preserve the whole spool. Dead-letter is not a
+ * persisted flag (it's the in-memory ≥3-attempts tier), so it is derived here
+ * the same way the reporter derives it.
+ */
+export function summarizeUsageSpool(
+  rows: ReadonlyArray<{ id?: unknown; payload?: unknown; attempts?: unknown }>,
+): UsageSpoolSummary {
+  const counts: Record<UsageSpoolState, number> = { pending: 0, deadLetter: 0, quarantined: 0 };
+  const events: UsageSpoolSummary['events'] = [];
+  for (const row of rows) {
+    if (typeof row.payload !== 'string') {
+      continue;
+    }
+    let json: unknown;
+    try {
+      json = JSON.parse(row.payload);
+    } catch {
+      continue; // corrupt payloads fail wire validation at load; not a spool row
+    }
+    if (typeof json !== 'object' || json === null) {
+      continue;
+    }
+    const attempts = typeof row.attempts === 'number' ? row.attempts : 0;
+    const state: UsageSpoolState = isQuarantinedPayload(json)
+      ? 'quarantined'
+      : attempts >= HUB_USAGE_DEAD_LETTER_AFTER_ATTEMPTS
+        ? 'deadLetter'
+        : 'pending';
+    counts[state] += 1;
+    events.push({ id: row.id, attempts: row.attempts, state, payload: json });
+  }
+  return { counts, events };
 }
 
 export function createSqliteUsageEventStore(db: ChatGooseDb): UsageEventStore {
