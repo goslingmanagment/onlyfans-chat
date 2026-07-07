@@ -187,7 +187,9 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
   },
   'CG-HUB-01': {
     message: 'Agency Hub authentication failed.',
-    recovery: 'Check the chatter API key in Settings, then test the connection again.',
+    // Credential-neutral: the bearer may be a device token (expired/revoked)
+    // or the legacy chatter key — name both paths, not just the key field.
+    recovery: 'Sign in again in Settings to issue a fresh device token, or check the chatter key, then test the connection.',
     settingsLink: true,
   },
   'CG-HUB-02': {
