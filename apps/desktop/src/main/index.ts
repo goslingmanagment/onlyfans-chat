@@ -62,7 +62,7 @@ import { registerIpcHandlers } from './ipc/handlers';
 import { createAiCoordinator, type AiCoordinator } from './ai/index';
 import { createHubModule, type HubModule } from './hub/index';
 import { summarizeUsageSpool } from './hub/usage-store';
-import { hostname } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import {
   effectiveHubBearerAfterPatch,
   issueHubDeviceToken,
@@ -1434,6 +1434,18 @@ if (app.isPackaged) {
   app.setPath('userData', join(app.getPath('appData'), 'ChatGoose'));
 }
 
+// Packaged-launch smoke gate (D8): `ChatGoose --smoke` proves the main bundle
+// loads, the window is created, and boot() completes on a throwaway profile —
+// then exits 0 without human-visible UI. The 0.1.30/0.1.31 DOA class (module
+// resolution dying at load, windowless zombie) never reaches this code, so the
+// CI step's timeout is the failure signal for that class; a boot() rejection
+// exits 1 explicitly. Runs after the packaged-userData block so the temp
+// profile always wins — a CI runner must never touch a real profile.
+const smokeRun = process.argv.includes('--smoke');
+if (smokeRun) {
+  app.setPath('userData', join(tmpdir(), `chatgoose-smoke-${String(process.pid)}`));
+}
+
 // Single-instance lock (PLAN item 11): a second process on the same encrypted
 // db would double polling/credits and race the SQLite WAL. macOS masks this
 // (dock launches re-activate the running app) but on Windows every shortcut
@@ -1452,14 +1464,28 @@ if (!app.requestSingleInstanceLock()) {
     buildAppMenu();
     // A failed boot used to die as an unhandled rejection behind a blank
     // window; surface it (PLAN item 11 — a non-developer runs verification).
-    boot().catch((err: unknown) => {
-      logger?.error('boot', 'fatal startup error', errorToFields(err));
-      void logger?.flush();
-      dialog.showErrorBox(
-        'ChatGoose failed to start',
-        err instanceof Error ? err.message : String(err),
-      );
-    });
+    boot()
+      .then(() => {
+        if (smokeRun) {
+          logger?.info('app', 'smoke boot OK');
+          void logger?.flush();
+          app.exit(0);
+        }
+      })
+      .catch((err: unknown) => {
+        logger?.error('boot', 'fatal startup error', errorToFields(err));
+        void logger?.flush();
+        if (smokeRun) {
+          // CI runs headless — a dialog would hang the runner until timeout.
+          console.error('smoke boot FAILED:', err);
+          app.exit(1);
+          return;
+        }
+        dialog.showErrorBox(
+          'ChatGoose failed to start',
+          err instanceof Error ? err.message : String(err),
+        );
+      });
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         mainWindow = createWindow();

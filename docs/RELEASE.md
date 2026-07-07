@@ -94,7 +94,10 @@ check → download → install flow so the UX is demoable without a real feed.
 
 1. Bump `version` in `apps/desktop/package.json`, commit.
 2. `git tag v<version> && git push origin main --tags`.
-3. The `windows-build` workflow builds the installer on Windows and uploads
+3. The `windows-build` workflow builds the installer on Windows, **smoke-launches
+   the packaged binary** (`ChatGoose.exe --smoke` on a throwaway profile must
+   exit 0 — the D8 dead-on-launch class fails this step by timeout, and nothing
+   reaches the feed), and uploads
    `ChatGoose-Setup-<version>.exe` + `.blockmap` + `latest.yml` directly to the
    feed from the Windows runner (blockmaps make updates differential — clients
    download only changed chunks). The Actions artifact upload is best-effort

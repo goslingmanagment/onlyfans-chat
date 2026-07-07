@@ -53,6 +53,23 @@ jobs:
       - name: Build Windows installer
         run: pnpm dist:win
 
+      # Packaged-launch smoke gate (D8): 0.1.30/0.1.31 shipped installers whose
+      # main process died at module load — windowless, no error, invisible to
+      # `pnpm check` (vitest resolves @kernel/sdk through its own transform,
+      # not the packaged bundle). Launch the ACTUAL packaged binary; --smoke
+      # boots on a throwaway profile and exits 0. The DOA class never reaches
+      # the exit call, so the step timeout is the failure signal. Nothing
+      # reaches the update feed without this going green.
+      - name: Smoke-launch the packaged app
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $exe = "apps/desktop/release/win-unpacked/ChatGoose.exe"
+          if (-not (Test-Path $exe)) { Write-Error "win-unpacked binary not found at $exe"; exit 1 }
+          $p = Start-Process -FilePath $exe -ArgumentList '--smoke' -Wait -PassThru
+          Write-Host "smoke exit code: $($p.ExitCode)"
+          exit $p.ExitCode
+
       - name: Upload to the update feed
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
         shell: bash
