@@ -7,7 +7,8 @@ import type { DataLayer } from '@main/db/index';
 import type { SendEngine } from '@main/send/engine';
 import { createSettingsStore } from '@main/settings/store';
 import { registerIpcHandlers } from '@main/ipc/handlers';
-import type { IpcDeps } from '@main/ipc/handlers';
+import type { AiCoordinatorLike, IpcDeps } from '@main/ipc/handlers';
+import { utcDayOf } from '@main/ipc/activity';
 import { ACCT, CHAT, memoryDataLayer } from './helpers';
 
 type Handler = (event: unknown, args?: unknown) => unknown;
@@ -47,7 +48,11 @@ function makeEngineStub(): SendEngine {
   };
 }
 
-function register(data: DataLayer, send: SendEngine | null): void {
+function register(
+  data: DataLayer,
+  send: SendEngine | null,
+  coordinator: IpcDeps['coordinator'] = null,
+): void {
   handlers.clear();
   const secrets = {
     hasSecret: async () => false,
@@ -59,11 +64,57 @@ function register(data: DataLayer, send: SendEngine | null): void {
     settingsStore: createSettingsStore({ queries: data.settings, secrets }),
     sync: null,
     creditMeter: null,
-    coordinator: null,
+    coordinator,
     send,
     purge: async () => undefined,
   };
   registerIpcHandlers(deps);
+}
+
+interface FakeCoordinatorContext {
+  feature: string;
+  requestId?: string | null;
+  accountId?: string;
+  chatId?: string;
+  parts?: string[];
+}
+
+/** Minimal AiCoordinatorLike double: a preloaded completed-op registry (C5)
+ * plus an observable markOperationAccepted so tests can assert the dedup. */
+function makeFakeCoordinator(
+  contexts: Record<string, FakeCoordinatorContext> = {},
+): AiCoordinatorLike & { acceptedCalls: string[] } {
+  const accepted = new Set<string>();
+  const acceptedCalls: string[] = [];
+  return {
+    start: vi.fn(),
+    cancel: vi.fn(),
+    conversationOpened: vi.fn(),
+    conversationClosed: vi.fn(),
+    getOperationContext: (operationId) => {
+      const ctx = contexts[operationId];
+      if (ctx === undefined) {
+        return null;
+      }
+      return {
+        operationId,
+        requestId: ctx.requestId ?? null,
+        feature: ctx.feature,
+        accountId: ctx.accountId ?? ACCT,
+        chatId: ctx.chatId ?? CHAT,
+        parts: ctx.parts ?? [],
+      };
+    },
+    markOperationAccepted: (operationId) => {
+      acceptedCalls.push(operationId);
+      if (accepted.has(operationId)) {
+        return false;
+      }
+      accepted.add(operationId);
+      return true;
+    },
+    acceptedCalls,
+  };
 }
 
 describe('send-channel IPC handlers', () => {
@@ -290,5 +341,47 @@ describe('send-channel IPC handlers', () => {
       .get({ id: operationId }) as { payload: string } | undefined;
     expect(row).toBeDefined();
     expect(JSON.parse(row?.payload ?? '{}')).toMatchObject({ accepted: 1, acceptedPart: 1 });
+  });
+
+  // C5: kernel-lane ops (Stage 31) write no usage_events row at all, so the
+  // legacy payload lookup above always misses for them — the completed-op
+  // registry is the only place the feature survives, and the ai_spend_log
+  // inserted counter must still move.
+  it('cmd:ai.feedback increments ai_spend_log for a kernel-lane op via the completed-op registry', async () => {
+    const operationId = '00000000-0000-4000-8000-000000000099';
+    const coordinator = makeFakeCoordinator({
+      [operationId]: { feature: 'fan-summary' },
+    });
+    register(data, engine, coordinator);
+    const today = utcDayOf(Date.now());
+
+    await invoke('cmd:ai.feedback', { operationId, action: 'inserted', partIndex: 0 });
+
+    expect(data.aiSpendLog.rowsSince(today)).toMatchObject([{ feature: 'fan-summary', inserted: 1 }]);
+    // No usage_events row exists for this op — the legacy UPDATE is a
+    // harmless no-op (0 rows matched), not an error.
+    const row = data.db
+      .prepare('SELECT payload FROM usage_events WHERE client_event_id = @id')
+      .get({ id: operationId });
+    expect(row).toBeUndefined();
+
+    // Second identical feedback for the same operation must not double-count
+    // (mirrors the legacy usage_events row's `accepted` flag dedup).
+    await invoke('cmd:ai.feedback', { operationId, action: 'inserted', partIndex: 0 });
+    const rows = data.aiSpendLog.rowsSince(today);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.inserted).toBe(1);
+    expect(coordinator.acceptedCalls).toEqual([operationId, operationId]);
+  });
+
+  it('cmd:ai.feedback falls back to the request feature when the op has aged out of the completed-op registry', async () => {
+    const operationId = '00000000-0000-4000-8000-0000000000aa';
+    const coordinator = makeFakeCoordinator(); // empty registry: simulates cap-50 eviction
+    register(data, engine, coordinator);
+    const today = utcDayOf(Date.now());
+
+    await invoke('cmd:ai.feedback', { operationId, action: 'copied', partIndex: 0, feature: 'chat-review' });
+
+    expect(data.aiSpendLog.rowsSince(today)).toMatchObject([{ feature: 'chat-review', inserted: 1 }]);
   });
 });

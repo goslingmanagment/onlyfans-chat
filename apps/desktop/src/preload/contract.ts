@@ -545,8 +545,10 @@ export interface AiStartRequest {
 /**
  * Acceptance instrumentation (PRD §3): every copy (P2 companion mode) or
  * insert (P3+) of an AI draft. `partIndex` 0 = all parts, 1..N = part N.
- * `feature` lets main increment the durable ai_spend_log inserted counter
- * even after the usage_events row drained to the hub (Activity panel).
+ * `feature` is the ai_spend_log inserted-counter fallback for kernel-lane
+ * ops (Stage 31+), which write no usage_events row at all: main prefers the
+ * coordinator's completed-op registry for the feature and only reads this
+ * field once that (cap-50, in-memory) registry has evicted the operation.
  */
 export interface AiFeedbackRequest {
   operationId: string;

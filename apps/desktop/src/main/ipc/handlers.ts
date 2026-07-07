@@ -345,6 +345,9 @@ export interface AiCoordinatorLike {
     chatId: string;
     parts: string[];
   } | null;
+  /** C5: dedup an ai_spend_log insert-counter increment for a kernel-lane op
+   * (see cmd:ai.feedback). True the first time for this operationId. */
+  markOperationAccepted?(operationId: string): boolean;
 }
 
 export interface IpcDeps {
@@ -1004,17 +1007,35 @@ export function registerIpcHandlers(deps: IpcDeps): void {
          WHERE client_event_id = @id`,
       )
       .run({ part: args.partIndex ?? null, id: args.operationId });
-    if (payload !== null && !hasAcceptedFeedback(payload)) {
-      const day = payload.completedAt.slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-        data.aiSpendLog.markInserted(day, payload.feature);
+
+    // Stage 31 acceptance: correlated through the coordinator's completed-op
+    // registry (the kernel lanes no longer write usage_events rows).
+    const context = deps.coordinator?.getOperationContext?.(args.operationId) ?? null;
+
+    if (payload !== null) {
+      // Legacy lane: a usage_events row exists — its own `accepted` flag
+      // (read above, pre-UPDATE) is the dedup.
+      if (!hasAcceptedFeedback(payload)) {
+        const day = payload.completedAt.slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+          data.aiSpendLog.markInserted(day, payload.feature);
+        }
+      }
+    } else {
+      // Kernel lane (C5): no usage_events row was ever written, so the
+      // completed-op registry is the only place the feature is still known;
+      // fall back to the caller-supplied feature when the op has aged out of
+      // the (cap-50, in-memory) registry. markOperationAccepted dedups
+      // once-per-operation the way the legacy row's `accepted` flag did.
+      const feature = context?.feature ?? args.feature;
+      if (feature !== undefined) {
+        const firstAcceptance = deps.coordinator?.markOperationAccepted?.(args.operationId) ?? true;
+        if (firstAcceptance) {
+          data.aiSpendLog.markInserted(utcDayOf(Date.now()), feature);
+        }
       }
     }
 
-    // Stage 31 acceptance: the same action also rides the capture lane,
-    // correlated through the coordinator's completed-op registry (the
-    // kernel lanes no longer write usage_events rows).
-    const context = deps.coordinator?.getOperationContext?.(args.operationId) ?? null;
     if (deps.acceptance && context !== null) {
       reportFeedbackAcceptance(
         deps.acceptance,

@@ -132,6 +132,11 @@ export interface CompletedOperationContext {
   /** Sanitized result parts (reply features) — the sent/edited comparison
    * and feedback correlation read these; empty for analysis features. */
   parts: string[];
+  /** C5 dedup: has an ai.feedback insert/copy already counted against the
+   * durable ai_spend_log for this operation? Kernel-lane ops write no
+   * usage_events row, so this mirrors that row's `accepted` flag — set once
+   * by markOperationAccepted, on this registry entry instead. */
+  accepted: boolean;
 }
 
 export interface AiCoordinator {
@@ -140,6 +145,14 @@ export interface AiCoordinator {
   /** Stage 31: bounded registry of recently completed operations — the
    * acceptance IPC path correlates feedback/sends after ops settle. */
   getOperationContext(operationId: string): CompletedOperationContext | null;
+  /** C5: marks the registry entry accepted (ai_spend_log insert-counter
+   * dedup for kernel-lane ops, which write no usage_events row). Returns
+   * true the first time for this operation (caller should count it), false
+   * once already marked. An operation absent from the registry (evicted —
+   * cap-50 — or never completed) has nothing to dedup against, so this
+   * returns true every time; callers accept that as the registry's known
+   * in-memory-only limit. */
+  markOperationAccepted(operationId: string): boolean;
   conversationOpened(accountId: string, chatId: string): void;
   conversationClosed(accountId: string, chatId: string): void;
   subscribe(listener: (event: OperationEvent) => void): () => void;
@@ -429,6 +442,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       accountId: op.accountId,
       chatId: op.chatId,
       parts,
+      accepted: false,
     });
     while (completedOps.size > COMPLETED_OPS_CAP) {
       const oldest = completedOps.keys().next().value;
@@ -895,6 +909,21 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
 
     getOperationContext(operationId) {
       return completedOps.get(operationId) ?? null;
+    },
+
+    markOperationAccepted(operationId) {
+      const context = completedOps.get(operationId);
+      if (context === undefined) {
+        // Evicted (cap-50) or never completed — no entry to dedup against;
+        // count this call (best effort, matching the registry's documented
+        // in-memory-only limit).
+        return true;
+      }
+      if (context.accepted) {
+        return false;
+      }
+      context.accepted = true;
+      return true;
     },
 
     conversationOpened(_accountId, _chatId) {

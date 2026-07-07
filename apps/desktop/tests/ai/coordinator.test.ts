@@ -343,4 +343,23 @@ describe('AiCoordinator', () => {
     expect(discarded).toHaveLength(1);
     expect(gateway.cancelCount).toBe(1);
   });
+
+  // C5: markOperationAccepted is the kernel-lane dedup for the ai_spend_log
+  // inserted counter — kernel ops write no usage_events row, whose `accepted`
+  // flag used to carry this.
+  it('markOperationAccepted counts once per completed op, best-effort for evicted ops', async () => {
+    build();
+    await startAndReachStream();
+    gateway.cb?.onComplete('hey you');
+    await flushAsync();
+    expect(coordinator.getOperationContext('op-1')).not.toBeNull();
+
+    expect(coordinator.markOperationAccepted('op-1')).toBe(true);
+    expect(coordinator.markOperationAccepted('op-1')).toBe(false);
+
+    // Absent from the registry (cap-50 eviction / never completed): nothing
+    // to dedup against — every call counts; the documented best-effort limit.
+    expect(coordinator.markOperationAccepted('op-never')).toBe(true);
+    expect(coordinator.markOperationAccepted('op-never')).toBe(true);
+  });
 });
