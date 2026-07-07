@@ -30,18 +30,29 @@ export type HubProbeFetch = (
   init: { method: 'GET'; headers: Record<string, string>; signal?: AbortSignal },
 ) => Promise<Response>;
 
-/** Resolves with the principal on success; throws CG-HUB-01 (auth) / CG-HUB-02 / CG-NET-02. */
+/**
+ * Resolves with the principal on success; throws CG-HUB-01 (auth) / CG-HUB-02
+ * / CG-NET-02. `clientVersion` (Stage 4 / Proposal 4.1) stamps
+ * `x-client-version` when supplied and non-blank — the fleet-adoption
+ * release gate reads it off every hub request.
+ */
 export async function probeHubConnection(
   baseUrl: string,
   apiKey: string,
   fetchImpl: HubProbeFetch = fetch,
+  clientVersion?: string,
 ): Promise<HubProbeResult> {
   const url = `${baseUrl.replace(/\/+$/, '')}${HUB_AUTH_ME_PATH}`;
+  const version = clientVersion?.trim();
   let response: Response;
   try {
     response = await fetchImpl(url, {
       method: 'GET',
-      headers: { authorization: `Bearer ${apiKey}`, accept: 'application/json' },
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        accept: 'application/json',
+        ...(version !== undefined && version.length > 0 ? { 'x-client-version': version } : {}),
+      },
       signal: AbortSignal.timeout(HUB_PROBE_TIMEOUT_MS),
     });
   } catch (error) {

@@ -12,18 +12,21 @@ const ME_BODY = JSON.stringify({
   },
 });
 
-function makeDeps(secrets: Record<string, string | null>) {
+function makeDeps(secrets: Record<string, string | null>, clientVersion?: string) {
   const bearers: string[] = [];
+  const versions: Array<string | undefined> = [];
   const fetchImpl: HubProbeFetch = (_url, init) => {
     bearers.push(init.headers['authorization'] ?? '');
+    versions.push(init.headers['x-client-version']);
     return Promise.resolve(new Response(ME_BODY, { status: 200 }));
   };
   const deps = {
     keychain: { getSecret: (name: string) => Promise.resolve(secrets[name] ?? null) },
     settingsStore: { get: () => Promise.resolve({ hubBaseUrl: 'https://hub.example.com' }) },
     fetchImpl,
+    ...(clientVersion !== undefined ? { clientVersion } : {}),
   } as unknown as KeyTestDeps;
-  return { deps, bearers };
+  return { deps, bearers, versions };
 }
 
 describe('runKeyTest credential resolution', () => {
@@ -49,5 +52,12 @@ describe('runKeyTest credential resolution', () => {
     const result = await runKeyTest('hub', deps);
     expect(result).toMatchObject({ ok: false, code: 'HUB_NOT_CONFIGURED' });
     expect(bearers).toEqual([]);
+  });
+
+  it('passes the caller-supplied clientVersion through to the probe (Stage 4 / Proposal 4.1)', async () => {
+    const { deps, versions } = makeDeps({ hubApiKey: 'agency_hub_core_k' }, '0.1.29');
+    const result = await runKeyTest('hub', deps);
+    expect(result.ok).toBe(true);
+    expect(versions).toEqual(['0.1.29']);
   });
 });

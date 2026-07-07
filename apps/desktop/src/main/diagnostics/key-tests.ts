@@ -19,6 +19,8 @@ export interface KeyTestDeps {
   settingsStore: SettingsStore;
   /** GET-fetch seam for the hub probe (tests). */
   fetchImpl?: HubProbeFetch;
+  /** Stage 4 / Proposal 4.1: stamped on the probe as `x-client-version`. */
+  clientVersion?: string;
 }
 
 export async function runKeyTest(
@@ -33,7 +35,7 @@ export async function runKeyTest(
     if (vm.hubBaseUrl === null || credential === null || credential.length === 0) {
       return { ok: false, code: 'HUB_NOT_CONFIGURED', message: 'Hub base URL or credential missing — sign in or paste a chatter key.' };
     }
-    const me = await probeHubConnection(vm.hubBaseUrl, credential, deps.fetchImpl ?? fetch);
+    const me = await probeHubConnection(vm.hubBaseUrl, credential, deps.fetchImpl ?? fetch, deps.clientVersion);
     return {
       ok: true,
       code: null,

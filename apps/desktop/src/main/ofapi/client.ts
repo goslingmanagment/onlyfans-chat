@@ -95,6 +95,14 @@ export interface OfApiClientOptions {
   baseUrl?: string;
   /** Hub read gateway uses a chatter key, so its 401 belongs to CG-HUB-01. */
   authErrorCode?: 'CG-OF-01' | 'CG-HUB-01';
+  /**
+   * Stage 4 / Proposal 4.1: stamped as `x-client-version` on every request
+   * when set — the fleet-adoption release gate reads it off the hub
+   * read-gateway lane. Direct OFAPI reads are hub-only post-DP8, but this
+   * stays optional-clean rather than assuming a caller. Blank/absent omits
+   * the header.
+   */
+  clientVersion?: string;
   fetchImpl?: typeof fetch;
   onMeta?: CreditMeterListener;
   creditMeter?: CreditMeter;
@@ -371,6 +379,11 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
   const baseUrl = (options.baseUrl ?? OFAPI_BASE_URL).replace(/\/$/, '');
   const fetchImpl = options.fetchImpl ?? fetch;
   const requestTimeoutMs = options.requestTimeoutMs ?? OFAPI_REQUEST_TIMEOUT_MS;
+  const clientVersion = options.clientVersion?.trim();
+  const versionHeaders: Record<string, string> =
+    clientVersion !== undefined && clientVersion.length > 0
+      ? { 'x-client-version': clientVersion }
+      : {};
   const creditMeter =
     options.creditMeter ??
     createCreditMeter(options.onMeta ? { onMeta: options.onMeta } : {});
@@ -440,6 +453,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       authorization: `Bearer ${options.apiKey}`,
       accept: 'application/json',
       ...(spec.jsonBody !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...versionHeaders,
     };
     let response: Response;
     try {

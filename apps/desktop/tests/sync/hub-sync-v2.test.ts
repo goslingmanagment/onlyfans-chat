@@ -128,7 +128,7 @@ describe('createHubSync (protocol v2)', () => {
 
   function makeV2Sync(
     responses: Array<{ status: number; stream: FakeStream | null; json?: unknown }>,
-    options: { initialCursor?: string | null; failEvents?: boolean } = {},
+    options: { initialCursor?: string | null; failEvents?: boolean; clientVersion?: string } = {},
   ): V2Harness {
     const { fetchImpl, calls } = makeHarness(responses);
     const statuses: HubSyncStatus[] = [];
@@ -140,6 +140,7 @@ describe('createHubSync (protocol v2)', () => {
       baseUrl: 'https://hub.test/',
       apiKey: 'agency_hub_core_k1',
       fetchImpl,
+      ...(options.clientVersion !== undefined ? { clientVersion: options.clientVersion } : {}),
       sleep: () => Promise.resolve(),
       accountIds: [ACCT],
       onEvent: (event) => {
@@ -166,12 +167,14 @@ describe('createHubSync (protocol v2)', () => {
 
   it('connects to the v2 path, resumes with the opaque cursor, and handle-then-checkpoints mapped frames', async () => {
     const stream = makeStream();
-    const h = makeV2Sync([{ status: 200, stream }], { initialCursor: 'CUR_START' });
+    const h = makeV2Sync([{ status: 200, stream }], { initialCursor: 'CUR_START', clientVersion: '0.1.29' });
     h.sync.start();
     await drainMicrotasks();
 
     expect(h.calls[0]!.url).toBe(`https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_START`);
     expect(h.calls[0]!.headers.authorization).toBe('Bearer agency_hub_core_k1');
+    // Stage 4 / Proposal 4.1: fleet-adoption gate reads this off every hub request.
+    expect(h.calls[0]!.headers['x-client-version']).toBe('0.1.29');
 
     stream.send(messageFrame('CUR_1'));
     await drainMicrotasks();
@@ -294,13 +297,15 @@ describe('createHubSync (protocol v2)', () => {
       },
       { status: 200, stream: null, json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 7, currentSeq: 12 }] } },
       { status: 200, stream },
-    ], { initialCursor: 'CUR_STALE' });
+    ], { initialCursor: 'CUR_STALE', clientVersion: '0.1.29' });
     h.sync.start();
     await drainMicrotasks();
 
     expect(h.calls[0]!.url).toContain('cursor=CUR_STALE');
     expect(h.calls[1]!.url).toBe(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
     expect(h.calls[2]!.url).toContain('cursor=CUR_FRESH');
+    // v2 snapshot handshake carries the header too, not just the SSE connect.
+    expect(h.calls[1]!.headers['x-client-version']).toBe('0.1.29');
     expect(h.log).toEqual(['persist:CUR_FRESH', 'gap-recovered']);
     expect(h.gapRecoveries()).toBe(1);
     h.sync.stop();

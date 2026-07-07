@@ -74,6 +74,20 @@ describe('listChats (recorded fixture)', () => {
     expect(request?.headers['authorization']).toBe('Bearer test-key');
     expect(request?.method).toBe('GET');
   });
+
+  it('stamps x-client-version on the read-gateway request when the option is set (Stage 4 / Proposal 4.1)', async () => {
+    const fixture = loadFixture('list-chats.json');
+    const { client, requests } = makeClient([() => jsonResponse(fixture)], { clientVersion: '0.1.29' });
+    await client.listChats({ purpose: 'hot-poll', accountId: ACCOUNT_ID });
+    expect(requests[0]?.headers['x-client-version']).toBe('0.1.29');
+  });
+
+  it('omits x-client-version when the option is not set', async () => {
+    const fixture = loadFixture('list-chats.json');
+    const { client, requests } = makeClient([() => jsonResponse(fixture)]);
+    await client.listChats({ purpose: 'hot-poll', accountId: ACCOUNT_ID });
+    expect(requests[0]?.headers).not.toHaveProperty('x-client-version');
+  });
 });
 
 describe('listMessages (recorded fixture)', () => {

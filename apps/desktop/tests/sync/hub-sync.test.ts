@@ -221,7 +221,11 @@ describe('createHubSync', () => {
 
   function makeSync(
     responses: Array<{ status: number; stream: FakeStream | null; json?: unknown }>,
-    options: { initialLastEventId?: number | null; onEventDelay?: boolean } = {},
+    options: {
+      initialLastEventId?: number | null;
+      onEventDelay?: boolean;
+      clientVersion?: string;
+    } = {},
   ): SyncHarness {
     const { fetchImpl, calls } = makeHarness(responses);
     const statuses: HubSyncStatus[] = [];
@@ -233,6 +237,7 @@ describe('createHubSync', () => {
       baseUrl: 'https://hub.test/',
       apiKey: 'agency_hub_core_k1',
       fetchImpl,
+      ...(options.clientVersion !== undefined ? { clientVersion: options.clientVersion } : {}),
       sleep: (ms) => {
         sleeps.push(ms);
         return Promise.resolve();
@@ -262,7 +267,7 @@ describe('createHubSync', () => {
 
   it('happy stream: bearer auth, events in order, lastEventId persisted AFTER handling', async () => {
     const stream = makeStream();
-    const h = makeSync([{ status: 200, stream }], { onEventDelay: true });
+    const h = makeSync([{ status: 200, stream }], { onEventDelay: true, clientVersion: '0.1.29' });
     h.sync.start();
     await drainMicrotasks();
 
@@ -270,6 +275,8 @@ describe('createHubSync', () => {
     expect(h.calls[0]?.url).toBe('https://hub.test/api/v1/events/stream'); // no resume param yet
     expect(h.calls[0]?.headers['authorization']).toBe('Bearer agency_hub_core_k1');
     expect(h.calls[0]?.headers['accept']).toBe('text/event-stream');
+    // Stage 4 / Proposal 4.1: fleet-adoption gate reads this off every hub request.
+    expect(h.calls[0]?.headers['x-client-version']).toBe('0.1.29');
 
     stream.send('retry: 3000\n\n');
     stream.send(syncFrame(41, TYPING_DATA('1')));
@@ -364,7 +371,7 @@ describe('createHubSync', () => {
         { status: 200, stream: null, json: snapshot(null) },
         { status: 200, stream: resumed },
       ],
-      { initialLastEventId: 7 },
+      { initialLastEventId: 7, clientVersion: '0.1.29' },
     );
 
     h.sync.start();
@@ -376,6 +383,9 @@ describe('createHubSync', () => {
       'https://hub.test/api/v1/events/snapshot?accountId=acct_hub_test&afterSeq=7&pageCursor=5&limit=50&snapshotCursor=22',
       'https://hub.test/api/v1/events/stream?lastEventId=22',
     ]);
+    // v1 snapshot recovery requests carry the header too, not just the SSE connect.
+    expect(h.calls[1]?.headers['x-client-version']).toBe('0.1.29');
+    expect(h.calls[2]?.headers['x-client-version']).toBe('0.1.29');
     expect(h.log).toEqual([
       'gap:7',
       `snapshot:${ACCT}:5`,

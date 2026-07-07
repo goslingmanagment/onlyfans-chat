@@ -432,6 +432,9 @@ async function rebuildOfapiRuntime(
     creditMeter,
     onError: onError('hub'),
     onRequestEvent: onRequestEvent('hub'),
+    // Stage 4 / Proposal 4.1: every hub request carries x-client-version, the
+    // fleet-version exit signal — this is the read-gateway lane.
+    clientVersion: app.getVersion(),
   });
   const nextClient = createOfApiTransportClient(readClient);
   logger?.info('ofapi', 'read transport selected', { transport: 'hub' });
@@ -558,6 +561,9 @@ async function rebuildOfapiRuntime(
         // Stage 24: v2 by default; 'v1' is the rollout-window-only fallback
         // (settings-file flip, no UI).
         protocol: vm.hubSyncProtocol,
+        // Stage 4 / Proposal 4.1: an idle-but-connected SSE-only install must
+        // still show up in the fleet-adoption release gate.
+        clientVersion: app.getVersion(),
         accountIds,
         onEvent,
         onSnapshot,
@@ -1079,7 +1085,8 @@ async function boot(): Promise<void> {
         updateStatusVM(updateController ? await updateController.check() : null),
       install: () => updateController?.install(),
     },
-    testKey: (provider) => runKeyTest(provider, { keychain, settingsStore }),
+    testKey: (provider) =>
+      runKeyTest(provider, { keychain, settingsStore, clientVersion: app.getVersion() }),
     // Stage 24: one-time device-token sign-in (Settings → Hub). The token
     // lands in the keychain; the config recheck swings every hub consumer
     // (REST, SSE, read gateway) onto it without a restart.
@@ -1095,6 +1102,9 @@ async function boot(): Promise<void> {
           password,
           label: hostname(),
           keychain,
+          // Stage 4 / Proposal 4.1 (N5): a machine mid-onboarding must not be
+          // invisible to the fleet-adoption release gate.
+          clientVersion: app.getVersion(),
         });
         // The fingerprint includes the resolved credential, so this recheck
         // reconfigures both the REST module and the SSE connection.

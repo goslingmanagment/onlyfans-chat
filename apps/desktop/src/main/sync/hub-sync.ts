@@ -172,6 +172,12 @@ export interface HubSyncOptions {
    * this flag) are deleted after fleet confirmation.
    */
   protocol?: HubSyncProtocol;
+  /**
+   * Stage 4 / Proposal 4.1: stamped on every hub request as `x-client-version`
+   * so an idle-but-connected install (SSE + background reads only) still
+   * shows up in the fleet-adoption release gate. Blank/absent omits the header.
+   */
+  clientVersion?: string;
   fetchImpl?: HubSseFetch;
   now?: () => number;
   /** Backoff delays only — the watchdog uses real timers (abortable). */
@@ -219,6 +225,11 @@ type ConnectionOutcome =
 export function createHubSync(options: HubSyncOptions): HubSync {
   const baseUrl = options.baseUrl.trim().replace(/\/+$/, '');
   const apiKey = options.apiKey.trim();
+  const clientVersion = options.clientVersion?.trim();
+  const versionHeaders: Record<string, string> =
+    clientVersion !== undefined && clientVersion.length > 0
+      ? { 'x-client-version': clientVersion }
+      : {};
   const fetchImpl: HubSseFetch = options.fetchImpl ?? ((url, init) => fetch(url, init));
   const sleep: SleepFn =
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -352,6 +363,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         headers: {
           authorization: `Bearer ${apiKey}`,
           accept: 'application/json',
+          ...versionHeaders,
         },
         signal: snapshotAbort.signal,
       });
@@ -406,6 +418,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
             headers: {
               authorization: `Bearer ${apiKey}`,
               accept: 'application/json',
+              ...versionHeaders,
             },
             signal: snapshotAbort.signal,
           });
@@ -481,6 +494,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         headers: {
           authorization: `Bearer ${apiKey}`,
           accept: 'text/event-stream',
+          ...versionHeaders,
         },
         signal,
       });

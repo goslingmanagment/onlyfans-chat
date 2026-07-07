@@ -62,6 +62,44 @@ describe('issueHubDeviceToken', () => {
     expect(calls[2]!.cookie).toBe('agency_hub_session=tok123');
   });
 
+  it('stamps x-client-version on the sign-in POST and the SDK static-headers seam (Stage 4 / Proposal 4.1 / N5)', async () => {
+    const calls: Array<{ url: string; xClientVersion: string | null }> = [];
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      calls.push({ url, xClientVersion: headers['x-client-version'] ?? null });
+      if (url.endsWith('/api/v1/auth/login')) {
+        return jsonResponse(200, { authMethod: 'session', user: { username: 'anton' } }, {
+          'set-cookie': 'agency_hub_session=tok123; Path=/; HttpOnly',
+        });
+      }
+      if (url.endsWith('/api/v1/auth/device-tokens')) {
+        return jsonResponse(200, ISSUED);
+      }
+      if (url.endsWith('/api/v1/auth/logout')) {
+        return jsonResponse(200, { ok: true });
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+
+    await issueHubDeviceToken({
+      baseUrl: 'https://hub.test',
+      username: 'anton',
+      password: 'pw',
+      label: 'test-machine',
+      keychain: { setSecret: async () => undefined } as never,
+      fetchImpl: fetchImpl as never,
+      clientVersion: '0.1.29',
+    });
+
+    expect(calls[0]!.url).toBe('https://hub.test/api/v1/auth/login');
+    expect(calls[0]!.xClientVersion).toBe('0.1.29'); // raw sign-in fetch (N5)
+    expect(calls[1]!.url).toBe('https://hub.test/api/v1/auth/device-tokens');
+    expect(calls[1]!.xClientVersion).toBe('0.1.29'); // SDK static-headers seam
+    expect(calls[2]!.url).toBe('https://hub.test/api/v1/auth/logout');
+    expect(calls[2]!.xClientVersion).toBe('0.1.29');
+  });
+
   it('maps bad credentials to a clear error and stores nothing', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(401, { error: 'unauthorized' }));
     const setSecret = vi.fn();

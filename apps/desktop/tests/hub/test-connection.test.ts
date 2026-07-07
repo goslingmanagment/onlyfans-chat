@@ -32,6 +32,27 @@ describe('probeHubConnection', () => {
     expect(result).toEqual({ username: 'dasha', role: 'chatter', pages: 2 });
   });
 
+  it('stamps x-client-version on the probe when a version is supplied (Stage 4 / Proposal 4.1)', async () => {
+    const headers: Array<Record<string, string>> = [];
+    const impl: HubProbeFetch = (_url, init) => {
+      headers.push(init.headers);
+      return Promise.resolve(new Response(ME_BODY, { status: 200 }));
+    };
+    await probeHubConnection('https://hub.example.com', 'agency_hub_core_k', impl, '0.1.29');
+    expect(headers[0]?.['x-client-version']).toBe('0.1.29');
+  });
+
+  it('omits x-client-version when no version is supplied', async () => {
+    const { impl } = fetchReturning(200);
+    const headers: Array<Record<string, string>> = [];
+    const wrapped: HubProbeFetch = (url, init) => {
+      headers.push(init.headers);
+      return impl(url, init);
+    };
+    await probeHubConnection('https://hub.example.com', 'agency_hub_core_k', wrapped);
+    expect(headers[0]).not.toHaveProperty('x-client-version');
+  });
+
   it('maps 401/403 to CG-HUB-01 and other failures to CG-HUB-02', async () => {
     await expect(
       probeHubConnection('https://h.x', 'agency_hub_core_k', fetchReturning(401).impl),

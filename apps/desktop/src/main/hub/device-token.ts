@@ -25,15 +25,27 @@ export interface IssueHubDeviceTokenInput {
   label: string;
   keychain: Pick<Keychain, 'setSecret'>;
   fetchImpl?: typeof fetch;
+  /**
+   * Stage 4 / Proposal 4.1 (N5): stamped as `x-client-version` on the sign-in
+   * POST and carried through the SDK's static-headers seam for the issue/
+   * logout calls — without it, a machine mid-onboarding is invisible to the
+   * fleet-adoption release gate.
+   */
+  clientVersion?: string;
 }
 
 export async function issueHubDeviceToken(input: IssueHubDeviceTokenInput): Promise<HubDeviceTokenResult> {
   const baseUrl = input.baseUrl.trim().replace(/\/+$/, '');
   const fetchImpl = input.fetchImpl ?? fetch;
+  const clientVersion = input.clientVersion?.trim();
+  const versionHeaders: Record<string, string> =
+    clientVersion !== undefined && clientVersion.length > 0
+      ? { 'x-client-version': clientVersion }
+      : {};
 
   const login = await fetchImpl(`${baseUrl}/api/v1/auth/login`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    headers: { 'content-type': 'application/json', accept: 'application/json', ...versionHeaders },
     body: JSON.stringify({ username: input.username.trim(), password: input.password }),
   });
   if (login.status === 401 || login.status === 403) {
@@ -50,7 +62,7 @@ export async function issueHubDeviceToken(input: IssueHubDeviceTokenInput): Prom
 
   const client = createClient({
     baseUrl,
-    headers: { cookie: sessionCookie },
+    headers: { cookie: sessionCookie, ...versionHeaders },
     ...(input.fetchImpl !== undefined ? { fetch: input.fetchImpl } : {}),
   });
   try {
