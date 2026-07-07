@@ -28,7 +28,7 @@ import { createLogger, type Logger } from './diagnostics/logger';
 import { buildDiagnosticsReport } from './diagnostics/report';
 import { runKeyTest } from './diagnostics/key-tests';
 import { auditOutbox } from './send/audit';
-import { createSettingsStore, type SettingsStore } from './settings/store';
+import { createSettingsStore, settingsPatchSchema, type SettingsStore } from './settings/store';
 import {
   createToMediaUrl,
   isAllowedMediaUrl,
@@ -62,7 +62,11 @@ import { registerIpcHandlers } from './ipc/handlers';
 import { createAiCoordinator, type AiCoordinator } from './ai/index';
 import { createHubModule, type HubModule } from './hub/index';
 import { hostname } from 'node:os';
-import { issueHubDeviceToken, resolveHubCredential } from './hub/device-token';
+import {
+  effectiveHubBearerAfterPatch,
+  issueHubDeviceToken,
+  resolveHubCredential,
+} from './hub/device-token';
 import { attachEventForwarding } from './ipc/events';
 import { focusExistingWindow } from './platform/single-instance';
 import { badgePng } from './platform/badge';
@@ -984,6 +988,54 @@ async function boot(): Promise<void> {
     }
   };
 
+  // 4a: validate the hub read runtime a hubApiKey/hubBaseUrl patch WOULD produce
+  // BEFORE cmd:settings.update persists it. A throwaway read client is built
+  // from the PATCH overrides (not disk) and account-bootstrapped; a bad key/URL
+  // throws here so the handler rejects with nothing written to the keychain or
+  // the settings table (SPEC §15 — no half-applied credential). Clearing the
+  // hub, or a patch with no effective credential/URL, is a no-op (the rebuild
+  // runs keyless).
+  const probeReadRuntimeForPatch = async (rawPatch: unknown): Promise<void> => {
+    const patch = settingsPatchSchema.parse(rawPatch);
+    if (patch.hubApiKey === undefined && patch.hubBaseUrl === undefined) {
+      return;
+    }
+    const dataLayer = data;
+    if (dataLayer === null) {
+      return;
+    }
+    const [current, currentDeviceToken, currentHubApiKey] = await Promise.all([
+      settingsStore.get(),
+      keychain.getSecret('hubDeviceToken'),
+      keychain.getSecret('hubApiKey'),
+    ]);
+    const hubBaseUrl = patch.hubBaseUrl !== undefined ? patch.hubBaseUrl : current.hubBaseUrl;
+    const credential = effectiveHubBearerAfterPatch({
+      patchHubApiKey: patch.hubApiKey,
+      patchHubBaseUrl: patch.hubBaseUrl,
+      currentHubBaseUrl: current.hubBaseUrl,
+      currentDeviceToken,
+      currentHubApiKey,
+    });
+    if (hubBaseUrl === null || credential === null || credential.length === 0) {
+      return;
+    }
+    const probeClient = createOfApiTransportClient(
+      createOfApiClient({
+        apiKey: credential,
+        baseUrl: buildHubOfApiReadBaseUrl(hubBaseUrl),
+        authErrorCode: 'CG-HUB-01',
+        requestTimeoutMs: HUB_OFAPI_READ_TIMEOUT_MS,
+        creditMeter: createCreditMeter(),
+        clientVersion: app.getVersion(),
+      }),
+    );
+    // The account list GET is the bootstrap probe. On success it also refreshes
+    // the local accounts table (idempotent — the real rebuild re-syncs); on a
+    // 401/failure it throws before any write, and the handler skips persisting.
+    await syncAccounts(probeClient, dataLayer, createToMediaUrl(dataLayer.mediaUrls));
+  };
+
   let purging = false;
   registerIpcHandlers({
     data,
@@ -1069,6 +1121,7 @@ async function boot(): Promise<void> {
       app.relaunch();
       app.exit(0);
     },
+    probeReadRuntimeForPatch,
     onOfapiRuntimeConfigChanged: rebuildOfapiRuntimeFromSettings,
     onOfapiKeyConfigured: rebuildOfapiRuntimeFromSettings,
     onHubConfigChanged: async () => {

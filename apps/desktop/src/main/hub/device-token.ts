@@ -88,3 +88,40 @@ export async function resolveHubCredential(
   }
   return keychain.getSecret('hubApiKey');
 }
+
+/**
+ * The hub bearer that `resolveHubCredential` WOULD return after
+ * `settingsStore.update(patch)` is applied — computed WITHOUT persisting, so a
+ * pre-persist validation (4a: index.ts's read-runtime probe) can test exactly
+ * the credential that will authenticate.
+ *
+ * MUST mirror settings/store.ts `update()`'s wipe rules (kept in lockstep):
+ *   • a hub switch (hubBaseUrl changed) wipes the device token unconditionally
+ *     and wipes the old chatter key unless the SAME patch carries a replacement;
+ *   • without a switch the device token is preserved and still shadows any
+ *     chatter-key write (resolveHubCredential prefers it unconditionally).
+ */
+export function effectiveHubBearerAfterPatch(input: {
+  /** parsed patch value; `undefined` = key not in the patch, '' = clear. */
+  patchHubApiKey: string | undefined;
+  /** parsed patch value; `undefined` = URL not in the patch. */
+  patchHubBaseUrl: string | null | undefined;
+  currentHubBaseUrl: string | null;
+  currentDeviceToken: string | null;
+  currentHubApiKey: string | null;
+}): string | null {
+  const hubSwitched =
+    input.patchHubBaseUrl !== undefined && input.patchHubBaseUrl !== input.currentHubBaseUrl;
+
+  const effectiveDeviceToken = hubSwitched ? null : input.currentDeviceToken;
+  if (effectiveDeviceToken !== null && effectiveDeviceToken.trim().length > 0) {
+    return effectiveDeviceToken;
+  }
+
+  if (input.patchHubApiKey !== undefined) {
+    const trimmed = input.patchHubApiKey.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  // Key not in the patch: a switch wiped the old one; otherwise it survives.
+  return hubSwitched ? null : input.currentHubApiKey;
+}

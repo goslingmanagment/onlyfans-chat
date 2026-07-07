@@ -3,7 +3,11 @@
 // raw response and carried explicitly on the issue/logout calls.
 
 import { describe, expect, it, vi } from 'vitest';
-import { issueHubDeviceToken, resolveHubCredential } from '../../src/main/hub/device-token';
+import {
+  effectiveHubBearerAfterPatch,
+  issueHubDeviceToken,
+  resolveHubCredential,
+} from '../../src/main/hub/device-token';
 
 const ISSUED = {
   token: 'agency_hub_device_secret123',
@@ -150,5 +154,86 @@ describe('resolveHubCredential', () => {
     }))).resolves.toBe('agency_hub_core_y');
 
     await expect(resolveHubCredential(keychainWith({}))).resolves.toBeNull();
+  });
+});
+
+// 4a: the pre-persist validation probe (index.ts) must test EXACTLY the bearer
+// that settingsStore.update(patch) would leave active — this mirrors store.ts
+// update()'s device-token/chatter-key wipe rules so a good save is never
+// falsely rejected and a bad one never slips through.
+describe('effectiveHubBearerAfterPatch', () => {
+  it('returns the new chatter key when no device token is present (the common save)', () => {
+    expect(
+      effectiveHubBearerAfterPatch({
+        patchHubApiKey: 'agency_hub_core_new',
+        patchHubBaseUrl: undefined,
+        currentHubBaseUrl: 'https://gosling-agency.ru',
+        currentDeviceToken: null,
+        currentHubApiKey: null,
+      }),
+    ).toBe('agency_hub_core_new');
+  });
+
+  it('keeps the device token when a chatter key is patched without a hub switch (token shadows)', () => {
+    // resolveHubCredential prefers the device token unconditionally; a chatter
+    // key write that does not switch hubs leaves it in place, so THAT is what
+    // will actually authenticate — validate it, not the shadowed new key.
+    expect(
+      effectiveHubBearerAfterPatch({
+        patchHubApiKey: 'agency_hub_core_new',
+        patchHubBaseUrl: undefined,
+        currentHubBaseUrl: 'https://gosling-agency.ru',
+        currentDeviceToken: 'agency_hub_device_live',
+        currentHubApiKey: 'agency_hub_core_old',
+      }),
+    ).toBe('agency_hub_device_live');
+  });
+
+  it('drops the device token on a hub switch and uses the same-patch replacement key', () => {
+    expect(
+      effectiveHubBearerAfterPatch({
+        patchHubApiKey: 'agency_hub_core_forNewHub',
+        patchHubBaseUrl: 'http://localhost:4000',
+        currentHubBaseUrl: 'https://gosling-agency.ru',
+        currentDeviceToken: 'agency_hub_device_live',
+        currentHubApiKey: 'agency_hub_core_old',
+      }),
+    ).toBe('agency_hub_core_forNewHub');
+  });
+
+  it('returns null on a hub switch with no replacement key (both credentials wiped)', () => {
+    expect(
+      effectiveHubBearerAfterPatch({
+        patchHubApiKey: undefined,
+        patchHubBaseUrl: 'http://localhost:4000',
+        currentHubBaseUrl: 'https://gosling-agency.ru',
+        currentDeviceToken: 'agency_hub_device_live',
+        currentHubApiKey: 'agency_hub_core_old',
+      }),
+    ).toBeNull();
+  });
+
+  it('treats an empty/whitespace patched key as a clear (null)', () => {
+    expect(
+      effectiveHubBearerAfterPatch({
+        patchHubApiKey: '   ',
+        patchHubBaseUrl: undefined,
+        currentHubBaseUrl: 'https://gosling-agency.ru',
+        currentDeviceToken: null,
+        currentHubApiKey: 'agency_hub_core_old',
+      }),
+    ).toBeNull();
+  });
+
+  it('preserves the current chatter key when the patch does not touch credentials', () => {
+    expect(
+      effectiveHubBearerAfterPatch({
+        patchHubApiKey: undefined,
+        patchHubBaseUrl: undefined,
+        currentHubBaseUrl: 'https://gosling-agency.ru',
+        currentDeviceToken: null,
+        currentHubApiKey: 'agency_hub_core_old',
+      }),
+    ).toBe('agency_hub_core_old');
   });
 });

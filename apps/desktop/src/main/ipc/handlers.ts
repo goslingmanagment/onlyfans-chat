@@ -406,6 +406,15 @@ export interface IpcDeps {
     check: () => Promise<UpdateStatusVM>;
     install: () => void;
   } | null;
+  /**
+   * 4a: validate a candidate read runtime built from a hubApiKey/hubBaseUrl
+   * patch's overrides BEFORE it is persisted. Rejects (throws) with the
+   * validation error when the credential/URL fails account bootstrap; resolves
+   * (no-op) when the patch clears the hub or leaves nothing to probe. The
+   * caller persists ONLY after this resolves, so a bad key never reaches the
+   * keychain or the settings table (SPEC §15 — no half-applied credential).
+   */
+  probeReadRuntimeForPatch?: (rawPatch: unknown) => Promise<void>;
   /** Called when settings.update changes direct/hub read-runtime credentials. */
   onOfapiRuntimeConfigChanged?: () => void | Promise<void>;
   /** Called when settings.update sets an OFAPI key while sync is offline. */
@@ -859,12 +868,19 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   ipcMain.handle('cmd:settings.update', async (_event, rawPatch: unknown) => {
-    const result = await settingsStore.update(rawPatch);
     const rawPatchObject = typeof rawPatch === 'object' && rawPatch !== null;
     const touchedReadRuntime =
       rawPatchObject &&
       ('hubApiKey' in rawPatch ||
         'hubBaseUrl' in rawPatch);
+    // 4a (SPEC §15): for hub-affecting keys, VALIDATE a candidate read runtime
+    // built from the patch overrides BEFORE persisting. A bad key/URL rejects
+    // here with nothing written to the keychain or the settings table — no
+    // half-applied credential. Non-hub patches keep persist-then-return.
+    if (touchedReadRuntime && deps.probeReadRuntimeForPatch) {
+      await deps.probeReadRuntimeForPatch(rawPatch);
+    }
+    const result = await settingsStore.update(rawPatch);
     if (touchedReadRuntime) {
       await deps.onOfapiRuntimeConfigChanged?.();
     }

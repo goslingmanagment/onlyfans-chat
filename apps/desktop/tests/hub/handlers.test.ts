@@ -225,6 +225,74 @@ describe('hub IPC wiring', () => {
     expect(onOfapiRuntimeConfigChanged).not.toHaveBeenCalled();
   });
 
+  // ── 4a: validate the hub read runtime BEFORE persisting the credential ──
+
+  function statefulSecrets(seed: SecretName[] = []): {
+    hasSecret: (name: SecretName) => Promise<boolean>;
+    setSecret: (name: SecretName) => Promise<void>;
+    deleteSecret: (name: SecretName) => Promise<void>;
+  } {
+    const values = new Set<SecretName>(seed);
+    return {
+      hasSecret: (name) => Promise.resolve(values.has(name)),
+      setSecret: (name) => {
+        values.add(name);
+        return Promise.resolve();
+      },
+      deleteSecret: (name) => {
+        values.delete(name);
+        return Promise.resolve();
+      },
+    };
+  }
+
+  it('4a: rejects a hub credential save and persists nothing when validation fails', async () => {
+    const settingsStore = createSettingsStore({ queries: data.settings, secrets: statefulSecrets() });
+    const updateSpy = vi.spyOn(settingsStore, 'update');
+    const probeReadRuntimeForPatch = vi.fn(async () => {
+      throw new Error('CG-HUB-01: account bootstrap rejected (401)');
+    });
+    const { onOfapiRuntimeConfigChanged } = register(data, {
+      settingsStore,
+      probeReadRuntimeForPatch,
+    });
+
+    await expect(
+      invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_bad' }),
+    ).rejects.toThrow(/CG-HUB-01/);
+
+    expect(probeReadRuntimeForPatch).toHaveBeenCalledTimes(1);
+    // No persist: settingsStore.update never ran (SPEC §15 — no half-applied
+    // credential), so keychain + settings table are untouched.
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(((await invoke('query:settings.get')) as SettingsVM).hasHubKey).toBe(false);
+    expect(onOfapiRuntimeConfigChanged).not.toHaveBeenCalled();
+  });
+
+  it('4a: persists and rebuilds once the hub credential validates', async () => {
+    const settingsStore = createSettingsStore({ queries: data.settings, secrets: statefulSecrets() });
+    const probeReadRuntimeForPatch = vi.fn(async () => undefined);
+    const { onOfapiRuntimeConfigChanged } = register(data, {
+      settingsStore,
+      probeReadRuntimeForPatch,
+    });
+
+    await invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_good' });
+
+    expect(probeReadRuntimeForPatch).toHaveBeenCalledTimes(1);
+    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(1);
+    expect(((await invoke('query:settings.get')) as SettingsVM).hasHubKey).toBe(true);
+  });
+
+  it('4a: non-hub settings patches skip the read-runtime probe', async () => {
+    const probeReadRuntimeForPatch = vi.fn(async () => undefined);
+    register(data, { probeReadRuntimeForPatch });
+
+    await invoke('cmd:settings.update', { debugMode: true });
+
+    expect(probeReadRuntimeForPatch).not.toHaveBeenCalled();
+  });
+
   it('surfaces read-runtime activation failures after persisting validated settings', async () => {
     const onOfapiRuntimeConfigChanged = vi.fn(async () => {
       throw new Error('account bootstrap failed');
