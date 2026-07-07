@@ -24,6 +24,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D4 | 2026-07-06 | Stage 31: kernel-only AI — local prompt library/providers/vendor keys deleted (core #111) |
 | D5 | 2026-07-06 | Kernel model sentinel: summary cache pins modelId='kernel'; pre-cutover entries invalidate once |
 | D6 | 2026-07-07 | 0.1.31 RELEASED (kernel-AI cutover live); §5 watch, then owner revokes vendor keys |
+| D7 | 2026-07-07 | Test Connection probes the actual bearer (device token preferred) — token-only installs verifiable; core #116 |
 
 ## Entries
 
@@ -66,3 +67,12 @@ direct-key copy replaced. §5 verification window from here: a real
 chatter workday on 0.1.31 (kernel-AI generations, acceptance telemetry
 under producer desktop@0.1.31), THEN the owner revokes the retired vendor
 keys at Anthropic/OpenRouter. Rollback: republish 0.1.30 latest.yml.
+
+**D7 (2026-07-07).** Settings → Test Connection now probes with the ACTUAL
+hub bearer via `resolveHubCredential` (device token preferred, legacy key
+fallback) instead of `hubApiKey` only — the documented "no device-token
+probe exists" gap. A token-only install (the #116 end state: humans =
+password + device tokens, robots = API keys) can finally verify its
+connection; the not-configured message names both credential paths. Pinned
+in tests/diagnostics/key-tests.test.ts. Part of core decision #116 (family
+credential ruling; client key-fallback deletion gate).
