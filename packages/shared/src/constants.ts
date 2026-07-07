@@ -130,8 +130,6 @@ export const DEFAULT_FEATURE_REASONING: Record<ModelSelectableFeature, Reasoning
 
 export interface Settings {
   ofapiApiKey: string;
-  claudeApiKey: string;
-  openRouterApiKey: string;
   agencyHubBaseUrl: string;
   agencyHubApiKey: string;
   quickMessageCount: number;
@@ -147,8 +145,6 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   ofapiApiKey: '',
-  claudeApiKey: '',
-  openRouterApiKey: '',
   agencyHubBaseUrl: '',
   agencyHubApiKey: '',
   quickMessageCount: QUICK_DEFAULT_MESSAGE_COUNT,

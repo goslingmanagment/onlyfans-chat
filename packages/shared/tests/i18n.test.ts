@@ -30,6 +30,15 @@ describe('UI message catalog', () => {
     expect(UI_MESSAGES['activity.totalToday'].ru).toBe('Итого за сегодня');
   });
 
+  // D4 / Stage 31: the repo holds no vendor AI keys — no copy may instruct
+  // the user to add one (the pre-cutover aidock.gate.noKey did exactly that).
+  it('no catalog string mentions direct AI keys post-kernel-cutover', () => {
+    for (const [key, entry] of Object.entries(UI_MESSAGES)) {
+      expect(entry.en, `${key}.en`).not.toMatch(/direct AI key/i);
+      expect(entry.ru, `${key}.ru`).not.toMatch(/прямой AI-ключ/i);
+    }
+  });
+
   it('covers every OFAPI purpose incl. untagged, with en equal to the shared label map', () => {
     for (const purpose of [...OFAPI_PURPOSES, UNTAGGED_PURPOSE]) {
       const key = `purpose.${purpose}` as keyof typeof UI_MESSAGES;

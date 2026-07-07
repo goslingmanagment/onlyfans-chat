@@ -197,8 +197,6 @@ describe('DEFAULT_SETTINGS (legacy §5.1 shape, desktop keys)', () => {
   it('matches the legacy defaults with desktop adaptations', () => {
     expect(DEFAULT_SETTINGS).toEqual({
       ofapiApiKey: '',
-      claudeApiKey: '',
-      openRouterApiKey: '',
       agencyHubBaseUrl: '',
       agencyHubApiKey: '',
       quickMessageCount: 100,

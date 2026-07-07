@@ -119,7 +119,6 @@ export const UI_MESSAGES = {
   'hub.deviceToken.signOut': { en: 'Sign out', ru: 'Выйти' },
   'hub.deviceToken.signingOut': { en: 'Signing out…', ru: 'Выход…' },
   'hub.deviceToken.signOutFailed': { en: 'Sign-out failed', ru: 'Не удалось выйти' },
-  'hub.aiGateway.label': { en: 'AI generation', ru: 'Генерация ИИ' },
   'hub.ofapiWrites.label': { en: 'OFAPI writes', ru: 'Записи OFAPI' },
   'hub.ofapiWrites.hint': {
     en: 'Text, typing, unsend, mark-read, media and PPV go through core commands. Direct is disabled.',
@@ -130,16 +129,6 @@ export const UI_MESSAGES = {
   'hub.ofapiWrites.restart': {
     en: 'fails closed if Hub is unavailable',
     ru: 'fail-closed, если Hub недоступен',
-  },
-  'hub.aiGateway.hint': {
-    en: 'Direct local keys or core streaming gateway.',
-    ru: 'Локальные ключи напрямую или стрим через core.',
-  },
-  'hub.aiGateway.direct': { en: 'Direct', ru: 'Напрямую' },
-  'hub.aiGateway.hub': { en: 'Agency Hub', ru: 'Agency Hub' },
-  'hub.aiGateway.liveGate': {
-    en: 'Hub mode needs saved hub settings and the core live gate.',
-    ru: 'Для Hub нужны сохранённые настройки хаба и live-gate в core.',
   },
   'hub.streamStatus': { en: 'Stream status', ru: 'Статус стрима' },
   'hub.status.connecting': { en: 'connecting…', ru: 'подключение…' },
@@ -1151,8 +1140,8 @@ export const UI_MESSAGES = {
   'aidock.hiTip': { en: '3 opener variants for a fresh conversation', ru: '3 варианта первого сообщения для нового диалога' },
   'aidock.gate.unmapped': { en: 'Map a personality in Settings', ru: 'Свяжите личность в настройках' },
   'aidock.gate.noKey': {
-    en: 'Add a direct AI key or configure Hub AI in Settings',
-    ru: 'Добавьте прямой AI-ключ или настройте Hub AI в настройках',
+    en: 'Connect Agency Hub in Settings (sign in or add the hub key)',
+    ru: 'Подключите Agency Hub в настройках (войдите или добавьте ключ хаба)',
   },
   'aidock.pingBlocked': { en: 'Fan is active — use Reply', ru: 'Фан активен — используйте Reply' },
   'aidock.hiLocked': {
