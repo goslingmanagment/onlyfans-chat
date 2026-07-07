@@ -59,6 +59,10 @@ const hubIssueDeviceTokenSchema = z.object({
   username: z.string().min(1).max(120),
   password: z.string().min(1).max(500),
 });
+// Void args on the wire, but the trust boundary still validates the shape
+// (SPEC §15.3) — an unexpected field on a renderer-controlled payload fails
+// loudly instead of being silently ignored.
+const hubSignOutDeviceSchema = z.object({}).strict();
 
 const EMPTY_HUB_TELEMETRY: HubTelemetryVM = {
   received: { total: 0, byType: {} },
@@ -379,6 +383,8 @@ export interface IpcDeps {
   /** Stage 24: one-time hub device-token sign-in (Settings → Hub). */
   hubAuth?: {
     issueDeviceToken: (args: { username: string; password: string }) => Promise<HubDeviceTokenResultVM>;
+    /** Recovery affordance (C2/N2): deletes the keychain-held device token. */
+    signOutDevice: () => Promise<void>;
   } | null;
   /** Danger-zone capabilities (paths/shell live only in the composition root). */
   localData?: {
@@ -637,6 +643,19 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       throw new Error('Hub sign-in is not available in this build.');
     }
     return deps.hubAuth.issueDeviceToken(args);
+  });
+
+  ipcMain.handle('cmd:hub.signOutDevice', async (_event, rawArgs: unknown) => {
+    hubSignOutDeviceSchema.parse(rawArgs ?? {});
+    if (!deps.hubAuth) {
+      throw new Error('Hub sign-in is not available in this build.');
+    }
+    await deps.hubAuth.signOutDevice();
+    // Same reconnect signal a credential-touching cmd:settings.update patch
+    // uses (hubApiKey/hubBaseUrl) — the device token is a credential too, so
+    // deleting it must re-derive the read runtime from whatever's left
+    // (the legacy key, if any) exactly the same way.
+    await deps.onOfapiKeyConfigured?.();
   });
 
   function requireLocalData(): NonNullable<IpcDeps['localData']> {

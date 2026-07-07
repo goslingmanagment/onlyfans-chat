@@ -348,6 +348,27 @@ describe('settings store', () => {
     expect(secrets.values.has('hubApiKey')).toBe(false);
   });
 
+  it('clears the device token too when the Hub host changes without a replacement key', async () => {
+    // Stage 24 dual-acceptance: a hub switch must invalidate BOTH credential
+    // paths, not just the legacy chatter key — otherwise the device token
+    // silently keeps authenticating against the OLD hub while Settings shows
+    // the new URL.
+    const { store, secrets } = createStore();
+    await store.update({
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      hubApiKey: 'agency_hub_core_secret',
+    });
+    await secrets.setSecret('hubDeviceToken', 'agency_hub_device_secret');
+    expect((await store.get()).hasHubDeviceToken).toBe(true);
+
+    const vm = await store.update({ hubBaseUrl: 'http://127.0.0.1:4000' });
+    expect(vm.hubBaseUrl).toBe('http://127.0.0.1:4000');
+    expect(vm.hasHubKey).toBe(false);
+    expect(vm.hasHubDeviceToken).toBe(false);
+    expect(secrets.values.has('hubApiKey')).toBe(false);
+    expect(secrets.values.has('hubDeviceToken')).toBe(false);
+  });
+
   it('keeps the hub key when the Hub host changes with a replacement key', async () => {
     const { store, secrets } = createStore();
     await store.update({
@@ -361,6 +382,29 @@ describe('settings store', () => {
     });
     expect(vm.hasHubKey).toBe(true);
     expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_new');
+  });
+
+  it('a hub switch WITH a replacement key still clears the device token', async () => {
+    // resolveHubCredential prefers the device token unconditionally, so if the
+    // old hub's token survived this combined save (new URL + fresh key in ONE
+    // patch — exactly what HubSettings save() sends), it would keep shadowing
+    // the fresh key against the new hub.
+    const { store, secrets } = createStore();
+    await store.update({
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      hubApiKey: 'agency_hub_core_old',
+    });
+    await secrets.setSecret('hubDeviceToken', 'agency_hub_device_old');
+    expect((await store.get()).hasHubDeviceToken).toBe(true);
+
+    const vm = await store.update({
+      hubBaseUrl: 'http://127.0.0.1:4000',
+      hubApiKey: 'agency_hub_core_new',
+    });
+    expect(vm.hasHubKey).toBe(true);
+    expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_new');
+    expect(vm.hasHubDeviceToken).toBe(false);
+    expect(secrets.values.has('hubDeviceToken')).toBe(false);
   });
 
   it('persists accountPageLabels overrides (round-trip) and rejects bad shapes', async () => {

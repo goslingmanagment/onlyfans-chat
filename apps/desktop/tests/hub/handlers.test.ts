@@ -11,6 +11,7 @@ import type { SyncProvider } from '@main/sync/provider';
 import { createSettingsStore } from '@main/settings/store';
 import { registerIpcHandlers } from '@main/ipc/handlers';
 import type { IpcDeps } from '@main/ipc/handlers';
+import type { SecretName } from '@main/secrets/keychain';
 import type { SettingsVM, SyncStatusVM } from '../../src/preload/contract';
 import { ACCT, memoryDataLayer } from './helpers';
 
@@ -234,5 +235,70 @@ describe('hub IPC wiring', () => {
       invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_x' }),
     ).rejects.toThrow(/account bootstrap failed/);
     expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('cmd:hub.signOutDevice', () => {
+  let data: DataLayer;
+
+  beforeEach(() => {
+    data = memoryDataLayer();
+  });
+
+  function stubHubAuth(signOutDevice: () => Promise<void>): NonNullable<IpcDeps['hubAuth']> {
+    return {
+      issueDeviceToken: async () => {
+        throw new Error('issueDeviceToken not exercised in this test');
+      },
+      signOutDevice,
+    };
+  }
+
+  it('deletes the device-token secret and requests the same rebuild a credential change uses', async () => {
+    // Real settings store + a stateful secrets fake, seeded with a device
+    // token — mirrors an installed, signed-in chatter.
+    const secretValues = new Set<SecretName>(['hubDeviceToken']);
+    const secrets = {
+      hasSecret: (name: SecretName) => Promise.resolve(secretValues.has(name)),
+      setSecret: (name: SecretName) => {
+        secretValues.add(name);
+        return Promise.resolve();
+      },
+      deleteSecret: (name: SecretName) => {
+        secretValues.delete(name);
+        return Promise.resolve();
+      },
+    };
+    const settingsStore = createSettingsStore({ queries: data.settings, secrets });
+    const onOfapiKeyConfigured = vi.fn();
+    const signOutDevice = vi.fn(() => secrets.deleteSecret('hubDeviceToken'));
+
+    register(data, {
+      settingsStore,
+      onOfapiKeyConfigured,
+      hubAuth: stubHubAuth(signOutDevice),
+    });
+
+    expect(((await invoke('query:settings.get')) as SettingsVM).hasHubDeviceToken).toBe(true);
+
+    await invoke('cmd:hub.signOutDevice');
+
+    expect(signOutDevice).toHaveBeenCalledTimes(1);
+    expect(onOfapiKeyConfigured).toHaveBeenCalledTimes(1);
+    // The secret is gone — verified through the same public VM the renderer reads.
+    expect(((await invoke('query:settings.get')) as SettingsVM).hasHubDeviceToken).toBe(false);
+  });
+
+  it('rejects when hub sign-in is unavailable in this build', async () => {
+    register(data); // no hubAuth override -> deps.hubAuth is undefined
+    await expect(invoke('cmd:hub.signOutDevice')).rejects.toThrow(/not available/i);
+  });
+
+  it('rejects an unexpected payload at the trust boundary', async () => {
+    const signOutDevice = vi.fn(() => Promise.resolve());
+    register(data, { hubAuth: stubHubAuth(signOutDevice) });
+
+    await expect(invoke('cmd:hub.signOutDevice', { evil: true })).rejects.toThrow();
+    expect(signOutDevice).not.toHaveBeenCalled();
   });
 });

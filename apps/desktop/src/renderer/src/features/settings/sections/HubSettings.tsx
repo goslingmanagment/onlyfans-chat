@@ -8,11 +8,18 @@
 import { useState } from 'react';
 import type { KeyTestResultVM, SettingsVM, SyncStatusVM } from '../../../../../preload/contract';
 import type { UiLocale, UiTranslator } from '@chatgoose/shared/i18n/index';
-import { useAccounts, useHubDeviceTokenIssue, useKeyTest, useSyncStatus } from '../../../bridge/queries';
+import {
+  useAccounts,
+  useHubDeviceTokenIssue,
+  useHubSignOutDevice,
+  useKeyTest,
+  useSyncStatus,
+} from '../../../bridge/queries';
 import { localizedErrorText, useLocale, useT } from '../../../lib/i18n';
 import { Badge } from '../../../design/Badge';
 import { Button } from '../../../design/Button';
 import { Section, type PatchFn } from '../SettingsSurface';
+import { isHubConfigured } from './hubSettingsLogic';
 
 type HubState = SyncStatusVM['hub'];
 
@@ -50,6 +57,7 @@ export function HubSettings({
   const [signInUser, setSignInUser] = useState('');
   const [signInPassword, setSignInPassword] = useState('');
   const deviceToken = useHubDeviceTokenIssue();
+  const signOutDevice = useHubSignOutDevice();
   const [labels, setLabels] = useState<Record<string, string>>(settings.accountPageLabels);
   const accounts = useAccounts();
   const syncStatus = useSyncStatus();
@@ -57,7 +65,7 @@ export function HubSettings({
   const t = useT();
   const locale = useLocale();
 
-  const configured = settings.hubBaseUrl !== null && settings.hasHubKey;
+  const configured = isHubConfigured(settings);
   const hub: HubState = syncStatus.data?.hub ?? 'off';
   // The probe runs against the SAVED config — while the form holds unsaved
   // edits a green result would "verify" the wrong URL/key, so Test locks
@@ -157,6 +165,18 @@ export function HubSettings({
           >
             {deviceToken.isPending ? t('hub.deviceToken.signingIn') : t('hub.deviceToken.signIn')}
           </Button>
+          {settings.hasHubDeviceToken && (
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={signOutDevice.isPending}
+              onClick={() => signOutDevice.mutate()}
+            >
+              {signOutDevice.isPending
+                ? t('hub.deviceToken.signingOut')
+                : t('hub.deviceToken.signOut')}
+            </Button>
+          )}
         </div>
         {deviceToken.isSuccess && (
           <div className="pl-47 text-[11px] text-ink-low">
@@ -164,6 +184,13 @@ export function HubSettings({
               prefix: deviceToken.data.keyPrefix,
               label: deviceToken.data.label,
             })}
+          </div>
+        )}
+        {signOutDevice.isError && (
+          <div className="pl-47 text-[11px] text-bad">
+            {signOutDevice.error instanceof Error
+              ? signOutDevice.error.message
+              : t('hub.deviceToken.signOutFailed')}
           </div>
         )}
         {deviceToken.isError && (

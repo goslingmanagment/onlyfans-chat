@@ -1102,6 +1102,10 @@ async function boot(): Promise<void> {
         emitSyncStatusFrame();
         return issued;
       },
+      // cmd:hub.signOutDevice (ipc/handlers.ts) does the reconnect itself via
+      // onOfapiKeyConfigured — this stays a plain keychain delete so it
+      // doesn't race/duplicate that rebuild.
+      signOutDevice: () => keychain.deleteSecret('hubDeviceToken'),
     },
     harvest: {
       start: () => harvestModule.run(),

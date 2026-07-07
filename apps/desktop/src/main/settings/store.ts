@@ -488,12 +488,21 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
 
 
       if (parsed.hubApiKey !== undefined) await applySecret('hubApiKey', parsed.hubApiKey);
-      if (
-        parsed.hubBaseUrl !== undefined &&
-        parsed.hubBaseUrl !== before.hubBaseUrl &&
-        parsed.hubApiKey === undefined
-      ) {
+      const hubSwitched =
+        parsed.hubBaseUrl !== undefined && parsed.hubBaseUrl !== before.hubBaseUrl;
+      // The chatter key survives a hub switch only when the same patch carries
+      // its replacement (a fresh key for the NEW hub — HubSettings save()
+      // bundles both); otherwise it belongs to the old hub and is wiped.
+      if (hubSwitched && parsed.hubApiKey === undefined) {
         await applySecret('hubApiKey', '');
+      }
+      // The device token is wiped on EVERY hub switch, replacement key or not:
+      // it is bound to the OLD hub's session, this patch has no way to hand in
+      // a new one (issuance is its own sign-in flow), and resolveHubCredential
+      // prefers it unconditionally — left behind, it would shadow even a fresh
+      // key against the new hub.
+      if (hubSwitched) {
+        await applySecret('hubDeviceToken', '');
       }
 
       for (const key of PERSISTED_SETTINGS_KEYS) {

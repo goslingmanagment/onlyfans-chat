@@ -1245,6 +1245,10 @@ export function createMockBridge(): ChatGooseBridge {
       label: `mock-${username}`,
       expiresAt: new Date(Date.now() + 90 * 24 * 3_600_000).toISOString(),
     }),
+    'cmd:hub.signOutDevice': () => {
+      store.settings = { ...store.settings, hasHubDeviceToken: false };
+      emit('db:changed', { scope: 'settings' });
+    },
     'cmd:keys.test': () => {
       // Mock: hub probe result depends on the mock config (Stage 31: hub-only).
       return store.settings.hubBaseUrl !== null && store.settings.hasHubKey

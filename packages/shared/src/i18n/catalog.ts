@@ -73,7 +73,11 @@ export const UI_MESSAGES = {
   },
   'err.CG-HUB-01': {
     en: 'The hub rejected the chatter key.',
-    ru: 'Хаб отклонил ключ чаттера.',
+    // Credential-neutral recovery (mirrors errors/index.ts CG-HUB-01 a08a251):
+    // localizedErrorText short-circuits RU straight to this catalog entry, so
+    // the registry's fixed recovery text never reaches RU readers — it has to
+    // be repeated here.
+    ru: 'Хаб отклонил учётные данные — войдите заново в настройках или проверьте ключ чаттера.',
   },
   'err.CG-HUB-02': {
     en: 'The hub is unreachable.',
@@ -112,6 +116,9 @@ export const UI_MESSAGES = {
     ru: 'Токен устройства выдан ({prefix}…) для {label}',
   },
   'hub.deviceToken.failed': { en: 'Sign-in failed', ru: 'Не удалось войти' },
+  'hub.deviceToken.signOut': { en: 'Sign out', ru: 'Выйти' },
+  'hub.deviceToken.signingOut': { en: 'Signing out…', ru: 'Выход…' },
+  'hub.deviceToken.signOutFailed': { en: 'Sign-out failed', ru: 'Не удалось выйти' },
   'hub.aiGateway.label': { en: 'AI generation', ru: 'Генерация ИИ' },
   'hub.ofapiWrites.label': { en: 'OFAPI writes', ru: 'Записи OFAPI' },
   'hub.ofapiWrites.hint': {
@@ -140,9 +147,13 @@ export const UI_MESSAGES = {
   'hub.status.degraded': { en: 'degraded — polling covers', ru: 'сбой — опрос подстраховывает' },
   'hub.status.auth-failed': { en: 'auth failed', ru: 'ключ отклонён' },
   'hub.status.stopped': { en: 'stopped', ru: 'остановлен' },
+  // Credential-neutral (mirrors errors/index.ts CG-HUB-01, a08a251): a
+  // revoked/expired DEVICE TOKEN hits this same state, and "paste a key"
+  // does nothing for that install — lead with re-sign-in, key stays the
+  // fallback for chatter-key-only installs.
   'hub.authFailedBody': {
-    en: 'CG-HUB-01 — the hub rejected the chatter key. Chatter keys are one-active-per-chatter and revocable: paste a fresh key (hub Settings → Users) and save.',
-    ru: 'CG-HUB-01 — хаб отклонил ключ чаттера. Ключ один на чаттера и может быть отозван: вставьте свежий ключ (хаб: Settings → Users) и сохраните.',
+    en: 'CG-HUB-01 — the hub rejected the credential. Sign in again above to issue a fresh device token; if this install still uses the chatter key, paste a fresh one instead (hub Settings → Users) and save.',
+    ru: 'CG-HUB-01 — хаб отклонил учётные данные. Войдите заново выше, чтобы получить новый токен устройства; если это подключение всё ещё на ключе чаттера — вставьте свежий ключ (хаб: Settings → Users) и сохраните.',
   },
   'hub.pageLabels.title': { en: 'Hub page labels', ru: 'Метки страниц хаба' },
   'hub.pageLabels.hint': {

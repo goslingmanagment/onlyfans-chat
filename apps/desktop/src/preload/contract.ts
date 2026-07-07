@@ -795,6 +795,8 @@ export interface InvokeChannels {
     args: { username: string; password: string };
     result: HubDeviceTokenResultVM;
   };
+  /** Stage 24 recovery: deletes the device token from the keychain (Settings → Hub). */
+  'cmd:hub.signOutDevice': { args: void; result: void };
   /** Danger zone: encrypted local cache footprint. */
   'query:localData.stats': { args: void; result: LocalDataStatsVM };
   'cmd:localData.openFolder': { args: void; result: void };
@@ -1072,6 +1074,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:ai.featureCosts': true,
   'cmd:keys.test': true,
   'cmd:hub.issueDeviceToken': true,
+  'cmd:hub.signOutDevice': true,
   'query:localData.stats': true,
   'cmd:localData.openFolder': true,
   'cmd:localData.exportDiagnostics': true,

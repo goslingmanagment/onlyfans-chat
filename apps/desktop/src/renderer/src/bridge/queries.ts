@@ -326,6 +326,20 @@ export function useHubDeviceTokenIssue() {
   });
 }
 
+/** Stage 24 recovery: deletes the local device token so a stale/revoked one
+ *  can't keep shadowing a fresh sign-in or the legacy chatter key. Invalidate
+ *  on settle (not just success) — the delete lands even if the follow-up hub
+ *  reconnect attempt errors, so the settings badge must refresh either way. */
+export function useHubSignOutDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => getBridge().invoke('cmd:hub.signOutDevice', undefined),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['settings'] });
+    },
+  });
+}
+
 export function useOpenDataFolder() {
   return useMutation({
     mutationFn: () => getBridge().invoke('cmd:localData.openFolder', undefined),
