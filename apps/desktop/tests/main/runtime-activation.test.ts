@@ -3,7 +3,11 @@
 // index.ts wires: 4b non-fatal boot activation.
 
 import { describe, expect, it, vi } from 'vitest';
-import { activateRuntimeNonFatal, validateThenReconcileOnBoot } from '@main/runtime-activation';
+import {
+  activateRuntimeNonFatal,
+  subscribeSettingsScope,
+  validateThenReconcileOnBoot,
+} from '@main/runtime-activation';
 
 describe('activateRuntimeNonFatal (4b)', () => {
   it('resolves false and reports the error WITHOUT throwing when activation rejects', async () => {
@@ -55,5 +59,46 @@ describe('validateThenReconcileOnBoot (4c)', () => {
       }),
     ).rejects.toThrow(/CG-HUB-01/);
     expect(reconcile).not.toHaveBeenCalled();
+  });
+});
+
+describe('subscribeSettingsScope (4d)', () => {
+  function fakeBus(): {
+    subscribe: (listener: (events: readonly { readonly scope: string }[]) => void) => () => void;
+    emit: (events: readonly { readonly scope: string }[]) => void;
+  } {
+    const listeners = new Set<(events: readonly { readonly scope: string }[]) => void>();
+    return {
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      emit(events) {
+        for (const listener of listeners) {
+          listener(events);
+        }
+      },
+    };
+  }
+
+  it('fires onSettingsChanged only for batches that touch the settings scope', () => {
+    const bus = fakeBus();
+    const onSettingsChanged = vi.fn();
+    const dispose = subscribeSettingsScope(bus, onSettingsChanged);
+
+    bus.emit([{ scope: 'chats' }, { scope: 'messages' }]);
+    expect(onSettingsChanged).not.toHaveBeenCalled();
+
+    bus.emit([{ scope: 'chats' }, { scope: 'settings' }]);
+    expect(onSettingsChanged).toHaveBeenCalledTimes(1);
+
+    // A settings write DURING the (still-attached) bootstrap is observed — the
+    // 4d guarantee: the candidate does not miss it until the next write.
+    bus.emit([{ scope: 'settings' }]);
+    expect(onSettingsChanged).toHaveBeenCalledTimes(2);
+
+    dispose();
+    bus.emit([{ scope: 'settings' }]);
+    expect(onSettingsChanged).toHaveBeenCalledTimes(2); // unsubscribed
   });
 });

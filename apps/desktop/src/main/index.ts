@@ -83,7 +83,11 @@ import {
   isAllowedExternalOpenUrl,
 } from './platform/navigation';
 import { messageNotificationBody } from './notifications';
-import { activateRuntimeNonFatal, validateThenReconcileOnBoot } from './runtime-activation';
+import {
+  activateRuntimeNonFatal,
+  subscribeSettingsScope,
+  validateThenReconcileOnBoot,
+} from './runtime-activation';
 import type { UnreadReconcileSettingsVM, UpdateStatusVM } from '../preload/contract';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
@@ -525,6 +529,22 @@ async function rebuildOfapiRuntime(
   }
   let hubFingerprint = await hubConfigFingerprint();
 
+  // 4d: attach the runtime settings watcher at CANDIDATE creation — before the
+  // (possibly slow) account bootstrap below — so a settings write DURING the
+  // rebuild is folded into settingsCache instead of being missed until the next
+  // write. Its disposer is adopted by the module-level binding on commit, or
+  // released in the !committed cleanup (symmetric with the other candidate
+  // resources). While the candidate builds, the outgoing runtime's own watcher
+  // stays live too; each updates its independent settingsCache closure.
+  let disposeCandidateSettingsWatcher: (() => void) | null = subscribeSettingsScope(
+    dataLayer.bus,
+    () => {
+      void settingsStore.get().then((vm) => {
+        settingsCache = vm;
+      });
+    },
+  );
+
   // Minting registers the remote URL in media_urls; only registered tokens
   // resolve through the media:// handler (SPEC §4).
   const toMediaUrl = createToMediaUrl(dataLayer.mediaUrls);
@@ -613,15 +633,6 @@ async function rebuildOfapiRuntime(
       await Promise.all([nextSync.reconfigureHub(), nextHub.reconfigure()]);
     }
   };
-  const attachRuntimeSettingsWatcher = (): (() => void) =>
-    dataLayer.bus.subscribe((events) => {
-      if (events.some((event) => event.scope === 'settings')) {
-        void settingsStore.get().then((vm) => {
-          settingsCache = vm;
-        });
-      }
-    });
-
   // Hub-supported writes (text, typing, unsend, mark-read, media/PPV) are the
   // only app write path. The local OFAPI key may still back Direct reads, but it
   // is never passed to the send engine.
@@ -716,7 +727,9 @@ async function rebuildOfapiRuntime(
     onlineService = nextOnlineService;
     spendersRefresh = nextSpendersRefresh;
     recheckHubConfig = recheckNextHubConfig;
-    disposeRuntimeSettingsWatcher = attachRuntimeSettingsWatcher();
+    // Adopt the candidate watcher attached at creation (4d) as the live one.
+    disposeRuntimeSettingsWatcher = disposeCandidateSettingsWatcher;
+    disposeCandidateSettingsWatcher = null;
 
     nextSync.start(accountIds);
     // A refresh interrupted by quit/crash continues here; the per-fan TTL skip
@@ -730,6 +743,7 @@ async function rebuildOfapiRuntime(
     });
   } finally {
     if (!committed) {
+      disposeCandidateSettingsWatcher?.();
       unsubscribeSendSync();
       unsubscribeCreditMeter();
       nextSpendersRefresh.dispose();

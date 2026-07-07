@@ -45,3 +45,24 @@ export async function validateThenReconcileOnBoot(params: {
   await params.reconcile(params.isBoot);
   return accountIds;
 }
+
+/**
+ * 4d: subscribe to settings-scope DB changes, invoking `onSettingsChanged` for
+ * any batch that touches the settings table. index.ts attaches this at CANDIDATE
+ * creation — before the possibly-slow account bootstrap — so a settings write
+ * DURING the rebuild is observed by the candidate's live settings cache instead
+ * of being missed until the next write (the old attach happened after the swap).
+ * Returns the unsubscribe disposer, added to the candidate's cleanup.
+ */
+export function subscribeSettingsScope(
+  bus: {
+    subscribe(listener: (events: readonly { readonly scope: string }[]) => void): () => void;
+  },
+  onSettingsChanged: () => void,
+): () => void {
+  return bus.subscribe((events) => {
+    if (events.some((event) => event.scope === 'settings')) {
+      onSettingsChanged();
+    }
+  });
+}
