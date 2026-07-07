@@ -83,6 +83,7 @@ import {
   isAllowedExternalOpenUrl,
 } from './platform/navigation';
 import { messageNotificationBody } from './notifications';
+import { activateRuntimeNonFatal } from './runtime-activation';
 import type { UnreadReconcileSettingsVM, UpdateStatusVM } from '../preload/contract';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
@@ -972,7 +973,21 @@ async function boot(): Promise<void> {
     fetchRemote,
   });
 
-  await initOfapi(keychain, data, settingsStore);
+  // 4b: boot-time read-runtime activation must NOT be fatal. DB + keychain init
+  // above keep their fatal error box; a failed OFAPI activation (bad/expired hub
+  // key, hub down, offline) is logged and swallowed so boot continues to
+  // loadWindowContent with a null runtime — the getter-based IpcDeps below
+  // tolerate null services, and the hub-status banner surfaces the disconnect.
+  const bootData = data;
+  await activateRuntimeNonFatal(
+    () => initOfapi(keychain, bootData, settingsStore),
+    (error) =>
+      logger?.error(
+        'ofapi',
+        'boot read-runtime activation failed; continuing with no runtime',
+        errorToFields(error),
+      ),
+  );
 
   const rebuildOfapiRuntimeFromSettings = async (): Promise<void> => {
     if (data === null) {
