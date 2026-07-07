@@ -25,6 +25,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D5 | 2026-07-06 | Kernel model sentinel: summary cache pins modelId='kernel'; pre-cutover entries invalidate once |
 | D6 | 2026-07-07 | 0.1.31 RELEASED (kernel-AI cutover live); §5 watch, then owner revokes vendor keys |
 | D7 | 2026-07-07 | Test Connection probes the actual bearer (device token preferred) — token-only installs verifiable; core #116 |
+| D8 | 2026-07-07 | 0.1.30/0.1.31 dead-on-launch; 0.1.32 fixes SDK bundling |
 
 ## Entries
 
@@ -66,7 +67,7 @@ configures AI (gate accepted only the legacy key before), stale
 direct-key copy replaced. §5 verification window from here: a real
 chatter workday on 0.1.31 (kernel-AI generations, acceptance telemetry
 under producer desktop@0.1.31), THEN the owner revokes the retired vendor
-keys at Anthropic/OpenRouter. Rollback: republish 0.1.30 latest.yml.
+keys at Anthropic/OpenRouter. Rollback: republish 0.1.29 latest.yml — 0.1.30/0.1.31 are dead-on-launch (D8); prefer rolling forward from 0.1.32.
 
 **D7 (2026-07-07).** Settings → Test Connection now probes with the ACTUAL
 hub bearer via `resolveHubCredential` (device token preferred, legacy key
@@ -76,3 +77,5 @@ password + device tokens, robots = API keys) can finally verify its
 connection; the not-configured message names both credential paths. Pinned
 in tests/diagnostics/key-tests.test.ts. Part of core decision #116 (family
 credential ruling; client key-fallback deletion gate).
+
+**D8 (2026-07-07).** 0.1.30/0.1.31 dead-on-launch; SDK must be bundled. Both releases shipped with `@kernel/sdk` externalized from the main bundle (`ERR_MODULE_NOT_FOUND` before window creation; packaged builds swallow the error — the app sits windowless). 0.1.32 fixes it by bundling (`externalizeDepsPlugin({ exclude: ['@kernel/sdk'] })` in `electron.vite.config.ts`) — the dep must never be externalized again. Last pre-incident working release: 0.1.29; the only safe rollback target below 0.1.32. D6's §5 verification window and the vendor-key revocation gate restart against 0.1.32 (producer `desktop@0.1.32`).

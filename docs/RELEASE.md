@@ -111,6 +111,8 @@ the unprivileged `cgupdates` user; CI uploads over scp with the
 are unsigned, so the feed host being ours is the trust anchor — rotate the
 token path (nginx dir + `publish.url`) if it ever leaks somewhere noisy.
 
+**Rollback:** Auto-update rolls the fleet to whatever `latest.yml` points at. Safe targets: **0.1.32+**, or **0.1.29** (last pre-incident build). **Never republish 0.1.30/0.1.31** — both are dead-on-launch (D8).
+
 **Provisioned & verified 2026-06-13.** The feed is live: a liveness probe sits
 at `https://45-8-230-111.sslip.io/u/<token>/ping.txt` (returns `feed-ok`).
 Verified end-to-end: trusted TLS from a client machine, the `cgupdates` deploy
