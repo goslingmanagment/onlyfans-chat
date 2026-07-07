@@ -26,3 +26,22 @@ export async function activateRuntimeNonFatal(
     return false;
   }
 }
+
+/**
+ * 4c: on a read-runtime (re)build, run account-bootstrap validation FIRST, then
+ * engine reconciliation — both BEFORE the new engine is swapped in. If
+ * validation (syncAccounts) throws, `reconcile` never runs, so a rejected
+ * rebuild never touches the live outbox (no createOfapiCommand, no state churn).
+ * `isBoot` is forwarded to `reconcile` (true from boot, false from a settings
+ * rebuild — see engine.reconcileOnBoot, which gates its destructive transitions
+ * on it). Returns the validated account ids for the caller to start sync with.
+ */
+export async function validateThenReconcileOnBoot(params: {
+  syncAccounts: () => Promise<readonly string[]>;
+  reconcile: (isBoot: boolean) => Promise<void>;
+  isBoot: boolean;
+}): Promise<readonly string[]> {
+  const accountIds = await params.syncAccounts();
+  await params.reconcile(params.isBoot);
+  return accountIds;
+}

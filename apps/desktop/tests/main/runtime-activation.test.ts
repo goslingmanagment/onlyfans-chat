@@ -3,7 +3,7 @@
 // index.ts wires: 4b non-fatal boot activation.
 
 import { describe, expect, it, vi } from 'vitest';
-import { activateRuntimeNonFatal } from '@main/runtime-activation';
+import { activateRuntimeNonFatal, validateThenReconcileOnBoot } from '@main/runtime-activation';
 
 describe('activateRuntimeNonFatal (4b)', () => {
   it('resolves false and reports the error WITHOUT throwing when activation rejects', async () => {
@@ -25,5 +25,35 @@ describe('activateRuntimeNonFatal (4b)', () => {
       activateRuntimeNonFatal(() => Promise.resolve(), onFailure),
     ).resolves.toBe(true);
     expect(onFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('validateThenReconcileOnBoot (4c)', () => {
+  it('validates BEFORE reconciling and forwards isBoot + the account ids', async () => {
+    const order: string[] = [];
+    const accountIds = await validateThenReconcileOnBoot({
+      syncAccounts: async () => {
+        order.push('sync');
+        return ['acct_a', 'acct_b'];
+      },
+      reconcile: async (isBoot) => {
+        order.push(`reconcile:${isBoot}`);
+      },
+      isBoot: false,
+    });
+    expect(order).toEqual(['sync', 'reconcile:false']);
+    expect(accountIds).toEqual(['acct_a', 'acct_b']);
+  });
+
+  it('does NOT reconcile when validation fails (a rejected rebuild leaves the outbox alone)', async () => {
+    const reconcile = vi.fn(async () => undefined);
+    await expect(
+      validateThenReconcileOnBoot({
+        syncAccounts: () => Promise.reject(new Error('CG-HUB-01 account bootstrap failed')),
+        reconcile,
+        isBoot: true,
+      }),
+    ).rejects.toThrow(/CG-HUB-01/);
+    expect(reconcile).not.toHaveBeenCalled();
   });
 });

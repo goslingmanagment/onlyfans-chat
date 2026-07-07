@@ -97,8 +97,14 @@ export interface SendEngine {
   verifyChat(accountId: string, chatId: string): Promise<void>;
   /** messages.sent for a chat with unconfirmed rows → local-only match (no network). */
   handleSyncEvent(event: SyncEvent): void;
-  /** sending → unconfirmed (+verify); queued → cancelled. Never auto-sends on boot. */
-  reconcileOnBoot(): Promise<void>;
+  /**
+   * sending → unconfirmed (+verify); queued → cancelled — but ONLY at real boot
+   * (isBoot, default true). A settings-driven rebuild (isBoot=false) skips those
+   * destructive rewrites so it never falsely marks rows the outgoing engine may
+   * still be pumping (SPEC §15.5); verification of already-unconfirmed rows runs
+   * on both paths (self-reschedules via scheduleVerify). Never auto-sends.
+   */
+  reconcileOnBoot(isBoot?: boolean): Promise<void>;
   typingActive(accountId: string, chatId: string): void;
   markRead(accountId: string, chatId: string): Promise<void>;
   unsend(accountId: string, chatId: string, messageId: string): Promise<void>;
@@ -810,21 +816,30 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       matchUnconfirmed(event.accountId, event.chatId);
     },
 
-    async reconcileOnBoot() {
-      // A restart kills pending sequences — the app never auto-sends on boot.
-      for (const row of data.outbox.listByState('queued')) {
-        data.outbox.transition({ localId: row.localId, from: ['queued'], to: 'cancelled' });
+    async reconcileOnBoot(isBoot = true) {
+      // Destructive rewrites run ONLY at real boot. A settings-driven rebuild
+      // (isBoot=false) builds a new engine over the SAME DB while the outgoing
+      // engine may still be pumping queued/sending rows — rewriting them here
+      // would cancel live parts or falsely park an in-flight send as unconfirmed
+      // (SPEC §15.5). At boot no engine is live, so the rewrites are safe.
+      if (isBoot) {
+        // A restart kills pending sequences — the app never auto-sends on boot.
+        for (const row of data.outbox.listByState('queued')) {
+          data.outbox.transition({ localId: row.localId, from: ['queued'], to: 'cancelled' });
+        }
+        // In flight at shutdown: the outcome is unknowable — verification, not resend.
+        for (const row of data.outbox.listByState('sending')) {
+          data.outbox.transition({
+            localId: row.localId,
+            from: ['sending'],
+            to: 'unconfirmed',
+            errorCode: 'CG-OF-06',
+            errorMessage: 'The app restarted while this send was in flight',
+          });
+        }
       }
-      // In flight at shutdown: the outcome is unknowable — verification, not resend.
-      for (const row of data.outbox.listByState('sending')) {
-        data.outbox.transition({
-          localId: row.localId,
-          from: ['sending'],
-          to: 'unconfirmed',
-          errorCode: 'CG-OF-06',
-          errorMessage: 'The app restarted while this send was in flight',
-        });
-      }
+      // Verification of already-unconfirmed rows runs on BOTH paths (it only
+      // reads status / matches local evidence, never auto-resends).
       for (const { accountId, chatId } of data.outbox.chatsWithState('unconfirmed')) {
         try {
           await verifyChat(accountId, chatId);

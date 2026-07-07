@@ -83,7 +83,7 @@ import {
   isAllowedExternalOpenUrl,
 } from './platform/navigation';
 import { messageNotificationBody } from './notifications';
-import { activateRuntimeNonFatal } from './runtime-activation';
+import { activateRuntimeNonFatal, validateThenReconcileOnBoot } from './runtime-activation';
 import type { UnreadReconcileSettingsVM, UpdateStatusVM } from '../preload/contract';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
@@ -326,6 +326,9 @@ async function initOfapi(
   keychain: Keychain,
   dataLayer: DataLayer,
   settingsStore: SettingsStore,
+  // 4c: true only for the real boot activation; a settings-driven rebuild passes
+  // false so reconcileOnBoot skips the destructive queued/sending rewrites.
+  isBoot: boolean,
 ): Promise<void> {
   if (rebuildOfapiRuntimeInFlight !== null) {
     try {
@@ -335,7 +338,7 @@ async function initOfapi(
       // being permanently blocked by the previous failed candidate.
     }
   }
-  const rebuild = rebuildOfapiRuntime(keychain, dataLayer, settingsStore);
+  const rebuild = rebuildOfapiRuntime(keychain, dataLayer, settingsStore, isBoot);
   rebuildOfapiRuntimeInFlight = rebuild;
   try {
     await rebuild;
@@ -350,6 +353,7 @@ async function rebuildOfapiRuntime(
   keychain: Keychain,
   dataLayer: DataLayer,
   settingsStore: SettingsStore,
+  isBoot: boolean,
 ): Promise<void> {
   const [initialSettings, hubApiKey] = await Promise.all([
     settingsStore.get(),
@@ -679,13 +683,18 @@ async function rebuildOfapiRuntime(
 
   let committed = false;
   try {
-    // Awaited on purpose (adversarial review 2026-06-11): the "reconciliation
-    // before any send" guarantee must hold even for a fast first user action.
-    // reconcileOnBoot swallows network errors internally, so this never blocks
-    // startup on connectivity.
-    await engine.reconcileOnBoot();
-
-    const accountIds = await syncAccounts(nextClient, dataLayer, toMediaUrl);
+    // 4c: validation (syncAccounts) runs BEFORE reconcileOnBoot, both before the
+    // swap. A failed account bootstrap thus aborts the rebuild without the new
+    // engine ever touching the live outbox (no createOfapiCommand, no state
+    // churn — SPEC §15.5). The "reconcile before any send" guarantee (adversarial
+    // review 2026-06-11) still holds: reconcile completes before the new engine
+    // becomes reachable at the swap below. isBoot gates the destructive rewrites
+    // to the real boot only; reconcileOnBoot swallows network errors internally.
+    const accountIds = await validateThenReconcileOnBoot({
+      syncAccounts: () => syncAccounts(nextClient, dataLayer, toMediaUrl),
+      reconcile: (boot) => engine.reconcileOnBoot(boot),
+      isBoot,
+    });
 
     disposeEventForwarding?.();
     disposeEventForwarding = null;
@@ -980,7 +989,7 @@ async function boot(): Promise<void> {
   // tolerate null services, and the hub-status banner surfaces the disconnect.
   const bootData = data;
   await activateRuntimeNonFatal(
-    () => initOfapi(keychain, bootData, settingsStore),
+    () => initOfapi(keychain, bootData, settingsStore, true),
     (error) =>
       logger?.error(
         'ofapi',
@@ -994,7 +1003,10 @@ async function boot(): Promise<void> {
       return;
     }
     try {
-      await initOfapi(keychain, data, settingsStore);
+      // 4c: a settings-driven rebuild — isBoot=false keeps the outgoing engine's
+      // live queued/sending rows intact (reconcileOnBoot skips its destructive
+      // transitions on this path).
+      await initOfapi(keychain, data, settingsStore, false);
       reattachEventForwarding();
       emitSyncStatusFrame();
     } catch (error) {

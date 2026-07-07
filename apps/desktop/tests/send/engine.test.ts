@@ -15,6 +15,7 @@ import {
 import type { SendEngine, SendEngineOptions } from '@main/send/engine';
 import { mapOfApiHttpError, mapOfApiNetworkError } from '@main/ofapi/errors';
 import type { OfApiError } from '@main/ofapi/errors';
+import { validateThenReconcileOnBoot } from '@main/runtime-activation';
 import type { SleepFn } from '@main/ofapi/rate-limiter';
 import {
   ACCT,
@@ -124,6 +125,32 @@ describe('send engine (SPEC §7)', () => {
         )`,
       )
       .run({ local_id: localId, account_id: ACCT, chat_id: CHAT, text, created_at: createdAt });
+    return localId;
+  }
+
+  function insertHubUnconfirmedNoCommandId({ text }: { text: string }): string {
+    localSeq += 1;
+    const localId = `hub-unconfirmed-${localSeq}`;
+    // core_command_id omitted → NULL, so a verify pass would call createOfapiCommand.
+    data.db
+      .prepare(
+        `INSERT INTO outbox (
+          local_id, account_id, chat_id, text, transport, state, sequence_id, part_index,
+          message_id, error_code, error_message, text_highlights, attempts, retry_of,
+          price, media_files, previews, created_at, updated_at
+        ) VALUES (
+          @local_id, @account_id, @chat_id, @text, 'hub', 'unconfirmed', NULL, 0,
+          NULL, 'CG-OF-06', 'in flight at rebuild', '[]', 1, NULL,
+          0, '[]', '[]', @created_at, @created_at
+        )`,
+      )
+      .run({
+        local_id: localId,
+        account_id: ACCT,
+        chat_id: CHAT,
+        text,
+        created_at: new Date().toISOString(),
+      });
     return localId;
   }
 
@@ -415,6 +442,83 @@ describe('send engine (SPEC §7)', () => {
       errorCode: 'CG-OF-06',
     });
     rebooted.dispose();
+    engine.dispose();
+  });
+
+  it('settings rebuild (isBoot=false): queued parts survive the rebuild and still send', async () => {
+    let releaseFirst: ((value: ReturnType<typeof makeSentMessage>) => void) | undefined;
+    stub.onSend((call, index) =>
+      index === 0
+        ? new Promise((resolve) => {
+            releaseFirst = resolve;
+          })
+        : Promise.resolve(makeSentMessage({ id: 1000 + index, text: call.text })),
+    );
+    const { engine } = makeEngine();
+    const { localIds } = engine.sendParts({
+      accountId: ACCT,
+      chatId: CHAT,
+      parts: ['part one', 'part two', 'part three'],
+    });
+    await drain();
+    const [id1, id2, id3] = [localIds[0] ?? '', localIds[1] ?? '', localIds[2] ?? ''];
+    expect(rowState(id1)).toBe('sending'); // in flight when the rebuild fires
+    expect(rowState(id2)).toBe('queued');
+    expect(rowState(id3)).toBe('queued');
+
+    // A settings-driven rebuild constructs a NEW engine over the SAME DB while
+    // the outgoing engine is still pumping. reconcileOnBoot(false) must NOT
+    // cancel the queued parts nor park the in-flight one as unconfirmed.
+    const rebuiltStub = makeStubClient();
+    const { engine: rebuilt } = makeEngine({ stub: rebuiltStub });
+    await rebuilt.reconcileOnBoot(false);
+
+    expect(rowState(id1)).toBe('sending'); // survive: NOT parked unconfirmed
+    expect(rowState(id2)).toBe('queued'); // survive: NOT cancelled
+    expect(rowState(id3)).toBe('queued'); // survive: NOT cancelled
+    expect(rebuiltStub.sendCalls).toHaveLength(0); // rebuild issued no commands
+
+    // Send: the ORIGINAL engine's pump still owns the sequence and drains it.
+    releaseFirst?.(makeSentMessage({ id: 1000, text: 'part one' }));
+    await drain();
+    expect(rowState(id1)).toBe('sent');
+    expect(rowState(id2)).toBe('sent');
+    expect(rowState(id3)).toBe('sent');
+    rebuilt.dispose();
+    engine.dispose();
+  });
+
+  it('settings rebuild (isBoot=false): a FAILED validation never reconciles the outbox', async () => {
+    // An unconfirmed hub row lacking a coreCommandId: reconcile's verify loop
+    // WOULD create a hub command for it — but only if validation passes first.
+    const hubCommandClient = makeStubHubCommandClient(stub);
+    const { engine } = makeEngine({ hubCommandClient });
+    const localId = insertHubUnconfirmedNoCommandId({ text: 'in flight at rebuild' });
+    expect(rowState(localId)).toBe('unconfirmed');
+
+    await expect(
+      validateThenReconcileOnBoot({
+        syncAccounts: () => Promise.reject(new Error('CG-HUB-01 account bootstrap failed')),
+        reconcile: (isBoot) => engine.reconcileOnBoot(isBoot),
+        isBoot: false,
+      }),
+    ).rejects.toThrow(/CG-HUB-01/);
+
+    // Validation threw first, so reconcile never ran: no hub command, no churn.
+    expect(hubCommandClient.createOfapiCommand).not.toHaveBeenCalled();
+    expect(rowState(localId)).toBe('unconfirmed');
+    engine.dispose();
+  });
+
+  it('settings rebuild (isBoot=false): already-unconfirmed rows are still verified', async () => {
+    const { engine } = makeEngine();
+    const localId = insertLegacyDirectUnconfirmed({ text: 'lost' });
+    // The delivered message is already local — verification promotes without net.
+    seedMessage(data, { messageId: '930', textPlain: 'lost', isSentByMe: true });
+
+    await engine.reconcileOnBoot(false);
+
+    expect(rowState(localId)).toBe('sent'); // verify runs on the non-boot path too
     engine.dispose();
   });
 
