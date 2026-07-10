@@ -243,6 +243,8 @@ interface OperationState {
   startedAtMs: number;
   /** Gateway generation ref (meta frame requestId). */
   generationRef: string | null;
+  /** Remaining daily gateway requests from the meta quota frame (#120). */
+  quotaRemainingRequests: number | null;
   /** Set only on a fan-summary cache miss; null for every other feature. */
   summarySeed: SummaryCacheSeed | null;
 }
@@ -488,6 +490,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       result,
       ...(spend !== undefined ? { llmSpend: { ...spend } } : {}),
       ...(profiling !== undefined ? { profiling } : {}),
+      ...(op.quotaRemainingRequests !== null ? { quotaRemainingRequests: op.quotaRemainingRequests } : {}),
     });
   }
 
@@ -786,6 +789,11 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
           op.generationRef = requestId;
         }
       },
+      onQuotaRemaining: (remainingRequests: number) => {
+        if (!op.settled) {
+          op.quotaRemainingRequests = remainingRequests;
+        }
+      },
       onText: (text: string) => {
         if (op.settled) {
           return;
@@ -885,6 +893,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         chunkTimer: null,
         startedAtMs: Date.now(),
         generationRef: null,
+        quotaRemainingRequests: null,
         summarySeed: null,
       };
 

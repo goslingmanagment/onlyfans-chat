@@ -60,6 +60,8 @@ export interface AiJob extends ActiveAiOp {
   spend: LlmSpendSummaryPayload | null;
   profiling: ProfilingSnapshotPayload | null;
   debugPrompt: Record<string, unknown> | null;
+  /** Remaining daily AI gateway requests for the page (#120); null = unknown. */
+  quotaRemainingRequests: number | null;
   /** True only when completion happened while this job was the visible dock job. */
   completedWhileVisible: boolean;
   startedAt: number;
@@ -350,6 +352,7 @@ export function startAiFeature(
     spend: null,
     profiling: null,
     debugPrompt: null,
+    quotaRemainingRequests: null,
     completedWhileVisible: false,
     startedAt: now,
     updatedAt: now,
@@ -633,6 +636,7 @@ export function handleAiOperationEvent(event: OperationEvent): void {
             view: deriveDockView(current.feature, event.result),
             spend: event.llmSpend ?? null,
             profiling: event.profiling ?? null,
+            quotaRemainingRequests: event.quotaRemainingRequests ?? null,
             completedWhileVisible: wasVisible,
             updatedAt: Date.now(),
           };

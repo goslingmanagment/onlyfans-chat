@@ -90,6 +90,37 @@ describe('AI feature lane (Stage 31)', () => {
     expect(rows.n).toBe(0);
   });
 
+  it('carries the meta quota frame into the complete event (#120 pre-warn)', async () => {
+    build();
+    coordinator.start(startRequest({ operationId: 'op-q' }));
+    await flushAsync();
+
+    featureGateway.cb?.onQuotaRemaining?.(12);
+    featureGateway.cb?.onText('hey');
+    await vi.advanceTimersByTimeAsync(STREAM_CHUNK_FLUSH_MS);
+    featureGateway.cb?.onComplete('hey');
+    await flushAsync();
+
+    const completes = framesOfType(frames, 'operation:complete');
+    expect(completes).toHaveLength(1);
+    expect(completes[0]?.quotaRemainingRequests).toBe(12);
+  });
+
+  it('omits quotaRemainingRequests when no meta quota arrived', async () => {
+    build();
+    coordinator.start(startRequest({ operationId: 'op-nq' }));
+    await flushAsync();
+
+    featureGateway.cb?.onText('hey');
+    await vi.advanceTimersByTimeAsync(STREAM_CHUNK_FLUSH_MS);
+    featureGateway.cb?.onComplete('hey');
+    await flushAsync();
+
+    const completes = framesOfType(frames, 'operation:complete');
+    expect(completes).toHaveLength(1);
+    expect(completes[0]?.quotaRemainingRequests).toBeUndefined();
+  });
+
   it('keeps the client-side draft gate and default tone; custom personas ride their key', async () => {
     build(makeSettingsVM({
       accountMappings: { [ACCT]: 'custom-1' },
@@ -263,6 +294,23 @@ describe('feature gateway adapter (Stage 31)', () => {
       await flushAsync();
       const error = events.find((event) => event.kind === 'error');
       expect((error?.value as { code: string }).code, message).toBe(code);
+    }
+  });
+
+  it('maps kernel gate codes structurally, independent of the message wording (#120)', async () => {
+    const cases: Array<[string, string]> = [
+      ['gate_min_messages', 'CG-FLOW-03'],
+      ['gate_hi_greeting_limit', 'CG-FLOW-09'],
+      ['gate_ping_active', 'CG-FLOW-05'],
+      ['gate_draft_required', 'CG-APP-01'],
+    ];
+    for (const [kernelCode, code] of cases) {
+      // Deliberately unmatchable message: only the structured code can map it.
+      const { events } = run(() =>
+        Promise.reject(new HubError('bad-request', { message: 'reworded upstream', detail: { kernelCode } })));
+      await flushAsync();
+      const error = events.find((event) => event.kind === 'error');
+      expect((error?.value as { code: string }).code, kernelCode).toBe(code);
     }
   });
 

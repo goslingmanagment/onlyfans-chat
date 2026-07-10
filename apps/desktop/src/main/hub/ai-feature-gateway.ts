@@ -13,12 +13,28 @@ export interface FeatureAiGatewayOptions {
   resolvePageLabel: (accountId: string) => Promise<string | null>;
 }
 
+// Kernel gate codes (#120): the kernel stamps each product-gate 400 with a
+// machine code, so the CG mapping is structural — no message parsing.
+const KERNEL_GATE_CODES: Record<string, () => CgError> = {
+  gate_min_messages: () => new CgError('CG-FLOW-03'),
+  gate_hi_greeting_limit: () => new CgError('CG-FLOW-09'),
+  gate_ping_active: () => new CgError('CG-FLOW-05'),
+  gate_draft_required: () => new CgError('CG-APP-01', { message: 'Draft text is required for this feature' }),
+};
+
 /**
  * The kernel enforces the migrated product gates (draft required, deep
- * minimum, hi-greeting lock, active-ping block) — map its 400 messages back
- * onto the legacy CG codes so the dock shows the exact same errors.
+ * minimum, hi-greeting lock, active-ping block) — map them back onto the
+ * legacy CG codes so the dock shows the exact same errors. Structural code
+ * first; the message match stays as a fallback for pre-#120 kernels.
  */
-function mapKernelGateError(message: string): CgError | null {
+function mapKernelGateError(kernelCode: string | undefined, message: string): CgError | null {
+  if (kernelCode !== undefined) {
+    const structural = KERNEL_GATE_CODES[kernelCode];
+    if (structural !== undefined) {
+      return structural();
+    }
+  }
   if (message.includes('requires at least')) {
     return new CgError('CG-FLOW-03');
   }
@@ -35,10 +51,11 @@ function mapKernelGateError(message: string): CgError | null {
 }
 
 function toGatewayError(error: unknown): CgError {
-  // Kernel gate messages ride HubError (a CgError subclass) — map them
+  // Kernel gate denials ride HubError (a CgError subclass) — map them
   // BEFORE the pass-through or every gate would surface as CG-HUB-02.
   const message = error instanceof Error ? error.message : String(error);
-  const mapped = mapKernelGateError(message);
+  const kernelCode = error instanceof HubError ? error.detail?.kernelCode : undefined;
+  const mapped = mapKernelGateError(kernelCode, message);
   if (mapped !== null) {
     return mapped;
   }
@@ -98,7 +115,12 @@ export function createFeatureAiGateway(options: FeatureAiGatewayOptions): AiFeat
               onReasoningDelta: (text) => cb.onReasoningDelta?.(text),
               onStopReason: (stopReason) => cb.onStopReason?.(stopReason),
               onUsage: (usage) => cb.onUsage?.(usage),
-              onMeta: (meta) => cb.onGenerationRef?.(meta.requestId),
+              onMeta: (meta) => {
+                cb.onGenerationRef?.(meta.requestId);
+                if (meta.quotaRemainingRequests !== null) {
+                  cb.onQuotaRemaining?.(meta.quotaRemainingRequests);
+                }
+              },
               onText: (text) => cb.onText(text),
             },
           );

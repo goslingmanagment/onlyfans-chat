@@ -244,6 +244,8 @@ export interface CgErrorDetail {
   status?: number;
   provider?: string;
   providerMessage?: string;
+  /** The kernel error body's machine code (e.g. "quota_denied", "gate_min_messages"). */
+  kernelCode?: string;
   responseSnippet?: string;
   retryAfterMs?: number;
   retryAtMs?: number;

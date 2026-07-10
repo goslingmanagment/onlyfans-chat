@@ -28,6 +28,9 @@ export interface AiGatewayCallbacks extends StreamCallbacks {
   /** Kernel lanes surface the gateway generation ref (meta frame requestId) —
    * the acceptance correlation anchor. */
   onGenerationRef?: (requestId: string) => void;
+  /** The page's remaining daily gateway requests, from the meta quota frame
+   * (#120) — the dock pre-warns before the cap turns into CG-HUB-03. */
+  onQuotaRemaining?: (remainingRequests: number) => void;
 }
 
 /** Stage 31: the kernel feature-service lane — refs, not assembled blocks.

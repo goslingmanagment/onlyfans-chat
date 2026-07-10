@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   INSERT_SEQUENCE_JOINER,
+  QUOTA_WARN_AT,
   appendToDraft,
   insertPayload,
+  quotaWarning,
   resolveDockPartAction,
 } from '../../src/renderer/src/features/ai/dockLogic';
 import { splitDraftParts } from '../../src/renderer/src/features/conversation/sendLogic';
@@ -85,5 +87,19 @@ describe('resolveDockPartAction (insert→feedback wiring + SPEC §7.0 degrade)'
     expect(resolveDockPartAction(parts, 3, true)).toBeNull();
     expect(resolveDockPartAction([], 0, true)).toBeNull();
     expect(resolveDockPartAction([], 1, false)).toBeNull();
+  });
+});
+
+describe('quotaWarning (#120 pre-warn before the daily cap)', () => {
+  it('stays silent while the budget is comfortable or unknown', () => {
+    expect(quotaWarning(null)).toBeNull();
+    expect(quotaWarning(QUOTA_WARN_AT + 1)).toBeNull();
+    expect(quotaWarning(500)).toBeNull();
+  });
+
+  it('reports the remaining count at and below the threshold, down to zero', () => {
+    expect(quotaWarning(QUOTA_WARN_AT)).toBe(QUOTA_WARN_AT);
+    expect(quotaWarning(3)).toBe(3);
+    expect(quotaWarning(0)).toBe(0);
   });
 });

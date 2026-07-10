@@ -191,6 +191,7 @@ function kernelErrorDetail(error: KernelApiError): CgErrorDetail {
       : '';
   return {
     ...(error.status !== null ? { status: error.status } : {}),
+    ...(error.code !== null ? { kernelCode: error.code } : {}),
     ...(snippet ? { responseSnippet: snippet.slice(0, 400) } : {}),
   };
 }
@@ -265,8 +266,9 @@ export interface HubAiGatewayStreamCallbacks {
   onReasoningDelta?: (text: string) => void;
   onStopReason?: (stopReason: string | null) => void;
   /** Stage 31: the gateway meta frame — requestId is the generation ref
-   * (the acceptance correlation key kernel-side). */
-  onMeta?: (meta: { requestId: string; clientRequestId: string }) => void;
+   * (the acceptance correlation key kernel-side). quotaRemainingRequests is
+   * the page's remaining daily gateway budget (null = kernel didn't say). */
+  onMeta?: (meta: { requestId: string; clientRequestId: string; quotaRemainingRequests: number | null }) => void;
 }
 
 type AiGatewayUsageFrame = Extract<AiGatewayStreamFrame, { type: 'usage' }>;
@@ -592,7 +594,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
           callbacks.onProgress?.();
           switch (frame.type) {
             case 'meta':
-              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId });
+              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId, quotaRemainingRequests: frame.quota.remainingRequestsToday });
               return;
             case 'content_delta':
               state.rawText += frame.text;
@@ -681,7 +683,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
           callbacks.onProgress?.();
           switch (frame.type) {
             case 'meta':
-              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId });
+              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId, quotaRemainingRequests: frame.quota.remainingRequestsToday });
               return;
             case 'content_delta':
               state.rawText += frame.text;

@@ -40,6 +40,7 @@ import {
   extractPromptBlocks,
   formatOpCost,
   progressLabel,
+  quotaWarning,
   shouldAutoInsertCompactDraft,
   toggleTone,
   type DockView,
@@ -127,6 +128,11 @@ function FullDock(): React.JSX.Element | null {
         {running && <StreamingDrafts key={op.operationId} operationId={op.operationId} />}
         {status === 'completed' && view !== null && (
           <CompletedView view={view} canSend={canSend} cannotReason={cannotReason} />
+        )}
+        {status === 'completed' && quotaWarning(op.quotaRemainingRequests) !== null && (
+          <p className="rounded-[10px] border border-warn/40 bg-warn/10 px-3 py-1.5 text-[12px] text-warn">
+            {t('aidock.quotaLow', { n: String(quotaWarning(op.quotaRemainingRequests)) })}
+          </p>
         )}
         {status === 'error' && error !== null && <ErrorCard error={error} />}
       </div>

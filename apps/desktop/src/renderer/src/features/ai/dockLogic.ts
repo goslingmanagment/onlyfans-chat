@@ -242,6 +242,17 @@ export function errorHint(error: UserFacingErrorPayload): string | null {
   return typeof recovery === 'string' && recovery.length > 0 ? recovery : null;
 }
 
+// ─── Quota pre-warn (#120) ────────────────────────────────────────────────
+
+/** Warn when the page's remaining daily gateway budget drops to this — 5% of
+ * the 500/day cap, roughly the tail of a busy shift. */
+export const QUOTA_WARN_AT = 25;
+
+/** The remaining count worth warning about, or null when there is nothing to say. */
+export function quotaWarning(remainingRequests: number | null): number | null {
+  return remainingRequests !== null && remainingRequests <= QUOTA_WARN_AT ? remainingRequests : null;
+}
+
 // ─── Gating (composer pill row) ──────────────────────────────────────────
 
 export interface AiGateInput {

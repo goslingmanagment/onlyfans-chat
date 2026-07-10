@@ -157,6 +157,9 @@ export const operationCompleteSchema = z.object({
   result: featureResultSchema,
   llmSpend: llmSpendSummarySchema.optional(),
   profiling: profilingSnapshotSchema.optional(),
+  /** Remaining daily AI gateway requests for the page (#120) — the dock
+   * pre-warns when this runs low instead of surprising with CG-HUB-03. */
+  quotaRemainingRequests: z.number().int().nonnegative().optional(),
 });
 export type OperationComplete = z.infer<typeof operationCompleteSchema>;
 

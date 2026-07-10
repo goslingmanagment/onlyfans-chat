@@ -87,6 +87,10 @@ export const UI_MESSAGES = {
     en: 'Daily AI generation limit reached — resets at midnight UTC.',
     ru: 'Дневной лимит AI-генераций исчерпан — сбросится в полночь UTC.',
   },
+  'aidock.quotaLow': {
+    en: 'AI limit for this page: {n} generations left today — resets at midnight UTC.',
+    ru: 'Лимит AI на эту страницу: осталось {n} генераций на сегодня — сброс в полночь UTC.',
+  },
   'err.CG-GUARD-01': {
     en: 'Message Guard blocked this message.',
     ru: 'Message Guard заблокировал это сообщение.',
