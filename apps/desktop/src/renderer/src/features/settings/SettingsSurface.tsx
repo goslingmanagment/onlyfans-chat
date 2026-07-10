@@ -225,12 +225,19 @@ function SettingsBody({
 }): React.JSX.Element {
   const update = useUpdateSettings();
   const [savedFlash, setSavedFlash] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   function patch(p: SettingsPatch): void {
     update.mutate(p, {
       onSuccess: () => {
+        setSaveError(null);
         setSavedFlash(true);
         setTimeout(() => setSavedFlash(false), 1_200);
+      },
+      // I116-2 (W4.1): a rejected save (e.g. the 4a hub-credential probe
+      // 401s) used to be completely silent — no flash, no error.
+      onError: (error) => {
+        setSaveError(error instanceof Error ? error.message : String(error));
       },
     });
   }
@@ -248,6 +255,14 @@ function SettingsBody({
       >
         {t('common.savedFlash')} ✓
       </div>
+      {saveError !== null && (
+        <div
+          aria-live="assertive"
+          className="fixed right-6 bottom-12 z-40 max-w-md rounded-chip border border-bad/40 bg-bg1 px-3 py-1.5 text-[12px] text-bad"
+        >
+          {t('common.saveFailed', { message: saveError })}
+        </div>
+      )}
       <div id={sectionDomId('activity')} className="scroll-mt-4">
         <ActivitySettings />
       </div>

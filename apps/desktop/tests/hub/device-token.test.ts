@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   effectiveHubBearerAfterPatch,
   issueHubDeviceToken,
+  probeRetryKeyAfterAuthFailure,
   resolveHubCredential,
 } from '../../src/main/hub/device-token';
 
@@ -235,5 +236,61 @@ describe('effectiveHubBearerAfterPatch', () => {
         currentHubApiKey: 'agency_hub_core_old',
       }),
     ).toBe('agency_hub_core_old');
+  });
+});
+
+// I116-2 (W4.1): the paste-a-key recovery on a dead device token — the probe
+// fallback matrix. The retry key is returned ONLY for the exact silent-failure
+// shape: stored token was the probed bearer, it failed AUTH, and the patch
+// carries a different non-empty key.
+describe('probeRetryKeyAfterAuthFailure', () => {
+  const base = {
+    usedCredential: 'agency_hub_device_dead',
+    currentDeviceToken: 'agency_hub_device_dead',
+    patchHubApiKey: 'agency_hub_core_fresh',
+    hubSwitched: false,
+    authFailure: true,
+  };
+
+  it('returns the pasted key when the stored token shadowed it and failed auth', () => {
+    expect(probeRetryKeyAfterAuthFailure(base)).toBe('agency_hub_core_fresh');
+  });
+
+  it('trims the pasted key', () => {
+    expect(probeRetryKeyAfterAuthFailure({ ...base, patchHubApiKey: '  agency_hub_core_fresh  ' })).toBe(
+      'agency_hub_core_fresh',
+    );
+  });
+
+  it('does not retry on non-auth probe failures (network, 5xx)', () => {
+    expect(probeRetryKeyAfterAuthFailure({ ...base, authFailure: false })).toBeNull();
+  });
+
+  it('does not retry on a hub switch (the pasted key was already the probed bearer)', () => {
+    expect(probeRetryKeyAfterAuthFailure({ ...base, hubSwitched: true })).toBeNull();
+  });
+
+  it('does not retry when no device token exists (the pasted key itself was rejected)', () => {
+    expect(
+      probeRetryKeyAfterAuthFailure({
+        ...base,
+        currentDeviceToken: null,
+        usedCredential: 'agency_hub_core_fresh',
+      }),
+    ).toBeNull();
+  });
+
+  it('does not retry when the probe already used the pasted key', () => {
+    expect(
+      probeRetryKeyAfterAuthFailure({
+        ...base,
+        usedCredential: 'agency_hub_core_fresh',
+      }),
+    ).toBeNull();
+  });
+
+  it('does not retry when the patch carries no key or an empty key', () => {
+    expect(probeRetryKeyAfterAuthFailure({ ...base, patchHubApiKey: undefined })).toBeNull();
+    expect(probeRetryKeyAfterAuthFailure({ ...base, patchHubApiKey: '   ' })).toBeNull();
   });
 });

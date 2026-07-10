@@ -101,6 +101,41 @@ export async function resolveHubCredential(
  *   • without a switch the device token is preserved and still shadows any
  *     chatter-key write (resolveHubCredential prefers it unconditionally).
  */
+/**
+ * I116-2 (W4.1): the paste-a-key recovery on a dead device token. The 4a
+ * probe validates with the credential the patch WOULD resolve — the stored
+ * device token whenever one exists, because it shadows any pasted chatter key
+ * (`resolveHubCredential` prefers it unconditionally). When that probe fails
+ * AUTH and the patch carries a fresh key, the documented recovery used to
+ * fail SILENTLY: the stale token 401'd, the save rejected, nothing surfaced.
+ * Returns the pasted key to RE-PROBE with — on its success the stored token
+ * is provably dead and must be cleared — or null when the failure is not
+ * this exact shape (a real credential rejection stays a rejection).
+ */
+export function probeRetryKeyAfterAuthFailure(input: {
+  /** The bearer the failed probe actually used. */
+  usedCredential: string;
+  currentDeviceToken: string | null;
+  /** parsed patch value; `undefined` = key not in the patch. */
+  patchHubApiKey: string | undefined;
+  hubSwitched: boolean;
+  /** True when the probe failure was an auth rejection (CG-HUB-01). */
+  authFailure: boolean;
+}): string | null {
+  if (!input.authFailure || input.hubSwitched) {
+    return null;
+  }
+  const token = input.currentDeviceToken?.trim() ?? '';
+  if (token.length === 0 || input.usedCredential !== input.currentDeviceToken) {
+    return null; // the probe already used the pasted key — a real rejection
+  }
+  const pasted = input.patchHubApiKey?.trim() ?? '';
+  if (pasted.length === 0 || pasted === input.usedCredential) {
+    return null;
+  }
+  return pasted;
+}
+
 export function effectiveHubBearerAfterPatch(input: {
   /** parsed patch value; `undefined` = key not in the patch, '' = clear. */
   patchHubApiKey: string | undefined;

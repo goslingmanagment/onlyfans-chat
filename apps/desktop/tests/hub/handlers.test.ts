@@ -190,6 +190,19 @@ describe('hub IPC wiring', () => {
     expect(((await invoke('query:sync.status')) as SyncStatusVM).hub).toBe('off');
   });
 
+  it("reports hub 'auth-failed' while the boot-auth latch is set and sync is null (I116-2)", async () => {
+    // Boot activation failed CG-HUB-01 → no runtime, but the failure must be
+    // visible: the auth banner + sign-out UI key off this status.
+    register(data, { bootHubAuthFailed: () => true });
+    expect(((await invoke('query:sync.status')) as SyncStatusVM).hub).toBe('auth-failed');
+
+    // A live sync wins over the (stale) latch, and a cleared latch reports off.
+    register(data, { sync: makeSyncStub('live'), bootHubAuthFailed: () => true });
+    expect(((await invoke('query:sync.status')) as SyncStatusVM).hub).toBe('live');
+    register(data, { bootHubAuthFailed: () => false });
+    expect(((await invoke('query:sync.status')) as SyncStatusVM).hub).toBe('off');
+  });
+
   it('splits read-runtime rebuilds from hub stream override rechecks', async () => {
     const { onHubConfigChanged, onOfapiRuntimeConfigChanged } = register(data);
     await invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_x' });

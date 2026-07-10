@@ -67,6 +67,7 @@ import { hostname, tmpdir } from 'node:os';
 import {
   effectiveHubBearerAfterPatch,
   issueHubDeviceToken,
+  probeRetryKeyAfterAuthFailure,
   resolveHubCredential,
 } from './hub/device-token';
 import { attachEventForwarding } from './ipc/events';
@@ -126,6 +127,20 @@ let rebuildOfapiRuntimeInFlight: Promise<void> | null = null;
 let updateController: UpdateController | null = null;
 /** Set by initOfapi; lets cmd:settings.update trigger a hub-config recheck. */
 let recheckHubConfig: (() => Promise<void>) | null = null;
+/** I116-2 (W4.1): boot-time runtime activation failed AUTH (CG-HUB-01).
+ *  While set, query:sync.status reports hub:'auth-failed' even though sync is
+ *  null — the existing banner + sign-out UI engage instead of a false
+ *  "not configured". Cleared by any successful initOfapi. */
+let bootHubAuthFailed = false;
+
+/** OfApiError and HubError both carry code CG-HUB-01 for hub auth rejections. */
+function isHubAuthFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'CG-HUB-01'
+  );
+}
 /** UI prefs mirrored from settings by boot()'s bus watcher — read by window
  *  creation (zoom) and main-side notifications (locale). */
 let uiScale = 1;
@@ -348,6 +363,9 @@ async function initOfapi(
   rebuildOfapiRuntimeInFlight = rebuild;
   try {
     await rebuild;
+    // I116-2 (W4.1): a successful (re)build clears the boot-auth latch — the
+    // credential now works (or was deliberately cleared to a keyless state).
+    bootHubAuthFailed = false;
   } finally {
     if (rebuildOfapiRuntimeInFlight === rebuild) {
       rebuildOfapiRuntimeInFlight = null;
@@ -1016,12 +1034,18 @@ async function boot(): Promise<void> {
   const bootData = data;
   await activateRuntimeNonFatal(
     () => initOfapi(keychain, bootData, settingsStore, true),
-    (error) =>
+    (error) => {
+      // I116-2 (W4.1): a boot-auth failure used to be invisible — sync stayed
+      // null, query:sync.status said hub:'off', and Activity claimed "not
+      // configured" (false). Latch the auth class so the status reports
+      // 'auth-failed' and the existing banner + sign-out UI engage.
+      bootHubAuthFailed = isHubAuthFailure(error);
       logger?.error(
         'ofapi',
         'boot read-runtime activation failed; continuing with no runtime',
-        errorToFields(error),
-      ),
+        { ...errorToFields(error), bootHubAuthFailed },
+      );
+    },
   );
 
   const rebuildOfapiRuntimeFromSettings = async (): Promise<void> => {
@@ -1073,20 +1097,42 @@ async function boot(): Promise<void> {
     if (hubBaseUrl === null || credential === null || credential.length === 0) {
       return;
     }
-    const probeClient = createOfApiTransportClient(
-      createOfApiClient({
-        apiKey: credential,
-        baseUrl: buildHubOfApiReadBaseUrl(hubBaseUrl),
-        authErrorCode: 'CG-HUB-01',
-        requestTimeoutMs: HUB_OFAPI_READ_TIMEOUT_MS,
-        creditMeter: createCreditMeter(),
-        clientVersion: app.getVersion(),
-      }),
-    );
+    const buildProbeClient = (bearer: string): ReturnType<typeof createOfApiTransportClient> =>
+      createOfApiTransportClient(
+        createOfApiClient({
+          apiKey: bearer,
+          baseUrl: buildHubOfApiReadBaseUrl(hubBaseUrl),
+          authErrorCode: 'CG-HUB-01',
+          requestTimeoutMs: HUB_OFAPI_READ_TIMEOUT_MS,
+          creditMeter: createCreditMeter(),
+          clientVersion: app.getVersion(),
+        }),
+      );
     // The account list GET is the bootstrap probe. On success it also refreshes
     // the local accounts table (idempotent — the real rebuild re-syncs); on a
     // 401/failure it throws before any write, and the handler skips persisting.
-    await syncAccounts(probeClient, dataLayer, createToMediaUrl(dataLayer.mediaUrls));
+    try {
+      await syncAccounts(buildProbeClient(credential), dataLayer, createToMediaUrl(dataLayer.mediaUrls));
+    } catch (error) {
+      // I116-2 (W4.1): when the STORED device token shadowed the pasted key
+      // and got rejected, re-probe with the pasted key itself — otherwise the
+      // documented paste-a-key recovery fails silently forever.
+      const retryKey = probeRetryKeyAfterAuthFailure({
+        usedCredential: credential,
+        currentDeviceToken,
+        patchHubApiKey: patch.hubApiKey,
+        hubSwitched: patch.hubBaseUrl !== undefined && patch.hubBaseUrl !== current.hubBaseUrl,
+        authFailure: isHubAuthFailure(error),
+      });
+      if (retryKey === null) {
+        throw error;
+      }
+      await syncAccounts(buildProbeClient(retryKey), dataLayer, createToMediaUrl(dataLayer.mediaUrls));
+      // The pasted key authenticates, so the stored token is provably dead —
+      // clear it, or resolveHubCredential keeps shadowing the working key.
+      await keychain.deleteSecret('hubDeviceToken');
+      logger?.warn('hub', 'stored device token rejected; cleared in favor of the validated pasted key', {});
+    }
   };
 
   let purging = false;
@@ -1142,6 +1188,8 @@ async function boot(): Promise<void> {
     get spendersRefresh() {
       return spendersRefresh;
     },
+    // I116-2 (W4.1): boot-auth latch — read live, the flag flips on rebuilds.
+    bootHubAuthFailed: () => bootHubAuthFailed,
     purge: async () => {
       // Re-entry guard: a double-fired cmd:data.purge would otherwise call
       // app.relaunch() twice before exit — Electron then spawns TWO instances
@@ -1212,9 +1260,22 @@ async function boot(): Promise<void> {
           // invisible to the fleet-adoption release gate.
           clientVersion: app.getVersion(),
         });
-        // The fingerprint includes the resolved credential, so this recheck
-        // reconfigures both the REST module and the SSE connection.
-        await recheckHubConfig?.();
+        // I116-1 (W4.3): symmetric with sign-out — rebuild the WHOLE OFAPI
+        // runtime, not the null-safe recheck. On a keyless boot the recheck
+        // was null (runtime dead until restart); with a live legacy-key
+        // runtime the recheck moved SSE/REST but the captured read client
+        // kept the old bearer. The rebuild covers both halves; the in-flight
+        // coalescing makes it safe against the live outbox. Never fail the
+        // sign-in result on a rebuild error — the token IS stored.
+        try {
+          await rebuildOfapiRuntimeFromSettings();
+        } catch (error) {
+          logger?.error(
+            'hub',
+            'post-sign-in runtime rebuild failed; device token stored, restart or re-save settings to retry',
+            errorToFields(error),
+          );
+        }
         emitSyncStatusFrame();
         return issued;
       },

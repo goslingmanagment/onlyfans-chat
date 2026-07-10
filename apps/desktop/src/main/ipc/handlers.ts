@@ -355,6 +355,10 @@ export interface IpcDeps {
   settingsStore: SettingsStore;
   /** hubStatus/hubActivity are HubAwareSync extensions; plain providers report hub 'off'. */
   sync: ActivitySync | null;
+  /** I116-2 (W4.1): true while boot-time runtime activation failed AUTH —
+   *  sync is null then, and reporting hub:'off' hid the failure behind a
+   *  false "not configured". Cleared by any successful runtime rebuild. */
+  bootHubAuthFailed?: () => boolean;
   creditMeter: CreditMeter | null;
   coordinator: AiCoordinatorLike | null;
   /** Stage 31 acceptance lifecycle: copied/inserted (feedback) and
@@ -555,7 +559,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('query:sync.status', (): SyncStatusVM => {
     const snapshot = deps.creditMeter?.snapshot() ?? null;
     const syncStatus = deps.sync?.status() ?? { freshness: {}, state: 'offline' as const };
-    const hubStatus = deps.sync?.hubStatus?.() ?? 'off';
+    // I116-2 (W4.1): a boot-auth failure leaves sync null — surface it as
+    // 'auth-failed' so the banner and sign-out UI engage instead of the
+    // false "not configured".
+    const hubStatus =
+      deps.sync?.hubStatus?.() ??
+      (deps.bootHubAuthFailed?.() === true ? ('auth-failed' as const) : ('off' as const));
     const hubActivity = deps.sync?.hubActivity?.() ?? null;
     const today = utcDayOf(Date.now());
     return {
