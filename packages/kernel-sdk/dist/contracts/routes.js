@@ -1606,6 +1606,22 @@ export const aiFeatureStreamBodySchema = z.object({
     messageCount: z.number().int().min(5).max(3000).optional(),
     draftText: z.string().min(1).max(20_000).optional(),
     isRegeneration: z.boolean().optional(),
+    // Stage 32: client-loaded context for platforms whose kernel archive is
+    // pull-cadenced (Fansly: dm_conversations 30 min / dm_messages 24 h — no
+    // webhook lane), where the client reads the conversation live at
+    // generation time. Prompt ASSEMBLY stays kernel-side (templates, personas,
+    // policies, platform wording); only the context VALUES ride in. The values
+    // land verbatim in the assembled prompt and are captured under the
+    // Stage 29 restricted class exactly like archive-loaded context.
+    clientContext: z.object({
+        transcript: z.string().min(1).max(300_000),
+        messageCount: z.number().int().min(0).max(5000),
+        fanDisplayName: z.string().max(200),
+        fanSpendingData: z.string().max(20_000).default(""),
+        fanSubscriptionData: z.string().max(20_000).default(""),
+        fanBio: z.string().max(5_000).optional(),
+        pingSegment: z.enum(["segment-a", "segment-b", "active"]).optional(),
+    }).strict().optional(),
 }).strict();
 export const aiRestrictedGenerationSchema = z.object({
     generationRef: z.string(),
@@ -2333,8 +2349,9 @@ export const notificationsIncidentItemSchema = z.object({
     id: intId,
     incidentKey: z.string(),
     kind: notificationIncidentKindEnum,
-    pageLabel: z.string(),
-    platform: platformEnum,
+    /** Null for global incidents (db_disk_usage, observations_partitions, …). */
+    pageLabel: z.string().nullable(),
+    platform: platformEnum.nullable(),
     stream: z.string().nullable(),
     status: notificationIncidentStatusEnum,
     openedAt: isoTimestamp,
@@ -3953,6 +3970,38 @@ export const routeSchemas = {
         querystring: fanListQuerySchema,
         response: {
             200: fanListResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    pageTopSpenders: {
+        auth: { kind: "any", scope: "page" },
+        tags: ["fans"],
+        summary: "Top spenders for one page from the fan-earnings projection (Stage 32 board)",
+        params: pageParamsSchema,
+        querystring: z.object({
+            // 'lifetime' or a month window ('2026-06') — the projection's window values.
+            window: z.string().regex(/^(lifetime|\d{4}-\d{2})$/).default("lifetime"),
+            limit: z.coerce.number().int().min(1).max(500).default(150),
+        }),
+        response: {
+            200: z.object({
+                window: z.string(),
+                /** Freshest observed_at in the window (null = projection empty for this page). */
+                builtAt: z.string().nullable(),
+                /** Spenders with gross > 0 in this window (entries may be a bounded subset). */
+                fanCount: z.number().int().nonnegative(),
+                entries: z.array(z.object({
+                    platformUserId: z.string(),
+                    username: z.string().nullable(),
+                    displayName: z.string().nullable(),
+                    grossMills: z.number().int().nonnegative(),
+                    netMills: z.number().int().nullable(),
+                    currency: z.string(),
+                    observedAt: z.string(),
+                })),
+            }),
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,

@@ -115,15 +115,24 @@ function defaultTimeoutSignal(ms: number): HubAbortSignalLike | undefined {
  * Why a hub call failed. 'bad-request' covers both server HTTP 400 and
  * client-side contract validation (a request core would deterministically
  * 400) — the usage reporter quarantines on it and must never blind-retry
- * (SPEC §8.6). Everything except 'auth' maps to CG-HUB-02.
+ * (SPEC §8.6). 'quota' is the kernel AI gateway's daily-cap denial (429 with
+ * code "quota_denied") — it resets at midnight UTC, so retrying sooner is
+ * pointless. 'auth' maps to CG-HUB-01, 'quota' to CG-HUB-03, everything else
+ * to CG-HUB-02.
  */
-export type HubFailureReason = 'auth' | 'bad-request' | 'http' | 'timeout' | 'network' | 'invalid-response';
+export type HubFailureReason = 'auth' | 'bad-request' | 'quota' | 'http' | 'timeout' | 'network' | 'invalid-response';
+
+function hubCodeFor(reason: HubFailureReason): 'CG-HUB-01' | 'CG-HUB-02' | 'CG-HUB-03' {
+  if (reason === 'auth') return 'CG-HUB-01';
+  if (reason === 'quota') return 'CG-HUB-03';
+  return 'CG-HUB-02';
+}
 
 export class HubError extends CgError {
   readonly reason: HubFailureReason;
 
   constructor(reason: HubFailureReason, options: { message?: string; detail?: CgErrorDetail } = {}) {
-    super(reason === 'auth' ? 'CG-HUB-01' : 'CG-HUB-02', options);
+    super(hubCodeFor(reason), options);
     this.name = 'HubError';
     this.reason = reason;
   }
@@ -152,13 +161,19 @@ function toHubError(error: unknown): HubError {
           message: error.message,
           detail: { providerMessage: error.message },
         });
+      case 'rate_limit':
+        // The AI gateway's daily-cap denial ships code "quota_denied" (its
+        // gateway_outcome ledger value); generic 429s stay plain HTTP.
+        return error.code === 'quota_denied'
+          ? new HubError('quota', { message: error.message, detail })
+          : new HubError('http', { detail });
       case 'contract':
         return new HubError('invalid-response', {
           message: error.message,
           detail: { providerMessage: error.message.slice(0, 400), ...(error.status !== null ? { status: error.status } : {}) },
         });
       default:
-        // not_found / conflict / rate_limit / server — plain HTTP failures.
+        // not_found / conflict / server — plain HTTP failures.
         return new HubError('http', { detail });
     }
   }

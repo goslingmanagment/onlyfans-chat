@@ -495,6 +495,10 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/pages/:pageLabel/sync/blocks";
     };
+    readonly pageTopSpenders: {
+        readonly method: "GET";
+        readonly path: "/api/v1/pages/:pageLabel/top-spenders";
+    };
     readonly pageTransactions: {
         readonly method: "GET";
         readonly path: "/api/v1/pages/:pageLabel/transactions";

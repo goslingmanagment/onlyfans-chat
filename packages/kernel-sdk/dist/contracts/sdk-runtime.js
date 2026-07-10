@@ -105,7 +105,7 @@ function networkErrorCode(error) {
     return "network_error";
 }
 async function throwForErrorResponse(def, response, options, operation) {
-    let body = null;
+    let body;
     const text = await response.text();
     try {
         body = text ? JSON.parse(text) : null;
@@ -121,6 +121,13 @@ async function throwForErrorResponse(def, response, options, operation) {
         options.onAuthError?.(error, operation);
     }
     throw error;
+}
+/** Raw/stream paths carry a null operation (the options doc's contract):
+ * fire the logout hook for 401/403s that never pass throwForErrorResponse. */
+function notifyAuthError(options, error) {
+    if (error.category === "auth") {
+        options.onAuthError?.(error, null);
+    }
 }
 export function createKernelClient(operations, options) {
     const excluded = new Set(SDK_EXCLUDED_OPERATIONS);
@@ -144,7 +151,12 @@ export function createKernelClient(operations, options) {
     }
     const client = {
         async raw(key, input) {
-            return executeKernelRequest({ def: operations[key], options, ...input });
+            const def = operations[key];
+            const response = await executeKernelRequest({ def, options, ...input });
+            if (response.status === 401 || response.status === 403) {
+                notifyAuthError(options, new KernelApiError(`${def.method} ${def.path} failed with ${response.status}`, "auth", response.status, null, null));
+            }
+            return response;
         },
     };
     for (const key of Object.keys(operations)) {
@@ -252,7 +264,9 @@ export function subscribeSyncEvents(options, input) {
             return;
         }
         if (!response.ok || !response.body) {
-            throw new KernelApiError(`events/stream failed with ${response.status}`, response.status === 401 || response.status === 403 ? "auth" : "server", response.status, null, await response.text().catch(() => null));
+            const error = new KernelApiError(`events/stream failed with ${response.status}`, response.status === 401 || response.status === 403 ? "auth" : "server", response.status, null, await response.text().catch(() => null));
+            notifyAuthError(options, error);
+            throw error;
         }
         for await (const frame of parseSseStream(response.body)) {
             if (frame.event !== "sync" || frame.data === "") {
@@ -290,7 +304,7 @@ export function streamAiFeature(options, input) {
             signal: abort.signal,
         });
         if (!response.ok || !response.body) {
-            let body = null;
+            let body;
             const text = await response.text().catch(() => "");
             try {
                 body = text ? JSON.parse(text) : null;
@@ -299,7 +313,11 @@ export function streamAiFeature(options, input) {
                 body = text;
             }
             const envelope = (body ?? {});
-            throw new KernelApiError(typeof envelope.message === "string" ? envelope.message : `ai/features/${input.feature} failed with ${response.status}`, response.status === 401 || response.status === 403 ? "auth" : response.status >= 500 ? "server" : "validation", response.status, typeof envelope.error === "string" ? envelope.error : null, body);
+            // categoryForStatus, not an auth/server ternary: a 429 quota denial must
+            // reach clients as rate_limit (code "quota_denied"), not "validation".
+            const error = new KernelApiError(typeof envelope.message === "string" ? envelope.message : `ai/features/${input.feature} failed with ${response.status}`, categoryForStatus(response.status), response.status, typeof envelope.error === "string" ? envelope.error : null, body);
+            notifyAuthError(options, error);
+            throw error;
         }
         for await (const frame of parseSseStream(response.body)) {
             if (frame.event !== "ai" || frame.data === "") {
@@ -334,7 +352,7 @@ export function streamAiGateway(options, input) {
             signal: abort.signal,
         });
         if (!response.ok || !response.body) {
-            let body = null;
+            let body;
             const text = await response.text().catch(() => "");
             try {
                 body = text ? JSON.parse(text) : null;
@@ -343,7 +361,9 @@ export function streamAiGateway(options, input) {
                 body = text;
             }
             const envelope = (body ?? {});
-            throw new KernelApiError(typeof envelope.message === "string" ? envelope.message : `ai/gateway/stream failed with ${response.status}`, response.status === 401 || response.status === 403 ? "auth" : response.status >= 500 ? "server" : "validation", response.status, typeof envelope.error === "string" ? envelope.error : null, body);
+            const error = new KernelApiError(typeof envelope.message === "string" ? envelope.message : `ai/gateway/stream failed with ${response.status}`, categoryForStatus(response.status), response.status, typeof envelope.error === "string" ? envelope.error : null, body);
+            notifyAuthError(options, error);
+            throw error;
         }
         for await (const frame of parseSseStream(response.body)) {
             if (frame.event !== "ai" || frame.data === "") {
@@ -406,7 +426,9 @@ export function subscribeDomainEvents(options, input) {
             return;
         }
         if (!response.ok || !response.body) {
-            throw new KernelApiError(`events/v2/stream failed with ${response.status}`, response.status === 401 || response.status === 403 ? "auth" : "server", response.status, null, await response.text().catch(() => null));
+            const error = new KernelApiError(`events/v2/stream failed with ${response.status}`, response.status === 401 || response.status === 403 ? "auth" : "server", response.status, null, await response.text().catch(() => null));
+            notifyAuthError(options, error);
+            throw error;
         }
         for await (const frame of parseSseStream(response.body)) {
             if (frame.event !== "domain" || frame.data === "" || frame.id === null) {

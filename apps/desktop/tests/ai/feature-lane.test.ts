@@ -325,4 +325,65 @@ describe('feature gateway adapter (Stage 31)', () => {
     const error = events.find((event) => event.kind === 'error');
     expect((error?.value as { code: string }).code).toBe('CG-HUB-02');
   });
+
+  it('maps hub timeouts and connection drops to the CG-NET codes, not CG-HUB-02', async () => {
+    const cases: Array<['timeout' | 'network', string]> = [
+      ['timeout', 'CG-NET-02'],
+      ['network', 'CG-NET-01'],
+    ];
+    for (const [reason, code] of cases) {
+      const { events } = run(() => Promise.reject(new HubError(reason, { message: `hub ${reason}` })));
+      await flushAsync();
+      const error = events.find((event) => event.kind === 'error');
+      expect((error?.value as { code: string }).code, reason).toBe(code);
+    }
+  });
+
+  // Wire-level like the 400-gate test above: a real 429 quota_denied JSON
+  // response must survive the vendored SDK (rate_limit category) and
+  // toHubError ('quota' reason) all the way to CG-HUB-03 in the dock.
+  it('a real 429 quota denial surfaces as CG-HUB-03 (not CG-HUB-02)', async () => {
+    const fetchImpl = (): Promise<HubResponseLike> =>
+      Promise.resolve({
+        status: 429,
+        headers: { get: () => null },
+        body: null,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              error: 'quota_denied',
+              message: 'ChatMuse AI gateway daily quota exceeded',
+              statusCode: 429,
+            }),
+          ),
+      });
+    const client = createHubClient({ baseUrl: 'https://hub.example.com', apiKey: 'k', fetchImpl });
+    const adapter = createFeatureAiGateway({
+      client,
+      resolvePageLabel: () => Promise.resolve('lora-of'),
+    });
+    const events: Array<{ kind: string; value?: unknown }> = [];
+    adapter.stream(
+      {
+        feature: 'fast-reply',
+        clientRequestId: '22222222-2222-4222-8222-222222222222',
+        accountId: ACCT,
+        chatId: CHAT,
+        tone: 'casual',
+        mode: undefined,
+        draftText: undefined,
+        personaKey: 'builtin:lora',
+        isRegeneration: false,
+      },
+      {
+        onText: (text) => events.push({ kind: 'text', value: text }),
+        onError: (error) => events.push({ kind: 'error', value: error }),
+        onComplete: (rawText) => events.push({ kind: 'complete', value: rawText }),
+      },
+    );
+    await flushAsync();
+
+    const error = events.find((event) => event.kind === 'error');
+    expect((error?.value as { code: string }).code).toBe('CG-HUB-03');
+  });
 });

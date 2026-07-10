@@ -437,6 +437,31 @@ describe('createHubClient', () => {
       expect(error.detail?.status).toBe(503);
     });
 
+    it('maps a 429 quota_denied to CG-HUB-03 quota, keeping the kernel message', async () => {
+      const { fetchImpl } = stubFetch(
+        jsonResponse(429, { error: 'quota_denied', message: 'ChatMuse AI gateway daily quota exceeded', statusCode: 429 }),
+      );
+      const { client } = makeClient(fetchImpl);
+
+      const error = await captureHubError(client.listPages());
+      expect(error.code).toBe('CG-HUB-03');
+      expect(error.reason).toBe('quota');
+      expect(error.message).toBe('ChatMuse AI gateway daily quota exceeded');
+      expect(error.detail?.status).toBe(429);
+    });
+
+    it('maps a generic 429 (no quota code) to a plain http failure', async () => {
+      const { fetchImpl } = stubFetch(
+        jsonResponse(429, { error: 'rate_limit_exceeded', message: 'Too many requests', statusCode: 429 }),
+      );
+      const { client } = makeClient(fetchImpl);
+
+      const error = await captureHubError(client.listPages());
+      expect(error.code).toBe('CG-HUB-02');
+      expect(error.reason).toBe('http');
+      expect(error.detail?.status).toBe(429);
+    });
+
     it('distinguishes a timeout abort from a network failure', async () => {
       class TimeoutLikeError extends Error {
         override name = 'TimeoutError';

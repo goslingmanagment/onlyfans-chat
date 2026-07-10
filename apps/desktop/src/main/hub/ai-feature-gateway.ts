@@ -42,6 +42,17 @@ function toGatewayError(error: unknown): CgError {
   if (mapped !== null) {
     return mapped;
   }
+  // Timeouts and connection drops get the actionable CG-NET wording instead
+  // of the generic hub-failed card; quota (CG-HUB-03) and auth (CG-HUB-01)
+  // already carry their own codes via HubError.
+  if (error instanceof HubError) {
+    if (error.reason === 'timeout') {
+      return new CgError('CG-NET-02', { message: error.message, ...(error.detail ? { detail: error.detail } : {}) });
+    }
+    if (error.reason === 'network') {
+      return new CgError('CG-NET-01', { message: error.message, ...(error.detail ? { detail: error.detail } : {}) });
+    }
+  }
   if (error instanceof CgError) {
     return error;
   }

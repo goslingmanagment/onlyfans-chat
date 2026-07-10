@@ -124,6 +124,7 @@ export const kernelOperations = {
     pageSubscribers: { method: "GET", path: "/api/v1/pages/:pageLabel/subscribers" },
     pageSubscribersDaily: { method: "GET", path: "/api/v1/pages/:pageLabel/subscribers/daily" },
     pageSyncBlocks: { method: "GET", path: "/api/v1/pages/:pageLabel/sync/blocks" },
+    pageTopSpenders: { method: "GET", path: "/api/v1/pages/:pageLabel/top-spenders" },
     pageTransactions: { method: "GET", path: "/api/v1/pages/:pageLabel/transactions" },
     pages: { method: "GET", path: "/api/v1/pages" },
     setFanFlags: { method: "PATCH", path: "/api/v1/fans/:platform/:platformUserId/flags" },

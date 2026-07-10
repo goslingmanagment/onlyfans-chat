@@ -83,6 +83,10 @@ export const UI_MESSAGES = {
     en: 'The hub is unreachable.',
     ru: 'Хаб недоступен.',
   },
+  'err.CG-HUB-03': {
+    en: 'Daily AI generation limit reached — resets at midnight UTC.',
+    ru: 'Дневной лимит AI-генераций исчерпан — сбросится в полночь UTC.',
+  },
   'err.CG-GUARD-01': {
     en: 'Message Guard blocked this message.',
     ru: 'Message Guard заблокировал это сообщение.',

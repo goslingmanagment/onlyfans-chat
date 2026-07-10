@@ -3852,6 +3852,19 @@ export declare const aiFeatureStreamBodySchema: z.ZodObject<{
     messageCount: z.ZodOptional<z.ZodNumber>;
     draftText: z.ZodOptional<z.ZodString>;
     isRegeneration: z.ZodOptional<z.ZodBoolean>;
+    clientContext: z.ZodOptional<z.ZodObject<{
+        transcript: z.ZodString;
+        messageCount: z.ZodNumber;
+        fanDisplayName: z.ZodString;
+        fanSpendingData: z.ZodDefault<z.ZodString>;
+        fanSubscriptionData: z.ZodDefault<z.ZodString>;
+        fanBio: z.ZodOptional<z.ZodString>;
+        pingSegment: z.ZodOptional<z.ZodEnum<{
+            active: "active";
+            "segment-a": "segment-a";
+            "segment-b": "segment-b";
+        }>>;
+    }, z.core.$strict>>;
 }, z.core.$strict>;
 export declare const aiRestrictedGenerationSchema: z.ZodObject<{
     generationRef: z.ZodString;
@@ -7687,11 +7700,11 @@ export declare const notificationsIncidentItemSchema: z.ZodObject<{
         read_gateway_capture: "read_gateway_capture";
         golden_signal_lag: "golden_signal_lag";
     }>;
-    pageLabel: z.ZodString;
-    platform: z.ZodEnum<{
+    pageLabel: z.ZodNullable<z.ZodString>;
+    platform: z.ZodNullable<z.ZodEnum<{
         fansly: "fansly";
         onlyfans: "onlyfans";
-    }>;
+    }>>;
     stream: z.ZodNullable<z.ZodString>;
     status: z.ZodEnum<{
         open: "open";
@@ -7745,11 +7758,11 @@ export declare const notificationsIncidentsResponseSchema: z.ZodObject<{
             read_gateway_capture: "read_gateway_capture";
             golden_signal_lag: "golden_signal_lag";
         }>;
-        pageLabel: z.ZodString;
-        platform: z.ZodEnum<{
+        pageLabel: z.ZodNullable<z.ZodString>;
+        platform: z.ZodNullable<z.ZodEnum<{
             fansly: "fansly";
             onlyfans: "onlyfans";
-        }>;
+        }>>;
         stream: z.ZodNullable<z.ZodString>;
         status: z.ZodEnum<{
             open: "open";
@@ -11836,6 +11849,52 @@ export declare const routeSchemas: {
                 limit: z.ZodNumber;
                 offset: z.ZodNumber;
                 total: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly pageTopSpenders: {
+        readonly auth: {
+            readonly kind: "any";
+            readonly scope: "page";
+        };
+        readonly tags: readonly ["fans"];
+        readonly summary: "Top spenders for one page from the fan-earnings projection (Stage 32 board)";
+        readonly params: z.ZodObject<{
+            pageLabel: z.ZodString;
+        }, z.core.$strip>;
+        readonly querystring: z.ZodObject<{
+            window: z.ZodDefault<z.ZodString>;
+            limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                window: z.ZodString;
+                builtAt: z.ZodNullable<z.ZodString>;
+                fanCount: z.ZodNumber;
+                entries: z.ZodArray<z.ZodObject<{
+                    platformUserId: z.ZodString;
+                    username: z.ZodNullable<z.ZodString>;
+                    displayName: z.ZodNullable<z.ZodString>;
+                    grossMills: z.ZodNumber;
+                    netMills: z.ZodNullable<z.ZodNumber>;
+                    currency: z.ZodString;
+                    observedAt: z.ZodString;
+                }, z.core.$strip>>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
@@ -17170,6 +17229,19 @@ export declare const routeSchemas: {
             messageCount: z.ZodOptional<z.ZodNumber>;
             draftText: z.ZodOptional<z.ZodString>;
             isRegeneration: z.ZodOptional<z.ZodBoolean>;
+            clientContext: z.ZodOptional<z.ZodObject<{
+                transcript: z.ZodString;
+                messageCount: z.ZodNumber;
+                fanDisplayName: z.ZodString;
+                fanSpendingData: z.ZodDefault<z.ZodString>;
+                fanSubscriptionData: z.ZodDefault<z.ZodString>;
+                fanBio: z.ZodOptional<z.ZodString>;
+                pingSegment: z.ZodOptional<z.ZodEnum<{
+                    active: "active";
+                    "segment-a": "segment-a";
+                    "segment-b": "segment-b";
+                }>>;
+            }, z.core.$strict>>;
         }, z.core.$strict>;
         readonly response: {
             readonly 200: z.ZodUnknown;
@@ -19508,11 +19580,11 @@ export declare const routeSchemas: {
                         read_gateway_capture: "read_gateway_capture";
                         golden_signal_lag: "golden_signal_lag";
                     }>;
-                    pageLabel: z.ZodString;
-                    platform: z.ZodEnum<{
+                    pageLabel: z.ZodNullable<z.ZodString>;
+                    platform: z.ZodNullable<z.ZodEnum<{
                         fansly: "fansly";
                         onlyfans: "onlyfans";
-                    }>;
+                    }>>;
                     stream: z.ZodNullable<z.ZodString>;
                     status: z.ZodEnum<{
                         open: "open";

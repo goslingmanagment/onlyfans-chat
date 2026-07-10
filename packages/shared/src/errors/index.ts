@@ -39,6 +39,7 @@ export const CG_ERROR_CODES = [
   'CG-OF-08',
   'CG-HUB-01',
   'CG-HUB-02',
+  'CG-HUB-03',
   'CG-GUARD-01',
   'CG-GUARD-02',
 ] as const;
@@ -192,9 +193,17 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
     recovery: 'Sign in again in Settings to issue a fresh device token, or check the chatter key, then test the connection.',
     settingsLink: true,
   },
+  // Generic hub failure shown in every lane (generation, sync, commands) —
+  // keep the wording honest for all of them: no promises about retries.
   'CG-HUB-02': {
     message: 'Agency Hub request failed.',
-    recovery: 'Local results are kept and sync retries automatically. Report this if it keeps failing.',
+    recovery: 'Try again in a moment. If it keeps failing, check the Agency Hub connection in Settings and report the error code.',
+  },
+  // Kernel AI gateway daily cap (429 quota_denied). The quota is per page per
+  // UTC day, so "try again" is wrong advice until midnight UTC.
+  'CG-HUB-03': {
+    message: 'Daily AI generation limit reached.',
+    recovery: 'This page used up its Agency Hub AI quota for today. It resets at midnight UTC. Ask a manager to raise the cap if this blocks work.',
   },
   'CG-GUARD-01': {
     message: 'Message Guard blocked this message.',
