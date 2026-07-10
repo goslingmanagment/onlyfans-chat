@@ -47,6 +47,8 @@ export const userFacingErrorSchema = z.looseObject({
   code: z.string().min(1),
   message: z.string(),
   description: z.string().optional(),
+  /** A6/A17 (W4.4): the thrown error's own text, under the registry headline. */
+  detailText: z.string().optional(),
   settingsLink: z.boolean().optional(),
   retryAtMs: z.number().optional(),
   retryAfterMs: z.number().optional(),

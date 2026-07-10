@@ -151,9 +151,12 @@ function toHubError(error: unknown): HubError {
   }
   if (error instanceof KernelApiError) {
     const detail = kernelErrorDetail(error);
+    // A6/A17 (W4.4): every arm keeps `message` — dropping it flattened a
+    // deterministic kernel explanation ("Unknown persona: …") into the
+    // generic registry text with no way back.
     switch (error.category) {
       case 'auth':
-        return new HubError('auth', { detail });
+        return new HubError('auth', { message: error.message, detail });
       case 'validation':
         return new HubError('bad-request', { message: error.message, detail });
       case 'network':
@@ -166,7 +169,7 @@ function toHubError(error: unknown): HubError {
         // gateway_outcome ledger value); generic 429s stay plain HTTP.
         return error.code === 'quota_denied'
           ? new HubError('quota', { message: error.message, detail })
-          : new HubError('http', { detail });
+          : new HubError('http', { message: error.message, detail });
       case 'contract':
         return new HubError('invalid-response', {
           message: error.message,
@@ -174,7 +177,7 @@ function toHubError(error: unknown): HubError {
         });
       default:
         // not_found / conflict / server — plain HTTP failures.
-        return new HubError('http', { detail });
+        return new HubError('http', { message: error.message, detail });
     }
   }
   return new HubError('network', {
@@ -607,10 +610,13 @@ export function createHubClient(options: HubClientOptions): HubClient {
               callbacks.onUsage?.(mapGatewayUsage(frame.usage));
               return;
             case 'error':
+              // A6/A17 (W4.4): the frame's machine code belongs in kernelCode
+              // (structural mapping), not smuggled through providerMessage.
               throw new HubError('http', {
                 message: frame.message,
                 detail: {
-                  providerMessage: frame.code,
+                  kernelCode: frame.code,
+                  providerMessage: frame.message,
                   ...(frame.retryAfterMs !== null ? { retryAfterMs: frame.retryAfterMs } : {}),
                 },
               });
@@ -696,10 +702,13 @@ export function createHubClient(options: HubClientOptions): HubClient {
               callbacks.onUsage?.(mapGatewayUsage(frame.usage));
               return;
             case 'error':
+              // A6/A17 (W4.4): the frame's machine code belongs in kernelCode
+              // (structural mapping), not smuggled through providerMessage.
               throw new HubError('http', {
                 message: frame.message,
                 detail: {
-                  providerMessage: frame.code,
+                  kernelCode: frame.code,
+                  providerMessage: frame.message,
                   ...(frame.retryAfterMs !== null ? { retryAfterMs: frame.retryAfterMs } : {}),
                 },
               });

@@ -260,6 +260,7 @@ function toWireError(error: UserFacingError): UserFacingErrorPayload {
     code: error.code,
     message: error.message,
     description: error.recovery,
+    ...(error.detailText !== undefined ? { detailText: error.detailText } : {}),
     ...(error.settingsLink ? { settingsLink: true } : {}),
     ...(error.retryAtMs !== undefined ? { retryAtMs: error.retryAtMs } : {}),
     ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),

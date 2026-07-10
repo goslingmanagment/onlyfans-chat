@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STREAM_CHUNK_FLUSH_MS } from '@chatgoose/shared/constants';
+import { toUserFacing } from '@chatgoose/shared/errors/index';
 import { HubError, createHubClient } from '@chatgoose/shared/hub/index';
 import type { HubAiGatewayStreamCallbacks, HubResponseLike } from '@chatgoose/shared/hub/index';
 import type { OperationEvent } from '@chatgoose/shared/protocol/index';
@@ -433,5 +434,105 @@ describe('feature gateway adapter (Stage 31)', () => {
 
     const error = events.find((event) => event.kind === 'error');
     expect((error?.value as { code: string }).code).toBe('CG-HUB-03');
+  });
+
+  // A6/A17 (W4.4): a deterministic kernel 400 ("Unknown persona: …") used to
+  // flatten into the generic CG-HUB-02 registry text — toUserFacing now
+  // carries the kernel's own words as detailText for the dock card.
+  it('a deterministic kernel 400 keeps its own text as detailText on the card', async () => {
+    const fetchImpl = (): Promise<HubResponseLike> =>
+      Promise.resolve({
+        status: 400,
+        headers: { get: () => null },
+        body: null,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              error: 'bad_request',
+              message: 'Unknown persona: builtin:ghost',
+              statusCode: 400,
+            }),
+          ),
+      });
+    const client = createHubClient({ baseUrl: 'https://hub.example.com', apiKey: 'k', fetchImpl });
+    const adapter = createFeatureAiGateway({
+      client,
+      resolvePageLabel: () => Promise.resolve('lora-of'),
+    });
+    const events: Array<{ kind: string; value?: unknown }> = [];
+    adapter.stream(
+      {
+        feature: 'fast-reply',
+        clientRequestId: '33333333-3333-4333-8333-333333333333',
+        accountId: ACCT,
+        chatId: CHAT,
+        tone: 'casual',
+        mode: undefined,
+        draftText: undefined,
+        personaKey: 'builtin:ghost',
+        isRegeneration: false,
+      },
+      {
+        onText: (text) => events.push({ kind: 'text', value: text }),
+        onError: (error) => events.push({ kind: 'error', value: error }),
+        onComplete: (rawText) => events.push({ kind: 'complete', value: rawText }),
+      },
+    );
+    await flushAsync();
+
+    const error = events.find((event) => event.kind === 'error');
+    const facing = toUserFacing(error?.value);
+    expect(facing.code).toBe('CG-HUB-02');
+    expect(facing.detailText).toContain('Unknown persona: builtin:ghost');
+  });
+
+  // A6/A17 (W4.4): a generic kernel 429 (no quota_denied code) is throttling
+  // — the card must not read like an outage.
+  it('a real generic 429 gets retry-later wording, not the outage card', async () => {
+    const fetchImpl = (): Promise<HubResponseLike> =>
+      Promise.resolve({
+        status: 429,
+        headers: { get: () => null },
+        body: null,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              error: 'rate_limit',
+              message: 'Too many requests, slow down',
+              statusCode: 429,
+            }),
+          ),
+      });
+    const client = createHubClient({ baseUrl: 'https://hub.example.com', apiKey: 'k', fetchImpl });
+    const adapter = createFeatureAiGateway({
+      client,
+      resolvePageLabel: () => Promise.resolve('lora-of'),
+    });
+    const events: Array<{ kind: string; value?: unknown }> = [];
+    adapter.stream(
+      {
+        feature: 'fast-reply',
+        clientRequestId: '44444444-4444-4444-8444-444444444444',
+        accountId: ACCT,
+        chatId: CHAT,
+        tone: 'casual',
+        mode: undefined,
+        draftText: undefined,
+        personaKey: 'builtin:lora',
+        isRegeneration: false,
+      },
+      {
+        onText: (text) => events.push({ kind: 'text', value: text }),
+        onError: (error) => events.push({ kind: 'error', value: error }),
+        onComplete: (rawText) => events.push({ kind: 'complete', value: rawText }),
+      },
+    );
+    await flushAsync();
+
+    const error = events.find((event) => event.kind === 'error');
+    const facing = toUserFacing(error?.value);
+    expect(facing.code).toBe('CG-HUB-02');
+    expect(facing.message).toContain('rate-limiting');
+    expect(facing.recovery).toContain('not an outage');
   });
 });

@@ -495,6 +495,11 @@ function ErrorCard({ error }: { error: UserFacingErrorPayload }): React.JSX.Elem
         <span className="num text-micro tracking-[0.08em] text-bad">{error.code}</span>
         <span className="text-[13px] font-semibold text-ink">{error.message}</span>
       </div>
+      {/* A6/A17 (W4.4): the kernel's own explanation under the headline —
+          a deterministic 400 ("Unknown persona: …") is actionable text. */}
+      {typeof error.detailText === 'string' && error.detailText.length > 0 && (
+        <p className="mt-0.5 text-[12px] text-ink-mid">{error.detailText}</p>
+      )}
       {hint !== null && <p className="mt-1 text-[12.5px] text-ink-mid">{hint}</p>}
       {error.settingsLink === true && (
         <button

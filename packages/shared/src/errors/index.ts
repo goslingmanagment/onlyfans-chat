@@ -227,6 +227,10 @@ export const userFacingErrorSchema = z.object({
   code: z.enum(CG_ERROR_CODES),
   message: z.string().min(1),
   recovery: z.string().min(1),
+  /** A6/A17 (W4.4): the thrown error's own text (e.g. a deterministic kernel
+   *  400 explanation), shown under the registry headline — the registry
+   *  rebuild used to flatten it into the generic wording. */
+  detailText: z.string().min(1).optional(),
   settingsLink: z.literal(true).optional(),
   retryAtMs: z.number().optional(),
   retryAfterMs: z.number().optional(),
@@ -300,6 +304,7 @@ export class CgError extends Error {
 export interface UserFacingOverrides {
   message?: string;
   recovery?: string;
+  detailText?: string;
   retryAtMs?: number;
   retryAfterMs?: number;
 }
@@ -310,6 +315,7 @@ export function createUserFacing(code: CgErrorCode, overrides: UserFacingOverrid
     code,
     message: overrides.message ?? def.message,
     recovery: overrides.recovery ?? def.recovery,
+    ...(overrides.detailText !== undefined ? { detailText: overrides.detailText } : {}),
     ...(def.settingsLink ? { settingsLink: true as const } : {}),
     ...(overrides.retryAtMs !== undefined ? { retryAtMs: overrides.retryAtMs } : {}),
     ...(overrides.retryAfterMs !== undefined ? { retryAfterMs: overrides.retryAfterMs } : {}),
@@ -321,6 +327,32 @@ export function describeError(code: CgErrorCode): UserFacingError {
 }
 
 type ProviderWording = Pick<UserFacingError, 'message' | 'recovery'>;
+
+/** A6/A17 (W4.4): a CgError whose own message differs from the registry
+ * headline carries real information (a deterministic kernel 400 explanation,
+ * a validation detail) — surface it as detailText instead of flattening it. */
+function detailTextOf(code: CgErrorCode, message: string): string | undefined {
+  const trimmed = message.trim();
+  if (trimmed.length === 0 || trimmed === CG_ERROR_REGISTRY[code].message) {
+    return undefined;
+  }
+  return trimmed.slice(0, 400);
+}
+
+/** A6/A17 (W4.4, optional wording): a generic kernel 429 is throttling, not
+ * an outage — CG-HUB-02's "check the connection" advice was wrong for it. */
+function kernelRateLimitWording(
+  code: CgErrorCode,
+  detail: CgErrorDetail | undefined,
+): ProviderWording | null {
+  if (code !== 'CG-HUB-02' || detail?.kernelCode !== 'rate_limit') {
+    return null;
+  }
+  return {
+    message: 'Agency Hub is rate-limiting requests.',
+    recovery: 'Too many requests right now — wait a few seconds and try again. This is throttling, not an outage.',
+  };
+}
 
 // Legacy behavior: registry wording names Claude/Anthropic; OpenRouter-classified
 // errors get reworded per provider so the user fixes the right key/balance.
@@ -373,6 +405,10 @@ export function toUserFacing(error: unknown): UserFacingError {
   if (error instanceof CgError) {
     return createUserFacing(error.code, {
       ...(providerWordingOverrides(error.code, error.detail?.provider) ?? {}),
+      ...(kernelRateLimitWording(error.code, error.detail) ?? {}),
+      ...(detailTextOf(error.code, error.message) !== undefined
+        ? { detailText: detailTextOf(error.code, error.message)! }
+        : {}),
       ...(error.retryAtMs !== undefined ? { retryAtMs: error.retryAtMs } : {}),
       ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
     });
@@ -401,7 +437,15 @@ export function toUserFacing(error: unknown): UserFacingError {
       if (isUserFacingError(error)) {
         return error;
       }
-      return createUserFacing(code, retryOverrides);
+      // A6/A17 (W4.4): an IPC-cloned CgError keeps its message — preserve it
+      // the same way the instance branch does.
+      const clonedMessage =
+        'message' in error && typeof error.message === 'string' ? error.message : '';
+      const detailText = detailTextOf(code, clonedMessage);
+      return createUserFacing(code, {
+        ...(detailText !== undefined ? { detailText } : {}),
+        ...retryOverrides,
+      });
     }
   }
 
