@@ -293,6 +293,10 @@ export function createHubModule(options: HubModuleOptions): HubModule {
           resolvePageLabel: (accountId) => resolver.resolve(accountId),
         }),
       };
+      // A40 (W4.6): drain the acceptance spool as soon as a working client
+      // exists — flushNow had zero product callers, so events parked while
+      // the hub was unconfigured waited for the next enqueue to reschedule.
+      void acceptance.flushNow().catch(() => undefined);
     },
 
     dispose() {

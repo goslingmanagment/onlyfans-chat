@@ -157,6 +157,38 @@ function hubFailureCode(error: unknown, unavailable: boolean): 'CG-HUB-01' | 'CG
     : 'CG-HUB-02';
 }
 
+/** A24 (W4.5): kernel intake body codes raised BEFORE the command insert,
+ * with the HTTP status each one is serialized under. The (code, status) pair
+ * is the kernel's proof that NO command exists — anything less stays
+ * indeterminate under the one-attempt law. */
+const PRE_INTAKE_KERNEL_CODES: Record<string, number> = {
+  service_unavailable: 503,
+  not_found: 404,
+  conflict: 409,
+};
+
+/**
+ * A24 (W4.5): true only for a DEFINITE pre-intake rejection — the fresh DB
+ * row still has no coreCommandId (create-time failure is proven: the id is
+ * persisted before any status read) AND the error carries a typed pre-intake
+ * kernel body code under its matching HTTP status. Post-intake errors and
+ * unparsed transport failures (a create that may have landed) return false.
+ */
+function isDefinitePreIntakeRejection(error: unknown, freshRow: OutboxRow | null): boolean {
+  if (freshRow === null || freshRow.coreCommandId !== null) {
+    return false;
+  }
+  if (!(error instanceof HubError)) {
+    return false;
+  }
+  const kernelCode = error.detail?.kernelCode;
+  if (kernelCode === undefined) {
+    return false;
+  }
+  const expectedStatus = PRE_INTAKE_KERNEL_CODES[kernelCode];
+  return expectedStatus !== undefined && error.detail?.status === expectedStatus;
+}
+
 function mediaStubForConfirmedRow(row: OutboxRow, mediaId: OutboxMediaId): MessageMediaItem {
   const previewIds = new Set(row.previews.map(String));
   return {
@@ -429,14 +461,23 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       // have happened after core accepted the command, so never fall back to a
       // direct send; recovery repeats intake with the same id and reads status.
       // Missing Hub config is the exception: no command could have been accepted.
+      // A24 (W4.5): a DEFINITE pre-intake rejection (typed kernel body code
+      // raised before the command insert, row provably without a
+      // coreCommandId) parks 'failed' too — 'unconfirmed' fed the verifier's
+      // first-time intake and produced the documented hours-late silent
+      // stale send. 'failed' restores the retry affordance, which is safe
+      // precisely because the kernel proved no command exists (a manual
+      // retry mints a new clientCommandId).
+      const preIntakeRejected =
+        !unavailable && isDefinitePreIntakeRejection(error, data.outbox.get(row.localId));
       data.outbox.transition({
         localId: row.localId,
         from: ['sending'],
-        to: unavailable ? 'failed' : 'unconfirmed',
-        errorCode: hubFailureCode(error, unavailable),
+        to: unavailable || preIntakeRejected ? 'failed' : 'unconfirmed',
+        errorCode: hubFailureCode(error, unavailable || preIntakeRejected),
         errorMessage: error instanceof Error ? error.message : String(error),
       });
-      if (!unavailable) {
+      if (!unavailable && !preIntakeRejected) {
         scheduleVerify(row.accountId, row.chatId);
       }
       return false;
@@ -623,6 +664,20 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     }
     const hubRows = unconfirmed.filter((row) => row.transport === 'hub');
     for (const row of hubRows) {
+      // A24 (W4.5): never perform FIRST-TIME intake for a stale row. A null
+      // coreCommandId here means the kernel never accepted this command;
+      // ensureHubCommand would CREATE and execute a brand-new one — at any
+      // age via manual verifyNow, up to hours late via the periodic pass:
+      // the documented silent stale send. The kernel's own queued-TTL is
+      // 10 min (= VERIFY_AUTO_STOP_AGE_MS), so past it the answer is a
+      // manual retry, never late intake. Status reads for rows the kernel
+      // already accepted stay allowed at any age.
+      if (
+        row.coreCommandId === null &&
+        now() - Date.parse(row.createdAt) > VERIFY_AUTO_STOP_AGE_MS
+      ) {
+        continue;
+      }
       try {
         const command = await waitForHubCommand(await ensureHubCommand(row));
         settleHubCommand(row, command);

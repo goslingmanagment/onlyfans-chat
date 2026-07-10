@@ -618,4 +618,148 @@ describe('send engine hub command transport', () => {
     expect(direct.listMessagesCalls).toBe(0);
     engine.dispose();
   });
+
+  // A24 (W4.5): kernel intake raises 503/404/409 with typed body codes
+  // BEFORE the command insert. With no coreCommandId on the row, that pair
+  // is proof no command exists — park 'failed' (retryable), never
+  // 'unconfirmed' (which fed the verifier's first-time intake: the
+  // documented hours-late silent stale send).
+  it.each([
+    ['service_unavailable', 503],
+    ['not_found', 404],
+    ['conflict', 409],
+  ] as const)('parks a definite pre-intake rejection (%s/%i) as failed with retry', async (kernelCode, status) => {
+    const direct = makeStubClient();
+    const createOfapiCommand = vi.fn(async () => {
+      throw new HubError('http', {
+        message: `kernel intake refused: ${kernelCode}`,
+        detail: { status, kernelCode },
+      });
+    });
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+
+    const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello'] });
+    await drain();
+
+    expect(data.outbox.get(localIds[0] ?? '')).toMatchObject({
+      state: 'failed',
+      coreCommandId: null,
+      errorCode: 'CG-HUB-02',
+      errorMessage: `kernel intake refused: ${kernelCode}`,
+    });
+    // Out of the verifier pool: a verify pass must not re-intake it.
+    await engine.verifyChat(ACCT, CHAT);
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+    engine.dispose();
+  });
+
+  it('never fails a POST-intake row on the same typed codes (one-attempt guard)', async () => {
+    const direct = makeStubClient();
+    const createOfapiCommand = vi.fn(async ({ command: request }) =>
+      command(request.clientCommandId, 'queued'),
+    );
+    // The status read after a successful intake throws the same typed shape —
+    // the command EXISTS, so this must stay indeterminate ('unconfirmed').
+    const getOfapiCommand = vi.fn(async () => {
+      throw new HubError('http', {
+        message: 'kernel status read refused',
+        detail: { status: 409, kernelCode: 'conflict' },
+      });
+    });
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      hubCommandPollIntervalMs: 0,
+      hubCommandPollLimit: 2,
+    });
+
+    const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello'] });
+    await drain();
+
+    expect(data.outbox.get(localIds[0] ?? '')).toMatchObject({
+      state: 'unconfirmed',
+      coreCommandId: '11111111-1111-4111-8111-111111111111',
+    });
+    engine.dispose();
+  });
+
+  it('keeps an untyped or status-mismatched intake failure indeterminate', async () => {
+    const direct = makeStubClient();
+    // kernelCode without its matching serialization status is NOT proof —
+    // e.g. a proxy rewrote the status; the create may have landed.
+    const createOfapiCommand = vi.fn(async () => {
+      throw new HubError('http', {
+        message: 'mismatched shape',
+        detail: { status: 500, kernelCode: 'conflict' },
+      });
+    });
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+
+    const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello'] });
+    await drain();
+
+    expect(data.outbox.get(localIds[0] ?? '')?.state).toBe('unconfirmed');
+    engine.dispose();
+  });
+
+  it('never performs FIRST-TIME intake for a stale row in verifyChat (A24 age bound)', async () => {
+    const direct = makeStubClient();
+    let clock = Date.parse('2026-06-20T00:00:00.000Z');
+    let failIntake = true;
+    const createOfapiCommand = vi.fn(async ({ command: request }) => {
+      if (failIntake) {
+        throw new Error('connection reset'); // untyped → unconfirmed, null coreCommandId
+      }
+      return command(request.clientCommandId, 'confirmed', { deduplicated: true });
+    });
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      now: () => clock,
+    });
+
+    const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello'] });
+    await drain();
+    expect(data.outbox.get(localIds[0] ?? '')).toMatchObject({
+      state: 'unconfirmed',
+      coreCommandId: null,
+    });
+
+    // 11 minutes later (past VERIFY_AUTO_STOP_AGE_MS) the kernel is healthy
+    // again — a verify (incl. manual verifyNow) must NOT mint the command:
+    // that is the hours-late silent stale send.
+    failIntake = false;
+    clock += 11 * 60_000;
+    await engine.verifyChat(ACCT, CHAT);
+
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+    expect(data.outbox.get(localIds[0] ?? '')?.state).toBe('unconfirmed');
+    engine.dispose();
+  });
 });
