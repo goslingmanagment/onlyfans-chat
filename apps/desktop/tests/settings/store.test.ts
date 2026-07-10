@@ -28,6 +28,16 @@ function createFakeQueries(): FakeQueries {
     set: (key, value) => {
       rows.set(key, JSON.stringify(value));
     },
+    remove: (key) => {
+      rows.delete(key);
+    },
+    all: () => {
+      const out: Record<string, unknown> = {};
+      for (const [key, raw] of rows) {
+        out[key] = JSON.parse(raw);
+      }
+      return out;
+    },
   };
 }
 

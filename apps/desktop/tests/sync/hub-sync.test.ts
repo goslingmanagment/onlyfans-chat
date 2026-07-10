@@ -767,9 +767,13 @@ interface FakePolling extends SyncProvider {
   forceRefreshCalls: number;
   refreshCalls: Array<{ accountId: string; chatId: string }>;
   accountRefreshCalls: string[];
+  /** D1-N2: gap-recovery reconciles (awaitable, failure-propagating path). */
+  reconcileCalls: string[];
+  reconcileError: Error | null;
   ingestCalls: Array<{ accountId: string; chatId: string; messageId: string }>;
   ingestResult: boolean;
   refreshAccountHead(accountId: string): Promise<void>;
+  reconcileAccountHeadNow(accountId: string): Promise<void>;
   ingestHubMessage(accountId: string, chatId: string, message: NormalizedSyncMessage): Promise<boolean>;
   emit(event: SyncEvent): void;
 }
@@ -781,6 +785,8 @@ function makeFakePolling(): FakePolling {
     forceRefreshCalls: 0,
     refreshCalls: [],
     accountRefreshCalls: [],
+    reconcileCalls: [],
+    reconcileError: null,
     ingestCalls: [],
     ingestResult: true,
     emit: (event) => {
@@ -800,6 +806,14 @@ function makeFakePolling(): FakePolling {
     },
     refreshAccountHead: (accountId) => {
       polling.accountRefreshCalls.push(accountId);
+      polling.emit({ type: 'chatListUpdated', accountId });
+      return Promise.resolve();
+    },
+    reconcileAccountHeadNow: (accountId) => {
+      polling.reconcileCalls.push(accountId);
+      if (polling.reconcileError !== null) {
+        return Promise.reject(polling.reconcileError);
+      }
       polling.emit({ type: 'chatListUpdated', accountId });
       return Promise.resolve();
     },
@@ -964,6 +978,23 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(polling.forceRefreshCalls).toBe(1);
     expect(logs.map((log) => log.message)).toContain('SSE live; polling suspended');
     expect(logs.map((log) => log.message)).toContain('SSE not live; polling resumed');
+    provider.stop();
+  });
+
+  it('v2 gap recovery reconciles through the awaitable path and propagates failure (D1-N2)', async () => {
+    const { provider, polling, callbacks } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Success: the awaitable reconcile ran (not the debounced head refresh).
+    await callbacks().onV2GapRecovered();
+    expect(polling.reconcileCalls).toEqual([ACCT]);
+    expect(polling.accountRefreshCalls).toEqual([]);
+
+    // Failure PROPAGATES so HubSync refuses to persist the fresh cursor.
+    polling.reconcileError = new Error('head refresh failed');
+    await expect(callbacks().onV2GapRecovered()).rejects.toThrow(/1 of 1 account/);
     provider.stop();
   });
 

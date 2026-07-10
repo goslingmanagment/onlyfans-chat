@@ -355,6 +355,9 @@ export interface SettingsQueries {
   /** Parsed JSON value, or undefined when unset. May throw on corrupt rows. */
   get(key: string): unknown;
   set(key: string, value: unknown): void;
+  remove(key: string): void;
+  /** All settings except schema_version (D1-N1: hub-switch cursor wipe). */
+  all(): Record<string, unknown>;
 }
 
 /** Narrow keychain view the settings store depends on (Keychain satisfies it). */
