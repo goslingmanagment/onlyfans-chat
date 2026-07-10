@@ -503,6 +503,15 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       // key against the new hub.
       if (hubSwitched) {
         await applySecret('hubDeviceToken', '');
+        // D1-N1 (W4.2): sync cursors belong to the OLD hub's streams — a
+        // stale v1 seq or v2 cursor replayed against the new hub is at best
+        // a 409 and at worst a silent wrong-window resume. Wipe every
+        // cursor row (the v2 keys are bearer-suffixed).
+        for (const key of Object.keys(queries.all())) {
+          if (key === 'hubSync.lastEventId' || key.startsWith('hubSync.v2Cursor')) {
+            queries.remove(key);
+          }
+        }
       }
 
       for (const key of PERSISTED_SETTINGS_KEYS) {

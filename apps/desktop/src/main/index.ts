@@ -14,6 +14,7 @@ import {
   safeStorage,
   shell,
 } from 'electron';
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
@@ -585,6 +586,12 @@ async function rebuildOfapiRuntime(
       if (vm.hubBaseUrl === null || hubKey === null || hubKey.length === 0) {
         return null;
       }
+      // D1-N1 (W4.2) hardening: the v2 cursor encodes the bearer's account
+      // grants, so it is scoped to the credential that earned it — a key
+      // paste or re-sign-in gets a fresh cursor handshake instead of a dead
+      // stream. The un-suffixed legacy key is left unread (wiped on hub
+      // switch by the settings store).
+      const v2CursorKey = `hubSync.v2Cursor.${createHash('sha256').update(hubKey).digest('hex').slice(0, 16)}`;
       return createHubSync({
         baseUrl: vm.hubBaseUrl,
         apiKey: hubKey,
@@ -608,8 +615,9 @@ async function rebuildOfapiRuntime(
           dataLayer.settings.getParsed('hubSync.lastEventId', lastEventIdSchema) ?? null,
         setLastEventId: (id) => dataLayer.settings.set('hubSync.lastEventId', id),
         getV2Cursor: () =>
-          dataLayer.settings.getParsed('hubSync.v2Cursor', v2CursorSchema) ?? null,
-        setV2Cursor: (cursor) => dataLayer.settings.set('hubSync.v2Cursor', cursor),
+          dataLayer.settings.getParsed(v2CursorKey, v2CursorSchema) ?? null,
+        setV2Cursor: (cursor) => dataLayer.settings.set(v2CursorKey, cursor),
+        clearV2Cursor: () => dataLayer.settings.remove(v2CursorKey),
       });
     },
   });

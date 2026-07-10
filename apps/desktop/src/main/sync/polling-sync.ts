@@ -39,6 +39,8 @@ const BUDGET_FACTOR = 4;
 // initial hydration finishes. Id-only and notification hub frames use this
 // debounce window to coalesce body-free list refreshes when auto-read is off.
 const HUB_LIST_REFRESH_DEBOUNCE_MS = 2_000;
+/** D1-N2 (W4.2): gap-recovery reconcile waits out an in-flight poll tick. */
+const RECONCILE_INFLIGHT_WAIT_MS = 250;
 // OnlyFans ignores limit>10 on chats and dictates its own page size (live
 // 2026-06-11: ~10 near the order=recent head, 10–19 deeper); limit≤10 is
 // honored, so we request an explicit 10 and advance the offset by what
@@ -247,6 +249,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   setHubPollingSuspended(suspended: boolean): void;
   /** Event-driven, body-free page-1 list refresh for hub account-level activity. */
   refreshAccountHead(accountId: string): Promise<void>;
+  /** D1-N2: awaitable, failure-propagating head refresh — v2 gap recovery only. */
+  reconcileAccountHeadNow(accountId: string): Promise<void>;
   /** Body-free local ingestion for enriched hub message events. */
   ingestHubMessage(
     accountId: string,
@@ -1073,11 +1077,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     return data.chats.get(accountId, chatId) !== null;
   }
 
-  async function refreshAccountHeadNow(accountId: string): Promise<void> {
-    const loop = loops.get(accountId);
-    if (!loop || !running || loop.inFlight) {
-      return;
-    }
+  async function runAccountHeadRefresh(
+    accountId: string,
+    loop: { lastSuccessAt: number | null; consecutiveFailures: number },
+  ): Promise<void> {
     try {
       const head = await walkChatPages(accountId, 0, 1, 'hot-poll');
       upsertChatRows(accountId, head.chats);
@@ -1089,6 +1092,36 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       loop.consecutiveFailures += 1;
       throw error;
     }
+  }
+
+  async function refreshAccountHeadNow(accountId: string): Promise<void> {
+    const loop = loops.get(accountId);
+    if (!loop || !running || loop.inFlight) {
+      return;
+    }
+    await runAccountHeadRefresh(accountId, loop);
+  }
+
+  /** D1-N2 (W4.2): awaitable immediate head refresh for v2 gap recovery ONLY
+   * — per-frame hub callers keep the debounced refreshAccountHead. An
+   * in-flight poll tick is waited out and the refresh RETRIED, never silently
+   * skipped, and failures propagate so an unreconciled window is never
+   * reported as recovered. */
+  async function reconcileAccountHeadNow(accountId: string): Promise<void> {
+    const loop = loops.get(accountId);
+    if (!loop) {
+      return; // account not handled by this runtime — nothing to reconcile
+    }
+    while (loop.inFlight) {
+      if (!running) {
+        return; // shutdown: the caller's own running-check refuses the cursor persist
+      }
+      await sleep(RECONCILE_INFLIGHT_WAIT_MS);
+    }
+    if (!running) {
+      return;
+    }
+    await runAccountHeadRefresh(accountId, loop);
   }
 
   function armHubListRefresh(accountId: string, pending: PendingHubListRefresh): void {
@@ -1641,6 +1674,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       }
     },
     refreshAccountHead,
+    reconcileAccountHeadNow,
     ingestHubMessage,
     reconcileUnread,
     async forceRefresh(accountId) {

@@ -49,6 +49,8 @@ type PollingLike = SyncProvider & {
   pollAccount(accountId: string): Promise<void>;
   setHubPollingSuspended(suspended: boolean): void;
   refreshAccountHead(accountId: string): Promise<void>;
+  /** D1-N2 (W4.2): awaitable, failure-propagating refresh for gap recovery. */
+  reconcileAccountHeadNow(accountId: string): Promise<void>;
   ingestHubMessage(
     accountId: string,
     chatId: string,
@@ -535,19 +537,32 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
 
   /** Stage 24 v2 gap recovery: the stream re-baselined to "now"; the missed
    * window reconciles through the authoritative polling path (list-only head
-   * refresh per handled account — same reconciliation the per-event fallback
-   * uses). */
+   * refresh per handled account). D1-N2 (W4.2): the refresh is awaited FOR
+   * REAL and failures propagate — HubSync persists the fresh cursor only
+   * after this resolves, so a failed reconcile can never durably skip the
+   * missed window (the next connect 409s and recovery retries). */
   async function handleV2GapRecovered(): Promise<void> {
     recordFallback('hub-v2-gap-cursor-rebaseline', 'syncSnapshotRequired', {
       accounts: handledAccountIds.length,
     });
+    const failedAccounts: string[] = [];
     for (const accountId of handledAccountIds) {
       try {
-        await polling.refreshAccountHead(accountId);
-      } catch {
-        // transient fetch failure: polling cadence reconciles later
+        await polling.reconcileAccountHeadNow(accountId);
+      } catch (error) {
+        failedAccounts.push(accountId);
+        onLog('warn', 'v2 gap reconcile failed for account', {
+          accountId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        continue;
       }
       emit({ type: 'chatListUpdated', accountId });
+    }
+    if (failedAccounts.length > 0) {
+      throw new Error(
+        `v2 gap reconcile failed for ${failedAccounts.length} of ${handledAccountIds.length} account(s)`,
+      );
     }
   }
 

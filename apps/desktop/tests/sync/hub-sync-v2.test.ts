@@ -128,7 +128,13 @@ describe('createHubSync (protocol v2)', () => {
 
   function makeV2Sync(
     responses: Array<{ status: number; stream: FakeStream | null; json?: unknown }>,
-    options: { initialCursor?: string | null; failEvents?: boolean; clientVersion?: string } = {},
+    options: {
+      initialCursor?: string | null;
+      failEvents?: boolean;
+      clientVersion?: string;
+      /** D1-N2: fail the first N gap-recovery reconciles. */
+      failGapRecoveries?: number;
+    } = {},
   ): V2Harness {
     const { fetchImpl, calls } = makeHarness(responses);
     const statuses: HubSyncStatus[] = [];
@@ -151,6 +157,10 @@ describe('createHubSync (protocol v2)', () => {
       },
       onV2GapRecovered: () => {
         gapRecoveries += 1;
+        if (gapRecoveries <= (options.failGapRecoveries ?? 0)) {
+          log.push('gap-failed');
+          throw new Error('reconcile failed');
+        }
         log.push('gap-recovered');
       },
       onStatusChange: (status) => statuses.push(status),
@@ -160,6 +170,10 @@ describe('createHubSync (protocol v2)', () => {
       setV2Cursor: (next) => {
         cursor = next;
         log.push(`persist:${next}`);
+      },
+      clearV2Cursor: () => {
+        cursor = null;
+        log.push('clear');
       },
     });
     return { sync, calls, statuses, log, cursor: () => cursor, gapRecoveries: () => gapRecoveries };
@@ -306,9 +320,84 @@ describe('createHubSync (protocol v2)', () => {
     expect(h.calls[2]!.url).toContain('cursor=CUR_FRESH');
     // v2 snapshot handshake carries the header too, not just the SSE connect.
     expect(h.calls[1]!.headers['x-client-version']).toBe('0.1.29');
-    expect(h.log).toEqual(['persist:CUR_FRESH', 'gap-recovered']);
+    // D1-N2 (W4.2): reconcile FIRST, persist only after it succeeds.
+    expect(h.log).toEqual(['gap-recovered', 'persist:CUR_FRESH']);
     expect(h.gapRecoveries()).toBe(1);
     h.sync.stop();
+  });
+
+  it('does not persist the fresh cursor when reconciliation fails; recovery retries (D1-N2)', async () => {
+    const stream = makeStream();
+    const snapshotRequired = {
+      error: 'sync_snapshot_required',
+      message: 'cursor gap',
+      statusCode: 409,
+      version: 2,
+      accounts: [{ accountId: 7, requestedSeq: 900, oldestAvailableSeq: 1, currentSeq: 12 }],
+      snapshotPath: HUB_V2_SNAPSHOT_PATH,
+    };
+    const h = makeV2Sync([
+      { status: 409, stream: null, json: snapshotRequired },
+      { status: 200, stream: null, json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+      { status: 409, stream: null, json: snapshotRequired },
+      { status: 200, stream: null, json: { cursor: 'CUR_FRESH2', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+      { status: 200, stream },
+    ], { initialCursor: 'CUR_STALE', failGapRecoveries: 1 });
+    h.sync.start();
+    await drainMicrotasks();
+
+    // First recovery reconcile failed → the fresh cursor was NOT persisted;
+    // the reconnect still carries the STALE cursor, 409s again, and the
+    // second recovery succeeds end-to-end.
+    expect(h.calls[2]!.url).toContain('cursor=CUR_STALE');
+    expect(h.log).toEqual(['gap-failed', 'gap-recovered', 'persist:CUR_FRESH2']);
+    expect(h.cursor()).toBe('CUR_FRESH2');
+    expect(h.calls[4]!.url).toContain('cursor=CUR_FRESH2');
+    h.sync.stop();
+  });
+
+  it('clears the cursor and rebaselines once on a 403-with-cursor instead of dying (D1-N1)', async () => {
+    const stream = makeStream();
+    const h = makeV2Sync([
+      { status: 403, stream: null },
+      { status: 200, stream },
+    ], { initialCursor: 'CUR_OUT_OF_GRANT' });
+    h.sync.start();
+    await drainMicrotasks();
+
+    expect(h.calls[0]!.url).toContain('cursor=CUR_OUT_OF_GRANT');
+    expect(h.log).toContain('clear');
+    // The one-shot retry reconnects CURSOR-LESS through the rebaseline.
+    expect(h.calls[1]!.url).not.toContain('cursor=');
+
+    stream.send(': keep-alive\n\n');
+    await drainMicrotasks();
+    expect(h.sync.status()).toBe('live');
+    expect(h.statuses).not.toContain('auth-failed');
+    h.sync.stop();
+  });
+
+  it('treats a cursor-less 401/403 as a real credential failure (D1-N1)', async () => {
+    const h = makeV2Sync([{ status: 401, stream: null }], { initialCursor: null });
+    h.sync.start();
+    await drainMicrotasks();
+
+    expect(h.calls).toHaveLength(1);
+    expect(h.sync.status()).toBe('auth-failed');
+    expect(h.log).not.toContain('clear');
+  });
+
+  it('gives the rebaseline exactly one shot: a second auth failure is terminal (D1-N1 loop guard)', async () => {
+    const h = makeV2Sync([
+      { status: 403, stream: null },
+      { status: 403, stream: null },
+    ], { initialCursor: 'CUR_DEAD' });
+    h.sync.start();
+    await drainMicrotasks();
+
+    expect(h.calls).toHaveLength(2);
+    expect(h.log.filter((entry) => entry === 'clear')).toHaveLength(1);
+    expect(h.sync.status()).toBe('auth-failed');
   });
 
   it('requires the v2 cursor seams at construction', () => {

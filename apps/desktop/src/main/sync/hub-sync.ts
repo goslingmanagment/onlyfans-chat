@@ -198,6 +198,10 @@ export interface HubSyncOptions {
    *  retained untouched for the v1 fallback window). */
   getV2Cursor?: () => string | null;
   setV2Cursor?: (cursor: string) => void;
+  /** D1-N1 (W4.2): removes the persisted v2 cursor — the 401/403-with-cursor
+   *  rebaseline path (grant shrink / re-sign-in invalidates the cursor's
+   *  account set without the credential being dead). */
+  clearV2Cursor?: () => void;
   /**
    * v2 gap recovery applied a fresh cursor (the v2 snapshot is a cursor
    * handshake, not projection pages — decision #92): the caller reconciles
@@ -246,6 +250,10 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   /** Consecutive failed connections since the last byte received. */
   let failures = 0;
   let retryFloorMs = HUB_DEFAULT_RETRY_MS;
+  /** D1-N1 (W4.2): one-shot guard for the 401/403-with-cursor rebaseline —
+   * reset on live bytes so a later grant change gets its own retry, but a
+   * cursor-less auth failure right after a clear is a REAL credential death. */
+  let v2AuthRebaselineTried = false;
   const allowedAccountIds = options.accountIds === undefined
     ? null
     : new Set(options.accountIds);
@@ -351,8 +359,12 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   }
 
   /** v2 gap recovery: the snapshot is a fresh-cursor handshake (decision
-   * #92) — persist it, then hand reconciliation of the missed window to the
-   * caller's authoritative polling path. */
+   * #92). D1-N2 (W4.2): reconcile the missed window FIRST (awaited for real
+   * through the caller's authoritative polling path), and persist the fresh
+   * cursor only after the reconcile succeeds — persisting first durably
+   * skipped the window whenever the reconcile failed. On failure the runLoop
+   * backoff retries: the next connect 409s again (idempotent), and a crash
+   * between reconcile and persist just re-runs the recovery. */
   async function recoverV2Cursor(): Promise<void> {
     const snapshotAbort = new AbortController();
     abort = snapshotAbort;
@@ -385,8 +397,12 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     if (!running) {
       throw new Error('hub v2 snapshot recovery stopped');
     }
-    options.setV2Cursor!(parsed.data.cursor);
+    const freshCursor = parsed.data.cursor;
     await options.onV2GapRecovered?.();
+    if (!running) {
+      throw new Error('hub v2 snapshot recovery stopped');
+    }
+    options.setV2Cursor!(freshCursor);
   }
 
   async function recoverSnapshots(requirement: SyncSnapshotRequired): Promise<void> {
@@ -543,6 +559,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
           }
           receivedBytes = true;
           failures = 0;
+          v2AuthRebaselineTried = false;
           armWatchdog();
           // Any bytes on an authorized stream mean the pipe works — heartbeats
           // included. Mark live on first data, not on response headers, so a
@@ -582,6 +599,24 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         break;
       }
       if (outcome.kind === 'auth') {
+        // D1-N1 (W4.2): a 401/403 on a cursor-bearing v2 connect is often an
+        // out-of-grant CURSOR (grant shrink, re-sign-in), not a dead
+        // credential — the kernel 403s a cursor naming an account the bearer
+        // no longer holds. Clear the cursor and retry ONCE cursor-less
+        // through the existing rebaseline (fresh-cursor handshake +
+        // reconcile). A cursor-less auth failure is the real thing.
+        if (
+          protocol === 'v2'
+          && options.clearV2Cursor !== undefined
+          && !v2AuthRebaselineTried
+          && options.getV2Cursor!() !== null
+        ) {
+          v2AuthRebaselineTried = true;
+          options.onWarn?.('hub v2 auth failure with a cursor; clearing cursor and rebaselining', {});
+          options.clearV2Cursor();
+          setStatus('degraded');
+          continue;
+        }
         setStatus('auth-failed');
         running = false;
         break;
