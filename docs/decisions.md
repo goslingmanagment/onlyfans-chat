@@ -100,4 +100,4 @@ as a typed card — dossier version/age/chars/dropped sections plus the
 transcript-union counts — which is the fastest way to tell a STALE dossier from a
 MISSING one. The echo lives in the in-memory job store only: never persisted,
 never logged. (The Fansly extension takes the same echo but may not show it in
-the page — see its E27; a desktop renderer is app-origin, so inline is fine.)
+the page — see its E28; a desktop renderer is app-origin, so inline is fine.)
