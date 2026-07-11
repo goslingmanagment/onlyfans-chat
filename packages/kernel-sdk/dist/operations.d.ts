@@ -43,6 +43,10 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/admin/db/stats";
     };
+    readonly adminDeactivateUser: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/users/:username/deactivate";
+    };
     readonly adminDeleteModel: {
         readonly method: "DELETE";
         readonly path: "/api/v1/admin/models/:modelSlug";
@@ -130,6 +134,10 @@ export declare const kernelOperations: {
     readonly adminQueueJobs: {
         readonly method: "GET";
         readonly path: "/api/v1/admin/queue/jobs";
+    };
+    readonly adminReactivateUser: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/users/:username/reactivate";
     };
     readonly adminRevokeApiKeys: {
         readonly method: "DELETE";

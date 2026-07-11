@@ -41,9 +41,13 @@ import {
   formatOpCost,
   progressLabel,
   quotaWarning,
+  readKernelContext,
+  readPromptEchoStatus,
   shouldAutoInsertCompactDraft,
   toggleTone,
   type DockView,
+  type KernelContextInfo,
+  type PromptEchoStatus,
   type PromptInspectorBlock,
 } from './dockLogic';
 import { getFeaturePolicy } from '@chatgoose/shared/features';
@@ -601,8 +605,20 @@ function DebugSection({
   if (debugPrompt === null && profiling === null) return null;
   const blocks = debugPrompt !== null ? extractPromptBlocks(debugPrompt) : null;
   const transcriptDebug = debugPrompt !== null ? readTranscriptDebug(debugPrompt) : null;
+  // #140: no blocks is not the same as nothing to say — the kernel's echo window
+  // may be shut, or the answer may have come from cache with no model call.
+  const echoStatus = debugPrompt !== null ? readPromptEchoStatus(debugPrompt) : null;
+  const kernelContext = debugPrompt !== null ? readKernelContext(debugPrompt) : null;
   const promptSummary =
-    blocks !== null ? `${blocks.length} blocks` : debugPrompt !== null ? 'raw' : 'profiling';
+    blocks !== null
+      ? `${blocks.length} blocks`
+      : echoStatus === 'cache-hit'
+        ? 'no LLM call'
+        : echoStatus === 'unavailable'
+          ? 'echo off'
+          : debugPrompt !== null
+            ? 'raw'
+            : 'profiling';
 
   function copyPromptText(): void {
     const text =
@@ -652,6 +668,8 @@ function DebugSection({
                     blocks={blocks}
                     debugPrompt={debugPrompt}
                     transcriptDebug={transcriptDebug}
+                    echoStatus={echoStatus}
+                    kernelContext={kernelContext}
                     profiling={profiling}
                     compact
                   />
@@ -716,6 +734,8 @@ function DebugSection({
             blocks={blocks}
             debugPrompt={debugPrompt}
             transcriptDebug={transcriptDebug}
+            echoStatus={echoStatus}
+            kernelContext={kernelContext}
             profiling={profiling}
             compact={false}
           />
@@ -729,12 +749,16 @@ function PromptDebugBody({
   blocks,
   debugPrompt,
   transcriptDebug,
+  echoStatus,
+  kernelContext,
   profiling,
   compact,
 }: {
   blocks: PromptInspectorBlock[] | null;
   debugPrompt: Record<string, unknown> | null;
   transcriptDebug?: TranscriptDebug | null;
+  echoStatus?: PromptEchoStatus;
+  kernelContext?: KernelContextInfo | null;
   profiling: ProfilingSnapshotPayload | null;
   compact: boolean;
 }): React.JSX.Element {
@@ -742,6 +766,12 @@ function PromptDebugBody({
     <div className="space-y-2">
       {transcriptDebug !== null && transcriptDebug !== undefined && (
         <TranscriptDebugCard transcriptDebug={transcriptDebug} />
+      )}
+      {echoStatus !== null && echoStatus !== undefined && (
+        <EchoStatusCard status={echoStatus} />
+      )}
+      {kernelContext !== null && kernelContext !== undefined && (
+        <KernelContextCard context={kernelContext} />
       )}
       {blocks !== null ? (
         blocks.map((block, i) => (
@@ -769,7 +799,10 @@ function PromptDebugBody({
             </pre>
           </div>
         ))
-      ) : debugPrompt !== null ? (
+      ) : debugPrompt !== null && (echoStatus === null || echoStatus === undefined) ? (
+        // Unknown shape → raw JSON. A KNOWN "no blocks" reason (echo off, cache
+        // hit) already has its own card; dumping {"echo":"..."} under it would
+        // just be noise.
         <pre
           className={cx(
             'rounded-chip border border-line bg-bg1 px-2.5 py-1.5 font-mono text-[11px] leading-[1.5] whitespace-pre-wrap text-ink-mid select-text',
@@ -833,6 +866,61 @@ function TranscriptDebugCard({
       <pre className="max-h-36 overflow-auto px-2.5 py-1.5 font-mono text-[11px] leading-[1.5] whitespace-pre-wrap text-ink-mid select-text">
         {transcriptDebug.preview}
       </pre>
+    </div>
+  );
+}
+
+/** #140: why the inspector has no prompt to show. Both reasons are normal. */
+function EchoStatusCard({ status }: { status: 'unavailable' | 'cache-hit' }): React.JSX.Element {
+  return (
+    <div className="rounded-chip border border-amber-line bg-amber-bg px-2.5 py-1.5 text-[11.5px] leading-[1.5] text-ink-mid">
+      {status === 'cache-hit'
+        ? 'Served from cache — no model call, so there is no prompt to show.'
+        : 'The kernel did not echo the prompt: the owner opens a time-boxed window per chatter.'}
+    </div>
+  );
+}
+
+/** The kernel's own account of the context it injected — the fast way to tell a
+ * STALE dossier from a MISSING one when a reply reads wrong. */
+function KernelContextCard({ context }: { context: KernelContextInfo }): React.JSX.Element {
+  const { dossier, transcript } = context;
+  return (
+    <div className="rounded-chip border border-line bg-bg1">
+      <div className="flex items-center gap-2 border-b border-line px-2.5 py-1">
+        <span className="cap text-ink-mid">kernel context</span>
+        <span
+          className={cx(
+            'num rounded-full border px-1.5 text-micro',
+            dossier !== null
+              ? 'border-green-line bg-green-bg text-green'
+              : 'border-line text-ink-low',
+          )}
+        >
+          {dossier !== null ? `dossier v${dossier.version ?? '?'}` : 'no dossier'}
+        </span>
+        {dossier !== null && dossier.ageDays !== null && (
+          <span className="num text-micro text-ink-low">{dossier.ageDays}d old</span>
+        )}
+        {dossier !== null && dossier.chars !== null && (
+          <span className="num text-micro text-ink-low">{dossier.chars} chars</span>
+        )}
+        {dossier?.truncated === true && (
+          <span className="num rounded-full border border-amber-line bg-amber-bg px-1.5 text-micro text-amber">
+            truncated
+          </span>
+        )}
+      </div>
+      <div className="space-y-0.5 px-2.5 py-1.5 font-mono text-[11px] leading-[1.5] text-ink-mid select-text">
+        {dossier !== null && dossier.droppedSections.length > 0 && (
+          <div>dropped: {dossier.droppedSections.join(', ')}</div>
+        )}
+        {transcript.map(([key, value]) => (
+          <div key={key}>
+            {key}: {value}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

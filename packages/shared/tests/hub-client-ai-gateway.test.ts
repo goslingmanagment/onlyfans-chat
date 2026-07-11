@@ -197,4 +197,74 @@ describe('HubClient AI feature stream', () => {
     expect(hubError.reason).toBe('bad-request');
     expect(hubError.message).toContain('fan-summary requires at least 30 messages in the conversation');
   });
+
+  // #140: the prompt echo. The capability rides a HEADER — an old kernel ignores
+  // it, so a kernel rollback after a desktop release cannot break generations.
+  it('advertises the echo capability only when asked and surfaces the debug frame', async () => {
+    const calls: Array<{ url: string; init: HubRequestInit }> = [];
+    const debugFrame = {
+      type: 'debug_input_v1',
+      systemBlocks: [{ text: 'safety + persona', cache: '1h' }],
+      userBlocks: [{ text: '## Fan Dossier\nred Ducati', cache: '5m' }],
+      contextManifest: { fanProfile: { version: 2, ageDays: 1 }, source: 'union' },
+    };
+    const fetchImpl: HubFetch = (url, init) => {
+      calls.push({ url, init });
+      return Promise.resolve(
+        streamResponse(
+          aiFrame({
+            type: 'meta',
+            requestId: '22222222-2222-4222-8222-222222222222',
+            clientRequestId: '11111111-1111-4111-8111-111111111111',
+            feature: 'fast-reply',
+            pageLabel: 'Lora',
+            model: 'anthropic:claude-sonnet-4-6',
+            provider: 'anthropic',
+            providerResponseId: null,
+            quota: { accepted: true, remainingRequestsToday: 10, remainingMicroUsdToday: 1_000 },
+          }) +
+            aiFrame(debugFrame) +
+            aiFrame({ type: 'content_delta', text: 'hi' }) +
+            aiFrame({ type: 'done', stopReason: 'end_turn' }),
+        ),
+      );
+    };
+    const client = createHubClient({ baseUrl: 'https://hub.example.com', apiKey: 'k', fetchImpl });
+
+    const echoes: unknown[] = [];
+    await client.streamAiFeature(
+      { feature: 'fast-reply', request: makeFeatureRequest(), debugPromptEcho: true },
+      { onText: () => {}, onDebugInput: (input) => echoes.push(input) },
+    );
+
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers['x-kernel-ai-capabilities']).toBe('debug-input-v1');
+    expect(echoes).toEqual([
+      {
+        systemBlocks: debugFrame.systemBlocks,
+        userBlocks: debugFrame.userBlocks,
+        contextManifest: debugFrame.contextManifest,
+      },
+    ]);
+
+    const quiet: Array<{ url: string; init: HubRequestInit }> = [];
+    const quietClient = createHubClient({
+      baseUrl: 'https://hub.example.com',
+      apiKey: 'k',
+      fetchImpl: (url, init) => {
+        quiet.push({ url, init });
+        return Promise.resolve(
+          streamResponse(
+            aiFrame({ type: 'content_delta', text: 'hi' }) + aiFrame({ type: 'done', stopReason: 'end_turn' }),
+          ),
+        );
+      },
+    });
+    await quietClient.streamAiFeature(
+      { feature: 'fast-reply', request: makeFeatureRequest() },
+      { onText: () => {} },
+    );
+    const quietHeaders = quiet[0]!.init.headers as Record<string, string>;
+    expect(quietHeaders['x-kernel-ai-capabilities']).toBeUndefined();
+  });
 });

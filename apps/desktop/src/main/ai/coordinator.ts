@@ -41,7 +41,7 @@ import type {
 import type { AiStartRequest, SettingsVM } from '../../preload/contract';
 import type { DataLayer } from '../db/index';
 import type { SettingsStore } from '../settings/store';
-import type { AiFeatureGateway, CancelFn } from './gateway';
+import type { AiDebugInput, AiFeatureGateway, CancelFn } from './gateway';
 import { createOperationProfiler, NO_OP_PROFILER } from './profiler';
 import type { OperationProfiler, ProfilerStageHandle } from './profiler';
 import { createStagedTimeouts } from './timeouts';
@@ -245,6 +245,10 @@ interface OperationState {
   generationRef: string | null;
   /** Remaining daily gateway requests from the meta quota frame (#120). */
   quotaRemainingRequests: number | null;
+  /** #140: debug mode asked for the prompt echo… */
+  debugEchoRequested: boolean;
+  /** …and this says whether the kernel's window let it through. */
+  sawDebugEcho: boolean;
   /** Set only on a fan-summary cache miss; null for every other feature. */
   summarySeed: SummaryCacheSeed | null;
 }
@@ -547,6 +551,16 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     if (!beginSettle(op)) {
       return;
     }
+    // No kernel call happened here, so there is no prompt to echo — say that
+    // outright instead of showing an empty inspector (#140).
+    if (op.debugEchoRequested) {
+      emit({
+        type: 'operation:debugPrompt',
+        operationId: op.operationId,
+        feature: op.feature,
+        snapshot: { echo: 'cache-hit' },
+      });
+    }
     recordUsageEvent(op, undefined, { isCacheHit: true });
     const profiling = op.profiler.snapshot();
     emit({
@@ -684,6 +698,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     }
     if (settings.debugMode) {
       op.profiler = createOperationProfiler();
+      op.debugEchoRequested = true;
     }
 
     const identityStage = op.profiler.stage('resolve-identity');
@@ -767,6 +782,10 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         draftText: op.params.draftText,
         personaKey,
         isRegeneration: op.params.forceRegenerate === true,
+        // #140: in debug mode, ask the kernel for the prompt it assembled. It
+        // answers only inside an owner-set, time-bounded window; silence is
+        // normal and never affects the generation.
+        debugPromptEcho: settings.debugMode,
       },
       streamCallbacks(op),
     );
@@ -794,6 +813,25 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         if (!op.settled) {
           op.quotaRemainingRequests = remainingRequests;
         }
+      },
+      // #140: the kernel's echo of the prompt it built. Until now the debug
+      // inspector had nothing real to show in production — the desktop sends
+      // refs, so the persona/templates/dossier never passed through it.
+      onDebugInput: (input: AiDebugInput) => {
+        if (op.settled) {
+          return;
+        }
+        op.sawDebugEcho = true;
+        emit({
+          type: 'operation:debugPrompt',
+          operationId: op.operationId,
+          feature: op.feature,
+          snapshot: {
+            systemBlocks: input.systemBlocks,
+            userBlocks: input.userBlocks,
+            contextManifest: input.contextManifest,
+          },
+        });
       },
       onText: (text: string) => {
         if (op.settled) {
@@ -833,6 +871,16 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         settleError(op, error);
       },
       onComplete: (rawText: string) => {
+        // Asked and not answered: say the echo window is closed, rather than
+        // leaving the inspector looking like a broken profiling-only panel.
+        if (op.debugEchoRequested && !op.sawDebugEcho && !op.settled) {
+          emit({
+            type: 'operation:debugPrompt',
+            operationId: op.operationId,
+            feature: op.feature,
+            snapshot: { echo: 'unavailable' },
+          });
+        }
         settleComplete(op, rawText);
       },
     };
@@ -895,6 +943,8 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         startedAtMs: Date.now(),
         generationRef: null,
         quotaRemainingRequests: null,
+        debugEchoRequested: false,
+        sawDebugEcho: false,
         summarySeed: null,
       };
 

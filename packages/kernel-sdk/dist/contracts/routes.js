@@ -121,6 +121,11 @@ export const adminUserApiKeyStatusSchema = z.object({
 });
 export const adminUserSchema = authUserSchema.extend({
     apiKeyStatus: adminUserApiKeyStatusSchema.nullable(),
+    // Decision #126: deactivation tombstone (null = active) and the honest
+    // activity signal — max(last api-key use, last device-token use), so a
+    // password+device-token chatter (#116) no longer reads "Never".
+    disabledAt: isoTimestamp.nullable(),
+    lastActiveAt: isoTimestamp.nullable(),
 });
 export const authStateSchema = z.object({
     authMethod: z.enum(["session", "api_key", "device_token"]),
@@ -487,6 +492,9 @@ export const pageRevenueItemSchema = z.object({
     modelName: z.string(),
     netEarningsMills: mills,
     totalNetMills: mills,
+    // W7.2 (A33, decision #131): revenue rollups include tombstoned pages —
+    // historical attribution is permanent. Optional (additive).
+    status: z.enum(["active", "deleted"]).optional(),
 });
 export const modelRevenueItemSchema = z.object({
     modelId: intId,
@@ -495,6 +503,8 @@ export const modelRevenueItemSchema = z.object({
     pageCount: z.number().int(),
     netEarningsMills: mills,
     totalNetMills: mills,
+    // W7.2 (A33): 'retired' = every page of the model is tombstoned.
+    status: z.enum(["active", "retired"]).optional(),
 });
 export const overviewRevenueResponseSchema = revenueWindowSchema.extend({
     models: z.array(modelRevenueItemSchema),
@@ -1247,6 +1257,9 @@ export const fanProfileDocumentSchema = z.object({
     body: z.string(),
     source: fanProfileSourceEnum,
     createdAt: isoTimestamp,
+    /** Scan generation time (#136); null for rows written before the field
+     * existed. Optional so a newer SDK tolerates an older kernel. */
+    sourceGeneratedAt: isoTimestamp.nullable().optional(),
     createdByUserId: intId.nullable(),
 });
 export const fanProfileResponseSchema = z.object({
@@ -1434,6 +1447,14 @@ export const crossPageFanTransactionListResponseSchema = z.object({
 });
 export const upsertFanProfileBodySchema = z.object({
     body: z.string().min(1).max(50_000),
+    /** Epoch ms of the client's Scan generation (#136): created_at is only the
+     * hub APPEND time and must not stand in for the dossier's age when a
+     * client re-pushes an old cached summary. Optional — legacy clients omit.
+     * Bounded to 2100-01-01: int().positive() alone admits values past the
+     * JS Date range (Invalid Date at insert) and absurd-future stamps that
+     * would keep volatile dossier sections "fresh" forever. Small NEAR-future
+     * clock skew is clamped server-side, not rejected here. */
+    generatedAtMs: z.number().int().positive().max(4_102_444_800_000).optional(),
 });
 export const createFanNoteBodySchema = z.object({
     body: z.string().min(1).max(10000),
@@ -1502,6 +1523,24 @@ export const aiGatewayPromptBlockSchema = z.object({
     text: z.string().min(1).max(100_000),
     cache: aiGatewayPromptCacheTtlSchema,
 }).strict();
+// Feature-lane-only debug echo. Deliberately separate from the raw gateway
+// prompt-block schema (100k): an assembled block is much larger than the wire
+// values it carries. clientContext admits a 300k transcript, the builder places
+// the WHOLE transcript in one dynamic block, and escapeForPrompt expands the
+// worst case fivefold ("&" → "&amp;"). Bound = (transcript 300k + spending 20k
+// + subscription 20k + draft 20k) × 5 + dossier 20k + template framing, rounded
+// up. Echo contract only — never accepted in an AI request body.
+export const AI_FEATURE_DEBUG_PROMPT_BLOCK_MAX_CHARS = 2_500_000;
+export const aiFeatureDebugPromptBlockSchema = z.object({
+    text: z.string().min(1).max(AI_FEATURE_DEBUG_PROMPT_BLOCK_MAX_CHARS),
+    cache: aiGatewayPromptCacheTtlSchema,
+}).strict();
+export const aiFeatureDebugInputFrameSchema = z.object({
+    type: z.literal("debug_input_v1"),
+    systemBlocks: z.array(aiFeatureDebugPromptBlockSchema).min(1).max(64),
+    userBlocks: z.array(aiFeatureDebugPromptBlockSchema).min(1).max(64),
+    contextManifest: z.record(z.string(), z.unknown()).nullable(),
+}).strict();
 export const aiGatewayStreamBodySchema = z.object({
     clientRequestId: z.string().uuid(),
     feature: aiUsageFeatureEnum,
@@ -1568,6 +1607,13 @@ export const aiGatewayStreamFrameSchema = z.discriminatedUnion("type", [
         type: z.literal("done"),
         stopReason: z.string().nullable(),
     }).strict(),
+]);
+// Unknown frames remain fatal for the raw gateway. Only streamAiFeature uses
+// this additive union, and the server emits debug_input_v1 only when the
+// caller advertised the matching capability header.
+export const aiFeatureStreamFrameSchema = z.union([
+    aiGatewayStreamFrameSchema,
+    aiFeatureDebugInputFrameSchema,
 ]);
 // Stage 29 restricted capture class (DP 6-A): owner-only reads.
 // Stage 31: personas are kernel config (DP 9-A single-tenant) — the desktop
@@ -2286,6 +2332,7 @@ export const archiveMessageItemSchema = z.object({
 const notificationIncidentKindEnum = z.enum([
     "auth_blocked",
     "proxy_failed",
+    "proxy_missing",
     "stream_failed_threshold",
     "ofapi_auth",
     "ofapi_low_credit",
@@ -2296,6 +2343,8 @@ const notificationIncidentKindEnum = z.enum([
     "wrong_transactions_writer",
     "read_gateway_capture",
     "golden_signal_lag",
+    "scheduler_silent",
+    "ops_sampler_silent",
 ]);
 const notificationIncidentStatusEnum = z.enum(["open", "resolved"]);
 const deliveryKindEnum = z.enum([
@@ -2489,6 +2538,10 @@ export const verifyPageResponseSchema = z.object({
     verified: z.boolean(),
     username: z.string().nullable(),
     platform: platformEnum,
+    // W3.3 (D4-N1): false = the credentials verified but the auth block could
+    // not be cleared — streams stay blocked and the incidents stay open; the
+    // dashboard renders a warning instead of an all-clear.
+    syncUnblocked: z.boolean(),
 });
 export const adminCreatePageResponseSchema = z.object({
     page: assignedPageSchema,
@@ -2510,6 +2563,8 @@ export const adminUpdatePageResponseSchema = z.object({
 export const updateCredentialsResponseSchema = z.object({
     updated: z.boolean(),
     verified: z.boolean(),
+    // W3.3 (D4-N1): see verifyPageResponseSchema.syncUnblocked.
+    syncUnblocked: z.boolean(),
 });
 export const deletedResponseSchema = z.object({
     deleted: z.literal(true),
@@ -3556,7 +3611,6 @@ export const routeSchemas = {
             200: ofapiWebhookAckResponseSchema,
             400: errorResponseSchema,
             401: errorResponseSchema,
-            429: errorResponseSchema,
             503: errorResponseSchema,
         },
     },
@@ -3992,6 +4046,16 @@ export const routeSchemas = {
                 builtAt: z.string().nullable(),
                 /** Spenders with gross > 0 in this window (entries may be a bounded subset). */
                 fanCount: z.number().int().nonnegative(),
+                /** W8.1 (A12/A20): why the projection is (or is not) being fed — a
+                 * `builtAt: null` response is no longer ambiguous between "no
+                 * spenders" and "stream not ramped for this page". Additive. */
+                source: z.object({
+                    streamState: z.enum(["ramped", "flag_off", "not_allowlisted", "unsupported_platform"]),
+                    /** fan_earnings stream's last successful sync for this page. */
+                    lastSyncedAt: z.string().nullable(),
+                    /** null = the page has no fan_earnings sync state row yet. */
+                    consecutiveFailures: z.number().int().nullable(),
+                }),
                 entries: z.array(z.object({
                     platformUserId: z.string(),
                     username: z.string().nullable(),
@@ -4770,6 +4834,44 @@ export const routeSchemas = {
         params: z.object({ username: z.string().min(1) }),
         response: {
             200: z.object({ revokedCount: z.number().int() }),
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    adminDeactivateUser: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Deactivate a user (decision #126: soft tombstone, never delete)",
+        description: "Sets the disabled_at tombstone and revokes every credential "
+            + "(API keys, device tokens, sessions) in one transaction. History and "
+            + "attribution are preserved; the row disappears from the default admin "
+            + "list. Owners and the calling account itself cannot be deactivated.",
+        params: z.object({ username: z.string().min(1) }),
+        response: {
+            200: z.object({
+                ok: z.literal(true),
+                revokedApiKeys: z.number().int().nonnegative(),
+                revokedDeviceTokens: z.number().int().nonnegative(),
+                revokedSessions: z.number().int().nonnegative(),
+            }),
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    adminReactivateUser: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Reactivate a deactivated user",
+        description: "Clears the disabled_at tombstone. The stored password works "
+            + "again immediately; API keys and device tokens stay revoked — issue "
+            + "fresh ones.",
+        params: z.object({ username: z.string().min(1) }),
+        response: {
+            200: z.object({ ok: z.literal(true) }),
+            400: errorResponseSchema,
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,

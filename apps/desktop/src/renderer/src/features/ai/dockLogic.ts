@@ -421,6 +421,76 @@ export function extractPromptBlocks(snapshot: unknown): PromptInspectorBlock[] |
   return blocks.length > 0 ? blocks : null;
 }
 
+// ─── Kernel prompt echo (#140) ───────────────────────────────────────────
+
+/** Why there are no blocks to show: the kernel's echo window is closed, or the
+ * answer came from cache and no model was called at all. */
+export type PromptEchoStatus = 'unavailable' | 'cache-hit' | null;
+
+const echoStatusSchema = z.looseObject({ echo: z.enum(['unavailable', 'cache-hit']).optional() });
+
+export function readPromptEchoStatus(snapshot: unknown): PromptEchoStatus {
+  const parsed = echoStatusSchema.safeParse(snapshot);
+  return parsed.success ? parsed.data.echo ?? null : null;
+}
+
+export interface KernelDossierInfo {
+  version: number | null;
+  ageDays: number | null;
+  chars: number | null;
+  truncated: boolean;
+  droppedSections: string[];
+}
+
+export interface KernelContextInfo {
+  dossier: KernelDossierInfo | null;
+  /** Transcript-union audit (kernel-loaded lane) as label/value pairs. */
+  transcript: Array<[string, string]>;
+  manifest: Record<string, unknown> | null;
+}
+
+const manifestSchema = z.looseObject({
+  contextManifest: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+const dossierSchema = z.looseObject({
+  version: z.number().nullable().optional(),
+  ageDays: z.number().nullable().optional(),
+  chars: z.number().nullable().optional(),
+  truncated: z.boolean().optional(),
+  droppedSections: z.array(z.string()).optional(),
+});
+const TRANSCRIPT_KEYS = ['source', 'mode', 'archiveCount', 'unionCount', 'staleContext'] as const;
+
+/** The manifest is the kernel's own account of what it injected — the fastest
+ * way to tell "the dossier is stale" from "the dossier never arrived". */
+export function readKernelContext(snapshot: unknown): KernelContextInfo | null {
+  const parsed = manifestSchema.safeParse(snapshot);
+  if (!parsed.success) return null;
+  const manifest = parsed.data.contextManifest ?? null;
+  if (manifest === null) return null;
+
+  const dossierParsed = dossierSchema.safeParse(manifest['fanProfile']);
+  const dossier: KernelDossierInfo | null = dossierParsed.success && manifest['fanProfile'] !== undefined
+    ? {
+        version: dossierParsed.data.version ?? null,
+        ageDays: dossierParsed.data.ageDays ?? null,
+        chars: dossierParsed.data.chars ?? null,
+        truncated: dossierParsed.data.truncated === true,
+        droppedSections: dossierParsed.data.droppedSections ?? [],
+      }
+    : null;
+
+  const transcript: Array<[string, string]> = [];
+  for (const key of TRANSCRIPT_KEYS) {
+    const value = manifest[key];
+    if (value !== undefined && value !== null) {
+      transcript.push([key, String(value)]);
+    }
+  }
+
+  return { dossier, transcript, manifest };
+}
+
 // ─── Chunk batching (DESIGN §3.4: ≤1 flush / 50 ms) ──────────────────────
 
 export const STREAM_FLUSH_MS = 50;

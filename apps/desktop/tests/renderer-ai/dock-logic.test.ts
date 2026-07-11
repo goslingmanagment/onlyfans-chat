@@ -10,6 +10,8 @@ import {
   errorHint,
   evaluateAiGate,
   extractPromptBlocks,
+  readKernelContext,
+  readPromptEchoStatus,
   hasConfiguredAiTransport,
   isFrameForOperation,
   shouldAutoInsertCompactDraft,
@@ -315,5 +317,63 @@ describe('extractPromptBlocks (debug inspector)', () => {
     expect(extractPromptBlocks({ something: 'else' })).toBeNull();
     expect(extractPromptBlocks('not an object')).toBeNull();
     expect(extractPromptBlocks({ systemBlocks: [{ text: 1, cache: 'none' }] })).toBeNull();
+  });
+});
+
+// #140 — the kernel prompt echo. The inspector must be able to say WHY it has no
+// blocks (window shut vs. no model call at all), and to surface the kernel's own
+// account of the context it injected: a stale dossier and a missing one produce
+// very different bad replies.
+describe('prompt echo status', () => {
+  it('reads the two known no-blocks reasons and ignores everything else', () => {
+    expect(readPromptEchoStatus({ echo: 'unavailable' })).toBe('unavailable');
+    expect(readPromptEchoStatus({ echo: 'cache-hit' })).toBe('cache-hit');
+    expect(readPromptEchoStatus({ systemBlocks: [], userBlocks: [] })).toBeNull();
+    expect(readPromptEchoStatus({ echo: 'something-else' })).toBeNull();
+    expect(readPromptEchoStatus(null)).toBeNull();
+  });
+});
+
+describe('kernel context manifest', () => {
+  it('reads the dossier audit and the transcript-union keys', () => {
+    const context = readKernelContext({
+      systemBlocks: [{ text: 'persona', cache: '1h' }],
+      contextManifest: {
+        fanProfile: {
+          version: 3,
+          ageDays: 12,
+          chars: 8110,
+          truncated: false,
+          droppedSections: ['FINANCIAL PROFILE', 'STRATEGY'],
+        },
+        source: 'union',
+        archiveCount: 40,
+        unionCount: 42,
+        staleContext: false,
+      },
+    });
+
+    expect(context?.dossier).toEqual({
+      version: 3,
+      ageDays: 12,
+      chars: 8110,
+      truncated: false,
+      droppedSections: ['FINANCIAL PROFILE', 'STRATEGY'],
+    });
+    expect(context?.transcript).toEqual([
+      ['source', 'union'],
+      ['archiveCount', '40'],
+      ['unionCount', '42'],
+      ['staleContext', 'false'],
+    ]);
+  });
+
+  it('distinguishes a manifest without a dossier from no manifest at all', () => {
+    const withoutDossier = readKernelContext({ contextManifest: { source: 'archive' } });
+    expect(withoutDossier?.dossier).toBeNull();
+    expect(withoutDossier?.transcript).toEqual([['source', 'archive']]);
+
+    expect(readKernelContext({ contextManifest: null })).toBeNull();
+    expect(readKernelContext({ systemBlocks: [] })).toBeNull();
   });
 });

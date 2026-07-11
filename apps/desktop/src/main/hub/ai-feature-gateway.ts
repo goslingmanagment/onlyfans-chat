@@ -98,6 +98,7 @@ export function createFeatureAiGateway(options: FeatureAiGatewayOptions): AiFeat
             {
               feature: req.feature,
               signal: controller.signal,
+              ...(req.debugPromptEcho ? { debugPromptEcho: true } : {}),
               request: {
                 clientRequestId: req.clientRequestId,
                 pageLabel,
@@ -121,6 +122,7 @@ export function createFeatureAiGateway(options: FeatureAiGatewayOptions): AiFeat
                   cb.onQuotaRemaining?.(meta.quotaRemainingRequests);
                 }
               },
+              onDebugInput: (input) => cb.onDebugInput?.(input),
               onText: (text) => cb.onText(text),
             },
           );

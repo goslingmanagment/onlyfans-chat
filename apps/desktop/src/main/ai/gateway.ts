@@ -9,6 +9,15 @@ import type { LlmReasoningSignal, LlmUsageMetrics } from '@chatgoose/shared/usag
 
 export type CancelFn = () => void;
 
+/** The prompt the kernel actually assembled (core #140). Since the cutover the
+ * desktop sends refs only, so this is the ONLY way it can see the persona,
+ * templates and fan dossier that shaped a generation. */
+export interface AiDebugInput {
+  systemBlocks: Array<{ text: string; cache: string }>;
+  userBlocks: Array<{ text: string; cache: string }>;
+  contextManifest: Record<string, unknown> | null;
+}
+
 export interface StreamCallbacks {
   onText: (text: string) => void;
   onUsage?: (usage: LlmUsageMetrics) => void;
@@ -19,6 +28,8 @@ export interface StreamCallbacks {
   onStopReason?: (stopReason: string | null) => void;
   /** Fired exactly once with the terminal classified error. Aborts reject without firing it. */
   onError?: (error: CgError) => void;
+  /** Debug mode only: the kernel's prompt echo, if its window allows it. */
+  onDebugInput?: (input: AiDebugInput) => void;
 }
 
 /** Provider StreamCallbacks plus the terminal success signal. */
@@ -50,6 +61,8 @@ export interface AiFeatureGatewayRequest {
   draftText?: string | undefined;
   personaKey?: string | undefined;
   isRegeneration: boolean;
+  /** Debug mode only (#140): request the kernel's prompt echo. */
+  debugPromptEcho?: boolean;
 }
 
 export interface AiFeatureGateway {

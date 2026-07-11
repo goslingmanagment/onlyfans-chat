@@ -168,7 +168,7 @@ export function createKernelClient(operations, options) {
     return client;
 }
 // --- Stream helpers (Stage 20 Task 2) ---
-import { aiGatewayStreamFrameSchema, domainEventFrameSchema, domainEventsSnapshotRequiredResponseSchema, syncEventSchema, syncSnapshotRequiredResponseSchema, } from "./routes";
+import { aiFeatureStreamFrameSchema, aiGatewayStreamFrameSchema, domainEventFrameSchema, domainEventsSnapshotRequiredResponseSchema, syncEventSchema, syncSnapshotRequiredResponseSchema, } from "./routes";
 async function* parseSseStream(body) {
     const reader = body.getReader();
     const decoder = new TextDecoder();
@@ -300,6 +300,9 @@ export function streamAiFeature(options, input) {
             options,
             method: "POST",
             path: `/api/v1/ai/features/${encodeURIComponent(input.feature)}`,
+            headers: input.debugPromptEcho
+                ? { "x-kernel-ai-capabilities": "debug-input-v1" }
+                : undefined,
             body: input.body,
             signal: abort.signal,
         });
@@ -323,7 +326,7 @@ export function streamAiFeature(options, input) {
             if (frame.event !== "ai" || frame.data === "") {
                 continue;
             }
-            const parsed = aiGatewayStreamFrameSchema.safeParse(JSON.parse(frame.data));
+            const parsed = aiFeatureStreamFrameSchema.safeParse(JSON.parse(frame.data));
             if (!parsed.success) {
                 throw new KernelApiError(`ai frame failed contract validation: ${parsed.error.message}`, "contract", 200, "frame_validation_failed", frame.data);
             }

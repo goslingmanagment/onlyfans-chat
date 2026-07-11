@@ -262,6 +262,15 @@ const hubUsageBatchRequestSchema = z.object({
 
 export type HubIngestObservationEvent = z.infer<typeof routeSchemas.ingestObservations.body.shape.events.element>;
 
+/** Core #140: the kernel's echo of the prompt it actually assembled. Arrives
+ * only when the caller asked for it (capability header) AND the owner's
+ * time-bounded window names this chatter — silence is "not now", not an error. */
+export interface HubAiDebugInput {
+  systemBlocks: Array<{ text: string; cache: string }>;
+  userBlocks: Array<{ text: string; cache: string }>;
+  contextManifest: Record<string, unknown> | null;
+}
+
 export interface HubAiGatewayStreamCallbacks {
   onText: (text: string) => void;
   onUsage?: (usage: LlmUsageMetrics) => void;
@@ -272,6 +281,7 @@ export interface HubAiGatewayStreamCallbacks {
    * (the acceptance correlation key kernel-side). quotaRemainingRequests is
    * the page's remaining daily gateway budget (null = kernel didn't say). */
   onMeta?: (meta: { requestId: string; clientRequestId: string; quotaRemainingRequests: number | null }) => void;
+  onDebugInput?: (input: HubAiDebugInput) => void;
 }
 
 type AiGatewayUsageFrame = Extract<AiGatewayStreamFrame, { type: 'usage' }>;
@@ -350,7 +360,14 @@ export interface HubClient {
    *  Same SSE frames as streamAiGateway; the kernel loads context and builds
    *  the prompt — the desktop sends refs only. */
   streamAiFeature(
-    args: { feature: string; request: HubAiFeatureStreamRequest; signal?: HubAbortSignalLike },
+    args: {
+      feature: string;
+      request: HubAiFeatureStreamRequest;
+      signal?: HubAbortSignalLike;
+      /** Debug mode only (#140): ask the kernel to echo the assembled prompt.
+       * Rides a capability header, so an old kernel simply ignores it. */
+      debugPromptEcho?: boolean;
+    },
     callbacks: HubAiGatewayStreamCallbacks,
   ): Promise<string>;
   /**
@@ -667,7 +684,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
         clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaArchive({ params: { key } }));
     },
 
-    async streamAiFeature({ feature, request: streamRequest, signal }, callbacks) {
+    async streamAiFeature({ feature, request: streamRequest, signal, debugPromptEcho }, callbacks) {
       const requestBody = routeSchemas.aiFeatureStream.body.safeParse(streamRequest);
       if (!requestBody.success) {
         throw badRequestBeforeWire('AI feature stream request failed contract validation', requestBody.error.message);
@@ -685,9 +702,17 @@ export function createHubClient(options: HubClientOptions): HubClient {
         feature,
         body: requestBody.data,
         signal: controller.signal as never,
+        ...(debugPromptEcho ? { debugPromptEcho: true } : {}),
         onFrame: (frame) => {
           callbacks.onProgress?.();
           switch (frame.type) {
+            case 'debug_input_v1':
+              callbacks.onDebugInput?.({
+                systemBlocks: frame.systemBlocks,
+                userBlocks: frame.userBlocks,
+                contextManifest: frame.contextManifest,
+              });
+              return;
             case 'meta':
               callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId, quotaRemainingRequests: frame.quota.remainingRequestsToday });
               return;

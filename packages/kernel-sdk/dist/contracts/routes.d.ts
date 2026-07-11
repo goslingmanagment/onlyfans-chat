@@ -106,6 +106,8 @@ export declare const adminUserSchema: z.ZodObject<{
         activeKeyCreatedAt: z.ZodNullable<z.ZodString>;
         activeKeyLastUsedAt: z.ZodNullable<z.ZodString>;
     }, z.core.$strip>>;
+    disabledAt: z.ZodNullable<z.ZodString>;
+    lastActiveAt: z.ZodNullable<z.ZodString>;
 }, z.core.$strip>;
 export declare const authStateSchema: z.ZodObject<{
     authMethod: z.ZodEnum<{
@@ -708,6 +710,10 @@ export declare const pageRevenueItemSchema: z.ZodObject<{
     modelName: z.ZodString;
     netEarningsMills: z.ZodNumber;
     totalNetMills: z.ZodNumber;
+    status: z.ZodOptional<z.ZodEnum<{
+        active: "active";
+        deleted: "deleted";
+    }>>;
 }, z.core.$strip>;
 export declare const modelRevenueItemSchema: z.ZodObject<{
     modelId: z.ZodNumber;
@@ -716,6 +722,10 @@ export declare const modelRevenueItemSchema: z.ZodObject<{
     pageCount: z.ZodNumber;
     netEarningsMills: z.ZodNumber;
     totalNetMills: z.ZodNumber;
+    status: z.ZodOptional<z.ZodEnum<{
+        active: "active";
+        retired: "retired";
+    }>>;
 }, z.core.$strip>;
 export declare const overviewRevenueResponseSchema: z.ZodObject<{
     revenueMills: z.ZodNumber;
@@ -778,6 +788,10 @@ export declare const overviewRevenueResponseSchema: z.ZodObject<{
         pageCount: z.ZodNumber;
         netEarningsMills: z.ZodNumber;
         totalNetMills: z.ZodNumber;
+        status: z.ZodOptional<z.ZodEnum<{
+            active: "active";
+            retired: "retired";
+        }>>;
     }, z.core.$strip>>;
     pages: z.ZodArray<z.ZodObject<{
         pageId: z.ZodNumber;
@@ -786,6 +800,10 @@ export declare const overviewRevenueResponseSchema: z.ZodObject<{
         modelName: z.ZodString;
         netEarningsMills: z.ZodNumber;
         totalNetMills: z.ZodNumber;
+        status: z.ZodOptional<z.ZodEnum<{
+            active: "active";
+            deleted: "deleted";
+        }>>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
 export declare const overviewGrowthResponseSchema: z.ZodObject<{
@@ -862,6 +880,10 @@ export declare const modelRevenueResponseSchema: z.ZodObject<{
         modelName: z.ZodString;
         netEarningsMills: z.ZodNumber;
         totalNetMills: z.ZodNumber;
+        status: z.ZodOptional<z.ZodEnum<{
+            active: "active";
+            deleted: "deleted";
+        }>>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
 export declare const pageRevenueResponseSchema: z.ZodObject<{
@@ -3048,6 +3070,7 @@ export declare const fanProfileDocumentSchema: z.ZodObject<{
         chatmuse: "chatmuse";
     }>;
     createdAt: z.ZodString;
+    sourceGeneratedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     createdByUserId: z.ZodNullable<z.ZodNumber>;
 }, z.core.$strip>;
 export declare const fanProfileResponseSchema: z.ZodObject<{
@@ -3069,6 +3092,7 @@ export declare const fanProfileResponseSchema: z.ZodObject<{
             chatmuse: "chatmuse";
         }>;
         createdAt: z.ZodString;
+        sourceGeneratedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
         createdByUserId: z.ZodNullable<z.ZodNumber>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
@@ -3553,6 +3577,7 @@ export declare const crossPageFanTransactionListResponseSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const upsertFanProfileBodySchema: z.ZodObject<{
     body: z.ZodString;
+    generatedAtMs: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>;
 export declare const createFanNoteBodySchema: z.ZodObject<{
     body: z.ZodString;
@@ -3679,6 +3704,35 @@ export declare const aiGatewayPromptBlockSchema: z.ZodObject<{
         "5m": "5m";
     }>;
 }, z.core.$strict>;
+export declare const AI_FEATURE_DEBUG_PROMPT_BLOCK_MAX_CHARS = 2500000;
+export declare const aiFeatureDebugPromptBlockSchema: z.ZodObject<{
+    text: z.ZodString;
+    cache: z.ZodEnum<{
+        none: "none";
+        "1h": "1h";
+        "5m": "5m";
+    }>;
+}, z.core.$strict>;
+export declare const aiFeatureDebugInputFrameSchema: z.ZodObject<{
+    type: z.ZodLiteral<"debug_input_v1">;
+    systemBlocks: z.ZodArray<z.ZodObject<{
+        text: z.ZodString;
+        cache: z.ZodEnum<{
+            none: "none";
+            "1h": "1h";
+            "5m": "5m";
+        }>;
+    }, z.core.$strict>>;
+    userBlocks: z.ZodArray<z.ZodObject<{
+        text: z.ZodString;
+        cache: z.ZodEnum<{
+            none: "none";
+            "1h": "1h";
+            "5m": "5m";
+        }>;
+    }, z.core.$strict>>;
+    contextManifest: z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+}, z.core.$strict>;
 export declare const aiGatewayStreamBodySchema: z.ZodObject<{
     clientRequestId: z.ZodString;
     feature: z.ZodEnum<{
@@ -3796,6 +3850,79 @@ export declare const aiGatewayStreamFrameSchema: z.ZodDiscriminatedUnion<[z.ZodO
     type: z.ZodLiteral<"done">;
     stopReason: z.ZodNullable<z.ZodString>;
 }, z.core.$strict>], "type">;
+export declare const aiFeatureStreamFrameSchema: z.ZodUnion<readonly [z.ZodDiscriminatedUnion<[z.ZodObject<{
+    type: z.ZodLiteral<"meta">;
+    requestId: z.ZodString;
+    clientRequestId: z.ZodString;
+    feature: z.ZodEnum<{
+        "fast-reply": "fast-reply";
+        "improve-draft": "improve-draft";
+        "help-me": "help-me";
+        "fan-summary": "fan-summary";
+        "chat-review": "chat-review";
+        scan: "scan";
+        ping: "ping";
+        "hi-greeting": "hi-greeting";
+        "workboard-closing": "workboard-closing";
+    }>;
+    pageLabel: z.ZodString;
+    model: z.ZodString;
+    provider: z.ZodEnum<{
+        anthropic: "anthropic";
+        openrouter: "openrouter";
+    }>;
+    providerResponseId: z.ZodNullable<z.ZodString>;
+    quota: z.ZodObject<{
+        accepted: z.ZodBoolean;
+        remainingRequestsToday: z.ZodNullable<z.ZodNumber>;
+        remainingMicroUsdToday: z.ZodNullable<z.ZodNumber>;
+    }, z.core.$strip>;
+}, z.core.$strict>, z.ZodObject<{
+    type: z.ZodLiteral<"content_delta">;
+    text: z.ZodString;
+}, z.core.$strict>, z.ZodObject<{
+    type: z.ZodLiteral<"reasoning_delta">;
+    text: z.ZodString;
+}, z.core.$strict>, z.ZodObject<{
+    type: z.ZodLiteral<"usage">;
+    usage: z.ZodObject<{
+        inputTokens: z.ZodNumber;
+        outputTokens: z.ZodNumber;
+        cacheWriteTokens: z.ZodNumber;
+        cacheReadTokens: z.ZodNumber;
+        costMicroUsd: z.ZodNumber;
+        costApproximate: z.ZodBoolean;
+    }, z.core.$strip>;
+    providerResponseId: z.ZodNullable<z.ZodString>;
+    cacheHit: z.ZodBoolean;
+}, z.core.$strict>, z.ZodObject<{
+    type: z.ZodLiteral<"error">;
+    code: z.ZodString;
+    message: z.ZodString;
+    retryAfterMs: z.ZodNullable<z.ZodNumber>;
+}, z.core.$strict>, z.ZodObject<{
+    type: z.ZodLiteral<"done">;
+    stopReason: z.ZodNullable<z.ZodString>;
+}, z.core.$strict>], "type">, z.ZodObject<{
+    type: z.ZodLiteral<"debug_input_v1">;
+    systemBlocks: z.ZodArray<z.ZodObject<{
+        text: z.ZodString;
+        cache: z.ZodEnum<{
+            none: "none";
+            "1h": "1h";
+            "5m": "5m";
+        }>;
+    }, z.core.$strict>>;
+    userBlocks: z.ZodArray<z.ZodObject<{
+        text: z.ZodString;
+        cache: z.ZodEnum<{
+            none: "none";
+            "1h": "1h";
+            "5m": "5m";
+        }>;
+    }, z.core.$strict>>;
+    contextManifest: z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+}, z.core.$strict>]>;
 export declare const aiPersonaSchema: z.ZodObject<{
     key: z.ZodString;
     displayName: z.ZodString;
@@ -7689,6 +7816,7 @@ export declare const notificationsIncidentItemSchema: z.ZodObject<{
     kind: z.ZodEnum<{
         auth_blocked: "auth_blocked";
         proxy_failed: "proxy_failed";
+        proxy_missing: "proxy_missing";
         stream_failed_threshold: "stream_failed_threshold";
         ofapi_auth: "ofapi_auth";
         ofapi_low_credit: "ofapi_low_credit";
@@ -7699,6 +7827,8 @@ export declare const notificationsIncidentItemSchema: z.ZodObject<{
         wrong_transactions_writer: "wrong_transactions_writer";
         read_gateway_capture: "read_gateway_capture";
         golden_signal_lag: "golden_signal_lag";
+        scheduler_silent: "scheduler_silent";
+        ops_sampler_silent: "ops_sampler_silent";
     }>;
     pageLabel: z.ZodNullable<z.ZodString>;
     platform: z.ZodNullable<z.ZodEnum<{
@@ -7725,6 +7855,7 @@ export declare const notificationsIncidentsQuerySchema: z.ZodObject<{
     kind: z.ZodOptional<z.ZodEnum<{
         auth_blocked: "auth_blocked";
         proxy_failed: "proxy_failed";
+        proxy_missing: "proxy_missing";
         stream_failed_threshold: "stream_failed_threshold";
         ofapi_auth: "ofapi_auth";
         ofapi_low_credit: "ofapi_low_credit";
@@ -7735,6 +7866,8 @@ export declare const notificationsIncidentsQuerySchema: z.ZodObject<{
         wrong_transactions_writer: "wrong_transactions_writer";
         read_gateway_capture: "read_gateway_capture";
         golden_signal_lag: "golden_signal_lag";
+        scheduler_silent: "scheduler_silent";
+        ops_sampler_silent: "ops_sampler_silent";
     }>>;
     pageLabel: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -7747,6 +7880,7 @@ export declare const notificationsIncidentsResponseSchema: z.ZodObject<{
         kind: z.ZodEnum<{
             auth_blocked: "auth_blocked";
             proxy_failed: "proxy_failed";
+            proxy_missing: "proxy_missing";
             stream_failed_threshold: "stream_failed_threshold";
             ofapi_auth: "ofapi_auth";
             ofapi_low_credit: "ofapi_low_credit";
@@ -7757,6 +7891,8 @@ export declare const notificationsIncidentsResponseSchema: z.ZodObject<{
             wrong_transactions_writer: "wrong_transactions_writer";
             read_gateway_capture: "read_gateway_capture";
             golden_signal_lag: "golden_signal_lag";
+            scheduler_silent: "scheduler_silent";
+            ops_sampler_silent: "ops_sampler_silent";
         }>;
         pageLabel: z.ZodNullable<z.ZodString>;
         platform: z.ZodNullable<z.ZodEnum<{
@@ -7919,6 +8055,7 @@ export declare const verifyPageResponseSchema: z.ZodObject<{
         fansly: "fansly";
         onlyfans: "onlyfans";
     }>;
+    syncUnblocked: z.ZodBoolean;
 }, z.core.$strip>;
 export declare const adminCreatePageResponseSchema: z.ZodObject<{
     page: z.ZodObject<{
@@ -7991,6 +8128,7 @@ export declare const adminUpdatePageResponseSchema: z.ZodObject<{
 export declare const updateCredentialsResponseSchema: z.ZodObject<{
     updated: z.ZodBoolean;
     verified: z.ZodBoolean;
+    syncUnblocked: z.ZodBoolean;
 }, z.core.$strip>;
 export declare const deletedResponseSchema: z.ZodObject<{
     deleted: z.ZodLiteral<true>;
@@ -9801,11 +9939,6 @@ export declare const routeSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
             }, z.core.$strip>;
-            readonly 429: z.ZodObject<{
-                error: z.ZodString;
-                message: z.ZodString;
-                statusCode: z.ZodNumber;
-            }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
@@ -11073,6 +11206,10 @@ export declare const routeSchemas: {
                     pageCount: z.ZodNumber;
                     netEarningsMills: z.ZodNumber;
                     totalNetMills: z.ZodNumber;
+                    status: z.ZodOptional<z.ZodEnum<{
+                        active: "active";
+                        retired: "retired";
+                    }>>;
                 }, z.core.$strip>>;
                 pages: z.ZodArray<z.ZodObject<{
                     pageId: z.ZodNumber;
@@ -11081,6 +11218,10 @@ export declare const routeSchemas: {
                     modelName: z.ZodString;
                     netEarningsMills: z.ZodNumber;
                     totalNetMills: z.ZodNumber;
+                    status: z.ZodOptional<z.ZodEnum<{
+                        active: "active";
+                        deleted: "deleted";
+                    }>>;
                 }, z.core.$strip>>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
@@ -11226,6 +11367,10 @@ export declare const routeSchemas: {
                     modelName: z.ZodString;
                     netEarningsMills: z.ZodNumber;
                     totalNetMills: z.ZodNumber;
+                    status: z.ZodOptional<z.ZodEnum<{
+                        active: "active";
+                        deleted: "deleted";
+                    }>>;
                 }, z.core.$strip>>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
@@ -11886,6 +12031,16 @@ export declare const routeSchemas: {
                 window: z.ZodString;
                 builtAt: z.ZodNullable<z.ZodString>;
                 fanCount: z.ZodNumber;
+                source: z.ZodObject<{
+                    streamState: z.ZodEnum<{
+                        ramped: "ramped";
+                        flag_off: "flag_off";
+                        not_allowlisted: "not_allowlisted";
+                        unsupported_platform: "unsupported_platform";
+                    }>;
+                    lastSyncedAt: z.ZodNullable<z.ZodString>;
+                    consecutiveFailures: z.ZodNullable<z.ZodNumber>;
+                }, z.core.$strip>;
                 entries: z.ZodArray<z.ZodObject<{
                     platformUserId: z.ZodString;
                     username: z.ZodNullable<z.ZodString>;
@@ -12288,6 +12443,7 @@ export declare const routeSchemas: {
                         chatmuse: "chatmuse";
                     }>;
                     createdAt: z.ZodString;
+                    sourceGeneratedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
                     createdByUserId: z.ZodNullable<z.ZodNumber>;
                 }, z.core.$strip>>;
             }, z.core.$strip>;
@@ -12339,6 +12495,7 @@ export declare const routeSchemas: {
                         chatmuse: "chatmuse";
                     }>;
                     createdAt: z.ZodString;
+                    sourceGeneratedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
                     createdByUserId: z.ZodNullable<z.ZodNumber>;
                 }, z.core.$strip>>;
             }, z.core.$strip>;
@@ -12372,6 +12529,7 @@ export declare const routeSchemas: {
         }, z.core.$strip>;
         readonly body: z.ZodObject<{
             body: z.ZodString;
+            generatedAtMs: z.ZodOptional<z.ZodNumber>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -12381,6 +12539,7 @@ export declare const routeSchemas: {
                     chatmuse: "chatmuse";
                 }>;
                 createdAt: z.ZodString;
+                sourceGeneratedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
                 createdByUserId: z.ZodNullable<z.ZodNumber>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
@@ -12456,6 +12615,7 @@ export declare const routeSchemas: {
                     chatmuse: "chatmuse";
                 }>;
                 createdAt: z.ZodString;
+                sourceGeneratedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
                 createdByUserId: z.ZodNullable<z.ZodNumber>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
@@ -17095,6 +17255,8 @@ export declare const routeSchemas: {
                     activeKeyCreatedAt: z.ZodNullable<z.ZodString>;
                     activeKeyLastUsedAt: z.ZodNullable<z.ZodString>;
                 }, z.core.$strip>>;
+                disabledAt: z.ZodNullable<z.ZodString>;
+                lastActiveAt: z.ZodNullable<z.ZodString>;
             }, z.core.$strip>>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
@@ -17741,6 +17903,81 @@ export declare const routeSchemas: {
         readonly response: {
             readonly 200: z.ZodObject<{
                 revokedCount: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminDeactivateUser: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Deactivate a user (decision #126: soft tombstone, never delete)";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            username: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                ok: z.ZodLiteral<true>;
+                revokedApiKeys: z.ZodNumber;
+                revokedDeviceTokens: z.ZodNumber;
+                revokedSessions: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminReactivateUser: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Reactivate a deactivated user";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            username: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                ok: z.ZodLiteral<true>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
@@ -19147,6 +19384,7 @@ export declare const routeSchemas: {
                     fansly: "fansly";
                     onlyfans: "onlyfans";
                 }>;
+                syncUnblocked: z.ZodBoolean;
             }, z.core.$strip>;
             readonly 400: z.ZodObject<{
                 error: z.ZodString;
@@ -19199,6 +19437,7 @@ export declare const routeSchemas: {
             readonly 200: z.ZodObject<{
                 updated: z.ZodBoolean;
                 verified: z.ZodBoolean;
+                syncUnblocked: z.ZodBoolean;
             }, z.core.$strip>;
             readonly 400: z.ZodObject<{
                 error: z.ZodString;
@@ -19546,6 +19785,7 @@ export declare const routeSchemas: {
             kind: z.ZodOptional<z.ZodEnum<{
                 auth_blocked: "auth_blocked";
                 proxy_failed: "proxy_failed";
+                proxy_missing: "proxy_missing";
                 stream_failed_threshold: "stream_failed_threshold";
                 ofapi_auth: "ofapi_auth";
                 ofapi_low_credit: "ofapi_low_credit";
@@ -19556,6 +19796,8 @@ export declare const routeSchemas: {
                 wrong_transactions_writer: "wrong_transactions_writer";
                 read_gateway_capture: "read_gateway_capture";
                 golden_signal_lag: "golden_signal_lag";
+                scheduler_silent: "scheduler_silent";
+                ops_sampler_silent: "ops_sampler_silent";
             }>>;
             pageLabel: z.ZodOptional<z.ZodString>;
             limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -19569,6 +19811,7 @@ export declare const routeSchemas: {
                     kind: z.ZodEnum<{
                         auth_blocked: "auth_blocked";
                         proxy_failed: "proxy_failed";
+                        proxy_missing: "proxy_missing";
                         stream_failed_threshold: "stream_failed_threshold";
                         ofapi_auth: "ofapi_auth";
                         ofapi_low_credit: "ofapi_low_credit";
@@ -19579,6 +19822,8 @@ export declare const routeSchemas: {
                         wrong_transactions_writer: "wrong_transactions_writer";
                         read_gateway_capture: "read_gateway_capture";
                         golden_signal_lag: "golden_signal_lag";
+                        scheduler_silent: "scheduler_silent";
+                        ops_sampler_silent: "ops_sampler_silent";
                     }>;
                     pageLabel: z.ZodNullable<z.ZodString>;
                     platform: z.ZodNullable<z.ZodEnum<{
@@ -19979,10 +20224,13 @@ export type IngestObservationsResponse = z.infer<typeof ingestObservationsRespon
 export type AiGatewayPromptCacheTtl = z.infer<typeof aiGatewayPromptCacheTtlSchema>;
 export type AiGatewayReasoningEffort = z.infer<typeof aiGatewayReasoningEffortSchema>;
 export type AiGatewayPromptBlock = z.infer<typeof aiGatewayPromptBlockSchema>;
+export type AiFeatureDebugPromptBlock = z.infer<typeof aiFeatureDebugPromptBlockSchema>;
+export type AiFeatureDebugInputFrame = z.infer<typeof aiFeatureDebugInputFrameSchema>;
 export type AiGatewayStreamBody = z.infer<typeof aiGatewayStreamBodySchema>;
 export type AiGatewayUsage = z.infer<typeof aiGatewayUsageSchema>;
 export type AiGatewayQuota = z.infer<typeof aiGatewayQuotaSchema>;
 export type AiGatewayStreamFrame = z.infer<typeof aiGatewayStreamFrameSchema>;
+export type AiFeatureStreamFrame = z.infer<typeof aiFeatureStreamFrameSchema>;
 export type SyncEvent = z.infer<typeof syncEventSchema>;
 export type NormalizedSyncMessage = z.infer<typeof normalizedSyncMessageSchema>;
 export type OfapiWebhookAckResponse = z.infer<typeof ofapiWebhookAckResponseSchema>;

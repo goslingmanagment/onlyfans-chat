@@ -73,6 +73,9 @@ describe('AI feature lane (Stage 31)', () => {
       draftText: undefined,
       personaKey: 'builtin:lora',
       isRegeneration: false,
+      // #140: still refs only. The echo is a DEBUG-mode ask (default off), and
+      // even when asked it rides a capability header — never the request body.
+      debugPromptEcho: false,
     });
 
     featureGateway.cb?.onText('kernel says hey');
@@ -89,6 +92,51 @@ describe('AI feature lane (Stage 31)', () => {
     // Gateway ledger is authoritative: no local usage_events row is written.
     const rows = data.db.prepare('SELECT COUNT(*) AS n FROM usage_events').get() as { n: number };
     expect(rows.n).toBe(0);
+  });
+
+  // #140: in debug mode the coordinator ASKS for the kernel's prompt echo and
+  // republishes it as the debug snapshot the inspector has been missing since
+  // the cutover. No echo (window shut) is reported, not silently swallowed.
+  it('requests the prompt echo in debug mode and emits it — or says the window is shut', async () => {
+    build(makeSettingsVM({ debugMode: true }));
+    coordinator.start(startRequest());
+    await flushAsync();
+
+    expect(featureGateway.calls[0]).toMatchObject({ debugPromptEcho: true });
+
+    featureGateway.cb?.onDebugInput?.({
+      systemBlocks: [{ text: 'safety + persona', cache: '1h' }],
+      userBlocks: [{ text: '## Fan Dossier\nred Ducati', cache: '5m' }],
+      contextManifest: { fanProfile: { version: 2, ageDays: 1 } },
+    });
+    featureGateway.cb?.onText('hey');
+    await vi.advanceTimersByTimeAsync(STREAM_CHUNK_FLUSH_MS);
+    featureGateway.cb?.onComplete('hey');
+    await flushAsync();
+
+    const snapshots = framesOfType(frames, 'operation:debugPrompt');
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({
+      snapshot: {
+        userBlocks: [{ text: '## Fan Dossier\nred Ducati', cache: '5m' }],
+        contextManifest: { fanProfile: { version: 2, ageDays: 1 } },
+      },
+    });
+  });
+
+  it('reports an unanswered echo instead of leaving the inspector blank', async () => {
+    build(makeSettingsVM({ debugMode: true }));
+    coordinator.start(startRequest());
+    await flushAsync();
+
+    featureGateway.cb?.onText('hey');
+    await vi.advanceTimersByTimeAsync(STREAM_CHUNK_FLUSH_MS);
+    featureGateway.cb?.onComplete('hey');
+    await flushAsync();
+
+    const snapshots = framesOfType(frames, 'operation:debugPrompt');
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatchObject({ snapshot: { echo: 'unavailable' } });
   });
 
   it('carries the meta quota frame into the complete event (#120 pre-warn)', async () => {

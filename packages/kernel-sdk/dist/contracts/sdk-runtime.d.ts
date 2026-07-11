@@ -91,7 +91,7 @@ export declare function executeKernelRequest(input: {
     headers?: Record<string, string> | undefined;
 }): Promise<Response>;
 export declare function createKernelClient(operations: Record<KernelOperationKey, KernelOperationDef>, options: KernelClientOptions): KernelClient;
-import { syncSnapshotRequiredResponseSchema, type AiGatewayStreamFrame, type DomainEventFrame, type DomainEventsSnapshotRequired, type SyncEvent } from "./routes";
+import { syncSnapshotRequiredResponseSchema, type AiFeatureStreamFrame, type AiGatewayStreamFrame, type DomainEventFrame, type DomainEventsSnapshotRequired, type SyncEvent } from "./routes";
 import type { z as zod } from "zod";
 export interface KernelStreamHandle {
     /** Resolves when the stream ends (server bound, snapshot-required, or close()). */
@@ -123,7 +123,8 @@ export declare function subscribeSyncEvents(options: KernelClientOptions, input:
 export declare function streamAiFeature(options: KernelClientOptions, input: {
     feature: string;
     body: zod.input<(typeof routeSchemas)["aiFeatureStream"]["body"]>;
-    onFrame: (frame: AiGatewayStreamFrame) => void;
+    onFrame: (frame: AiFeatureStreamFrame) => void;
+    debugPromptEcho?: boolean;
     signal?: AbortSignal;
 }): KernelStreamHandle;
 export declare function streamAiGateway(options: KernelClientOptions, input: {
