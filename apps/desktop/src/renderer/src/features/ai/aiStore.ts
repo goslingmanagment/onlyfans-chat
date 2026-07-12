@@ -7,6 +7,7 @@
 import { create } from 'zustand';
 import type { ReplyTone } from '@chatgoose/shared/types';
 import { getFeaturePolicy, type OperationFeature } from '@chatgoose/shared/features';
+import { toUserFacing } from '@chatgoose/shared/errors/index';
 import type {
   LlmSpendSummaryPayload,
   OperationEvent,
@@ -98,6 +99,20 @@ export interface AiDockState {
 
 const MAX_RUNNING_JOBS = 3;
 const MAX_TERMINAL_JOBS = 24;
+
+function aiStartRejection(error: unknown): UserFacingErrorPayload {
+  const normalized = toUserFacing(error);
+  return {
+    key: normalized.code,
+    code: normalized.code,
+    message: normalized.message,
+    description: normalized.recovery,
+    ...(normalized.detailText !== undefined ? { detailText: normalized.detailText } : {}),
+    ...(normalized.settingsLink ? { settingsLink: true } : {}),
+    ...(normalized.retryAtMs !== undefined ? { retryAtMs: normalized.retryAtMs } : {}),
+    ...(normalized.retryAfterMs !== undefined ? { retryAfterMs: normalized.retryAfterMs } : {}),
+  };
+}
 
 const CLEARED = {
   op: null,
@@ -386,13 +401,24 @@ export function startAiFeature(
       jobsByConversation: { ...s.jobsByConversation, [key]: operationId },
     })),
   );
-  void getBridge().invoke('ai:start', {
-    operationId,
-    feature,
-    accountId: ctx.accountId,
-    chatId: ctx.chatId,
-    params,
-  });
+  void getBridge()
+    .invoke('ai:start', {
+      operationId,
+      feature,
+      accountId: ctx.accountId,
+      chatId: ctx.chatId,
+      params,
+    })
+    .catch((error: unknown) => {
+      // Main can reject before the coordinator accepts the operation (for
+      // example while the runtime is offline). Without a terminal frame this
+      // local reservation stayed "running" forever and consumed a job slot.
+      handleAiOperationEvent({
+        type: 'operation:error',
+        operationId,
+        error: aiStartRejection(error),
+      });
+    });
 }
 
 export function regenerateActiveOperation(): void {

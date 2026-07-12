@@ -26,11 +26,22 @@ export interface SyncStatusSnapshot {
 
 export interface SyncProvider {
   start(accountIds: readonly string[]): void;
-  stop(): void;
+  /** Stop scheduling new work and resolve only after every accepted sync task
+   * has finished its final DB continuation. Runtime replacement/DB close must
+   * await this quiescence barrier. */
+  stop(): Promise<void>;
   subscribe(listener: SyncListener): () => void;
   /** Automatic/background tail fetch (limit=100, ONE page). Gated by
-   *  settings.autoReadChats because the OFAPI body read marks the chat read. */
-  refreshChat(accountId: string, chatId: string, purpose?: OfApiPurpose): Promise<void>;
+   *  settings.autoReadChats because the OFAPI body read marks the chat read.
+   *  `expectedMessageId` turns a thin Hub-frame fallback into a proof-bearing
+   *  read: success requires that exact body (auto-read on) or a list head at or
+   *  beyond that numeric platform id (auto-read off). */
+  refreshChat(
+    accountId: string,
+    chatId: string,
+    purpose?: OfApiPurpose,
+    expectedMessageId?: string,
+  ): Promise<void>;
   /** Deliberate single-chat user read (QuickLook/open-like). Bypasses the
    *  automatic auto-read gate but does NOT set openConversation or arm sweeps. */
   readChatTailForUserOpen(

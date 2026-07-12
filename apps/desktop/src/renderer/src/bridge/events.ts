@@ -13,6 +13,7 @@ import { useSettingsCache } from '../state/settingsCache';
 import { useSpendersStore } from '../features/spenders/spendersStore';
 import { playNotificationBlip } from '../lib/sound';
 import { uiMessage } from '@chatgoose/shared/i18n/index';
+import { messageNotificationBody } from '@chatgoose/shared/notifications/index';
 import { currentLocale } from '../lib/i18n';
 import { handleAiOperationEvent } from '../features/ai/aiStore';
 import { syncStatusInvalidationKeysForEvent } from './syncInvalidation';
@@ -78,7 +79,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     type: z.literal('spendersRefresh'),
     accountId: z.string(),
     scope: z.string(),
-    state: z.enum(['running', 'paused', 'done', 'stopped']),
+    state: z.enum(['running', 'paused', 'done', 'partial', 'stopped']),
     done: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
   });
@@ -112,7 +113,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
               }
             : null,
         );
-      if (frame.state === 'done' || frame.state === 'stopped') {
+      if (frame.state === 'done' || frame.state === 'partial' || frame.state === 'stopped') {
         // Clear the cached active-queue synchronously (the invalidate flush is
         // batched 50 ms — a stale 'running' must not flicker the button back).
         queryClient.setQueryData(
@@ -159,7 +160,10 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
             const locale = currentLocale();
             ui.pushToast({
               title: chat?.fanName ?? uiMessage(locale, 'toast.newMessage'),
-              body: chat?.lastMessagePreview ?? uiMessage(locale, 'toast.sentYou'),
+              // The chat query is invalidated in a later batch, so its preview
+              // is still the previous message here. Enriched frames already
+              // carry the authoritative body; id-only frames use generic copy.
+              body: messageNotificationBody(locale, event),
               accountId: event.accountId,
               chatId: event.chatId,
             });

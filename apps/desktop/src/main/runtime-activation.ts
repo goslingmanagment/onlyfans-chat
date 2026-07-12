@@ -27,6 +27,82 @@ export async function activateRuntimeNonFatal(
   }
 }
 
+/** Expose the cached/local UI before beginning any remote runtime activation.
+ * Registration and renderer load remain fatal startup work; activation runs in
+ * the background and reports its eventual status through the supplied hooks. */
+export async function exposeUiBeforeRuntimeActivation(options: {
+  registerIpc: () => void;
+  loadUi: () => Promise<void>;
+  activate: () => Promise<void>;
+  onActivationFailure: (error: unknown) => void;
+  onActivationSettled?: (activated: boolean) => void;
+}): Promise<void> {
+  options.registerIpc();
+  await options.loadUi();
+  void activateRuntimeNonFatal(options.activate, options.onActivationFailure)
+    .then((activated) => options.onActivationSettled?.(activated))
+    .catch(() => undefined);
+}
+
+/** A normal fatal boot must not leave a lock-holding, windowless process. Show
+ * the synchronous error box, flush diagnostics, then release custody via exit. */
+export async function exitAfterFatalBoot(options: {
+  showError: () => void;
+  flush: () => Promise<void>;
+  exit: (code: number) => void;
+}): Promise<void> {
+  try {
+    options.showError();
+  } finally {
+    try {
+      await options.flush();
+    } finally {
+      options.exit(1);
+    }
+  }
+}
+
+/** Electron's `quit` event is too late to await service shutdown. This
+ * before-quit barrier prevents the first attempt, drains exactly once, then
+ * reissues quit; the second pass is allowed through. */
+export function createBeforeQuitBarrier(options: {
+  drain: () => Promise<void>;
+  quit: () => void;
+  onError?: (error: unknown) => void;
+}): (event: { preventDefault(): void }) => void {
+  let state: 'idle' | 'draining' | 'drained' = 'idle';
+  const report = (error: unknown): void => {
+    try {
+      options.onError?.(error);
+    } catch {
+      // Shutdown reporting must not strand the process behind the barrier.
+    }
+  };
+  const finish = (): void => {
+    state = 'drained';
+    try {
+      options.quit();
+    } catch (error) {
+      report(error);
+    }
+  };
+
+  return (event) => {
+    if (state === 'drained') {
+      return;
+    }
+    event.preventDefault();
+    if (state === 'draining') {
+      return;
+    }
+    state = 'draining';
+    void options.drain().then(finish, (error: unknown) => {
+      report(error);
+      finish();
+    });
+  };
+}
+
 /**
  * Credential validation must stay read-only: list the candidate credential's
  * accounts through the throwaway client, but do not feed them into syncAccounts
@@ -48,22 +124,56 @@ export interface BoundedRetryController {
 
 export interface RuntimeMutationQueue {
   run<Result>(task: () => Promise<Result>): Promise<Result>;
+  /** Atomically reject future mutations and run one final task after the
+   * already-accepted tail. Used by before-quit shutdown. */
+  sealAndRun<Result>(task: () => Promise<Result>): Promise<Result>;
 }
 
 /** FIFO promise mutex for activation/deactivation transitions. A rejected task
  * is returned to its caller but does not poison the next queued mutation. */
 export function createRuntimeMutationQueue(): RuntimeMutationQueue {
   let tail: Promise<void> = Promise.resolve();
+  let sealed = false;
+  let terminal: Promise<unknown> | null = null;
+  const enqueue = <Result>(task: () => Promise<Result>): Promise<Result> => {
+    const result = tail.then(task, task);
+    tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
   return {
     run<Result>(task: () => Promise<Result>): Promise<Result> {
-      const result = tail.then(task, task);
-      tail = result.then(
-        () => undefined,
-        () => undefined,
-      );
+      if (sealed) {
+        return Promise.reject(new Error('Runtime mutation queue is sealed for shutdown'));
+      }
+      return enqueue(task);
+    },
+    sealAndRun<Result>(task: () => Promise<Result>): Promise<Result> {
+      if (terminal !== null) {
+        // Quit can race a terminal purge (including auto-updater quit). Both
+        // callers must await the same custody transition; the second terminal
+        // task must neither bypass it nor deactivate a second time.
+        return terminal as Promise<Result>;
+      }
+      sealed = true;
+      const result = enqueue(task);
+      terminal = result;
       return result;
     },
   };
+}
+
+/** Terminal custody transition shared by quit and purge. Sealing and enqueueing
+ * the final drain are one operation, so a settings probe that completes a
+ * moment later cannot publish a replacement runtime against a closing/deleted
+ * database. */
+export function sealRuntimeForTerminalOperation<Result>(
+  queue: RuntimeMutationQueue,
+  drain: () => Promise<Result>,
+): Promise<Result> {
+  return queue.sealAndRun(drain);
 }
 
 /**
@@ -153,17 +263,20 @@ export async function stopRuntimeServices(services: {
   disposeEventForwarding?: (() => void) | null;
   disposeSettingsWatcher?: (() => void) | null;
   disposeCreditMeter?: (() => void) | null;
-  sync?: { stop(): void } | null;
+  sync?: { stop(): Promise<void> | void } | null;
   spendersRefresh?: { dispose(): void } | null;
   sendEngine?: { quiesce(): Promise<void>; dispose(): void } | null;
   coordinator?: { dispose(): void } | null;
   hub?: { dispose(): void } | null;
 }): Promise<void> {
-  services.disposeEventForwarding?.();
   services.disposeSettingsWatcher?.();
   services.disposeCreditMeter?.();
-  services.sync?.stop();
+  // Prevent a scoped refresh queue from enrolling another polling read while
+  // the provider's quiescence barrier is draining its current one.
   services.spendersRefresh?.dispose();
+  // Stop the producer first, then await its DB-continuation barrier before a
+  // replacement runtime can publish or the owner can close SQLite.
+  await services.sync?.stop();
   let quiesceFailed = false;
   let quiesceError: unknown;
   if (services.sendEngine != null) {
@@ -177,6 +290,9 @@ export async function stopRuntimeServices(services: {
     }
   }
   services.coordinator?.dispose();
+  // Coordinator disposal emits terminal discarded frames. Keep the renderer
+  // subscription alive through that emission so jobs cannot remain running.
+  services.disposeEventForwarding?.();
   services.hub?.dispose();
   if (quiesceFailed) {
     throw quiesceError;

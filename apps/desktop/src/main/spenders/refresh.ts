@@ -30,7 +30,7 @@ export const REFRESH_FAILURE_PAUSE_THRESHOLD = 3;
  *  per-fan TTL skip makes the replayed steps free. */
 const PERSIST_EVERY = 10;
 
-export type SpendersRefreshState = 'running' | 'paused' | 'done' | 'stopped';
+export type SpendersRefreshState = 'running' | 'paused' | 'done' | 'partial' | 'stopped';
 
 /** Additive status frame on the sync:event channel (same pattern as
  *  CreditBalanceEvent): renderers that only run frames through parseSyncEvent
@@ -232,6 +232,7 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
 
   async function runQueue(accountId: string, queue: ActiveQueue): Promise<void> {
     let consecutiveFailures = 0;
+    const failedIds: string[] = [];
     while (queue.pending.length > 0 && !queue.stopRequested && !disposed) {
       if (isBudgetExhausted()) {
         if (queue.state !== 'paused') {
@@ -260,8 +261,15 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
           consecutiveFailures += 1;
           if (consecutiveFailures >= REFRESH_FAILURE_PAUSE_THRESHOLD) {
             // Likely network-down: pause and retry the SAME fan instead of
-            // burning through the whole scope erroring.
+            // burning through the whole scope erroring. Earlier consecutive
+            // failures in this burst were provisionally isolated; put them
+            // back too now that the burst is classified as network-wide.
             consecutiveFailures = 0;
+            if (failedIds.length > 0) {
+              queue.pending.unshift(...failedIds);
+              queue.done = Math.max(0, queue.done - failedIds.length);
+              failedIds.length = 0;
+            }
             queue.state = 'paused';
             persist(accountId, queue);
             emit(accountId, queue, 'paused');
@@ -269,7 +277,9 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
             continue;
           }
           // isolated failure (deactivated fan, transient 5xx): skip the fan —
-          // no stamp was written, the next explicit click retries it
+          // no per-fan stamp was written. Preserve the id as a durable partial
+          // queue so this run cannot masquerade as complete/fresh.
+          failedIds.push(chatId);
         }
       }
       queue.pending.shift();
@@ -284,6 +294,13 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
     if (queue.stopRequested || disposed) {
       data.settings.remove(queueKey(accountId));
       emit(accountId, queue, 'stopped');
+      return;
+    }
+    if (failedIds.length > 0) {
+      queue.pending = failedIds;
+      queue.done = Math.max(0, queue.total - failedIds.length);
+      persist(accountId, queue);
+      emit(accountId, queue, 'partial');
       return;
     }
     writeScopeStamps(accountId, queue.scope, await getMappedListIds(accountId).catch(() => []));

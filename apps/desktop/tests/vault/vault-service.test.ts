@@ -68,20 +68,21 @@ describe('mapVaultItem', () => {
     expect(vm).toMatchObject({ id: '3866342509', type: 'photo', isReady: true, tipsTotal: 85 });
   });
 
-  it('audio falls back to the full url; processing items report isReady false', () => {
+  it('never mints a full-only audio file as an image thumbnail', () => {
+    const callsBefore = mintedUrls.length;
     const audio = mapVaultItem(
       vaultMedia({
         type: 'audio',
-        isReady: false,
+        isReady: true,
         duration: 3,
         files: { full: { url: 'https://cdn2.onlyfans.com/files/v3/full.mp3' }, thumb: null, preview: null, squarePreview: null },
       }),
       toMediaUrl,
     );
-    expect(audio.isReady).toBe(false);
-    expect(audio.thumbUrl).toMatch(/^media:\/\//);
+    expect(audio.isReady).toBe(true);
+    expect(audio.thumbUrl).toBeNull();
     expect(audio.durationSeconds).toBe(3);
-    expect(mintedUrls).toContain('https://cdn2.onlyfans.com/files/v3/full.mp3');
+    expect(mintedUrls.slice(callsBefore)).not.toContain('https://cdn2.onlyfans.com/files/v3/full.mp3');
   });
 });
 

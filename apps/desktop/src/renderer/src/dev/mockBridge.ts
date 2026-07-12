@@ -1114,6 +1114,7 @@ export function createMockBridge(): ChatGooseBridge {
       return fan === undefined ? null : { ...fan };
     },
     'query:settings.get': () => ({ ...store.settings }),
+    'cmd:app.rendererReady': () => undefined,
     'query:personalities.list': () => store.personalities.map((p) => ({ ...p })),
     'query:sync.status': () => ({
       ...store.sync,

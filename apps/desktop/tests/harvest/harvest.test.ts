@@ -194,7 +194,7 @@ describe('harvest module', () => {
     expect(harvest.isIncomplete()).toBe(false);
   });
 
-  it('splits oversized rows out of the batch instead of tripping the hub body cap', async () => {
+  it('quarantines an oversized row and keeps purge blocked until it is reconciled', async () => {
     seedMessage('1');
     // A row whose serialized event alone exceeds the byte budget.
     data.db
@@ -204,29 +204,15 @@ describe('harvest module', () => {
       )
       .run({ text: 'x'.repeat(950_000) });
 
-    const { batches, uploader } = collectingUploader();
+    const { uploader } = collectingUploader();
     const harvest = buildModule(uploader);
-    const { manifestPath } = await harvest.run();
-
-    const uploadedMessageIds = batches
-      .flat()
-      .filter((event) => event.kind === 'harvest.messages')
-      .map((event) => (event.payload.row as { message_id: string }).message_id);
-    expect(uploadedMessageIds).toEqual(['1']);
+    await expect(harvest.run()).rejects.toThrow('quarantined to');
     // The oversize row is preserved for manual replay, not silently dropped.
     const quarantineFiles = readdirSync(manifestDir)
       .filter((name) => name.startsWith('chatgoose-harvest-quarantine-'));
     expect(quarantineFiles).toHaveLength(1);
-    // The run itself completes; the manifest's walked>uploaded gap is what
-    // the core-side reconcile flags.
-    expect(manifestPath).not.toBeNull();
-    const manifest = JSON.parse(readFileSync(manifestPath!, 'utf8')) as {
-      tables: Array<{ table: string; walked: number; uploaded: number }>;
-    };
-    expect(manifest.tables.find((entry) => entry.table === 'messages')).toMatchObject({
-      walked: 2,
-      uploaded: 1,
-    });
+    expect(harvest.status().state).toBe('error');
+    expect(harvest.isIncomplete()).toBe(true);
   });
 
   it('degrades a garbage local timestamp to epoch instead of poisoning the batch', async () => {

@@ -35,7 +35,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
       expect(indexes).toContain('idx_message_guard_events_occurred');
       expect(indexes).toContain('idx_message_guard_events_hash');
-      expect(SCHEMA_VERSION).toBe(17);
+      expect(SCHEMA_VERSION).toBe(18);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       const guardCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('message_guard_events')")
@@ -70,6 +70,7 @@ describe('migration runner', () => {
       }
       expect(names).toContain('ai_spend_log');
       expect(names).toContain('ai_acceptance_ops');
+      expect(names).toContain('unsend_commands');
       const acceptanceCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('ai_acceptance_ops')")
         .all()
@@ -153,6 +154,32 @@ describe('migration runner', () => {
       .prepare("SELECT last_message_id FROM chats WHERE account_id = 'acct_1' AND chat_id = '101'")
       .get();
     expect(upgraded).toEqual({ last_message_id: null });
+    db.close();
+  });
+
+  it('v17 → v18 scrubs reply parts from operations that were already accepted', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 17));
+    expect(readSchemaVersion(db)).toBe(17);
+    db.prepare(
+      `INSERT INTO ai_acceptance_ops (
+         operation_id, feature, day, request_id, account_id,
+         conversation_id, parts, known_at, accepted_at
+       ) VALUES (
+         @operation_id, 'fast-reply', '2026-07-12', 'req-old', 'acct_1',
+         '101', @parts, '2026-07-12T10:00:00.000Z', '2026-07-12T10:01:00.000Z'
+       )`,
+    ).run({
+      operation_id: '00000000-0000-4000-8000-0000000000ff',
+      parts: JSON.stringify(['previously retained reply']),
+    });
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 17, to: 18 });
+    expect(
+      db.prepare(
+        "SELECT parts, accepted_at FROM ai_acceptance_ops WHERE operation_id = '00000000-0000-4000-8000-0000000000ff'",
+      ).get(),
+    ).toEqual({ parts: '[]', accepted_at: '2026-07-12T10:01:00.000Z' });
     db.close();
   });
 
@@ -422,7 +449,7 @@ describe('migration runner', () => {
     db.close();
   });
 
-  it('v16 → v17 adds durable AI acceptance dedup without touching spend history', () => {
+  it('v16 → latest adds durable AI acceptance and unsend lineage without touching spend history', () => {
     const db = rawDb();
     runMigrations(db, MIGRATIONS.slice(0, 16));
     db.exec(
@@ -430,12 +457,15 @@ describe('migration runner', () => {
        VALUES ('2026-07-12', 'fast-reply', 3, 1)`,
     );
 
-    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 16, to: 17 });
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 16, to: SCHEMA_VERSION });
     expect(db.prepare("SELECT runs, inserted FROM ai_spend_log WHERE day = '2026-07-12'").get())
       .toEqual({ runs: 3, inserted: 1 });
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ai_acceptance_ops'").get(),
     ).toEqual({ name: 'ai_acceptance_ops' });
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'unsend_commands'").get(),
+    ).toEqual({ name: 'unsend_commands' });
     db.close();
   });
 

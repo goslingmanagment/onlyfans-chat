@@ -28,6 +28,9 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D8 | 2026-07-07 | 0.1.30/0.1.31 dead-on-launch; 0.1.32 fixes SDK bundling |
 | D9 | 2026-07-11 | Debug prompt inspector restored through the gated kernel debug-input echo |
 | D10 | 2026-07-12 | Stream-v2 rebaseline is fail-closed: refresh grants, exhaust durable state, then checkpoint |
+| D11 | 2026-07-12 | Update recovery is forward-only; feed publication is serialized, monotonic, and atomic |
+| D12 | 2026-07-12 | Runtime custody handoff is quiescent; unsend commands keep durable idempotent lineage |
+| D13 | 2026-07-12 | Replay/telemetry obligations become durable before one-way claims or later awaits |
 
 ## Entries
 
@@ -125,3 +128,55 @@ mark and would skip the missed interval. V2 cursors are additionally scoped to
 the credential that earned them. The retained immediate head-reconcile seam
 claims PollingSync's per-account single-flight guard, and a queued reconcile
 exits if that account is revoked before it acquires the guard.
+
+**D11 (2026-07-12).** Desktop update recovery is a strictly higher-semver
+roll-forward release. `electron-updater` does not accept a lower version by
+default, and forward-only database migrations make arbitrary binary rollback
+unsafe. This supersedes only the rollback instructions in D6/D8 that proposed
+repointing `latest.yml`; their incident and release facts remain historical.
+The repository release path now requires the full check, a `v*` tag whose
+commit is on `origin/main`, serialized publication, a server-side lock and
+strict version increase (except an identical equal-version retry, which is a
+verified no-op after an ambiguous acknowledgement), versioned assets before one same-filesystem manifest
+rename, normal TLS verification, and a served-installer SHA-512 match. The
+workflow resolves an ambiguous SSH acknowledgement by verifying the exact
+same-run bytes already served; it never treats an equal-version rebuild as the
+same artifact. Production publication fails closed unless kernel-owned `flock`
+is available.
+packaged smoke gate requires navigation plus a committed renderer settings-IPC
+round trip, not `did-finish-load` alone. Authenticode remains an owner/admin key
+custody decision and is not implied by these feed-integrity controls.
+
+**D12 (2026-07-12).** Credential/runtime ownership transfers only after the
+outgoing generation is quiescent. `SyncProvider.stop()` is an awaited barrier:
+PollingSync stops timers, rejects undurable Hub reconciliation obligations,
+waits every accepted network/DB continuation, and prevents media callbacks from
+re-arming. Normal Electron quit is held at `before-quit` until this runtime
+drain completes; purge keeps its separate awaited close/delete sequence.
+Auxiliary unsend commands now use schema v18 `unsend_commands`: the logical
+message key owns one durable `clientCommandId`, the accepted Core command id is
+persisted before polling, and boot/rebuild recovery resumes the same lineage.
+Queued/in-flight automatic recovery is bounded to ten minutes from the original
+intent; an indeterminate
+outcome is retained but never resubmitted or polled forever, and the renderer
+surfaces the uncertainty. The before-quit path cancels bounded retries and
+atomically seals the runtime mutation queue before its final deactivation, so
+no late producer can publish a replacement behind the drain. Purge uses the
+same terminal seal before closing or deleting SQLite. Typing remains
+intentionally lossy under the existing Core contract.
+
+**D13 (2026-07-12).** A replayable obligation must be durable before a
+one-way claim or a later fallible await. AI copy/insert feedback enters the KV
+spool in the same SQLite transaction that claims `accepted_at`, increments the
+metric, and clears generated parts; a
+process-scoped tracker survives credential-runtime swaps. Summary pushes mark
+the exact body `pending` before page resolution or network I/O, and disposed
+generations cannot overwrite the replacement's result. Initial transaction
+backfills persist each valid page plus its continuation marker before fetching
+the next page. Multi-chat polling emits a message event immediately after that
+chat's rows are durable, so failure in a later chat cannot erase the earlier
+event on retry. These are ordering rules, not best-effort telemetry hints.
+Thin Hub message frames also carry a proof obligation into `refreshChat`: with
+automatic reads enabled the exact message row must be present, while list-only
+mode must reach that numeric platform head or a newer one before the stream
+cursor may checkpoint.

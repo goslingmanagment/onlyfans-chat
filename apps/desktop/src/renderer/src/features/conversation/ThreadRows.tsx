@@ -11,6 +11,7 @@ import { canUnsend, mediaCountLabel, ppvChip, sendState } from '../../lib/messag
 import { Badge } from '../../design/Badge';
 import { getBridge } from '../../bridge/bridge';
 import { useLocale, useT } from '../../lib/i18n';
+import { useUiStore } from '../../state/uiStore';
 
 export const DayDivider = memo(function DayDivider({ label }: { label: string }): React.JSX.Element {
   return (
@@ -67,11 +68,23 @@ export const MessageRow = memo(function MessageRow({
 
   function unsend(): void {
     setConfirmUnsend(false);
-    void getBridge().invoke('cmd:message.unsend', {
-      accountId,
-      chatId: message.chatId,
-      messageId: message.id,
-    });
+    void getBridge()
+      .invoke('cmd:message.unsend', {
+        accountId,
+        chatId: message.chatId,
+        messageId: message.id,
+      })
+      .catch((error: unknown) => {
+        useUiStore.getState().pushToast({
+          title: t('conv.unsendFailed'),
+          body:
+            error instanceof Error && error.message.trim() !== ''
+              ? error.message
+              : t('conv.unsendTryAgain'),
+          accountId,
+          chatId: message.chatId,
+        });
+      });
   }
 
   return (

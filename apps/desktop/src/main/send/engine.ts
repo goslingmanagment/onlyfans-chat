@@ -44,6 +44,8 @@ export const TYPING_MIN_INTERVAL_MS = 2500;
 export const MARK_READ_DEBOUNCE_MS = 1500;
 export const HUB_COMMAND_POLL_INTERVAL_MS = 500;
 export const HUB_COMMAND_POLL_LIMIT = 60;
+export const UNSEND_RECOVERY_INTERVAL_MS = 5_000;
+export const UNSEND_RECOVERY_MAX_AGE_MS = 10 * 60_000;
 // PPV price bounds (openapi send-message: "0 or between 3-200", integer dollars).
 export const PPV_PRICE_MIN = 3;
 export const PPV_PRICE_MAX = 200;
@@ -64,6 +66,7 @@ export interface SendEngineOptions {
   random?: () => number;
   hubCommandPollIntervalMs?: number;
   hubCommandPollLimit?: number;
+  unsendRecoveryIntervalMs?: number;
 }
 
 export interface SendEngine {
@@ -102,7 +105,8 @@ export interface SendEngine {
    * (isBoot, default true). A settings-driven rebuild (isBoot=false) skips those
    * destructive rewrites so it never falsely marks rows the outgoing engine may
    * still be pumping (SPEC §15.5); verification of already-unconfirmed rows runs
-   * on both paths (self-reschedules via scheduleVerify). Never auto-sends.
+   * on both paths (self-reschedules via scheduleVerify). Durable unsend rows
+   * resume the same idempotent command/status lineage on both paths.
    */
   reconcileOnBoot(isBoot?: boolean): Promise<void>;
   /**
@@ -221,15 +225,17 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
   const hubCommandPollIntervalMs =
     options.hubCommandPollIntervalMs ?? HUB_COMMAND_POLL_INTERVAL_MS;
   const hubCommandPollLimit = options.hubCommandPollLimit ?? HUB_COMMAND_POLL_LIMIT;
+  const unsendRecoveryIntervalMs =
+    options.unsendRecoveryIntervalMs ?? UNSEND_RECOVERY_INTERVAL_MS;
 
   const pumping = new Set<string>();
   const pumpTasks = new Set<Promise<void>>();
   const credentialTasks = new Set<Promise<unknown>>();
   const verifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const markReadTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const unsendRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const typingLastAt = new Map<string, number>();
   const pendingHubUnsends = new Map<string, Promise<void>>();
-  const submittedHubUnsends = new Set<string>();
   let quiescing = false;
   let disposed = false;
 
@@ -310,6 +316,10 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       clearTimeout(timer);
     }
     markReadTimers.clear();
+    for (const timer of unsendRecoveryTimers.values()) {
+      clearTimeout(timer);
+    }
+    unsendRecoveryTimers.clear();
   }
 
   // ── Pump: single-flight per chat ─────────────────────────────────────────
@@ -537,57 +547,120 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     }
   }
 
-  async function unsendViaHub(accountId: string, chatId: string, messageId: string): Promise<void> {
+  function unsendKey(accountId: string, chatId: string, messageId: string): string {
+    return `${accountId}|${chatId}|${messageId}`;
+  }
+
+  function canAutoRecoverUnsend(row: { createdAt: string }): boolean {
+    const createdAtMs = Date.parse(row.createdAt);
+    return Number.isFinite(createdAtMs) && now() - createdAtMs < UNSEND_RECOVERY_MAX_AGE_MS;
+  }
+
+  function scheduleUnsendRecovery(accountId: string, chatId: string, messageId: string): void {
+    const key = unsendKey(accountId, chatId, messageId);
+    const row = data.unsendCommands.get(accountId, chatId, messageId);
+    if (
+      quiescing ||
+      disposed ||
+      unsendRecoveryTimers.has(key) ||
+      row === null ||
+      !canAutoRecoverUnsend(row)
+    ) {
+      return;
+    }
+    unsendRecoveryTimers.set(
+      key,
+      setTimeout(() => {
+        unsendRecoveryTimers.delete(key);
+        const current = data.unsendCommands.get(accountId, chatId, messageId);
+        if (current === null || !canAutoRecoverUnsend(current)) {
+          return;
+        }
+        void unsendViaHub(accountId, chatId, messageId, false).catch(() => undefined);
+      }, unsendRecoveryIntervalMs),
+    );
+  }
+
+  async function ensureHubUnsendCommand(
+    accountId: string,
+    chatId: string,
+    messageId: string,
+  ): Promise<HubOfapiCommand> {
     if (hubCommandClient === undefined) {
       throw hubWriteUnavailable();
     }
-    const key = `${accountId}|${chatId}|${messageId}`;
+    const row = data.unsendCommands.ensure({
+      accountId,
+      chatId,
+      messageId,
+      clientCommandId: randomUUID(),
+      createdAt: nowIso(),
+    });
+    if (row.coreCommandId !== null) {
+      return hubCommandClient.getOfapiCommand({ commandId: row.coreCommandId });
+    }
+    const accepted = await hubCommandClient.createOfapiCommand({
+      command: {
+        clientCommandId: row.clientCommandId,
+        kind: 'unsend_message_v1',
+        accountId,
+        conversationId: chatId,
+        payload: { messageId },
+      },
+    });
+    // Persist server lineage before any status polling can yield or fail.
+    data.unsendCommands.setCoreCommandId(accountId, chatId, messageId, accepted.commandId);
+    return accepted;
+  }
+
+  async function unsendViaHub(
+    accountId: string,
+    chatId: string,
+    messageId: string,
+    waitForTerminal = true,
+  ): Promise<void> {
+    if (hubCommandClient === undefined) {
+      throw hubWriteUnavailable();
+    }
+    const key = unsendKey(accountId, chatId, messageId);
     if (data.messages.get(accountId, chatId, messageId)?.deleted === true) {
-      submittedHubUnsends.delete(key);
+      data.unsendCommands.remove(accountId, chatId, messageId);
       return;
     }
     const pending = pendingHubUnsends.get(key);
     if (pending !== undefined) {
       return pending;
     }
-    if (submittedHubUnsends.has(key)) {
-      return;
-    }
-    submittedHubUnsends.add(key);
 
+    let shouldScheduleRecovery = true;
     const task = (async () => {
-      try {
-        const command = await waitForHubCommand(
-          await hubCommandClient.createOfapiCommand({
-            command: {
-              clientCommandId: randomUUID(),
-              kind: 'unsend_message_v1',
-              accountId,
-              conversationId: chatId,
-              payload: { messageId },
-            },
-          }),
-        );
-        switch (command.state) {
-          case 'confirmed':
-            data.messages.markDeleted(accountId, chatId, [messageId]);
-            submittedHubUnsends.delete(key);
-            return;
-          case 'queued':
-          case 'in_flight':
-          case 'indeterminate':
-            return;
-          case 'failed_retryable':
-          case 'failed_terminal':
-          case 'cancelled':
-            submittedHubUnsends.delete(key);
-            throw new Error(command.lastErrorCode ?? `Hub unsend command ended as ${command.state}`);
-        }
-      } catch (error) {
-        if (isHubWriteUnavailable(error)) {
-          submittedHubUnsends.delete(key);
-        }
-        throw error;
+      const initial = await ensureHubUnsendCommand(accountId, chatId, messageId);
+      const command = waitForTerminal ? await waitForHubCommand(initial) : initial;
+      switch (command.state) {
+        case 'confirmed':
+          data.messages.markDeleted(accountId, chatId, [messageId]);
+          data.unsendCommands.remove(accountId, chatId, messageId);
+          return;
+        case 'queued':
+        case 'in_flight':
+          if (waitForTerminal) {
+            throw new Error('Unsend is still pending in Agency Hub; the message remains visible.');
+          }
+          return;
+        case 'indeterminate':
+          // Never resubmit or poll an outcome Core has classified as
+          // indeterminate. Keep the durable lineage for explicit later status
+          // inspection, but stop the five-second background loop.
+          shouldScheduleRecovery = false;
+          if (waitForTerminal) {
+            throw new Error('Unsend could not be confirmed; the message remains visible and was not resubmitted.');
+          }
+          return;
+        case 'failed_retryable':
+        case 'failed_terminal':
+        case 'cancelled':
+          data.unsendCommands.remove(accountId, chatId, messageId);
+          throw new Error(command.lastErrorCode ?? `Hub unsend command ended as ${command.state}`);
       }
     })();
     pendingHubUnsends.set(key, task);
@@ -596,6 +669,11 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     } finally {
       if (pendingHubUnsends.get(key) === task) {
         pendingHubUnsends.delete(key);
+      }
+      // Any retained row is unresolved. Retry status/intake later under the
+      // same durable ids; confirmed/terminal paths removed it above.
+      if (shouldScheduleRecovery) {
+        scheduleUnsendRecovery(accountId, chatId, messageId);
       }
     }
   }
@@ -975,6 +1053,23 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
           scheduleVerify(accountId, chatId);
         }
       }
+      // Auxiliary unsends have no ordinary outbox row. Resume each persisted
+      // logical command once without blocking boot on the full polling window;
+      // unresolved rows schedule periodic status/intake recovery.
+      for (const row of data.unsendCommands.listPending()) {
+        // Recovery is deliberately bounded. In particular, never turn an old
+        // response-lost row with no Core command id into a surprise intake on
+        // a much later application boot or settings-driven runtime rebuild.
+        if (!canAutoRecoverUnsend(row)) {
+          continue;
+        }
+        try {
+          await unsendViaHub(row.accountId, row.chatId, row.messageId, false);
+        } catch {
+          // Offline/auth-failed startup retains the durable row; its scheduled
+          // recovery and the next configured rebuild repeat the same client id.
+        }
+      }
     },
 
     async quiesce() {
@@ -983,8 +1078,8 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       // No new pump can enter after the flag flips. Existing pumps may still
       // own rows (or be between sequence parts), so wait for all of them to
       // drain before a replacement engine with a fresh per-chat lock is used.
-      // An already-submitted unsend also owns an engine-local dedup latch; wait
-      // for it so the replacement cannot issue the same write concurrently.
+      // An already-submitted unsend also owns the durable lineage row; wait for
+      // its current network continuation before publishing a replacement.
       // credentialTasks covers verifier, typing and fired mark-read work through
       // their final DB continuation, making this barrier safe for purge too.
       while (pumpTasks.size > 0 || pendingHubUnsends.size > 0 || credentialTasks.size > 0) {

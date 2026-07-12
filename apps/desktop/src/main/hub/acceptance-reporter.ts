@@ -4,8 +4,8 @@
 // (= the gateway clientRequestId) and requestId (the generation ref from the
 // meta frame; null on the direct lane — correlation is best-effort there).
 //
-// SPOOL: the db settings KV (key below), NOT a new table — SCHEMA_VERSION 16
-// is pinned by the stage spec. Bounded FIFO (oldest dropped past the cap);
+// SPOOL: the db settings KV (key below), not a dedicated table. Later schema
+// migrations do not change this telemetry-grade queue. Bounded FIFO (oldest dropped past the cap);
 // telemetry-grade delivery: a 400 drops the batch loudly, transient errors
 // retry with the spool intact.
 
@@ -83,6 +83,20 @@ export interface AcceptanceReporterOptions {
   onWarn?: (message: string) => void;
 }
 
+/** Durably append even while no credential-bound Hub runtime exists. A later
+ * reporter configure/flush drains the same KV spool. */
+export function enqueueAcceptanceEvent(
+  data: Pick<DataLayer, 'settings'>,
+  event: AcceptanceEventInput,
+): void {
+  const spool = data.settings.getParsed(ACCEPTANCE_SPOOL_SETTINGS_KEY, spoolSchema) ?? [];
+  spool.push({ ...event, attempts: 0 });
+  data.settings.set(
+    ACCEPTANCE_SPOOL_SETTINGS_KEY,
+    spool.length > SPOOL_CAP ? spool.slice(spool.length - SPOOL_CAP) : spool,
+  );
+}
+
 function toWireEvent(event: SpooledEvent): HubIngestObservationEvent {
   return {
     clientEventId: uuidV5(`${event.operationId}:${event.action}:${event.at}`),
@@ -104,6 +118,7 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
   const onWarn = options.onWarn ?? (() => {});
   let timer: ReturnType<typeof setTimeout> | null = null;
   let flushing = false;
+  let flushAgain = false;
   let disposed = false;
 
   function load(): SpooledEvent[] {
@@ -113,6 +128,37 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
 
   function persist(spool: SpooledEvent[]): void {
     options.data.settings.set(ACCEPTANCE_SPOOL_SETTINGS_KEY, spool);
+  }
+
+  function eventId(event: SpooledEvent): string {
+    return toWireEvent(event).clientEventId;
+  }
+
+  /**
+   * Mutate the latest durable spool after an awaited request. `enqueue()` may
+   * have appended events while the request was in flight, so deriving the next
+   * value from the pre-request snapshot would overwrite those events.
+   * Settings reads/writes are synchronous, making this read-modify-write one
+   * event-loop critical section.
+   */
+  function updatePostedBatch(
+    batch: readonly SpooledEvent[],
+    update: (event: SpooledEvent) => SpooledEvent | null,
+  ): void {
+    const postedIds = new Set(batch.map(eventId));
+    const latest = load();
+    const next: SpooledEvent[] = [];
+    for (const event of latest) {
+      if (!postedIds.has(eventId(event))) {
+        next.push(event);
+        continue;
+      }
+      const updated = update(event);
+      if (updated !== null) {
+        next.push(updated);
+      }
+    }
+    persist(next);
   }
 
   function schedule(): void {
@@ -126,16 +172,29 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
   }
 
   async function flush(): Promise<void> {
-    if (flushing || disposed) {
+    if (disposed) {
       return;
     }
-    const client = options.getClient();
-    if (client === null) {
-      return; // hub unconfigured — spool waits
+    if (flushing) {
+      // Reconfigure calls flushNow while the outgoing credential may still own
+      // an awaited batch. Preserve that request and run it under the current
+      // client when this generation releases the single-flight owner.
+      flushAgain = true;
+      return;
     }
     flushing = true;
     try {
       for (;;) {
+        // A credential-bound reporter may be retired while an HTTP batch is
+        // in flight. Never let that old instance pick up events appended for
+        // its replacement after the awaited request settles.
+        if (disposed) {
+          return;
+        }
+        const client = options.getClient();
+        if (client === null) {
+          return; // hub unconfigured — spool waits
+        }
         const spool = load();
         if (spool.length === 0) {
           return;
@@ -143,30 +202,51 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
         const batch = spool.slice(0, BATCH_MAX);
         try {
           await client.postIngestObservations({ events: batch.map(toWireEvent) });
-          persist(spool.slice(batch.length));
+          updatePostedBatch(batch, () => null);
+          if (disposed) {
+            return;
+          }
+          if (options.getClient() !== client) {
+            flushAgain = true;
+            return;
+          }
         } catch (error) {
+          // The replacement reporter owns retry/drop policy now. In
+          // particular, a 400 from a retired credential must not delete events
+          // that the new credential may be authorized to deliver.
+          if (disposed) {
+            return;
+          }
+          if (options.getClient() !== client) {
+            flushAgain = true;
+            return;
+          }
           if (error instanceof HubError && error.reason === 'bad-request') {
             // Contract bug: never retriable verbatim — drop loudly.
             onWarn(`[acceptance] batch rejected (${error.message}); dropping ${batch.length} events`);
-            persist(spool.slice(batch.length));
+            updatePostedBatch(batch, () => null);
             continue;
           }
-          const retained = spool.map((event, index) =>
-            index < batch.length ? { ...event, attempts: event.attempts + 1 } : event,
-          ).filter((event) => {
-            if (event.attempts >= MAX_ATTEMPTS) {
-              onWarn(`[acceptance] dropping event after ${event.attempts} attempts (${event.action})`);
-              return false;
+          updatePostedBatch(batch, (event) => {
+            const attempted = { ...event, attempts: event.attempts + 1 };
+            if (attempted.attempts >= MAX_ATTEMPTS) {
+              onWarn(
+                `[acceptance] dropping event after ${attempted.attempts} attempts (${attempted.action})`,
+              );
+              return null;
             }
-            return true;
+            return attempted;
           });
-          persist(retained);
           schedule(); // transient — try again later
           return;
         }
       }
     } finally {
       flushing = false;
+      if (!disposed && flushAgain) {
+        flushAgain = false;
+        void flush();
+      }
     }
   }
 
@@ -175,9 +255,7 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
       if (disposed) {
         return;
       }
-      const spool = load();
-      spool.push({ ...event, attempts: 0 });
-      persist(spool.length > SPOOL_CAP ? spool.slice(spool.length - SPOOL_CAP) : spool);
+      enqueueAcceptanceEvent(options.data, event);
       schedule();
     },
     pending() {

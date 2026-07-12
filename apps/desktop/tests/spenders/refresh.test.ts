@@ -284,14 +284,31 @@ describe('scoped refresh queue', () => {
     expect(h.service.status(ACCT)).toBeNull();
   });
 
-  it('an isolated fetch failure skips the fan (no stamp — the next click retries it)', async () => {
-    const h = makeHarness({ scopes: { all: ['1', '2'] }, failFor: new Set(['1']) });
+  it('an isolated fetch failure leaves a durable partial queue and cannot stamp the scope fresh', async () => {
+    const failFor = new Set(['1']);
+    const h = makeHarness({ scopes: { all: ['1', '2'] }, failFor });
     await h.service.start(ACCT, 'all');
-    await until(() => h.frames.some((f) => f.state === 'done'));
+    await until(() => h.frames.some((f) => f.state === 'partial'));
 
     expect(h.fetched.map((f) => f.chatId)).toEqual(['2']);
     expect(data.threadFetchLog.get(ACCT, '1')).toBeNull();
-    expect(h.frames.at(-1)).toMatchObject({ done: 2, total: 2 });
+    expect(h.frames.at(-1)).toMatchObject({ state: 'partial', done: 1, total: 2 });
+    expect(h.service.freshness(ACCT)).toEqual({});
+    expect(data.settings.get(`spenders.refreshQueue.${ACCT}`)).toEqual({
+      scope: 'all',
+      pending: ['1'],
+      total: 2,
+      done: 1,
+    });
+
+    // A later explicit retry rebuilds the scope: fan 2 is TTL-skipped, the
+    // preserved failure is fetched, and only that complete run earns freshness.
+    failFor.clear();
+    await h.service.start(ACCT, 'all');
+    await until(() => h.frames.some((f) => f.state === 'done'));
+    expect(h.fetched.map((f) => f.chatId)).toEqual(['2', '1']);
+    expect(h.service.freshness(ACCT)['all']).toBeDefined();
+    expect(data.settings.get(`spenders.refreshQueue.${ACCT}`)).toBeUndefined();
   });
 
   it(`${REFRESH_FAILURE_PAUSE_THRESHOLD} consecutive failures pause (network down) and the same fan retries after`, async () => {
@@ -307,8 +324,9 @@ describe('scoped refresh queue', () => {
     await until(() => h.frames.some((f) => f.state === 'done'));
 
     expect(h.frames.some((f) => f.state === 'paused')).toBe(true);
-    // after the pause, fan '3' (the one that tripped the threshold) is retried
-    expect(h.fetched.map((f) => f.chatId)).toEqual(['3', '4']);
+    // Once the burst is classified as network-wide, the first two provisional
+    // failures are put back too; successful completion really covers all four.
+    expect(h.fetched.map((f) => f.chatId)).toEqual(['1', '2', '3', '4']);
     expect(h.frames.at(-1)).toMatchObject({ done: 4, total: 4 });
   });
 

@@ -405,7 +405,16 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     return null;
   }
 
-  function snapshotHeadIsCurrent(thread: SyncSnapshotThread, existingAt: string | null): boolean {
+  function snapshotHeadIsCurrent(
+    thread: SyncSnapshotThread,
+    existingAt: string | null,
+    existingHeadWasDeleted: boolean,
+  ): boolean {
+    // A tombstone is an authoritative reason for a head to move backwards or
+    // become null. Timestamp monotonicity is invalid for that transition.
+    if (existingHeadWasDeleted) {
+      return true;
+    }
     if (thread.lastMessageAt === null) {
       return existingAt === null;
     }
@@ -415,12 +424,27 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     return Date.parse(thread.lastMessageAt) >= Date.parse(existingAt);
   }
 
-  function upsertSnapshotThread(accountId: string, thread: SyncSnapshotThread): void {
+  function upsertSnapshotThread(
+    accountId: string,
+    thread: SyncSnapshotThread,
+    tombstonedMessageIds: ReadonlySet<string>,
+  ): void {
     const existing = data.chats.get(accountId, thread.chatId);
     if (!thread.visible && existing === null) {
       return;
     }
-    const useSnapshotHead = snapshotHeadIsCurrent(thread, existing?.lastMessageAt ?? null);
+    const existingHeadWasDeleted =
+      existing?.lastMessageId !== null
+      && existing?.lastMessageId !== undefined
+      && (
+        tombstonedMessageIds.has(existing.lastMessageId)
+        || data.messages.get(accountId, thread.chatId, existing.lastMessageId)?.deleted === true
+      );
+    const useSnapshotHead = snapshotHeadIsCurrent(
+      thread,
+      existing?.lastMessageAt ?? null,
+      existingHeadWasDeleted,
+    );
     const hasUnreadTips = useSnapshotHead
       ? (thread.hasUnreadTips ?? (thread.unreadCount === 0 ? false : (existing?.hasUnreadTips ?? false)))
       : (existing?.hasUnreadTips ?? false);
@@ -464,8 +488,16 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       );
     }
 
+    const tombstonedMessageIds = new Set([
+      ...snapshot.threads.flatMap((thread) =>
+        thread.messages
+          .filter((item) => item.deletedAt !== null)
+          .map((item) => item.messageId)),
+      ...snapshot.unresolvedTombstones.map((item) => item.messageId),
+    ]);
+
     for (const thread of snapshot.threads) {
-      upsertSnapshotThread(snapshot.page.accountId, thread);
+      upsertSnapshotThread(snapshot.page.accountId, thread, tombstonedMessageIds);
     }
     for (const thread of snapshot.threads) {
       if (!thread.visible && data.chats.get(snapshot.page.accountId, thread.chatId) === null) {
@@ -524,7 +556,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     // Re-apply authoritative heads after message upserts, which intentionally
     // use the normal idempotent ingest path and its local chat-head heuristic.
     for (const thread of snapshot.threads) {
-      upsertSnapshotThread(snapshot.page.accountId, thread);
+      upsertSnapshotThread(snapshot.page.accountId, thread, tombstonedMessageIds);
     }
     emit({ type: 'chatListUpdated', accountId: snapshot.page.accountId });
     onLog('info', 'hub snapshot page applied', {
@@ -604,11 +636,10 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
 
         // Older Core frames and incomplete/mismatched bodies still reconcile via
         // the polling provider. With auto-read off this is list-only.
-        try {
-          await polling.refreshChat(event.accountId, event.chatId);
-        } catch {
-          // transient fetch failure: still emit — polling reconciles later
-        }
+        // Cursor safety: a thin frame is not durable locally until this fallback
+        // read has really applied. Let failure reject onEvent so HubSync replays
+        // the frame instead of checkpointing past missing state.
+        await polling.refreshChat(event.accountId, event.chatId, undefined, event.messageId);
         emit(event);
         recordApplied(event.type);
         break;
@@ -623,11 +654,12 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
           chatId: event.chatId,
           messageId: event.messageId,
         });
-        try {
-          await polling.refreshChat(event.accountId, event.chatId);
-        } catch {
-          // transient fetch failure: still emit — polling reconciles later
-        }
+        await polling.refreshChat(
+          event.accountId,
+          event.chatId,
+          undefined,
+          event.messageId,
+        );
         emit(event);
         recordApplied(event.type);
         break;
@@ -638,30 +670,18 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
             accountId: event.accountId,
             messageId: event.messageId,
           });
-          try {
-            await polling.refreshAccountHead(event.accountId);
-          } catch {
-            // transient fetch failure: the next hub activity/degrade refresh reconciles
-          }
+          await polling.refreshAccountHead(event.accountId);
           return; // unknown message: nothing to tombstone, drop silently
         }
         // Tombstone (deleted=1) publishes bus scope 'messages' for the chat.
         data.messages.markDeleted(event.accountId, chatId, [event.messageId]);
-        try {
-          await polling.refreshAccountHead(event.accountId);
-        } catch {
-          // transient fetch failure: still emit the tombstone
-        }
+        await polling.refreshAccountHead(event.accountId);
         emit({ ...event, chatId });
         recordApplied(event.type);
         break;
       }
       case 'chatListUpdated':
-        try {
-          await polling.refreshAccountHead(event.accountId);
-        } catch {
-          emit(event);
-        }
+        await polling.refreshAccountHead(event.accountId);
         recordApplied(event.type);
         break;
       default:
@@ -795,10 +815,10 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       polling.start(accountIds);
       void startHub();
     },
-    stop() {
+    async stop() {
       running = false;
       stopHub();
-      polling.stop();
+      await polling.stop();
     },
     subscribe(listener) {
       listeners.add(listener);
@@ -809,7 +829,8 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       return () => statusListeners.delete(listener);
     },
     refreshAccountHead: (accountId) => polling.refreshAccountHead(accountId),
-    refreshChat: (accountId, chatId, purpose) => polling.refreshChat(accountId, chatId, purpose),
+    refreshChat: (accountId, chatId, purpose, expectedMessageId) =>
+      polling.refreshChat(accountId, chatId, purpose, expectedMessageId),
     readChatTailForUserOpen: (accountId, chatId, purpose) =>
       polling.readChatTailForUserOpen(accountId, chatId, purpose),
     loadOlderMessagesForUserOpen: (accountId, chatId) =>

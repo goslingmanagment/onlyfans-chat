@@ -1109,6 +1109,11 @@ export const UI_MESSAGES = {
     ru: 'Отозвать (удаляет сообщение у фана — работает 24 ч)',
   },
   'conv.unsend': { en: 'unsend', ru: 'отозвать' },
+  'conv.unsendFailed': { en: 'Unsend not confirmed', ru: 'Отзыв не подтверждён' },
+  'conv.unsendTryAgain': {
+    en: 'The message is still visible. Try again later.',
+    ru: 'Сообщение всё ещё видно. Попробуйте позже.',
+  },
   'conv.ppvNotPurchased': { en: '{price} PPV — not purchased', ru: '{price} PPV — не куплено' },
 
   // ── AI dock / gates / pill row / header menu ───────────────────────────────

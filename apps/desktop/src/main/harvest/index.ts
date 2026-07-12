@@ -256,12 +256,13 @@ export function createHarvestModule(options: HarvestModuleOptions) {
     for (const event of events) {
       const size = Buffer.byteLength(JSON.stringify(event), 'utf8');
       if (size > HARVEST_MAX_BATCH_BYTES) {
-        // A single event the hub can never accept: quarantine it and keep
-        // walking — the reconcile manifest surfaces the gap (walked > counted)
-        // and the file preserves the payload for manual replay.
+        // A single event the hub can never accept is preserved for manual
+        // replay, but it must also keep the harvest/purge guard armed. Advancing
+        // past it and stamping global completion would falsely certify a
+        // snapshot that the kernel never received.
         const file = await writeQuarantineFile('event exceeds max batch bytes', [event]);
         log('harvest event quarantined (oversize)', { clientEventId: event.clientEventId, file });
-        continue;
+        throw new Error(`Harvest event exceeds max batch bytes; quarantined to ${file}`);
       }
       if (chunk.length > 0 && chunkBytes + size > HARVEST_MAX_BATCH_BYTES) {
         await flush();

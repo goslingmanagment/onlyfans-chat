@@ -14,6 +14,8 @@ import {
   makeSettingsVM,
   memoryDataLayer,
   rawCoordinatorPayload,
+  seedAccount,
+  seedSummary,
   usageEventRowCount,
   FAN,
 } from './helpers';
@@ -112,6 +114,38 @@ describe('createHubModule', () => {
 
     expect(client.batches.flat().map((event) => event.clientEventId)).toEqual(['op-backlog']);
     expect(usageEventRowCount(data)).toBe(0);
+    module.dispose();
+  });
+
+  it('replays a pending summary as soon as Hub configuration becomes active', async () => {
+    const data = memoryDataLayer();
+    seedAccount(data);
+    seedSummary(data, {
+      body: 'pending local summary',
+      generatedAt: Date.parse('2026-07-12T00:00:00.000Z'),
+      hubSyncState: {
+        state: 'pending',
+        reason: 'delivery-failed',
+        at: '2026-07-12T00:00:00.000Z',
+      },
+    });
+    const client = makeFakeHubClient();
+    const module = createHubModule({
+      data,
+      settingsStore: makeSettingsStore(
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+      ),
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient: () => client,
+    });
+
+    await module.reconfigure();
+    await vi.waitFor(() => expect(client.putFanProfileMock).toHaveBeenCalledTimes(1));
+
+    expect(client.putFanProfileMock).toHaveBeenCalledWith(
+      expect.objectContaining({ fanId: FAN, body: 'pending local summary' }),
+    );
+    expect(data.summaries.get('acct_hub', FAN)?.hubSyncState).toMatchObject({ state: 'synced' });
     module.dispose();
   });
 

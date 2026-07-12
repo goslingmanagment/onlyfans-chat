@@ -9,10 +9,14 @@ import { drain, memoryDataLayer } from '../send/helpers';
 import {
   activateRuntimeNonFatal,
   activateStoredCredentialWithRetry,
+  createBeforeQuitBarrier,
   createBoundedRetry,
   createRuntimeMutationQueue,
+  exitAfterFatalBoot,
+  exposeUiBeforeRuntimeActivation,
   probeHubReadCredential,
   replaceRuntimeSecurityFirst,
+  sealRuntimeForTerminalOperation,
   stopRuntimeServices,
   subscribeSettingsScope,
   validateThenReconcileOnBoot,
@@ -42,6 +46,98 @@ describe('activateRuntimeNonFatal (4b)', () => {
       activateRuntimeNonFatal(() => Promise.resolve(), onFailure),
     ).resolves.toBe(true);
     expect(onFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('exposeUiBeforeRuntimeActivation', () => {
+  it('registers IPC and finishes cached UI load before starting remote activation', async () => {
+    const order: string[] = [];
+    let releaseActivation: (() => void) | undefined;
+    const settled: boolean[] = [];
+
+    await exposeUiBeforeRuntimeActivation({
+      registerIpc: () => order.push('ipc'),
+      loadUi: async () => {
+        order.push('ui');
+      },
+      activate: () => new Promise<void>((resolve) => {
+        order.push('activate');
+        releaseActivation = resolve;
+      }),
+      onActivationFailure: () => order.push('failure'),
+      onActivationSettled: (activated) => settled.push(activated),
+    });
+
+    expect(order).toEqual(['ipc', 'ui', 'activate']);
+    expect(settled).toEqual([]);
+    releaseActivation?.();
+    await vi.waitFor(() => expect(settled).toEqual([true]));
+  });
+
+  it('keeps an offline activation non-fatal and forwards its settled status', async () => {
+    const error = new Error('offline');
+    const onFailure = vi.fn();
+    const onSettled = vi.fn();
+    await exposeUiBeforeRuntimeActivation({
+      registerIpc: () => undefined,
+      loadUi: async () => undefined,
+      activate: () => Promise.reject(error),
+      onActivationFailure: onFailure,
+      onActivationSettled: onSettled,
+    });
+    await vi.waitFor(() => expect(onSettled).toHaveBeenCalledWith(false));
+    expect(onFailure).toHaveBeenCalledWith(error);
+  });
+});
+
+describe('exitAfterFatalBoot', () => {
+  it('shows the error, flushes diagnostics, then exits', async () => {
+    const order: string[] = [];
+    await exitAfterFatalBoot({
+      showError: () => order.push('show'),
+      flush: async () => {
+        order.push('flush');
+      },
+      exit: (code) => order.push(`exit:${String(code)}`),
+    });
+    expect(order).toEqual(['show', 'flush', 'exit:1']);
+  });
+
+  it('still exits when diagnostics flushing rejects', async () => {
+    const exit = vi.fn();
+    await expect(exitAfterFatalBoot({
+      showError: () => undefined,
+      flush: () => Promise.reject(new Error('disk failed')),
+      exit,
+    })).rejects.toThrow(/disk failed/i);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('createBeforeQuitBarrier', () => {
+  it('blocks repeated quit attempts until one drain completes, then allows the reissued quit', async () => {
+    let releaseDrain: (() => void) | undefined;
+    const drain = vi.fn(() => new Promise<void>((resolve) => {
+      releaseDrain = resolve;
+    }));
+    const quit = vi.fn();
+    const barrier = createBeforeQuitBarrier({ drain, quit });
+    const first = { preventDefault: vi.fn() };
+    const repeated = { preventDefault: vi.fn() };
+
+    barrier(first);
+    barrier(repeated);
+    expect(first.preventDefault).toHaveBeenCalledOnce();
+    expect(repeated.preventDefault).toHaveBeenCalledOnce();
+    expect(drain).toHaveBeenCalledOnce();
+    expect(quit).not.toHaveBeenCalled();
+
+    releaseDrain?.();
+    await vi.waitFor(() => expect(quit).toHaveBeenCalledOnce());
+
+    const reissued = { preventDefault: vi.fn() };
+    barrier(reissued);
+    expect(reissued.preventDefault).not.toHaveBeenCalled();
   });
 });
 
@@ -132,6 +228,79 @@ describe('createRuntimeMutationQueue', () => {
     await expect(queue.run(async () => order.push('after-failure'))).resolves.toBe(3);
     expect(order.at(-1)).toBe('after-failure');
   });
+
+  it('seals future producers while a final drain waits behind accepted work', async () => {
+    const queue = createRuntimeMutationQueue();
+    const order: string[] = [];
+    let releaseActivation: (() => void) | undefined;
+    const activation = queue.run(
+      () => new Promise<void>((resolve) => {
+        order.push('activation');
+        releaseActivation = resolve;
+      }),
+    );
+    const drain = queue.sealAndRun(async () => {
+      order.push('drain');
+    });
+
+    await expect(queue.run(async () => order.push('late-rebuild')))
+      .rejects.toThrow(/sealed for shutdown/i);
+    expect(order).toEqual(['activation']);
+
+    releaseActivation?.();
+    await Promise.all([activation, drain]);
+    expect(order).toEqual(['activation', 'drain']);
+  });
+
+  it('prevents a late settings rebuild from starting behind a terminal purge drain', async () => {
+    const queue = createRuntimeMutationQueue();
+    let releaseProbe: (() => void) | undefined;
+    const order: string[] = [];
+    const probe = queue.run(
+      () => new Promise<void>((resolve) => {
+        order.push('probe');
+        releaseProbe = resolve;
+      }),
+    );
+    const purgeDrain = sealRuntimeForTerminalOperation(queue, async () => {
+      order.push('deactivate-before-delete');
+    });
+
+    await expect(queue.run(async () => order.push('late-runtime-rebuild')))
+      .rejects.toThrow(/sealed for shutdown/i);
+    releaseProbe?.();
+    await Promise.all([probe, purgeDrain]);
+
+    expect(order).toEqual(['probe', 'deactivate-before-delete']);
+  });
+
+  it('makes a racing quit await the in-progress purge terminal operation', async () => {
+    const queue = createRuntimeMutationQueue();
+    let finishDelete: (() => void) | undefined;
+    const order: string[] = [];
+    const purge = sealRuntimeForTerminalOperation(
+      queue,
+      async () => {
+        order.push('purge:deactivate');
+        await new Promise<void>((resolve) => {
+          order.push('purge:delete');
+          finishDelete = () => {
+            order.push('purge:relaunch');
+            resolve();
+          };
+        });
+      },
+    );
+    const quit = sealRuntimeForTerminalOperation(queue, async () => {
+      order.push('quit:second-drain');
+    });
+
+    await Promise.resolve();
+    expect(order).toEqual(['purge:deactivate', 'purge:delete']);
+    finishDelete?.();
+    await Promise.all([purge, quit]);
+    expect(order).toEqual(['purge:deactivate', 'purge:delete', 'purge:relaunch']);
+  });
 });
 
 describe('stopRuntimeServices', () => {
@@ -142,7 +311,11 @@ describe('stopRuntimeServices', () => {
       disposeEventForwarding: () => order.push('events'),
       disposeSettingsWatcher: () => order.push('settings'),
       disposeCreditMeter: () => order.push('credits'),
-      sync: { stop: () => order.push('sync') },
+      sync: {
+        stop: () => {
+          order.push('sync');
+        },
+      },
       spendersRefresh: { dispose: () => order.push('spenders') },
       sendEngine: {
         quiesce: () => new Promise<void>((resolve) => {
@@ -156,20 +329,58 @@ describe('stopRuntimeServices', () => {
     });
 
     await Promise.resolve();
-    expect(order).toEqual(['events', 'settings', 'credits', 'sync', 'spenders', 'send:quiesce']);
+    expect(order).toEqual(['settings', 'credits', 'spenders', 'sync', 'send:quiesce']);
     releaseQuiesce?.();
     await stopped;
     expect(order).toEqual([
-      'events',
       'settings',
       'credits',
-      'sync',
       'spenders',
+      'sync',
       'send:quiesce',
       'send:dispose',
       'coordinator',
+      'events',
       'hub',
     ]);
+  });
+
+  it('does not dispose DB-owning services until async sync shutdown is quiescent', async () => {
+    const order: string[] = [];
+    let releaseSync: (() => void) | undefined;
+    const stopped = stopRuntimeServices({
+      sync: {
+        stop: () => new Promise<void>((resolve) => {
+          order.push('sync:drain');
+          releaseSync = resolve;
+        }),
+      },
+      coordinator: { dispose: () => order.push('coordinator') },
+      hub: { dispose: () => order.push('hub') },
+    });
+
+    await Promise.resolve();
+    expect(order).toEqual(['sync:drain']);
+    releaseSync?.();
+    await stopped;
+    expect(order).toEqual(['sync:drain', 'coordinator', 'hub']);
+  });
+
+  it('keeps forwarding alive for the coordinator discarded frame during disposal', async () => {
+    let forwarding = true;
+    const seen: string[] = [];
+    await stopRuntimeServices({
+      coordinator: {
+        dispose: () => {
+          if (forwarding) seen.push('operation:discarded');
+        },
+      },
+      disposeEventForwarding: () => {
+        forwarding = false;
+      },
+    });
+    expect(seen).toEqual(['operation:discarded']);
+    expect(forwarding).toBe(false);
   });
 
   it('still disposes the runtime when send quiescence rejects', async () => {

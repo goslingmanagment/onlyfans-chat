@@ -73,7 +73,8 @@ function lastAiStart(): AiStartRequest {
 }
 
 beforeEach(() => {
-  invoke.mockClear();
+  invoke.mockReset();
+  invoke.mockResolvedValue({ text: '' });
   resetStore();
   useUiStore.setState({ toasts: [] });
   // Module-level lastConversationKey persists across tests; force a visible
@@ -187,6 +188,28 @@ describe('handleConversationChange (sticky-within-chat / reset-on-switch)', () =
       title: 'AI busy',
       body: '3 generations are already running.',
     });
+  });
+
+  it('settles a main-side ai:start rejection and releases its concurrency slot', async () => {
+    invoke.mockRejectedValueOnce(new Error('AI runtime is offline'));
+    startAiFeature('fast-reply', CTX);
+    const rejectedId = useAiStore.getState().jobsByConversation['acct_1/555'];
+    expect(rejectedId).toBeTruthy();
+
+    await vi.waitFor(() => {
+      expect(useAiStore.getState().jobsById[rejectedId!]).toMatchObject({
+        status: 'error',
+        phase: 'error',
+        error: { code: 'CG-APP-01' },
+      });
+    });
+
+    startAiFeature('fast-reply', { ...CTX, chatId: '556' });
+    startAiFeature('fast-reply', { ...CTX, chatId: '557' });
+    startAiFeature('fast-reply', { ...CTX, chatId: '558' });
+    expect(Object.values(useAiStore.getState().jobsById).filter((job) => job.status === 'running'))
+      .toHaveLength(3);
+    expect(useUiStore.getState().toasts.some((toast) => toast.title === 'AI busy')).toBe(false);
   });
 
   it('retains only the newest large debug prompt across the terminal-job history', () => {

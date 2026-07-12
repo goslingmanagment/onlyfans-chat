@@ -15,6 +15,7 @@ import { resolveHubCredential } from './device-token';
 import { createPageLabelResolver } from './page-resolver';
 import { createSqliteUsageEventStore } from './usage-store';
 import { createSummaryHubHooks } from './summary-hooks';
+import type { SummaryHubSyncHooks } from './summary-hooks';
 import { mapUsagePayloadToHubEvent } from './usage-mapper';
 import { z } from 'zod';
 import { createFeatureAiGateway } from './ai-feature-gateway';
@@ -78,7 +79,7 @@ export interface HubModule {
 interface ActiveHub {
   client: HubClient;
   reporter: UsageReporter;
-  hooks: SummaryHubHooks;
+  hooks: SummaryHubSyncHooks;
   aiFeatureGateway: AiFeatureGateway;
 }
 
@@ -111,6 +112,7 @@ export function createHubModule(options: HubModuleOptions): HubModule {
   function teardown(): void {
     // Reporter dispose keeps queued events persisted (crash-safe store).
     active?.reporter.dispose();
+    active?.hooks.dispose();
     active = null;
   }
 
@@ -280,14 +282,15 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         }
       })();
 
+      const hooks = createSummaryHubHooks({
+        client,
+        data,
+        resolvePageLabel: (accountId) => resolver.resolve(accountId),
+      });
       active = {
         client,
         reporter,
-        hooks: createSummaryHubHooks({
-          client,
-          data,
-          resolvePageLabel: (accountId) => resolver.resolve(accountId),
-        }),
+        hooks,
         aiFeatureGateway: createFeatureAiGateway({
           client,
           resolvePageLabel: (accountId) => resolver.resolve(accountId),
@@ -297,6 +300,12 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       // exists — flushNow had zero product callers, so events parked while
       // the hub was unconfigured waited for the next enqueue to reschedule.
       void acceptance.flushNow().catch(() => undefined);
+      // Pending summaries are durable. Reconfiguration is the immediate
+      // reconnect/configure signal; failures retain the row and arm the hook's
+      // periodic retry until the Hub is reachable again.
+      void hooks.replayPending().catch((error: unknown) => {
+        onWarn(`[hub] summary replay failed (${error instanceof Error ? error.message : String(error)})`);
+      });
     },
 
     dispose() {

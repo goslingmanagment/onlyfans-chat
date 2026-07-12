@@ -35,6 +35,7 @@ interface TxStub {
   txCalls: ListTransactionsParams[];
   setTransactions(txs: OfApiTransaction[]): void;
   failTransactions(fail: boolean): void;
+  failAtMarker(marker: number | null | undefined): void;
 }
 
 /** Marker model mirrors the live endpoint: newest-first list filtered by
@@ -43,6 +44,7 @@ function makeTxStub(): TxStub {
   let all: OfApiTransaction[] = [];
   const chats: OfApiChat[] = [chatWithFan(101)];
   let failing = false;
+  let failingMarker: number | null | undefined;
   const state: TxStub = {
     txCalls: [],
     setTransactions: (txs) => {
@@ -50,6 +52,9 @@ function makeTxStub(): TxStub {
     },
     failTransactions: (fail) => {
       failing = fail;
+    },
+    failAtMarker: (marker) => {
+      failingMarker = marker;
     },
     client: {
       listChats: vi.fn(async () => ({ chats, nextPageUrl: null })),
@@ -59,6 +64,9 @@ function makeTxStub(): TxStub {
           throw new Error('OFAPI 500');
         }
         state.txCalls.push(params);
+        if (failingMarker !== undefined && (params.marker ?? null) === failingMarker) {
+          throw new Error('OFAPI marker page failed');
+        }
         const startMs =
           params.startDate === '-30days' || params.startDate === undefined
             ? Date.now() - 30 * DAY_MS
@@ -152,7 +160,11 @@ describe('fan-spend sweep', () => {
     const sync = makeSync();
     await bootAndSweep(sync);
 
-    expect(stub.txCalls[0]?.startDate).toBe('-30days');
+    const expectedBackfillStart = new Date(Date.now() - 30 * DAY_MS)
+      .toISOString()
+      .slice(0, 19)
+      .replace('T', ' ');
+    expect(stub.txCalls[0]?.startDate).toBe(expectedBackfillStart);
     expect(stub.txCalls[0]?.limit).toBe(10);
     expect(stub.txCalls).toHaveLength(2); // 14 transactions at limit 10 → marker page 2
     expect(stub.txCalls[1]?.marker).toBe(10);
@@ -162,6 +174,68 @@ describe('fan-spend sweep', () => {
     expect(marcus.spend30d).toBeCloseTo(9.6 + 80 + 16.4);
     expect(marcus.lifetimeSpend).toBeCloseTo(1284.4); // from the list-poll fan payload
     sync.stop();
+  });
+
+  it('persists a capped initial marker and eventually covers more than 1,000 monthly rows', async () => {
+    const monthly = Array.from({ length: 1_001 }, (_, index) =>
+      tx(`tx-${String(index).padStart(4, '0')}`, 101, 1, (index / 1_000) * 29));
+    stub.setTransactions(monthly);
+
+    const sync = makeSync();
+    await bootAndSweep(sync);
+
+    const count = () => (data.db
+      .prepare('SELECT COUNT(*) AS n FROM fan_transactions WHERE account_id = @account_id')
+      .get({ account_id: ACCT }) as { n: number }).n;
+    expect(count()).toBe(1_000);
+    expect(data.settings.get(`sync.spendCoverage.v1.${ACCT}`)).toMatchObject({
+      status: 'backfill',
+      nextMarker: 1_000,
+      pagesCompleted: 100,
+    });
+
+    // The normal next cadence resumes at marker 1000 instead of treating the
+    // newest cached timestamp as proof that the older part was covered.
+    await vi.advanceTimersByTimeAsync(REDUCED_SPEND_SWEEP_INTERVAL_MS);
+    await drainPoll();
+
+    expect(stub.txCalls.at(-1)?.marker).toBe(1_000);
+    expect(count()).toBe(1_001);
+    expect(data.settings.get(`sync.spendCoverage.v1.${ACCT}`)).toMatchObject({
+      status: 'complete',
+    });
+    expect(spendOf('101').spend30d).toBeCloseTo(1_001 * 0.8);
+    sync.stop();
+  });
+
+  it('checkpoints successful transaction pages before a later page fails', async () => {
+    stub.setTransactions(
+      Array.from({ length: 25 }, (_, index) => tx(`tx-retry-${index}`, 101, 1, index / 10)),
+    );
+    stub.failAtMarker(10);
+    const sync = makeSync();
+    await bootAndSweep(sync);
+
+    const count = () => (data.db
+      .prepare('SELECT COUNT(*) AS n FROM fan_transactions WHERE account_id = @account_id')
+      .get({ account_id: ACCT }) as { n: number }).n;
+    expect(count()).toBe(10);
+    expect(data.settings.get(`sync.spendCoverage.v1.${ACCT}`)).toMatchObject({
+      status: 'backfill',
+      nextMarker: 10,
+      pagesCompleted: 1,
+    });
+
+    stub.failAtMarker(undefined);
+    await vi.advanceTimersByTimeAsync(REDUCED_SPEND_SWEEP_INTERVAL_MS);
+    await drainPoll();
+
+    expect(stub.txCalls.at(-2)?.marker).toBe(10);
+    expect(count()).toBe(25);
+    expect(data.settings.get(`sync.spendCoverage.v1.${ACCT}`)).toMatchObject({
+      status: 'complete',
+    });
+    await sync.stop();
   });
 
   it('incremental sweep resumes from the newest cached row minus the 1h overlap', async () => {

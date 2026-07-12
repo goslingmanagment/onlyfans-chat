@@ -41,7 +41,7 @@ function fakeMeter(balance: number | null, rpmRemaining: number | null): CreditM
 function fakeSync(overrides: Partial<ActivitySync> = {}): ActivitySync {
   return {
     start: () => undefined,
-    stop: () => undefined,
+    stop: () => Promise.resolve(),
     subscribe: () => () => undefined,
     refreshChat: () => Promise.resolve(),
     readChatTailForUserOpen: () => Promise.resolve(),

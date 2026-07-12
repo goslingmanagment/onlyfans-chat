@@ -38,7 +38,7 @@ LEFT JOIN fans f ON f.account_id = c.account_id AND f.fan_id = c.chat_id
 LEFT JOIN (
   SELECT account_id, fan_id, SUM(net) AS spend_30d
   FROM fan_transactions
-  WHERE created_at >= @spend_cutoff
+  WHERE account_id = @account_id AND created_at >= @spend_cutoff
   GROUP BY account_id, fan_id
 ) tx ON tx.account_id = c.account_id AND tx.fan_id = c.chat_id`;
 
@@ -75,6 +75,19 @@ const FILTER_WHERE: Record<ChatFilter, string> = {
   unread: 'AND c.unread_count > 0',
   with_tips: 'AND c.has_unread_tips = 1',
 };
+
+/** Kept as builders so the exact production SQL can be pinned with
+ * `EXPLAIN QUERY PLAN` in tests; this prevents a correctness-only fixture from
+ * missing a regression back to materializing every account's transactions. */
+export function chatListQuerySql(filter: ChatFilter): string {
+  return `SELECT ${LIST_COLUMNS} ${LIST_JOINS}
+           WHERE c.account_id = @account_id ${FILTER_WHERE[filter]}
+           ${ORDER} LIMIT @limit OFFSET @offset`;
+}
+
+export const CHAT_SEARCH_QUERY_SQL = `SELECT ${LIST_COLUMNS} ${LIST_JOINS}
+           WHERE c.account_id = @account_id AND c.fan_name LIKE @pattern ESCAPE '\\'
+           ${ORDER} LIMIT @limit`;
 
 function spendCutoffIso(): string {
   return new Date(Date.now() - SPEND_WINDOW_MS).toISOString();
@@ -176,11 +189,7 @@ export function createChatsQueries(db: ChatGooseDb, bus: DbChangeBus): ChatsQuer
 
     list({ accountId, filter, limit = 50, offset = 0 }) {
       const rows = db
-        .prepare(
-          `SELECT ${LIST_COLUMNS} ${LIST_JOINS}
-           WHERE c.account_id = @account_id ${FILTER_WHERE[filter]}
-           ${ORDER} LIMIT @limit OFFSET @offset`,
-        )
+        .prepare(chatListQuerySql(filter))
         .all({ account_id: accountId, limit: limit + 1, offset, spend_cutoff: spendCutoffIso() });
       const hasMore = rows.length > limit;
       return {
@@ -192,11 +201,7 @@ export function createChatsQueries(db: ChatGooseDb, bus: DbChangeBus): ChatsQuer
     search({ accountId, query, limit = 50 }) {
       const pattern = `%${escapeLike(query)}%`;
       const rows = db
-        .prepare(
-          `SELECT ${LIST_COLUMNS} ${LIST_JOINS}
-           WHERE c.account_id = @account_id AND c.fan_name LIKE @pattern ESCAPE '\\'
-           ${ORDER} LIMIT @limit`,
-        )
+        .prepare(CHAT_SEARCH_QUERY_SQL)
         .all({ account_id: accountId, pattern, limit, spend_cutoff: spendCutoffIso() });
       return rows.map(decodeChatListRow);
     },

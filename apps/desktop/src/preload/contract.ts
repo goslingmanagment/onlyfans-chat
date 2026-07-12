@@ -775,6 +775,8 @@ export interface InvokeChannels {
   };
   'query:fan.get': { args: { accountId: string; fanId: string }; result: FanPanelVM | null };
   'query:settings.get': { args: void; result: SettingsVM };
+  /** Post-commit renderer acknowledgement used by boot/release smoke. */
+  'cmd:app.rendererReady': { args: void; result: void };
   'query:personalities.list': { args: void; result: Personality[] };
   'query:sync.status': { args: void; result: SyncStatusVM };
   /** Settings → Activity panel: data flow + credit/AI ledgers (read-only). */
@@ -1020,7 +1022,7 @@ export interface SpendersRefreshEvent {
   type: 'spendersRefresh';
   accountId: string;
   scope: string;
-  state: 'running' | 'paused' | 'done' | 'stopped';
+  state: 'running' | 'paused' | 'done' | 'partial' | 'stopped';
   done: number;
   total: number;
 }
@@ -1065,6 +1067,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:messages.page': true,
   'query:fan.get': true,
   'query:settings.get': true,
+  'cmd:app.rendererReady': true,
   'query:personalities.list': true,
   'query:sync.status': true,
   'query:activity.summary': true,

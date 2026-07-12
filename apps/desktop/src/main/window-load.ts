@@ -1,7 +1,8 @@
 // Testable renderer-load gate used by packaged smoke and normal boot. Electron's
 // loadFile/loadURL promise alone does not cover preload failure or a renderer
-// process crash, so success is the did-finish-load event while every fatal load
-// surface rejects the same promise.
+// process crash. Success requires BOTH did-finish-load and a post-commit
+// renderer IPC acknowledgement while every fatal load surface rejects the same
+// promise.
 
 import type { EventEmitter } from 'node:events';
 
@@ -24,18 +25,27 @@ function detailMessage(value: unknown): string {
 export function awaitRendererLoad(
   events: LoadEventSource,
   beginLoad: () => Promise<unknown>,
+  rendererReady: Promise<void>,
+  timeoutMs = 30_000,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false;
+    let navigationFinished = false;
+    let rendererAcknowledged = false;
+    const timeout = setTimeout(() => {
+      fail(new Error(`Renderer did not become ready within ${String(timeoutMs)} ms`));
+    }, timeoutMs);
+    timeout.unref?.();
 
     const cleanup = (): void => {
+      clearTimeout(timeout);
       events.removeListener('did-finish-load', onFinish);
       events.removeListener('did-fail-load', onFailLoad);
       events.removeListener('preload-error', onPreloadError);
       events.removeListener('render-process-gone', onRenderGone);
     };
-    const succeed = (): void => {
-      if (settled) return;
+    const succeedIfReady = (): void => {
+      if (settled || !navigationFinished || !rendererAcknowledged) return;
       settled = true;
       cleanup();
       resolve();
@@ -46,7 +56,10 @@ export function awaitRendererLoad(
       cleanup();
       reject(error);
     };
-    const onFinish = (): void => succeed();
+    const onFinish = (): void => {
+      navigationFinished = true;
+      succeedIfReady();
+    };
     const onFailLoad = (
       _event: unknown,
       errorCode: unknown,
@@ -71,6 +84,16 @@ export function awaitRendererLoad(
     events.once('did-fail-load', onFailLoad);
     events.once('preload-error', onPreloadError);
     events.once('render-process-gone', onRenderGone);
+
+    void rendererReady.then(
+      () => {
+        rendererAcknowledged = true;
+        succeedIfReady();
+      },
+      (error: unknown) => {
+        fail(new Error(`Renderer readiness rejected: ${detailMessage(error)}`, { cause: error }));
+      },
+    );
 
     try {
       void beginLoad().catch((error: unknown) => {

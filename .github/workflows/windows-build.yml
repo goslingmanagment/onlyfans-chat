@@ -11,6 +11,12 @@
 
 name: windows-build
 
+# Only one run may mutate the shared update feed at a time. The remote publisher
+# additionally takes a server-side lock and rejects non-increasing versions.
+concurrency:
+  group: chatgoose-windows-update-feed
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
     inputs:
@@ -27,6 +33,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
 
@@ -37,6 +45,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Check (typecheck + lint + test + build)
+        run: pnpm check
 
       # Release hygiene (0.1.31 audit): refuse a mistagged build BEFORE anything
       # is built or uploaded — the post-upload assert then only guards the feed.
@@ -50,6 +61,21 @@ jobs:
             echo "::error::Tag v$tag_version != package.json ($pkg_version) — bump before tagging"; exit 1
           fi
 
+      - name: Assert publish tag is on origin/main
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "::error::Feed publication requires selecting/pushing a v* tag, not $GITHUB_REF"
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          release_sha=$(git rev-list -n 1 "$GITHUB_REF")
+          if ! git merge-base --is-ancestor "$release_sha" origin/main; then
+            echo "::error::Release commit $release_sha is not an ancestor of origin/main"
+            exit 1
+          fi
+
       - name: Build Windows installer
         run: pnpm dist:win
 
@@ -57,8 +83,9 @@ jobs:
       # main process died at module load — windowless, no error, invisible to
       # `pnpm check` (vitest resolves @kernel/sdk through its own transform,
       # not the packaged bundle). Launch the ACTUAL packaged binary; --smoke
-      # boots on a throwaway profile and exits 0 only after did-finish-load;
-      # navigation/preload/renderer-process failures exit non-zero. The DOA
+      # boots on a throwaway profile and exits 0 only after navigation plus a
+      # committed renderer IPC round trip; navigation/preload/renderer-process
+      # failures exit non-zero. The DOA
       # class never reaches the exit call, so timeout remains its failure signal.
       # Nothing reaches the update feed without this going green.
       - name: Smoke-launch the packaged app
@@ -72,25 +99,58 @@ jobs:
           exit $p.ExitCode
 
       - name: Upload to the update feed
+        id: publish
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
         shell: bash
         env:
           SSH_KEY: ${{ secrets.UPDATES_SSH_KEY }}
+          FEED_DIR: /srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3
+          FEED_URL: https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3
         run: |
           if [ -z "$SSH_KEY" ]; then
-            echo "::notice::UPDATES_SSH_KEY secret not set — feed upload skipped"
-            exit 0
+            echo "::error::UPDATES_SSH_KEY secret is required for feed publication"
+            exit 1
           fi
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           # Pinned host key of the feed server (45.8.230.111).
           echo "45.8.230.111 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKVfAxl4anwdXe3m+tK5yajpXDZD7iD1D1uc6A+y6o9Y" > ~/.ssh/known_hosts
-          # latest.yml goes LAST: clients polling mid-upload must never see a
-          # manifest that points at a not-yet-uploaded installer.
-          scp apps/desktop/release/*.exe apps/desktop/release/*.blockmap cgupdates@45.8.230.111:/srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3/
-          scp apps/desktop/release/latest.yml cgupdates@45.8.230.111:/srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3/
-          echo "feed updated"
+          metadata=$(node apps/desktop/scripts/release-feed.mjs metadata apps/desktop/release/latest.yml)
+          printf '%s\n' "$metadata" >> "$GITHUB_OUTPUT"
+          version=$(printf '%s\n' "$metadata" | awk -F= '$1 == "version" { print $2 }')
+          artifact=$(printf '%s\n' "$metadata" | awk -F= '$1 == "artifact" { print $2 }')
+          sha512=$(printf '%s\n' "$metadata" | awk -F= '$1 == "sha512" { print $2 }')
+          stage_dir="$FEED_DIR/.incoming/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ssh cgupdates@45.8.230.111 "command -v flock >/dev/null && command -v openssl >/dev/null && command -v cmp >/dev/null"
+          ssh cgupdates@45.8.230.111 "mkdir -p '$stage_dir'"
+          scp apps/desktop/release/*.exe apps/desktop/release/*.blockmap apps/desktop/release/latest.yml "cgupdates@45.8.230.111:$stage_dir/"
+          # Server-side lock + monotonic version check; assets are renamed into
+          # place first and latest.yml is one final same-filesystem atomic rename.
+          if ! ssh cgupdates@45.8.230.111 "bash -s -- '$FEED_DIR' '$stage_dir'" < apps/desktop/scripts/publish-feed.sh; then
+            # The server may have committed the atomic rename before the SSH
+            # acknowledgement was lost. Prove THIS run's bytes are live before
+            # deciding the publication failed; never rebuild/retry an equal tag.
+            served_manifest="$RUNNER_TEMP/ambiguous-latest.yml"
+            served_artifact="$RUNNER_TEMP/ambiguous-$artifact"
+            ambiguous_verified=false
+            for attempt in 1 2 3 4 5 6; do
+              if curl --fail --silent --show-error --location "$FEED_URL/latest.yml" --output "$served_manifest" \
+                && node apps/desktop/scripts/release-feed.mjs verify-manifest "$served_manifest" "$version" "$artifact" "$sha512" \
+                && curl --fail --silent --show-error --location "$FEED_URL/$artifact" --output "$served_artifact" \
+                && node apps/desktop/scripts/release-feed.mjs verify-artifact "$served_manifest" "$served_artifact"; then
+                ambiguous_verified=true
+                break
+              fi
+              echo "ambiguous publication verification attempt $attempt failed; retrying"
+              sleep 10
+            done
+            if [ "$ambiguous_verified" != true ]; then
+              echo "::error::Feed publication failed and this run's exact release could not be verified"
+              exit 1
+            fi
+            echo "::warning::SSH acknowledgement was lost, but this run's exact release is live"
+          fi
 
       # Release hygiene (Stage 35): what the feed SERVES must be this release —
       # served latest.yml version == apps/desktop/package.json == the v* tag.
@@ -98,13 +158,31 @@ jobs:
       - name: Assert served feed version == package.json == tag
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
         shell: bash
+        env:
+          FEED_URL: https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3
+          EXPECTED_ARTIFACT: ${{ steps.publish.outputs.artifact }}
+          EXPECTED_SHA512: ${{ steps.publish.outputs.sha512 }}
         run: |
           pkg_version=$(node -p "require('./apps/desktop/package.json').version")
-          served_version=$(curl -sSk https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3/latest.yml | awk '/^version:/ { print $2; exit }' | tr -d '\r')
-          echo "package.json=$pkg_version served=$served_version ref=$GITHUB_REF"
-          if [ "$served_version" != "$pkg_version" ]; then
-            echo "::error::Served feed version ($served_version) != package.json ($pkg_version)"; exit 1
+          served_manifest="$RUNNER_TEMP/served-latest.yml"
+          served_artifact="$RUNNER_TEMP/$EXPECTED_ARTIFACT"
+          verified=false
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --location "$FEED_URL/latest.yml" --output "$served_manifest" \
+              && node apps/desktop/scripts/release-feed.mjs verify-manifest "$served_manifest" "$pkg_version" "$EXPECTED_ARTIFACT" "$EXPECTED_SHA512" \
+              && curl --fail --silent --show-error --location "$FEED_URL/$EXPECTED_ARTIFACT" --output "$served_artifact" \
+              && node apps/desktop/scripts/release-feed.mjs verify-artifact "$served_manifest" "$served_artifact"; then
+              verified=true
+              break
+            fi
+            echo "served feed verification attempt $attempt failed; retrying"
+            sleep 10
+          done
+          if [ "$verified" != true ]; then
+            echo "::error::Served feed did not converge to this run after six attempts"
+            exit 1
           fi
+          echo "package.json=$pkg_version served artifact=$EXPECTED_ARTIFACT sha512=$EXPECTED_SHA512 ref=$GITHUB_REF"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             tag_version="${GITHUB_REF#refs/tags/v}"
             if [ "$tag_version" != "$pkg_version" ]; then

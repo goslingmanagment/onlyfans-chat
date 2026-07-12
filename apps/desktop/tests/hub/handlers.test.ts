@@ -27,12 +27,12 @@ vi.mock('electron', () => ({
 }));
 
 // async wrapper: ipcMain.handle converts sync handler throws into rejections.
-async function invoke(channel: string, args?: unknown): Promise<unknown> {
+async function invoke(channel: string, args?: unknown, event: unknown = {}): Promise<unknown> {
   const handler = handlers.get(channel);
   if (!handler) {
     throw new Error(`no handler registered for ${channel}`);
   }
-  return handler({}, args);
+  return handler(event, args);
 }
 
 function makeSyncStub(
@@ -41,7 +41,7 @@ function makeSyncStub(
 ): IpcDeps['sync'] {
   const provider: SyncProvider = {
     start: () => undefined,
-    stop: () => undefined,
+    stop: () => Promise.resolve(),
     subscribe: () => () => undefined,
     refreshChat: async () => undefined,
     readChatTailForUserOpen: async () => undefined,
@@ -143,6 +143,13 @@ describe('hub IPC wiring', () => {
     ).rejects.toThrow();
   });
 
+  it('routes renderer readiness to the sending WebContents id', async () => {
+    const onRendererReady = vi.fn();
+    register(data, { onRendererReady });
+    await invoke('cmd:app.rendererReady', undefined, { sender: { id: 42 } });
+    expect(onRendererReady).toHaveBeenCalledWith(42);
+  });
+
   it('query:sync.status carries the hub stream state', async () => {
     register(data, { sync: makeSyncStub('live') });
     const status = (await invoke('query:sync.status')) as SyncStatusVM;
@@ -223,6 +230,27 @@ describe('hub IPC wiring', () => {
     });
     expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(3);
     expect(onHubConfigChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips probe/rebuild for an unchanged hub URL but preserves real URL and key transitions', async () => {
+    const probeReadRuntimeForPatch = vi.fn(async () => undefined);
+    const { onOfapiRuntimeConfigChanged } = register(data, { probeReadRuntimeForPatch });
+    const current = (await invoke('query:settings.get')) as SettingsVM;
+
+    await invoke('cmd:settings.update', {
+      hubBaseUrl: current.hubBaseUrl,
+      accountPageLabels: { [ACCT]: 'Lora' },
+    });
+    expect(probeReadRuntimeForPatch).not.toHaveBeenCalled();
+    expect(onOfapiRuntimeConfigChanged).not.toHaveBeenCalled();
+    expect(((await invoke('query:settings.get')) as SettingsVM).accountPageLabels).toEqual({
+      [ACCT]: 'Lora',
+    });
+
+    await invoke('cmd:settings.update', { hubBaseUrl: 'http://localhost:4000' });
+    await invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_changed' });
+    expect(probeReadRuntimeForPatch).toHaveBeenCalledTimes(2);
+    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(2);
   });
 
   it('onHubConfigChanged stays silent on unrelated or invalid patches', async () => {

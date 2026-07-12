@@ -35,6 +35,8 @@ export interface PaginateCommonOptions<T> {
 
 interface EngineOptions<T, C> extends PaginateCommonOptions<T> {
   fetchPage: (cursor: C | null) => Promise<{ items: T[]; next: C | null }>;
+  /** Optional persisted continuation for a bounded multi-run walk. */
+  startCursor?: C;
 }
 
 // For 'until': the whole page containing the match is kept (callers dedupe by id
@@ -44,7 +46,7 @@ async function paginateEngine<T, C>(options: EngineOptions<T, C>): Promise<Pagin
   const sleep = options.sleep ?? defaultSleep;
   const seen = new Set<string | number>();
   const items: T[] = [];
-  let cursor: C | null = null;
+  let cursor: C | null = options.startCursor ?? null;
   let pages = 0;
   let satisfied = false;
   let exhausted = false;
@@ -131,14 +133,36 @@ export function paginateMarker<T>(
     fetchPage: (
       marker: number | null,
     ) => Promise<{ items: T[]; nextMarker: number | null; hasMore?: boolean }>;
+    /** Persisted marker from an earlier hard-cap termination. */
+    startMarker?: number;
+    /** Called after each valid page so long walks can durably checkpoint rows
+     * and the next marker before a later request fails. */
+    onPage?: (page: {
+      items: T[];
+      nextMarker: number | null;
+      hasMore: boolean;
+      pageNumber: number;
+    }) => void | Promise<void>;
   },
 ): Promise<PaginateOutcome<T>> {
-  const { fetchPage, ...common } = options;
+  const { fetchPage, startMarker, onPage, ...common } = options;
+  let pageNumber = 0;
   return paginateEngine<T, number>({
     ...common,
+    ...(startMarker !== undefined ? { startCursor: startMarker } : {}),
     fetchPage: async (cursor) => {
       const page = await fetchPage(cursor);
       const more = page.hasMore ?? page.nextMarker !== null;
+      if (more && page.nextMarker === null) {
+        throw new Error('marker pagination claimed more rows without a continuation marker');
+      }
+      pageNumber += 1;
+      await onPage?.({
+        items: page.items,
+        nextMarker: page.nextMarker,
+        hasMore: more,
+        pageNumber,
+      });
       return { items: page.items, next: more ? page.nextMarker : null };
     },
   });

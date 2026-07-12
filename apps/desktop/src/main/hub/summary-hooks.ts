@@ -15,11 +15,19 @@ import type { DataLayer } from '../db/index';
 
 /** Legacy AGENCY_HUB_PROFILE_MAX_BYTES — UTF-8 byte gate, kept in the caller. */
 export const HUB_PROFILE_MAX_BYTES = 50_000;
+export const SUMMARY_REPLAY_DELAY_MS = 60_000;
 
 /** Opaque hubSyncState carried on summaries rows; owned by this module. */
 export interface HubSummarySyncState extends Record<string, unknown> {
-  state: 'synced' | 'pending';
+  state: 'synced' | 'pending' | 'rejected';
   at: string;
+  reason?: 'delivery-pending' | 'delivery-failed' | 'page-unresolved' | 'oversize';
+}
+
+export interface SummaryHubSyncHooks extends SummaryHubHooks {
+  /** Replay pending rows immediately (Hub configure) and arm retry on failure. */
+  replayPending(): Promise<void>;
+  dispose(): void;
 }
 
 export interface SummaryHubHooksOptions {
@@ -46,12 +54,22 @@ function withBudget<T>(promise: Promise<T>, budgetMs: number, fallback: T): Prom
   });
 }
 
-export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryHubHooks {
+export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryHubSyncHooks {
   const { client, data, resolvePageLabel } = options;
   const now = options.now ?? (() => Date.now());
+  let replayTimer: ReturnType<typeof setTimeout> | null = null;
+  let replaying: Promise<void> | null = null;
+  let disposed = false;
 
-  function syncState(state: HubSummarySyncState['state']): HubSummarySyncState {
-    return { state, at: new Date(now()).toISOString() };
+  function syncState(
+    state: HubSummarySyncState['state'],
+    reason?: HubSummarySyncState['reason'],
+  ): HubSummarySyncState {
+    return {
+      state,
+      at: new Date(now()).toISOString(),
+      ...(reason === undefined ? {} : { reason }),
+    };
   }
 
   /**
@@ -63,13 +81,17 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
     fanId: string,
     body: string,
     state: HubSummarySyncState['state'],
+    reason?: HubSummarySyncState['reason'],
   ): void {
     try {
       const entry = data.summaries.get(accountId, fanId);
       if (entry === null || entry.body !== body) {
         return;
       }
-      data.summaries.put(accountId, fanId, { ...entry, hubSyncState: syncState(state) });
+      data.summaries.put(accountId, fanId, {
+        ...entry,
+        hubSyncState: syncState(state, reason),
+      });
     } catch {
       // Sync-state bookkeeping must never surface.
     }
@@ -80,7 +102,7 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
     fanId: string,
   ): Promise<{ body: string; generatedAt: number } | null> {
     const pageLabel = await resolvePageLabel(accountId);
-    if (pageLabel === null) {
+    if (disposed || pageLabel === null) {
       return null;
     }
     const profile = await client.getFanProfile({
@@ -88,6 +110,9 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
       fanId,
       timeoutMs: HUB_PROFILE_GET_TIMEOUT_MS,
     });
+    if (disposed) {
+      return null;
+    }
     const version = profile?.profile ?? null;
     if (version === null || version.body.length === 0) {
       return null;
@@ -123,17 +148,42 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
     // The coordinator's adopt path re-puts the entry without hubSyncState in
     // the same tick we resolve — re-mark on the next macrotask (body-guarded)
     // so 'synced' sticks on the adopted row.
-    setTimeout(() => markSyncState(accountId, fanId, version.body, 'synced'), 0);
+    setTimeout(() => {
+      if (!disposed) markSyncState(accountId, fanId, version.body, 'synced');
+    }, 0);
     return { body: version.body, generatedAt };
   }
 
-  async function doPush(accountId: string, fanId: string, body: string): Promise<void> {
-    if (body.length === 0 || Buffer.byteLength(body, 'utf8') > HUB_PROFILE_MAX_BYTES) {
-      return; // legacy byte gate: oversize summaries are never pushed
-    }
-    const pageLabel = await resolvePageLabel(accountId);
-    if (pageLabel === null) {
+  function scheduleReplay(): void {
+    if (disposed || replayTimer !== null) {
       return;
+    }
+    replayTimer = setTimeout(() => {
+      replayTimer = null;
+      void replayPending().catch(() => undefined);
+    }, SUMMARY_REPLAY_DELAY_MS);
+    (replayTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  async function doPush(accountId: string, fanId: string, body: string): Promise<boolean> {
+    if (disposed) {
+      return false;
+    }
+    if (body.length === 0 || Buffer.byteLength(body, 'utf8') > HUB_PROFILE_MAX_BYTES) {
+      markSyncState(accountId, fanId, body, 'rejected', 'oversize');
+      return true; // explicit non-retriable classification
+    }
+    // Persist the replay obligation before the first await. A crash, runtime
+    // swap, or process exit during page resolution/network I/O must leave a row
+    // the next configured hook can discover.
+    markSyncState(accountId, fanId, body, 'pending', 'delivery-pending');
+    const pageLabel = await resolvePageLabel(accountId);
+    if (disposed) {
+      return false;
+    }
+    if (pageLabel === null) {
+      markSyncState(accountId, fanId, body, 'pending', 'page-unresolved');
+      return false;
     }
     const delivered = await withBudget(
       client
@@ -145,7 +195,53 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
       HUB_PROFILE_PUT_TIMEOUT_MS,
       false,
     );
-    markSyncState(accountId, fanId, body, delivered ? 'synced' : 'pending');
+    if (disposed) {
+      return delivered;
+    }
+    markSyncState(
+      accountId,
+      fanId,
+      body,
+      delivered ? 'synced' : 'pending',
+      delivered ? undefined : 'delivery-failed',
+    );
+    return delivered;
+  }
+
+  function replayPending(): Promise<void> {
+    if (disposed) {
+      return Promise.resolve();
+    }
+    if (replaying !== null) {
+      return replaying;
+    }
+    const task = (async () => {
+      for (const pending of data.summaries.listHubSyncPending()) {
+        if (disposed) {
+          return;
+        }
+        try {
+          await doPush(pending.accountId, pending.fanId, pending.entry.body);
+        } catch {
+          markSyncState(
+            pending.accountId,
+            pending.fanId,
+            pending.entry.body,
+            'pending',
+            'delivery-failed',
+          );
+        }
+      }
+      if (!disposed && data.summaries.listHubSyncPending(1).length > 0) {
+        scheduleReplay();
+      }
+    })();
+    replaying = task;
+    const clear = (): void => {
+      if (replaying === task) replaying = null;
+    };
+    void task.then(clear, clear);
+    return task;
   }
 
   return {
@@ -156,9 +252,21 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
 
     pushSummary: async ({ accountId, fanId, body }) => {
       try {
-        await doPush(accountId, fanId, body);
+        const delivered = await doPush(accountId, fanId, body);
+        if (!delivered) {
+          scheduleReplay();
+        }
       } catch {
-        // Fire-and-forget: push failures never surface into the operation.
+        markSyncState(accountId, fanId, body, 'pending', 'delivery-failed');
+        scheduleReplay();
+      }
+    },
+    replayPending,
+    dispose() {
+      disposed = true;
+      if (replayTimer !== null) {
+        clearTimeout(replayTimer);
+        replayTimer = null;
       }
     },
   };

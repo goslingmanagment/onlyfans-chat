@@ -358,6 +358,8 @@ export interface ReadRuntimeProbeResult {
 export interface IpcDeps {
   data: DataLayer;
   settingsStore: SettingsStore;
+  /** Resolves the navigation gate for the sending WebContents only. */
+  onRendererReady?: (webContentsId: number) => void;
   /** hubStatus/hubActivity are HubAwareSync extensions; plain providers report hub 'off'. */
   sync: ActivitySync | null;
   /** I116-2 (W4.1): true while boot-time runtime activation failed AUTH —
@@ -543,6 +545,11 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   ipcMain.handle('query:settings.get', () => settingsStore.get());
+
+  ipcMain.handle('cmd:app.rendererReady', (event, rawArgs: unknown) => {
+    z.undefined().parse(rawArgs);
+    deps.onRendererReady?.(event.sender.id);
+  });
 
   ipcMain.handle('query:personalities.list', async () => {
     if (deps.personas) {
@@ -879,10 +886,11 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:settings.update', async (_event, rawPatch: unknown) => {
     const rawPatchObject = typeof rawPatch === 'object' && rawPatch !== null;
-    const touchedReadRuntime =
-      rawPatchObject &&
-      ('hubApiKey' in rawPatch ||
-        'hubBaseUrl' in rawPatch);
+    let touchedReadRuntime = rawPatchObject && 'hubApiKey' in rawPatch;
+    if (rawPatchObject && 'hubBaseUrl' in rawPatch) {
+      const current = await settingsStore.get();
+      touchedReadRuntime = touchedReadRuntime || rawPatch.hubBaseUrl !== current.hubBaseUrl;
+    }
     // 4a (SPEC §15): for hub-affecting keys, VALIDATE a candidate read runtime
     // built from the patch overrides BEFORE persisting. A bad key/URL rejects
     // here with nothing written to the keychain or the settings table — no
@@ -1011,6 +1019,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('cmd:ai.feedback', (_event, rawArgs: unknown) => {
     const args = aiFeedbackSchema.parse(rawArgs);
     const acceptedAt = new Date().toISOString();
+    const acceptance = deps.acceptance ?? null;
     const payload = parseUsageFeedbackPayload(
       data.db
         .prepare('SELECT payload FROM usage_events WHERE client_event_id = @id')
@@ -1058,12 +1067,10 @@ export function registerIpcHandlers(deps: IpcDeps): void {
           knownAt: acceptedAt,
         });
       }
-      const result = data.aiAcceptance.acceptOnce(args.operationId, acceptedAt);
-      if (result.status === 'unknown') {
+      const operation = data.aiAcceptance.get(args.operationId);
+      if (operation === null) {
         throw new Error('Unknown or expired AI operation; acceptance feedback was not counted.');
       }
-      shouldReport = result.status === 'accepted';
-      const operation = result.operation;
       reportingContext = operation.accountId !== null && operation.conversationId !== null
         ? {
             operationId: operation.operationId,
@@ -1074,11 +1081,51 @@ export function registerIpcHandlers(deps: IpcDeps): void {
             parts: operation.parts,
           }
         : null;
+      if (operation.acceptedAt === null) {
+        // The spool append and one-way claim share ONE SQLite transaction.
+        // Claiming first inside that transaction avoids duplicate enqueues;
+        // an enqueue failure rolls the claim/metric back, and a crash can leave
+        // neither side or both sides but never a divergent half-state.
+        if (acceptance === null || reportingContext === null) {
+          throw new Error('Acceptance reporting is temporarily unavailable; feedback was not consumed.');
+        }
+      }
+      const result = operation.acceptedAt === null
+        ? data.db.transaction(() => {
+            const claimed = data.aiAcceptance.acceptOnce(args.operationId, acceptedAt);
+            if (claimed.status === 'accepted' && acceptance !== null && reportingContext !== null) {
+              acceptance.enqueue({
+                operationId: reportingContext.operationId,
+                requestId: reportingContext.requestId,
+                feature: reportingContext.feature,
+                action: args.action,
+                accountId: reportingContext.accountId,
+                conversationId: reportingContext.chatId,
+                at: acceptedAt,
+              });
+            }
+            return claimed;
+          })
+        : data.aiAcceptance.acceptOnce(args.operationId, acceptedAt);
+      if (result.status === 'unknown') {
+        throw new Error('Unknown or expired AI operation; acceptance feedback was not counted.');
+      }
+      if (result.status === 'accepted' && args.action === 'inserted' && reportingContext !== null) {
+        acceptance?.trackInserted(reportingContext.accountId, reportingContext.chatId, {
+          operationId: reportingContext.operationId,
+          requestId: reportingContext.requestId,
+          feature: reportingContext.feature,
+          text:
+            reportingContext.parts[args.partIndex ?? 0]
+            ?? reportingContext.parts.join('\n'),
+        });
+      }
+      shouldReport = false;
     }
 
-    if (shouldReport && deps.acceptance && reportingContext !== null) {
+    if (shouldReport && acceptance !== null && reportingContext !== null) {
       reportFeedbackAcceptance(
-        deps.acceptance,
+        acceptance,
         reportingContext,
         args.action,
         args.partIndex ?? null,

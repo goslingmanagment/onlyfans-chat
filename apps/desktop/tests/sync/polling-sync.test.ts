@@ -774,6 +774,108 @@ describe('PollingSync', () => {
     second.stop();
   });
 
+  it('automatic warm-cache catch-up paginates until the advertised head beyond one page', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+    stub.setMessages([makeMessage({ id: 5 })]);
+    const first = makeSync();
+    first.start([ACCT]);
+    await vi.runOnlyPendingTimersAsync();
+    await first.openConversation(ACCT, '101');
+    first.stop();
+
+    const history = Array.from({ length: 147 }, (_, index) => makeMessage({ id: index + 5 }));
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 151, unread: 146 })]);
+    const listMessages = stub.client.listMessages as ReturnType<typeof vi.fn>;
+    listMessages.mockClear();
+    listMessages.mockImplementation(async (params: {
+      lastId?: string;
+      limit?: number;
+    }) => {
+      const limit = params.limit ?? 100;
+      const boundary = params.lastId === undefined
+        ? Math.max(0, history.length - limit)
+        : history.findIndex((message) => String(message.id) === params.lastId);
+      const start = boundary < 0 ? history.length : boundary;
+      return { messages: history.slice(start, start + limit), nextPageUrl: null };
+    });
+
+    events = [];
+    const second = makeSync();
+    second.start([ACCT]);
+    await drainPoll();
+
+    expect(listMessages.mock.calls.map(([params]) => params.lastId)).toEqual(['5', '104']);
+    expect(data.messages.count(ACCT, '101')).toBe(147);
+    expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('151');
+    expect(
+      events.filter((event) => event.type === 'messageReceived' || event.type === 'messageSent'),
+    ).toHaveLength(0);
+    second.stop();
+  });
+
+  it('does not lose an earlier chat event when a later chat delta fails and retries', async () => {
+    stub.setChats([
+      makeChat({ fanId: 101, lastMessageId: 5 }),
+      makeChat({ fanId: 202, lastMessageId: 5 }),
+    ]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await drainPoll();
+    for (const chatId of ['101', '202']) {
+      data.messages.upsertMany([{
+        accountId: ACCT,
+        chatId,
+        messageId: '5',
+        createdAt: '2026-06-10T12:00:00.000Z',
+        isSentByMe: false,
+        textHtml: '<p>cached boundary</p>',
+        textPlain: 'cached boundary',
+        price: 0,
+        isOpened: null,
+        isNew: false,
+        isTip: false,
+        tipAmount: null,
+        tipText: null,
+        replyTo: null,
+        media: [],
+        deleted: false,
+        raw: {},
+      }]);
+    }
+
+    stub.setChats([
+      makeChat({ fanId: 101, lastMessageId: 6 }),
+      makeChat({ fanId: 202, lastMessageId: 6 }),
+    ]);
+    let failSecondChat = true;
+    (stub.client.listMessages as ReturnType<typeof vi.fn>).mockImplementation(
+      async (params: { chatId: string }) => {
+        if (params.chatId === '202' && failSecondChat) {
+          throw new Error('second chat failed');
+        }
+        return {
+          messages: [makeMessage({ id: 5 }), makeMessage({ id: 6 })],
+          nextPageUrl: null,
+        };
+      },
+    );
+    events = [];
+
+    await sync.pollAccount(ACCT);
+    expect(events.filter((event) => event.type === 'messageReceived')).toEqual([
+      expect.objectContaining({ accountId: ACCT, chatId: '101', messageId: '6' }),
+    ]);
+    expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('5');
+
+    failSecondChat = false;
+    await sync.pollAccount(ACCT);
+    expect(events.filter((event) => event.type === 'messageReceived')).toEqual([
+      expect.objectContaining({ accountId: ACCT, chatId: '101', messageId: '6' }),
+      expect.objectContaining({ accountId: ACCT, chatId: '202', messageId: '6' }),
+    ]);
+    await sync.stop();
+  });
+
   it('never overlaps polls of one account (Phase-0 latency reality)', async () => {
     let resolveFirst: (() => void) | undefined;
     stub.setChats([]);
@@ -937,13 +1039,40 @@ describe('PollingSync', () => {
     sync.start([ACCT]);
     await drainPoll();
     const callsBeforeRestart = stub.listChatsCalls;
-    sync.stop();
+    await sync.stop();
 
     sync.start([ACCT]);
     await drainPoll();
 
     expect(stub.listChatsCalls).toBeGreaterThan(callsBeforeRestart);
-    sync.stop();
+    await sync.stop();
+  });
+
+  it('stop waits for an accepted poll DB continuation and leaves no timer that can write afterward', async () => {
+    let releaseHead: ((value: { chats: OfApiChat[]; nextPageUrl: null }) => void) | undefined;
+    (stub.client.listChats as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<{ chats: OfApiChat[]; nextPageUrl: null }>((resolve) => {
+        releaseHead = resolve;
+      }),
+    );
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await vi.waitFor(() => expect(releaseHead).toBeTypeOf('function'));
+
+    let stopped = false;
+    const stopping = sync.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    releaseHead?.({ chats: [makeChat({ fanId: 101, lastMessageId: 5 })], nextPageUrl: null });
+    await stopping;
+    expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('5');
+
+    const callsAfterStop = stub.listChatsCalls;
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(stub.listChatsCalls).toBe(callsAfterStop);
   });
 
   it('focused account polls at 20s, others at 60s; hidden window ×4 keeps running', async () => {
@@ -1309,6 +1438,22 @@ describe('PollingSync', () => {
       sync.stop();
     });
 
+    it('rejects a thin-event fallback when a successful body read is still stale', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      stub.setMessages([makeMessage({ id: 5 })]);
+      const sync = makeSync();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      await expect(sync.refreshChat(ACCT, '101', undefined, '6'))
+        .rejects.toThrow(/did not observe message 6/i);
+
+      stub.setMessages([makeMessage({ id: 5 }), makeMessage({ id: 6 })]);
+      await expect(sync.refreshChat(ACCT, '101', undefined, '6')).resolves.toBeUndefined();
+      expect(data.messages.get(ACCT, '101', '6')).not.toBeNull();
+      sync.stop();
+    });
+
     it('refreshChat with an explicit purpose (refresh queue) is ONE page of limit 100', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
       stub.setMessages([makeMessage({ id: 5 })]);
@@ -1504,8 +1649,13 @@ describe('PollingSync', () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: 6, unread: 2 })]);
       const first = sync.refreshChat(ACCT, '101', 'spenders-refresh');
       const second = sync.refreshChat(ACCT, '101', 'spenders-refresh');
+      let settled = false;
+      void Promise.all([first, second]).then(() => {
+        settled = true;
+      });
       await vi.advanceTimersByTimeAsync(1_999);
       expect(stub.listChatsCalls).toBe(listCallsBefore);
+      expect(settled).toBe(false); // callers share the real pending obligation
       await vi.advanceTimersByTimeAsync(1);
       await Promise.all([first, second]);
 
@@ -1515,6 +1665,62 @@ describe('PollingSync', () => {
       expect(events.some((e) => e.type === 'chatListUpdated')).toBe(true);
       expect(data.chats.get(ACCT, '101')?.unreadCount).toBe(2);
       sync.stop();
+    });
+
+    it('rejects a stale-success list fallback and accepts a newer numeric head', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      const stale = sync.refreshChat(ACCT, '101', undefined, '6');
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(stale).rejects.toThrow(/did not observe message 6/i);
+
+      // A busy chat may already have advanced past the intermediate Hub frame;
+      // that newer list head is sufficient proof without a body read.
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 7, unread: 2 })]);
+      const caughtUp = sync.refreshChat(ACCT, '101', undefined, '6');
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(caughtUp).resolves.toBeUndefined();
+      expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('7');
+      sync.stop();
+    });
+
+    it('bounds a continuously re-armed Hub list debounce and propagates the read failure', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      const listCallsBefore = stub.listChatsCalls;
+
+      const pending: Promise<void>[] = [];
+      for (let elapsed = 0; elapsed < 10_000; elapsed += 1_000) {
+        pending.push(sync.refreshAccountHead(ACCT));
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+      await Promise.all(pending);
+      expect(stub.listChatsCalls).toBe(listCallsBefore + 1);
+
+      (stub.client.listChats as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error('head refresh failed'),
+      );
+      const failed = sync.refreshAccountHead(ACCT);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(failed).rejects.toThrow('head refresh failed');
+      sync.stop();
+    });
+
+    it('rejects a pending Hub reconciliation when shutdown cancels it before durability', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      const pending = sync.refreshAccountHead(ACCT);
+      const stopping = sync.stop();
+      await expect(pending).rejects.toThrow(/stopped before Hub list reconciliation/i);
+      await stopping;
     });
 
     it('readChatTailForUserOpen STILL reads and stamps with auto-read OFF', async () => {

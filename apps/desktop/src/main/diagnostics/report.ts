@@ -63,7 +63,15 @@ export function buildDiagnosticsReport(
   inputs: DiagnosticsInputs,
   secrets: readonly string[] = [],
 ): Record<string, unknown> {
-  const { usageSpool, ...boundedInputs } = inputs;
+  const { usageSpool, logs, fileLog, ...rest } = inputs;
+  // Both sources are chronological (oldest -> newest). The generic redactor
+  // keeps the first 100 array items, which used to discard the incident tail.
+  // Bound these arrays from the end before the final all-field redaction pass.
+  const boundedInputs = {
+    ...rest,
+    logs: logs.slice(-100),
+    fileLog: fileLog.slice(-100),
+  };
   const report = redactValue(boundedInputs, secrets) as Record<string, unknown>;
   if (usageSpool !== undefined) {
     // The generic diagnostics redactor deliberately caps arrays at 100. The

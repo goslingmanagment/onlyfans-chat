@@ -769,7 +769,7 @@ interface FakePolling extends SyncProvider {
   setHubPollingSuspended(suspended: boolean): void;
   suspensions: boolean[];
   forceRefreshCalls: number;
-  refreshCalls: Array<{ accountId: string; chatId: string }>;
+  refreshCalls: Array<{ accountId: string; chatId: string; expectedMessageId?: string }>;
   accountRefreshCalls: string[];
   /** Retained PollingSync surface; durable v2 recovery must not use it. */
   reconcileCalls: string[];
@@ -802,13 +802,17 @@ function makeFakePolling(): FakePolling {
       for (const listener of listeners) listener(event);
     },
     start: () => undefined,
-    stop: () => undefined,
+    stop: () => Promise.resolve(),
     subscribe: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    refreshChat: (accountId, chatId) => {
-      polling.refreshCalls.push({ accountId, chatId });
+    refreshChat: (accountId, chatId, _purpose, expectedMessageId) => {
+      polling.refreshCalls.push({
+        accountId,
+        chatId,
+        ...(expectedMessageId === undefined ? {} : { expectedMessageId }),
+      });
       // mirrors the real provider: refreshChat re-announces the list
       polling.emit({ type: 'chatListUpdated', accountId });
       return Promise.resolve();
@@ -944,6 +948,30 @@ describe('createHubAwareSync (provider composition)', () => {
       raw: {},
     };
     data.messages.upsertMany([upsert]);
+  }
+
+  function seedChat(
+    chatId: string,
+    lastMessageId: string,
+    lastMessageAt: string,
+  ): void {
+    data.chats.upsert({
+      accountId: ACCT,
+      chatId,
+      fanName: `Fan ${chatId}`,
+      avatar: null,
+      unreadCount: 1,
+      hasUnreadTips: false,
+      lastMessageAt,
+      lastMessagePreview: `message ${lastMessageId}`,
+      lastMessageIsSentByMe: false,
+      lastMessageId,
+      lastReadMessageId: null,
+      pinned: false,
+      canSendMessage: true,
+      canNotSendReason: null,
+      raw: {},
+    });
   }
 
   function hubMessage(overrides: Partial<NormalizedSyncMessage> = {}): NormalizedSyncMessage {
@@ -1413,6 +1441,91 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
+  it('snapshot repairs a tombstoned head backward or to null without regressing a newer REST head', async () => {
+    const { provider, callbacks } = build();
+    seedChat('101', 'deleted-new', '2026-06-19T18:00:00.000Z');
+    seedMessage('deleted-new', '101');
+    seedChat('202', 'deleted-only', '2026-06-19T18:00:00.000Z');
+    seedMessage('deleted-only', '202');
+    // The tombstone may have arrived in an earlier cursor page; a later head
+    // snapshot still has to trust the durable local deleted bit.
+    data.messages.markDeleted(ACCT, '202', ['deleted-only']);
+    seedChat('303', 'rest-new', '2026-06-19T19:00:00.000Z');
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const snapshot = emptySnapshot(ACCT);
+    snapshot.threads = [
+      {
+        chatId: '101',
+        fanName: 'Fan 101',
+        unreadCount: 0,
+        hasUnreadTips: false,
+        lastMessageId: 'surviving-old',
+        lastMessageAt: '2026-06-19T17:00:00.000Z',
+        lastMessageIsSentByMe: false,
+        lastMessagePreview: 'surviving old body',
+        visible: true,
+        sourceUpdatedAt: '2026-06-19T18:01:00.000Z',
+        messages: [{
+          chatId: '101',
+          messageId: 'deleted-new',
+          message: null,
+          deletedAt: '2026-06-19T18:01:00.000Z',
+          sourceUpdatedAt: '2026-06-19T18:01:00.000Z',
+          sourceFanoutSeq: 1,
+        }],
+      },
+      {
+        chatId: '202',
+        fanName: 'Fan 202',
+        unreadCount: 0,
+        hasUnreadTips: false,
+        lastMessageId: null,
+        lastMessageAt: null,
+        lastMessageIsSentByMe: false,
+        lastMessagePreview: '',
+        visible: true,
+        sourceUpdatedAt: '2026-06-19T18:01:00.000Z',
+        messages: [],
+      },
+      {
+        chatId: '303',
+        fanName: 'Fan 303',
+        unreadCount: 0,
+        hasUnreadTips: false,
+        lastMessageId: 'snapshot-old',
+        lastMessageAt: '2026-06-19T17:00:00.000Z',
+        lastMessageIsSentByMe: false,
+        lastMessagePreview: 'snapshot old body',
+        visible: true,
+        sourceUpdatedAt: '2026-06-19T18:01:00.000Z',
+        messages: [],
+      },
+    ];
+
+    await callbacks().onSnapshot(snapshot);
+
+    expect(data.messages.get(ACCT, '101', 'deleted-new')?.deleted).toBe(true);
+    expect(data.chats.get(ACCT, '101')).toMatchObject({
+      lastMessageId: 'surviving-old',
+      lastMessageAt: '2026-06-19T17:00:00.000Z',
+      lastMessagePreview: 'surviving old body',
+    });
+    expect(data.messages.get(ACCT, '202', 'deleted-only')?.deleted).toBe(true);
+    expect(data.chats.get(ACCT, '202')).toMatchObject({
+      lastMessageId: null,
+      lastMessageAt: null,
+      lastMessagePreview: '',
+    });
+    expect(data.chats.get(ACCT, '303')).toMatchObject({
+      lastMessageId: 'rest-new',
+      lastMessageAt: '2026-06-19T19:00:00.000Z',
+    });
+    provider.stop();
+  });
+
   it('id-only messageReceived preserves the refreshChat fallback before re-emitting', async () => {
     const { provider, polling, callbacks, events, logs } = build();
     provider.start([ACCT]);
@@ -1428,7 +1541,11 @@ describe('createHubAwareSync (provider composition)', () => {
     await callbacks().onEvent(frame);
 
     expect(polling.ingestCalls).toEqual([]);
-    expect(polling.refreshCalls).toEqual([{ accountId: ACCT, chatId: '101' }]);
+    expect(polling.refreshCalls).toEqual([{
+      accountId: ACCT,
+      chatId: '101',
+      expectedMessageId: '9001',
+    }]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
     expect(provider.hubActivity()).toMatchObject({
       eventsToday: 1,
@@ -1452,6 +1569,27 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
+  it('rejects a thin Hub event when its fallback read fails', async () => {
+    const { provider, polling, callbacks, events } = build();
+    polling.refreshChat = async () => {
+      throw new Error('fallback read failed');
+    };
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await expect(callbacks().onEvent({
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: '9001',
+    })).rejects.toThrow('fallback read failed');
+
+    expect(events).toEqual([]);
+    expect(provider.hubActivity().appliedEventsToday).toBe(0);
+    provider.stop();
+  });
+
   it('mismatched enriched message falls back to refreshChat', async () => {
     const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
@@ -1468,7 +1606,11 @@ describe('createHubAwareSync (provider composition)', () => {
     await callbacks().onEvent(frame);
 
     expect(polling.ingestCalls).toEqual([]);
-    expect(polling.refreshCalls).toEqual([{ accountId: ACCT, chatId: '101' }]);
+    expect(polling.refreshCalls).toEqual([{
+      accountId: ACCT,
+      chatId: '101',
+      expectedMessageId: '9001',
+    }]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
     expect(provider.hubActivity()).toMatchObject({
       fallbackByTypeToday: { messageReceived: 1 },
@@ -1508,7 +1650,11 @@ describe('createHubAwareSync (provider composition)', () => {
     await callbacks().onEvent(frame);
 
     expect(polling.ingestCalls).toEqual([]);
-    expect(polling.refreshCalls).toEqual([{ accountId: ACCT, chatId: '101' }]);
+    expect(polling.refreshCalls).toEqual([{
+      accountId: ACCT,
+      chatId: '101',
+      expectedMessageId: '9001',
+    }]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
     expect(provider.hubActivity()).toMatchObject({
       fallbackByTypeToday: { messageReceived: 1 },
@@ -1537,7 +1683,10 @@ describe('createHubAwareSync (provider composition)', () => {
       amountUsd: 5,
     });
     await callbacks().onEvent({ type: 'ppvUnlocked', accountId: ACCT, chatId: '5', messageId: '2' });
-    expect(polling.refreshCalls).toHaveLength(2);
+    expect(polling.refreshCalls).toEqual([
+      { accountId: ACCT, chatId: '5', expectedMessageId: '1' },
+      { accountId: ACCT, chatId: '5', expectedMessageId: '2' },
+    ]);
     expect(events.filter((e) => e.type === 'tipReceived' || e.type === 'ppvUnlocked')).toHaveLength(2);
     expect(provider.hubActivity()).toMatchObject({
       eventsByTypeToday: { tipReceived: 1, ppvUnlocked: 1 },

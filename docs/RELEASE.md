@@ -92,16 +92,30 @@ check → download → install flow so the UX is demoable without a real feed.
 
 **Release ritual:**
 
-1. Bump `version` in `apps/desktop/package.json`, commit.
-2. `git tag v<version> && git push origin main --tags`.
-3. The `windows-build` workflow builds the installer on Windows, **smoke-launches
+1. Bump `version` in `apps/desktop/package.json`, run `pnpm check`, and commit on
+   `main`.
+2. `git tag v<version> && git push origin main --tags`. Publication rejects a
+   tag whose commit is not an ancestor of `origin/main`.
+3. The serialized `windows-build` workflow reruns the full `pnpm check`, builds
+   the installer on Windows, **smoke-launches
    the packaged binary** (`ChatGoose.exe --smoke` on a throwaway profile must
-   exit 0 only after the renderer finishes loading; main navigation failure,
-   preload failure, or a renderer crash exits non-zero — the D8 dead-on-launch
+   exit 0 only after the committed renderer completes a real settings IPC round
+   trip; main navigation failure, preload failure, or a renderer crash exits
+   non-zero — the D8 dead-on-launch
    class still fails by timeout, and nothing reaches the feed), and uploads
    `ChatGoose-Setup-<version>.exe` + `.blockmap` + `latest.yml` directly to the
    feed from the Windows runner (blockmaps make updates differential — clients
-   download only changed chunks). The Actions artifact upload is best-effort
+   download only changed chunks). Publication stages a complete release under
+   `.incoming`, takes a process-owned server-side lock, rejects a version that
+   is not strictly newer than the served version (an identical same-version
+   retry after an ambiguous acknowledgement is a verified no-op), verifies the
+   staged installer SHA-512, moves
+   versioned assets into place, and atomically renames `latest.yml` last. The
+   postcheck uses normal TLS verification and downloads the served installer to
+   prove its SHA-512 equals this run's manifest. If SSH acknowledgement is lost
+   after the rename, the same workflow run verifies those already-built exact
+   bytes and continues; it does not rebuild an equal version. Transient served
+   feed checks retry for up to one minute. The Actions artifact upload is best-effort
    only, with short retention, so GitHub artifact quota cannot block feed
    publication. Done — apps pick it up within 4 h or on next launch.
 
@@ -115,7 +129,13 @@ the unprivileged `cgupdates` user; CI uploads over scp with the
 are unsigned, so the feed host being ours is the trust anchor — rotate the
 token path (nginx dir + `publish.url`) if it ever leaks somewhere noisy.
 
-**Rollback:** Auto-update rolls the fleet to whatever `latest.yml` points at. Safe targets: **0.1.32+**, or **0.1.29** (last pre-incident build). **Never republish 0.1.30/0.1.31** — both are dead-on-launch (D8).
+**Recovery / rollback:** Never point `latest.yml` at a lower version. The updater
+rejects downgrades, and an older binary may also reject a database migrated by a
+newer release. Roll forward instead: build a **higher-semver** rescue release
+from the last known-good code plus the required forward-compatible migrations,
+run the complete release ritual above, and let normal auto-update install it.
+In particular, never rebuild or republish 0.1.30/0.1.31 — both are dead-on-launch
+(D8).
 
 **Provisioned & verified 2026-06-13.** The feed is live: a liveness probe sits
 at `https://45-8-230-111.sslip.io/u/<token>/ping.txt` (returns `feed-ok`).
@@ -136,9 +156,9 @@ authorized deploy key, the Let's Encrypt cert) is reproduced by
 
 ## Post-publish assert (Stage 35)
 
-The windows-build workflow's publish path ends with a checked step: the SERVED
-feed `latest.yml` version must equal `apps/desktop/package.json` and (on tag
-builds) the `v*` tag. A mismatch fails the run — the feed never silently
-serves a version that isn't the release you think you shipped. Recovery path
-if it fires: the stage-04 artifact-diff ritual (compare the served installer
-and manifest against the run's artifacts, re-upload latest.yml LAST).
+The windows-build workflow's publish path ends with a checked step: the served
+`latest.yml` version, artifact filename, and SHA-512 must equal this run, and the
+downloaded served installer must hash to that same SHA-512. The package version
+must also equal the `v*` tag. Any mismatch fails the run. Recovery is another
+strictly higher-semver roll-forward release; never repair the feed by pointing
+it backward or by copying `latest.yml` outside the locked publisher.

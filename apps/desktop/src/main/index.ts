@@ -62,6 +62,11 @@ import { createHubAwareSync, type HubAwareSync } from './sync/hub-provider';
 import { registerIpcHandlers } from './ipc/handlers';
 import { createAiCoordinator, type AiCoordinator } from './ai/index';
 import { createHubModule, type HubModule } from './hub/index';
+import {
+  createAcceptanceTracker,
+  enqueueAcceptanceEvent,
+  type AcceptanceTracker,
+} from './hub/acceptance-reporter';
 import { summarizeUsageSpool } from './hub/usage-store';
 import { hostname, tmpdir } from 'node:os';
 import {
@@ -87,13 +92,22 @@ import {
 } from './platform/navigation';
 import { messageNotificationBody } from './notifications';
 import { awaitRendererLoad } from './window-load';
+import { createRendererReadiness } from './renderer-readiness';
 import {
-  activateRuntimeNonFatal,
+  createWindowVisibilityTracker,
+  isWindowBackgrounded,
+  wireWindowLifecycle,
+} from './window-lifecycle';
+import {
   activateStoredCredentialWithRetry,
   createBoundedRetry,
+  createBeforeQuitBarrier,
   createRuntimeMutationQueue,
+  exitAfterFatalBoot,
+  exposeUiBeforeRuntimeActivation,
   probeHubReadCredential,
   replaceRuntimeSecurityFirst,
+  sealRuntimeForTerminalOperation,
   stopRuntimeServices,
   subscribeSettingsScope,
   validateThenReconcileOnBoot,
@@ -105,6 +119,8 @@ protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 const HUB_OFAPI_READ_TIMEOUT_MS = 75_000;
 
 let mainWindow: BrowserWindow | null = null;
+const rendererReadiness = createRendererReadiness();
+const windowVisibility = createWindowVisibilityTracker(false);
 
 // Stage 12: retention prunes freeze while a harvest is incomplete (history
 // must reach the kernel before it may die locally). Bound in boot() once the
@@ -126,10 +142,13 @@ let spendersService: SpendersService | null = null;
 let onlineService: OnlineService | null = null;
 let spendersRefresh: SpendersRefreshService | null = null;
 let hub: HubModule | null = null;
+/** Process-scoped so inserted→sent correlation survives credential runtime swaps. */
+let acceptanceTracker: AcceptanceTracker | null = null;
 let disposeEventForwarding: (() => void) | null = null;
 let disposeRuntimeSettingsWatcher: (() => void) | null = null;
 let disposeRuntimeCreditMeter: (() => void) | null = null;
 const ofapiRuntimeMutations = createRuntimeMutationQueue();
+let cancelRuntimeRetries: (() => void) | null = null;
 /** Set once electron-updater is dynamic-imported (win32 packaged only); null
  *  everywhere else — the IPC layer then reports phase 'unsupported'. */
 let updateController: UpdateController | null = null;
@@ -337,16 +356,26 @@ function loadWindowContent(win: BrowserWindow): Promise<void> {
       ? `view=${openView}`
       : null;
   const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
+  const webContentsId = win.webContents.id;
+  const rendererReady = rendererReadiness.waitForNext(webContentsId);
+  let loaded: Promise<void>;
   if (!app.isPackaged && isAllowedDevRendererUrl(rendererUrl)) {
-    return awaitRendererLoad(win.webContents, () =>
-      win.loadURL(appendSearchToUrl(rendererUrl, search)),
+    loaded = awaitRendererLoad(
+      win.webContents,
+      () => win.loadURL(appendSearchToUrl(rendererUrl, search)),
+      rendererReady,
+    );
+  } else {
+    loaded = awaitRendererLoad(
+      win.webContents,
+      () =>
+        win.loadFile(join(import.meta.dirname, '../renderer/index.html'), {
+          ...(search !== null ? { search } : {}),
+        }),
+      rendererReady,
     );
   }
-  return awaitRendererLoad(win.webContents, () =>
-    win.loadFile(join(import.meta.dirname, '../renderer/index.html'), {
-      ...(search !== null ? { search } : {}),
-    }),
-  );
+  return loaded.finally(() => rendererReadiness.cancel(webContentsId));
 }
 
 function createWindow(options: { load?: boolean } = {}): BrowserWindow {
@@ -371,7 +400,21 @@ function createWindow(options: { load?: boolean } = {}): BrowserWindow {
       backgroundThrottling: false,
     },
   });
-  win.on('ready-to-show', () => win.show());
+  const webContentsId = win.webContents.id;
+  wireWindowLifecycle(win, {
+    setWindowVisible: (visible) => windowVisibility.update(visible, sync),
+    onClosed: (closedWindow) => {
+      rendererReadiness.cancel(webContentsId, new Error('Window closed before renderer readiness'));
+      if (mainWindow === closedWindow) {
+        mainWindow = null;
+      }
+    },
+  });
+  win.on('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+    }
+  });
   // Settings → Behavior → UI scale; re-applied on every load (zoom does not
   // survive navigation) and reactively by boot()'s settings watcher.
   win.webContents.on('did-finish-load', () => {
@@ -828,6 +871,9 @@ async function rebuildOfapiRuntime(
     disposeRuntimeCreditMeter = disposeCandidateCreditMeter;
     disposeCandidateCreditMeter = null;
 
+    // The native window may have been hidden before this replacement existed;
+    // transfer the last state before scheduling its first polling cadence.
+    windowVisibility.apply(nextSync);
     nextSync.start(accountIds);
     // A refresh interrupted by quit/crash continues here; the per-fan TTL skip
     // makes the replayed tail of the persisted queue free.
@@ -889,8 +935,7 @@ function reattachEventForwarding(): void {
       }
       if (
         event.type === 'messageReceived' &&
-        mainWindow &&
-        (!mainWindow.isVisible() || !mainWindow.isFocused()) &&
+        isWindowBackgrounded(mainWindow) &&
         notificationPrefs.notificationsEnabled &&
         Notification.isSupported()
       ) {
@@ -960,6 +1005,7 @@ async function boot(): Promise<void> {
     filePath: join(userData, 'chatgoose.db'),
     encryptionKey: dbKey,
   });
+  acceptanceTracker = createAcceptanceTracker();
   messageGuard = createMessageGuardRuntime({
     data,
     ...(logger !== null ? { logger } : {}),
@@ -1061,7 +1107,8 @@ async function boot(): Promise<void> {
     }
   });
 
-  mainWindow = createWindow({ load: false });
+  const bootWindow = createWindow({ load: false });
+  mainWindow = bootWindow;
 
   // Media: direct fetch of the signed URL first (Phase-0: hosts not IP-locked,
   // 0 credits). OFAPI download-endpoint fallback is a P3 follow-up — P1 media
@@ -1085,7 +1132,7 @@ async function boot(): Promise<void> {
     };
   };
   const media = registerMediaProtocol({
-    session: mainWindow.webContents.session,
+    session: bootWindow.webContents.session,
     cacheDir: join(userData, 'media-cache'),
     encryptionKey: Buffer.from(mediaKeyHex, 'hex'),
     queries: createSqliteMediaCacheQueries(data.db),
@@ -1093,27 +1140,19 @@ async function boot(): Promise<void> {
     fetchRemote,
   });
 
-  // 4b: boot-time read-runtime activation must NOT be fatal. DB + keychain init
-  // above keep their fatal error box; a failed OFAPI activation (bad/expired hub
-  // key, hub down, offline) is logged and swallowed so boot continues to
-  // loadWindowContent with a null runtime — the getter-based IpcDeps below
-  // tolerate null services, and the hub-status banner surfaces the disconnect.
   const bootData = data;
-  await activateRuntimeNonFatal(
-    () => initOfapi(keychain, bootData, settingsStore, true),
-    (error) => {
-      // I116-2 (W4.1): a boot-auth failure used to be invisible — sync stayed
-      // null, query:sync.status said hub:'off', and Activity claimed "not
-      // configured" (false). Latch the auth class so the status reports
-      // 'auth-failed' and the existing banner + sign-out UI engage.
-      bootHubAuthFailed = isHubAuthFailure(error);
-      logger?.error(
-        'ofapi',
-        'boot read-runtime activation failed; continuing with no runtime',
-        { ...errorToFields(error), bootHubAuthFailed },
-      );
-    },
-  );
+  const onBootRuntimeActivationFailure = (error: unknown): void => {
+    // I116-2 (W4.1): a boot-auth failure used to be invisible — sync stayed
+    // null, query:sync.status said hub:'off', and Activity claimed "not
+    // configured" (false). Latch the auth class so the status reports
+    // 'auth-failed' and the existing banner + sign-out UI engage.
+    bootHubAuthFailed = isHubAuthFailure(error);
+    logger?.error(
+      'ofapi',
+      'boot read-runtime activation failed; continuing with no runtime',
+      { ...errorToFields(error), bootHubAuthFailed },
+    );
+  };
 
   let postSignInRuntimeRetry: ReturnType<typeof createBoundedRetry> | null = null;
   const rebuildOfapiRuntimeFromSettings = async (
@@ -1155,6 +1194,7 @@ async function boot(): Promise<void> {
       logger?.info('hub', 'post-sign-in runtime retry succeeded', { attempt });
     },
   });
+  cancelRuntimeRetries = () => postSignInRuntimeRetry?.cancel();
 
   // 4a: validate the hub read runtime a hubApiKey/hubBaseUrl patch WOULD produce
   // BEFORE cmd:settings.update persists it. A throwaway read client is built
@@ -1228,9 +1268,13 @@ async function boot(): Promise<void> {
   };
 
   let purging = false;
-  registerIpcHandlers({
-    data,
-    settingsStore,
+  const registerMainIpc = (): void => {
+    registerIpcHandlers({
+      data: bootData,
+      settingsStore,
+      onRendererReady: (webContentsId) => {
+        rendererReadiness.markReady(webContentsId);
+      },
     // OFAPI-lifecycle services are built lazily by initOfapi, which can run
     // AFTER this registration — a key configured on a keyless boot routes
     // cmd:settings.update → onOfapiRuntimeConfigChanged → initOfapi and reassigns the
@@ -1251,15 +1295,21 @@ async function boot(): Promise<void> {
       return hub?.personas ?? null;
     },
     get acceptance() {
-      if (hub === null) {
+      const tracker = acceptanceTracker;
+      if (tracker === null) {
         return null;
       }
-      const module = hub;
       return {
-        enqueue: (event: Parameters<typeof module.acceptance.enqueue>[0]) =>
-          module.acceptance.enqueue(event),
-        trackInserted: module.acceptanceTracker.trackInserted,
-        consumeForSend: module.acceptanceTracker.consumeForSend,
+        enqueue: (event: Parameters<NonNullable<HubModule>['acceptance']['enqueue']>[0]) => {
+          const module = hub;
+          if (module !== null) {
+            module.acceptance.enqueue(event);
+          } else {
+            enqueueAcceptanceEvent(bootData, event);
+          }
+        },
+        trackInserted: tracker.trackInserted,
+        consumeForSend: tracker.consumeForSend,
       };
     },
     get send() {
@@ -1300,15 +1350,20 @@ async function boot(): Promise<void> {
       postSignInRuntimeRetry?.cancel();
       // Serialize behind any activation and drain authorized send pumps before
       // closing/deleting the DB they still reference.
-      await ofapiRuntimeMutations.run(deactivateOfapiRuntime);
-      data?.close();
-      await media.cache.clear().catch(() => undefined);
-      await rm(join(userData, 'chatgoose.db'), { force: true });
-      await rm(join(userData, 'chatgoose.db-wal'), { force: true });
-      await rm(join(userData, 'chatgoose.db-shm'), { force: true });
-      await rm(join(userData, 'media-cache'), { recursive: true, force: true });
-      app.relaunch();
-      app.exit(0);
+      await sealRuntimeForTerminalOperation(ofapiRuntimeMutations, async () => {
+        // The shared terminal promise spans the ENTIRE destructive custody
+        // transition. A concurrent quit/auto-updater exit must wait through DB
+        // close, cache deletion and relaunch—not merely runtime deactivation.
+        await deactivateOfapiRuntime();
+        data?.close();
+        await media.cache.clear().catch(() => undefined);
+        await rm(join(userData, 'chatgoose.db'), { force: true });
+        await rm(join(userData, 'chatgoose.db-wal'), { force: true });
+        await rm(join(userData, 'chatgoose.db-shm'), { force: true });
+        await rm(join(userData, 'media-cache'), { recursive: true, force: true });
+        app.relaunch();
+        app.exit(0);
+      });
     },
     probeReadRuntimeForPatch,
     onOfapiRuntimeConfigChanged: rebuildOfapiRuntimeFromSettings,
@@ -1578,9 +1633,8 @@ async function boot(): Promise<void> {
         return { path: file };
       },
     },
-  });
-
-  reattachEventForwarding();
+    });
+  };
 
   // Dev-only evidence hook: CHATGOOSE_CAPTURE=/path/prefix captures the window
   // every 10 s (prefix-1.png, prefix-2.png, …) so a live run can be documented
@@ -1601,12 +1655,22 @@ async function boot(): Promise<void> {
     }, 10_000);
   }
 
-  mainWindow.on('focus', () => sync?.setWindowVisible(true));
-  mainWindow.on('show', () => sync?.setWindowVisible(true));
-  mainWindow.on('hide', () => sync?.setWindowVisible(false));
-  mainWindow.on('minimize', () => sync?.setWindowVisible(false));
-
-  await loadWindowContent(mainWindow);
+  // Local IPC + cached SQLite UI become interactive before any remote account
+  // bootstrap. The remote runtime then activates in the background and swaps
+  // event forwarding/status onto the live services when it settles.
+  await exposeUiBeforeRuntimeActivation({
+    registerIpc: () => {
+      registerMainIpc();
+      reattachEventForwarding();
+    },
+    loadUi: () => loadWindowContent(bootWindow),
+    activate: () => initOfapi(keychain, bootData, settingsStore, true),
+    onActivationFailure: onBootRuntimeActivationFailure,
+    onActivationSettled: () => {
+      reattachEventForwarding();
+      emitSyncStatusFrame();
+    },
+  });
 }
 
 // Dev-only smoke hook: run a keyless Hub profile without touching the real dev
@@ -1629,8 +1693,9 @@ if (app.isPackaged) {
 }
 
 // Packaged-launch smoke gate (D8): `ChatGoose --smoke` proves the main bundle
-// loads, the window is created, and preload + renderer reach did-finish-load on
-// a throwaway profile — then exits 0 without human-visible UI. Navigation,
+// loads, the window is created, navigation finishes, and the committed renderer
+// proves a settings IPC round trip on a throwaway profile — then exits 0 without
+// human-visible UI. Navigation,
 // preload, and renderer-process failures reject boot. The 0.1.30/0.1.31 DOA class (module
 // resolution dying at load, windowless zombie) never reaches this code, so the
 // CI step's timeout is the failure signal for that class; a boot() rejection
@@ -1669,17 +1734,22 @@ if (!app.requestSingleInstanceLock()) {
       })
       .catch((err: unknown) => {
         logger?.error('boot', 'fatal startup error', errorToFields(err));
-        void logger?.flush();
         if (smokeRun) {
           // CI runs headless — a dialog would hang the runner until timeout.
           console.error('smoke boot FAILED:', err);
           app.exit(1);
           return;
         }
-        dialog.showErrorBox(
-          'ChatGoose failed to start',
-          err instanceof Error ? err.message : String(err),
-        );
+        void exitAfterFatalBoot({
+          showError: () => {
+            dialog.showErrorBox(
+              'ChatGoose failed to start',
+              err instanceof Error ? err.message : String(err),
+            );
+          },
+          flush: flushLogger,
+          exit: (code) => app.exit(code),
+        }).catch(() => undefined);
       });
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -1695,13 +1765,27 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('quit', () => {
-  logger?.info('app', 'quit');
-  void logger?.flush();
-  disposeRuntimeSettingsWatcher?.();
-  sync?.stop();
-  sendEngine?.dispose();
-  coordinator?.dispose();
-  hub?.dispose();
-  data?.close();
+const beforeQuitBarrier = createBeforeQuitBarrier({
+  drain: async () => {
+    logger?.info('app', 'quit requested; draining runtime');
+    cancelRuntimeRetries?.();
+    cancelRuntimeRetries = null;
+    try {
+      // Serialize behind any activation/rebuild, then await PollingSync and
+      // send-engine quiescence before allowing Electron to close the process.
+      // Sealing is atomic with the final task: no late settings/retry callback
+      // can enqueue a fresh runtime behind the drain.
+      await sealRuntimeForTerminalOperation(ofapiRuntimeMutations, deactivateOfapiRuntime);
+    } finally {
+      // Do not close SQLite in `quit`: Electron's first before-quit pass leaves
+      // the renderer alive while this barrier runs. The process owns the DB and
+      // releases it on exit; purge has its own awaited close/delete sequence.
+      await flushLogger();
+    }
+  },
+  onError: (error) => {
+    logger?.error('app', 'runtime drain failed during quit', errorToFields(error));
+  },
+  quit: () => app.quit(),
 });
+app.on('before-quit', beforeQuitBarrier);

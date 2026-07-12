@@ -106,7 +106,8 @@ export function createAiAcceptanceQueries(
            account_id = COALESCE(ai_acceptance_ops.account_id, excluded.account_id),
            conversation_id = COALESCE(ai_acceptance_ops.conversation_id, excluded.conversation_id),
            parts = CASE
-             WHEN json_array_length(excluded.parts) > 0 THEN excluded.parts
+             WHEN ai_acceptance_ops.accepted_at IS NULL
+                  AND json_array_length(excluded.parts) > 0 THEN excluded.parts
              ELSE ai_acceptance_ops.parts
            END`,
       ).run({
@@ -132,13 +133,17 @@ export function createAiAcceptanceQueries(
         const claimed = db
           .prepare(
             `UPDATE ai_acceptance_ops
-             SET accepted_at = @accepted_at
+             SET accepted_at = @accepted_at,
+                 parts = '[]'
              WHERE operation_id = @operation_id AND accepted_at IS NULL`,
           )
           .run({ operation_id: operationId, accepted_at: acceptedAt });
         if (claimed.changes === 0) {
           return { status: 'duplicate', operation };
         }
+        // `operation` was decoded before the claim, so the caller can still
+        // report which part was accepted. The durable row no longer needs to
+        // retain generated reply text once correlation has been consumed.
         aiSpendLog.markInserted(operation.day, operation.feature);
         return { status: 'accepted', operation: { ...operation, acceptedAt } };
       });

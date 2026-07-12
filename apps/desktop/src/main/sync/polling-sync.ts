@@ -12,8 +12,8 @@ import { OFAPI_INTER_PAGE_DELAY_MS, type OfApiPurpose } from '@chatgoose/shared'
 import type { NormalizedSyncMessage, SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { ChatListFilter, OfApiClient } from '../ofapi/client';
 import type { ChatRow, ChatUpsert, DataLayer, FanTransactionUpsert, MessageUpsert } from '../db/index';
-import type { OfApiChat, OfApiTransaction } from '../ofapi/schemas';
-import { paginateMarker } from '../ofapi/pagination';
+import type { OfApiChat, OfApiMessage, OfApiTransaction } from '../ofapi/schemas';
+import { paginateFirstLastId, paginateMarker } from '../ofapi/pagination';
 import type { SleepFn } from '../ofapi/rate-limiter';
 import {
   mapAccount,
@@ -39,6 +39,10 @@ const BUDGET_FACTOR = 4;
 // initial hydration finishes. Id-only and notification hub frames use this
 // debounce window to coalesce body-free list refreshes when auto-read is off.
 const HUB_LIST_REFRESH_DEBOUNCE_MS = 2_000;
+/** A steady stream of thin Hub frames must not postpone the durable list read
+ * forever. The trailing debounce coalesces bursts, while this independent cap
+ * guarantees that the shared obligation eventually runs. */
+const HUB_LIST_REFRESH_MAX_WAIT_MS = 10_000;
 /** D1-N2 (W4.2): gap-recovery reconcile waits out an in-flight poll tick. */
 const RECONCILE_INFLIGHT_WAIT_MS = 250;
 // OnlyFans ignores limit>10 on chats and dictates its own page size (live
@@ -68,6 +72,9 @@ const OFFLINE_AFTER_FAILURES = 3;
 const USER_OPEN_COLD_PAGE_LIMIT = 30;
 const USER_BACKFILL_PAGE_LIMIT = 30;
 const USER_OPEN_BACKFILL_THRESHOLD = 30;
+/** Automatic catch-up can span the full retained local window. Reaching this
+ * guard without seeing the list's known head is a failed poll, never coverage. */
+const POLL_DELTA_MAX_PAGES = 500;
 // Fan-spend sweep (DESIGN §1 30-day figure): the first walk pulls the full
 // -30days transactions window once; every later sweep starts at the newest
 // cached row minus an overlap, so steady state is ~1 page per sweep. Page
@@ -79,12 +86,34 @@ const REDUCED_SPEND_SWEEP_INTERVAL_MS = 60 * 60_000;
 const SPEND_TX_PAGE_LIMIT = 10;
 const SPEND_SWEEP_MAX_PAGES = 100;
 const SPEND_SWEEP_OVERLAP_MS = 60 * 60_000;
+const SPEND_INITIAL_WINDOW_MS = 30 * 24 * 60 * 60_000;
 /**
  * Retention horizon (Stage 4 stop-loss: ~10× the legacy 31 d) — transactions
  * are business facts and the kernel holds no copy yet; the read window stays
  * 30 d, only the prune cutoff moved.
  */
 const SPEND_RETENTION_MS = 310 * 24 * 60 * 60_000;
+
+/** Versioned coverage state makes existing installs perform one trustworthy
+ * full-window backfill after this fix, even when their old capped sweep already
+ * left a newest row that would otherwise masquerade as complete coverage. */
+const spendCoverageSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('backfill'),
+    startDate: z.string(),
+    nextMarker: z.number().int().nonnegative().nullable(),
+    pagesCompleted: z.number().int().nonnegative(),
+  }),
+  z.object({
+    status: z.literal('complete'),
+    completedAt: z.string(),
+  }),
+]);
+type SpendCoverage = z.infer<typeof spendCoverageSchema>;
+
+function spendCoverageKey(accountId: string): string {
+  return `sync.spendCoverage.v1.${accountId}`;
+}
 
 export interface UnreadReconcileSettings {
   enabled: boolean;
@@ -189,6 +218,7 @@ function createAccountLoopState(): AccountLoop {
 
 interface PendingHubListRefresh {
   timer: ReturnType<typeof setTimeout> | null;
+  maxWaitTimer: ReturnType<typeof setTimeout> | null;
   promise: Promise<void>;
   resolve: () => void;
   reject: (error: unknown) => void;
@@ -299,7 +329,9 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
 
   const listeners = new Set<SyncListener>();
   const loops = new Map<string, AccountLoop>();
+  const activeTasks = new Set<Promise<unknown>>();
   let running = false;
+  let stopping: Promise<void> | null = null;
   let focusedAccount: string | null = null;
   let windowVisible = true;
   let hubPollingSuspended = false;
@@ -310,6 +342,28 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   const mediaPollers = new Map<string, { startedAt: number; timer: ReturnType<typeof setTimeout> }>();
   const hubListRefreshes = new Map<string, PendingHubListRefresh>();
   const historyCoverage = new Map<string, ThreadHistoryCoverage>();
+
+  function trackActive<T>(task: Promise<T>): Promise<T> {
+    activeTasks.add(task);
+    void task.then(
+      () => activeTasks.delete(task),
+      () => activeTasks.delete(task),
+    );
+    return task;
+  }
+
+  async function drainActiveTasks(): Promise<void> {
+    // A finishing task may have synchronously enrolled a nested continuation
+    // before observing `running = false`; keep taking snapshots until the set
+    // is genuinely empty.
+    while (activeTasks.size > 0) {
+      const snapshot = [...activeTasks];
+      await Promise.allSettled(snapshot);
+      for (const task of snapshot) {
+        activeTasks.delete(task);
+      }
+    }
+  }
 
   function historyKey(accountId: string, chatId: string): string {
     return `${accountId}/${chatId}`;
@@ -456,7 +510,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       if (pending.timer) {
         clearTimeout(pending.timer);
       }
-      pending.resolve();
+      if (pending.maxWaitTimer) {
+        clearTimeout(pending.maxWaitTimer);
+      }
+      pending.reject(new Error('PollingSync stopped before Hub list reconciliation completed'));
     }
     hubListRefreshes.clear();
   }
@@ -479,7 +536,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     const pending = hubListRefreshes.get(accountId);
     if (pending) {
       if (pending.timer) clearTimeout(pending.timer);
+      if (pending.maxWaitTimer) clearTimeout(pending.maxWaitTimer);
       hubListRefreshes.delete(accountId);
+      // A revoked account is no longer part of this runtime's durable state
+      // obligation; unlike shutdown, grant shrink may settle the queued read.
       pending.resolve();
     }
     for (const [key, poller] of mediaPollers) {
@@ -694,6 +754,92 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     };
   }
 
+  /** Automatic polling catch-up has a stronger contract than explicit preview
+   * hydration: once listChats advertises a head, walk the inclusive ascending
+   * tail until that exact id is present. The ordinary fetchChatTail path stays
+   * one-page for QuickLook/Spenders and explicit user opens. */
+  async function fetchChatDeltaThroughHead(
+    accountId: string,
+    chatId: string,
+    upstreamHeadId: string | null,
+  ): Promise<{ freshIds: string[]; hadCachedMessages: boolean }> {
+    const cachedPage = data.messages.page({ accountId, chatId, limit: 1 });
+    const newestCached = cachedPage.items.at(-1)?.messageId;
+    if (
+      upstreamHeadId !== null &&
+      data.messages.get(accountId, chatId, upstreamHeadId) !== null
+    ) {
+      return { freshIds: [], hadCachedMessages: newestCached !== undefined };
+    }
+    if (newestCached === undefined || upstreamHeadId === null) {
+      const result = await fetchChatTail(accountId, chatId);
+      if (upstreamHeadId !== null && data.messages.get(accountId, chatId, upstreamHeadId) === null) {
+        throw new Error(`poll delta did not include upstream head ${upstreamHeadId}`);
+      }
+      return result;
+    }
+
+    const startedAt = now();
+    const outcome = await paginateFirstLastId<OfApiMessage>({
+      direction: 'forward',
+      startId: newestCached,
+      want: {
+        kind: 'until',
+        predicate: (message) => String(message.id) === upstreamHeadId,
+      },
+      maxPages: POLL_DELTA_MAX_PAGES,
+      sleep,
+      idOf: (message) => String(message.id),
+      fetchPage: async (lastId) => {
+        const page = await client.listMessages({
+          accountId,
+          chatId,
+          ...(lastId !== null ? { lastId } : {}),
+          order: 'asc',
+          limit: 100,
+          purpose: 'message-tail',
+        });
+        return { items: page.messages };
+      },
+    });
+    if (!outcome.satisfied) {
+      onLog('warn', 'poll delta coverage incomplete', {
+        accountId,
+        chatId,
+        cursor: newestCached,
+        upstreamHeadId,
+        pages: outcome.pages,
+        exhausted: outcome.exhausted,
+      });
+      throw new Error(`poll delta did not reach upstream head ${upstreamHeadId}`);
+    }
+
+    const fresh = outcome.items.filter(
+      (message) => data.messages.get(accountId, chatId, String(message.id)) === null,
+    );
+    const upserts = outcome.items.map((message) => mapMessage(accountId, chatId, message, toMediaUrl));
+    data.messages.upsertMany(upserts);
+    pruneMessages(accountId, chatId);
+    data.threadFetchLog.stamp(accountId, chatId, new Date(now()).toISOString());
+    if (autoReadEnabled()) {
+      trackUnreadyMedia(accountId, chatId, upserts);
+    }
+    onLog('info', 'diag pollDelta', {
+      accountId,
+      chatId,
+      cursor: newestCached,
+      upstreamHeadId,
+      pages: outcome.pages,
+      returned: outcome.items.length,
+      fresh: fresh.length,
+      elapsedMs: now() - startedAt,
+    });
+    return {
+      freshIds: fresh.map((message) => String(message.id)),
+      hadCachedMessages: true,
+    };
+  }
+
   async function backfillOlder(
     accountId: string,
     chatId: string,
@@ -832,7 +978,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       }
       const startedAt = now();
       const poll = (): void => {
-        if (!loops.has(accountId)) {
+        if (!running || !loops.has(accountId)) {
           mediaPollers.delete(key);
           return;
         }
@@ -840,24 +986,29 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           mediaPollers.delete(key);
           return;
         }
-        void client
+        const task = client
           .getMessage({ accountId, chatId, messageId: message.messageId, purpose: 'media' })
           .then((fresh) => {
+            if (!running || !loops.has(accountId)) {
+              mediaPollers.delete(key);
+              return;
+            }
             const upsert = mapMessage(accountId, chatId, fresh, toMediaUrl);
             data.messages.upsertMany([upsert]);
             if (upsert.media.every((item) => item.isReady)) {
               mediaPollers.delete(key);
               return;
             }
-            if (loops.has(accountId)) {
+            if (running && loops.has(accountId)) {
               mediaPollers.set(key, { startedAt, timer: setTimeout(poll, MEDIA_READY_POLL_MS) });
             }
           })
           .catch(() => {
-            if (loops.has(accountId)) {
+            if (running && loops.has(accountId)) {
               mediaPollers.set(key, { startedAt, timer: setTimeout(poll, MEDIA_READY_POLL_MS) });
             }
           });
+        void trackActive(task);
       };
       mediaPollers.set(key, { startedAt, timer: setTimeout(poll, MEDIA_READY_POLL_MS) });
     }
@@ -870,6 +1021,25 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       return left < right ? -1 : left > right ? 1 : 0;
     }
     return a < b ? -1 : a > b ? 1 : 0;
+  }
+
+  function listHeadReachedExpectedMessage(
+    accountId: string,
+    chatId: string,
+    expectedMessageId: string,
+  ): boolean {
+    const actual = data.chats.get(accountId, chatId)?.lastMessageId ?? null;
+    if (actual === expectedMessageId) {
+      return true;
+    }
+    // OnlyFans platform message ids are numeric on this boundary. Accepting a
+    // strictly newer numeric list head prevents a busy chat from wedging on an
+    // intermediate SSE frame that is no longer the latest preview. Unknown id
+    // shapes stay exact-match only.
+    return actual !== null
+      && /^\d+$/.test(actual)
+      && /^\d+$/.test(expectedMessageId)
+      && compareMessageIds(actual, expectedMessageId) > 0;
   }
 
   function hubMessageAdvances(message: MessageUpsert, chat: ChatRow): boolean {
@@ -1024,7 +1194,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     data.chats.upsertMany(chatUpserts);
   }
 
-  async function runUnreadReconcile(
+  async function runUnreadReconcileInner(
     accountId: string,
     maxPages: number,
     trigger: UnreadReconcileTrigger,
@@ -1108,6 +1278,14 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }
   }
 
+  function runUnreadReconcile(
+    accountId: string,
+    maxPages: number,
+    trigger: UnreadReconcileTrigger,
+  ): Promise<void> {
+    return trackActive(runUnreadReconcileInner(accountId, maxPages, trigger));
+  }
+
   async function reconcileUnread(
     accountId?: string,
     trigger: UnreadReconcileTrigger = 'manual',
@@ -1189,25 +1367,20 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }
   }
 
-  async function refreshAccountHeadNow(accountId: string): Promise<void> {
-    const loop = loops.get(accountId);
-    if (!loop || !running || loop.inFlight) {
-      return;
-    }
-    await runAccountHeadRefresh(accountId, loop);
-  }
-
   /** Awaitable immediate head refresh for recovery/diagnostics. It participates
    * in the same per-account single-flight guard as pollAccount: wait for the
    * current owner, claim synchronously, and release in finally. */
-  async function reconcileAccountHeadNow(accountId: string): Promise<void> {
+  async function reconcileAccountHeadNowInner(accountId: string): Promise<void> {
     const loop = loops.get(accountId);
     if (!loop) {
-      return; // account not handled by this runtime — nothing to reconcile
+      return;
     }
     while (true) {
-      if (!running || loops.get(accountId) !== loop) {
-        return; // shutdown/revocation: never start a stale queued refresh
+      if (!running) {
+        throw new Error(`Account reconciliation cancelled for ${accountId}`);
+      }
+      if (loops.get(accountId) !== loop) {
+        return;
       }
       if (!loop.inFlight) {
         loop.inFlight = true;
@@ -1216,7 +1389,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       await sleep(RECONCILE_INFLIGHT_WAIT_MS);
     }
     try {
-      if (!running || loops.get(accountId) !== loop) {
+      if (!running) {
+        throw new Error(`Account reconciliation cancelled for ${accountId}`);
+      }
+      if (loops.get(accountId) !== loop) {
         return;
       }
       await runAccountHeadRefresh(accountId, loop);
@@ -1225,17 +1401,34 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }
   }
 
+  function reconcileAccountHeadNow(accountId: string): Promise<void> {
+    return trackActive(reconcileAccountHeadNowInner(accountId));
+  }
+
+  function runPendingHubListRefresh(accountId: string, pending: PendingHubListRefresh): void {
+    if (hubListRefreshes.get(accountId) !== pending) {
+      return;
+    }
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+      pending.timer = null;
+    }
+    if (pending.maxWaitTimer) {
+      clearTimeout(pending.maxWaitTimer);
+      pending.maxWaitTimer = null;
+    }
+    hubListRefreshes.delete(accountId);
+    // Use the awaitable single-flight owner: a normal poll already in flight is
+    // waited out instead of turning the Hub obligation into a false success.
+    void reconcileAccountHeadNow(accountId).then(pending.resolve, pending.reject);
+  }
+
   function armHubListRefresh(accountId: string, pending: PendingHubListRefresh): void {
     if (pending.timer) {
       clearTimeout(pending.timer);
     }
     pending.timer = setTimeout(() => {
-      pending.timer = null;
-      if (hubListRefreshes.get(accountId) !== pending) {
-        return;
-      }
-      hubListRefreshes.delete(accountId);
-      void refreshAccountHeadNow(accountId).then(pending.resolve, pending.reject);
+      runPendingHubListRefresh(accountId, pending);
     }, HUB_LIST_REFRESH_DEBOUNCE_MS);
   }
 
@@ -1246,7 +1439,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     const existing = hubListRefreshes.get(accountId);
     if (existing) {
       armHubListRefresh(accountId, existing);
-      return Promise.resolve();
+      return existing.promise;
     }
     let resolvePending!: () => void;
     let rejectPending!: (error: unknown) => void;
@@ -1256,14 +1449,18 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     });
     const pending: PendingHubListRefresh = {
       timer: null,
+      maxWaitTimer: null,
       promise,
       resolve: resolvePending,
       reject: rejectPending,
     };
     hubListRefreshes.set(accountId, pending);
     armHubListRefresh(accountId, pending);
+    pending.maxWaitTimer = setTimeout(() => {
+      runPendingHubListRefresh(accountId, pending);
+    }, HUB_LIST_REFRESH_MAX_WAIT_MS);
     void promise.catch(() => undefined);
-    return Promise.resolve();
+    return promise;
   }
 
   async function ingestHubMessage(
@@ -1318,7 +1515,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     return true;
   }
 
-  async function pollAccount(accountId: string, depth: PollDepth = 'hot'): Promise<void> {
+  async function pollAccountInner(accountId: string, depth: PollDepth = 'hot'): Promise<void> {
     const loop = loops.get(accountId);
     if (!loop || loop.inFlight) {
       return; // overlap protection — Phase-0 measured p95 7.5 s on list-chats
@@ -1341,7 +1538,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         deepDue ? 'deep-sweep' : 'hot-poll',
       );
 
-      const deltas: { chatId: string; wasCached: boolean }[] = [];
+      const deltas: { chatId: string; upstreamHeadId: string | null }[] = [];
       for (const chat of head.chats) {
         if (!chatChanged(accountId, chat)) {
           continue;
@@ -1351,17 +1548,29 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           continue;
         }
         const chatId = String(fanId);
-        const wasCached = data.chats.get(accountId, chatId) !== null;
+        const cachedChat = data.chats.get(accountId, chatId);
+        const wasCached = cachedChat !== null;
+        const mappedChat = mapChat(accountId, chat, toMediaUrl);
+        // A Hub-enriched message can reach SQLite before the eventually
+        // consistent list endpoint exposes it. Never walk forward from that
+        // newer local cursor in search of an older advertised head: it cannot
+        // succeed and would turn normal REST lag into a permanent failed poll.
+        const upstreamHeadIsOlder =
+          cachedChat !== null &&
+          mappedChat !== null &&
+          cachedHeadIsNewer(cachedChat, mappedChat);
         // Tail-fetch policy (the cost rule at 900+ chats):
         //  - cached chat changed → always fetch, even at baseline (silently
         //    swallows the downtime backlog so it never replays as live events);
         //  - uncached chat → fetch only post-baseline (a fresh conversation
         //    surfacing on the head pages); at baseline it is pure hydration.
-        if (wasCached || prevSuccessAt !== null) {
-          deltas.push({ chatId, wasCached });
+        if ((wasCached || prevSuccessAt !== null) && !upstreamHeadIsOlder) {
+          deltas.push({
+            chatId,
+            upstreamHeadId: chat.lastMessage?.id != null ? String(chat.lastMessage.id) : null,
+          });
         }
       }
-      upsertChatRows(accountId, head.chats);
 
       // Tail fetches are AUTOMATIC message-body reads → gated on autoReadChats.
       // The chat list, unread counts and previews above came from listChats
@@ -1369,38 +1578,51 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       // fetch + the live message/tip events it drives are skipped when OFF.
       if (autoReadEnabled()) {
         for (const delta of deltas) {
-          const { freshIds, hadCachedMessages } = await fetchChatTail(accountId, delta.chatId);
-          if (prevSuccessAt === null) {
-            continue; // baseline: history is not news (notifications hang off these)
-          }
-          for (const messageId of freshIds) {
-            const row = data.messages.get(accountId, delta.chatId, messageId);
-            if (!row) {
-              continue;
-            }
-            // No cached boundary (chat never opened / just discovered): the tail
-            // is mostly backlog — only messages newer than the previous successful
-            // poll are live. With a boundary, fresh-by-id is exact.
-            if (!hadCachedMessages && Date.parse(row.createdAt) <= prevSuccessAt) {
-              continue;
-            }
-            emit(
-              row.isSentByMe
-                ? { type: 'messageSent', accountId, chatId: delta.chatId, messageId }
-                : { type: 'messageReceived', accountId, chatId: delta.chatId, messageId },
-            );
-            if (row.isTip) {
-              emit({
-                type: 'tipReceived',
-                accountId,
-                chatId: delta.chatId,
-                messageId,
-                ...(row.tipAmount != null ? { amountUsd: row.tipAmount } : {}),
-              });
+          const { freshIds, hadCachedMessages } = await fetchChatDeltaThroughHead(
+            accountId,
+            delta.chatId,
+            delta.upstreamHeadId,
+          );
+          // Each fetch has already durably upserted its rows. Emit its live
+          // events before moving to the next chat, otherwise a later chat
+          // failure would make these rows non-fresh on retry and lose the
+          // events forever.
+          if (prevSuccessAt !== null) {
+            for (const messageId of freshIds) {
+              const row = data.messages.get(accountId, delta.chatId, messageId);
+              if (!row) {
+                continue;
+              }
+              // No cached boundary (chat never opened / just discovered): the tail
+              // is mostly backlog — only messages newer than the previous successful
+              // poll are live. With a boundary, fresh-by-id is exact.
+              if (!hadCachedMessages && Date.parse(row.createdAt) <= prevSuccessAt) {
+                continue;
+              }
+              emit(
+                row.isSentByMe
+                  ? { type: 'messageSent', accountId, chatId: delta.chatId, messageId }
+                  : { type: 'messageReceived', accountId, chatId: delta.chatId, messageId },
+              );
+              if (row.isTip) {
+                emit({
+                  type: 'tipReceived',
+                  accountId,
+                  chatId: delta.chatId,
+                  messageId,
+                  ...(row.tipAmount != null ? { amountUsd: row.tipAmount } : {}),
+                });
+              }
             }
           }
         }
       }
+
+      // Do not publish the upstream head until every automatic body delta has
+      // reached it. On a capped/failed tail the old head remains the detector,
+      // so the next poll retries instead of converting a transient gap into a
+      // permanent one.
+      upsertChatRows(accountId, head.chats);
 
       emit({ type: 'chatListUpdated', accountId });
 
@@ -1443,6 +1665,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }
   }
 
+  function pollAccount(accountId: string, depth: PollDepth = 'hot'): Promise<void> {
+    return trackActive(pollAccountInner(accountId, depth));
+  }
+
   // ── Conditional read-state sweep (SPEC §6.1/§6.2 policy) ────────────────
   function sweepEligible(): boolean {
     if (!windowVisible || !openConversation) {
@@ -1472,7 +1698,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }, READ_STATE_SWEEP_MS);
   }
 
-  async function runSweep(): Promise<void> {
+  async function runSweepInner(): Promise<void> {
     // listMessages here marks the open chat read on OnlyFans — gated off.
     if (!autoReadEnabled() || !openConversation || !sweepEligible()) {
       return;
@@ -1508,6 +1734,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }
   }
 
+  function runSweep(): Promise<void> {
+    return trackActive(runSweepInner());
+  }
+
   /** OFAPI startDate format ("2025-01-01 00:00:00", per vendored openapi.json
    *  example). Emitted in UTC; upstream TZ semantics are unverified — the
    *  1-hour overlap plus (account_id, tx_id) idempotency absorb any drift. */
@@ -1519,10 +1749,30 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
    *  full -30days window; later runs resume from the newest cached row minus
    *  the overlap, so steady state is ~1 page (≈1 credit) per sweep. */
   async function sweepFanSpend(accountId: string): Promise<void> {
+    let coverage = data.settings.getParsed(spendCoverageKey(accountId), spendCoverageSchema);
+    if (coverage === undefined) {
+      coverage = {
+        status: 'backfill',
+        // Freeze the lower bound while a capped marker walk spans several
+        // scheduled sweeps. A relative -30days filter would move underneath a
+        // persisted marker and could skip rows between runs.
+        startDate: ofapiStartDate(now() - SPEND_INITIAL_WINDOW_MS),
+        nextMarker: null,
+        pagesCompleted: 0,
+      } satisfies SpendCoverage;
+      data.settings.set(spendCoverageKey(accountId), coverage);
+    }
+
+    const backfill = coverage.status === 'backfill' ? coverage : null;
     const latest = data.fanTransactions.latestCreatedAt(accountId);
-    const sinceMs = latest === null ? null : Date.parse(latest) - SPEND_SWEEP_OVERLAP_MS;
+    const sinceMs = backfill !== null || latest === null
+      ? null
+      : Date.parse(latest) - SPEND_SWEEP_OVERLAP_MS;
     // Newest-first ordering: stop as soon as a page reaches past the lower bound.
-    const lowerBoundMs = sinceMs ?? now() - SPEND_RETENTION_MS;
+    const lowerBoundMs = backfill !== null
+      ? Date.parse(`${backfill.startDate.replace(' ', 'T')}Z`)
+      : sinceMs ?? now() - SPEND_INITIAL_WINDOW_MS;
+    let continuationMarker: number | null = backfill?.nextMarker ?? null;
     const outcome = await paginateMarker<OfApiTransaction>({
       want: {
         kind: 'until',
@@ -1531,14 +1781,40 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       maxPages: SPEND_SWEEP_MAX_PAGES,
       sleep,
       idOf: (tx) => String(tx.id),
+      ...(backfill === null
+        ? {}
+        : {
+            onPage: (page: {
+              items: OfApiTransaction[];
+              nextMarker: number | null;
+              hasMore: boolean;
+              pageNumber: number;
+            }) => {
+              const pageRows = page.items
+                .map((tx) => mapFanTransaction(accountId, tx))
+                .filter((row): row is FanTransactionUpsert => row !== null);
+              data.fanTransactions.upsertMany(pageRows);
+              if (page.hasMore && page.nextMarker !== null) {
+                data.settings.set(spendCoverageKey(accountId), {
+                  ...backfill,
+                  nextMarker: page.nextMarker,
+                  pagesCompleted: backfill.pagesCompleted + page.pageNumber,
+                } satisfies SpendCoverage);
+              }
+            },
+          }),
+      ...(backfill?.nextMarker !== null && backfill?.nextMarker !== undefined
+        ? { startMarker: backfill.nextMarker }
+        : {}),
       fetchPage: async (marker) => {
         const page = await client.listTransactions({
           accountId,
           limit: SPEND_TX_PAGE_LIMIT,
           purpose: 'spend-sweep',
-          startDate: sinceMs === null ? '-30days' : ofapiStartDate(sinceMs),
+          startDate: backfill?.startDate ?? (sinceMs === null ? '-30days' : ofapiStartDate(sinceMs)),
           ...(marker !== null ? { marker } : {}),
         });
+        continuationMarker = page.nextMarker;
         return {
           items: page.transactions,
           nextMarker: page.nextMarker,
@@ -1546,17 +1822,39 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         };
       },
     });
-    const rows = outcome.items
-      .map((tx) => mapFanTransaction(accountId, tx))
-      .filter((row): row is FanTransactionUpsert => row !== null);
-    data.fanTransactions.upsertMany(rows);
+    if (backfill === null) {
+      const rows = outcome.items
+        .map((tx) => mapFanTransaction(accountId, tx))
+        .filter((row): row is FanTransactionUpsert => row !== null);
+      data.fanTransactions.upsertMany(rows);
+    }
+    if (backfill !== null) {
+      if (outcome.satisfied || outcome.exhausted) {
+        data.settings.set(spendCoverageKey(accountId), {
+          status: 'complete',
+          completedAt: new Date(now()).toISOString(),
+        } satisfies SpendCoverage);
+      } else {
+        if (continuationMarker === null) {
+          // A capped response that claims more pages but supplies no marker is
+          // malformed. Keep the prior checkpoint and retry idempotently rather
+          // than falsely declaring the historical window complete.
+          throw new Error('transactions backfill capped without a continuation marker');
+        }
+        data.settings.set(spendCoverageKey(accountId), {
+          ...backfill,
+          nextMarker: continuationMarker,
+          pagesCompleted: backfill.pagesCompleted + outcome.pages,
+        } satisfies SpendCoverage);
+      }
+    }
     data.fanTransactions.pruneOlderThan(
       accountId,
       new Date(now() - SPEND_RETENTION_MS).toISOString(),
     );
   }
 
-  async function runSpendSweep(accountId: string): Promise<void> {
+  async function runSpendSweepInner(accountId: string): Promise<void> {
     const loop = loops.get(accountId);
     if (!loop || !running || loop.spendInFlight) {
       return;
@@ -1588,6 +1886,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       loop.spendInFlight = false;
       scheduleSpendSweep(accountId, spendSweepIntervalMs());
     }
+  }
+
+  function runSpendSweep(accountId: string): Promise<void> {
+    return trackActive(runSpendSweepInner(accountId));
   }
 
   async function refreshFanDetail(accountId: string, chatId: string): Promise<void> {
@@ -1626,12 +1928,18 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
 
   return {
     start(accountIds) {
+      if (stopping !== null) {
+        throw new Error('PollingSync cannot restart while stop() is still draining');
+      }
       running = true;
       for (const accountId of accountIds) {
         addAccountLoop(accountId, true);
       }
     },
     stop() {
+      if (stopping !== null) {
+        return stopping;
+      }
       running = false;
       for (const loop of loops.values()) {
         if (loop.timer) {
@@ -1656,68 +1964,94 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       }
       mediaPollers.clear();
       clearHubListRefreshes();
+      const drain = drainActiveTasks();
+      stopping = drain;
+      void drain.finally(() => {
+        if (stopping === drain) {
+          stopping = null;
+        }
+      });
+      return drain;
     },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    async refreshChat(accountId, chatId, purpose) {
-      // refreshChat is the AUTOMATIC/background body-read seam (hub message
-      // reactions, scoped Spenders refresh). When auto-read is off, skip the
-      // tail GET (which would mark the chat read) and just nudge the list;
-      // listChats-driven rows stay fresh through a debounced hub activity refresh.
-      if (!autoReadEnabled()) {
-        await refreshAccountHead(accountId);
-        return;
-      }
-      await fetchChatTail(accountId, chatId, purpose);
-      emit({ type: 'chatListUpdated', accountId });
+    refreshChat(accountId, chatId, purpose, expectedMessageId) {
+      return trackActive((async () => {
+        // refreshChat is the AUTOMATIC/background body-read seam (hub message
+        // reactions, scoped Spenders refresh). When auto-read is off, skip the
+        // tail GET (which would mark the chat read) and just nudge the list;
+        // listChats-driven rows stay fresh through a debounced hub activity refresh.
+        const bodyReadEnabled = autoReadEnabled();
+        if (!bodyReadEnabled) {
+          await refreshAccountHead(accountId);
+        } else {
+          await fetchChatTail(accountId, chatId, purpose);
+          emit({ type: 'chatListUpdated', accountId });
+        }
+        if (expectedMessageId !== undefined) {
+          const applied = bodyReadEnabled
+            ? data.messages.get(accountId, chatId, expectedMessageId) !== null
+            : listHeadReachedExpectedMessage(accountId, chatId, expectedMessageId);
+          if (!applied) {
+            throw new Error(
+              `Hub fallback did not observe message ${expectedMessageId} in ${accountId}/${chatId}`,
+            );
+          }
+        }
+      })());
     },
-    async readChatTailForUserOpen(accountId, chatId, purpose) {
-      // Deliberate single-chat user read (QuickLook/open-like): use the same
-      // force path as openConversation so history loads even with auto-read
-      // OFF, without setting openConversation or arming the read-state sweep.
-      await readHistoryForExplicitUserOpen(accountId, chatId, purpose);
-      emit({ type: 'chatListUpdated', accountId });
+    readChatTailForUserOpen(accountId, chatId, purpose) {
+      return trackActive((async () => {
+        // Deliberate single-chat user read (QuickLook/open-like): use the same
+        // force path as openConversation so history loads even with auto-read
+        // OFF, without setting openConversation or arming the read-state sweep.
+        await readHistoryForExplicitUserOpen(accountId, chatId, purpose);
+        emit({ type: 'chatListUpdated', accountId });
+      })());
     },
-    async loadOlderMessagesForUserOpen(accountId, chatId) {
-      return backfillOlder(accountId, chatId);
+    loadOlderMessagesForUserOpen(accountId, chatId) {
+      return trackActive(backfillOlder(accountId, chatId));
     },
-    ensureChat,
-    async openConversation(accountId, chatId) {
-      openConversation = { accountId, chatId };
-      sweepLastChangeAt = now(); // re-arm the idle window on every open
-      scheduleSweep();
-      // openConversation is the ONE sanctioned message-body read when auto-read
-      // is OFF — force the tail fetch (and its media polling) unconditionally.
-      await readHistoryForExplicitUserOpen(accountId, chatId, 'message-tail');
-      // Local unread-clear (body-free; runs in BOTH modes). Fixes the
-      // stuck-unread bug: reading a chat in OnlyMonster does not change its
-      // lastMessage, so the hot poll never re-surfaces it and the cached
-      // unread_count stays stale. Clearing only after the read succeeds prevents
-      // failed opens from hiding still-unread chats locally.
-      const cached = data.chats.get(accountId, chatId);
-      if (cached !== null && (cached.unreadCount > 0 || cached.hasUnreadTips)) {
-        data.chats.upsert({
-          accountId: cached.accountId,
-          chatId: cached.chatId,
-          fanName: cached.fanName,
-          avatar: cached.avatar,
-          unreadCount: 0,
-          hasUnreadTips: false,
-          lastMessageAt: cached.lastMessageAt,
-          lastMessagePreview: cached.lastMessagePreview,
-          lastMessageIsSentByMe: cached.lastMessageIsSentByMe,
-          lastMessageId: cached.lastMessageId,
-          lastReadMessageId: cached.lastReadMessageId,
-          pinned: cached.pinned,
-          canSendMessage: cached.canSendMessage,
-          canNotSendReason: cached.canNotSendReason,
-          raw: null, // write-only column; chats reads never select it
-        });
-        scheduleUnreadReconcile(accountId);
-      }
-      void refreshFanDetail(accountId, chatId);
+    ensureChat: (accountId, chatId, hint) =>
+      trackActive(ensureChat(accountId, chatId, hint)),
+    openConversation(accountId, chatId) {
+      return trackActive((async () => {
+        openConversation = { accountId, chatId };
+        sweepLastChangeAt = now(); // re-arm the idle window on every open
+        scheduleSweep();
+        // openConversation is the ONE sanctioned message-body read when auto-read
+        // is OFF — force the tail fetch (and its media polling) unconditionally.
+        await readHistoryForExplicitUserOpen(accountId, chatId, 'message-tail');
+        // Local unread-clear (body-free; runs in BOTH modes). Fixes the
+        // stuck-unread bug: reading a chat in OnlyMonster does not change its
+        // lastMessage, so the hot poll never re-surfaces it and the cached
+        // unread_count stays stale. Clearing only after the read succeeds prevents
+        // failed opens from hiding still-unread chats locally.
+        const cached = data.chats.get(accountId, chatId);
+        if (cached !== null && (cached.unreadCount > 0 || cached.hasUnreadTips)) {
+          data.chats.upsert({
+            accountId: cached.accountId,
+            chatId: cached.chatId,
+            fanName: cached.fanName,
+            avatar: cached.avatar,
+            unreadCount: 0,
+            hasUnreadTips: false,
+            lastMessageAt: cached.lastMessageAt,
+            lastMessagePreview: cached.lastMessagePreview,
+            lastMessageIsSentByMe: cached.lastMessageIsSentByMe,
+            lastMessageId: cached.lastMessageId,
+            lastReadMessageId: cached.lastReadMessageId,
+            pinned: cached.pinned,
+            canSendMessage: cached.canSendMessage,
+            canNotSendReason: cached.canNotSendReason,
+            raw: null, // write-only column; chats reads never select it
+          });
+          scheduleUnreadReconcile(accountId);
+        }
+        void trackActive(refreshFanDetail(accountId, chatId));
+      })());
     },
     closeConversation(accountId, chatId) {
       if (
@@ -1771,8 +2105,9 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     },
     refreshAccountHead,
     reconcileAccountHeadNow,
-    refreshAccountGrants,
-    ingestHubMessage,
+    refreshAccountGrants: () => trackActive(refreshAccountGrants()),
+    ingestHubMessage: (accountId, chatId, message) =>
+      trackActive(ingestHubMessage(accountId, chatId, message)),
     reconcileUnread,
     async forceRefresh(accountId) {
       const targets = accountId ? [accountId] : [...loops.keys()];

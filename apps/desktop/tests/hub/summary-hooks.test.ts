@@ -4,7 +4,11 @@
 // on failure), the 50 KB byte gate, and silent skips on unresolvable pages.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createSummaryHubHooks, HUB_PROFILE_MAX_BYTES } from '@main/hub/summary-hooks';
+import {
+  createSummaryHubHooks,
+  HUB_PROFILE_MAX_BYTES,
+  SUMMARY_REPLAY_DELAY_MS,
+} from '@main/hub/summary-hooks';
 import type { DataLayer } from '@main/db/index';
 import { ACCT, FAN, hubProfile, makeFakeHubClient, memoryDataLayer, seedSummary } from './helpers';
 
@@ -127,7 +131,8 @@ describe('pushSummary', () => {
     const { hooks } = hooksWith(data, client);
 
     await hooks.pushSummary?.({ accountId: ACCT, fanId: FAN, body: HUB_BODY, generatedAt: HUB_AT_MS });
-    expect(hubSyncStateOf(data)).toMatchObject({ state: 'pending' });
+    expect(hubSyncStateOf(data)).toMatchObject({ state: 'pending', reason: 'delivery-failed' });
+    hooks.dispose();
   });
 
   it("marks 'pending' when the push exceeds its 10 s budget", async () => {
@@ -140,7 +145,8 @@ describe('pushSummary', () => {
     const push = hooks.pushSummary?.({ accountId: ACCT, fanId: FAN, body: HUB_BODY, generatedAt: HUB_AT_MS });
     await vi.advanceTimersByTimeAsync(10_000);
     await push;
-    expect(hubSyncStateOf(data)).toMatchObject({ state: 'pending' });
+    expect(hubSyncStateOf(data)).toMatchObject({ state: 'pending', reason: 'delivery-failed' });
+    hooks.dispose();
   });
 
   it('gates oversize bodies (> 50 KB UTF-8) before the wire', async () => {
@@ -153,7 +159,8 @@ describe('pushSummary', () => {
     await hooks.pushSummary?.({ accountId: ACCT, fanId: FAN, body: oversize, generatedAt: HUB_AT_MS });
     expect(resolvePageLabel).not.toHaveBeenCalled();
     expect(client.putFanProfileMock).not.toHaveBeenCalled();
-    expect(hubSyncStateOf(data)).toBeUndefined(); // untouched, stays unsynced
+    expect(hubSyncStateOf(data)).toMatchObject({ state: 'rejected', reason: 'oversize' });
+    hooks.dispose();
   });
 
   it('counts the gate in UTF-8 bytes, not characters', async () => {
@@ -161,10 +168,13 @@ describe('pushSummary', () => {
     // Two-byte chars: 26,000 chars = 52,000 bytes — over the byte gate while
     // comfortably under a 50,000-character gate.
     const multibyte = 'я'.repeat(26_000);
+    seedSummary(data, { body: multibyte, generatedAt: HUB_AT_MS });
     const client = makeFakeHubClient();
     const { hooks } = hooksWith(data, client);
     await hooks.pushSummary?.({ accountId: ACCT, fanId: FAN, body: multibyte, generatedAt: HUB_AT_MS });
     expect(client.putFanProfileMock).not.toHaveBeenCalled();
+    expect(hubSyncStateOf(data)).toMatchObject({ state: 'rejected', reason: 'oversize' });
+    hooks.dispose();
   });
 
   it('skips silently when no page label resolves', async () => {
@@ -174,7 +184,8 @@ describe('pushSummary', () => {
     const { hooks } = hooksWith(data, client, null);
     await hooks.pushSummary?.({ accountId: ACCT, fanId: FAN, body: HUB_BODY, generatedAt: HUB_AT_MS });
     expect(client.putFanProfileMock).not.toHaveBeenCalled();
-    expect(hubSyncStateOf(data)).toBeUndefined();
+    expect(hubSyncStateOf(data)).toMatchObject({ state: 'pending', reason: 'page-unresolved' });
+    hooks.dispose();
   });
 
   it('never clobbers a row whose body changed while the push ran', async () => {
@@ -185,5 +196,85 @@ describe('pushSummary', () => {
     await hooks.pushSummary?.({ accountId: ACCT, fanId: FAN, body: HUB_BODY, generatedAt: HUB_AT_MS });
     expect(data.summaries.get(ACCT, FAN)?.body).toBe('regenerated meanwhile');
     expect(hubSyncStateOf(data)).toBeUndefined();
+    hooks.dispose();
+  });
+
+  it('replays a failed push after connectivity returns and marks the same body synced', async () => {
+    vi.useFakeTimers();
+    const data = memoryDataLayer();
+    seedSummary(data, { body: HUB_BODY, generatedAt: HUB_AT_MS });
+    let offline = true;
+    const client = makeFakeHubClient({
+      putFanProfile: () =>
+        offline ? Promise.reject(new Error('offline')) : Promise.resolve({ version: 1 }),
+    });
+    const { hooks } = hooksWith(data, client);
+
+    await hooks.pushSummary?.({ accountId: ACCT, fanId: FAN, body: HUB_BODY, generatedAt: HUB_AT_MS });
+    expect(hubSyncStateOf(data)).toMatchObject({ state: 'pending' });
+    offline = false;
+
+    await vi.advanceTimersByTimeAsync(SUMMARY_REPLAY_DELAY_MS);
+
+    expect(client.putFanProfileMock).toHaveBeenCalledTimes(2);
+    expect(hubSyncStateOf(data)).toMatchObject({ state: 'synced' });
+    hooks.dispose();
+  });
+
+  it('persists pending before page resolution so a runtime swap can replay the same body', async () => {
+    const data = memoryDataLayer();
+    seedSummary(data, { body: HUB_BODY, generatedAt: HUB_AT_MS });
+    let resolvePage: ((value: string | null) => void) | undefined;
+    const first = createSummaryHubHooks({
+      client: makeFakeHubClient(),
+      data,
+      resolvePageLabel: () => new Promise<string | null>((resolve) => {
+        resolvePage = resolve;
+      }),
+    });
+
+    const interruptedPush = first.pushSummary?.({
+      accountId: ACCT,
+      fanId: FAN,
+      body: HUB_BODY,
+      generatedAt: HUB_AT_MS,
+    });
+    expect(hubSyncStateOf(data)).toMatchObject({
+      state: 'pending',
+      reason: 'delivery-pending',
+    });
+    first.dispose();
+    resolvePage?.('acct-page');
+    await interruptedPush;
+
+    const replacementClient = makeFakeHubClient();
+    const replacement = createSummaryHubHooks({
+      client: replacementClient,
+      data,
+      resolvePageLabel: async () => 'acct-page',
+    });
+    await replacement.replayPending();
+
+    expect(replacementClient.putFanProfileMock).toHaveBeenCalledWith(
+      expect.objectContaining({ body: HUB_BODY }),
+    );
+    expect(hubSyncStateOf(data)).toMatchObject({ state: 'synced' });
+    replacement.dispose();
+  });
+
+  it('does not replay an old body after the local summary is replaced', async () => {
+    vi.useFakeTimers();
+    const data = memoryDataLayer();
+    seedSummary(data, { body: HUB_BODY, generatedAt: HUB_AT_MS });
+    const client = makeFakeHubClient({ putFanProfile: () => Promise.reject(new Error('offline')) });
+    const { hooks } = hooksWith(data, client);
+    await hooks.pushSummary?.({ accountId: ACCT, fanId: FAN, body: HUB_BODY, generatedAt: HUB_AT_MS });
+
+    seedSummary(data, { body: 'new local body', generatedAt: HUB_AT_MS + 1 });
+    await vi.advanceTimersByTimeAsync(SUMMARY_REPLAY_DELAY_MS);
+
+    expect(client.putFanProfileMock).toHaveBeenCalledTimes(1);
+    expect(data.summaries.get(ACCT, FAN)?.body).toBe('new local body');
+    hooks.dispose();
   });
 });

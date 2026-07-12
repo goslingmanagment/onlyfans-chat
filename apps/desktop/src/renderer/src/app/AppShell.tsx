@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useAccounts, useSettings } from '../bridge/queries';
 import { getBridge } from '../bridge/bridge';
+import { signalRendererReady } from '../bridge/rendererReady';
 import { useUiStore } from '../state/uiStore';
 import { useSettingsCache } from '../state/settingsCache';
 import { applyThemeSetting } from '../lib/theme';
@@ -28,6 +29,13 @@ export function AppShell(): React.JSX.Element {
   const accounts = useAccounts();
   const settings = useSettings();
   const setFromSettings = useSettingsCache((s) => s.setFromSettings);
+
+  // This effect runs only when the healthy AppShell subtree commits. Its first
+  // invoke proves preload/main IPC before the second releases the boot gate.
+  // StrictMode may repeat it in dev; late duplicate acknowledgements are no-ops.
+  useEffect(() => {
+    void signalRendererReady();
+  }, []);
 
   // default account selection once accounts load — selection only, never a
   // view switch (a boot into Settings must stay there)

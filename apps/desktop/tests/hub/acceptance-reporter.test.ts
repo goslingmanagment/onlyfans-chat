@@ -1,5 +1,5 @@
 // Stage 31 Task 2 — acceptance spool, tracker, and the IPC hook bodies.
-// The spool is KV-backed (SCHEMA_VERSION 16 pinned — no new table); delivery
+// The spool is KV-backed (independent of later schema migrations); delivery
 // is telemetry-grade: 400 drops the batch loudly, transients retry, and the
 // send-path observer is OBSERVE-ONLY by construction (frozen-args proof).
 
@@ -12,6 +12,7 @@ import {
   ACCEPTANCE_SPOOL_SETTINGS_KEY,
   createAcceptanceReporter,
   createAcceptanceTracker,
+  enqueueAcceptanceEvent,
   observeSendForAcceptance,
   reportFeedbackAcceptance,
 } from '@main/hub/acceptance-reporter';
@@ -98,6 +99,25 @@ describe('acceptance reporter (spool + drain)', () => {
     reporter.dispose();
   });
 
+  it('drains an event durably enqueued while no credential runtime existed', async () => {
+    client = null;
+    enqueueAcceptanceEvent(data, event({ operationId: 'op-runtime-gap' }));
+    const reporter = makeReporter();
+    expect(reporter.pending()).toBe(1);
+
+    client = {
+      postIngestObservations: vi.fn((args: { events: HubIngestObservationEvent[] }) => {
+        batches.push(args.events);
+        return Promise.resolve({ accepted: args.events.length, duplicates: 0 });
+      }),
+    };
+    await reporter.flushNow();
+
+    expect(reporter.pending()).toBe(0);
+    expect(batches[0]?.[0]?.payload['operationId']).toBe('op-runtime-gap');
+    reporter.dispose();
+  });
+
   it('waits while the hub is unconfigured; drops a rejected batch loudly; retries transients', async () => {
     const warns: string[] = [];
     const reporter = makeReporter(warns);
@@ -134,6 +154,140 @@ describe('acceptance reporter (spool + drain)', () => {
       z.array(z.looseObject({ operationId: z.string() })),
     );
     expect(spool?.[0]?.operationId).toBe('op-10');
+    reporter.dispose();
+  });
+
+  it.each([
+    ['success', null],
+    ['bad request', new HubError('bad-request', { message: 'contract bug' })],
+    ['transient failure', new HubError('network', { message: 'offline' })],
+  ] as const)('preserves an event enqueued during an awaited %s response', async (_label, failure) => {
+    let settleFirst: (() => void) | undefined;
+    let calls = 0;
+    client = {
+      postIngestObservations: vi.fn((args: { events: HubIngestObservationEvent[] }) => {
+        calls += 1;
+        batches.push(args.events);
+        if (calls !== 1) {
+          return Promise.resolve({ accepted: args.events.length, duplicates: 0 });
+        }
+        return new Promise<{ accepted: number; duplicates: number }>((resolve, reject) => {
+          settleFirst = () => {
+            if (failure === null) {
+              resolve({ accepted: args.events.length, duplicates: 0 });
+            } else {
+              reject(failure);
+            }
+          };
+        });
+      }),
+    };
+    const reporter = makeReporter();
+    reporter.enqueue(event({ operationId: 'op-in-flight' }));
+
+    const flush = reporter.flushNow();
+    await vi.waitFor(() => expect(client?.postIngestObservations).toHaveBeenCalledTimes(1));
+    reporter.enqueue(event({ operationId: 'op-concurrent', at: '2026-07-06T12:00:01.000Z' }));
+    settleFirst?.();
+    await flush;
+
+    if (failure instanceof HubError && failure.reason === 'network') {
+      expect(reporter.pending()).toBe(2);
+      const stored = data.settings.getParsed(
+        ACCEPTANCE_SPOOL_SETTINGS_KEY,
+        z.array(z.looseObject({ operationId: z.string(), attempts: z.number() })),
+      );
+      expect(stored).toEqual([
+        expect.objectContaining({ operationId: 'op-in-flight', attempts: 1 }),
+        expect.objectContaining({ operationId: 'op-concurrent', attempts: 0 }),
+      ]);
+    } else {
+      expect(batches.flat().map((item) => item.payload['operationId'])).toEqual([
+        'op-in-flight',
+        'op-concurrent',
+      ]);
+      expect(reporter.pending()).toBe(0);
+    }
+    reporter.dispose();
+  });
+
+  it('does not drain replacement events through a reporter disposed mid-flight', async () => {
+    let settleOld: (() => void) | undefined;
+    const oldClient = {
+      postIngestObservations: vi.fn((args: { events: HubIngestObservationEvent[] }) => {
+        batches.push(args.events);
+        return new Promise<{ accepted: number; duplicates: number }>((resolve) => {
+          settleOld = () => resolve({ accepted: args.events.length, duplicates: 0 });
+        });
+      }),
+    };
+    client = oldClient;
+    const retired = makeReporter();
+    retired.enqueue(event({ operationId: 'op-old-runtime' }));
+    const oldFlush = retired.flushNow();
+    await vi.waitFor(() => expect(oldClient.postIngestObservations).toHaveBeenCalledTimes(1));
+
+    retired.dispose();
+    enqueueAcceptanceEvent(
+      data,
+      event({ operationId: 'op-new-runtime', at: '2026-07-06T12:02:00.000Z' }),
+    );
+    settleOld?.();
+    await oldFlush;
+
+    expect(oldClient.postIngestObservations).toHaveBeenCalledTimes(1);
+    expect(retired.pending()).toBe(1);
+
+    const newBatches: HubIngestObservationEvent[][] = [];
+    client = {
+      postIngestObservations: vi.fn(async (args: { events: HubIngestObservationEvent[] }) => {
+        newBatches.push(args.events);
+        return { accepted: args.events.length, duplicates: 0 };
+      }),
+    };
+    const replacement = makeReporter();
+    await replacement.flushNow();
+    expect(newBatches.flat().map((item) => item.payload['operationId'])).toEqual([
+      'op-new-runtime',
+    ]);
+    replacement.dispose();
+  });
+
+  it('stops an in-flight flush when the same module swaps to a new client', async () => {
+    let settleOld: (() => void) | undefined;
+    const oldClient = {
+      postIngestObservations: vi.fn((args: { events: HubIngestObservationEvent[] }) => {
+        batches.push(args.events);
+        return new Promise<{ accepted: number; duplicates: number }>((resolve) => {
+          settleOld = () => resolve({ accepted: args.events.length, duplicates: 0 });
+        });
+      }),
+    };
+    client = oldClient;
+    const reporter = makeReporter();
+    reporter.enqueue(event({ operationId: 'op-old-client' }));
+    const flush = reporter.flushNow();
+    await vi.waitFor(() => expect(oldClient.postIngestObservations).toHaveBeenCalledTimes(1));
+
+    enqueueAcceptanceEvent(
+      data,
+      event({ operationId: 'op-new-client', at: '2026-07-06T12:03:00.000Z' }),
+    );
+    const newBatches: HubIngestObservationEvent[][] = [];
+    client = {
+      postIngestObservations: vi.fn(async (args: { events: HubIngestObservationEvent[] }) => {
+        newBatches.push(args.events);
+        return { accepted: args.events.length, duplicates: 0 };
+      }),
+    };
+    settleOld?.();
+    await flush;
+
+    expect(oldClient.postIngestObservations).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(reporter.pending()).toBe(0));
+    expect(newBatches.flat().map((item) => item.payload['operationId'])).toEqual([
+      'op-new-client',
+    ]);
     reporter.dispose();
   });
 });

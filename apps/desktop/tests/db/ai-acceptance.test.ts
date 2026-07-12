@@ -18,8 +18,13 @@ describe('ai_acceptance_ops', () => {
     const data = memoryDataLayer();
     data.aiAcceptance.remember(OPERATION);
 
-    expect(data.aiAcceptance.acceptOnce(OPERATION.operationId, '2026-07-12T10:01:00.000Z').status)
-      .toBe('accepted');
+    const accepted = data.aiAcceptance.acceptOnce(
+      OPERATION.operationId,
+      '2026-07-12T10:01:00.000Z',
+    );
+    expect(accepted.status).toBe('accepted');
+    expect(accepted.status === 'accepted' ? accepted.operation.parts : []).toEqual(OPERATION.parts);
+    expect(data.aiAcceptance.get(OPERATION.operationId)?.parts).toEqual([]);
     expect(data.aiAcceptance.acceptOnce(OPERATION.operationId, '2026-07-12T10:02:00.000Z').status)
       .toBe('duplicate');
     expect(data.aiSpendLog.rowsSince(OPERATION.day)).toMatchObject([
@@ -30,6 +35,28 @@ describe('ai_acceptance_ops', () => {
     const afterReplacement = createAiAcceptanceQueries(data.db, data.aiSpendLog);
     expect(afterReplacement.acceptOnce(OPERATION.operationId, '2026-07-12T10:03:00.000Z').status)
       .toBe('duplicate');
+  });
+
+  it('never restores cleared reply text when duplicate feedback remembers the operation again', () => {
+    const data = memoryDataLayer();
+    data.aiAcceptance.remember(OPERATION);
+    expect(
+      data.aiAcceptance.acceptOnce(OPERATION.operationId, '2026-07-12T10:01:00.000Z').status,
+    ).toBe('accepted');
+
+    // The feedback handler can still hold coordinator context on a repeated
+    // Copy/Insert click and therefore calls remember() before observing that
+    // the durable operation was already accepted.
+    data.aiAcceptance.remember(OPERATION);
+
+    expect(data.aiAcceptance.get(OPERATION.operationId)).toMatchObject({
+      acceptedAt: '2026-07-12T10:01:00.000Z',
+      parts: [],
+    });
+    expect(
+      data.aiAcceptance.acceptOnce(OPERATION.operationId, '2026-07-12T10:02:00.000Z').status,
+    ).toBe('duplicate');
+    data.close();
   });
 
   it('rejects unknown operation ids without creating spend rows', () => {

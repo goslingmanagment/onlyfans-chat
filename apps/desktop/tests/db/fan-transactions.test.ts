@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DataLayer, DbChangedEvent, FanTransactionUpsert } from '@main/db/index';
+import {
+  CHAT_SEARCH_QUERY_SQL,
+  chatListQuerySql,
+} from '@main/db/queries/chats';
 import { memoryDataLayer, sampleChat } from './helpers';
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -95,6 +99,7 @@ describe('chat list fan-value join (DESIGN §1)', () => {
       tx({ txId: 'in-window-2', amount: 20.5, net: 16.4, createdAt: isoDaysAgo(29) }),
       tx({ txId: 'out-of-window', amount: 500, net: 400, createdAt: isoDaysAgo(31) }),
       tx({ txId: 'other-fan', fanId: '999', amount: 77, net: 61.6, createdAt: isoDaysAgo(1) }),
+      tx({ accountId: 'acct_2', txId: 'other-account', amount: 1_000, net: 800, createdAt: isoDaysAgo(1) }),
     ]);
 
     const items = layer.chats.list({ accountId: 'acct_1', filter: 'all' }).items;
@@ -102,6 +107,41 @@ describe('chat list fan-value join (DESIGN §1)', () => {
     expect(marcus?.lifetimeSpend).toBeCloseTo(1284.4);
     // 80 + 16.4 — the join sums net, never the gross amount column
     expect(marcus?.spend30d).toBeCloseTo(96.4);
+  });
+
+  it('uses an account-range search for the transaction aggregate in list and search', () => {
+    const queries = [
+      {
+        sql: chatListQuerySql('all'),
+        params: {
+          account_id: 'acct_1',
+          spend_cutoff: isoDaysAgo(30),
+          limit: 51,
+          offset: 0,
+        },
+      },
+      {
+        sql: CHAT_SEARCH_QUERY_SQL,
+        params: {
+          account_id: 'acct_1',
+          spend_cutoff: isoDaysAgo(30),
+          pattern: '%marc%',
+          limit: 50,
+        },
+      },
+    ];
+
+    for (const query of queries) {
+      const plan = layer.db
+        .prepare(`EXPLAIN QUERY PLAN ${query.sql}`)
+        .all(query.params) as Array<{ detail: string }>;
+      const transactionSteps = plan
+        .map((row) => row.detail)
+        .filter((detail) => detail.includes('fan_transactions'));
+      expect(transactionSteps).toEqual([
+        expect.stringMatching(/SEARCH fan_transactions .*\(account_id=\?/),
+      ]);
+    }
   });
 
   it('renders silence honestly: no fan row / no transactions → nulls', () => {

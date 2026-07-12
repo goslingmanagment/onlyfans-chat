@@ -46,12 +46,15 @@ const VAULT_TYPES = new Set(['photo', 'video', 'audio', 'gif']);
 
 export function mapVaultItem(media: OfApiVaultMedia, toMediaUrl: ToMediaUrl): VaultItemVM {
   const files = media.files ?? null;
-  const thumbRemote =
-    files?.thumb?.url ?? files?.squarePreview?.url ?? files?.preview?.url ?? files?.full?.url ?? null;
   const type =
     media.type != null && VAULT_TYPES.has(media.type)
       ? (media.type as VaultItemVM['type'])
       : 'other';
+  const previewRemote = files?.thumb?.url ?? files?.squarePreview?.url ?? files?.preview?.url ?? null;
+  // OFAPI legitimately returns ready, full-only audio rows. A full MP3 is not
+  // an image thumbnail: minting it makes <img> download and buffer the complete
+  // audio file only to fail decoding. Keep the existing note placeholder.
+  const thumbRemote = previewRemote ?? (type === 'audio' ? null : (files?.full?.url ?? null));
   return {
     id: String(media.id),
     type,

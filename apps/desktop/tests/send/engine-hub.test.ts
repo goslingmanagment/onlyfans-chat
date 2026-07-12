@@ -3,8 +3,10 @@ import { HubError, type HubOfapiCommand } from '@chatgoose/shared/hub/index';
 import {
   createSendEngine,
   MARK_READ_DEBOUNCE_MS,
+  UNSEND_RECOVERY_MAX_AGE_MS,
   VERIFY_INTERVAL_MS,
 } from '@main/send/engine';
+import { createChangeBus, createDataLayer } from '@main/db/index';
 import type { DataLayer } from '@main/db/index';
 import {
   ACCT,
@@ -16,7 +18,9 @@ import {
   seedChat,
   seedMessage,
   toMediaUrl,
+  TEST_DRIVER,
 } from './helpers';
+import { tempDbFile } from '../db/helpers';
 
 function command(
   clientCommandId: string,
@@ -48,9 +52,11 @@ function command(
 
 describe('send engine hub command transport', () => {
   let data: DataLayer;
+  let cleanup: () => void;
 
   beforeEach(() => {
     vi.useFakeTimers();
+    cleanup = () => undefined;
     data = memoryDataLayer();
     seedChat(data);
   });
@@ -58,6 +64,7 @@ describe('send engine hub command transport', () => {
   afterEach(() => {
     vi.useRealTimers();
     data.close();
+    cleanup();
   });
 
   it('uses core command intake/status without a Direct client or GET /messages', async () => {
@@ -391,10 +398,11 @@ describe('send engine hub command transport', () => {
     });
     expect(direct.deleteCalls).toHaveLength(0);
     expect(data.messages.get(ACCT, CHAT, '9001')).toMatchObject({ deleted: true });
+    expect(data.unsendCommands.get(ACCT, CHAT, '9001')).toBeNull();
     engine.dispose();
   });
 
-  it('collapses duplicate pending hub unsend clicks and leaves the message visible while pending', async () => {
+  it('collapses concurrent unsends and reuses durable lineage while the command remains queued', async () => {
     seedMessage(data, { messageId: '9001', deleted: false });
     const direct = makeStubClient();
     let resolveCreate: ((value: HubOfapiCommand) => void) | undefined;
@@ -429,11 +437,272 @@ describe('send engine hub command transport', () => {
     expect(createOfapiCommand).toHaveBeenCalledTimes(1);
 
     resolveCreate?.(command('unused', 'queued', { kind: 'unsend_message_v1' }));
-    await Promise.all([first, second]);
-    await engine.unsend(ACCT, CHAT, '9001');
+    const concurrent = await Promise.allSettled([first, second]);
+    expect(concurrent.map((result) => result.status)).toEqual(['rejected', 'rejected']);
+    await expect(engine.unsend(ACCT, CHAT, '9001')).rejects.toThrow(/still pending/i);
 
     expect(direct.deleteCalls).toHaveLength(0);
     expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+    expect(data.unsendCommands.get(ACCT, CHAT, '9001')).toMatchObject({
+      coreCommandId: '11111111-1111-4111-8111-111111111111',
+    });
+    expect(data.messages.get(ACCT, CHAT, '9001')).toMatchObject({ deleted: false });
+    engine.dispose();
+  });
+
+  it('resumes a queued unsend by persisted core command id after an engine rebuild', async () => {
+    seedMessage(data, { messageId: '9001', deleted: false });
+    const direct = makeStubClient();
+    const createOfapiCommand = vi.fn(async ({ command: request }) =>
+      command(request.clientCommandId, 'queued', {
+        commandId: '22222222-2222-4222-8222-222222222222',
+        kind: 'unsend_message_v1',
+      }),
+    );
+    const first = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      hubCommandPollLimit: 0,
+    });
+
+    await expect(first.unsend(ACCT, CHAT, '9001')).rejects.toThrow(/still pending/i);
+    const persisted = data.unsendCommands.get(ACCT, CHAT, '9001');
+    expect(persisted).toMatchObject({
+      coreCommandId: '22222222-2222-4222-8222-222222222222',
+    });
+    first.dispose();
+
+    const getOfapiCommand = vi.fn(async ({ commandId }: { commandId: string }) =>
+      command(persisted?.clientCommandId ?? 'missing', 'confirmed', {
+        commandId,
+        kind: 'unsend_message_v1',
+        platformMessageId: '9001',
+      }),
+    );
+    const replacement = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      hubCommandPollLimit: 0,
+    });
+
+    await replacement.reconcileOnBoot(false);
+
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+    expect(getOfapiCommand).toHaveBeenCalledWith({
+      commandId: '22222222-2222-4222-8222-222222222222',
+    });
+    expect(data.messages.get(ACCT, CHAT, '9001')).toMatchObject({ deleted: true });
+    expect(data.unsendCommands.get(ACCT, CHAT, '9001')).toBeNull();
+    replacement.dispose();
+  });
+
+  it('retains indeterminate unsend lineage but stops automatic polling and surfaces uncertainty', async () => {
+    seedMessage(data, { messageId: '9001', deleted: false });
+    const direct = makeStubClient();
+    const getOfapiCommand = vi.fn();
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: {
+        createOfapiCommand: vi.fn(async ({ command: request }) =>
+          command(request.clientCommandId, 'indeterminate', {
+            commandId: '44444444-4444-4444-8444-444444444444',
+            kind: 'unsend_message_v1',
+          })),
+        getOfapiCommand,
+      },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+
+    await expect(engine.unsend(ACCT, CHAT, '9001')).rejects.toThrow(/could not be confirmed/i);
+    expect(data.unsendCommands.get(ACCT, CHAT, '9001')).toMatchObject({
+      coreCommandId: '44444444-4444-4444-8444-444444444444',
+    });
+    expect(data.messages.get(ACCT, CHAT, '9001')).toMatchObject({ deleted: false });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getOfapiCommand).not.toHaveBeenCalled();
+    engine.dispose();
+  });
+
+  it('repeats response-lost unsend intake with the same client id after a process restart', async () => {
+    const temp = tempDbFile();
+    cleanup = temp.cleanup;
+    data.close();
+    data = createDataLayer({
+      driverPath: TEST_DRIVER,
+      filePath: temp.file,
+      encryptionKey: 'test-unsend-restart-key',
+      bus: createChangeBus(0),
+    });
+    seedChat(data);
+    seedMessage(data, { messageId: '9001', deleted: false });
+    const direct = makeStubClient();
+    let acceptedClientId: string | null = null;
+    const lostResponseCreate = vi.fn(async ({ command: request }) => {
+      acceptedClientId = request.clientCommandId;
+      throw new Error('connection reset after intake');
+    });
+    const first = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand: lostResponseCreate, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      hubCommandPollLimit: 0,
+    });
+
+    await expect(first.unsend(ACCT, CHAT, '9001')).rejects.toThrow(/connection reset/);
+    const beforeRestart = data.unsendCommands.get(ACCT, CHAT, '9001');
+    expect(beforeRestart).toMatchObject({ clientCommandId: acceptedClientId, coreCommandId: null });
+    first.dispose();
+    data.close();
+
+    data = createDataLayer({
+      driverPath: TEST_DRIVER,
+      filePath: temp.file,
+      encryptionKey: 'test-unsend-restart-key',
+      bus: createChangeBus(0),
+    });
+    const replayCreate = vi.fn(async ({ command: request }) =>
+      command(request.clientCommandId, 'confirmed', {
+        commandId: '33333333-3333-4333-8333-333333333333',
+        kind: 'unsend_message_v1',
+        platformMessageId: '9001',
+        deduplicated: true,
+      }),
+    );
+    const restarted = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand: replayCreate, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      hubCommandPollLimit: 0,
+    });
+
+    await restarted.reconcileOnBoot();
+
+    expect(replayCreate).toHaveBeenCalledWith({
+      command: expect.objectContaining({ clientCommandId: acceptedClientId }),
+    });
+    expect(data.messages.get(ACCT, CHAT, '9001')).toMatchObject({ deleted: true });
+    expect(data.unsendCommands.get(ACCT, CHAT, '9001')).toBeNull();
+    restarted.dispose();
+  });
+
+  it('does not auto-intake an expired response-lost unsend during boot recovery', async () => {
+    const clock = Date.parse('2026-07-12T12:00:00.000Z');
+    seedMessage(data, { messageId: '9001', deleted: false });
+    data.unsendCommands.ensure({
+      accountId: ACCT,
+      chatId: CHAT,
+      messageId: '9001',
+      clientCommandId: '55555555-5555-4555-8555-555555555555',
+      createdAt: new Date(clock - UNSEND_RECOVERY_MAX_AGE_MS - 1).toISOString(),
+    });
+    const createOfapiCommand = vi.fn(async ({ command: request }) =>
+      command(request.clientCommandId, 'confirmed', {
+        kind: 'unsend_message_v1',
+        platformMessageId: '9001',
+      }),
+    );
+    const getOfapiCommand = vi.fn();
+    const engine = createSendEngine({
+      client: makeStubClient().client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      now: () => clock,
+    });
+
+    await engine.reconcileOnBoot();
+
+    expect(createOfapiCommand).not.toHaveBeenCalled();
+    expect(getOfapiCommand).not.toHaveBeenCalled();
+    expect(data.messages.get(ACCT, CHAT, '9001')).toMatchObject({ deleted: false });
+    expect(data.unsendCommands.get(ACCT, CHAT, '9001')).not.toBeNull();
+    engine.dispose();
+  });
+
+  it('rechecks the unsend recovery deadline when an already-armed timer fires', async () => {
+    let clock = Date.parse('2026-07-12T12:00:00.000Z');
+    seedMessage(data, { messageId: '9001', deleted: false });
+    data.unsendCommands.ensure({
+      accountId: ACCT,
+      chatId: CHAT,
+      messageId: '9001',
+      clientCommandId: '66666666-6666-4666-8666-666666666666',
+      createdAt: new Date(clock - UNSEND_RECOVERY_MAX_AGE_MS + 1_000).toISOString(),
+    });
+    const createOfapiCommand = vi.fn(async () => {
+      throw new Error('response lost');
+    });
+    const engine = createSendEngine({
+      client: makeStubClient().client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      now: () => clock,
+      unsendRecoveryIntervalMs: 5_000,
+    });
+
+    await expect(engine.unsend(ACCT, CHAT, '9001')).rejects.toThrow(/response lost/i);
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+
+    clock += 5_000;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+    expect(data.unsendCommands.get(ACCT, CHAT, '9001')).not.toBeNull();
+    engine.dispose();
+  });
+
+  it('clears durable unsend lineage on a terminal command failure', async () => {
+    seedMessage(data, { messageId: '9001', deleted: false });
+    const direct = makeStubClient();
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: {
+        createOfapiCommand: vi.fn(async ({ command: request }) =>
+          command(request.clientCommandId, 'failed_terminal', {
+            kind: 'unsend_message_v1',
+            lastErrorCode: 'cannot_unsend',
+          }),
+        ),
+        getOfapiCommand: vi.fn(),
+      },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+
+    await expect(engine.unsend(ACCT, CHAT, '9001')).rejects.toThrow('cannot_unsend');
+    expect(data.unsendCommands.get(ACCT, CHAT, '9001')).toBeNull();
     expect(data.messages.get(ACCT, CHAT, '9001')).toMatchObject({ deleted: false });
     engine.dispose();
   });

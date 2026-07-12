@@ -424,6 +424,31 @@ CREATE TABLE ai_acceptance_ops (
 CREATE INDEX idx_ai_acceptance_ops_known_at ON ai_acceptance_ops (known_at);
 `;
 
+// v18 — durable auxiliary-command lineage for unsend. Unlike text/media sends,
+// unsend has no local outbox row to lend it a stable clientCommandId. Persist
+// the logical command before intake so a lost response, runtime rebuild, or
+// process restart can repeat the SAME idempotent Core command and resume status
+// by the accepted command id instead of silently latching in memory.
+export const SCHEMA_V18 = `
+CREATE TABLE unsend_commands (
+  account_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  client_command_id TEXT NOT NULL UNIQUE,
+  core_command_id TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (account_id, chat_id, message_id)
+);
+CREATE INDEX idx_unsend_commands_core_command ON unsend_commands (core_command_id);
+
+-- v17 initially retained accepted reply parts. Once accepted_at is durable the
+-- correlation has been consumed, so scrub existing installs as well as relying
+-- on the guarded UPSERT/claim behavior for future rows.
+UPDATE ai_acceptance_ops
+SET parts = '[]'
+WHERE accepted_at IS NOT NULL AND parts <> '[]';
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',
@@ -439,6 +464,7 @@ export const ALL_TABLES = [
   'fan_transactions',
   'ai_spend_log',
   'ai_acceptance_ops',
+  'unsend_commands',
   'thread_fetch_log',
   'message_guard_events',
 ] as const;

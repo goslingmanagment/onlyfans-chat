@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -338,7 +338,7 @@ describe('registerMediaProtocol (end-to-end with the real encrypted cache)', () 
     expect(fetchRemote).toHaveBeenCalledTimes(1);
   });
 
-  it('prunes registry rows when encrypted cache eviction drops a token', async () => {
+  it('retains resolver rows so an evicted token can refetch', async () => {
     const registered: Array<{ scheme: string; handler: MediaRequestHandler }> = [];
     const session = {
       protocol: {
@@ -380,9 +380,53 @@ describe('registerMediaProtocol (end-to-end with the real encrypted cache)', () 
       expect(res.status).toBe(200);
     }
 
-    expect(registry.lookup(tokens[0] ?? '')).toBeUndefined();
-    expect(registry.lookup(tokens[1] ?? '')).toBeUndefined();
+    expect(registry.lookup(tokens[0] ?? '')).toBe(urls[0]);
+    expect(registry.lookup(tokens[1] ?? '')).toBe(urls[1]);
     expect(registry.lookup(tokens[2] ?? '')).toBe(urls[2]);
+
+    const refetched = await handler({ url: `media://${tokens[0]}` });
+    expect(refetched.status).toBe(200);
+    expect(refetched.headers.get('x-chatgoose-cache')).toBe('miss');
+    const hit = await handler({ url: `media://${tokens[0]}` });
+    expect(hit.headers.get('x-chatgoose-cache')).toBe('hit');
+    expect(fetchRemote).toHaveBeenCalledTimes(4);
+  });
+
+  it('retains resolver rows across corrupt-file self-heal and the next request', async () => {
+    const registered: Array<{ scheme: string; handler: MediaRequestHandler }> = [];
+    const registry = createInMemoryMediaUrlRegistry();
+    const queries = createInMemoryMediaCacheQueries();
+    const fetchRemote = vi.fn().mockResolvedValue({
+      data: Buffer.from('fresh-image'),
+      contentType: 'image/jpeg',
+    });
+    registerMediaProtocol({
+      session: {
+        protocol: {
+          handle: (scheme, handler) => registered.push({ scheme, handler }),
+        },
+      },
+      cacheDir,
+      encryptionKey: randomBytes(32),
+      queries,
+      registry,
+      fetchRemote,
+    });
+    const handler = registered[0]?.handler;
+    if (handler === undefined) throw new Error('unreachable');
+    const remote = 'https://thumbs.onlyfans.com/a/corrupt.jpg?sig=1';
+    const mediaUrl = createToMediaUrl(registry)(remote);
+    if (mediaUrl === null) throw new Error('unreachable');
+    const token = mediaUrl.slice('media://'.length);
+
+    expect((await handler({ url: mediaUrl })).status).toBe(200);
+    await writeFile(join(cacheDir, `${token}.bin`), Buffer.from('corrupt'));
+
+    const healed = await handler({ url: mediaUrl });
+    expect(healed.status).toBe(200);
+    expect(healed.headers.get('x-chatgoose-cache')).toBe('miss');
+    expect(registry.lookup(token)).toBe(remote);
+    expect((await handler({ url: mediaUrl })).headers.get('x-chatgoose-cache')).toBe('hit');
   });
 
   it('never serves or fetches non-allowlisted URLs end-to-end', async () => {

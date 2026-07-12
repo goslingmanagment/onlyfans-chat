@@ -175,7 +175,7 @@ export interface RegisterMediaProtocolOptions {
   /** 32-byte mediaCacheKey from the keychain. */
   encryptionKey: Buffer;
   queries: MediaCacheQueries;
-  registry: Pick<MediaUrlRegistry, 'lookup' | 'delete' | 'clear'>;
+  registry: Pick<MediaUrlRegistry, 'lookup' | 'clear'>;
   fetchRemote: FetchRemote;
   maxCacheBytes?: number;
 }
@@ -193,7 +193,9 @@ export function registerMediaProtocol(
     encryptionKey: options.encryptionKey,
     queries: options.queries,
     maxBytes: options.maxCacheBytes ?? MEDIA_CACHE_MAX_BYTES,
-    onPruneUrlHash: (urlHash) => options.registry.delete(urlHash),
+    // Blob-cache eviction is not source-registry GC. Persisted messages retain
+    // only their opaque media:// token, so deleting the resolver here would make
+    // an ordinary LRU eviction (or corrupt-file self-heal) a permanent 404.
     onClear: () => options.registry.clear(),
   });
   const handler = createMediaRequestHandler({

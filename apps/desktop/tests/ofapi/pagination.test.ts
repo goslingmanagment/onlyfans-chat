@@ -161,6 +161,32 @@ describe('paginateMarker', () => {
     expect(result.items.map((i) => i.id)).toEqual([1, 2, 3, 4, 5]);
     expect(result.exhausted).toBe(true);
   });
+
+  it('resumes from a persisted marker after an earlier hard cap', async () => {
+    const markers: Array<number | null> = [];
+    const result = await paginateMarker<Item>({
+      startMarker: 800,
+      fetchPage: (marker) => {
+        markers.push(marker);
+        return Promise.resolve({ items: items([5]), nextMarker: null, hasMore: false });
+      },
+      want: { kind: 'count', count: 100 },
+      maxPages: 5,
+      sleep: sleepSpy().sleep,
+    });
+    expect(markers).toEqual([800]);
+    expect(result.items.map((item) => item.id)).toEqual([5]);
+    expect(result.exhausted).toBe(true);
+  });
+
+  it('rejects a has-more response that omits its continuation marker', async () => {
+    await expect(paginateMarker<Item>({
+      fetchPage: () => Promise.resolve({ items: items([1]), nextMarker: null, hasMore: true }),
+      want: { kind: 'count', count: 100 },
+      maxPages: 5,
+      sleep: sleepSpy().sleep,
+    })).rejects.toThrow(/without a continuation marker/i);
+  });
 });
 
 describe('paginateFirstLastId', () => {

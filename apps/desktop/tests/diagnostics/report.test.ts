@@ -88,6 +88,29 @@ describe('buildDiagnosticsReport', () => {
     expect(JSON.stringify(exported.events[249])).not.toContain('agency_hub_core_abcdef123456');
   });
 
+  it('keeps the newest incident records from chronological ring and file logs', () => {
+    const logs = Array.from({ length: 150 }, (_, index) => ({
+      t: index,
+      level: 'info' as const,
+      scope: 'sync',
+      msg: index === 149 ? 'latest incident' : `record ${String(index)}`,
+    }));
+    const fileLog = Array.from({ length: 150 }, (_, index) =>
+      index === 149 ? 'latest file incident' : `file ${String(index)}`,
+    );
+
+    const report = buildDiagnosticsReport(inputs({ logs, fileLog }));
+    const exportedLogs = report['logs'] as typeof logs;
+    const exportedFileLog = report['fileLog'] as string[];
+
+    expect(exportedLogs).toHaveLength(100);
+    expect(exportedLogs[0]?.t).toBe(50);
+    expect(exportedLogs.at(-1)?.msg).toBe('latest incident');
+    expect(exportedFileLog).toHaveLength(100);
+    expect(exportedFileLog[0]).toBe('file 50');
+    expect(exportedFileLog.at(-1)).toBe('latest file incident');
+  });
+
   it('exports durable hub telemetry while redacting lifecycle fields', () => {
     const report = buildDiagnosticsReport(
       inputs({

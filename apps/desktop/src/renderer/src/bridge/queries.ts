@@ -467,7 +467,7 @@ export function useSpenderStats(accountId: string | null, enabled: boolean) {
 }
 
 /** Per-scope «последний апдейт» stamps + the in-flight refresh queue (PLAN
- *  item 13). Refetched on spendersRefresh done/stopped frames (events.ts);
+ *  item 13). Refetched on spendersRefresh done/partial/stopped frames (events.ts);
  *  live progress flows through the spenders store, not this query. */
 export function useSpendersFreshness(accountId: string | null, enabled: boolean) {
   return useQuery<SpendersFreshnessVM>({

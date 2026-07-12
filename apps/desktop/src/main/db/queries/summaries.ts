@@ -45,6 +45,11 @@ const summarySqlSchema = z.object({
   hub_sync_state: z.string().nullable(),
 });
 
+const pendingSummarySqlSchema = summarySqlSchema.extend({
+  account_id: z.string().min(1),
+  fan_id: z.string().min(1),
+});
+
 function rowToCandidate(value: unknown): Record<string, unknown> | null {
   const parsed = summarySqlSchema.safeParse(value);
   if (!parsed.success) {
@@ -79,6 +84,12 @@ function rowToCandidate(value: unknown): Record<string, unknown> | null {
 export interface SummariesQueries {
   get(accountId: string, fanId: string): SummaryCacheEntry | null;
   put(accountId: string, fanId: string, entry: SummaryCacheEntry): void;
+  /** Oldest local summaries whose last Hub delivery is explicitly pending. */
+  listHubSyncPending(limit?: number): Array<{
+    accountId: string;
+    fanId: string;
+    entry: SummaryCacheEntry;
+  }>;
   /** Refresh = delete + regenerate (SPEC §8.5). */
   remove(accountId: string, fanId: string): void;
 }
@@ -112,6 +123,30 @@ export function createSummariesQueries(db: ChatGooseDb, bus: DbChangeBus): Summa
         hub_sync_state: entry.hubSyncState === undefined ? null : toJson(entry.hubSyncState),
       });
       bus.publish({ scope: 'summaries', accountId });
+    },
+
+    listHubSyncPending(limit = 100) {
+      const boundedLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
+      return db
+        .prepare(
+          `SELECT ${COLUMNS}
+           FROM summaries
+           WHERE json_extract(hub_sync_state, '$.state') = 'pending'
+           ORDER BY generated_at, account_id, fan_id
+           LIMIT @limit`,
+        )
+        .all({ limit: boundedLimit })
+        .flatMap((value) => {
+          const parsed = pendingSummarySqlSchema.safeParse(value);
+          if (!parsed.success) {
+            return [];
+          }
+          const candidate = rowToCandidate(parsed.data);
+          const entry = candidate === null ? null : normalizeSummaryCacheEntry(candidate);
+          return entry === null
+            ? []
+            : [{ accountId: parsed.data.account_id, fanId: parsed.data.fan_id, entry }];
+        });
     },
 
     remove(accountId, fanId) {

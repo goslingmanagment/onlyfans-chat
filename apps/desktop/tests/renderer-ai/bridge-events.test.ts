@@ -24,15 +24,21 @@ vi.mock('../../src/renderer/src/bridge/bridge', () => ({
 
 import { attachBridgeEvents } from '../../src/renderer/src/bridge/events';
 import { qk } from '../../src/renderer/src/bridge/queries';
+import { useSettingsCache } from '../../src/renderer/src/state/settingsCache';
+import { useUiStore } from '../../src/renderer/src/state/uiStore';
 
 describe('attachBridgeEvents', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     bridgeMock.listeners.clear();
     bridgeMock.bridge.on.mockClear();
+    useSettingsCache.setState({ notificationsEnabled: true, soundEnabled: false, uiLocale: 'en' });
+    useUiStore.setState({ selectedAccountId: null, selectedChatId: null, toasts: [] });
+    vi.stubGlobal('document', { hasFocus: () => false });
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -48,6 +54,36 @@ describe('attachBridgeEvents', () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: qk.accounts });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['online', 'acct_1'] });
+    detach();
+  });
+
+  it('builds a message toast from the incoming frame instead of the stale chat preview', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(qk.chats('acct_1', 'all'), {
+      items: [{ chatId: 'chat_1', fanName: 'Alice', lastMessagePreview: 'old preview' }],
+    });
+    const detach = attachBridgeEvents(queryClient);
+
+    for (const listener of bridgeMock.listeners.get('sync:event') ?? []) {
+      listener({
+        type: 'messageReceived',
+        accountId: 'acct_1',
+        chatId: 'chat_1',
+        messageId: 'm2',
+        message: {
+          id: 'm2',
+          text: '<p>new body<br>second line</p>',
+          createdAt: '2026-07-12T12:00:00.000Z',
+          isSentByMe: false,
+          price: 0,
+        },
+      });
+    }
+
+    expect(useUiStore.getState().toasts.at(-1)).toMatchObject({
+      title: 'Alice',
+      body: 'new body\nsecond line',
+    });
     detach();
   });
 });

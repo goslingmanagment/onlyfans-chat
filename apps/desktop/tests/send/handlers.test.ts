@@ -9,6 +9,10 @@ import { createSettingsStore } from '@main/settings/store';
 import { registerIpcHandlers } from '@main/ipc/handlers';
 import type { AiCoordinatorLike, IpcDeps } from '@main/ipc/handlers';
 import { utcDayOf } from '@main/ipc/activity';
+import {
+  ACCEPTANCE_SPOOL_SETTINGS_KEY,
+  enqueueAcceptanceEvent,
+} from '@main/hub/acceptance-reporter';
 import { ACCT, CHAT, memoryDataLayer } from './helpers';
 
 type Handler = (event: unknown, args?: unknown) => unknown;
@@ -68,6 +72,11 @@ function register(
     creditMeter: null,
     coordinator,
     send,
+    acceptance: {
+      enqueue: vi.fn(),
+      trackInserted: vi.fn(),
+      consumeForSend: vi.fn(() => null),
+    },
     purge: async () => undefined,
     ...overrides,
   };
@@ -423,6 +432,66 @@ describe('send-channel IPC handlers', () => {
       feature: 'fan-summary',
       text: 'durable answer',
     }));
+  });
+
+  it('does not consume durable feedback when no acceptance spool seam is available', async () => {
+    const operationId = '00000000-0000-4000-8000-0000000000ad';
+    data.aiAcceptance.remember({
+      operationId,
+      requestId: 'req-offline',
+      feature: 'fast-reply',
+      accountId: ACCT,
+      conversationId: CHAT,
+      parts: ['keep until durable enqueue'],
+      day: utcDayOf(Date.now()),
+      knownAt: new Date().toISOString(),
+    });
+    register(data, engine, makeFakeCoordinator(), { acceptance: null });
+
+    await expect(
+      invoke('cmd:ai.feedback', { operationId, action: 'inserted', partIndex: 0 }),
+    ).rejects.toThrow(/temporarily unavailable/i);
+
+    expect(data.aiAcceptance.get(operationId)).toMatchObject({
+      acceptedAt: null,
+      parts: ['keep until durable enqueue'],
+    });
+    expect(data.aiSpendLog.rowsSince(utcDayOf(Date.now()))).toEqual([]);
+  });
+
+  it('atomically rolls back the acceptance claim when durable spool enqueue fails', async () => {
+    const operationId = '00000000-0000-4000-8000-0000000000ae';
+    data.aiAcceptance.remember({
+      operationId,
+      requestId: 'req-atomic',
+      feature: 'fast-reply',
+      accountId: ACCT,
+      conversationId: CHAT,
+      parts: ['must remain retryable'],
+      day: utcDayOf(Date.now()),
+      knownAt: new Date().toISOString(),
+    });
+    register(data, engine, makeFakeCoordinator(), {
+      acceptance: {
+        enqueue: (acceptanceEvent) => {
+          enqueueAcceptanceEvent(data, acceptanceEvent);
+          throw new Error('simulated spool failure after write');
+        },
+        trackInserted: vi.fn(),
+        consumeForSend: vi.fn(() => null),
+      },
+    });
+
+    await expect(
+      invoke('cmd:ai.feedback', { operationId, action: 'inserted', partIndex: 0 }),
+    ).rejects.toThrow(/simulated spool failure/i);
+
+    expect(data.aiAcceptance.get(operationId)).toMatchObject({
+      acceptedAt: null,
+      parts: ['must remain retryable'],
+    });
+    expect(data.settings.get(ACCEPTANCE_SPOOL_SETTINGS_KEY)).toBeUndefined();
+    expect(data.aiSpendLog.rowsSince(utcDayOf(Date.now()))).toEqual([]);
   });
 
   it('rejects unknown kernel operations instead of trusting renderer-supplied feature', async () => {

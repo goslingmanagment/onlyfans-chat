@@ -34,6 +34,8 @@ import { createThreadFetchLogQueries } from './queries/thread-fetch-log';
 import type { ThreadFetchLogQueries } from './queries/thread-fetch-log';
 import { createMessageGuardEventsQueries } from './queries/message-guard-events';
 import type { MessageGuardEventsQueries } from './queries/message-guard-events';
+import { createUnsendCommandQueries } from './queries/unsend-commands';
+import type { UnsendCommandQueries } from './queries/unsend-commands';
 
 export interface DataLayer {
   db: ChatGooseDb;
@@ -52,6 +54,7 @@ export interface DataLayer {
   mediaUrls: MediaUrlsQueries;
   threadFetchLog: ThreadFetchLogQueries;
   messageGuardEvents: MessageGuardEventsQueries;
+  unsendCommands: UnsendCommandQueries;
   close(): void;
 }
 
@@ -76,6 +79,7 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     mediaUrls: createMediaUrlsQueries(db),
     threadFetchLog: createThreadFetchLogQueries(db),
     messageGuardEvents: createMessageGuardEventsQueries(db, bus),
+    unsendCommands: createUnsendCommandQueries(db),
     close() {
       bus.flushNow();
       bus.dispose();
@@ -154,3 +158,9 @@ export type {
   MessageGuardEventsQueries,
   MessageGuardRecentEvent,
 } from './queries/message-guard-events';
+export { createUnsendCommandQueries } from './queries/unsend-commands';
+export type {
+  UnsendCommandInsert,
+  UnsendCommandQueries,
+  UnsendCommandRow,
+} from './queries/unsend-commands';
