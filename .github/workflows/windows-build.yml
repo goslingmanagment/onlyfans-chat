@@ -57,9 +57,10 @@ jobs:
       # main process died at module load — windowless, no error, invisible to
       # `pnpm check` (vitest resolves @kernel/sdk through its own transform,
       # not the packaged bundle). Launch the ACTUAL packaged binary; --smoke
-      # boots on a throwaway profile and exits 0. The DOA class never reaches
-      # the exit call, so the step timeout is the failure signal. Nothing
-      # reaches the update feed without this going green.
+      # boots on a throwaway profile and exits 0 only after did-finish-load;
+      # navigation/preload/renderer-process failures exit non-zero. The DOA
+      # class never reaches the exit call, so timeout remains its failure signal.
+      # Nothing reaches the update feed without this going green.
       - name: Smoke-launch the packaged app
         timeout-minutes: 3
         shell: pwsh

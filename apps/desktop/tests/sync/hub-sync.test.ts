@@ -13,6 +13,9 @@ import type {
 } from '@chatgoose/shared/protocol/index';
 import {
   createHubSync,
+  HUB_SNAPSHOT_PATH,
+  HUB_V2_SNAPSHOT_PATH,
+  HUB_V2_SSE_PATH,
   SseFrameParser,
   HUB_WATCHDOG_MS,
   type HubSseBody,
@@ -29,6 +32,7 @@ import type { MessageUpsert } from '../../src/main/db/index';
 
 const TEST_DRIVER = 'bsqlite3-mc-node';
 const ACCT = 'acct_hub_test';
+const NEW_ACCT = 'acct_hub_new';
 
 // ─── SSE frame parser ──────────────────────────────────────────────────────
 
@@ -767,13 +771,16 @@ interface FakePolling extends SyncProvider {
   forceRefreshCalls: number;
   refreshCalls: Array<{ accountId: string; chatId: string }>;
   accountRefreshCalls: string[];
-  /** D1-N2: gap-recovery reconciles (awaitable, failure-propagating path). */
+  /** Retained PollingSync surface; durable v2 recovery must not use it. */
   reconcileCalls: string[];
   reconcileError: Error | null;
+  grantRefreshCalls: number;
+  grantAccountIds: string[];
   ingestCalls: Array<{ accountId: string; chatId: string; messageId: string }>;
   ingestResult: boolean;
   refreshAccountHead(accountId: string): Promise<void>;
   reconcileAccountHeadNow(accountId: string): Promise<void>;
+  refreshAccountGrants(): Promise<string[]>;
   ingestHubMessage(accountId: string, chatId: string, message: NormalizedSyncMessage): Promise<boolean>;
   emit(event: SyncEvent): void;
 }
@@ -787,6 +794,8 @@ function makeFakePolling(): FakePolling {
     accountRefreshCalls: [],
     reconcileCalls: [],
     reconcileError: null,
+    grantRefreshCalls: 0,
+    grantAccountIds: [ACCT],
     ingestCalls: [],
     ingestResult: true,
     emit: (event) => {
@@ -816,6 +825,10 @@ function makeFakePolling(): FakePolling {
       }
       polling.emit({ type: 'chatListUpdated', accountId });
       return Promise.resolve();
+    },
+    refreshAccountGrants: () => {
+      polling.grantRefreshCalls += 1;
+      return Promise.resolve([...polling.grantAccountIds]);
     },
     ingestHubMessage: (accountId, chatId, message) => {
       polling.ingestCalls.push({ accountId, chatId, messageId: message.id });
@@ -947,6 +960,36 @@ describe('createHubAwareSync (provider composition)', () => {
     };
   }
 
+  function emptySnapshot(accountId: string): SyncSnapshotResponse {
+    return {
+      version: 1,
+      requestedAfterSeq: 0,
+      snapshotCursor: 1,
+      stateAt: '2026-07-12T18:00:00.000Z',
+      resumeAllowed: true,
+      page: {
+        pageId: 1,
+        label: 'snapshot-page',
+        accountId,
+        username: accountId,
+        authStatus: 'connected',
+        authenticated: true,
+        authChangedAt: '2026-07-12T17:59:00.000Z',
+      },
+      coverage: {
+        durableDomains: ['chat_heads', 'hot_messages', 'message_tombstones', 'account_auth'],
+        omittedDomains: [
+          { domain: 'presence', reason: 'ephemeral_not_snapshotted' },
+          { domain: 'typing', reason: 'ephemeral_not_snapshotted' },
+        ],
+        messageWindow: 'hot_projection_plus_archive_delta',
+      },
+      threads: [],
+      unresolvedTombstones: [],
+      nextPageCursor: null,
+    };
+  }
+
   it('start() starts polling AND the hub when settings are configured', async () => {
     const { provider, hub } = build();
     provider.start([ACCT]);
@@ -981,20 +1024,201 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
-  it('v2 gap recovery reconciles through the awaitable path and propagates failure (D1-N2)', async () => {
-    const { provider, polling, callbacks } = build();
+  it('v2 recovery completion records telemetry without a weaker OFAPI head refresh', async () => {
+    const { provider, polling, callbacks, logs } = build();
     provider.start([ACCT]);
     await Promise.resolve();
     await Promise.resolve();
 
-    // Success: the awaitable reconcile ran (not the debounced head refresh).
     await callbacks().onV2GapRecovered();
-    expect(polling.reconcileCalls).toEqual([ACCT]);
+    expect(polling.grantRefreshCalls).toBe(1);
+    expect(polling.reconcileCalls).toEqual([]);
     expect(polling.accountRefreshCalls).toEqual([]);
+    expect(provider.hubActivity().lastFallbackReason).toBe('hub-v2-gap-cursor-rebaseline');
+    expect(logs).toContainEqual({
+      level: 'info',
+      message: 'v2 account grants refreshed for durable reconciliation',
+      fields: { accountsBefore: 1, accountsAfter: 1 },
+    });
+    provider.stop();
+  });
 
-    // Failure PROPAGATES so HubSync refuses to persist the fresh cursor.
-    polling.reconcileError = new Error('head refresh failed');
-    await expect(callbacks().onV2GapRecovered()).rejects.toThrow(/1 of 1 account/);
+  it('v2 grant refresh replaces the provider snapshot allowlist', async () => {
+    const { provider, polling, callbacks } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    polling.grantAccountIds = [NEW_ACCT];
+
+    await expect(callbacks().onV2GapRecovered()).resolves.toEqual([NEW_ACCT]);
+    await expect(callbacks().onSnapshot(emptySnapshot(ACCT))).rejects.toThrow(
+      `Snapshot account ${ACCT} is not handled locally`,
+    );
+    await expect(callbacks().onSnapshot(emptySnapshot(NEW_ACCT))).resolves.toBeUndefined();
+    provider.stop();
+  });
+
+  it('v2 multi-page recovery applies messages, tips, and deletes before cursor persistence', async () => {
+    const { provider, polling, callbacks } = build();
+    polling.ingestHubMessage = (accountId, chatId, message) => {
+      const mapped = mapHubMessage(accountId, chatId, message);
+      if (mapped === null) {
+        return Promise.resolve(false);
+      }
+      polling.ingestCalls.push({ accountId, chatId, messageId: message.id });
+      data.messages.upsertMany([mapped]);
+      return Promise.resolve(true);
+    };
+    seedMessage('gone', '202');
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const snapshotPage = (
+      thread: SyncSnapshotResponse['threads'][number],
+      nextPageCursor: number | null,
+    ): SyncSnapshotResponse => ({
+      version: 1,
+      requestedAfterSeq: 0,
+      snapshotCursor: 77,
+      stateAt: '2026-07-12T18:00:00.000Z',
+      resumeAllowed: true,
+      page: {
+        pageId: 1,
+        label: 'lora-of',
+        accountId: ACCT,
+        username: 'lora',
+        authStatus: 'connected',
+        authenticated: true,
+        authChangedAt: '2026-07-12T17:59:00.000Z',
+      },
+      coverage: {
+        durableDomains: ['chat_heads', 'hot_messages', 'message_tombstones', 'account_auth'],
+        omittedDomains: [
+          { domain: 'presence', reason: 'ephemeral_not_snapshotted' },
+          { domain: 'typing', reason: 'ephemeral_not_snapshotted' },
+        ],
+        messageWindow: 'hot_projection_plus_archive_delta',
+      },
+      threads: [thread],
+      unresolvedTombstones: [],
+      nextPageCursor,
+    });
+    const tipMessage = hubMessage({
+      id: 'tip-1',
+      text: '<p>thank you</p>',
+      createdAt: '2026-07-12T17:58:00.000Z',
+      isTip: true,
+      tipAmountUsd: 12.5,
+    });
+    const firstPage = snapshotPage({
+      chatId: '101',
+      fanName: 'Tip fan',
+      unreadCount: 1,
+      hasUnreadTips: true,
+      lastMessageId: 'tip-1',
+      lastMessageAt: tipMessage.createdAt,
+      lastMessageIsSentByMe: false,
+      lastMessagePreview: 'thank you',
+      visible: true,
+      sourceUpdatedAt: '2026-07-12T18:00:00.000Z',
+      messages: [{
+        chatId: '101',
+        messageId: 'tip-1',
+        message: tipMessage,
+        deletedAt: null,
+        sourceUpdatedAt: '2026-07-12T18:00:00.000Z',
+        sourceFanoutSeq: 76,
+      }],
+    }, 5);
+    const secondPage = snapshotPage({
+      chatId: '202',
+      fanName: 'Deleted fan',
+      unreadCount: 0,
+      hasUnreadTips: false,
+      lastMessageId: null,
+      lastMessageAt: null,
+      lastMessageIsSentByMe: false,
+      lastMessagePreview: '',
+      visible: true,
+      sourceUpdatedAt: '2026-07-12T18:00:00.000Z',
+      messages: [{
+        chatId: '202',
+        messageId: 'gone',
+        message: null,
+        deletedAt: '2026-07-12T17:59:00.000Z',
+        sourceUpdatedAt: '2026-07-12T18:00:00.000Z',
+        sourceFanoutSeq: 77,
+      }],
+    }, null);
+
+    const resumed = makeStream();
+    const { fetchImpl, calls } = makeHarness([
+      {
+        status: 409,
+        stream: null,
+        json: {
+          error: 'sync_snapshot_required',
+          message: 'cursor gap',
+          statusCode: 409,
+          version: 2,
+          accounts: [{ accountId: 1, requestedSeq: 50, oldestAvailableSeq: 60, currentSeq: 80 }],
+          snapshotPath: HUB_V2_SNAPSHOT_PATH,
+        },
+      },
+      { status: 200, stream: null, json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 1, currentSeq: 80 }] } },
+      { status: 200, stream: null, json: firstPage },
+      { status: 200, stream: null, json: secondPage },
+      { status: 200, stream: resumed },
+    ]);
+    let cursor = 'CUR_STALE';
+    const order: string[] = [];
+    const recoveringHub = createHubSync({
+      protocol: 'v2',
+      baseUrl: 'https://hub.test',
+      apiKey: 'k',
+      accountIds: [ACCT],
+      fetchImpl,
+      sleep: () => Promise.resolve(),
+      onEvent: () => undefined,
+      onSnapshot: async (snapshot) => {
+        order.push(`apply:${snapshot.threads[0]?.chatId}`);
+        await callbacks().onSnapshot(snapshot);
+      },
+      onV2GapRecovered: async () => {
+        order.push('reconciled');
+        return callbacks().onV2GapRecovered();
+      },
+      getLastEventId: () => null,
+      setLastEventId: () => undefined,
+      getV2Cursor: () => cursor,
+      setV2Cursor: (next) => {
+        order.push(`persist:${next}`);
+        cursor = next;
+      },
+    });
+
+    recoveringHub.start();
+    await drainMicrotasks();
+
+    expect(calls.map((call) => call.url)).toEqual([
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
+      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=50`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=5&limit=50&snapshotCursor=77`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH`,
+    ]);
+    expect(order).toEqual(['reconciled', 'apply:101', 'apply:202', 'persist:CUR_FRESH']);
+    expect(data.messages.get(ACCT, '101', 'tip-1')).toMatchObject({
+      textPlain: 'thank you',
+      isTip: true,
+      tipAmount: 12.5,
+    });
+    expect(data.messages.get(ACCT, '202', 'gone')?.deleted).toBe(true);
+    expect(cursor).toBe('CUR_FRESH');
+    expect(polling.reconcileCalls).toEqual([]);
+
+    recoveringHub.stop();
     provider.stop();
   });
 

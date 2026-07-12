@@ -282,6 +282,27 @@ function evictTerminalJobs(
   return { jobsById: nextJobsById, jobsByConversation: nextJobsByConversation };
 }
 
+/** Prompt echoes are exceptionally large debug artifacts, not user content.
+ * Keep at most the newest one across all running/terminal jobs so the normal
+ * 24-job history cannot multiply a multi-hundred-kilobyte snapshot. */
+function replaceRetainedDebugPrompt(
+  jobsById: Record<string, AiJob>,
+  operationId: string,
+  snapshot: Record<string, unknown>,
+): Record<string, AiJob> {
+  const next: Record<string, AiJob> = {};
+  for (const [id, job] of Object.entries(jobsById)) {
+    if (id === operationId) {
+      next[id] = { ...job, debugPrompt: snapshot, updatedAt: Date.now() };
+    } else if (job.debugPrompt !== null) {
+      next[id] = { ...job, debugPrompt: null };
+    } else {
+      next[id] = job;
+    }
+  }
+  return next;
+}
+
 function pushHiddenCompletionToast(job: AiJob, status: 'completed' | 'error'): void {
   const title = status === 'completed' ? 'AI ready' : 'AI failed';
   const feature = DOCK_FEATURE_LABELS[job.feature];
@@ -613,10 +634,7 @@ export function handleAiOperationEvent(event: OperationEvent): void {
           const current = s.jobsById[event.operationId];
           if (current === undefined) return {};
           return {
-            jobsById: {
-              ...s.jobsById,
-              [event.operationId]: { ...current, debugPrompt: event.snapshot, updatedAt: Date.now() },
-            },
+            jobsById: replaceRetainedDebugPrompt(s.jobsById, event.operationId, event.snapshot),
           };
         }),
       );

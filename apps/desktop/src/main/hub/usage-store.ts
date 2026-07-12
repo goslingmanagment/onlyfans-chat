@@ -50,16 +50,28 @@ function isQuarantinedPayload(json: unknown): boolean {
   );
 }
 
-export type UsageSpoolState = 'pending' | 'deadLetter' | 'quarantined';
+export type UsageSpoolState = 'pending' | 'deadLetter' | 'quarantined' | 'invalid';
+
+export type UsageSpoolInvalidReason =
+  | 'non-string-payload'
+  | 'malformed-json'
+  | 'non-object-json';
 
 export interface UsageSpoolSummary {
   counts: Record<UsageSpoolState, number>;
-  events: Array<{ id: unknown; attempts: unknown; state: UsageSpoolState; payload: unknown }>;
+  events: Array<{
+    id: unknown;
+    attempts: unknown;
+    state: UsageSpoolState;
+    payload: unknown;
+    invalidReason?: UsageSpoolInvalidReason;
+  }>;
 }
 
 /**
  * Diagnostics-export view of the spool: EVERY undelivered row with its state
- * (pending / dead-letter / quarantined). Stage 4 stop-loss means none of them
+ * (pending / dead-letter / quarantined / invalid raw payload). Stage 4
+ * stop-loss means none of them
  * may hide behind a quarantined-only filter — "export diagnostics first"
  * before a purge must actually preserve the whole spool. Dead-letter is not a
  * persisted flag (it's the in-memory ≥3-attempts tier), so it is derived here
@@ -68,19 +80,51 @@ export interface UsageSpoolSummary {
 export function summarizeUsageSpool(
   rows: ReadonlyArray<{ id?: unknown; payload?: unknown; attempts?: unknown }>,
 ): UsageSpoolSummary {
-  const counts: Record<UsageSpoolState, number> = { pending: 0, deadLetter: 0, quarantined: 0 };
+  const counts: Record<UsageSpoolState, number> = {
+    pending: 0,
+    deadLetter: 0,
+    quarantined: 0,
+    invalid: 0,
+  };
   const events: UsageSpoolSummary['events'] = [];
   for (const row of rows) {
     if (typeof row.payload !== 'string') {
+      counts.invalid += 1;
+      events.push({
+        id: row.id,
+        attempts: row.attempts,
+        state: 'invalid',
+        payload: row.payload,
+        invalidReason: 'non-string-payload',
+      });
       continue;
     }
     let json: unknown;
     try {
       json = JSON.parse(row.payload);
     } catch {
-      continue; // corrupt payloads fail wire validation at load; not a spool row
+      // Preserve the exact raw bytes. A malformed legacy row cannot be sent,
+      // but it is still an undelivered accounting fact that purge insurance
+      // must not silently erase.
+      counts.invalid += 1;
+      events.push({
+        id: row.id,
+        attempts: row.attempts,
+        state: 'invalid',
+        payload: row.payload,
+        invalidReason: 'malformed-json',
+      });
+      continue;
     }
-    if (typeof json !== 'object' || json === null) {
+    if (typeof json !== 'object' || json === null || Array.isArray(json)) {
+      counts.invalid += 1;
+      events.push({
+        id: row.id,
+        attempts: row.attempts,
+        state: 'invalid',
+        payload: row.payload,
+        invalidReason: 'non-object-json',
+      });
       continue;
     }
     const attempts = typeof row.attempts === 'number' ? row.attempts : 0;

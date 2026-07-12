@@ -26,6 +26,8 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D6 | 2026-07-07 | 0.1.31 RELEASED (kernel-AI cutover live); §5 watch, then owner revokes vendor keys |
 | D7 | 2026-07-07 | Test Connection probes the actual bearer (device token preferred) — token-only installs verifiable; core #116 |
 | D8 | 2026-07-07 | 0.1.30/0.1.31 dead-on-launch; 0.1.32 fixes SDK bundling |
+| D9 | 2026-07-11 | Debug prompt inspector restored through the gated kernel debug-input echo |
+| D10 | 2026-07-12 | Stream-v2 rebaseline is fail-closed: refresh grants, exhaust durable state, then checkpoint |
 
 ## Entries
 
@@ -98,6 +100,28 @@ being shut (`echo: 'unavailable'`) and a cached Scan that never called a model
 (`echo: 'cache-hit'`). The inspector also renders the kernel's `contextManifest`
 as a typed card — dossier version/age/chars/dropped sections plus the
 transcript-union counts — which is the fastest way to tell a STALE dossier from a
-MISSING one. The echo lives in the in-memory job store only: never persisted,
-never logged. (The Fansly extension takes the same echo but may not show it in
-the page — see its E28; a desktop renderer is app-origin, so inline is fine.)
+MISSING one. Failed debug generations emit the same explicit unavailable state.
+
+The echo lives in the in-memory job store only: never persisted, never logged.
+Desktop bounds retained prompt-block text to 500,000 characters and a serialized
+context-manifest preview to 100,000 characters, with explicit truncation metadata.
+The renderer retains only the newest prompt snapshot, keeps it opaque while the
+inspector is collapsed, and caps opened DOM text at 100,000 characters; COPY uses
+the larger already-bounded snapshot. (The Fansly extension takes the same echo
+but may not show it in the page — see its E28; a desktop renderer is app-origin,
+so inline is fine.)
+
+**D10 (2026-07-12).** Stream-v2 rebaseline is fail-closed. A cursor-bearing
+stream 401/403 or a 409 first authenticates through the fresh-cursor endpoint,
+but that cursor stays unpersisted while the desktop refreshes the read-gateway
+account grants, replaces its hub allowlist, reconciles polling-loop membership,
+and exhausts every durable state-snapshot page for every refreshed account.
+Shrink-to-zero is a valid grant state; revoked account caches remain local but
+are marked unauthenticated. Any missing account (including a single 404 among otherwise
+successful accounts), partial/malformed page, apply failure, or grant-refresh
+failure keeps the old cursor for retry. The client never clears a stale cursor
+to reconnect cursorless, because cursorless v2 starts at the current high-water
+mark and would skip the missed interval. V2 cursors are additionally scoped to
+the credential that earned them. The retained immediate head-reconcile seam
+claims PollingSync's per-account single-flight guard, and a queued reconcile
+exits if that account is revoked before it acquires the guard.

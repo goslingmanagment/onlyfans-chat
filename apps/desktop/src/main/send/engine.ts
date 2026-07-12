@@ -105,6 +105,15 @@ export interface SendEngine {
    * on both paths (self-reschedules via scheduleVerify). Never auto-sends.
    */
   reconcileOnBoot(isBoot?: boolean): Promise<void>;
+  /**
+   * Runtime-replacement barrier: reject or drop new platform-write work,
+   * let every pump that already owns a chat drain its authorized queue, wait
+   * for submitted unsends and every already-started credential-bound auxiliary
+   * task (verification, mark-read, typing), then resolve. The composition root
+   * MUST await this before publishing a replacement engine or closing the DB so
+   * engine-local write ownership and DB access can never overlap generations.
+   */
+  quiesce(): Promise<void>;
   typingActive(accountId: string, chatId: string): void;
   markRead(accountId: string, chatId: string): Promise<void>;
   unsend(accountId: string, chatId: string, messageId: string): Promise<void>;
@@ -164,7 +173,7 @@ function hubFailureCode(error: unknown, unavailable: boolean): 'CG-HUB-01' | 'CG
 const PRE_INTAKE_KERNEL_CODES: Record<string, number> = {
   service_unavailable: 503,
   not_found: 404,
-  conflict: 409,
+  rate_limit_exceeded: 429,
 };
 
 /**
@@ -214,11 +223,14 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
   const hubCommandPollLimit = options.hubCommandPollLimit ?? HUB_COMMAND_POLL_LIMIT;
 
   const pumping = new Set<string>();
+  const pumpTasks = new Set<Promise<void>>();
+  const credentialTasks = new Set<Promise<unknown>>();
   const verifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const markReadTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const typingLastAt = new Map<string, number>();
   const pendingHubUnsends = new Map<string, Promise<void>>();
   const submittedHubUnsends = new Set<string>();
+  let quiescing = false;
   let disposed = false;
 
   function chatKey(accountId: string, chatId: string): string {
@@ -266,17 +278,51 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     );
   }
 
+  function assertAcceptingWriteWork(): void {
+    if (quiescing || disposed) {
+      throw new Error('Send engine is quiescing for runtime replacement');
+    }
+  }
+
+  /** Claim one credential-bound async task before it can yield. A factory keeps
+   * callers from starting network/DB work before the task is registered. Tasks
+   * accepted before quiesce are allowed to settle; later callers are dropped. */
+  function startCredentialTask<T>(start: () => Promise<T>): Promise<T> | null {
+    if (quiescing || disposed) {
+      return null;
+    }
+    const task = Promise.resolve().then(start);
+    credentialTasks.add(task);
+    // Observe both outcomes without replacing the promise returned to callers.
+    void task.then(
+      () => credentialTasks.delete(task),
+      () => credentialTasks.delete(task),
+    );
+    return task;
+  }
+
+  function clearDeferredTimers(): void {
+    for (const timer of verifyTimers.values()) {
+      clearTimeout(timer);
+    }
+    verifyTimers.clear();
+    for (const timer of markReadTimers.values()) {
+      clearTimeout(timer);
+    }
+    markReadTimers.clear();
+  }
+
   // ── Pump: single-flight per chat ─────────────────────────────────────────
   // One drain loop per chat at a time; rows queued while it runs are picked up
   // by the same loop (claimNextQueued re-reads the table each iteration), so a
   // second concurrent POST for the chat cannot exist.
   function kickPump(accountId: string, chatId: string): void {
     const key = chatKey(accountId, chatId);
-    if (pumping.has(key)) {
+    if (quiescing || disposed || pumping.has(key)) {
       return;
     }
     pumping.add(key);
-    void (async () => {
+    const task = (async () => {
       try {
         for (;;) {
           // queued → sending (attempts+1) persisted BEFORE the POST (SPEC §7.1).
@@ -302,6 +348,13 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         pumping.delete(key);
       }
     })();
+    pumpTasks.add(task);
+    // Observe both outcomes (the old fire-and-forget pump could otherwise
+    // produce an unhandled rejection) and keep quiesce's task set exact.
+    void task.then(
+      () => pumpTasks.delete(task),
+      () => pumpTasks.delete(task),
+    );
   }
 
   function upsertHubConfirmedMessage(row: OutboxRow, command: HubOfapiCommand): void {
@@ -657,13 +710,19 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     }
   }
 
-  async function verifyChat(accountId: string, chatId: string): Promise<void> {
+  async function verifyChatInner(accountId: string, chatId: string): Promise<void> {
+    if (quiescing || disposed) {
+      return;
+    }
     const unconfirmed = data.outbox.listByStateForChat(accountId, chatId, 'unconfirmed');
     if (unconfirmed.length === 0) {
       return;
     }
     const hubRows = unconfirmed.filter((row) => row.transport === 'hub');
     for (const row of hubRows) {
+      if (quiescing || disposed) {
+        return;
+      }
       // A24 (W4.5): never perform FIRST-TIME intake for a stale row. A null
       // coreCommandId here means the kernel never accepted this command;
       // ensureHubCommand would CREATE and execute a brand-new one — at any
@@ -688,6 +747,10 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     matchUnconfirmed(accountId, chatId);
   }
 
+  function verifyChat(accountId: string, chatId: string): Promise<void> {
+    return startCredentialTask(() => verifyChatInner(accountId, chatId)) ?? Promise.resolve();
+  }
+
   function hasAutoVerifiableRows(accountId: string, chatId: string): boolean {
     return data.outbox
       .listByStateForChat(accountId, chatId, 'unconfirmed')
@@ -696,32 +759,37 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
 
   function scheduleVerify(accountId: string, chatId: string): void {
     const key = chatKey(accountId, chatId);
-    if (disposed || verifyTimers.has(key)) {
+    if (quiescing || disposed || verifyTimers.has(key)) {
       return;
     }
     verifyTimers.set(
       key,
       setTimeout(() => {
         verifyTimers.delete(key);
-        void (async () => {
+        const task = startCredentialTask(async () => {
           if (!hasAutoVerifiableRows(accountId, chatId)) {
             return; // stale (>10 min) or resolved — manual verifyNow only
           }
           try {
-            await verifyChat(accountId, chatId);
+            await verifyChatInner(accountId, chatId);
           } catch {
             // transient (offline); the rescheduled pass retries
           }
-          if (hasAutoVerifiableRows(accountId, chatId)) {
+          if (!quiescing && !disposed && hasAutoVerifiableRows(accountId, chatId)) {
             scheduleVerify(accountId, chatId);
           }
-        })();
+        });
+        if (task === null) {
+          return;
+        }
+        void task.catch(() => undefined);
       }, VERIFY_INTERVAL_MS),
     );
   }
 
   return {
     sendParts({ accountId, chatId, parts }) {
+      assertAcceptingWriteWork();
       if (parts.length === 0) {
         throw new Error('sendParts: at least one part is required');
       }
@@ -748,6 +816,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     },
 
     sendPpv({ accountId, chatId, text, price, mediaFiles, previews }) {
+      assertAcceptingWriteWork();
       // ALL validation precedes the insert: an invalid PPV must never enqueue.
       if (mediaFiles.length === 0) {
         throw new Error('sendPpv: at least one media file is required');
@@ -797,6 +866,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     },
 
     retry({ accountId, localId, text }) {
+      assertAcceptingWriteWork();
       const row = data.outbox.get(localId);
       if (row === null || row.accountId !== accountId) {
         throw new Error('retry: unknown outbox row');
@@ -907,7 +977,31 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       }
     },
 
+    async quiesce() {
+      quiescing = true;
+      clearDeferredTimers();
+      // No new pump can enter after the flag flips. Existing pumps may still
+      // own rows (or be between sequence parts), so wait for all of them to
+      // drain before a replacement engine with a fresh per-chat lock is used.
+      // An already-submitted unsend also owns an engine-local dedup latch; wait
+      // for it so the replacement cannot issue the same write concurrently.
+      // credentialTasks covers verifier, typing and fired mark-read work through
+      // their final DB continuation, making this barrier safe for purge too.
+      while (pumpTasks.size > 0 || pendingHubUnsends.size > 0 || credentialTasks.size > 0) {
+        await Promise.allSettled([
+          ...pumpTasks,
+          ...pendingHubUnsends.values(),
+          ...credentialTasks,
+        ]);
+      }
+    },
+
     typingActive(accountId, chatId) {
+      // Typing is deliberately lossy; once retirement starts, drop the beacon
+      // instead of extending the runtime handoff for it.
+      if (quiescing || disposed) {
+        return;
+      }
       const key = chatKey(accountId, chatId);
       const last = typingLastAt.get(key);
       if (last !== undefined && now() - last < TYPING_MIN_INTERVAL_MS) {
@@ -917,8 +1011,8 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       if (hubCommandClient === undefined) {
         return;
       }
-      void hubCommandClient
-        .createOfapiCommand({
+      const task = startCredentialTask(async () => {
+        await hubCommandClient.createOfapiCommand({
           command: {
             clientCommandId: randomUUID(),
             kind: 'typing_active_v1',
@@ -926,49 +1020,55 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
             conversationId: chatId,
             payload: {},
           },
-        })
-        .catch(() => undefined);
+        });
+      });
+      if (task !== null) {
+        void task.catch(() => undefined);
+      }
     },
 
-    async markRead(accountId, chatId) {
-      const settings = await getSettings();
-      if (!settings.markAsReadOnOpen || disposed) {
-        return;
-      }
-      const key = chatKey(accountId, chatId);
-      const pending = markReadTimers.get(key);
-      if (pending !== undefined) {
-        clearTimeout(pending); // debounce: rapid re-opens collapse into one call
-      }
-      markReadTimers.set(
-        key,
-        setTimeout(() => {
-          markReadTimers.delete(key);
-          void (async () => {
-            const success = await markReadViaHub(accountId, chatId);
-            if (!success) {
-              return;
+    markRead(accountId, chatId) {
+      return startCredentialTask(async () => {
+        const settings = await getSettings();
+        if (!settings.markAsReadOnOpen || quiescing || disposed) {
+          return;
+        }
+        const key = chatKey(accountId, chatId);
+        const pending = markReadTimers.get(key);
+        if (pending !== undefined) {
+          clearTimeout(pending); // debounce: rapid re-opens collapse into one call
+        }
+        markReadTimers.set(
+          key,
+          setTimeout(() => {
+            markReadTimers.delete(key);
+            const task = startCredentialTask(async () => {
+              const success = await markReadViaHub(accountId, chatId);
+              if (!success) {
+                return;
+              }
+              zeroUnread(accountId, chatId);
+            });
+            if (task !== null) {
+              void task.catch(() => undefined); // lossy: the next conversation open retries
             }
-            zeroUnread(accountId, chatId);
-          })().catch(() => undefined); // lossy: the next conversation open retries
-        }, MARK_READ_DEBOUNCE_MS),
-      );
+          }, MARK_READ_DEBOUNCE_MS),
+        );
+      }) ?? Promise.resolve();
     },
 
     async unsend(accountId, chatId, messageId) {
+      assertAcceptingWriteWork();
       await unsendViaHub(accountId, chatId, messageId);
     },
 
     dispose() {
+      // Shutdown stays synchronous/bounded: prevent any new work and clear
+      // timers, but do not wait for network-bound pumps. Runtime replacement
+      // uses await quiesce() before dispose().
+      quiescing = true;
       disposed = true;
-      for (const timer of verifyTimers.values()) {
-        clearTimeout(timer);
-      }
-      verifyTimers.clear();
-      for (const timer of markReadTimers.values()) {
-        clearTimeout(timer);
-      }
-      markReadTimers.clear();
+      clearDeferredTimers();
     },
   };
 }

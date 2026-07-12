@@ -41,6 +41,7 @@ function makeEngineStub(): SendEngine {
     verifyChat: vi.fn(async () => undefined),
     handleSyncEvent: vi.fn(),
     reconcileOnBoot: vi.fn(async () => undefined),
+    quiesce: vi.fn(async () => undefined),
     typingActive: vi.fn(),
     markRead: vi.fn(async () => undefined),
     unsend: vi.fn(async () => undefined),
@@ -52,6 +53,7 @@ function register(
   data: DataLayer,
   send: SendEngine | null,
   coordinator: IpcDeps['coordinator'] = null,
+  overrides: Partial<IpcDeps> = {},
 ): void {
   handlers.clear();
   const secrets = {
@@ -67,6 +69,7 @@ function register(
     coordinator,
     send,
     purge: async () => undefined,
+    ...overrides,
   };
   registerIpcHandlers(deps);
 }
@@ -343,11 +346,7 @@ describe('send-channel IPC handlers', () => {
     expect(JSON.parse(row?.payload ?? '{}')).toMatchObject({ accepted: 1, acceptedPart: 1 });
   });
 
-  // C5: kernel-lane ops (Stage 31) write no usage_events row at all, so the
-  // legacy payload lookup above always misses for them — the completed-op
-  // registry is the only place the feature survives, and the ai_spend_log
-  // inserted counter must still move.
-  it('cmd:ai.feedback increments ai_spend_log for a kernel-lane op via the completed-op registry', async () => {
+  it('cmd:ai.feedback persists authoritative context and counts a kernel operation once', async () => {
     const operationId = '00000000-0000-4000-8000-000000000099';
     const coordinator = makeFakeCoordinator({
       [operationId]: { feature: 'fan-summary' },
@@ -371,17 +370,100 @@ describe('send-channel IPC handlers', () => {
     const rows = data.aiSpendLog.rowsSince(today);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.inserted).toBe(1);
-    expect(coordinator.acceptedCalls).toEqual([operationId, operationId]);
+    expect(data.aiAcceptance.get(operationId)).toMatchObject({
+      operationId,
+      feature: 'fan-summary',
+      acceptedAt: expect.any(String),
+    });
+    // The coordinator's memory-only accepted bit is no longer the dedup source.
+    expect(coordinator.acceptedCalls).toEqual([]);
   });
 
-  it('cmd:ai.feedback falls back to the request feature when the op has aged out of the completed-op registry', async () => {
+  it('uses durable operation metadata after coordinator replacement and ignores renderer feature', async () => {
     const operationId = '00000000-0000-4000-8000-0000000000aa';
-    const coordinator = makeFakeCoordinator(); // empty registry: simulates cap-50 eviction
-    register(data, engine, coordinator);
+    data.aiAcceptance.remember({
+      operationId,
+      requestId: 'req-durable',
+      feature: 'fan-summary',
+      accountId: ACCT,
+      conversationId: CHAT,
+      parts: ['durable answer'],
+      day: utcDayOf(Date.now()),
+      knownAt: new Date().toISOString(),
+    });
+    const today = utcDayOf(Date.now());
+    const enqueue = vi.fn();
+    const trackInserted = vi.fn();
+    // The replacement coordinator has an empty in-memory registry; reporting
+    // must be reconstructed from the durable authoritative record above.
+    register(data, engine, makeFakeCoordinator(), {
+      acceptance: {
+        enqueue,
+        trackInserted,
+        consumeForSend: vi.fn(() => null),
+      },
+    });
+
+    await invoke('cmd:ai.feedback', { operationId, action: 'inserted', partIndex: 0, feature: 'chat-review' });
+    await invoke('cmd:ai.feedback', { operationId, action: 'inserted', partIndex: 0, feature: 'ping' });
+
+    expect(data.aiSpendLog.rowsSince(today)).toMatchObject([{ feature: 'fan-summary', inserted: 1 }]);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      operationId,
+      requestId: 'req-durable',
+      feature: 'fan-summary',
+      accountId: ACCT,
+      conversationId: CHAT,
+      action: 'inserted',
+    }));
+    expect(trackInserted).toHaveBeenCalledTimes(1);
+    expect(trackInserted).toHaveBeenCalledWith(ACCT, CHAT, expect.objectContaining({
+      operationId,
+      feature: 'fan-summary',
+      text: 'durable answer',
+    }));
+  });
+
+  it('rejects unknown kernel operations instead of trusting renderer-supplied feature', async () => {
+    const operationId = '00000000-0000-4000-8000-0000000000ab';
+    register(data, engine, makeFakeCoordinator());
     const today = utcDayOf(Date.now());
 
-    await invoke('cmd:ai.feedback', { operationId, action: 'copied', partIndex: 0, feature: 'chat-review' });
+    await expect(
+      invoke('cmd:ai.feedback', { operationId, action: 'copied', partIndex: 0, feature: 'chat-review' }),
+    ).rejects.toThrow(/unknown or expired AI operation/i);
+    expect(data.aiSpendLog.rowsSince(today)).toEqual([]);
+  });
 
-    expect(data.aiSpendLog.rowsSince(today)).toMatchObject([{ feature: 'chat-review', inserted: 1 }]);
+  it('preserves acceptance reporting when live coordinator context exists', async () => {
+    const operationId = '00000000-0000-4000-8000-0000000000ac';
+    const coordinator = makeFakeCoordinator({
+      [operationId]: { feature: 'fast-reply', parts: ['hello'] },
+    });
+    const enqueue = vi.fn();
+    const trackInserted = vi.fn();
+    register(data, engine, coordinator, {
+      acceptance: {
+        enqueue,
+        trackInserted,
+        consumeForSend: vi.fn(() => null),
+      },
+    });
+
+    await invoke('cmd:ai.feedback', { operationId, action: 'inserted', partIndex: 0 });
+    await invoke('cmd:ai.feedback', { operationId, action: 'inserted', partIndex: 0 });
+
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      operationId,
+      feature: 'fast-reply',
+      action: 'inserted',
+    }));
+    expect(trackInserted).toHaveBeenCalledWith(ACCT, CHAT, expect.objectContaining({
+      operationId,
+      text: 'hello',
+    }));
+    expect(trackInserted).toHaveBeenCalledTimes(1);
   });
 });

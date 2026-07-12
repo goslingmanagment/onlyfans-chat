@@ -10,7 +10,12 @@ import { toUserFacing } from '@chatgoose/shared/errors/index';
 import { HubError, createHubClient } from '@chatgoose/shared/hub/index';
 import type { HubAiGatewayStreamCallbacks, HubResponseLike } from '@chatgoose/shared/hub/index';
 import type { OperationEvent } from '@chatgoose/shared/protocol/index';
-import { createAiCoordinator } from '@main/ai/index';
+import {
+  DEBUG_PROMPT_BLOCK_CHAR_BUDGET,
+  DEBUG_PROMPT_MANIFEST_CHAR_BUDGET,
+  boundDebugPromptInput,
+  createAiCoordinator,
+} from '@main/ai/index';
 import type { AiCoordinator } from '@main/ai/index';
 
 import { createFeatureAiGateway } from '@main/hub/ai-feature-gateway';
@@ -137,6 +142,40 @@ describe('AI feature lane (Stage 31)', () => {
     const snapshots = framesOfType(frames, 'operation:debugPrompt');
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]).toMatchObject({ snapshot: { echo: 'unavailable' } });
+  });
+
+  it('reports an unanswered echo before a failed debug generation settles', async () => {
+    build(makeSettingsVM({ debugMode: true }));
+    coordinator.start(startRequest());
+    await flushAsync();
+
+    featureGateway.cb?.onError?.(new HubError('http', { message: 'kernel failed' }));
+    await flushAsync();
+
+    expect(frames.map((frame) => frame.type).slice(-2)).toEqual([
+      'operation:debugPrompt',
+      'operation:error',
+    ]);
+    expect(framesOfType(frames, 'operation:debugPrompt')[0]).toMatchObject({
+      snapshot: { echo: 'unavailable' },
+    });
+  });
+
+  it('bounds a valid multi-megabyte echo and records explicit truncation metadata', () => {
+    const bounded = boundDebugPromptInput({
+      systemBlocks: [{ text: 's'.repeat(DEBUG_PROMPT_BLOCK_CHAR_BUDGET + 50), cache: '1h' }],
+      userBlocks: [{ text: 'never retained in full', cache: '5m' }],
+      contextManifest: { giant: 'm'.repeat(DEBUG_PROMPT_MANIFEST_CHAR_BUDGET + 50) },
+    });
+    const systemBlocks = bounded['systemBlocks'] as Array<{ text: string }>;
+
+    expect(systemBlocks[0]?.text.length).toBeLessThanOrEqual(DEBUG_PROMPT_BLOCK_CHAR_BUDGET);
+    expect(bounded['userBlocks']).toEqual([]);
+    expect(bounded['contextManifest']).toMatchObject({ desktopTruncated: true });
+    expect(bounded['desktopTruncation']).toMatchObject({
+      blockTextTruncated: true,
+      manifestTruncated: true,
+    });
   });
 
   it('carries the meta quota frame into the complete event (#120 pre-warn)', async () => {

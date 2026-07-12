@@ -5,7 +5,10 @@
 //   - `retry: 3000` on connect; `: keep-alive` comment every 30 s;
 //   - server CLOSES every stream at the 15-min max lifetime — reconnect with
 //     `?lastEventId=` resume is the NORMAL path, not an error path;
-//   - 401/403 = bad / non-chatter key → permanent stop (CG-HUB-01 family).
+//   - cursor-less 401/403 = bad / non-chatter key → permanent stop;
+//   - v2 cursor-bearing 401/403 may instead mean grant drift, so the client
+//     authenticates through the fresh-cursor endpoint and state-reconciles
+//     before replacing the cursor (snapshot auth failure is still terminal).
 // The shared MessagesSseParser is LLM-shaped (no id/retry fields), so frame
 // parsing is a small dedicated SSE-spec parser below, unit-tested directly.
 
@@ -198,16 +201,15 @@ export interface HubSyncOptions {
    *  retained untouched for the v1 fallback window). */
   getV2Cursor?: () => string | null;
   setV2Cursor?: (cursor: string) => void;
-  /** D1-N1 (W4.2): removes the persisted v2 cursor — the 401/403-with-cursor
-   *  rebaseline path (grant shrink / re-sign-in invalidates the cursor's
-   *  account set without the credential being dead). */
+  /** Retained for runtime-wiring compatibility. Recovery must never clear a
+   * cursor and reconnect cursor-less: core interprets no cursor as "start now". */
   clearV2Cursor?: () => void;
   /**
-   * v2 gap recovery applied a fresh cursor (the v2 snapshot is a cursor
-   * handshake, not projection pages — decision #92): the caller reconciles
-   * the missed window through its authoritative polling path.
+   * Authenticated v2 rebaseline hook: refreshes the read-gateway account grant
+   * set and returns the current OFAPI account ids. HubSync replaces its event
+   * allowlist with this set before applying durable state pages.
    */
-  onV2GapRecovered?: () => void | Promise<void>;
+  onV2GapRecovered?: () => readonly string[] | Promise<readonly string[]>;
 }
 
 export interface HubSync {
@@ -225,6 +227,17 @@ type ConnectionOutcome =
   | { kind: 'stopped' }
   | { kind: 'snapshot'; requirement: SyncSnapshotRequired }
   | { kind: 'snapshot-v2' };
+
+class HubSnapshotAuthError extends Error {
+  constructor(path: string, status: number) {
+    super(`${path} authorization failed (${status})`);
+    this.name = 'HubSnapshotAuthError';
+  }
+}
+
+function isSnapshotAuthError(error: unknown): error is HubSnapshotAuthError {
+  return error instanceof HubSnapshotAuthError;
+}
 
 export function createHubSync(options: HubSyncOptions): HubSync {
   const baseUrl = options.baseUrl.trim().replace(/\/+$/, '');
@@ -250,11 +263,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   /** Consecutive failed connections since the last byte received. */
   let failures = 0;
   let retryFloorMs = HUB_DEFAULT_RETRY_MS;
-  /** D1-N1 (W4.2): one-shot guard for the 401/403-with-cursor rebaseline —
-   * reset on live bytes so a later grant change gets its own retry, but a
-   * cursor-less auth failure right after a clear is a REAL credential death. */
-  let v2AuthRebaselineTried = false;
-  const allowedAccountIds = options.accountIds === undefined
+  let allowedAccountIds = options.accountIds === undefined
     ? null
     : new Set(options.accountIds);
 
@@ -358,13 +367,12 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     }
   }
 
-  /** v2 gap recovery: the snapshot is a fresh-cursor handshake (decision
-   * #92). D1-N2 (W4.2): reconcile the missed window FIRST (awaited for real
-   * through the caller's authoritative polling path), and persist the fresh
-   * cursor only after the reconcile succeeds — persisting first durably
-   * skipped the window whenever the reconcile failed. On failure the runLoop
-   * backoff retries: the next connect 409s again (idempotent), and a crash
-   * between reconcile and persist just re-runs the recovery. */
+  /** v2 recovery obtains a fresh opaque cursor, refreshes read-gateway grants,
+   * then exhausts the existing durable state-snapshot endpoint for every
+   * currently granted account. The state pages carry chat heads, hot/archive
+   * messages, tips and tombstones without OFAPI body reads. Persist only after
+   * all pages apply; on any failure the stale cursor remains and recovery
+   * retries from the start. */
   async function recoverV2Cursor(): Promise<void> {
     const snapshotAbort = new AbortController();
     abort = snapshotAbort;
@@ -385,7 +393,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       }
     }
     if (response.status === 401 || response.status === 403) {
-      throw new Error(`hub v2 snapshot authorization failed (${response.status})`);
+      throw new HubSnapshotAuthError('hub v2 snapshot', response.status);
     }
     if (response.status !== 200 || response.json === undefined) {
       throw new Error(`hub v2 snapshot request failed (${response.status})`);
@@ -398,14 +406,26 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       throw new Error('hub v2 snapshot recovery stopped');
     }
     const freshCursor = parsed.data.cursor;
-    await options.onV2GapRecovered?.();
+    if (options.onV2GapRecovered === undefined) {
+      throw new Error('hub v2 account grant refresh is not configured');
+    }
+    const refreshedAccountIds = await options.onV2GapRecovered();
+    allowedAccountIds = new Set(refreshedAccountIds);
+    // Shrink-to-zero is a valid authenticated grant state. There is no account
+    // state to page, but the empty fresh cursor must still replace the stale
+    // cursor so the client does not loop forever on the revoked grant.
+    if (allowedAccountIds.size > 0) {
+      await recoverStateSnapshots(0);
+    }
     if (!running) {
       throw new Error('hub v2 snapshot recovery stopped');
     }
     options.setV2Cursor!(freshCursor);
   }
 
-  async function recoverSnapshots(requirement: SyncSnapshotRequired): Promise<void> {
+  /** Applies a complete, sticky-cursor state snapshot without advancing either
+   * SSE cursor. The caller owns the final protocol-specific checkpoint. */
+  async function recoverStateSnapshots(afterSeq: number): Promise<number> {
     if (allowedAccountIds === null || options.onSnapshot === undefined) {
       throw new Error('hub snapshot recovery is not configured');
     }
@@ -419,7 +439,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         }
         const url = new URL(`${baseUrl}${HUB_SNAPSHOT_PATH}`);
         url.searchParams.set('accountId', accountId);
-        url.searchParams.set('afterSeq', String(requirement.requestedSeq));
+        url.searchParams.set('afterSeq', String(afterSeq));
         url.searchParams.set('pageCursor', String(pageCursor));
         url.searchParams.set('limit', '50');
         if (snapshotCursor !== null) {
@@ -444,13 +464,13 @@ export function createHubSync(options: HubSyncOptions): HubSync {
           }
         }
         if (response.status === 404) {
-          options.onWarn?.('hub snapshot account not assigned; polling remains authoritative', {
+          options.onWarn?.('hub snapshot account not assigned; refusing partial recovery', {
             accountId,
           });
-          break;
+          throw new Error(`hub snapshot account ${accountId} is not assigned`);
         }
         if (response.status === 401 || response.status === 403) {
-          throw new Error(`hub snapshot authorization failed (${response.status})`);
+          throw new HubSnapshotAuthError('hub snapshot', response.status);
         }
         if (response.status !== 200 || response.json === undefined) {
           throw new Error(`hub snapshot request failed (${response.status})`);
@@ -462,7 +482,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         const snapshot = parsed.data;
         if (
           snapshot.page.accountId !== accountId
-          || snapshot.requestedAfterSeq !== requirement.requestedSeq
+          || snapshot.requestedAfterSeq !== afterSeq
         ) {
           throw new Error('hub snapshot response scope mismatch');
         }
@@ -487,6 +507,11 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     if (!appliedSnapshotPage || snapshotCursor === null) {
       throw new Error('hub snapshot recovery produced no snapshot pages');
     }
+    return snapshotCursor;
+  }
+
+  async function recoverSnapshots(requirement: SyncSnapshotRequired): Promise<void> {
+    const snapshotCursor = await recoverStateSnapshots(requirement.requestedSeq);
     if (running) {
       options.setLastEventId(snapshotCursor);
     }
@@ -559,7 +584,6 @@ export function createHubSync(options: HubSyncOptions): HubSync {
           }
           receivedBytes = true;
           failures = 0;
-          v2AuthRebaselineTried = false;
           armWatchdog();
           // Any bytes on an authorized stream mean the pipe works — heartbeats
           // included. Mark live on first data, not on response headers, so a
@@ -599,27 +623,32 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         break;
       }
       if (outcome.kind === 'auth') {
-        // D1-N1 (W4.2): a 401/403 on a cursor-bearing v2 connect is often an
-        // out-of-grant CURSOR (grant shrink, re-sign-in), not a dead
-        // credential — the kernel 403s a cursor naming an account the bearer
-        // no longer holds. Clear the cursor and retry ONCE cursor-less
-        // through the existing rebaseline (fresh-cursor handshake +
-        // reconcile). A cursor-less auth failure is the real thing.
-        if (
-          protocol === 'v2'
-          && options.clearV2Cursor !== undefined
-          && !v2AuthRebaselineTried
-          && options.getV2Cursor!() !== null
-        ) {
-          v2AuthRebaselineTried = true;
-          options.onWarn?.('hub v2 auth failure with a cursor; clearing cursor and rebaselining', {});
-          options.clearV2Cursor();
+        // A cursor-bearing v2 403 can be grant drift rather than dead auth.
+        // Never clear and reconnect cursor-less: core baselines that at "now"
+        // and the lost interval becomes unrecoverable. Instead authenticate via
+        // the fresh-cursor endpoint, apply durable state pages, then persist.
+        if (protocol === 'v2' && options.getV2Cursor!() !== null) {
+          options.onWarn?.('hub v2 auth failure with a cursor; authenticating rebaseline', {});
           setStatus('degraded');
-          continue;
+          try {
+            await recoverV2Cursor();
+            failures = 0;
+            continue;
+          } catch (error) {
+            if (isSnapshotAuthError(error)) {
+              setStatus('auth-failed');
+              running = false;
+              break;
+            }
+            options.onWarn?.('hub v2 authenticated rebaseline failed', {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        } else {
+          setStatus('auth-failed');
+          running = false;
+          break;
         }
-        setStatus('auth-failed');
-        running = false;
-        break;
       }
       if (outcome.kind === 'clean-close') {
         // Silent reconnect+resume; status stays 'live' so polling never churns
@@ -634,6 +663,11 @@ export function createHubSync(options: HubSyncOptions): HubSync {
           failures = 0;
           continue;
         } catch (error) {
+          if (isSnapshotAuthError(error)) {
+            setStatus('auth-failed');
+            running = false;
+            break;
+          }
           options.onWarn?.('hub v2 cursor recovery failed', {
             error: error instanceof Error ? error.message : String(error),
           });
@@ -651,6 +685,11 @@ export function createHubSync(options: HubSyncOptions): HubSync {
           failures = 0;
           continue;
         } catch (error) {
+          if (isSnapshotAuthError(error)) {
+            setStatus('auth-failed');
+            running = false;
+            break;
+          }
           options.onWarn?.('hub snapshot recovery failed', {
             error: error instanceof Error ? error.message : String(error),
           });

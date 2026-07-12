@@ -86,8 +86,15 @@ import {
   isAllowedExternalOpenUrl,
 } from './platform/navigation';
 import { messageNotificationBody } from './notifications';
+import { awaitRendererLoad } from './window-load';
 import {
   activateRuntimeNonFatal,
+  activateStoredCredentialWithRetry,
+  createBoundedRetry,
+  createRuntimeMutationQueue,
+  probeHubReadCredential,
+  replaceRuntimeSecurityFirst,
+  stopRuntimeServices,
   subscribeSettingsScope,
   validateThenReconcileOnBoot,
 } from './runtime-activation';
@@ -121,7 +128,8 @@ let spendersRefresh: SpendersRefreshService | null = null;
 let hub: HubModule | null = null;
 let disposeEventForwarding: (() => void) | null = null;
 let disposeRuntimeSettingsWatcher: (() => void) | null = null;
-let rebuildOfapiRuntimeInFlight: Promise<void> | null = null;
+let disposeRuntimeCreditMeter: (() => void) | null = null;
+const ofapiRuntimeMutations = createRuntimeMutationQueue();
 /** Set once electron-updater is dynamic-imported (win32 packaged only); null
  *  everywhere else — the IPC layer then reports phase 'unsupported'. */
 let updateController: UpdateController | null = null;
@@ -140,6 +148,50 @@ function isHubAuthFailure(error: unknown): boolean {
     'code' in error &&
     (error as { code?: unknown }).code === 'CG-HUB-01'
   );
+}
+
+/**
+ * Stop and unpublish every credential-bound runtime service. Runtime swaps and
+ * token-only sign-out share this path, so a missing replacement credential can
+ * never leave old authenticated clients reachable. The send-engine quiesce
+ * barrier is awaited before disposal/publishing a replacement engine.
+ */
+async function deactivateOfapiRuntime(): Promise<void> {
+  const previousSync = sync;
+  const previousSpendersRefresh = spendersRefresh;
+  const previousSendEngine = sendEngine;
+  const previousCoordinator = coordinator;
+  const previousHub = hub;
+  const previousEventForwarding = disposeEventForwarding;
+  const previousSettingsWatcher = disposeRuntimeSettingsWatcher;
+  const previousCreditMeter = disposeRuntimeCreditMeter;
+
+  // Unpublish first: IPC getters immediately stop handing out the outgoing
+  // runtime while its pumps are draining.
+  client = null;
+  sync = null;
+  hub = null;
+  sendEngine = null;
+  coordinator = null;
+  vaultService = null;
+  spendersService = null;
+  onlineService = null;
+  spendersRefresh = null;
+  recheckHubConfig = null;
+  disposeEventForwarding = null;
+  disposeRuntimeSettingsWatcher = null;
+  disposeRuntimeCreditMeter = null;
+
+  await stopRuntimeServices({
+    disposeEventForwarding: previousEventForwarding,
+    disposeSettingsWatcher: previousSettingsWatcher,
+    disposeCreditMeter: previousCreditMeter,
+    sync: previousSync,
+    spendersRefresh: previousSpendersRefresh,
+    sendEngine: previousSendEngine,
+    coordinator: previousCoordinator,
+    hub: previousHub,
+  });
 }
 /** UI prefs mirrored from settings by boot()'s bus watcher — read by window
  *  creation (zoom) and main-side notifications (locale). */
@@ -276,7 +328,7 @@ function buildAppMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function loadWindowContent(win: BrowserWindow): void {
+function loadWindowContent(win: BrowserWindow): Promise<void> {
   // Dev convenience: CHATGOOSE_OPEN_VIEW=settings|spenders|online boots straight
   // into that view (e.g. documenting a live run). No effect packaged.
   const openView = !app.isPackaged ? process.env['CHATGOOSE_OPEN_VIEW'] : undefined;
@@ -286,12 +338,15 @@ function loadWindowContent(win: BrowserWindow): void {
       : null;
   const rendererUrl = process.env['ELECTRON_RENDERER_URL'];
   if (!app.isPackaged && isAllowedDevRendererUrl(rendererUrl)) {
-    void win.loadURL(appendSearchToUrl(rendererUrl, search));
-  } else {
-    void win.loadFile(join(import.meta.dirname, '../renderer/index.html'), {
-      ...(search !== null ? { search } : {}),
-    });
+    return awaitRendererLoad(win.webContents, () =>
+      win.loadURL(appendSearchToUrl(rendererUrl, search)),
+    );
   }
+  return awaitRendererLoad(win.webContents, () =>
+    win.loadFile(join(import.meta.dirname, '../renderer/index.html'), {
+      ...(search !== null ? { search } : {}),
+    }),
+  );
 }
 
 function createWindow(options: { load?: boolean } = {}): BrowserWindow {
@@ -338,7 +393,9 @@ function createWindow(options: { load?: boolean } = {}): BrowserWindow {
     return { action: 'deny' };
   });
   if (options.load ?? true) {
-    loadWindowContent(win);
+    void loadWindowContent(win).catch((error: unknown) => {
+      logger?.error('renderer', 'window content load failed', errorToFields(error));
+    });
   }
   return win;
 }
@@ -351,26 +408,12 @@ async function initOfapi(
   // false so reconcileOnBoot skips the destructive queued/sending rewrites.
   isBoot: boolean,
 ): Promise<void> {
-  if (rebuildOfapiRuntimeInFlight !== null) {
-    try {
-      await rebuildOfapiRuntimeInFlight;
-    } catch {
-      // A new call should validate the latest persisted settings instead of
-      // being permanently blocked by the previous failed candidate.
-    }
-  }
-  const rebuild = rebuildOfapiRuntime(keychain, dataLayer, settingsStore, isBoot);
-  rebuildOfapiRuntimeInFlight = rebuild;
-  try {
-    await rebuild;
+  await ofapiRuntimeMutations.run(async () => {
+    await rebuildOfapiRuntime(keychain, dataLayer, settingsStore, isBoot);
     // I116-2 (W4.1): a successful (re)build clears the boot-auth latch — the
     // credential now works (or was deliberately cleared to a keyless state).
     bootHubAuthFailed = false;
-  } finally {
-    if (rebuildOfapiRuntimeInFlight === rebuild) {
-      rebuildOfapiRuntimeInFlight = null;
-    }
-  }
+  });
 }
 
 async function rebuildOfapiRuntime(
@@ -384,7 +427,6 @@ async function rebuildOfapiRuntime(
     // Stage 24: device token preferred; chatter key = fallback.
     resolveHubCredential(keychain),
   ]);
-  const hadActiveRuntime = client !== null;
   const creditMeter = createCreditMeter();
   const onError =
     (transport: 'hub'): NonNullable<OfApiClientOptions['onError']> =>
@@ -452,9 +494,7 @@ async function rebuildOfapiRuntime(
       hasHubBaseUrl: initialSettings.hubBaseUrl !== null,
       hasHubKey: hubApiKey !== null && hubApiKey.length > 0,
     });
-    if (hadActiveRuntime) {
-      throw new Error('Hub read transport is not configured');
-    }
+    await deactivateOfapiRuntime();
     return;
   }
   const readClient = createOfApiClient({
@@ -504,7 +544,7 @@ async function rebuildOfapiRuntime(
       .byPurposeOn(utcDay)
       .map((row) => [row.purpose, { requests: row.requests, credits: row.credits }]),
   );
-  const unsubscribeCreditMeter = nextClient.creditMeter.subscribe((snapshot) => {
+  let disposeCandidateCreditMeter: (() => void) | null = nextClient.creditMeter.subscribe((snapshot) => {
     if (snapshot.utcDay !== persistedDay) {
       persistedDay = snapshot.utcDay;
       persistedByPurpose.clear();
@@ -716,7 +756,40 @@ async function rebuildOfapiRuntime(
     settingsStore,
     featureGateway: nextHub.aiFeatureGateway,
     summaryHub: nextHub.summaryHub,
-    onAcceptanceEvent: (event) => nextHub.onAcceptanceEvent(event),
+    onAcceptanceEvent: (event) => {
+      try {
+        dataLayer.aiAcceptance.remember({
+          operationId: event.operationId,
+          requestId: event.requestId,
+          feature: event.feature,
+          accountId: event.accountId,
+          conversationId: event.conversationId,
+          parts: [],
+          day: event.at.slice(0, 10),
+          knownAt: event.at,
+        });
+      } catch (error) {
+        logger?.warn('ai', 'failed to persist acceptance operation correlation', errorToFields(error));
+      }
+      nextHub.onAcceptanceEvent(event);
+    },
+    onCompletedOperation: (context) => {
+      const completedAt = new Date().toISOString();
+      try {
+        dataLayer.aiAcceptance.remember({
+          operationId: context.operationId,
+          requestId: context.requestId,
+          feature: context.feature,
+          accountId: context.accountId,
+          conversationId: context.chatId,
+          parts: context.parts,
+          day: completedAt.slice(0, 10),
+          knownAt: completedAt,
+        });
+      } catch (error) {
+        logger?.warn('ai', 'failed to persist completed acceptance context', errorToFields(error));
+      }
+    },
   });
 
   let committed = false;
@@ -737,15 +810,7 @@ async function rebuildOfapiRuntime(
       isBoot,
     });
 
-    disposeEventForwarding?.();
-    disposeEventForwarding = null;
-    disposeRuntimeSettingsWatcher?.();
-    disposeRuntimeSettingsWatcher = null;
-    sync?.stop();
-    spendersRefresh?.dispose();
-    sendEngine?.dispose();
-    coordinator?.dispose();
-    hub?.dispose();
+    await deactivateOfapiRuntime();
 
     client = nextClient;
     sync = nextSync;
@@ -760,6 +825,8 @@ async function rebuildOfapiRuntime(
     // Adopt the candidate watcher attached at creation (4d) as the live one.
     disposeRuntimeSettingsWatcher = disposeCandidateSettingsWatcher;
     disposeCandidateSettingsWatcher = null;
+    disposeRuntimeCreditMeter = disposeCandidateCreditMeter;
+    disposeCandidateCreditMeter = null;
 
     nextSync.start(accountIds);
     // A refresh interrupted by quit/crash continues here; the per-fan TTL skip
@@ -775,7 +842,7 @@ async function rebuildOfapiRuntime(
     if (!committed) {
       disposeCandidateSettingsWatcher?.();
       unsubscribeSendSync();
-      unsubscribeCreditMeter();
+      disposeCandidateCreditMeter?.();
       nextSpendersRefresh.dispose();
       engine.dispose();
       nextCoordinator.dispose();
@@ -1048,7 +1115,10 @@ async function boot(): Promise<void> {
     },
   );
 
-  const rebuildOfapiRuntimeFromSettings = async (): Promise<void> => {
+  let postSignInRuntimeRetry: ReturnType<typeof createBoundedRetry> | null = null;
+  const rebuildOfapiRuntimeFromSettings = async (
+    options: { cancelPendingRetry?: boolean } = {},
+  ): Promise<void> => {
     if (data === null) {
       return;
     }
@@ -1059,26 +1129,43 @@ async function boot(): Promise<void> {
       await initOfapi(keychain, data, settingsStore, false);
       reattachEventForwarding();
       emitSyncStatusFrame();
+      if (options.cancelPendingRetry ?? true) {
+        postSignInRuntimeRetry?.cancel();
+      }
     } catch (error) {
       logger?.error('ofapi', 'runtime activation failed', errorToFields(error));
       throw error;
     }
   };
 
+  postSignInRuntimeRetry = createBoundedRetry({
+    task: () => rebuildOfapiRuntimeFromSettings({ cancelPendingRetry: false }),
+    delaysMs: [1_000, 5_000, 15_000],
+    onAttemptFailure: (error, attempt) => {
+      logger?.warn('hub', 'automatic post-sign-in runtime retry failed', {
+        attempt,
+        ...errorToFields(error),
+      });
+    },
+    onExhausted: (error) => {
+      logger?.error('hub', 'post-sign-in runtime retry budget exhausted', errorToFields(error));
+      emitSyncStatusFrame();
+    },
+    onSuccess: (attempt) => {
+      logger?.info('hub', 'post-sign-in runtime retry succeeded', { attempt });
+    },
+  });
+
   // 4a: validate the hub read runtime a hubApiKey/hubBaseUrl patch WOULD produce
   // BEFORE cmd:settings.update persists it. A throwaway read client is built
-  // from the PATCH overrides (not disk) and account-bootstrapped; a bad key/URL
+  // from the PATCH overrides (not disk) and account-list probed; a bad key/URL
   // throws here so the handler rejects with nothing written to the keychain or
   // the settings table (SPEC §15 — no half-applied credential). Clearing the
   // hub, or a patch with no effective credential/URL, is a no-op (the rebuild
   // runs keyless).
-  const probeReadRuntimeForPatch = async (rawPatch: unknown): Promise<void> => {
+  const probeReadRuntimeForPatch = async (rawPatch: unknown) => {
     const patch = settingsPatchSchema.parse(rawPatch);
     if (patch.hubApiKey === undefined && patch.hubBaseUrl === undefined) {
-      return;
-    }
-    const dataLayer = data;
-    if (dataLayer === null) {
       return;
     }
     const [current, currentDeviceToken, currentHubApiKey] = await Promise.all([
@@ -1108,11 +1195,11 @@ async function boot(): Promise<void> {
           clientVersion: app.getVersion(),
         }),
       );
-    // The account list GET is the bootstrap probe. On success it also refreshes
-    // the local accounts table (idempotent — the real rebuild re-syncs); on a
-    // 401/failure it throws before any write, and the handler skips persisting.
+    // The account list GET is a read-only credential probe. It deliberately
+    // does NOT call syncAccounts: candidate accounts must not mutate the live
+    // DB until settings/keychain persistence commits and the real runtime builds.
     try {
-      await syncAccounts(buildProbeClient(credential), dataLayer, createToMediaUrl(dataLayer.mediaUrls));
+      await probeHubReadCredential(buildProbeClient(credential));
     } catch (error) {
       // I116-2 (W4.1): when the STORED device token shadowed the pasted key
       // and got rejected, re-probe with the pasted key itself — otherwise the
@@ -1127,11 +1214,16 @@ async function boot(): Promise<void> {
       if (retryKey === null) {
         throw error;
       }
-      await syncAccounts(buildProbeClient(retryKey), dataLayer, createToMediaUrl(dataLayer.mediaUrls));
-      // The pasted key authenticates, so the stored token is provably dead —
-      // clear it, or resolveHubCredential keeps shadowing the working key.
-      await keychain.deleteSecret('hubDeviceToken');
-      logger?.warn('hub', 'stored device token rejected; cleared in favor of the validated pasted key', {});
+      await probeHubReadCredential(buildProbeClient(retryKey));
+      // The pasted key authenticates, so the stored token is provably dead. The
+      // handler invokes this only AFTER settingsStore.update persisted the key.
+      return {
+        afterPersist: async () => {
+          await keychain.deleteSecret('hubDeviceToken');
+          await refreshRedactionSecrets();
+          logger?.warn('hub', 'stored device token rejected; cleared after persisting the validated pasted key', {});
+        },
+      };
     }
   };
 
@@ -1141,7 +1233,7 @@ async function boot(): Promise<void> {
     settingsStore,
     // OFAPI-lifecycle services are built lazily by initOfapi, which can run
     // AFTER this registration — a key configured on a keyless boot routes
-    // cmd:settings.update → onOfapiKeyConfigured → initOfapi and reassigns the
+    // cmd:settings.update → onOfapiRuntimeConfigChanged → initOfapi and reassigns the
     // module-level bindings below. Pass them as getters over those bindings so
     // handlers always read the LIVE instance, not the null captured at boot
     // (otherwise cmd:spenders.hydrate, send, vault, … silently no-op until the
@@ -1205,14 +1297,10 @@ async function boot(): Promise<void> {
         );
       }
       purging = true;
-      disposeEventForwarding?.();
-      disposeEventForwarding = null;
-      disposeRuntimeSettingsWatcher?.();
-      disposeRuntimeSettingsWatcher = null;
-      sync?.stop();
-      spendersRefresh?.dispose();
-      sendEngine?.dispose();
-      hub?.dispose();
+      postSignInRuntimeRetry?.cancel();
+      // Serialize behind any activation and drain authorized send pumps before
+      // closing/deleting the DB they still reference.
+      await ofapiRuntimeMutations.run(deactivateOfapiRuntime);
       data?.close();
       await media.cache.clear().catch(() => undefined);
       await rm(join(userData, 'chatgoose.db'), { force: true });
@@ -1224,7 +1312,6 @@ async function boot(): Promise<void> {
     },
     probeReadRuntimeForPatch,
     onOfapiRuntimeConfigChanged: rebuildOfapiRuntimeFromSettings,
-    onOfapiKeyConfigured: rebuildOfapiRuntimeFromSettings,
     onHubConfigChanged: async () => {
       await recheckHubConfig?.();
       emitSyncStatusFrame();
@@ -1265,24 +1352,60 @@ async function boot(): Promise<void> {
         // was null (runtime dead until restart); with a live legacy-key
         // runtime the recheck moved SSE/REST but the captured read client
         // kept the old bearer. The rebuild covers both halves; the in-flight
-        // coalescing makes it safe against the live outbox. Never fail the
-        // sign-in result on a rebuild error — the token IS stored.
-        try {
-          await rebuildOfapiRuntimeFromSettings();
-        } catch (error) {
-          logger?.error(
-            'hub',
-            'post-sign-in runtime rebuild failed; device token stored, restart or re-save settings to retry',
-            errorToFields(error),
-          );
-        }
+        // coalescing makes it safe against the live outbox. The token remains
+        // stored if activation fails, but the IPC call rejects visibly and a
+        // bounded retry series attempts recovery in the background.
+        await activateStoredCredentialWithRetry({
+          activate: rebuildOfapiRuntimeFromSettings,
+          scheduleRetry: () => postSignInRuntimeRetry?.start(),
+          onFailure: (error) => {
+            bootHubAuthFailed = isHubAuthFailure(error);
+            logger?.error(
+              'hub',
+              'post-sign-in runtime rebuild failed; device token stored and automatic retry scheduled',
+              errorToFields(error),
+            );
+            emitSyncStatusFrame();
+          },
+        });
         emitSyncStatusFrame();
         return issued;
       },
-      // cmd:hub.signOutDevice (ipc/handlers.ts) does the reconnect itself via
-      // onOfapiKeyConfigured — this stays a plain keychain delete so it
-      // doesn't race/duplicate that rebuild.
-      signOutDevice: () => keychain.deleteSecret('hubDeviceToken'),
+      // Security-first sign-out owns the complete transition. It waits behind
+      // any activation already in flight, unpublishes/quiesces that runtime,
+      // then attempts the legacy fallback from a null-runtime baseline.
+      signOutDevice: async () => {
+        postSignInRuntimeRetry?.cancel();
+        await keychain.deleteSecret('hubDeviceToken');
+        const liveData = data;
+        try {
+          await ofapiRuntimeMutations.run(async () => {
+            await replaceRuntimeSecurityFirst({
+              deactivate: deactivateOfapiRuntime,
+              activateFallback: async () => {
+                if (liveData !== null) {
+                  await rebuildOfapiRuntime(keychain, liveData, settingsStore, false);
+                }
+                bootHubAuthFailed = false;
+              },
+            });
+          });
+        } catch (error) {
+          bootHubAuthFailed = isHubAuthFailure(error);
+          logger?.error(
+            'hub',
+            'post-sign-out fallback activation failed; runtime remains deactivated',
+            errorToFields(error),
+          );
+          throw error;
+        } finally {
+          await refreshRedactionSecrets().catch((error: unknown) => {
+            logger?.warn('hub', 'failed to refresh redaction secrets after sign-out', errorToFields(error));
+          });
+          reattachEventForwarding();
+          emitSyncStatusFrame();
+        }
+      },
     },
     harvest: {
       start: () => harvestModule.run(),
@@ -1363,9 +1486,11 @@ async function boot(): Promise<void> {
         // Stage 4: the usage spool never self-deletes (stop-loss) — export
         // EVERY undelivered row with its state (pending / dead-letter /
         // quarantined), so "export diagnostics first" before a purge really
-        // preserves the spool, not just the HTTP-400 quarantine slice. Usage
-        // telemetry carries no message text; read straight from the table so
-        // the section is present even while the hub module is off.
+        // preserves the spool, not just the HTTP-400 quarantine slice. Valid
+        // usage telemetry carries no message text; malformed legacy rows are
+        // retained as raw, secret-redacted forensic records instead of being
+        // silently lost. Read straight from the table so the section is
+        // present even while the hub module is off.
         let usageSpool: ReturnType<typeof summarizeUsageSpool> | null;
         try {
           const rows = (data?.db
@@ -1481,7 +1606,7 @@ async function boot(): Promise<void> {
   mainWindow.on('hide', () => sync?.setWindowVisible(false));
   mainWindow.on('minimize', () => sync?.setWindowVisible(false));
 
-  loadWindowContent(mainWindow);
+  await loadWindowContent(mainWindow);
 }
 
 // Dev-only smoke hook: run a keyless Hub profile without touching the real dev
@@ -1504,8 +1629,9 @@ if (app.isPackaged) {
 }
 
 // Packaged-launch smoke gate (D8): `ChatGoose --smoke` proves the main bundle
-// loads, the window is created, and boot() completes on a throwaway profile —
-// then exits 0 without human-visible UI. The 0.1.30/0.1.31 DOA class (module
+// loads, the window is created, and preload + renderer reach did-finish-load on
+// a throwaway profile — then exits 0 without human-visible UI. Navigation,
+// preload, and renderer-process failures reject boot. The 0.1.30/0.1.31 DOA class (module
 // resolution dying at load, windowless zombie) never reaches this code, so the
 // CI step's timeout is the failure signal for that class; a boot() rejection
 // exits 1 explicitly. Runs after the packaged-userData block so the temp

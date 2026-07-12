@@ -63,6 +63,31 @@ describe('buildDiagnosticsReport', () => {
     expect(JSON.stringify(report)).not.toContain('agency_hub_core_abcdef123456');
   });
 
+  it('preserves every usage-spool row past the generic 100-item diagnostics bound', () => {
+    const events = Array.from({ length: 250 }, (_, index) => ({
+      id: `usage-${String(index)}`,
+      attempts: index % 4,
+      state: 'pending',
+      payload: {
+        clientEventId: `usage-${String(index)}`,
+        note: index === 249 ? 'token=agency_hub_core_abcdef123456' : 'ok',
+      },
+    }));
+    const report = buildDiagnosticsReport(
+      inputs({
+        usageSpool: {
+          counts: { pending: 250, deadLetter: 0, quarantined: 0, invalid: 0 },
+          events,
+        },
+      }),
+    );
+
+    const exported = report['usageSpool'] as { events: typeof events };
+    expect(exported.events).toHaveLength(250);
+    expect(exported.events[249]?.id).toBe('usage-249');
+    expect(JSON.stringify(exported.events[249])).not.toContain('agency_hub_core_abcdef123456');
+  });
+
   it('exports durable hub telemetry while redacting lifecycle fields', () => {
     const report = buildDiagnosticsReport(
       inputs({

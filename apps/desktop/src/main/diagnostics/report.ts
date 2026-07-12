@@ -37,9 +37,10 @@ export interface DiagnosticsInputs {
   messageGuardAudit?: unknown;
   /**
    * The full undelivered usage spool — pending, dead-letter AND quarantined
-   * rows, each with state + payload. Usage telemetry carries no message text,
-   * and exporting is the only way these facts leave the machine before a
-   * purge (Stage 4 kept-but-exportable).
+   * rows, each with state + payload. Valid usage telemetry carries no message
+   * text; malformed legacy rows remain raw and are explicitly marked invalid.
+   * Exporting is the only way these facts leave the machine before a purge
+   * (Stage 4 kept-but-exportable).
    */
   usageSpool?: unknown;
   /** error-level CG-* code → count over the in-memory log ring. */
@@ -62,5 +63,18 @@ export function buildDiagnosticsReport(
   inputs: DiagnosticsInputs,
   secrets: readonly string[] = [],
 ): Record<string, unknown> {
-  return redactValue({ ...inputs }, secrets) as Record<string, unknown>;
+  const { usageSpool, ...boundedInputs } = inputs;
+  const report = redactValue(boundedInputs, secrets) as Record<string, unknown>;
+  if (usageSpool !== undefined) {
+    // The generic diagnostics redactor deliberately caps arrays at 100. The
+    // usage spool is different: it is the purge insurance for accounting facts,
+    // so every DB row (including an invalid raw legacy payload) must survive
+    // export. Retain all rows/keys while still applying the exact same secret,
+    // depth and per-string safety passes.
+    report['usageSpool'] = redactValue(usageSpool, secrets, {
+      maxArrayItems: Number.POSITIVE_INFINITY,
+      maxObjectKeys: Number.POSITIVE_INFINITY,
+    });
+  }
+  return report;
 }

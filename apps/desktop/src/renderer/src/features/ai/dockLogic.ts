@@ -411,6 +411,9 @@ export interface PromptInspectorBlock {
   cache: string;
 }
 
+export const PROMPT_INSPECTOR_DISPLAY_CHAR_BUDGET = 100_000;
+const PROMPT_INSPECTOR_DISPLAY_TRUNCATION = '\n[display truncated — COPY retains the bounded debug snapshot]';
+
 /** Null = unknown snapshot shape; the inspector falls back to raw JSON. */
 export function extractPromptBlocks(snapshot: unknown): PromptInspectorBlock[] | null {
   const parsed = promptSnapshotSchema.safeParse(snapshot);
@@ -419,6 +422,27 @@ export function extractPromptBlocks(snapshot: unknown): PromptInspectorBlock[] |
   for (const block of parsed.data.systemBlocks ?? []) blocks.push({ role: 'system', ...block });
   for (const block of parsed.data.userBlocks ?? []) blocks.push({ role: 'user', ...block });
   return blocks.length > 0 ? blocks : null;
+}
+
+/** Bound only the DOM representation. The retained (already main-process
+ * bounded) snapshot remains available to COPY, while opening the inspector
+ * cannot create multi-megabyte text nodes. */
+export function boundPromptBlocksForDisplay(
+  blocks: readonly PromptInspectorBlock[],
+): PromptInspectorBlock[] {
+  let remaining = PROMPT_INSPECTOR_DISPLAY_CHAR_BUDGET;
+  return blocks.map((block) => {
+    if (block.text.length <= remaining) {
+      remaining -= block.text.length;
+      return block;
+    }
+    const contentBudget = Math.max(0, remaining - PROMPT_INSPECTOR_DISPLAY_TRUNCATION.length);
+    remaining = 0;
+    return {
+      ...block,
+      text: `${block.text.slice(0, contentBudget)}${PROMPT_INSPECTOR_DISPLAY_TRUNCATION}`,
+    };
+  });
 }
 
 // ─── Kernel prompt echo (#140) ───────────────────────────────────────────

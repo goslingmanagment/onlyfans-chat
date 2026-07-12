@@ -320,7 +320,10 @@ export function useHubDeviceTokenIssue() {
   return useMutation({
     mutationFn: (args: { username: string; password: string }) =>
       getBridge().invoke('cmd:hub.issueDeviceToken', args),
-    onSuccess: () => {
+    // Activation may fail after the token is durably stored. Refresh settings
+    // on either outcome so the sign-out/recovery affordance becomes visible
+    // alongside the mutation error while the bounded main-process retry runs.
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
     },
   });

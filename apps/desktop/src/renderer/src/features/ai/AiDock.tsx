@@ -37,6 +37,7 @@ import {
   DOCK_TONES,
   copyablePartsOf,
   errorHint,
+  boundPromptBlocksForDisplay,
   extractPromptBlocks,
   formatOpCost,
   progressLabel,
@@ -603,14 +604,20 @@ function DebugSection({
   }, [compact, open]);
 
   if (debugPrompt === null && profiling === null) return null;
-  const blocks = debugPrompt !== null ? extractPromptBlocks(debugPrompt) : null;
-  const transcriptDebug = debugPrompt !== null ? readTranscriptDebug(debugPrompt) : null;
+  // Large prompt snapshots stay opaque while collapsed. Parse/flatten only on
+  // explicit open; then bound the DOM representation separately from COPY.
+  const inspectPrompt = open && debugPrompt !== null;
+  const rawBlocks = inspectPrompt ? extractPromptBlocks(debugPrompt) : null;
+  const blocks = rawBlocks !== null ? boundPromptBlocksForDisplay(rawBlocks) : null;
+  const transcriptDebug = inspectPrompt ? readTranscriptDebug(debugPrompt) : null;
   // #140: no blocks is not the same as nothing to say — the kernel's echo window
   // may be shut, or the answer may have come from cache with no model call.
-  const echoStatus = debugPrompt !== null ? readPromptEchoStatus(debugPrompt) : null;
-  const kernelContext = debugPrompt !== null ? readKernelContext(debugPrompt) : null;
+  const echoStatus = inspectPrompt ? readPromptEchoStatus(debugPrompt) : null;
+  const kernelContext = inspectPrompt ? readKernelContext(debugPrompt) : null;
   const promptSummary =
-    blocks !== null
+    !open && debugPrompt !== null
+      ? 'available'
+      : blocks !== null
       ? `${blocks.length} blocks`
       : echoStatus === 'cache-hit'
         ? 'no LLM call'
@@ -621,9 +628,10 @@ function DebugSection({
             : 'profiling';
 
   function copyPromptText(): void {
+    const copyBlocks = debugPrompt !== null ? extractPromptBlocks(debugPrompt) : null;
     const text =
-      blocks !== null
-        ? blocks.map((b) => `── ${b.role.toUpperCase()} · cache ${b.cache} ──\n${b.text}`).join('\n\n')
+      copyBlocks !== null
+        ? copyBlocks.map((b) => `── ${b.role.toUpperCase()} · cache ${b.cache} ──\n${b.text}`).join('\n\n')
         : JSON.stringify(debugPrompt, null, 2);
     void navigator.clipboard.writeText(text);
   }
@@ -762,8 +770,17 @@ function PromptDebugBody({
   profiling: ProfilingSnapshotPayload | null;
   compact: boolean;
 }): React.JSX.Element {
+  const desktopTruncated =
+    debugPrompt !== null &&
+    typeof debugPrompt['desktopTruncation'] === 'object' &&
+    debugPrompt['desktopTruncation'] !== null;
   return (
     <div className="space-y-2">
+      {desktopTruncated && (
+        <div className="rounded-chip border border-clay-line bg-clay-bg px-2.5 py-1.5 text-[11px] text-clay-deep">
+          This prompt exceeded the desktop debug safety limit. The retained preview is explicitly truncated.
+        </div>
+      )}
       {transcriptDebug !== null && transcriptDebug !== undefined && (
         <TranscriptDebugCard transcriptDebug={transcriptDebug} />
       )}

@@ -267,7 +267,16 @@ describe('harvest module', () => {
       'outbox',
       'usage_events',
     ]);
-    const excluded = ['settings', 'summaries', 'chats', 'accounts', 'fans', 'media_urls', 'thread_fetch_log'];
+    const excluded = [
+      'settings',
+      'summaries',
+      'chats',
+      'accounts',
+      'fans',
+      'media_urls',
+      'thread_fetch_log',
+      'ai_acceptance_ops',
+    ];
     for (const table of excluded) {
       expect(HARVEST_TABLES.some((spec) => spec.table === table)).toBe(false);
     }

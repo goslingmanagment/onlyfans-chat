@@ -121,6 +121,10 @@ export interface AiCoordinatorDeps {
     conversationId: string;
     at: string;
   }) => void;
+  /** Persist completed-result correlation before the renderer can submit
+   * feedback. This keeps capture/insertion reporting intact across a runtime
+   * rebuild that replaces the coordinator's bounded in-memory registry. */
+  onCompletedOperation?: (context: Omit<CompletedOperationContext, 'accepted'>) => void;
 }
 
 export interface CompletedOperationContext {
@@ -251,6 +255,82 @@ interface OperationState {
   sawDebugEcho: boolean;
   /** Set only on a fan-summary cache miss; null for every other feature. */
   summarySeed: SummaryCacheSeed | null;
+}
+
+// A valid kernel echo may contain multi-megabyte prompt blocks. Debugging must
+// never turn one unusually large transcript into an equally large IPC payload
+// and renderer heap entry. Keep a generous, explicit preview budget and mark
+// truncation in-band so the inspector never pretends it received every byte.
+export const DEBUG_PROMPT_BLOCK_CHAR_BUDGET = 500_000;
+export const DEBUG_PROMPT_MANIFEST_CHAR_BUDGET = 100_000;
+const DEBUG_PROMPT_TRUNCATION_MARKER = '\n[desktop debug preview truncated]';
+
+export function boundDebugPromptInput(input: AiDebugInput): Record<string, unknown> {
+  const allBlocks = [...input.systemBlocks, ...input.userBlocks];
+  const originalBlockChars = allBlocks.reduce((sum, block) => sum + block.text.length, 0);
+  let remaining = DEBUG_PROMPT_BLOCK_CHAR_BUDGET;
+  let blockTextTruncated = false;
+
+  const boundBlocks = (
+    blocks: AiDebugInput['systemBlocks'],
+  ): AiDebugInput['systemBlocks'] => {
+    const bounded: AiDebugInput['systemBlocks'] = [];
+    for (const block of blocks) {
+      if (remaining <= 0) {
+        blockTextTruncated = true;
+        break;
+      }
+      if (block.text.length <= remaining) {
+        bounded.push(block);
+        remaining -= block.text.length;
+        continue;
+      }
+      blockTextTruncated = true;
+      const contentBudget = Math.max(0, remaining - DEBUG_PROMPT_TRUNCATION_MARKER.length);
+      bounded.push({
+        ...block,
+        text: `${block.text.slice(0, contentBudget)}${DEBUG_PROMPT_TRUNCATION_MARKER}`,
+      });
+      remaining = 0;
+    }
+    return bounded;
+  };
+
+  const systemBlocks = boundBlocks(input.systemBlocks);
+  const userBlocks = boundBlocks(input.userBlocks);
+
+  let contextManifest: Record<string, unknown> | null = input.contextManifest;
+  let manifestTruncated = false;
+  let originalManifestChars = 0;
+  if (input.contextManifest !== null) {
+    const serialized = JSON.stringify(input.contextManifest);
+    originalManifestChars = serialized.length;
+    if (serialized.length > DEBUG_PROMPT_MANIFEST_CHAR_BUDGET) {
+      manifestTruncated = true;
+      contextManifest = {
+        desktopTruncated: true,
+        originalChars: serialized.length,
+        preview: serialized.slice(0, DEBUG_PROMPT_MANIFEST_CHAR_BUDGET),
+      };
+    }
+  }
+
+  return {
+    systemBlocks,
+    userBlocks,
+    contextManifest,
+    ...(blockTextTruncated || manifestTruncated
+      ? {
+          desktopTruncation: {
+            blockTextTruncated,
+            manifestTruncated,
+            originalBlockChars,
+            retainedBlockChars: DEBUG_PROMPT_BLOCK_CHAR_BUDGET - remaining,
+            originalManifestChars,
+          },
+        }
+      : {}),
+  };
 }
 
 function conversationKeyOf(accountId: string, chatId: string): string {
@@ -442,7 +522,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
           (part): part is string => typeof part === 'string',
         ))
       : [];
-    completedOps.set(op.operationId, {
+    const context: CompletedOperationContext = {
       operationId: op.operationId,
       requestId: op.generationRef,
       feature: op.feature,
@@ -450,7 +530,13 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       chatId: op.chatId,
       parts,
       accepted: false,
-    });
+    };
+    completedOps.set(op.operationId, context);
+    try {
+      deps.onCompletedOperation?.(context);
+    } catch {
+      // Durable correlation is best-effort and must never break completion.
+    }
     while (completedOps.size > COMPLETED_OPS_CAP) {
       const oldest = completedOps.keys().next().value;
       if (oldest === undefined) {
@@ -576,6 +662,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
   }
 
   function settleError(op: OperationState, error: unknown): void {
+    emitUnavailableDebugEcho(op);
     if (!beginSettle(op)) {
       return;
     }
@@ -587,6 +674,19 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     stopStream(op);
     op.profiler.failActive(error instanceof Error ? error.message : undefined);
     emitErrorFrame(op.operationId, toWireError(toUserFacing(error)), op.profiler);
+  }
+
+  function emitUnavailableDebugEcho(op: OperationState): void {
+    if (!op.debugEchoRequested || op.sawDebugEcho || op.settled) {
+      return;
+    }
+    op.sawDebugEcho = true;
+    emit({
+      type: 'operation:debugPrompt',
+      operationId: op.operationId,
+      feature: op.feature,
+      snapshot: { echo: 'unavailable' },
+    });
   }
 
   function discard(op: OperationState, reason: OperationDiscardReason): void {
@@ -826,11 +926,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
           type: 'operation:debugPrompt',
           operationId: op.operationId,
           feature: op.feature,
-          snapshot: {
-            systemBlocks: input.systemBlocks,
-            userBlocks: input.userBlocks,
-            contextManifest: input.contextManifest,
-          },
+          snapshot: boundDebugPromptInput(input),
         });
       },
       onText: (text: string) => {
@@ -873,14 +969,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       onComplete: (rawText: string) => {
         // Asked and not answered: say the echo window is closed, rather than
         // leaving the inspector looking like a broken profiling-only panel.
-        if (op.debugEchoRequested && !op.sawDebugEcho && !op.settled) {
-          emit({
-            type: 'operation:debugPrompt',
-            operationId: op.operationId,
-            feature: op.feature,
-            snapshot: { echo: 'unavailable' },
-          });
-        }
+        emitUnavailableDebugEcho(op);
         settleComplete(op, rawText);
       },
     };

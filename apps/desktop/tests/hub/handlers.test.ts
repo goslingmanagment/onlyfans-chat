@@ -297,6 +297,62 @@ describe('hub IPC wiring', () => {
     expect(((await invoke('query:settings.get')) as SettingsVM).hasHubKey).toBe(true);
   });
 
+  it('4a: performs stale-token cleanup only after the replacement key persists', async () => {
+    const order: string[] = [];
+    const values = new Set<SecretName>(['hubDeviceToken']);
+    const secrets = {
+      hasSecret: (name: SecretName) => Promise.resolve(values.has(name)),
+      setSecret: (name: SecretName) => {
+        order.push(`persist:${name}`);
+        values.add(name);
+        return Promise.resolve();
+      },
+      deleteSecret: (name: SecretName) => {
+        order.push(`cleanup:${name}`);
+        values.delete(name);
+        return Promise.resolve();
+      },
+    };
+    const settingsStore = createSettingsStore({ queries: data.settings, secrets });
+    const onOfapiRuntimeConfigChanged = vi.fn(async () => {
+      order.push('rebuild');
+    });
+    const probeReadRuntimeForPatch = vi.fn(async () => {
+      order.push('probe');
+      return {
+        afterPersist: async () => {
+          await secrets.deleteSecret('hubDeviceToken');
+        },
+      };
+    });
+    register(data, { settingsStore, probeReadRuntimeForPatch, onOfapiRuntimeConfigChanged });
+
+    const result = (await invoke('cmd:settings.update', {
+      hubApiKey: 'agency_hub_core_replacement',
+    })) as SettingsVM;
+
+    expect(order).toEqual(['probe', 'persist:hubApiKey', 'cleanup:hubDeviceToken', 'rebuild']);
+    expect(result.hasHubKey).toBe(true);
+    expect(result.hasHubDeviceToken).toBe(false);
+  });
+
+  it('4a: never runs stale-token cleanup when replacement persistence fails', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const settingsStore: IpcDeps['settingsStore'] = {
+      get: () => createSettingsStore({ queries: data.settings, secrets: statefulSecrets() }).get(),
+      update: () => Promise.reject(new Error('keychain write failed')),
+    };
+    register(data, {
+      settingsStore,
+      probeReadRuntimeForPatch: async () => ({ afterPersist: cleanup }),
+    });
+
+    await expect(
+      invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_replacement' }),
+    ).rejects.toThrow(/keychain write failed/);
+    expect(cleanup).not.toHaveBeenCalled();
+  });
+
   it('4a: non-hub settings patches skip the read-runtime probe', async () => {
     const probeReadRuntimeForPatch = vi.fn(async () => undefined);
     register(data, { probeReadRuntimeForPatch });
@@ -335,7 +391,7 @@ describe('cmd:hub.signOutDevice', () => {
     };
   }
 
-  it('deletes the device-token secret and requests the same rebuild a credential change uses', async () => {
+  it('delegates the complete security-first token/runtime transition to hubAuth', async () => {
     // Real settings store + a stateful secrets fake, seeded with a device
     // token — mirrors an installed, signed-in chatter.
     const secretValues = new Set<SecretName>(['hubDeviceToken']);
@@ -351,12 +407,10 @@ describe('cmd:hub.signOutDevice', () => {
       },
     };
     const settingsStore = createSettingsStore({ queries: data.settings, secrets });
-    const onOfapiKeyConfigured = vi.fn();
     const signOutDevice = vi.fn(() => secrets.deleteSecret('hubDeviceToken'));
 
     register(data, {
       settingsStore,
-      onOfapiKeyConfigured,
       hubAuth: stubHubAuth(signOutDevice),
     });
 
@@ -365,7 +419,6 @@ describe('cmd:hub.signOutDevice', () => {
     await invoke('cmd:hub.signOutDevice');
 
     expect(signOutDevice).toHaveBeenCalledTimes(1);
-    expect(onOfapiKeyConfigured).toHaveBeenCalledTimes(1);
     // The secret is gone — verified through the same public VM the renderer reads.
     expect(((await invoke('query:settings.get')) as SettingsVM).hasHubDeviceToken).toBe(false);
   });

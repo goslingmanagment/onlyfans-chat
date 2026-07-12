@@ -49,8 +49,10 @@ type PollingLike = SyncProvider & {
   pollAccount(accountId: string): Promise<void>;
   setHubPollingSuspended(suspended: boolean): void;
   refreshAccountHead(accountId: string): Promise<void>;
-  /** D1-N2 (W4.2): awaitable, failure-propagating refresh for gap recovery. */
+  /** Awaitable refresh sharing PollingSync's per-account single-flight guard. */
   reconcileAccountHeadNow(accountId: string): Promise<void>;
+  /** Refreshes read-gateway grants and atomically reconfigures polling loops. */
+  refreshAccountGrants(): Promise<string[]>;
   ingestHubMessage(
     accountId: string,
     chatId: string,
@@ -67,9 +69,8 @@ export interface HubFactoryCallbacks {
     oldestAvailableSeq: number | null;
     currentSeq: number;
   }) => void;
-  /** Stage 24: v2 gap recovery installed a fresh cursor — polling reconciles
-   *  the missed window (the v2 snapshot carries no projection pages). */
-  onV2GapRecovered: () => Promise<void>;
+  /** Refresh current read-gateway grants before v2 state reconciliation. */
+  onV2GapRecovered: () => Promise<readonly string[]>;
 }
 
 export interface HubAwareSyncOptions {
@@ -535,35 +536,23 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     });
   }
 
-  /** Stage 24 v2 gap recovery: the stream re-baselined to "now"; the missed
-   * window reconciles through the authoritative polling path (list-only head
-   * refresh per handled account). D1-N2 (W4.2): the refresh is awaited FOR
-   * REAL and failures propagate — HubSync persists the fresh cursor only
-   * after this resolves, so a failed reconcile can never durably skip the
-   * missed window (the next connect 409s and recovery retries). */
-  async function handleV2GapRecovered(): Promise<void> {
+  /** The fresh-cursor request proved the bearer is valid. Refresh the actual
+   * read-gateway account universe before HubSync snapshots or filters events:
+   * grant shrink, shrink-to-zero and newly granted accounts all reconfigure the
+   * provider without deleting cached local data. */
+  async function handleV2GapRecovered(): Promise<readonly string[]> {
+    const previousAccountIds = handledAccountIds;
+    const refreshedAccountIds = await polling.refreshAccountGrants();
+    handledAccountIds = [...refreshedAccountIds];
     recordFallback('hub-v2-gap-cursor-rebaseline', 'syncSnapshotRequired', {
-      accounts: handledAccountIds.length,
+      accountsBefore: previousAccountIds.length,
+      accountsAfter: handledAccountIds.length,
     });
-    const failedAccounts: string[] = [];
-    for (const accountId of handledAccountIds) {
-      try {
-        await polling.reconcileAccountHeadNow(accountId);
-      } catch (error) {
-        failedAccounts.push(accountId);
-        onLog('warn', 'v2 gap reconcile failed for account', {
-          accountId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        continue;
-      }
-      emit({ type: 'chatListUpdated', accountId });
-    }
-    if (failedAccounts.length > 0) {
-      throw new Error(
-        `v2 gap reconcile failed for ${failedAccounts.length} of ${handledAccountIds.length} account(s)`,
-      );
-    }
+    onLog('info', 'v2 account grants refreshed for durable reconciliation', {
+      accountsBefore: previousAccountIds.length,
+      accountsAfter: handledAccountIds.length,
+    });
+    return handledAccountIds;
   }
 
   async function handleHubEvent(event: SyncEvent): Promise<void> {

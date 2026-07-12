@@ -94,7 +94,7 @@ describe('createSqliteUsageEventStore', () => {
       .all() as Array<{ id?: unknown; payload?: unknown; attempts?: unknown }>;
     const spool = summarizeUsageSpool(rows);
 
-    expect(spool.counts).toEqual({ pending: 1, deadLetter: 1, quarantined: 1 });
+    expect(spool.counts).toEqual({ pending: 1, deadLetter: 1, quarantined: 1, invalid: 0 });
     expect(spool.events.map((event) => [event.id, event.state])).toEqual([
       ['hot', 'pending'],
       ['parked', 'deadLetter'],
@@ -104,6 +104,49 @@ describe('createSqliteUsageEventStore', () => {
     for (const event of spool.events) {
       expect(event.payload).toMatchObject({ clientEventId: event.id });
     }
+  });
+
+  it('preserves malformed and invalid-shape rows as raw purge-insurance facts', () => {
+    const rows = [
+      { id: 'broken-json', payload: '{"clientEventId":', attempts: 1 },
+      { id: 'primitive-json', payload: '42', attempts: 2 },
+      { id: 'array-json', payload: '[]', attempts: 2 },
+      { id: 'broken-storage-shape', payload: null, attempts: 3 },
+    ];
+
+    const spool = summarizeUsageSpool(rows);
+
+    expect(spool.counts).toEqual({ pending: 0, deadLetter: 0, quarantined: 0, invalid: 4 });
+    expect(spool.events).toEqual([
+      {
+        id: 'broken-json',
+        attempts: 1,
+        state: 'invalid',
+        payload: '{"clientEventId":',
+        invalidReason: 'malformed-json',
+      },
+      {
+        id: 'primitive-json',
+        attempts: 2,
+        state: 'invalid',
+        payload: '42',
+        invalidReason: 'non-object-json',
+      },
+      {
+        id: 'array-json',
+        attempts: 2,
+        state: 'invalid',
+        payload: '[]',
+        invalidReason: 'non-object-json',
+      },
+      {
+        id: 'broken-storage-shape',
+        attempts: 3,
+        state: 'invalid',
+        payload: null,
+        invalidReason: 'non-string-payload',
+      },
+    ]);
   });
 
   it('loads coordinator-parked raw rows mapped to the wire shape', () => {

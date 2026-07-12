@@ -187,6 +187,37 @@ describe('toUserFacing', () => {
     expect(result.code).toBe('CG-API-02');
     expect(result.message).toBe('OpenRouter balance is insufficient.');
   });
+
+  it.each(['rate_limit_exceeded', 'rate_limit'])(
+    'uses throttling wording for kernel 429 code %s',
+    (kernelCode) => {
+      const result = toUserFacing(
+        new CgError('CG-HUB-02', {
+          message: 'Too many requests',
+          detail: { status: 429, kernelCode },
+        }),
+      );
+      expect(result.message).toBe('Agency Hub is rate-limiting requests.');
+      expect(result.recovery).toContain('not an outage');
+      expect(result.detailText).toBe('Too many requests');
+    },
+  );
+
+  it('applies canonical kernel rate-limit wording to a prototype-less copy', () => {
+    const wire = JSON.parse(
+      JSON.stringify(
+        toDebugPayload(
+          new CgError('CG-HUB-02', {
+            message: 'Too many requests',
+            detail: { status: 429, kernelCode: 'rate_limit_exceeded' },
+          }),
+        ),
+      ),
+    );
+    const result = toUserFacing(wire);
+    expect(result.message).toBe('Agency Hub is rate-limiting requests.');
+    expect(result.recovery).toContain('not an outage');
+  });
 });
 
 // Legacy errors.test.ts: getErrorMessage facts.

@@ -11,7 +11,7 @@ import { parseOperationEvent } from '@chatgoose/shared/protocol/index';
 import type { OperationEvent } from '@chatgoose/shared/protocol/index';
 import type { LlmUsageMetrics } from '@chatgoose/shared/usage-metrics';
 import { createAiCoordinator } from '@main/ai/index';
-import type { AiCoordinator } from '@main/ai/index';
+import type { AiCoordinator, AiCoordinatorDeps } from '@main/ai/index';
 import type { DataLayer } from '@main/db/index';
 import {
   ACCT,
@@ -41,11 +41,15 @@ describe('AiCoordinator', () => {
   let frames: OperationEvent[];
   let coordinator: AiCoordinator;
 
-  function build(settings: SettingsVM = makeSettingsVM()): void {
+  function build(
+    settings: SettingsVM = makeSettingsVM(),
+    overrides: Partial<AiCoordinatorDeps> = {},
+  ): void {
     coordinator = createAiCoordinator({
       data,
       settingsStore: makeSettingsStore(settings),
       featureGateway: gateway.gateway,
+      ...overrides,
     });
     coordinator.subscribe((event) => frames.push(event));
   }
@@ -103,6 +107,31 @@ describe('AiCoordinator', () => {
     expect(complete?.operationId).toBe('op-1');
     expect(complete?.result.rawText).toBe('hey you');
     expect(complete?.result.parts).toEqual(['hey you']);
+  });
+
+  it('publishes authoritative completed parts before the renderer receives completion', async () => {
+    const order: string[] = [];
+    const onCompletedOperation = vi.fn(() => order.push('persisted'));
+    build(makeSettingsVM(), { onCompletedOperation });
+    coordinator.subscribe((event) => {
+      if (event.type === 'operation:complete') {
+        order.push('renderer');
+      }
+    });
+    await startAndReachStream();
+
+    gateway.cb?.onText('durable answer');
+    gateway.cb?.onComplete('durable answer');
+    await flushAsync();
+
+    expect(onCompletedOperation).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: 'op-1',
+      feature: 'fast-reply',
+      accountId: ACCT,
+      chatId: CHAT,
+      parts: ['durable answer'],
+    }));
+    expect(order).toEqual(['persisted', 'renderer']);
   });
 
   it('batches stream chunks on the 50 ms relay timer', async () => {

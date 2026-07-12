@@ -1,12 +1,14 @@
 // HubSync v2 (kernel Stage 24): the SSE consumer against core's domain-event
 // stream — opaque per-account cursor resume, handle-then-checkpoint on the
 // mapped frames, forward-compat checkpointing of unmapped types, the
-// ephemeral (typing) lane that never checkpoints, and the fresh-cursor 409
-// recovery (the v2 snapshot is a handshake, not projection pages).
+// ephemeral (typing) lane that never checkpoints, and authenticated v2
+// rebaseline through a fresh cursor plus paginated durable state snapshots.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SyncSnapshotResponse } from '@chatgoose/shared/protocol/index';
 import {
   createHubSync,
+  HUB_SNAPSHOT_PATH,
   HUB_V2_SNAPSHOT_PATH,
   HUB_V2_SSE_PATH,
   type HubSseFetch,
@@ -14,6 +16,7 @@ import {
 } from '../../src/main/sync/hub-sync';
 
 const ACCT = 'acct_hub_v2_test';
+const NEW_ACCT = 'acct_hub_v2_new';
 
 interface FakeStream {
   send(text: string): void;
@@ -102,6 +105,59 @@ function messageFrame(cursor: string, overrides: Record<string, unknown> = {}): 
   });
 }
 
+function stateSnapshot(
+  nextPageCursor: number | null,
+  options: {
+    snapshotCursor?: number;
+    accountId?: string;
+    chatId?: string;
+    messages?: SyncSnapshotResponse['threads'][number]['messages'];
+    unresolvedTombstones?: SyncSnapshotResponse['unresolvedTombstones'];
+  } = {},
+): SyncSnapshotResponse {
+  const accountId = options.accountId ?? ACCT;
+  const chatId = options.chatId ?? '777';
+  return {
+    version: 1,
+    requestedAfterSeq: 0,
+    snapshotCursor: options.snapshotCursor ?? 22,
+    stateAt: '2026-07-12T18:00:00.000Z',
+    resumeAllowed: true,
+    page: {
+      pageId: 7,
+      label: 'lora-of',
+      accountId,
+      username: 'lora',
+      authStatus: 'connected',
+      authenticated: true,
+      authChangedAt: '2026-07-12T17:59:00.000Z',
+    },
+    coverage: {
+      durableDomains: ['chat_heads', 'hot_messages', 'message_tombstones', 'account_auth'],
+      omittedDomains: [
+        { domain: 'presence', reason: 'ephemeral_not_snapshotted' },
+        { domain: 'typing', reason: 'ephemeral_not_snapshotted' },
+      ],
+      messageWindow: 'hot_projection_plus_archive_delta',
+    },
+    threads: [{
+      chatId,
+      fanName: `Fan ${chatId}`,
+      unreadCount: 0,
+      hasUnreadTips: false,
+      lastMessageId: options.messages?.at(-1)?.messageId ?? null,
+      lastMessageAt: options.messages?.at(-1)?.message?.createdAt ?? null,
+      lastMessageIsSentByMe: options.messages?.at(-1)?.message?.isSentByMe ?? false,
+      lastMessagePreview: options.messages?.at(-1)?.message?.text ?? '',
+      visible: true,
+      sourceUpdatedAt: '2026-07-12T18:00:00.000Z',
+      messages: options.messages ?? [],
+    }],
+    unresolvedTombstones: options.unresolvedTombstones ?? [],
+    nextPageCursor,
+  };
+}
+
 async function drainMicrotasks(): Promise<void> {
   for (let i = 0; i < 50; i += 1) {
     await Promise.resolve();
@@ -132,8 +188,12 @@ describe('createHubSync (protocol v2)', () => {
       initialCursor?: string | null;
       failEvents?: boolean;
       clientVersion?: string;
-      /** D1-N2: fail the first N gap-recovery reconciles. */
+      /** Fail the first N durable state page applications. */
+      failSnapshotPages?: number;
+      /** Fail the first N authenticated grant refreshes. */
       failGapRecoveries?: number;
+      /** Account ids returned by the authenticated read-gateway refresh. */
+      refreshedAccountIds?: readonly string[];
     } = {},
   ): V2Harness {
     const { fetchImpl, calls } = makeHarness(responses);
@@ -141,6 +201,7 @@ describe('createHubSync (protocol v2)', () => {
     const log: string[] = [];
     let cursor: string | null = options.initialCursor ?? null;
     let gapRecoveries = 0;
+    let snapshotPages = 0;
     const sync = createHubSync({
       protocol: 'v2',
       baseUrl: 'https://hub.test/',
@@ -155,6 +216,14 @@ describe('createHubSync (protocol v2)', () => {
         }
         log.push(`event:${event.type}`);
       },
+      onSnapshot: (snapshot) => {
+        snapshotPages += 1;
+        if (snapshotPages <= (options.failSnapshotPages ?? 0)) {
+          log.push('snapshot-failed');
+          throw new Error('state snapshot apply failed');
+        }
+        log.push(`snapshot:${snapshot.threads[0]?.chatId ?? 'empty'}:${snapshot.nextPageCursor ?? 'done'}`);
+      },
       onV2GapRecovered: () => {
         gapRecoveries += 1;
         if (gapRecoveries <= (options.failGapRecoveries ?? 0)) {
@@ -162,6 +231,7 @@ describe('createHubSync (protocol v2)', () => {
           throw new Error('reconcile failed');
         }
         log.push('gap-recovered');
+        return options.refreshedAccountIds ?? [ACCT];
       },
       onStatusChange: (status) => statuses.push(status),
       getLastEventId: () => null,
@@ -294,7 +364,7 @@ describe('createHubSync (protocol v2)', () => {
     h.sync.stop();
   });
 
-  it('recovers from a v2 409 with a fresh snapshot cursor and hands reconciliation to the caller', async () => {
+  it('recovers from a v2 409 only after every durable state page applies', async () => {
     const stream = makeStream();
     const h = makeV2Sync([
       {
@@ -310,6 +380,8 @@ describe('createHubSync (protocol v2)', () => {
         },
       },
       { status: 200, stream: null, json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+      { status: 200, stream: null, json: stateSnapshot(5, { chatId: 'page-1' }) },
+      { status: 200, stream: null, json: stateSnapshot(null, { chatId: 'page-2' }) },
       { status: 200, stream },
     ], { initialCursor: 'CUR_STALE', clientVersion: '0.1.29' });
     h.sync.start();
@@ -317,16 +389,26 @@ describe('createHubSync (protocol v2)', () => {
 
     expect(h.calls[0]!.url).toContain('cursor=CUR_STALE');
     expect(h.calls[1]!.url).toBe(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
-    expect(h.calls[2]!.url).toContain('cursor=CUR_FRESH');
+    expect(h.calls[2]!.url).toBe(
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=50`,
+    );
+    expect(h.calls[3]!.url).toBe(
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=5&limit=50&snapshotCursor=22`,
+    );
+    expect(h.calls[4]!.url).toContain('cursor=CUR_FRESH');
     // v2 snapshot handshake carries the header too, not just the SSE connect.
     expect(h.calls[1]!.headers['x-client-version']).toBe('0.1.29');
-    // D1-N2 (W4.2): reconcile FIRST, persist only after it succeeds.
-    expect(h.log).toEqual(['gap-recovered', 'persist:CUR_FRESH']);
+    expect(h.log).toEqual([
+      'gap-recovered',
+      'snapshot:page-1:5',
+      'snapshot:page-2:done',
+      'persist:CUR_FRESH',
+    ]);
     expect(h.gapRecoveries()).toBe(1);
     h.sync.stop();
   });
 
-  it('does not persist the fresh cursor when reconciliation fails; recovery retries (D1-N2)', async () => {
+  it('does not persist the fresh cursor when a durable state page fails; recovery retries', async () => {
     const stream = makeStream();
     const snapshotRequired = {
       error: 'sync_snapshot_required',
@@ -339,41 +421,178 @@ describe('createHubSync (protocol v2)', () => {
     const h = makeV2Sync([
       { status: 409, stream: null, json: snapshotRequired },
       { status: 200, stream: null, json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+      { status: 200, stream: null, json: stateSnapshot(null, { chatId: 'first-attempt' }) },
       { status: 409, stream: null, json: snapshotRequired },
       { status: 200, stream: null, json: { cursor: 'CUR_FRESH2', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+      { status: 200, stream: null, json: stateSnapshot(null, { chatId: 'second-attempt' }) },
       { status: 200, stream },
-    ], { initialCursor: 'CUR_STALE', failGapRecoveries: 1 });
+    ], { initialCursor: 'CUR_STALE', failSnapshotPages: 1 });
     h.sync.start();
     await drainMicrotasks();
 
     // First recovery reconcile failed → the fresh cursor was NOT persisted;
     // the reconnect still carries the STALE cursor, 409s again, and the
     // second recovery succeeds end-to-end.
-    expect(h.calls[2]!.url).toContain('cursor=CUR_STALE');
-    expect(h.log).toEqual(['gap-failed', 'gap-recovered', 'persist:CUR_FRESH2']);
+    expect(h.calls[3]!.url).toContain('cursor=CUR_STALE');
+    expect(h.log).toEqual([
+      'gap-recovered',
+      'snapshot-failed',
+      'gap-recovered',
+      'snapshot:second-attempt:done',
+      'persist:CUR_FRESH2',
+    ]);
     expect(h.cursor()).toBe('CUR_FRESH2');
-    expect(h.calls[4]!.url).toContain('cursor=CUR_FRESH2');
+    expect(h.calls[6]!.url).toContain('cursor=CUR_FRESH2');
     h.sync.stop();
   });
 
-  it('clears the cursor and rebaselines once on a 403-with-cursor instead of dying (D1-N1)', async () => {
+  it('403-with-cursor authenticates, applies state, then persists without a cursor-less connect', async () => {
     const stream = makeStream();
     const h = makeV2Sync([
       { status: 403, stream: null },
+      { status: 200, stream: null, json: { cursor: 'CUR_RESCOPED', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+      { status: 200, stream: null, json: stateSnapshot(9, { chatId: 'rescoped-1' }) },
+      { status: 200, stream: null, json: stateSnapshot(null, { chatId: 'rescoped-2' }) },
       { status: 200, stream },
     ], { initialCursor: 'CUR_OUT_OF_GRANT' });
     h.sync.start();
     await drainMicrotasks();
 
     expect(h.calls[0]!.url).toContain('cursor=CUR_OUT_OF_GRANT');
-    expect(h.log).toContain('clear');
-    // The one-shot retry reconnects CURSOR-LESS through the rebaseline.
-    expect(h.calls[1]!.url).not.toContain('cursor=');
+    expect(h.calls[1]!.url).toBe(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
+    expect(h.calls[2]!.url).toContain(`${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0`);
+    expect(h.calls[3]!.url).toContain('pageCursor=9');
+    expect(h.calls[4]!.url).toContain('cursor=CUR_RESCOPED');
+    expect(h.calls.some((call) => call.url === `https://hub.test${HUB_V2_SSE_PATH}`)).toBe(false);
+    expect(h.log).toEqual([
+      'gap-recovered',
+      'snapshot:rescoped-1:9',
+      'snapshot:rescoped-2:done',
+      'persist:CUR_RESCOPED',
+    ]);
 
     stream.send(': keep-alive\n\n');
     await drainMicrotasks();
     expect(h.sync.status()).toBe('live');
     expect(h.statuses).not.toContain('auth-failed');
+    h.sync.stop();
+  });
+
+  it('refreshes a replaced grant set before snapshotting and accepts the newly granted account', async () => {
+    const stream = makeStream();
+    const h = makeV2Sync([
+      { status: 403, stream: null },
+      {
+        status: 200,
+        stream: null,
+        json: { cursor: 'CUR_REPLACED', accounts: [{ accountId: 8, currentSeq: 2 }] },
+      },
+      {
+        status: 200,
+        stream: null,
+        json: stateSnapshot(null, { accountId: NEW_ACCT, chatId: 'new-grant' }),
+      },
+      { status: 200, stream },
+    ], {
+      initialCursor: 'CUR_OLD_GRANT',
+      refreshedAccountIds: [NEW_ACCT],
+    });
+
+    h.sync.start();
+    await drainMicrotasks();
+
+    expect(h.calls.map((call) => call.url)).toEqual([
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_OLD_GRANT`,
+      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${NEW_ACCT}&afterSeq=0&pageCursor=0&limit=50`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_REPLACED`,
+    ]);
+    expect(h.calls.some((call) => call.url.includes(`accountId=${ACCT}`))).toBe(false);
+    expect(h.log).toEqual([
+      'gap-recovered',
+      'snapshot:new-grant:done',
+      'persist:CUR_REPLACED',
+    ]);
+
+    stream.send(messageFrame('CUR_NEW_EVENT', { accountRef: NEW_ACCT }));
+    await drainMicrotasks();
+    expect(h.log).toEqual([
+      'gap-recovered',
+      'snapshot:new-grant:done',
+      'persist:CUR_REPLACED',
+      'event:messageReceived',
+      'persist:CUR_NEW_EVENT',
+    ]);
+    h.sync.stop();
+  });
+
+  it('persists an authenticated shrink-to-zero cursor without state requests or revoked events', async () => {
+    const stream = makeStream();
+    const h = makeV2Sync([
+      { status: 403, stream: null },
+      { status: 200, stream: null, json: { cursor: 'CUR_EMPTY', accounts: [] } },
+      { status: 200, stream },
+    ], {
+      initialCursor: 'CUR_REVOKED',
+      refreshedAccountIds: [],
+    });
+
+    h.sync.start();
+    await drainMicrotasks();
+
+    expect(h.calls.map((call) => call.url)).toEqual([
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_REVOKED`,
+      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_EMPTY`,
+    ]);
+    expect(h.log).toEqual(['gap-recovered', 'persist:CUR_EMPTY']);
+
+    stream.send(messageFrame('CUR_REVOKED_EVENT'));
+    await drainMicrotasks();
+    expect(h.log).toEqual([
+      'gap-recovered',
+      'persist:CUR_EMPTY',
+      'persist:CUR_REVOKED_EVENT',
+    ]);
+    h.sync.stop();
+  });
+
+  it('refuses the fresh cursor when any refreshed account lacks a state snapshot', async () => {
+    const stream = makeStream();
+    const h = makeV2Sync([
+      {
+        status: 409,
+        stream: null,
+        json: {
+          error: 'sync_snapshot_required',
+          message: 'cursor gap',
+          statusCode: 409,
+          version: 2,
+          accounts: [{ accountId: 7, requestedSeq: 5, oldestAvailableSeq: 9, currentSeq: 12 }],
+          snapshotPath: HUB_V2_SNAPSHOT_PATH,
+        },
+      },
+      {
+        status: 200,
+        stream: null,
+        json: { cursor: 'CUR_PARTIAL', accounts: [{ accountId: 7, currentSeq: 12 }] },
+      },
+      { status: 200, stream: null, json: stateSnapshot(null, { chatId: 'covered' }) },
+      { status: 404, stream: null },
+      { status: 200, stream },
+    ], {
+      initialCursor: 'CUR_STALE',
+      refreshedAccountIds: [ACCT, NEW_ACCT],
+    });
+
+    h.sync.start();
+    await drainMicrotasks();
+
+    expect(h.calls[2]!.url).toContain(`accountId=${ACCT}`);
+    expect(h.calls[3]!.url).toContain(`accountId=${NEW_ACCT}`);
+    expect(h.calls[4]!.url).toBe(`https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`);
+    expect(h.cursor()).toBe('CUR_STALE');
+    expect(h.log).toEqual(['gap-recovered', 'snapshot:covered:done']);
     h.sync.stop();
   });
 
@@ -387,7 +606,7 @@ describe('createHubSync (protocol v2)', () => {
     expect(h.log).not.toContain('clear');
   });
 
-  it('gives the rebaseline exactly one shot: a second auth failure is terminal (D1-N1 loop guard)', async () => {
+  it('treats auth failure from the fresh-cursor handshake as terminal without clearing the cursor', async () => {
     const h = makeV2Sync([
       { status: 403, stream: null },
       { status: 403, stream: null },
@@ -396,9 +615,42 @@ describe('createHubSync (protocol v2)', () => {
     await drainMicrotasks();
 
     expect(h.calls).toHaveLength(2);
-    expect(h.log.filter((entry) => entry === 'clear')).toHaveLength(1);
+    expect(h.calls[1]!.url).toBe(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
+    expect(h.log).toEqual([]);
+    expect(h.cursor()).toBe('CUR_DEAD');
     expect(h.sync.status()).toBe('auth-failed');
   });
+
+  it.each([401, 403])(
+    'treats durable state-snapshot auth failure (%s) as terminal without persisting',
+    async (status) => {
+      const h = makeV2Sync([
+        {
+          status: 409,
+          stream: null,
+          json: {
+            error: 'sync_snapshot_required',
+            message: 'cursor gap',
+            statusCode: 409,
+            version: 2,
+            accounts: [{ accountId: 7, requestedSeq: 5, oldestAvailableSeq: 9, currentSeq: 12 }],
+            snapshotPath: HUB_V2_SNAPSHOT_PATH,
+          },
+        },
+        { status: 200, stream: null, json: { cursor: 'CUR_NOT_SAFE_YET', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+        { status, stream: null },
+      ], { initialCursor: 'CUR_STALE' });
+
+      h.sync.start();
+      await drainMicrotasks();
+
+      expect(h.calls).toHaveLength(3);
+      expect(h.calls[2]!.url).toContain(HUB_SNAPSHOT_PATH);
+      expect(h.cursor()).toBe('CUR_STALE');
+      expect(h.log).toEqual(['gap-recovered']);
+      expect(h.sync.status()).toBe('auth-failed');
+    },
+  );
 
   it('requires the v2 cursor seams at construction', () => {
     expect(() => createHubSync({

@@ -171,6 +171,22 @@ interface AccountLoop {
   consecutiveFailures: number;
 }
 
+function createAccountLoopState(): AccountLoop {
+  return {
+    timer: null,
+    spendTimer: null,
+    unreadReconcileTimer: null,
+    inFlight: false,
+    spendInFlight: false,
+    unreadReconcileInFlight: false,
+    lastSuccessAt: null,
+    lastDeepSweepAt: null,
+    lastSpendSweepAt: null,
+    lastUnreadReconcileAt: null,
+    consecutiveFailures: 0,
+  };
+}
+
 interface PendingHubListRefresh {
   timer: ReturnType<typeof setTimeout> | null;
   promise: Promise<void>;
@@ -249,8 +265,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   setHubPollingSuspended(suspended: boolean): void;
   /** Event-driven, body-free page-1 list refresh for hub account-level activity. */
   refreshAccountHead(accountId: string): Promise<void>;
-  /** D1-N2: awaitable, failure-propagating head refresh — v2 gap recovery only. */
+  /** Awaitable page-1 refresh that shares the account's poll single-flight guard. */
   reconcileAccountHeadNow(accountId: string): Promise<void>;
+  /** Refresh read-gateway account grants and reconfigure active polling loops. */
+  refreshAccountGrants(): Promise<string[]>;
   /** Body-free local ingestion for enriched hub message events. */
   ingestHubMessage(
     accountId: string,
@@ -441,6 +459,75 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       pending.resolve();
     }
     hubListRefreshes.clear();
+  }
+
+  function removeAccountLoop(accountId: string): void {
+    const loop = loops.get(accountId);
+    if (!loop) {
+      return;
+    }
+    // Delete first: completions from already-in-flight work may still apply
+    // idempotent cache rows, but every finally/scheduler sees no active loop.
+    loops.delete(accountId);
+    if (loop.timer) clearTimeout(loop.timer);
+    if (loop.spendTimer) clearTimeout(loop.spendTimer);
+    if (loop.unreadReconcileTimer) clearTimeout(loop.unreadReconcileTimer);
+    loop.timer = null;
+    loop.spendTimer = null;
+    loop.unreadReconcileTimer = null;
+
+    const pending = hubListRefreshes.get(accountId);
+    if (pending) {
+      if (pending.timer) clearTimeout(pending.timer);
+      hubListRefreshes.delete(accountId);
+      pending.resolve();
+    }
+    for (const [key, poller] of mediaPollers) {
+      if (key.startsWith(`${accountId}/`)) {
+        clearTimeout(poller.timer);
+        mediaPollers.delete(key);
+      }
+    }
+    for (const key of historyCoverage.keys()) {
+      if (key.startsWith(`${accountId}/`)) {
+        historyCoverage.delete(key);
+      }
+    }
+    if (focusedAccount === accountId) {
+      focusedAccount = null;
+    }
+    if (openConversation?.accountId === accountId) {
+      openConversation = null;
+      if (sweepTimer) clearTimeout(sweepTimer);
+      sweepTimer = null;
+    }
+    // Preserve cached rows and related messages, but make the revoked account
+    // visibly non-live rather than deleting data through account FKs.
+    data.accounts.setAuthState(accountId, 'unauthenticated');
+  }
+
+  function addAccountLoop(accountId: string, pollImmediately: boolean): void {
+    let created = false;
+    if (!loops.has(accountId)) {
+      loops.set(accountId, createAccountLoopState());
+      created = true;
+    }
+    if (!running) {
+      return;
+    }
+    const loop = loops.get(accountId)!;
+    if (readHydration(accountId).done && loop.spendTimer === null && !loop.spendInFlight) {
+      scheduleSpendSweep(accountId, 0);
+    }
+    if (pollImmediately) {
+      void pollAccount(accountId).finally(() => {
+        schedule(accountId, intervalFor(accountId));
+        scheduleUnreadReconcile(accountId);
+      });
+    } else if (created) {
+      schedule(accountId, intervalFor(accountId));
+      scheduleUnreadReconcile(accountId);
+    }
   }
 
   function scheduleSpendSweep(accountId: string, delayMs: number): void {
@@ -745,6 +832,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       }
       const startedAt = now();
       const poll = (): void => {
+        if (!loops.has(accountId)) {
+          mediaPollers.delete(key);
+          return;
+        }
         if (now() - startedAt > MEDIA_READY_POLL_CAP_MS) {
           mediaPollers.delete(key);
           return;
@@ -758,10 +849,14 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
               mediaPollers.delete(key);
               return;
             }
-            mediaPollers.set(key, { startedAt, timer: setTimeout(poll, MEDIA_READY_POLL_MS) });
+            if (loops.has(accountId)) {
+              mediaPollers.set(key, { startedAt, timer: setTimeout(poll, MEDIA_READY_POLL_MS) });
+            }
           })
           .catch(() => {
-            mediaPollers.set(key, { startedAt, timer: setTimeout(poll, MEDIA_READY_POLL_MS) });
+            if (loops.has(accountId)) {
+              mediaPollers.set(key, { startedAt, timer: setTimeout(poll, MEDIA_READY_POLL_MS) });
+            }
           });
       };
       mediaPollers.set(key, { startedAt, timer: setTimeout(poll, MEDIA_READY_POLL_MS) });
@@ -1102,26 +1197,32 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     await runAccountHeadRefresh(accountId, loop);
   }
 
-  /** D1-N2 (W4.2): awaitable immediate head refresh for v2 gap recovery ONLY
-   * — per-frame hub callers keep the debounced refreshAccountHead. An
-   * in-flight poll tick is waited out and the refresh RETRIED, never silently
-   * skipped, and failures propagate so an unreconciled window is never
-   * reported as recovered. */
+  /** Awaitable immediate head refresh for recovery/diagnostics. It participates
+   * in the same per-account single-flight guard as pollAccount: wait for the
+   * current owner, claim synchronously, and release in finally. */
   async function reconcileAccountHeadNow(accountId: string): Promise<void> {
     const loop = loops.get(accountId);
     if (!loop) {
       return; // account not handled by this runtime — nothing to reconcile
     }
-    while (loop.inFlight) {
-      if (!running) {
-        return; // shutdown: the caller's own running-check refuses the cursor persist
+    while (true) {
+      if (!running || loops.get(accountId) !== loop) {
+        return; // shutdown/revocation: never start a stale queued refresh
+      }
+      if (!loop.inFlight) {
+        loop.inFlight = true;
+        break;
       }
       await sleep(RECONCILE_INFLIGHT_WAIT_MS);
     }
-    if (!running) {
-      return;
+    try {
+      if (!running || loops.get(accountId) !== loop) {
+        return;
+      }
+      await runAccountHeadRefresh(accountId, loop);
+    } finally {
+      loop.inFlight = false;
     }
-    await runAccountHeadRefresh(accountId, loop);
   }
 
   function armHubListRefresh(accountId: string, pending: PendingHubListRefresh): void {
@@ -1507,32 +1608,27 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }
   }
 
+  async function refreshAccountGrants(): Promise<string[]> {
+    const accountIds = [...new Set(await syncAccounts(client, data, toMediaUrl))];
+    const next = new Set(accountIds);
+    for (const accountId of [...loops.keys()]) {
+      if (!next.has(accountId)) {
+        removeAccountLoop(accountId);
+      }
+    }
+    // Durable state snapshots run immediately after this refresh, so new loops
+    // wait for their normal cadence instead of racing the authoritative apply.
+    for (const accountId of accountIds) {
+      addAccountLoop(accountId, false);
+    }
+    return accountIds;
+  }
+
   return {
     start(accountIds) {
       running = true;
       for (const accountId of accountIds) {
-        if (!loops.has(accountId)) {
-          loops.set(accountId, {
-            timer: null,
-            spendTimer: null,
-            unreadReconcileTimer: null,
-            inFlight: false,
-            spendInFlight: false,
-            unreadReconcileInFlight: false,
-            lastSuccessAt: null,
-            lastDeepSweepAt: null,
-            lastSpendSweepAt: null,
-            lastUnreadReconcileAt: null,
-            consecutiveFailures: 0,
-          });
-        }
-        if (readHydration(accountId).done) {
-          scheduleSpendSweep(accountId, 0);
-        }
-        void pollAccount(accountId).finally(() => {
-          schedule(accountId, intervalFor(accountId));
-          scheduleUnreadReconcile(accountId);
-        });
+        addAccountLoop(accountId, true);
       }
     },
     stop() {
@@ -1675,6 +1771,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     },
     refreshAccountHead,
     reconcileAccountHeadNow,
+    refreshAccountGrants,
     ingestHubMessage,
     reconcileUnread,
     async forceRefresh(accountId) {

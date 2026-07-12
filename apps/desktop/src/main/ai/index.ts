@@ -4,7 +4,14 @@
 //   ipc 'ai:start' → coordinator.start, 'ai:cancel' → coordinator.cancel,
 //   coordinator.subscribe(event => webContents.send('ai:event', event)).
 
-export { createAiCoordinator, buildFeatureResult, PERSONALITIES_SETTINGS_KEY } from './coordinator';
+export {
+  createAiCoordinator,
+  buildFeatureResult,
+  boundDebugPromptInput,
+  DEBUG_PROMPT_BLOCK_CHAR_BUDGET,
+  DEBUG_PROMPT_MANIFEST_CHAR_BUDGET,
+  PERSONALITIES_SETTINGS_KEY,
+} from './coordinator';
 export type { AiCoordinator, AiCoordinatorDeps, SummaryHubHooks, UsageEventRecord } from './coordinator';
 export type {
   AiFeatureGateway,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DOCK_TONES,
   buildToneMenuItems,
+  boundPromptBlocksForDisplay,
   copyPayload,
   copyablePartsOf,
   cycleTone,
@@ -10,6 +11,7 @@ import {
   errorHint,
   evaluateAiGate,
   extractPromptBlocks,
+  PROMPT_INSPECTOR_DISPLAY_CHAR_BUDGET,
   readKernelContext,
   readPromptEchoStatus,
   hasConfiguredAiTransport,
@@ -317,6 +319,21 @@ describe('extractPromptBlocks (debug inspector)', () => {
     expect(extractPromptBlocks({ something: 'else' })).toBeNull();
     expect(extractPromptBlocks('not an object')).toBeNull();
     expect(extractPromptBlocks({ systemBlocks: [{ text: 1, cache: 'none' }] })).toBeNull();
+  });
+
+  it('bounds the opened DOM text while leaving small blocks unchanged', () => {
+    const small = [{ role: 'system' as const, text: 'hello', cache: '1h' }];
+    expect(boundPromptBlocksForDisplay(small)).toEqual(small);
+
+    const bounded = boundPromptBlocksForDisplay([
+      {
+        role: 'user',
+        text: 'x'.repeat(PROMPT_INSPECTOR_DISPLAY_CHAR_BUDGET + 500),
+        cache: '5m',
+      },
+    ]);
+    expect(bounded[0]?.text.length).toBeLessThanOrEqual(PROMPT_INSPECTOR_DISPLAY_CHAR_BUDGET);
+    expect(bounded[0]?.text).toContain('display truncated');
   });
 });
 

@@ -80,6 +80,17 @@ const REDACT_MAX_ARRAY_ITEMS = 100;
 const REDACT_MAX_OBJECT_KEYS = 100;
 const REDACT_MAX_STRING_CHARS = 20_000;
 
+export interface RedactValueOptions {
+  /** Override only for trusted, already-bounded structures such as the usage spool. */
+  maxArrayItems?: number;
+  maxObjectKeys?: number;
+}
+
+interface RedactValueLimits {
+  maxArrayItems: number;
+  maxObjectKeys: number;
+}
+
 function boundedString(value: string): string {
   if (value.length <= REDACT_MAX_STRING_CHARS) {
     return value;
@@ -92,6 +103,7 @@ function redactValueInner(
   secrets: readonly string[],
   seen: WeakSet<object>,
   depth: number,
+  limits: RedactValueLimits,
 ): unknown {
   if (typeof value === 'string') {
     return boundedString(redactSecrets(value, secrets));
@@ -110,26 +122,27 @@ function redactValueInner(
   try {
     if (Array.isArray(value)) {
       const items = value
-        .slice(0, REDACT_MAX_ARRAY_ITEMS)
-        .map((item) => redactValueInner(item, secrets, seen, depth + 1));
-      if (value.length > REDACT_MAX_ARRAY_ITEMS) {
-        items.push(`[${value.length - REDACT_MAX_ARRAY_ITEMS} items truncated]`);
+        .slice(0, limits.maxArrayItems)
+        .map((item) => redactValueInner(item, secrets, seen, depth + 1, limits));
+      if (value.length > limits.maxArrayItems) {
+        items.push(`[${value.length - limits.maxArrayItems} items truncated]`);
       }
       return items;
     }
 
     const out: Record<string, unknown> = {};
     const entries = Object.entries(value);
-    for (const [key, inner] of entries.slice(0, REDACT_MAX_OBJECT_KEYS)) {
+    for (const [key, inner] of entries.slice(0, limits.maxObjectKeys)) {
       out[boundedString(redactSecrets(key, secrets))] = redactValueInner(
         inner,
         secrets,
         seen,
         depth + 1,
+        limits,
       );
     }
-    if (entries.length > REDACT_MAX_OBJECT_KEYS) {
-      out['__truncatedKeys'] = entries.length - REDACT_MAX_OBJECT_KEYS;
+    if (entries.length > limits.maxObjectKeys) {
+      out['__truncatedKeys'] = entries.length - limits.maxObjectKeys;
     }
     return out;
   } finally {
@@ -138,8 +151,15 @@ function redactValueInner(
 }
 
 /** Deep-redact every string leaf of a structured value (objects, arrays). */
-export function redactValue(value: unknown, secrets: readonly string[] = []): unknown {
-  return redactValueInner(value, secrets, new WeakSet<object>(), 0);
+export function redactValue(
+  value: unknown,
+  secrets: readonly string[] = [],
+  options: RedactValueOptions = {},
+): unknown {
+  return redactValueInner(value, secrets, new WeakSet<object>(), 0, {
+    maxArrayItems: options.maxArrayItems ?? REDACT_MAX_ARRAY_ITEMS,
+    maxObjectKeys: options.maxObjectKeys ?? REDACT_MAX_OBJECT_KEYS,
+  });
 }
 
 /** Redact a log entry's message and fields. Returns a new entry. */

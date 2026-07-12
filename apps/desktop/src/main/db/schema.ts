@@ -404,6 +404,26 @@ export const SCHEMA_V16 = `
 ALTER TABLE outbox ADD COLUMN core_command_id TEXT;
 `;
 
+// v17 — durable AI acceptance correlation + dedup. The coordinator's bounded
+// in-memory completed-op registry is replaced during runtime rebuilds, but a
+// renderer may insert/copy a result afterward. Persist the authoritative
+// operation metadata when the first result token is shown, then claim
+// accepted_at exactly once before incrementing ai_spend_log.inserted.
+export const SCHEMA_V17 = `
+CREATE TABLE ai_acceptance_ops (
+  operation_id TEXT PRIMARY KEY,
+  feature TEXT NOT NULL,
+  day TEXT NOT NULL,
+  request_id TEXT,
+  account_id TEXT,
+  conversation_id TEXT,
+  parts TEXT NOT NULL DEFAULT '[]',
+  known_at TEXT NOT NULL,
+  accepted_at TEXT
+);
+CREATE INDEX idx_ai_acceptance_ops_known_at ON ai_acceptance_ops (known_at);
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',
@@ -418,6 +438,7 @@ export const ALL_TABLES = [
   'credit_log',
   'fan_transactions',
   'ai_spend_log',
+  'ai_acceptance_ops',
   'thread_fetch_log',
   'message_guard_events',
 ] as const;

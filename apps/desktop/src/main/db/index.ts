@@ -26,6 +26,8 @@ import { createCreditLogQueries } from './queries/credit-log';
 import type { CreditLogQueries } from './queries/credit-log';
 import { createAiSpendLogQueries } from './queries/ai-spend';
 import type { AiSpendLogQueries } from './queries/ai-spend';
+import { createAiAcceptanceQueries } from './queries/ai-acceptance';
+import type { AiAcceptanceQueries } from './queries/ai-acceptance';
 import { createMediaUrlsQueries } from './queries/media-urls';
 import type { MediaUrlsQueries } from './queries/media-urls';
 import { createThreadFetchLogQueries } from './queries/thread-fetch-log';
@@ -46,6 +48,7 @@ export interface DataLayer {
   outbox: OutboxQueries;
   creditLog: CreditLogQueries;
   aiSpendLog: AiSpendLogQueries;
+  aiAcceptance: AiAcceptanceQueries;
   mediaUrls: MediaUrlsQueries;
   threadFetchLog: ThreadFetchLogQueries;
   messageGuardEvents: MessageGuardEventsQueries;
@@ -55,6 +58,7 @@ export interface DataLayer {
 export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeBus }): DataLayer {
   const db = openDatabase(options);
   const bus = options.bus ?? createChangeBus();
+  const aiSpendLog = createAiSpendLogQueries(db);
   return {
     db,
     bus,
@@ -67,7 +71,8 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     settings: createSettingsQueries(db, bus),
     outbox: createOutboxQueries(db, bus),
     creditLog: createCreditLogQueries(db),
-    aiSpendLog: createAiSpendLogQueries(db),
+    aiSpendLog,
+    aiAcceptance: createAiAcceptanceQueries(db, aiSpendLog),
     mediaUrls: createMediaUrlsQueries(db),
     threadFetchLog: createThreadFetchLogQueries(db),
     messageGuardEvents: createMessageGuardEventsQueries(db, bus),
@@ -134,6 +139,13 @@ export { createCreditLogQueries } from './queries/credit-log';
 export type { CreditLogQueries } from './queries/credit-log';
 export { createAiSpendLogQueries } from './queries/ai-spend';
 export type { AiSpendLogQueries, AiSpendRunArgs } from './queries/ai-spend';
+export { createAiAcceptanceQueries } from './queries/ai-acceptance';
+export type {
+  AiAcceptanceKnownOperation,
+  AiAcceptanceOperation,
+  AiAcceptanceQueries,
+  AiAcceptanceResult,
+} from './queries/ai-acceptance';
 export { createMediaUrlsQueries } from './queries/media-urls';
 export type { MediaUrlsQueries } from './queries/media-urls';
 export { createMessageGuardEventsQueries } from './queries/message-guard-events';

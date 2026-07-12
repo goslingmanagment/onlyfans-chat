@@ -340,12 +340,17 @@ function detailTextOf(code: CgErrorCode, message: string): string | undefined {
 }
 
 /** A6/A17 (W4.4, optional wording): a generic kernel 429 is throttling, not
- * an outage — CG-HUB-02's "check the connection" advice was wrong for it. */
+ * an outage — CG-HUB-02's "check the connection" advice was wrong for it.
+ * Core's canonical AppError/Fastify body code is `rate_limit_exceeded`; keep
+ * the earlier `rate_limit` spelling as rollback compatibility. */
 function kernelRateLimitWording(
   code: CgErrorCode,
   detail: CgErrorDetail | undefined,
 ): ProviderWording | null {
-  if (code !== 'CG-HUB-02' || detail?.kernelCode !== 'rate_limit') {
+  if (
+    code !== 'CG-HUB-02' ||
+    (detail?.kernelCode !== 'rate_limit_exceeded' && detail?.kernelCode !== 'rate_limit')
+  ) {
     return null;
   }
   return {
@@ -422,6 +427,13 @@ export function toUserFacing(error: unknown): UserFacingError {
         typeof detail === 'object' && detail !== null && 'provider' in detail && typeof detail.provider === 'string'
           ? detail.provider
           : undefined;
+      const kernelCode =
+        typeof detail === 'object' &&
+        detail !== null &&
+        'kernelCode' in detail &&
+        typeof detail.kernelCode === 'string'
+          ? detail.kernelCode
+          : undefined;
       const retryAtMs = 'retryAtMs' in error && typeof error.retryAtMs === 'number' ? error.retryAtMs : undefined;
       const retryAfterMs =
         'retryAfterMs' in error && typeof error.retryAfterMs === 'number' ? error.retryAfterMs : undefined;
@@ -430,7 +442,9 @@ export function toUserFacing(error: unknown): UserFacingError {
         ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
       };
 
-      const wording = providerWordingOverrides(code, provider);
+      const wording =
+        providerWordingOverrides(code, provider) ??
+        kernelRateLimitWording(code, kernelCode === undefined ? undefined : { kernelCode });
       if (wording) {
         return createUserFacing(code, { ...wording, ...retryOverrides });
       }

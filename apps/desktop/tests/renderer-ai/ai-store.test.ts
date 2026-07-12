@@ -27,6 +27,7 @@ import {
   activateToneFromMenu,
   setToneMenuOpen,
   handleConversationChange,
+  handleAiOperationEvent,
   startAiFeature,
   type AiStartContext,
 } from '../../src/renderer/src/features/ai/aiStore';
@@ -185,6 +186,35 @@ describe('handleConversationChange (sticky-within-chat / reset-on-switch)', () =
     expect(useUiStore.getState().toasts.at(-1)).toMatchObject({
       title: 'AI busy',
       body: '3 generations are already running.',
+    });
+  });
+
+  it('retains only the newest large debug prompt across the terminal-job history', () => {
+    startAiFeature('fast-reply', CTX);
+    startAiFeature('fast-reply', { ...CTX, chatId: '556' });
+    const state = useAiStore.getState();
+    const firstId = state.jobsByConversation['acct_1/555'];
+    const secondId = state.jobsByConversation['acct_1/556'];
+    expect(firstId).toBeTruthy();
+    expect(secondId).toBeTruthy();
+
+    handleAiOperationEvent({
+      type: 'operation:debugPrompt',
+      operationId: firstId!,
+      feature: 'fast-reply',
+      snapshot: { systemBlocks: [{ text: 'first', cache: '1h' }] },
+    });
+    handleAiOperationEvent({
+      type: 'operation:debugPrompt',
+      operationId: secondId!,
+      feature: 'fast-reply',
+      snapshot: { systemBlocks: [{ text: 'second', cache: '1h' }] },
+    });
+
+    const retained = useAiStore.getState().jobsById;
+    expect(retained[firstId!]?.debugPrompt).toBeNull();
+    expect(retained[secondId!]?.debugPrompt).toMatchObject({
+      systemBlocks: [{ text: 'second' }],
     });
   });
 

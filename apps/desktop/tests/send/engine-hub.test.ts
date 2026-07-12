@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HubError, type HubOfapiCommand } from '@chatgoose/shared/hub/index';
-import { createSendEngine } from '@main/send/engine';
+import {
+  createSendEngine,
+  MARK_READ_DEBOUNCE_MS,
+  VERIFY_INTERVAL_MS,
+} from '@main/send/engine';
 import type { DataLayer } from '@main/db/index';
 import {
   ACCT,
@@ -619,15 +623,16 @@ describe('send engine hub command transport', () => {
     engine.dispose();
   });
 
-  // A24 (W4.5): kernel intake raises 503/404/409 with typed body codes
-  // BEFORE the command insert. With no coreCommandId on the row, that pair
+  // A24 (W4.5): kernel intake raises these typed errors before the command
+  // insert (including Fastify's route-level canonical 429). With no
+  // coreCommandId on the row, that pair
   // is proof no command exists — park 'failed' (retryable), never
   // 'unconfirmed' (which fed the verifier's first-time intake: the
   // documented hours-late silent stale send).
   it.each([
     ['service_unavailable', 503],
     ['not_found', 404],
-    ['conflict', 409],
+    ['rate_limit_exceeded', 429],
   ] as const)('parks a definite pre-intake rejection (%s/%i) as failed with retry', async (kernelCode, status) => {
     const direct = makeStubClient();
     const createOfapiCommand = vi.fn(async () => {
@@ -658,6 +663,43 @@ describe('send engine hub command transport', () => {
     // Out of the verifier pool: a verify pass must not re-intake it.
     await engine.verifyChat(ACCT, CHAT);
     expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+    engine.dispose();
+  });
+
+  it('keeps conflict/409 indeterminate because an existing mismatched clientCommandId also uses it', async () => {
+    const direct = makeStubClient();
+    const seenClientIds: string[] = [];
+    const createOfapiCommand = vi.fn(async ({ command: request }) => {
+      seenClientIds.push(request.clientCommandId);
+      throw new HubError('http', {
+        message: 'clientCommandId was already used for a different command',
+        detail: { status: 409, kernelCode: 'conflict' },
+      });
+    });
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+
+    const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello'] });
+    await drain();
+    const localId = localIds[0] ?? '';
+
+    expect(data.outbox.get(localId)).toMatchObject({
+      state: 'unconfirmed',
+      coreCommandId: null,
+    });
+    // Verification may repeat the idempotent intake under the SAME id, but the
+    // row never gains the fresh-id retry affordance that could duplicate an
+    // already-existing server command.
+    await engine.verifyChat(ACCT, CHAT);
+    expect(seenClientIds).toEqual([localId, localId]);
+    expect(data.outbox.get(localId)?.state).toBe('unconfirmed');
     engine.dispose();
   });
 
@@ -720,6 +762,290 @@ describe('send engine hub command transport', () => {
     await drain();
 
     expect(data.outbox.get(localIds[0] ?? '')?.state).toBe('unconfirmed');
+    engine.dispose();
+  });
+
+  it('quiesces the outgoing pump before same-chat work is exposed through a replacement engine', async () => {
+    const direct = makeStubClient();
+    const started: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    let releaseFirst: (() => void) | undefined;
+    let messageId = 9_100;
+
+    const recordStart = (text: string): void => {
+      started.push(text);
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+    };
+    const finishCommand = (clientCommandId: string): HubOfapiCommand => {
+      active -= 1;
+      messageId += 1;
+      return command(clientCommandId, 'confirmed', {
+        commandId: `cmd-${clientCommandId}`,
+        platformMessageId: String(messageId),
+      });
+    };
+
+    const oldCreate = vi.fn(async ({ command: request }) => {
+      const text = request.kind === 'send_text_message_v1' ? request.payload.text : request.kind;
+      recordStart(text);
+      if (started.length === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+      return finishCommand(request.clientCommandId);
+    });
+    const replacementCreate = vi.fn(async ({ command: request }) => {
+      const text = request.kind === 'send_text_message_v1' ? request.payload.text : request.kind;
+      recordStart(text);
+      return finishCommand(request.clientCommandId);
+    });
+    const common = {
+      client: direct.client,
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    };
+    const oldEngine = createSendEngine({
+      ...common,
+      hubCommandClient: { createOfapiCommand: oldCreate, getOfapiCommand: vi.fn() },
+    });
+    // Runtime construction happens before the swap; this engine is not exposed
+    // to IPC until the outgoing engine's quiesce barrier resolves.
+    const replacementEngine = createSendEngine({
+      ...common,
+      hubCommandClient: { createOfapiCommand: replacementCreate, getOfapiCommand: vi.fn() },
+    });
+
+    oldEngine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['old one', 'old two'] });
+    await drain();
+    expect(started).toEqual(['old one']);
+
+    let quiesced = false;
+    const barrier = oldEngine.quiesce().then(() => {
+      quiesced = true;
+    });
+    expect(() =>
+      oldEngine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['must reject'] }),
+    ).toThrow(/quiescing/);
+    await drain();
+    expect(quiesced).toBe(false);
+
+    releaseFirst?.();
+    await barrier;
+    oldEngine.dispose();
+
+    replacementEngine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['new runtime'] });
+    await drain();
+
+    expect(started).toEqual(['old one', 'old two', 'new runtime']);
+    expect(maxActive).toBe(1);
+    expect(data.outbox.listForChat(ACCT, CHAT).map((row) => row.text)).toEqual([
+      'old one',
+      'old two',
+      'new runtime',
+    ]);
+    replacementEngine.dispose();
+  });
+
+  it('quiesce drops new auxiliary writes and waits for an already-submitted unsend', async () => {
+    const direct = makeStubClient();
+    let releaseUnsend: (() => void) | undefined;
+    const createOfapiCommand = vi.fn(
+      ({ command: request }) =>
+        new Promise<HubOfapiCommand>((resolve) => {
+          releaseUnsend = () =>
+            resolve(
+              command(request.clientCommandId, 'confirmed', {
+                commandId: `cmd-${request.clientCommandId}`,
+                platformMessageId: request.kind === 'unsend_message_v1' ? request.payload.messageId : null,
+              }),
+            );
+        }),
+    );
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: true }),
+      sleep: () => Promise.resolve(),
+    });
+
+    // A deferred mark-read exists before retirement; quiesce must cancel it.
+    await engine.markRead(ACCT, CHAT);
+    const pendingUnsend = engine.unsend(ACCT, CHAT, '9001');
+    await drain();
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+
+    let quiesced = false;
+    const barrier = engine.quiesce().then(() => {
+      quiesced = true;
+    });
+    engine.typingActive(ACCT, CHAT);
+    await engine.markRead(ACCT, CHAT);
+    await expect(engine.unsend(ACCT, CHAT, '9002')).rejects.toThrow(/quiescing/);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+    expect(quiesced).toBe(false);
+
+    releaseUnsend?.();
+    await Promise.all([pendingUnsend, barrier]);
+    expect(quiesced).toBe(true);
+    engine.dispose();
+  });
+
+  it('quiesce waits for an already-started manual verifier to finish its DB transition', async () => {
+    const direct = makeStubClient();
+    let intakeAttempt = 0;
+    let releaseVerify: (() => void) | undefined;
+    const createOfapiCommand = vi.fn(({ command: request }) => {
+      intakeAttempt += 1;
+      if (intakeAttempt === 1) {
+        return Promise.reject(new Error('connection reset'));
+      }
+      return new Promise<HubOfapiCommand>((resolve) => {
+        releaseVerify = () => resolve(command(request.clientCommandId, 'confirmed'));
+      });
+    });
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+
+    const localId = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello'] }).localIds[0]!;
+    await drain();
+    expect(data.outbox.get(localId)?.state).toBe('unconfirmed');
+
+    const verification = engine.verifyChat(ACCT, CHAT);
+    await drain();
+    expect(createOfapiCommand).toHaveBeenCalledTimes(2);
+
+    let quiesced = false;
+    const barrier = engine.quiesce().then(() => {
+      // Purge may close the DB immediately after this resolves, so the final
+      // verifier transition must already be durable at the barrier boundary.
+      expect(data.outbox.get(localId)?.state).toBe('sent');
+      quiesced = true;
+    });
+    await drain();
+    expect(quiesced).toBe(false);
+    await engine.verifyChat(ACCT, CHAT); // rejected as new work after quiesce
+    expect(createOfapiCommand).toHaveBeenCalledTimes(2);
+
+    releaseVerify?.();
+    await Promise.all([verification, barrier]);
+    expect(quiesced).toBe(true);
+    engine.dispose();
+  });
+
+  it('quiesce waits for an already-fired scheduled verifier', async () => {
+    const direct = makeStubClient();
+    let intakeAttempt = 0;
+    let releaseVerify: (() => void) | undefined;
+    const createOfapiCommand = vi.fn(({ command: request }) => {
+      intakeAttempt += 1;
+      if (intakeAttempt === 1) {
+        return Promise.reject(new Error('connection reset'));
+      }
+      return new Promise<HubOfapiCommand>((resolve) => {
+        releaseVerify = () => resolve(command(request.clientCommandId, 'confirmed'));
+      });
+    });
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+
+    const localId = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello'] }).localIds[0]!;
+    await drain();
+    await vi.advanceTimersByTimeAsync(VERIFY_INTERVAL_MS);
+    await drain();
+    expect(createOfapiCommand).toHaveBeenCalledTimes(2);
+
+    let quiesced = false;
+    const barrier = engine.quiesce().then(() => {
+      expect(data.outbox.get(localId)?.state).toBe('sent');
+      quiesced = true;
+    });
+    await drain();
+    expect(quiesced).toBe(false);
+
+    releaseVerify?.();
+    await barrier;
+    expect(quiesced).toBe(true);
+    engine.dispose();
+  });
+
+  it('quiesce waits for already-started typing and mark-read commands before DB close', async () => {
+    seedChat(data, { unreadCount: 4 });
+    const direct = makeStubClient();
+    let releaseTyping: (() => void) | undefined;
+    let releaseMarkRead: (() => void) | undefined;
+    const createOfapiCommand = vi.fn(({ command: request }) =>
+      new Promise<HubOfapiCommand>((resolve) => {
+        const release = () => resolve(command(request.clientCommandId, 'confirmed', {
+          kind: request.kind,
+          platformMessageId: null,
+        }));
+        if (request.kind === 'typing_active_v1') {
+          releaseTyping = release;
+        } else if (request.kind === 'mark_chat_read_v1') {
+          releaseMarkRead = release;
+        }
+      }),
+    );
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: true }),
+      sleep: () => Promise.resolve(),
+      hubCommandPollIntervalMs: 0,
+      hubCommandPollLimit: 1,
+    });
+
+    engine.typingActive(ACCT, CHAT);
+    await engine.markRead(ACCT, CHAT);
+    await vi.advanceTimersByTimeAsync(MARK_READ_DEBOUNCE_MS);
+    await drain();
+    expect(createOfapiCommand).toHaveBeenCalledTimes(2);
+
+    let quiesced = false;
+    const barrier = engine.quiesce().then(() => {
+      // The confirmed mark-read's local mirror is part of the tracked task.
+      expect(data.chats.get(ACCT, CHAT)?.unreadCount).toBe(0);
+      quiesced = true;
+    });
+    await drain();
+    expect(quiesced).toBe(false);
+
+    releaseTyping?.();
+    await drain();
+    expect(quiesced).toBe(false);
+    expect(data.chats.get(ACCT, CHAT)?.unreadCount).toBe(4);
+
+    releaseMarkRead?.();
+    await barrier;
+    expect(quiesced).toBe(true);
     engine.dispose();
   });
 

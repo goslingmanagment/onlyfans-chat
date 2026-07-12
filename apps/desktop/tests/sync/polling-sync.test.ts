@@ -5,10 +5,25 @@ import { createDataLayer, type DataLayer } from '../../src/main/db/index';
 import { createPollingSync } from '../../src/main/sync/polling-sync';
 import { createBudgetGuard } from '../../src/main/sync/budget-guard';
 import type { OfApiClient } from '../../src/main/ofapi/client';
-import type { OfApiChat, OfApiMessage, OfApiTransaction } from '../../src/main/ofapi/schemas';
+import type {
+  OfApiAccount,
+  OfApiChat,
+  OfApiMessage,
+  OfApiTransaction,
+} from '../../src/main/ofapi/schemas';
 
 const TEST_DRIVER = 'bsqlite3-mc-node';
 const ACCT = 'acct_test';
+const NEW_ACCT = 'acct_new';
+
+function makeAccount(id: string, authenticated = true): OfApiAccount {
+  return {
+    id,
+    is_authenticated: authenticated,
+    display_name: id === ACCT ? 'Original account' : 'New account',
+    onlyfans_username: id,
+  } as OfApiAccount;
+}
 
 function makeChat(overrides: {
   fanId: number;
@@ -96,6 +111,7 @@ function makeTransaction(overrides: {
 
 interface StubClient {
   client: OfApiClient;
+  listAccountsCalls: number;
   listChatsCalls: number;
   listChatsParams: {
     limit?: number;
@@ -116,6 +132,7 @@ interface StubClient {
   }[];
   listTransactionsCalls: { limit?: number; purpose?: string; startDate?: string }[];
   setChats(chats: OfApiChat[]): void;
+  setAccounts(accounts: OfApiAccount[]): void;
   setMessages(messages: OfApiMessage[]): void;
   setTransactions(transactions: OfApiTransaction[]): void;
   onListChats(fn: ((params: { filter?: string; purpose?: string }) => void) | null): void;
@@ -127,17 +144,22 @@ interface StubClient {
  * advances by the number of chats actually returned (server-chosen page sizes).
  */
 function makeStubClient(): StubClient {
+  let accounts: OfApiAccount[] = [];
   let all: OfApiChat[] = [];
   let messages: OfApiMessage[] = [];
   let transactions: OfApiTransaction[] = [];
   let onListChats: ((params: { filter?: string; purpose?: string }) => void) | null = null;
   const state: StubClient = {
+    listAccountsCalls: 0,
     listChatsCalls: 0,
     listChatsParams: [],
     listMessagesCalls: [],
     listTransactionsCalls: [],
     setChats: (next) => {
       all = next;
+    },
+    setAccounts: (next) => {
+      accounts = next;
     },
     setMessages: (next) => {
       messages = next;
@@ -149,6 +171,10 @@ function makeStubClient(): StubClient {
       onListChats = fn;
     },
     client: {
+      listAccounts: vi.fn(async () => {
+        state.listAccountsCalls += 1;
+        return accounts;
+      }),
       listChats: vi.fn(
         async (params: {
           limit?: number;
@@ -765,6 +791,158 @@ describe('PollingSync', () => {
     expect(stub.listChatsCalls).toBe(0); // mocked-once call doesn't bump the counter
     resolveFirst?.();
     await vi.runOnlyPendingTimersAsync();
+    sync.stop();
+  });
+
+  it('reconcileAccountHeadNow claims the same per-account single-flight guard', async () => {
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await drainPoll(); // finish bootstrap; the scheduled cadence stays behind fake time
+
+    let active = 0;
+    let maxActive = 0;
+    const releases: Array<() => void> = [];
+    (stub.client.listChats as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          releases.push(() => {
+            active -= 1;
+            resolve({ chats: [], nextPageUrl: null });
+          });
+        }),
+    );
+
+    const first = sync.reconcileAccountHeadNow(ACCT);
+    await Promise.resolve();
+    expect(releases).toHaveLength(1);
+
+    // Both another recovery and the ordinary poll path arrive while the first
+    // recovery owns the account. Neither may start a second list request.
+    const second = sync.reconcileAccountHeadNow(ACCT);
+    await sync.pollAccount(ACCT);
+    expect(releases).toHaveLength(1);
+    expect(maxActive).toBe(1);
+
+    releases[0]!();
+    await first;
+    for (let i = 0; i < 20 && releases.length < 2; i += 1) {
+      await Promise.resolve();
+    }
+    expect(releases).toHaveLength(2);
+    expect(maxActive).toBe(1);
+
+    releases[1]!();
+    await second;
+    expect(active).toBe(0);
+    expect(maxActive).toBe(1);
+    sync.stop();
+  });
+
+  it('a queued account-head reconcile exits when its grant is revoked', async () => {
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await drainPoll();
+
+    const releases: Array<() => void> = [];
+    (stub.client.listChats as ReturnType<typeof vi.fn>).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releases.push(() => resolve({ chats: [], nextPageUrl: null }));
+        }),
+    );
+    const first = sync.reconcileAccountHeadNow(ACCT);
+    await Promise.resolve();
+    const queued = sync.reconcileAccountHeadNow(ACCT);
+    await Promise.resolve();
+    expect(releases).toHaveLength(1);
+
+    stub.setAccounts([]);
+    await sync.refreshAccountGrants();
+    releases[0]!();
+    await Promise.all([first, queued]);
+
+    expect(releases).toHaveLength(1);
+    expect(sync.status().pollIntervalsMs).toEqual({});
+    sync.stop();
+  });
+
+  it('grant refresh stops revoked loops, preserves their cache, and adds new loops without racing snapshots', async () => {
+    data.accounts.upsert({
+      id: ACCT,
+      username: 'original',
+      displayName: 'Original account',
+      avatar: null,
+      authState: 'authenticated',
+      raw: {},
+    });
+    upsertLocalChat({ chatId: '101' });
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await drainPoll();
+    const listCallsBeforeRefresh = stub.listChatsCalls;
+    stub.setAccounts([makeAccount(NEW_ACCT)]);
+
+    await expect(sync.refreshAccountGrants()).resolves.toEqual([NEW_ACCT]);
+
+    expect(stub.listAccountsCalls).toBe(1);
+    expect(stub.listChatsCalls).toBe(listCallsBeforeRefresh);
+    expect(sync.status().pollIntervalsMs).toEqual({ [NEW_ACCT]: 60_000 });
+    expect(data.accounts.get(ACCT)?.authState).toBe('unauthenticated');
+    expect(data.chats.get(ACCT, '101')).not.toBeNull();
+    expect(data.accounts.get(NEW_ACCT)?.authState).toBe('authenticated');
+
+    await sync.pollAccount(ACCT);
+    expect(stub.listChatsCalls).toBe(listCallsBeforeRefresh);
+    await sync.pollAccount(NEW_ACCT);
+    expect(stub.listChatsCalls).toBeGreaterThan(listCallsBeforeRefresh);
+    sync.stop();
+  });
+
+  it('grant shrink-to-zero clears every polling cadence without deleting cached data', async () => {
+    data.accounts.upsert({
+      id: ACCT,
+      username: 'original',
+      displayName: 'Original account',
+      avatar: null,
+      authState: 'authenticated',
+      raw: {},
+    });
+    upsertLocalChat({ chatId: '101' });
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await drainPoll();
+    const listCallsBeforeRefresh = stub.listChatsCalls;
+    stub.setAccounts([]);
+
+    await expect(sync.refreshAccountGrants()).resolves.toEqual([]);
+    expect(sync.status().pollIntervalsMs).toEqual({});
+    expect(data.accounts.get(ACCT)?.authState).toBe('unauthenticated');
+    expect(data.chats.get(ACCT, '101')).not.toBeNull();
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    await sync.forceRefresh();
+    expect(stub.listChatsCalls).toBe(listCallsBeforeRefresh);
+    sync.stop();
+  });
+
+  it('restarting the same polling provider re-arms its retained account loops', async () => {
+    stub.setChats([]);
+    const sync = makeSync();
+    sync.start([ACCT]);
+    await drainPoll();
+    const callsBeforeRestart = stub.listChatsCalls;
+    sync.stop();
+
+    sync.start([ACCT]);
+    await drainPoll();
+
+    expect(stub.listChatsCalls).toBeGreaterThan(callsBeforeRestart);
     sync.stop();
   });
 

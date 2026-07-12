@@ -35,7 +35,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
       expect(indexes).toContain('idx_message_guard_events_occurred');
       expect(indexes).toContain('idx_message_guard_events_hash');
-      expect(SCHEMA_VERSION).toBe(16);
+      expect(SCHEMA_VERSION).toBe(17);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       const guardCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('message_guard_events')")
@@ -69,6 +69,14 @@ describe('migration runner', () => {
         expect(creditCols).toContain(col);
       }
       expect(names).toContain('ai_spend_log');
+      expect(names).toContain('ai_acceptance_ops');
+      const acceptanceCols = layer.db
+        .prepare("SELECT name FROM pragma_table_info('ai_acceptance_ops')")
+        .all()
+        .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
+      for (const col of ['operation_id', 'feature', 'day', 'parts', 'known_at', 'accepted_at']) {
+        expect(acceptanceCols).toContain(col);
+      }
       const chatCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('chats')")
         .all()
@@ -411,6 +419,23 @@ describe('migration runner', () => {
     expect(db.prepare("SELECT transport FROM outbox WHERE local_id = 'legacy-direct'").get()).toEqual({
       transport: 'direct',
     });
+    db.close();
+  });
+
+  it('v16 → v17 adds durable AI acceptance dedup without touching spend history', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 16));
+    db.exec(
+      `INSERT INTO ai_spend_log (day, feature, runs, inserted)
+       VALUES ('2026-07-12', 'fast-reply', 3, 1)`,
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 16, to: 17 });
+    expect(db.prepare("SELECT runs, inserted FROM ai_spend_log WHERE day = '2026-07-12'").get())
+      .toEqual({ runs: 3, inserted: 1 });
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ai_acceptance_ops'").get(),
+    ).toEqual({ name: 'ai_acceptance_ops' });
     db.close();
   });
 

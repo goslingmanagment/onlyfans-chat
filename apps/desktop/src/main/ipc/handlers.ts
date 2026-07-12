@@ -19,7 +19,7 @@ import type { OnlineService } from '../online/service';
 import type { Logger } from '../diagnostics/logger';
 import type { MessageGuardRuntime } from '../message-guard/runtime';
 import { observeSendForAcceptance, reportFeedbackAcceptance } from '../hub/acceptance-reporter';
-import type { AcceptanceSeam } from '../hub/acceptance-reporter';
+import type { AcceptanceSeam, FeedbackContext } from '../hub/acceptance-reporter';
 import type {
   ActivityVM,
   AiStartRequest,
@@ -350,6 +350,11 @@ export interface AiCoordinatorLike {
   markOperationAccepted?(operationId: string): boolean;
 }
 
+export interface ReadRuntimeProbeResult {
+  /** Runs only after settingsStore.update has durably persisted the replacement. */
+  afterPersist?: () => Promise<void>;
+}
+
 export interface IpcDeps {
   data: DataLayer;
   settingsStore: SettingsStore;
@@ -390,7 +395,7 @@ export interface IpcDeps {
   /** Stage 24: one-time hub device-token sign-in (Settings → Hub). */
   hubAuth?: {
     issueDeviceToken: (args: { username: string; password: string }) => Promise<HubDeviceTokenResultVM>;
-    /** Recovery affordance (C2/N2): deletes the keychain-held device token. */
+    /** Security-first recovery: deletes the token, deactivates its runtime, then tries fallback. */
     signOutDevice: () => Promise<void>;
   } | null;
   /** Danger-zone capabilities (paths/shell live only in the composition root). */
@@ -421,11 +426,9 @@ export interface IpcDeps {
    * caller persists ONLY after this resolves, so a bad key never reaches the
    * keychain or the settings table (SPEC §15 — no half-applied credential).
    */
-  probeReadRuntimeForPatch?: (rawPatch: unknown) => Promise<void>;
+  probeReadRuntimeForPatch?: (rawPatch: unknown) => Promise<ReadRuntimeProbeResult | void>;
   /** Called when settings.update changes direct/hub read-runtime credentials. */
   onOfapiRuntimeConfigChanged?: () => void | Promise<void>;
-  /** Called when settings.update sets an OFAPI key while sync is offline. */
-  onOfapiKeyConfigured?: () => void | Promise<void>;
   /**
    * Called after any settings.update that touched hubApiKey/hubBaseUrl. Key
    * writes go to the keychain and publish no settings-table change, so this
@@ -672,11 +675,6 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       throw new Error('Hub sign-in is not available in this build.');
     }
     await deps.hubAuth.signOutDevice();
-    // Same reconnect signal a credential-touching cmd:settings.update patch
-    // uses (hubApiKey/hubBaseUrl) — the device token is a credential too, so
-    // deleting it must re-derive the read runtime from whatever's left
-    // (the legacy key, if any) exactly the same way.
-    await deps.onOfapiKeyConfigured?.();
   });
 
   function requireLocalData(): NonNullable<IpcDeps['localData']> {
@@ -889,10 +887,19 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     // built from the patch overrides BEFORE persisting. A bad key/URL rejects
     // here with nothing written to the keychain or the settings table — no
     // half-applied credential. Non-hub patches keep persist-then-return.
-    if (touchedReadRuntime && deps.probeReadRuntimeForPatch) {
-      await deps.probeReadRuntimeForPatch(rawPatch);
+    const probeResult =
+      touchedReadRuntime && deps.probeReadRuntimeForPatch
+        ? await deps.probeReadRuntimeForPatch(rawPatch)
+        : undefined;
+    let result = await settingsStore.update(rawPatch);
+    // A dead device token can shadow a newly validated chatter key. Cleanup is
+    // intentionally post-persist: a crash/keychain write failure must leave at
+    // least the old credential in place, never a credentialless install.
+    await probeResult?.afterPersist?.();
+    if (probeResult?.afterPersist !== undefined) {
+      // The pre-cleanup VM still reports the now-deleted device token.
+      result = await settingsStore.get();
     }
-    const result = await settingsStore.update(rawPatch);
     if (touchedReadRuntime) {
       await deps.onOfapiRuntimeConfigChanged?.();
     }
@@ -1003,6 +1010,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   // ai_spend_log inserted counter (Activity panel "inserted" column).
   ipcMain.handle('cmd:ai.feedback', (_event, rawArgs: unknown) => {
     const args = aiFeedbackSchema.parse(rawArgs);
+    const acceptedAt = new Date().toISOString();
     const payload = parseUsageFeedbackPayload(
       data.db
         .prepare('SELECT payload FROM usage_events WHERE client_event_id = @id')
@@ -1020,38 +1028,61 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     // Stage 31 acceptance: correlated through the coordinator's completed-op
     // registry (the kernel lanes no longer write usage_events rows).
     const context = deps.coordinator?.getOperationContext?.(args.operationId) ?? null;
+    let shouldReport = false;
+    let reportingContext: FeedbackContext | null = context;
 
     if (payload !== null) {
       // Legacy lane: a usage_events row exists — its own `accepted` flag
       // (read above, pre-UPDATE) is the dedup.
       if (!hasAcceptedFeedback(payload)) {
+        shouldReport = true;
         const day = payload.completedAt.slice(0, 10);
         if (/^\d{4}-\d{2}-\d{2}$/.test(day)) {
           data.aiSpendLog.markInserted(day, payload.feature);
         }
       }
     } else {
-      // Kernel lane (C5): no usage_events row was ever written, so the
-      // completed-op registry is the only place the feature is still known;
-      // fall back to the caller-supplied feature when the op has aged out of
-      // the (cap-50, in-memory) registry. markOperationAccepted dedups
-      // once-per-operation the way the legacy row's `accepted` flag did.
-      const feature = context?.feature ?? args.feature;
-      if (feature !== undefined) {
-        const firstAcceptance = deps.coordinator?.markOperationAccepted?.(args.operationId) ?? true;
-        if (firstAcceptance) {
-          data.aiSpendLog.markInserted(utcDayOf(Date.now()), feature);
-        }
+      // Kernel lane: remember only authoritative coordinator metadata. The
+      // composition root also records the shown event, so this lookup survives
+      // coordinator/runtime replacement. Renderer-supplied args.feature is
+      // compatibility-only and is never trusted for accounting.
+      if (context !== null) {
+        data.aiAcceptance.remember({
+          operationId: context.operationId,
+          requestId: context.requestId,
+          feature: context.feature,
+          accountId: context.accountId,
+          conversationId: context.chatId,
+          parts: context.parts,
+          day: utcDayOf(Date.now()),
+          knownAt: acceptedAt,
+        });
       }
+      const result = data.aiAcceptance.acceptOnce(args.operationId, acceptedAt);
+      if (result.status === 'unknown') {
+        throw new Error('Unknown or expired AI operation; acceptance feedback was not counted.');
+      }
+      shouldReport = result.status === 'accepted';
+      const operation = result.operation;
+      reportingContext = operation.accountId !== null && operation.conversationId !== null
+        ? {
+            operationId: operation.operationId,
+            requestId: operation.requestId,
+            feature: operation.feature,
+            accountId: operation.accountId,
+            chatId: operation.conversationId,
+            parts: operation.parts,
+          }
+        : null;
     }
 
-    if (deps.acceptance && context !== null) {
+    if (shouldReport && deps.acceptance && reportingContext !== null) {
       reportFeedbackAcceptance(
         deps.acceptance,
-        context,
+        reportingContext,
         args.action,
         args.partIndex ?? null,
-        new Date().toISOString(),
+        acceptedAt,
       );
     }
   });
