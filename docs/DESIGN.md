@@ -1,3 +1,9 @@
+> **MIXED SHIPPED DESIGN INTENT AND HISTORICAL ITERATION NOTES.** Performance
+> constraints and tracked binding mockups remain useful. Settings/API-key/model
+> descriptions and links to ignored experiment files are not automatically
+> current; verify the implemented surface in source before treating them as
+> binding. Never delete ignored experiments merely because they are untracked.
+
 # ChatGoose Desktop — UI/UX Design Brief
 
 Status: As-built brief — revised through 2026-06-23 (originally Draft v1, 2026-06-10). Binding companion to [PRD.md](PRD.md) §7 (principles) and [SPEC.md](SPEC.md) §13 (performance budgets). This brief turns those into concrete layout, interaction, and performance-engineering requirements; the UI was built from it through Phases 1–6 with the frontend-design skill and iterated with the owner on real data, and this doc now tracks the shipped design. The UI is designed from scratch — owner requirement: "прям очень удобно" and **fast**.

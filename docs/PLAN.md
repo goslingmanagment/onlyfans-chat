@@ -1,3 +1,7 @@
+> **HISTORICAL EXECUTION RECORD, NOT THE CURRENT WORK QUEUE.** Completed phase
+> prompts and Direct-mode rollout steps below must not be replayed. Current work
+> is derived from source, recent decisions/reviews, and an explicit user request.
+
 # ChatGoose Desktop — Implementation Plan
 
 Status: Updated 2026-06-26 — **desktop webhook/SSE, read custody, live text/typing/unsend/mark-read command custody, snapshot recovery, configurable unread reconcile, and hourly spend reconciliation are production defaults/rolling out with explicit rollback controls.** Core AI gateway is proxy-routed and production-enabled; Desktop Direct AI remains default until rollout acceptance. Phases gate on the acceptance criteria in [PRD.md](PRD.md) §12.

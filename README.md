@@ -1,23 +1,58 @@
 # ChatGoose Desktop
 
-Standalone desktop workspace for OnlyFans agency chatters: a from-scratch chat interface on top of [onlyfansapi.com](https://docs.onlyfansapi.com) with the proven ChatGoose AI assistant suite built in — fast replies in the creator's voice, draft improvement, coaching, deep fan summaries, performance reviews, and reactivation pings.
+Electron workspace for OnlyFans agency chatters: inbox, conversations, PPV/media
+sending, fan intelligence, spenders workflows, and AI-assisted drafting in one
+keyboard-first application.
 
-Successor to the ChatGoose Firefox extension for Fansly. OnlyFans accounts are accessed through OnlyMonster, which leaves no injection surface — so instead of overlaying the platform UI, this app **is** the chatter's interface: inbox, conversations, PPV sending, fan intelligence, and AI assistance in one keyboard-first tool.
+## Current architecture
 
-## Status
+The desktop is a client of the Agency Hub kernel in `../core`:
 
-**In pilot/rollout — shipping to real users via auto-update (desktop v0.1.25).** The Electron app is code-complete through Phases 0–6 and runs Hub-first by default. What remains is owner/pilot validation, not new engineering — see [docs/PLAN.md](docs/PLAN.md) for the current phase.
+- all OnlyFans/OFAPI reads go through core's read gateway;
+- text, typing, unsend, mark-read, and media writes go through core's command
+  outbox/executor;
+- live updates arrive through core's webhook-backed SSE stream and snapshots;
+- AI generations use the kernel feature lane; provider keys, models, prompts,
+  quota enforcement, and cost accounting live in core;
+- the desktop authenticates with a per-device token and stores its local database
+  and media cache encrypted at rest.
 
-| | |
-|---|---|
-| [docs/PRD.md](docs/PRD.md) | Product requirements: users, features, UX principles, economics, risks |
-| [docs/SPEC.md](docs/SPEC.md) | Technical spec: Electron + React + TS monorepo, sync engine, send pipeline, AI layer, hub relay |
-| [docs/PLAN.md](docs/PLAN.md) | Phased plan with exit criteria and per-phase status — the source of truth for what's done vs pending |
-| [docs/DESIGN.md](docs/DESIGN.md) | UI/UX brief: workspace anatomy, hotkeys, performance checklist, visual direction |
-| [docs/research/](docs/research/) | Deep research: legacy product inventory + OnlyFans API analysis |
-| [docs/vendor/onlyfansapi/](docs/vendor/onlyfansapi/) | Vendored API docs + OpenAPI spec for offline/AI-agent development |
-| [CLAUDE.md](CLAUDE.md) | Working agreement for AI-driven development in this repo |
+There is no supported Direct OFAPI/provider-key fallback on the chatter machine.
+The last pre-kernel PRD/SPEC/PLAN phases remain useful historical context but are
+not current architecture truth.
 
-## Architecture in one paragraph
+The shipped app version is `apps/desktop/package.json`; Git tags and the served
+auto-update feed determine release state. Do not copy a current-version claim
+from prose.
 
-An Electron desktop app (TypeScript end-to-end) renders the chat workspace; all secrets and network I/O live in the main process, with a local SQLite cache making every surface instant. By default it runs **Hub-first** against the agency's existing **Agency Hub backend ("core")**: OFAPI reads are proxied through core's read-gateway and writes (text/typing/unsend/mark-read/media) ride core's command outbox/executor, and core runs the OFAPI-webhook→SSE bridge plus a proxy-routed AI gateway. **Direct** mode — a local OFAPI key with LLM providers called directly — remains the Settings rollback for reads and AI (desktop AI still runs Direct by default until Hub-AI rollout is accepted). Fan summaries and AI-usage accounting also sync to core. Shared, platform-pure `packages/shared` carries the ported prompt stack and parsers from the Fansly extension — the part of the product that's already proven.
+## Documentation
+
+- [CLAUDE.md](CLAUDE.md) — binding engineering and safety rules;
+- [docs/decisions.md](docs/decisions.md) — append-only decisions and tombstones;
+- [docs/RELEASE.md](docs/RELEASE.md) — current Windows build/release procedure;
+- [docs/WINDOWS-VERIFICATION.md](docs/WINDOWS-VERIFICATION.md) — helper checklist
+  using Agency Hub device sign-in;
+- `docs/generated/` — point-in-time maps; verify their snapshot SHA before use;
+- `docs/PRD.md`, `docs/SPEC.md`, `docs/PLAN.md`, and `docs/DESIGN.md` — mixed
+  historical product/design material. Current code and decisions win on any
+  architecture or transport conflict;
+- `docs/SESSIONS.md` — historical build-session prompts plus the retained
+  fail-closed live-send/test-fan safety protocol. Do not replay completed phases.
+
+## Development
+
+Requirements: Node.js 22+, pnpm, and Docker where integration tests require it.
+
+```bash
+pnpm install
+pnpm check
+pnpm --filter @chatgoose/desktop dev
+```
+
+`pnpm check` runs typecheck, lint, unit tests, and builds. Release artifacts are
+created through the repository's Windows workflow or the commands documented in
+`docs/RELEASE.md`.
+
+AI output is always a draft. Never auto-retry an indeterminate send and never
+send to a real fan during testing; live-send checks are limited to the explicitly
+configured owner-controlled test fan and fail closed when it is absent.

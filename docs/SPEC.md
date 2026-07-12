@@ -1,3 +1,9 @@
+> **HISTORICAL ARCHITECTURE SPEC WITH RETAINED SAFETY INVARIANTS.** The Direct
+> transport/AI diagrams and local provider-key, model, and prompt sections are
+> superseded by the kernel-only implementation. Preserve §15 safety invariants,
+> but verify every transport or ownership claim against current source,
+> `CLAUDE.md`, `docs/decisions.md`, and the vendored kernel SDK.
+
 # ChatGoose Desktop — Technical Specification
 
 Status: Updated 2026-06-21 — webhook/SSE, snapshot recovery, Hub read custody, live Hub text/typing/unsend/mark-read/media-send command custody, configurable unread read-state reconcile, hourly spend reconcile, and durable telemetry are production defaults or rollout paths with rollback controls. Core AI gateway is proxy-routed and production-enabled; Desktop Direct AI remains the current rollback/default until desktop rollout is accepted.

@@ -2,23 +2,31 @@
 
 Desktop chat client for OnlyFans agency chatters with built-in AI assistance (reply generation, coaching, fan summaries, reactivation pings). Successor to the ChatGoose Firefox extension for Fansly. We cannot inject into OnlyFans, so this app renders its own chat interface on top of the third-party OnlyFans API (onlyfansapi.com, "OFAPI") — OnlyFans accounts are connected through OFAPI, and the desktop reaches OFAPI through the Agency Hub "core" (reads proxied via the hub read-gateway, writes via the command outbox).
 
-**Current state (2026-07-07): post-kernel-migration, in production via auto-update. 0.1.30/0.1.31 shipped dead-on-launch (externalized @kernel/sdk — D8); 0.1.32 (SDK bundled) is the current release; the last pre-incident working build was 0.1.29. The app is a kernel client: ALL platform reads go through the core read-gateway and ALL writes (text/typing/unsend/mark-read/media) through the command outbox — both via the vendored `@kernel/sdk` (`packages/kernel-sdk`), authenticated with per-device tokens. AI is kernel-only (decision D4 / core #111): this repo holds NO vendor AI SDKs, NO API keys, and NO prompts — every generation streams from core's AI gateway; the local LLM clients, prompt files, and key settings were deleted in the Stage 31 sweep. The kernel-AI cutover reaches users in 0.1.32; the D6 verification window (a real chatter workday on kernel AI, then vendor-key revocation) restarts against 0.1.32 (Stage 31 Task 5). PR CI runs `pnpm check` (Stage 35).** For any remaining phase work, the per-phase status notes in `docs/PLAN.md` are the source of truth, not this line.
+**Current architecture:** the app is a kernel client. ALL platform reads go
+through core's read gateway and ALL writes (text/typing/unsend/mark-read/media)
+through the command outbox, both via the vendored `@kernel/sdk` and authenticated
+with per-device tokens. AI is kernel-only (D4 / core #111): this repo holds no
+vendor AI SDKs, provider keys, or prompt library. Do not keep a manually updated
+"current release" here: local source truth is `apps/desktop/package.json`, release
+history is Git tags, and the actually deployed version must be verified against
+the auto-update feed. The 0.1.30/0.1.31 dead-on-launch incident remains relevant
+only as a rollback prohibition in `docs/RELEASE.md` and decision D8.**
 
 ## Read these before designing or building anything
 
 | Doc | What it answers |
 |---|---|
 | `docs/decisions.md` | This repo's decision log (quick-ref table + full entries) + the family law; cross-repo rulings live in core's log and are referenced by number |
-| `docs/generated/` | Regenerated post-migration codebase maps (Stage 35) — machine-generated, banner says how to regenerate; the Pass 1 originals in `docs/project-kernel/` are superseded history |
-| `docs/PRD.md` | What we're building, for whom, feature requirements, UX principles, risks |
-| `docs/SPEC.md` | Architecture, stack, security model, sync/send/AI design, invariants (§15) — §6.2 and §8.6 carry SUPERSEDED banners (stream v2 + kernel-only AI shipped); when SPEC and `docs/decisions.md`/`docs/generated/` disagree, the latter win |
-| `docs/PLAN.md` | Phase order, exit criteria, current next actions |
-| `docs/DESIGN.md` | UI/UX brief: workspace anatomy, hotkeys, **performance-engineering checklist (review-blocking for renderer PRs)**, visual direction |
+| `docs/generated/` | Point-in-time code maps. Verify each banner's snapshot SHA before relying on claims or line numbers; supplemental, not current truth until regenerated |
+| `docs/PRD.md` | Historical product baseline with some shipped UX intent. Direct transport/provider-key clauses are superseded; current code + decisions win |
+| `docs/SPEC.md` | Historical architecture/specification. Preserve §15 safety invariants, but treat Direct OFAPI/AI, prompt, model, and transport sections as superseded unless re-verified in code |
+| `docs/PLAN.md` | Historical phase/execution record, not the current work queue. Do not replay completed phases |
+| `docs/DESIGN.md` | Mixed shipped design intent and historical experiments. Performance constraints and tracked binding mockups remain useful; verify current settings/surfaces in code |
 | `docs/research/legacy-chatgoose.md` | Complete behavioral inventory of the predecessor (features, prompts, exact constants/timeouts, lessons). Normative for ported behavior |
 | `docs/research/onlyfansapi.md` | OFAPI capability map, real-time strategy, credits/pricing, gotchas, key docs URLs |
 | `docs/research/agency-hub-core.md` | Capability map of the Agency Hub "core" backend (`~/code/core`) — the live ChatMuse contract, auth model, what P6 adds there |
 | `docs/research/reactivation-guide.md` | Agency reactivation playbook — ping templates (A1–A11 / B1–B5) byte-for-byte + normative tone rules for any reactivation-message generation |
-| `docs/SESSIONS.md` | Session runbook — restartable per-phase session prompts, the "one session per repo" rule |
+| `docs/SESSIONS.md` | Historical build-session prompts. Do not execute completed phases. Retain and obey its fail-closed live-send/test-fan safety protocol |
 | `docs/RELEASE.md` | How to build/ship the desktop installer: a `v*` tag → auto-update reaching all users (hands off to `WINDOWS-GUIDE.html`) |
 | `docs/vendor/onlyfansapi/` | Vendored API docs: `openapi.json` (field-level source of truth — query with `jq`), `llms-full.txt` (grep, don't read whole), see its README |
 
@@ -32,7 +40,10 @@ Desktop chat client for OnlyFans agency chatters with built-in AI assistance (re
 - The legacy repo `~/code/chatgoose` is a **read-only behavioral reference — do NOT copy its code** (owner decision 2026-06-10: it was written for/by weaker models; write everything fresh). What carries over literally is exactly three things: **prompts byte-for-byte**; **product constants/data** (timeouts, temperatures, message counts, ping thresholds, model registry, `CG-*` error taxonomy — tuned config, catalogued in `docs/research/legacy-chatgoose.md`); and **test cases as behavior facts** (re-express legacy test cases in fresh test code, but never drop cases — they encode production-found edge cases: Gemini leak patterns, escape ordering, cache-staleness matrix). When unsure what the exact behavior is, read the legacy source to learn it — then implement your own. Never reproduce Fansly-specific parts (DOM injection, session capture, Fansly endpoints) — the split is in that doc's §10.
 - SPEC §15 invariants are review-blocking: secrets/network only in Electron main; `packages/shared` stays platform-pure; zod at every trust boundary; never auto-retry an indeterminate send; AI never sends without explicit human action; local DB/media cache encrypted at rest.
 - **This repo assembles no prompts and holds no vendor AI anything** (decision D4 / core #111). The prompt library was byte-migrated INTO core (core Stage 30, sha256-pinned manifest) and is frozen there; generations send refs + `clientContext` to core's feature lane and stream the result. Any prompt work happens in `~/code/core`, gated by its manifest pin — never here.
-- Keep PRD/SPEC/PLAN current: when a decision changes during implementation, update the doc in the same change.
+- Record current decisions in `docs/decisions.md` and update current operator or
+  contract docs in the same change. Do not make old phase prose look current by
+  silently patching isolated paragraphs; use explicit superseded banners or a
+  current as-built replacement.
 
 ## Kernel SDK: versioning and pinning
 
