@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const repoRoot = resolve(import.meta.dirname, '../../..');
@@ -46,6 +46,22 @@ function workflowRunScript(stepName: string): string {
 function writeExecutable(path: string, body: string): void {
   writeFileSync(path, body);
   chmodSync(path, 0o755);
+}
+
+function toBashPath(path: string): string {
+  if (process.platform !== 'win32') return path;
+  return path
+    .replace(/^([A-Za-z]):[\\/]/, (_match, drive: string) => `/${drive.toLowerCase()}/`)
+    .replaceAll('\\', '/');
+}
+
+function bashPathWith(prepend: string): string {
+  const inherited = execFileSync('bash', ['-lc', 'printf %s "$PATH"'], { encoding: 'utf8' });
+  return `${toBashPath(prepend)}:${inherited}`;
+}
+
+function readNormalized(path: string): string {
+  return readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 }
 
 describe('Windows release feed policy', () => {
@@ -201,16 +217,16 @@ touch "$stage/scp-succeeded"
       encoding: 'utf8',
       env: {
         ...process.env,
-        PATH: `${mockBin}${delimiter}${process.env.PATH ?? ''}`,
-        HOME: home,
+        PATH: bashPathWith(mockBin),
+        HOME: toBashPath(home),
         SSH_KEY: 'test-private-key',
-        FEED_DIR: feed,
+        FEED_DIR: toBashPath(feed),
         FEED_URL: 'https://feed.invalid',
         GITHUB_RUN_ID: '29210025236',
         GITHUB_RUN_ATTEMPT: '1',
-        GITHUB_OUTPUT: join(root, 'github-output'),
-        RUNNER_TEMP: runnerTemp,
-        MOCK_LOG: mockLog,
+        GITHUB_OUTPUT: toBashPath(join(root, 'github-output')),
+        RUNNER_TEMP: toBashPath(runnerTemp),
+        MOCK_LOG: toBashPath(mockLog),
       },
     });
 
@@ -221,9 +237,11 @@ touch "$stage/scp-succeeded"
     expect(existsSync(freshStage)).toBe(true);
     expect(existsSync(join(home, '.ssh/id_ed25519'))).toBe(false);
     const log = readFileSync(mockLog, 'utf8');
-    expect(log).toContain(`mkdir -p '${stage}'`);
-    expect(log).toContain(`bash -s -- '${feed}' '${stage}'`);
-    expect(log).toContain(`rm -rf -- '${stage}'`);
+    const bashFeed = toBashPath(feed);
+    const bashStage = toBashPath(stage);
+    expect(log).toContain(`mkdir -p '${bashStage}'`);
+    expect(log).toContain(`bash -s -- '${bashFeed}' '${bashStage}'`);
+    expect(log).toContain(`rm -rf -- '${bashStage}'`);
   });
 
   it('accepts only a successful completed CI run for the exact release SHA', () => {
@@ -248,8 +266,8 @@ touch "$stage/scp-succeeded"
   });
 
   it('pins the repository-controlled workflow gates and roll-forward runbook', () => {
-    const workflow = readFileSync(resolve(repoRoot, '.github/workflows/windows-build.yml'), 'utf8');
-    const ci = readFileSync(resolve(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+    const workflow = readNormalized(resolve(repoRoot, '.github/workflows/windows-build.yml'));
+    const ci = readNormalized(resolve(repoRoot, '.github/workflows/ci.yml'));
     expect(workflow).toMatch(/concurrency:/);
     expect(workflow).toMatch(/build:\n\s+runs-on: windows-latest\n\s+timeout-minutes: 130/);
     expect(workflow).toMatch(/permissions:\n\s+actions: read\n\s+contents: read/);
@@ -288,7 +306,7 @@ touch "$stage/scp-succeeded"
     expect(ci).toMatch(/windows-check:\n\s+name: pnpm check \(Windows\)\n\s+runs-on: windows-latest/);
     expect(ci.match(/run: pnpm check/g)).toHaveLength(2);
 
-    const release = readFileSync(resolve(repoRoot, 'docs/RELEASE.md'), 'utf8');
+    const release = readNormalized(resolve(repoRoot, 'docs/RELEASE.md'));
     expect(release).toMatch(/higher-semver/i);
     expect(release).toMatch(/roll forward/i);
     expect(release).toMatch(/wait for \*\*both\*\* release-prerequisite CI jobs/i);
