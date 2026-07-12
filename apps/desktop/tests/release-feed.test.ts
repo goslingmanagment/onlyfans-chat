@@ -78,6 +78,28 @@ describe('Windows release feed policy', () => {
     expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.5');
   });
 
+  it('publishes when the script is streamed to remote bash stdin', () => {
+    const root = mkdtempSync(join(tmpdir(), 'chatgoose-feed-stdin-'));
+    const feed = join(root, 'feed');
+    mkdirSync(join(feed, '.incoming'), { recursive: true });
+    fixture(feed, '1.2.3', 'old');
+
+    const stage = join(feed, '.incoming', 'run-stdin');
+    mkdirSync(stage);
+    fixture(stage, '1.2.4', 'new');
+
+    const publisherScript = readFileSync(publisher, 'utf8');
+    expect(publisherScript).not.toContain('\r');
+    const result = spawnSync('bash', ['-s', '--', feed, stage], {
+      env: publisherEnv,
+      input: publisherScript,
+      encoding: 'utf8',
+    });
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(0);
+    expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.4');
+  });
+
   it('pins the repository-controlled workflow gates and roll-forward runbook', () => {
     const workflow = readFileSync(resolve(repoRoot, '.github/workflows/windows-build.yml'), 'utf8');
     expect(workflow).toMatch(/concurrency:/);
