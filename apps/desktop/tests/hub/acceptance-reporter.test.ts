@@ -290,6 +290,34 @@ describe('acceptance reporter (spool + drain)', () => {
     ]);
     reporter.dispose();
   });
+
+  it('quiesce waits for an in-flight spool mutation before DB ownership is released', async () => {
+    let settle!: () => void;
+    client = {
+      postIngestObservations: vi.fn(
+        (args: { events: HubIngestObservationEvent[] }) =>
+          new Promise<{ accepted: number; duplicates: number }>((resolve) => {
+            settle = () => resolve({ accepted: args.events.length, duplicates: 0 });
+          }),
+      ),
+    };
+    const reporter = makeReporter();
+    reporter.enqueue(event({ operationId: 'op-quiesce' }));
+    void reporter.flushNow();
+    await vi.waitFor(() => expect(client?.postIngestObservations).toHaveBeenCalledTimes(1));
+
+    let released = false;
+    const stopped = reporter.quiesce().then(() => {
+      released = true;
+    });
+    await Promise.resolve();
+    expect(released).toBe(false);
+    expect(reporter.pending()).toBe(1);
+
+    settle();
+    await stopped;
+    expect(reporter.pending()).toBe(0);
+  });
 });
 
 describe('acceptance tracker + IPC hook bodies', () => {

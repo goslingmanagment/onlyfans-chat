@@ -27,6 +27,8 @@ export interface HubSummarySyncState extends Record<string, unknown> {
 export interface SummaryHubSyncHooks extends SummaryHubHooks {
   /** Replay pending rows immediately (Hub configure) and arm retry on failure. */
   replayPending(): Promise<void>;
+  /** Stops new work and awaits every continuation that can still touch SQLite. */
+  quiesce(): Promise<void>;
   dispose(): void;
 }
 
@@ -60,6 +62,24 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
   let replayTimer: ReturnType<typeof setTimeout> | null = null;
   let replaying: Promise<void> | null = null;
   let disposed = false;
+  const activeTasks = new Set<Promise<unknown>>();
+
+  function track<T>(task: Promise<T>): Promise<T> {
+    activeTasks.add(task);
+    const clear = (): void => {
+      activeTasks.delete(task);
+    };
+    void task.then(clear, clear);
+    return task;
+  }
+
+  function disposeHooks(): void {
+    disposed = true;
+    if (replayTimer !== null) {
+      clearTimeout(replayTimer);
+      replayTimer = null;
+    }
+  }
 
   function syncState(
     state: HubSummarySyncState['state'],
@@ -101,6 +121,9 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
     accountId: string,
     fanId: string,
   ): Promise<{ body: string; generatedAt: number } | null> {
+    if (disposed) {
+      return null;
+    }
     const pageLabel = await resolvePageLabel(accountId);
     if (disposed || pageLabel === null) {
       return null;
@@ -215,7 +238,7 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
     if (replaying !== null) {
       return replaying;
     }
-    const task = (async () => {
+    const task = track((async () => {
       for (const pending of data.summaries.listHubSyncPending()) {
         if (disposed) {
           return;
@@ -235,7 +258,7 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
       if (!disposed && data.summaries.listHubSyncPending(1).length > 0) {
         scheduleReplay();
       }
-    })();
+    })());
     replaying = task;
     const clear = (): void => {
       if (replaying === task) replaying = null;
@@ -245,14 +268,16 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
   }
 
   return {
-    prefetchSummary: ({ accountId, fanId }) =>
+    prefetchSummary: ({ accountId, fanId }) => disposed
+      ? Promise.resolve(null)
+      :
       // 5 s budget covers everything including page resolution; on elapse the
       // result is abandoned and generation proceeds (hub down ≠ broken Scan).
-      withBudget(doPrefetch(accountId, fanId), HUB_PROFILE_GET_TIMEOUT_MS, null),
+      withBudget(track(doPrefetch(accountId, fanId)), HUB_PROFILE_GET_TIMEOUT_MS, null),
 
     pushSummary: async ({ accountId, fanId, body }) => {
       try {
-        const delivered = await doPush(accountId, fanId, body);
+        const delivered = await track(doPush(accountId, fanId, body));
         if (!delivered) {
           scheduleReplay();
         }
@@ -262,12 +287,14 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
       }
     },
     replayPending,
-    dispose() {
-      disposed = true;
-      if (replayTimer !== null) {
-        clearTimeout(replayTimer);
-        replayTimer = null;
+    async quiesce() {
+      disposeHooks();
+      while (activeTasks.size > 0) {
+        await Promise.allSettled([...activeTasks]);
       }
+    },
+    dispose() {
+      disposeHooks();
     },
   };
 }

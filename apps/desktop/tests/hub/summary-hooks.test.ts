@@ -108,6 +108,42 @@ describe('prefetchSummary', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(settled).toBeNull(); // budget elapsed → generation proceeds
   });
+
+  it('quiesce waits for a budget-abandoned resolver before releasing SQLite ownership', async () => {
+    vi.useFakeTimers();
+    const data = memoryDataLayer();
+    let releaseResolver!: () => void;
+    const resolverGate = new Promise<void>((resolve) => {
+      releaseResolver = resolve;
+    });
+    const resolvePageLabel = vi.fn(async () => {
+      await resolverGate;
+      // This is the DB-owning continuation that must finish before close.
+      return data.accounts.get(ACCT)?.username ?? null;
+    });
+    const hooks = createSummaryHubHooks({
+      client: makeFakeHubClient(),
+      data,
+      resolvePageLabel,
+    });
+    const publicPrefetch = hooks.prefetchSummary?.({ accountId: ACCT, fanId: FAN });
+    await Promise.resolve();
+    expect(resolvePageLabel).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(publicPrefetch).resolves.toBeNull();
+
+    let released = false;
+    const stopped = hooks.quiesce().then(() => {
+      released = true;
+    });
+    await Promise.resolve();
+    expect(released).toBe(false);
+
+    releaseResolver();
+    await stopped;
+    data.close();
+    await expect(hooks.prefetchSummary?.({ accountId: ACCT, fanId: FAN })).resolves.toBeNull();
+  });
 });
 
 describe('pushSummary', () => {

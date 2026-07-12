@@ -94,9 +94,16 @@ check → download → install flow so the UX is demoable without a real feed.
 
 1. Bump `version` in `apps/desktop/package.json`, run `pnpm check`, and commit on
    `main`.
-2. `git tag v<version> && git push origin main --tags`. Publication rejects a
+2. Push `main` and wait for **both** release-prerequisite CI jobs to pass on that exact
+   commit: the existing Linux `pnpm check` and `pnpm check (Windows)`. Do not
+   create the release tag while either job is pending or failing; this catches
+   Windows path, line-ending, and native-toolchain regressions before a version
+   is consumed. GitHub plan restrictions prevent protected required checks on
+   this private repository, so `windows-build` also queries Actions and refuses
+   to build or publish unless the exact tag SHA already has a successful CI run.
+3. `git tag v<version> && git push origin v<version>`. Publication rejects a
    tag whose commit is not an ancestor of `origin/main`.
-3. The serialized `windows-build` workflow reruns the full `pnpm check`, builds
+4. The serialized `windows-build` workflow reruns the full `pnpm check`, builds
    the installer on Windows, **smoke-launches
    the packaged binary** (`ChatGoose.exe --smoke` on a throwaway profile must
    exit 0 only after the committed renderer completes a real settings IPC round

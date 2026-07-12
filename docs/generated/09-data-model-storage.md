@@ -151,25 +151,27 @@ invalidations (`10`).
   raw OF CDN URLs into `media://` tokens; local file-byte upload is intentionally absent (the
   transport wrapper also fails it closed, `05`).
 
-## One-time local-history harvest — `main/harvest/index.ts` (427 lines)
+## Revision-aware local-history harvest — `main/harvest/index.ts`
 
-A **one-time upload of local DB rows** (not OFAPI fetching) to the kernel capture lane
+A **custody upload of local DB row revisions** (not OFAPI fetching) to the kernel capture lane
 `POST /api/v1/ingest/observations` via `postIngestObservations` (`harvest/index.ts:1-7`).
 
-- **Deterministic ids:** `clientEventId = UUIDv5(machineId:table:rowPk)` (fixed namespace),
-  so a re-run/resume re-sends the same ids and the lane's idempotency makes it a no-op —
-  over-uploading is free, under-uploading is the only failure mode that matters.
+- **Deterministic revision ids:** v2 binds machine id, table, JSON-encoded natural-key tuple,
+  source schema, and canonical SHA-256 row content in a fixed UUIDv5 namespace. Schema v19
+  installs persistent INSERT/UPDATE/DELETE revision triggers and an immutable
+  `harvest_uploaded_revisions(table_name,row_key,content_hash)` ledger. Fingerprints commit
+  only after the covering 2xx; a crash retry gets a Core duplicate without losing custody.
 - **Tables harvested** (`HARVEST_TABLES`, `:50-58`): `messages, fan_transactions, outbox,
   message_guard_events, usage_events, ai_spend_log, credit_log`. Excluded per spec:
   chats/accounts/fans (kernel reference data), summaries (already synced), media caches,
   thread_fetch_log (local telemetry), settings (secrets — never leaves).
-- **Mechanics:** `run()` (idempotent, single-flight) walks each table by natural-key order in
-  `HARVEST_BATCH_SIZE=100` batches, paced `HARVEST_BATCH_PACE_MS=2000`, retries `[5s,30s,120s]`,
-  bodies split under `HARVEST_MAX_BATCH_BYTES=900_000` (hub 1 MiB cap). **Cursor/progress
-  persist only after a 2xx.** A 400 = contract bug → quarantine file + halt. `pause()` is
-  supported; on completion it writes a manifest.
-- **Retention interlock:** `isIncomplete()` (started but not completed) **freezes retention
-  prunes** in polling-sync (`index.ts:355-359`; consumed as `isPruneFrozen`) — local history
-  must reach the kernel before it may age out locally.
+- **Mechanics:** `run()` (idempotent, single-flight) fully scans only dirty tables, uploads
+  unseen revisions in `HARVEST_BATCH_SIZE=100` batches, and repeats when a trigger revision
+  changes during the scan. Batches are paced and split below the Hub body cap; a 400 or
+  oversize revision quarantines and fails closed. Completion writes timestamped audit
+  snapshots and atomically replaces the per-machine `...-latest.json` reconciliation file.
+- **Retention interlock:** `isIncomplete()` dynamically compares durable source/stable
+  revisions and **freezes retention prunes** in polling-sync and message-guard. Terminal purge
+  drains all DB-owning runtimes, uploads a final dirty delta, and only then closes/deletes SQLite.
 - IPC: `query:harvest.status`, `cmd:harvest.start` (fire-and-forget), `cmd:harvest.pause`,
   surfaced in the Danger Zone (`10`).

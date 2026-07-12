@@ -73,6 +73,8 @@ export interface AcceptanceReporter {
   /** Pending spool size (diagnostics). */
   pending(): number;
   flushNow(): Promise<void>;
+  /** Stops new work and waits for the current SQLite-owning continuation. */
+  quiesce(): Promise<void>;
   dispose(): void;
 }
 
@@ -118,6 +120,7 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
   const onWarn = options.onWarn ?? (() => {});
   let timer: ReturnType<typeof setTimeout> | null = null;
   let flushing = false;
+  let flushPromise: Promise<void> | null = null;
   let flushAgain = false;
   let disposed = false;
 
@@ -171,7 +174,7 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
     }, FLUSH_DEBOUNCE_MS);
   }
 
-  async function flush(): Promise<void> {
+  async function performFlush(): Promise<void> {
     if (disposed) {
       return;
     }
@@ -243,10 +246,32 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
       }
     } finally {
       flushing = false;
-      if (!disposed && flushAgain) {
-        flushAgain = false;
-        void flush();
+    }
+  }
+
+  function flush(): Promise<void> {
+    if (flushPromise !== null) {
+      flushAgain = true;
+      return flushPromise;
+    }
+    const tracked = performFlush().finally(() => {
+      if (flushPromise === tracked) {
+        flushPromise = null;
+        if (!disposed && flushAgain) {
+          flushAgain = false;
+          void flush();
+        }
       }
+    });
+    flushPromise = tracked;
+    return tracked;
+  }
+
+  function disposeReporter(): void {
+    disposed = true;
+    if (timer !== null) {
+      clearTimeout(timer);
+      timer = null;
     }
   }
 
@@ -268,12 +293,12 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
       }
       return flush();
     },
+    async quiesce() {
+      disposeReporter();
+      await flushPromise;
+    },
     dispose() {
-      disposed = true;
-      if (timer !== null) {
-        clearTimeout(timer);
-        timer = null;
-      }
+      disposeReporter();
     },
   };
 }

@@ -4,7 +4,10 @@ import {
   MESSAGE_GUARD_DISABLED_POLICY_VERSION,
   type GuardRule,
 } from '@chatgoose/shared/message-guard/index';
-import { createMessageGuardRuntime } from '@main/message-guard/runtime';
+import {
+  createMessageGuardRuntime,
+  createPrunedMessageGuardRuntime,
+} from '@main/message-guard/runtime';
 import type { DataLayer } from '@main/db/index';
 import { memoryDataLayer } from '../db/helpers';
 
@@ -86,5 +89,71 @@ describe('MessageGuardRuntime enforcement switch', () => {
     expect(guard.pruneExpired()).toBe(1);
     expect(data.messageGuardEvents.count()).toBe(1);
     expect(data.messageGuardEvents.report().recent[0]?.id).toBe('legacy-ttl-victim');
+  });
+
+  it('freezes guard-audit retention until the harvest releases custody', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    data.messageGuardEvents.insert({
+      id: 'past-horizon',
+      occurredAt: new Date(Date.now() - 4000 * DAY_MS).toISOString(),
+      actorUserId: null,
+      actorLabel: null,
+      accountId: 'acct_1',
+      chatId: '101',
+      surface: 'engine:sendParts',
+      transport: 'hub',
+      decision: 'blocked',
+      policyVersion: 'test',
+      category: 'off_platform',
+      ruleId: 'builtin-structural-domain',
+      ruleLabel: 'Off-platform domain',
+      matchedOriginal: 'example.com',
+      matchedNormalized: 'examplecom',
+      spanStart: 5,
+      spanEnd: 16,
+      messageText: 'send example.com here',
+      messageHash: 'abc123',
+      mediaCount: 0,
+      price: 0,
+    });
+    let frozen = true;
+    const guard = createMessageGuardRuntime({ data, isPruneFrozen: () => frozen });
+
+    expect(guard.pruneExpired()).toBe(0);
+    expect(data.messageGuardEvents.count()).toBe(1);
+
+    frozen = false;
+    expect(guard.pruneExpired()).toBe(1);
+    expect(data.messageGuardEvents.count()).toBe(0);
+  });
+
+  it('performs the boot prune through the already-bound harvest freeze', () => {
+    data.messageGuardEvents.insert({
+      id: 'boot-prune-victim',
+      occurredAt: '2010-01-01T00:00:00.000Z',
+      actorUserId: null,
+      actorLabel: null,
+      accountId: 'acct_1',
+      chatId: '101',
+      surface: 'engine:sendParts',
+      transport: 'hub',
+      decision: 'blocked',
+      policyVersion: 'test',
+      category: 'off_platform',
+      ruleId: 'test',
+      ruleLabel: 'Test',
+      matchedOriginal: 'example.com',
+      matchedNormalized: 'examplecom',
+      spanStart: 0,
+      spanEnd: 11,
+      messageText: 'example.com',
+      messageHash: 'boot-hash',
+      mediaCount: 0,
+      price: 0,
+    });
+
+    createPrunedMessageGuardRuntime({ data, isPruneFrozen: () => true });
+
+    expect(data.messageGuardEvents.count()).toBe(1);
   });
 });

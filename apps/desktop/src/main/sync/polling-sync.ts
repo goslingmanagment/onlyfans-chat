@@ -1848,10 +1848,12 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         } satisfies SpendCoverage);
       }
     }
-    data.fanTransactions.pruneOlderThan(
-      accountId,
-      new Date(now() - SPEND_RETENTION_MS).toISOString(),
-    );
+    if (!isPruneFrozen()) {
+      data.fanTransactions.pruneOlderThan(
+        accountId,
+        new Date(now() - SPEND_RETENTION_MS).toISOString(),
+      );
+    }
   }
 
   async function runSpendSweepInner(accountId: string): Promise<void> {

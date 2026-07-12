@@ -449,6 +449,46 @@ SET parts = '[]'
 WHERE accepted_at IS NOT NULL AND parts <> '[]';
 `;
 
+// v19 — revision-aware local-history harvest. The immutable fingerprint ledger
+// remembers every natural-key/content revision that reached Core; per-source
+// triggers make INSERT/UPDATE/DELETE dirtiness observable without trusting
+// mutable/reusable rowids. Missing revision settings mean revision 0; the v2
+// format marker, not eager settings rows, forces completed v1 installs through
+// one full rescan without polluting the normal settings snapshot.
+const HARVEST_REVISION_TABLES_V19 = [
+  'messages',
+  'fan_transactions',
+  'outbox',
+  'message_guard_events',
+  'usage_events',
+  'ai_spend_log',
+  'credit_log',
+] as const;
+
+const HARVEST_REVISION_TRIGGERS_V19 = HARVEST_REVISION_TABLES_V19.flatMap((table) =>
+  ['insert', 'update', 'delete'].map((operation) => `
+CREATE TRIGGER harvest_revision_${table}_${operation}
+AFTER ${operation.toUpperCase()} ON ${table}
+BEGIN
+  INSERT INTO settings (key, value)
+  VALUES ('harvest.revision.${table}', '1')
+  ON CONFLICT (key) DO UPDATE SET
+    value = CAST(CAST(value AS INTEGER) + 1 AS TEXT);
+END;`),
+).join('\n');
+
+export const SCHEMA_V19 = `
+CREATE TABLE harvest_uploaded_revisions (
+  table_name TEXT NOT NULL,
+  row_key TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  uploaded_at TEXT NOT NULL,
+  PRIMARY KEY (table_name, row_key, content_hash)
+);
+
+${HARVEST_REVISION_TRIGGERS_V19}
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',
@@ -467,4 +507,5 @@ export const ALL_TABLES = [
   'unsend_commands',
   'thread_fetch_log',
   'message_guard_events',
+  'harvest_uploaded_revisions',
 ] as const;

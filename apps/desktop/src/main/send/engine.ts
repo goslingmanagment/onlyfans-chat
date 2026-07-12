@@ -551,9 +551,17 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     return `${accountId}|${chatId}|${messageId}`;
   }
 
-  function canAutoRecoverUnsend(row: { createdAt: string }): boolean {
+  function isWithinUnsendRecoveryWindow(row: { createdAt: string }): boolean {
     const createdAtMs = Date.parse(row.createdAt);
     return Number.isFinite(createdAtMs) && now() - createdAtMs < UNSEND_RECOVERY_MAX_AGE_MS;
+  }
+
+  function canRecoverUnsendOnBoot(row: { createdAt: string; coreCommandId: string | null }): boolean {
+    // An accepted command is always safe to inspect once on boot/reconfigure:
+    // this is a status read, never a late intake. The hot five-second loop is
+    // still age-bounded below so a permanently missing/expired Core command
+    // cannot produce an unbounded request stream.
+    return row.coreCommandId !== null || isWithinUnsendRecoveryWindow(row);
   }
 
   function scheduleUnsendRecovery(accountId: string, chatId: string, messageId: string): void {
@@ -564,7 +572,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       disposed ||
       unsendRecoveryTimers.has(key) ||
       row === null ||
-      !canAutoRecoverUnsend(row)
+      !isWithinUnsendRecoveryWindow(row)
     ) {
       return;
     }
@@ -573,7 +581,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       setTimeout(() => {
         unsendRecoveryTimers.delete(key);
         const current = data.unsendCommands.get(accountId, chatId, messageId);
-        if (current === null || !canAutoRecoverUnsend(current)) {
+        if (current === null || !isWithinUnsendRecoveryWindow(current)) {
           return;
         }
         void unsendViaHub(accountId, chatId, messageId, false).catch(() => undefined);
@@ -966,26 +974,26 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         mediaCount: row.mediaFiles.length,
         price: row.price,
       });
-      data.outbox.transition({ localId, from: ['failed'], to: 'cancelled' }); // superseded
       const newLocalId = randomUUID();
-      data.outbox.insertMany([
-        {
-          localId: newLocalId,
-          accountId,
-          chatId: row.chatId,
-          text,
-          transport: HUB_WRITE_TRANSPORT,
-          sequenceId: null,
-          partIndex: 0,
-          retryOf: localId,
-          createdAt: nowIso(),
-          // PPV payload carries over unchanged (only the caption is editable);
-          // previews ⊆ mediaFiles holds because the old row enforced it.
-          price: row.price,
-          mediaFiles: row.mediaFiles,
-          previews: row.previews,
-        },
-      ]);
+      const replaced = data.outbox.replaceFailedWithRetry(localId, {
+        localId: newLocalId,
+        accountId,
+        chatId: row.chatId,
+        text,
+        transport: HUB_WRITE_TRANSPORT,
+        sequenceId: null,
+        partIndex: 0,
+        retryOf: localId,
+        createdAt: nowIso(),
+        // PPV payload carries over unchanged (only the caption is editable);
+        // previews ⊆ mediaFiles holds because the old row enforced it.
+        price: row.price,
+        mediaFiles: row.mediaFiles,
+        previews: row.previews,
+      });
+      if (!replaced) {
+        throw new Error('retry: failed row changed before the retry could be persisted');
+      }
       kickPump(accountId, row.chatId);
       return { localId: newLocalId };
     },
@@ -1060,7 +1068,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         // Recovery is deliberately bounded. In particular, never turn an old
         // response-lost row with no Core command id into a surprise intake on
         // a much later application boot or settings-driven runtime rebuild.
-        if (!canAutoRecoverUnsend(row)) {
+        if (!canRecoverUnsendOnBoot(row)) {
           continue;
         }
         try {

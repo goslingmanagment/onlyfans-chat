@@ -1,18 +1,16 @@
-// Stage 12: one-time local-DB harvest. Walks the harvested tables in rowid
-// order and uploads every row to the kernel's capture lane
-// (POST /api/v1/ingest/observations) with DETERMINISTIC clientEventIds
-// (UUIDv5 of machineId:table:rowPk), so a re-run or resume re-sends the same
-// ids and the lane's idempotency makes it a no-op. Over-uploading is free;
-// under-uploading is the only failure mode that matters — cursors advance
-// ONLY after a 2xx for the batch that contained the rows.
+// Stage 12: revision-aware local-DB harvest. Dirty-table revisions come from
+// SQLite triggers; each scan uploads natural-key + content-hash revisions to
+// the kernel capture lane (POST /api/v1/ingest/observations). A durable local
+// fingerprint ledger advances ONLY after the covering 2xx, so retry/resume is
+// idempotent while UPDATEs and rowid reuse remain observable.
 //
 // Excluded tables, per spec §2: chats/accounts/fans (kernel reference data),
 // summaries (already hub-synced), media_cache/media_urls (binary cache),
 // thread_fetch_log (local ops telemetry), settings (secrets — never leaves).
 
 import { createHash, randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { copyFile, rename, rm, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 
 import { HubError, type HubIngestObservationEvent } from '@chatgoose/shared/hub/index';
 import type { DataLayer } from '../db/index';
@@ -25,10 +23,14 @@ const HARVEST_RETRY_DELAYS_MS = [5_000, 30_000, 120_000];
 export const HARVEST_MAX_BATCH_BYTES = 900_000;
 
 const INSTALL_ID_KEY = 'harvest.install_id';
-const CURSOR_KEY_PREFIX = 'harvest.cursor.';
 const PROGRESS_KEY_PREFIX = 'harvest.progress.';
+const REVISION_KEY_PREFIX = 'harvest.revision.';
+const STABLE_REVISION_KEY_PREFIX = 'harvest.stable_revision.';
 const STARTED_KEY = 'harvest.started_at';
 const COMPLETED_KEY = 'harvest.completed_at';
+const FORMAT_VERSION_KEY = 'harvest.format_version';
+const SOURCE_SCHEMA_VERSION_KEY = 'harvest.source_schema_version';
+const HARVEST_FORMAT_VERSION = 2;
 
 // Fixed namespace for UUIDv5 ids (generated once for this feature; never
 // change it — determinism across runs and releases depends on it).
@@ -37,7 +39,7 @@ const HARVEST_UUID_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 export interface HarvestTableSpec {
   table: string;
   kind: string;
-  /** Natural-key columns joined into the deterministic id (NOT rowid — VACUUM renumbers rowids). */
+  /** Natural-key columns identifying a logical row across rowid changes. */
   pkColumns: string[];
   /** Column carrying the row's own timestamp for observedAt. */
   observedAtColumn: string;
@@ -75,6 +77,12 @@ interface TableProgress {
   minObservedAt: string | null;
   maxObservedAt: string | null;
   completed: boolean;
+}
+
+interface RowRevision {
+  rowKey: string;
+  contentHash: string;
+  event: HubIngestObservationEvent;
 }
 
 export interface HarvestStatus {
@@ -133,11 +141,6 @@ export function createHarvestModule(options: HarvestModuleOptions) {
     return generated;
   }
 
-  function readCursor(table: string): number {
-    const value = data.settings.get(`${CURSOR_KEY_PREFIX}${table}`);
-    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-  }
-
   function readProgress(table: string): TableProgress {
     const value = data.settings.get(`${PROGRESS_KEY_PREFIX}${table}`);
     if (value && typeof value === 'object') {
@@ -148,6 +151,47 @@ export function createHarvestModule(options: HarvestModuleOptions) {
 
   function writeProgress(table: string, progress: TableProgress): void {
     data.settings.set(`${PROGRESS_KEY_PREFIX}${table}`, progress);
+  }
+
+  function readIntegerSetting(key: string, fallback: number): number {
+    const value = data.settings.get(key);
+    return typeof value === 'number' && Number.isSafeInteger(value) ? value : fallback;
+  }
+
+  function readRevision(table: string): number {
+    return readIntegerSetting(`${REVISION_KEY_PREFIX}${table}`, 0);
+  }
+
+  function readStableRevision(table: string): number {
+    return readIntegerSetting(`${STABLE_REVISION_KEY_PREFIX}${table}`, -1);
+  }
+
+  function isTableDirty(table: string): boolean {
+    return readRevision(table) !== readStableRevision(table);
+  }
+
+  function hasDirtyTables(): boolean {
+    return HARVEST_TABLES.some((spec) => isTableDirty(spec.table));
+  }
+
+  function isCurrentFormat(): boolean {
+    return (
+      data.settings.get(FORMAT_VERSION_KEY) === HARVEST_FORMAT_VERSION &&
+      data.settings.get(SOURCE_SCHEMA_VERSION_KEY) === options.schemaVersion
+    );
+  }
+
+  function canonicalJson(value: unknown): string {
+    if (Array.isArray(value)) {
+      return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`;
+    }
+    if (value !== null && typeof value === 'object') {
+      return `{${Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+        .join(',')}}`;
+    }
+    return JSON.stringify(value) ?? 'null';
   }
 
   function observedAtOf(spec: HarvestTableSpec, row: Record<string, unknown>): string {
@@ -164,24 +208,36 @@ export function createHarvestModule(options: HarvestModuleOptions) {
     return Number.isNaN(new Date(candidate).getTime()) ? new Date(0).toISOString() : candidate;
   }
 
-  function toEvent(
+  function toRevision(
     spec: HarvestTableSpec,
     row: Record<string, unknown>,
     machine: string,
-  ): HubIngestObservationEvent {
-    const pk = spec.pkColumns.map((column) => String(row[column] ?? '')).join(':');
+  ): RowRevision {
+    const rowKey = JSON.stringify(spec.pkColumns.map((column) => row[column] ?? null));
     const account = spec.accountColumn ? row[spec.accountColumn] : null;
     const { __rowid: _rowid, ...cleanRow } = row;
+    const contentHash = createHash('sha256')
+      .update(canonicalJson({ schemaVersion: options.schemaVersion, row: cleanRow }))
+      .digest('hex');
     return {
-      clientEventId: uuidV5(`${machine}:${spec.table}:${pk}`),
-      kind: spec.kind,
-      observedAt: observedAtOf(spec, row),
-      payload: {
-        table: spec.table,
-        machineId: machine,
-        schemaVersion: options.schemaVersion,
-        ...(typeof account === 'string' && account.length > 0 ? { ofapiAccountId: account } : {}),
-        row: cleanRow,
+      rowKey,
+      contentHash,
+      event: {
+        clientEventId: uuidV5(
+          `${machine}:v${HARVEST_FORMAT_VERSION}:${spec.table}:${rowKey}:${contentHash}`,
+        ),
+        kind: spec.kind,
+        observedAt: observedAtOf(spec, row),
+        payload: {
+          table: spec.table,
+          machineId: machine,
+          schemaVersion: options.schemaVersion,
+          harvestFormatVersion: HARVEST_FORMAT_VERSION,
+          rowKey,
+          contentHash,
+          ...(typeof account === 'string' && account.length > 0 ? { ofapiAccountId: account } : {}),
+          row: cleanRow,
+        },
       },
     };
   }
@@ -274,64 +330,141 @@ export function createHarvestModule(options: HarvestModuleOptions) {
     return totals;
   }
 
-  async function walkTable(spec: HarvestTableSpec, uploader: HarvestUploader, machine: string) {
+  const fingerprintExistsStatement = data.db.prepare(
+    'SELECT 1 AS present FROM harvest_uploaded_revisions ' +
+      'WHERE table_name = @tableName AND row_key = @rowKey AND content_hash = @contentHash',
+  );
+  const insertFingerprintStatement = data.db.prepare(
+    'INSERT OR IGNORE INTO harvest_uploaded_revisions ' +
+      '(table_name, row_key, content_hash, uploaded_at) ' +
+      'VALUES (@tableName, @rowKey, @contentHash, @uploadedAt)',
+  );
+
+  function fingerprintExists(table: string, revision: RowRevision): boolean {
+    const row = fingerprintExistsStatement.get({
+      tableName: table,
+      rowKey: revision.rowKey,
+      contentHash: revision.contentHash,
+    }) as { present: number } | undefined;
+    return row?.present === 1;
+  }
+
+  async function scanTableUntilStable(
+    spec: HarvestTableSpec,
+    uploader: HarvestUploader,
+    machine: string,
+    forceFullScan: boolean,
+  ): Promise<void> {
     currentTable = spec.table;
     const progress = readProgress(spec.table);
-    if (progress.completed) {
+    if (!forceFullScan && !isTableDirty(spec.table)) {
+      if (!progress.completed) {
+        progress.completed = true;
+        writeProgress(spec.table, progress);
+      }
       return;
     }
+    if (progress.completed) {
+      progress.completed = false;
+      writeProgress(spec.table, progress);
+    }
     const statement = data.db.prepare(
-      `SELECT rowid AS __rowid, * FROM ${spec.table} WHERE rowid > @cursor ORDER BY rowid LIMIT @limit`,
+      `SELECT rowid AS __rowid, * FROM ${spec.table} ` +
+        'WHERE rowid > @cursor ORDER BY rowid LIMIT @limit',
     );
+
+    // A revision change at any point invalidates only the stable checkpoint,
+    // not the successful fingerprints. The next full pass skips those exact
+    // key+hash revisions and finds UPDATEs or reused rowids deterministically.
     for (;;) {
+      const scanRevision = readRevision(spec.table);
+      let cursor = 0;
+      for (;;) {
+        if (pauseRequested) {
+          return;
+        }
+        const rows = statement.all({ cursor, limit: batchSize }) as Record<string, unknown>[];
+        if (rows.length === 0) {
+          break;
+        }
+        cursor = Number(rows[rows.length - 1]!.__rowid);
+        const unseen = rows
+          .map((row) => toRevision(spec, row, machine))
+          .filter((revision) => !fingerprintExists(spec.table, revision));
+        if (unseen.length > 0) {
+          const events = unseen.map((revision) => revision.event);
+          const result = await uploadBatch(uploader, events);
+          if (result.accepted + result.duplicates !== events.length) {
+            throw new Error(
+              `Harvest acknowledgement mismatch for ${spec.table}: ` +
+                `${result.accepted} accepted + ${result.duplicates} duplicates for ${events.length} events`,
+            );
+          }
+          // Fingerprints and cumulative manifest counters commit together,
+          // strictly after every event in this logical batch received a 2xx.
+          data.db.transaction(() => {
+            const uploadedAt = new Date().toISOString();
+            for (const revision of unseen) {
+              insertFingerprintStatement.run({
+                tableName: spec.table,
+                rowKey: revision.rowKey,
+                contentHash: revision.contentHash,
+                uploadedAt,
+              });
+            }
+            progress.walked += unseen.length;
+            progress.uploaded += result.accepted;
+            progress.duplicates += result.duplicates;
+            for (const event of events) {
+              progress.minObservedAt =
+                progress.minObservedAt === null || event.observedAt < progress.minObservedAt
+                  ? event.observedAt
+                  : progress.minObservedAt;
+              progress.maxObservedAt =
+                progress.maxObservedAt === null || event.observedAt > progress.maxObservedAt
+                  ? event.observedAt
+                  : progress.maxObservedAt;
+            }
+            writeProgress(spec.table, progress);
+          });
+          log('harvest batch uploaded', {
+            table: spec.table,
+            rows: unseen.length,
+            accepted: result.accepted,
+            duplicates: result.duplicates,
+          });
+        }
+        if (rows.length < batchSize) {
+          break;
+        }
+        await sleep(paceMs);
+      }
       if (pauseRequested) {
         return;
       }
-      const cursor = readCursor(spec.table);
-      const rows = statement.all({ cursor, limit: batchSize }) as Record<string, unknown>[];
-      if (rows.length === 0) {
+      if (readRevision(spec.table) !== scanRevision) {
+        continue;
+      }
+      // No await may separate this comparison from the stable-revision write;
+      // same-process SQLite producers therefore cannot interleave a mutation.
+      data.db.transaction(() => {
+        data.settings.set(`${STABLE_REVISION_KEY_PREFIX}${spec.table}`, scanRevision);
         progress.completed = true;
         writeProgress(spec.table, progress);
-        return;
-      }
-      const events = rows.map((row) => toEvent(spec, row, machine));
-      const result = await uploadBatch(uploader, events);
-      // Cursor + progress persist ONLY after the 2xx that covered these rows.
-      const lastRowid = Number(rows[rows.length - 1]!.__rowid);
-      progress.walked += rows.length;
-      progress.uploaded += result.accepted;
-      progress.duplicates += result.duplicates;
-      for (const event of events) {
-        progress.minObservedAt = progress.minObservedAt === null || event.observedAt < progress.minObservedAt
-          ? event.observedAt
-          : progress.minObservedAt;
-        progress.maxObservedAt = progress.maxObservedAt === null || event.observedAt > progress.maxObservedAt
-          ? event.observedAt
-          : progress.maxObservedAt;
-      }
-      data.settings.set(`${CURSOR_KEY_PREFIX}${spec.table}`, lastRowid);
-      writeProgress(spec.table, progress);
-      log('harvest batch uploaded', {
-        table: spec.table,
-        rows: rows.length,
-        accepted: result.accepted,
-        duplicates: result.duplicates,
       });
-      if (rows.length < batchSize) {
-        progress.completed = true;
-        writeProgress(spec.table, progress);
-        return;
-      }
-      await sleep(paceMs);
+      return;
     }
   }
 
   async function writeManifest(machine: string): Promise<string> {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const latestName = `chatgoose-harvest-manifest-${machine}-latest.json`;
     const manifest = {
       machineId: machine,
       appVersion: options.appVersion,
       schemaVersion: options.schemaVersion,
+      harvestFormatVersion: HARVEST_FORMAT_VERSION,
+      reconcileUsing: latestName,
       completedAt: new Date().toISOString(),
       tables: HARVEST_TABLES.map((spec) => {
         const progress = readProgress(spec.table);
@@ -351,20 +484,50 @@ export function createHarvestModule(options: HarvestModuleOptions) {
     return file;
   }
 
+  async function publishLatestManifest(manifestPath: string, machine: string): Promise<string> {
+    const latest = join(
+      options.manifestDir,
+      `chatgoose-harvest-manifest-${machine}-latest.json`,
+    );
+    const temporary = `${latest}.${randomUUID()}.tmp`;
+    await copyFile(manifestPath, temporary);
+    await rename(temporary, latest);
+    return latest;
+  }
+
   return {
     /** Purge/prune guard: history must reach the kernel before it may die here. */
     isIncomplete(): boolean {
+      // Arm immediately, including while createUploader is still pending. A
+      // purge racing that await must not delete the DB out from under the run.
+      if (running) {
+        return true;
+      }
       const started = data.settings.get(STARTED_KEY);
       const completed = data.settings.get(COMPLETED_KEY);
-      return typeof started === 'string' && typeof completed !== 'string';
+      if (typeof started !== 'string') {
+        return false;
+      }
+      if (typeof completed !== 'string' || !isCurrentFormat()) {
+        return true;
+      }
+      // Source-table triggers make INSERT/UPDATE/DELETE dirtiness observable,
+      // including content changes at the same rowid and rowid reuse.
+      return hasDirtyTables();
     },
 
     status(): HarvestStatus {
-      const completed = typeof data.settings.get(COMPLETED_KEY) === 'string';
+      const completed =
+        typeof data.settings.get(COMPLETED_KEY) === 'string' &&
+        isCurrentFormat() &&
+        !hasDirtyTables();
       const started = typeof data.settings.get(STARTED_KEY) === 'string';
       const tables: Record<string, TableProgress> = {};
       for (const spec of HARVEST_TABLES) {
-        tables[spec.table] = readProgress(spec.table);
+        const progress = readProgress(spec.table);
+        tables[spec.table] = progress.completed && (!isCurrentFormat() || isTableDirty(spec.table))
+          ? { ...progress, completed: false }
+          : progress;
       }
       return {
         state: running
@@ -403,14 +566,54 @@ export function createHarvestModule(options: HarvestModuleOptions) {
         if (typeof data.settings.get(STARTED_KEY) !== 'string') {
           data.settings.set(STARTED_KEY, new Date().toISOString());
         }
-        for (const spec of HARVEST_TABLES) {
-          await walkTable(spec, uploader, machine);
-          if (pauseRequested) {
-            return { manifestPath: null };
-          }
+        const forceV2Rescan = !isCurrentFormat();
+        if (forceV2Rescan || hasDirtyTables()) {
+          // A process exit mid-resume must not leave a v1/stale global marker
+          // claiming completion while v2 revisions are outstanding.
+          data.settings.remove(COMPLETED_KEY);
         }
-        const manifestPath = await writeManifest(machine);
-        data.settings.set(COMPLETED_KEY, new Date().toISOString());
+        // A row can change in an earlier table while a later table uploads.
+        // Repeat full passes until all trigger revisions simultaneously match
+        // their stable checkpoints; only then may global completion advance.
+        let manifestPath: string;
+        for (;;) {
+          for (const spec of HARVEST_TABLES) {
+            await scanTableUntilStable(spec, uploader, machine, forceV2Rescan);
+            if (pauseRequested) {
+              return { manifestPath: null };
+            }
+          }
+          if (hasDirtyTables()) {
+            continue;
+          }
+          // Manifest I/O yields to runtime producers. Re-check after it and
+          // discard the stale snapshot if a continuation appended behind the
+          // just-finished walk; the final check and marker write are then
+          // synchronous, so no same-process producer can interleave them.
+          manifestPath = await writeManifest(machine);
+          if (!hasDirtyTables()) {
+            const latestManifestPath = await publishLatestManifest(manifestPath, machine);
+            if (hasDirtyTables()) {
+              // The canonical file still accurately describes the last Core
+              // observation count; another pass will supersede it after the
+              // new revision is uploaded. Never stamp global completion here.
+              continue;
+            }
+            data.db.transaction(() => {
+              data.settings.set(FORMAT_VERSION_KEY, HARVEST_FORMAT_VERSION);
+              data.settings.set(SOURCE_SCHEMA_VERSION_KEY, options.schemaVersion);
+              data.settings.set(COMPLETED_KEY, new Date().toISOString());
+            });
+            log('harvest latest manifest published', {
+              manifestPath: basename(latestManifestPath),
+            });
+            // The operator-facing result must always be the canonical file;
+            // timestamped snapshots become stale after later revisions.
+            manifestPath = latestManifestPath;
+            break;
+          }
+          await rm(manifestPath, { force: true });
+        }
         log('harvest complete', { manifestPath });
         return { manifestPath };
       } catch (error) {
@@ -426,3 +629,20 @@ export function createHarvestModule(options: HarvestModuleOptions) {
 }
 
 export type HarvestModule = ReturnType<typeof createHarvestModule>;
+
+/** Final custody check used after runtime producers have drained but before a
+ * terminal purge deletes SQLite. It uploads a delta created during that drain
+ * and fails closed if another run or pause leaves history outstanding. */
+export async function finishHarvestDeltaBeforePurge(
+  harvest: Pick<HarvestModule, 'isIncomplete' | 'run'>,
+): Promise<void> {
+  if (!harvest.isIncomplete()) {
+    return;
+  }
+  await harvest.run();
+  if (harvest.isIncomplete()) {
+    throw new Error(
+      'History changed during runtime shutdown and could not be fully harvested; local data was not purged.',
+    );
+  }
+}

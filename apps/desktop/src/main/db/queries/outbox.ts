@@ -145,6 +145,9 @@ export interface OutboxTransitionArgs {
 
 export interface OutboxQueries {
   insertMany(rows: readonly OutboxInsert[]): void;
+  /** Atomically supersede one failed row with its queued retry. If inserting
+   *  the replacement fails, the original row remains failed/retryable. */
+  replaceFailedWithRetry(originalLocalId: string, retry: OutboxInsert): boolean;
   get(localId: string): OutboxRow | null;
   /** Guarded transition; false (no write) when the row is missing or not in `from`. */
   transition(args: OutboxTransitionArgs): boolean;
@@ -193,6 +196,23 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
     bus.publish({ scope: 'outbox', accountId, chatId });
   }
 
+  function insertRow(row: OutboxInsert): void {
+    db.prepare(INSERT_SQL).run({
+      local_id: row.localId,
+      account_id: row.accountId,
+      chat_id: row.chatId,
+      text: row.text,
+      transport: row.transport ?? 'hub',
+      sequence_id: row.sequenceId,
+      part_index: row.partIndex,
+      retry_of: row.retryOf,
+      price: row.price ?? 0,
+      media_files: toJson(row.mediaFiles ?? []),
+      previews: toJson(row.previews ?? []),
+      created_at: row.createdAt,
+    });
+  }
+
   return {
     insertMany(rows) {
       if (rows.length === 0) {
@@ -200,20 +220,7 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
       }
       db.transaction(() => {
         for (const row of rows) {
-          db.prepare(INSERT_SQL).run({
-            local_id: row.localId,
-            account_id: row.accountId,
-            chat_id: row.chatId,
-            text: row.text,
-            transport: row.transport ?? 'hub',
-            sequence_id: row.sequenceId,
-            part_index: row.partIndex,
-            retry_of: row.retryOf,
-            price: row.price ?? 0,
-            media_files: toJson(row.mediaFiles ?? []),
-            previews: toJson(row.previews ?? []),
-            created_at: row.createdAt,
-          });
+          insertRow(row);
         }
       });
       const seen = new Set<string>();
@@ -224,6 +231,36 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
           publish(row.accountId, row.chatId);
         }
       }
+    },
+
+    replaceFailedWithRetry(originalLocalId, retry) {
+      if (retry.retryOf !== originalLocalId) {
+        throw new Error('Retry row must reference the failed row it supersedes');
+      }
+      const replaced = db.transaction(() => {
+        const { changes } = db
+          .prepare(
+            `UPDATE outbox
+             SET state = 'cancelled', updated_at = @updated_at
+             WHERE local_id = @local_id AND account_id = @account_id
+               AND chat_id = @chat_id AND state = 'failed'`,
+          )
+          .run({
+            local_id: originalLocalId,
+            account_id: retry.accountId,
+            chat_id: retry.chatId,
+            updated_at: retry.createdAt,
+          });
+        if (changes !== 1) {
+          return false;
+        }
+        insertRow(retry);
+        return true;
+      });
+      if (replaced) {
+        publish(retry.accountId, retry.chatId);
+      }
+      return replaced;
     },
 
     get: getOne,

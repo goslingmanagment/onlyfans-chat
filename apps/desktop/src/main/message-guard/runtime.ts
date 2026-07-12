@@ -73,13 +73,22 @@ function errorFromBlock(verdict: GuardVerdict): CgError {
   });
 }
 
-export function createMessageGuardRuntime(options: {
+export interface MessageGuardRuntimeOptions {
   data: DataLayer;
   logger?: Logger;
-}): MessageGuardRuntime {
+  /** Retention must stop while local history is awaiting harvest custody. */
+  isPruneFrozen?: () => boolean;
+}
+
+export function createMessageGuardRuntime(options: MessageGuardRuntimeOptions): MessageGuardRuntime {
   const { data, logger } = options;
+  const isPruneFrozen = options.isPruneFrozen ?? (() => false);
   let compiled: CompiledMessageGuardPolicy | null = null;
   let compiledKey: string | null = null;
+
+  function pruneExpiredIfAllowed(): number {
+    return isPruneFrozen() ? 0 : data.messageGuardEvents.pruneOlderThan(cutoffIso());
+  }
 
   function readPolicyCandidate(): unknown {
     try {
@@ -161,7 +170,7 @@ export function createMessageGuardRuntime(options: {
         price: args.price ?? 0,
       });
     }
-    data.messageGuardEvents.pruneOlderThan(cutoffIso());
+    pruneExpiredIfAllowed();
   }
 
   return {
@@ -199,7 +208,17 @@ export function createMessageGuardRuntime(options: {
     },
 
     pruneExpired() {
-      return data.messageGuardEvents.pruneOlderThan(cutoffIso());
+      return pruneExpiredIfAllowed();
     },
   };
+}
+
+/** Boot composition seam: install the live harvest predicate before the first
+ * retention pass, then run that pass through the guarded runtime. */
+export function createPrunedMessageGuardRuntime(
+  options: MessageGuardRuntimeOptions,
+): MessageGuardRuntime {
+  const runtime = createMessageGuardRuntime(options);
+  runtime.pruneExpired();
+  return runtime;
 }

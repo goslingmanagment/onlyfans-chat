@@ -8,6 +8,11 @@
   "engines": {
     "node": ">=22"
   },
+  "pnpm": {
+    "overrides": {
+      "js-yaml": "4.3.0"
+    }
+  },
   "scripts": {
     "typecheck": "pnpm -r --no-bail typecheck",
     "lint": "eslint .",

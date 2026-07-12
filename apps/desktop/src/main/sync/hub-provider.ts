@@ -645,6 +645,35 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         break;
       }
       case 'ppvUnlocked':
+        // Notification-shaped events are not full messages. Keep the existing
+        // reconciliation path; with auto-read off, refreshChat is list-only.
+        // The event itself is nevertheless an authoritative, monotonic domain
+        // fact. Persist it before returning so HubSync cannot checkpoint an
+        // unlock while leaving an older cached PPV locked.
+        recordFallback('hub-notification-fallback', event.type, {
+          type: event.type,
+          accountId: event.accountId,
+          chatId: event.chatId,
+          messageId: event.messageId,
+        });
+        if (event.messageId !== undefined) {
+          data.messages.markOpened(event.accountId, event.chatId, event.messageId);
+        }
+        await polling.refreshChat(
+          event.accountId,
+          event.chatId,
+          undefined,
+          event.messageId,
+        );
+        // If the fallback materialized a previously uncached target, apply the
+        // same fact now. The SQL merge prevents this (or a later stale fetch)
+        // from ever regressing an already-opened message.
+        if (event.messageId !== undefined) {
+          data.messages.markOpened(event.accountId, event.chatId, event.messageId);
+        }
+        emit(event);
+        recordApplied(event.type);
+        break;
       case 'tipReceived':
         // Notification-shaped events are not full messages. Keep the existing
         // reconciliation path; with auto-read off, refreshChat is list-only.

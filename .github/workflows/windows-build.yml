@@ -11,6 +11,10 @@
 
 name: windows-build
 
+permissions:
+  actions: read
+  contents: read
+
 # Only one run may mutate the shared update feed at a time. The remote publisher
 # additionally takes a server-side lock and rejects non-increasing versions.
 concurrency:
@@ -31,6 +35,7 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 130
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,9 +49,11 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
+        timeout-minutes: 15
         run: pnpm install --frozen-lockfile
 
       - name: Check (typecheck + lint + test + build)
+        timeout-minutes: 25
         run: pnpm check
 
       # Release hygiene (0.1.31 audit): refuse a mistagged build BEFORE anything
@@ -63,6 +70,7 @@ jobs:
 
       - name: Assert publish tag is on origin/main
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        timeout-minutes: 3
         shell: bash
         run: |
           if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
@@ -76,7 +84,35 @@ jobs:
             exit 1
           fi
 
+      - name: Assert exact commit passed cross-platform CI
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        timeout-minutes: 5
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_sha=$(git rev-list -n 1 "$GITHUB_REF")
+          ci_verified=false
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --location \
+              --connect-timeout 10 --max-time 30 \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$release_sha&status=success&per_page=10" \
+              | node apps/desktop/scripts/assert-ci-success.mjs "$release_sha"; then
+              ci_verified=true
+              break
+            fi
+            echo "exact-SHA cross-platform CI verification attempt $attempt failed; retrying"
+            sleep 10
+          done
+          if [ "$ci_verified" != true ]; then
+            echo "::error::Release commit $release_sha has no successful exact-SHA CI run"
+            exit 1
+          fi
+
       - name: Build Windows installer
+        timeout-minutes: 25
         run: pnpm dist:win
 
       # Packaged-launch smoke gate (D8): 0.1.30/0.1.31 shipped installers whose
@@ -101,12 +137,39 @@ jobs:
       - name: Upload to the update feed
         id: publish
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        timeout-minutes: 20
         shell: bash
         env:
           SSH_KEY: ${{ secrets.UPDATES_SSH_KEY }}
           FEED_DIR: /srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3
           FEED_URL: https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3
         run: |
+          stage_dir="$FEED_DIR/.incoming/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          SSH_OPTIONS=(
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o ConnectTimeout=10
+            -o ConnectionAttempts=2
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=2
+          )
+          cleanup_publish() {
+            status=$?
+            trap - EXIT
+            # This is independent of publish-feed.sh: it also runs when the
+            # remote bash stream never starts after mkdir/scp succeeded.
+            if [ -f "$HOME/.ssh/id_ed25519" ]; then
+              if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 \
+                "case '$stage_dir' in '$FEED_DIR'/.incoming/*) rm -rf -- '$stage_dir' ;; *) exit 2 ;; esac"; then
+                echo "::warning::Could not confirm cleanup of remote publication stage $stage_dir"
+              fi
+            fi
+            # No private deploy key may survive into a later action or its
+            # post-job hook.
+            rm -f ~/.ssh/id_ed25519
+            exit "$status"
+          }
+          trap cleanup_publish EXIT
           if [ -z "$SSH_KEY" ]; then
             echo "::error::UPDATES_SSH_KEY secret is required for feed publication"
             exit 1
@@ -121,13 +184,17 @@ jobs:
           version=$(printf '%s\n' "$metadata" | awk -F= '$1 == "version" { print $2 }')
           artifact=$(printf '%s\n' "$metadata" | awk -F= '$1 == "artifact" { print $2 }')
           sha512=$(printf '%s\n' "$metadata" | awk -F= '$1 == "sha512" { print $2 }')
-          stage_dir="$FEED_DIR/.incoming/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          ssh cgupdates@45.8.230.111 "command -v flock >/dev/null && command -v openssl >/dev/null && command -v cmp >/dev/null"
-          ssh cgupdates@45.8.230.111 "mkdir -p '$stage_dir'"
-          scp apps/desktop/release/*.exe apps/desktop/release/*.blockmap apps/desktop/release/latest.yml "cgupdates@45.8.230.111:$stage_dir/"
+          ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "command -v flock >/dev/null && command -v openssl >/dev/null && command -v cmp >/dev/null"
+          # EXIT traps cannot run after a hard runner loss. A stage older than
+          # the job's 130-minute maximum cannot belong to a live publisher, so
+          # reclaim it before staging the next release.
+          ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 \
+            "find '$FEED_DIR/.incoming' -mindepth 1 -maxdepth 1 -type d -mmin +180 -exec rm -rf -- {} +"
+          ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "mkdir -p '$stage_dir'"
+          scp "${SSH_OPTIONS[@]}" apps/desktop/release/*.exe apps/desktop/release/*.blockmap apps/desktop/release/latest.yml "cgupdates@45.8.230.111:$stage_dir/"
           # Server-side lock + monotonic version check; assets are renamed into
           # place first and latest.yml is one final same-filesystem atomic rename.
-          if ! ssh cgupdates@45.8.230.111 "bash -s -- '$FEED_DIR' '$stage_dir'" < apps/desktop/scripts/publish-feed.sh; then
+          if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- '$FEED_DIR' '$stage_dir'" < apps/desktop/scripts/publish-feed.sh; then
             # The server may have committed the atomic rename before the SSH
             # acknowledgement was lost. Prove THIS run's bytes are live before
             # deciding the publication failed; never rebuild/retry an equal tag.
@@ -135,9 +202,9 @@ jobs:
             served_artifact="$RUNNER_TEMP/ambiguous-$artifact"
             ambiguous_verified=false
             for attempt in 1 2 3 4 5 6; do
-              if curl --fail --silent --show-error --location "$FEED_URL/latest.yml" --output "$served_manifest" \
+              if curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 "$FEED_URL/latest.yml" --output "$served_manifest" \
                 && node apps/desktop/scripts/release-feed.mjs verify-manifest "$served_manifest" "$version" "$artifact" "$sha512" \
-                && curl --fail --silent --show-error --location "$FEED_URL/$artifact" --output "$served_artifact" \
+                && curl --fail --silent --show-error --location --connect-timeout 10 --max-time 120 "$FEED_URL/$artifact" --output "$served_artifact" \
                 && node apps/desktop/scripts/release-feed.mjs verify-artifact "$served_manifest" "$served_artifact"; then
                 ambiguous_verified=true
                 break
@@ -152,11 +219,17 @@ jobs:
             echo "::warning::SSH acknowledgement was lost, but this run's exact release is live"
           fi
 
+      - name: Remove update-feed deploy key
+        if: always() && (startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true)
+        shell: bash
+        run: rm -f ~/.ssh/id_ed25519
+
       # Release hygiene (Stage 35): what the feed SERVES must be this release —
       # served latest.yml version == apps/desktop/package.json == the v* tag.
       # Recovery if this fires: the stage-04 artifact-diff ritual (docs/RELEASE.md).
       - name: Assert served feed version == package.json == tag
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        timeout-minutes: 18
         shell: bash
         env:
           FEED_URL: https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3
@@ -168,9 +241,9 @@ jobs:
           served_artifact="$RUNNER_TEMP/$EXPECTED_ARTIFACT"
           verified=false
           for attempt in 1 2 3 4 5 6; do
-            if curl --fail --silent --show-error --location "$FEED_URL/latest.yml" --output "$served_manifest" \
+            if curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 "$FEED_URL/latest.yml" --output "$served_manifest" \
               && node apps/desktop/scripts/release-feed.mjs verify-manifest "$served_manifest" "$pkg_version" "$EXPECTED_ARTIFACT" "$EXPECTED_SHA512" \
-              && curl --fail --silent --show-error --location "$FEED_URL/$EXPECTED_ARTIFACT" --output "$served_artifact" \
+              && curl --fail --silent --show-error --location --connect-timeout 10 --max-time 120 "$FEED_URL/$EXPECTED_ARTIFACT" --output "$served_artifact" \
               && node apps/desktop/scripts/release-feed.mjs verify-artifact "$served_manifest" "$served_artifact"; then
               verified=true
               break

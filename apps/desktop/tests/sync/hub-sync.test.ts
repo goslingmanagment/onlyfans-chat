@@ -927,7 +927,11 @@ describe('createHubAwareSync (provider composition)', () => {
     };
   }
 
-  function seedMessage(messageId: string, chatId: string): void {
+  function seedMessage(
+    messageId: string,
+    chatId: string,
+    overrides: Partial<MessageUpsert> = {},
+  ): void {
     const upsert: MessageUpsert = {
       accountId: ACCT,
       chatId,
@@ -946,6 +950,7 @@ describe('createHubAwareSync (provider composition)', () => {
       media: [],
       deleted: false,
       raw: {},
+      ...overrides,
     };
     data.messages.upsertMany([upsert]);
   }
@@ -1700,6 +1705,56 @@ describe('createHubAwareSync (provider composition)', () => {
         fallbackByReason: { 'hub-notification-fallback': 2 },
       },
     });
+    provider.stop();
+  });
+
+  it('durably unlocks an older cached PPV when list-only refresh sees a newer head', async () => {
+    const { provider, polling, callbacks } = build();
+    seedMessage('2', '5', {
+      createdAt: '2026-06-11T10:00:00.000Z',
+      isSentByMe: true,
+      price: 25,
+      isOpened: false,
+    });
+    seedMessage('3', '5', {
+      createdAt: '2026-06-11T11:00:00.000Z',
+    });
+    seedChat('5', '3', '2026-06-11T11:00:00.000Z');
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // This fake refresh is intentionally list-only, matching auto-read off:
+    // the newer head proves freshness but does not reload the older PPV body.
+    await callbacks().onEvent({
+      type: 'ppvUnlocked',
+      accountId: ACCT,
+      chatId: '5',
+      messageId: '2',
+    });
+
+    expect(polling.refreshCalls).toEqual([{
+      accountId: ACCT,
+      chatId: '5',
+      expectedMessageId: '2',
+    }]);
+    expect(data.chats.get(ACCT, '5')?.lastMessageId).toBe('3');
+    expect(data.messages.get(ACCT, '5', '2')?.isOpened).toBe(true);
+
+    // A later stale body/list reconciliation cannot undo the unlock fact.
+    seedMessage('2', '5', {
+      createdAt: '2026-06-11T10:00:00.000Z',
+      isSentByMe: true,
+      price: 25,
+      isOpened: false,
+    });
+    seedMessage('2', '5', {
+      createdAt: '2026-06-11T10:00:00.000Z',
+      isSentByMe: true,
+      price: 25,
+      isOpened: null,
+    });
+    expect(data.messages.get(ACCT, '5', '2')?.isOpened).toBe(true);
     provider.stop();
   });
 

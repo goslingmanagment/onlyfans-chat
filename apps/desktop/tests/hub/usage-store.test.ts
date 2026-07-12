@@ -111,12 +111,13 @@ describe('createSqliteUsageEventStore', () => {
       { id: 'broken-json', payload: '{"clientEventId":', attempts: 1 },
       { id: 'primitive-json', payload: '42', attempts: 2 },
       { id: 'array-json', payload: '[]', attempts: 2 },
+      { id: 'invalid-contract', payload: '{"clientEventId":"bad","model":""}', attempts: 0 },
       { id: 'broken-storage-shape', payload: null, attempts: 3 },
     ];
 
     const spool = summarizeUsageSpool(rows);
 
-    expect(spool.counts).toEqual({ pending: 0, deadLetter: 0, quarantined: 0, invalid: 4 });
+    expect(spool.counts).toEqual({ pending: 0, deadLetter: 0, quarantined: 0, invalid: 5 });
     expect(spool.events).toEqual([
       {
         id: 'broken-json',
@@ -138,6 +139,13 @@ describe('createSqliteUsageEventStore', () => {
         state: 'invalid',
         payload: '[]',
         invalidReason: 'non-object-json',
+      },
+      {
+        id: 'invalid-contract',
+        attempts: 0,
+        state: 'invalid',
+        payload: { clientEventId: 'bad', model: '' },
+        invalidReason: 'invalid-contract',
       },
       {
         id: 'broken-storage-shape',
@@ -177,7 +185,7 @@ describe('createSqliteUsageEventStore', () => {
     expect(hubUsageEventSchema.safeParse(loaded[0]?.event).success).toBe(true);
   });
 
-  it('surfaces malformed rows so the reporter deletes them at load', () => {
+  it('surfaces malformed rows and the reporter parks them without deleting the business fact', () => {
     const data = memoryDataLayer();
     insertCoordinatorRow(data, { clientEventId: 'op-bad', nonsense: true, completedAt: 'x' });
     const store = createSqliteUsageEventStore(data.db);
@@ -185,12 +193,15 @@ describe('createSqliteUsageEventStore', () => {
     expect(loaded).toHaveLength(1);
     expect(hubUsageEventSchema.safeParse(loaded[0]?.event).success).toBe(false);
 
-    // The shared reporter's documented job: invalid persisted rows are removed.
+    // Invalid persisted rows cannot be sent, but remain available for
+    // diagnostics and a future repair/migration.
     const reporter = createUsageReporter({
       client: { postUsageBatch: vi.fn(), getServerTimeOffsetMs: () => null },
       store,
     });
-    expect(usageEventRowCount(data)).toBe(0);
+    expect(reporter.getPendingCount()).toBe(0);
+    expect(reporter.getQuarantined().map((pending) => pending.id)).toEqual(['op-bad']);
+    expect(usageEventRowCount(data)).toBe(1);
     reporter.dispose();
   });
 });

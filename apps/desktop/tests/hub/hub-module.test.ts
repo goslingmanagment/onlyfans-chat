@@ -117,6 +117,189 @@ describe('createHubModule', () => {
     module.dispose();
   });
 
+  it('shares quiescence and waits for the retiring usage reporter exactly once', async () => {
+    vi.useFakeTimers();
+    const data = memoryDataLayer();
+    insertCoordinatorRow(data, rawCoordinatorPayload({ clientEventId: 'op-quiesce' }));
+    let settleBatch!: () => void;
+    const postUsageBatch = vi.fn(
+      ({ events }: { events: unknown[] }) =>
+        new Promise<{
+          receivedCount: number;
+          insertedCount: number;
+          invalidCount: number;
+          dedupedCount: number;
+        }>((resolve) => {
+          settleBatch = () => resolve({
+            receivedCount: events.length,
+            insertedCount: events.length,
+            invalidCount: 0,
+            dedupedCount: 0,
+          });
+        }),
+    );
+    const client = makeFakeHubClient({ postUsageBatch });
+    const module = createHubModule({
+      data,
+      settingsStore: makeSettingsStore(
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+      ),
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient: () => client,
+    });
+    await module.reconfigure();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(postUsageBatch).toHaveBeenCalledTimes(1);
+
+    let firstDone = false;
+    let secondDone = false;
+    const first = module.quiesce().then(() => {
+      firstDone = true;
+    });
+    const second = module.quiesce().then(() => {
+      secondDone = true;
+    });
+    await Promise.resolve();
+    expect(firstDone).toBe(false);
+    expect(secondDone).toBe(false);
+
+    settleBatch();
+    await Promise.all([first, second]);
+    expect(firstDone).toBe(true);
+    expect(secondDone).toBe(true);
+    module.dispose();
+  });
+
+  it('serializes reporter retirement before a concurrent replacement is installed', async () => {
+    vi.useFakeTimers();
+    const data = memoryDataLayer();
+    insertCoordinatorRow(data, rawCoordinatorPayload({ clientEventId: 'op-retire' }));
+    let settleOld!: () => void;
+    const oldPost = vi.fn(
+      ({ events }: { events: unknown[] }) =>
+        new Promise<{
+          receivedCount: number;
+          insertedCount: number;
+          invalidCount: number;
+          dedupedCount: number;
+        }>((resolve) => {
+          settleOld = () => resolve({
+            receivedCount: events.length,
+            insertedCount: events.length,
+            invalidCount: 0,
+            dedupedCount: 0,
+          });
+        }),
+    );
+    const oldClient = makeFakeHubClient({ postUsageBatch: oldPost });
+    const replacementClient = makeFakeHubClient();
+    const createClient = vi.fn()
+      .mockReturnValueOnce(oldClient)
+      .mockReturnValue(replacementClient);
+    const module = createHubModule({
+      data,
+      settingsStore: makeSettingsStore(
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+      ),
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient,
+    });
+    await module.reconfigure();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(oldPost).toHaveBeenCalledTimes(1);
+
+    const firstReplacement = module.reconfigure();
+    await Promise.resolve();
+    await Promise.resolve();
+    const secondReplacement = module.reconfigure();
+    await Promise.resolve();
+    expect(createClient).toHaveBeenCalledTimes(1);
+
+    settleOld();
+    await Promise.all([firstReplacement, secondReplacement]);
+    expect(createClient).toHaveBeenCalledTimes(2);
+    expect(usageEventRowCount(data)).toBe(0);
+    module.dispose();
+  });
+
+  it('quiesce awaits an in-flight reconfigure before database ownership is released', async () => {
+    const data = memoryDataLayer();
+    let releaseSettings!: () => void;
+    const settingsPending = new Promise<ReturnType<typeof makeSettingsVM>>((resolve) => {
+      releaseSettings = () => resolve(
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+      );
+    });
+    const createClient = vi.fn(() => makeFakeHubClient());
+    const module = createHubModule({
+      data,
+      settingsStore: {
+        get: () => settingsPending,
+        update: () => settingsPending,
+      },
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient,
+    });
+    const configuring = module.reconfigure();
+    let stopped = false;
+    const quiesced = module.quiesce().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    releaseSettings();
+    await Promise.all([configuring, quiesced]);
+    expect(createClient).not.toHaveBeenCalled();
+    module.dispose();
+  });
+
+  it('does not start another persona upsert after reconfigure retires the client', async () => {
+    const data = memoryDataLayer();
+    data.settings.set('personalities', [
+      { id: 'custom:first', name: 'First', content: 'First prompt' },
+      { id: 'custom:second', name: 'Second', content: 'Second prompt' },
+    ]);
+    let releaseFirst!: () => void;
+    const firstInFlight = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const client = makeFakeHubClient();
+    const upsertAiPersona = vi.fn(async (args: { key: string; displayName: string; systemBlock: string }) => {
+      if (args.key === 'custom:first') {
+        await firstInFlight;
+      }
+      return { ...args, updatedAt: new Date().toISOString() };
+    });
+    client.upsertAiPersona = upsertAiPersona;
+    let current = makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true });
+    const module = createHubModule({
+      data,
+      settingsStore: {
+        get: () => Promise.resolve(current),
+        update: () => Promise.resolve(current),
+      },
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient: () => client,
+    });
+
+    await module.reconfigure();
+    await vi.waitFor(() => expect(upsertAiPersona).toHaveBeenCalledTimes(1));
+
+    current = makeSettingsVM({
+      hubBaseUrl: null,
+      hasHubKey: false,
+      keyMeta: { hub: null },
+    });
+    await module.reconfigure();
+    releaseFirst();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(upsertAiPersona).toHaveBeenCalledTimes(1);
+    module.dispose();
+  });
+
   it('replays a pending summary as soon as Hub configuration becomes active', async () => {
     const data = memoryDataLayer();
     seedAccount(data);

@@ -176,6 +176,33 @@ export function sealRuntimeForTerminalOperation<Result>(
   return queue.sealAndRun(drain);
 }
 
+/** Destructive purge tail with an explicit recovery path. Once the runtime
+ * queue is terminally sealed, a custody failure cannot safely return to the
+ * current process. Preserve the DB, surface the error, and relaunch instead. */
+export async function runFailClosedTerminalPurge(options: {
+  finishCustody(): Promise<void>;
+  closeDatabase(): void;
+  clearMedia(): Promise<void>;
+  deleteLocalData(): Promise<void>;
+  onFailure(error: unknown): void;
+  relaunch(): void;
+  exit(code: number): void;
+}): Promise<void> {
+  try {
+    await options.finishCustody();
+    options.closeDatabase();
+    await options.clearMedia();
+    await options.deleteLocalData();
+  } catch (error) {
+    options.onFailure(error);
+    options.relaunch();
+    options.exit(1);
+    throw error;
+  }
+  options.relaunch();
+  options.exit(0);
+}
+
 /**
  * Small testable retry scheduler for post-sign-in runtime activation. The
  * initial activation already failed; delaysMs describes the bounded automatic
@@ -267,7 +294,7 @@ export async function stopRuntimeServices(services: {
   spendersRefresh?: { dispose(): void } | null;
   sendEngine?: { quiesce(): Promise<void>; dispose(): void } | null;
   coordinator?: { dispose(): void } | null;
-  hub?: { dispose(): void } | null;
+  hub?: { quiesce?(): Promise<void>; dispose(): void } | null;
 }): Promise<void> {
   services.disposeSettingsWatcher?.();
   services.disposeCreditMeter?.();
@@ -293,7 +320,18 @@ export async function stopRuntimeServices(services: {
   // Coordinator disposal emits terminal discarded frames. Keep the renderer
   // subscription alive through that emission so jobs cannot remain running.
   services.disposeEventForwarding?.();
-  services.hub?.dispose();
+  if (services.hub != null) {
+    try {
+      await services.hub.quiesce?.();
+    } catch (error) {
+      if (!quiesceFailed) {
+        quiesceFailed = true;
+        quiesceError = error;
+      }
+    } finally {
+      services.hub.dispose();
+    }
+  }
   if (quiesceFailed) {
     throw quiesceError;
   }

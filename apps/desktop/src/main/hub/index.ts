@@ -73,6 +73,8 @@ export interface HubModule {
   getOfapiCreditsSummary(): Promise<HubOfapiCreditsSummary | null>;
   /** Rebuilds client/reporter/hooks from current settings + keychain. */
   reconfigure(): Promise<void>;
+  /** Retires network producers and awaits reporter continuations before DB close. */
+  quiesce(): Promise<void>;
   dispose(): void;
 }
 
@@ -108,6 +110,57 @@ export function createHubModule(options: HubModuleOptions): HubModule {
   /** Invalidates in-flight reconfigures (config can change mid-await). */
   let generation = 0;
   let disposed = false;
+  const reconfigureTasks = new Set<Promise<void>>();
+  let quiescePromise: Promise<void> | null = null;
+  let retirementTail: Promise<void> = Promise.resolve();
+
+  function rethrowFirstRejected(results: PromiseSettledResult<unknown>[]): void {
+    const rejected = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+    if (rejected !== undefined) {
+      throw rejected.reason;
+    }
+  }
+
+  async function performRetirement(waitForAcceptance: boolean): Promise<void> {
+    const retiring = active;
+    active = null;
+    const owners: Promise<unknown>[] = [];
+    if (retiring !== null) {
+      retiring.hooks.dispose();
+      retiring.reporter.dispose();
+      owners.push(retiring.hooks.quiesce(), retiring.reporter.quiesce());
+    }
+    if (waitForAcceptance) {
+      // active=null makes an old in-flight acceptance request finish without
+      // enrolling replacement work; the new client is installed only after
+      // that store-owning continuation has settled.
+      owners.push(acceptance.flushNow());
+    }
+    rethrowFirstRejected(await Promise.allSettled(owners));
+  }
+
+  function retireActive(waitForAcceptance: boolean): Promise<void> {
+    const retirement = retirementTail.then(
+      () => performRetirement(waitForAcceptance),
+      () => performRetirement(waitForAcceptance),
+    );
+    retirementTail = retirement.then(
+      () => undefined,
+      () => undefined,
+    );
+    return retirement;
+  }
+
+  function trackReconfigure(task: Promise<void>): Promise<void> {
+    reconfigureTasks.add(task);
+    const clear = (): void => {
+      reconfigureTasks.delete(task);
+    };
+    void task.then(clear, clear);
+    return task;
+  }
 
   function teardown(): void {
     // Reporter dispose keeps queued events persisted (crash-safe store).
@@ -215,7 +268,11 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       }
     },
 
-    async reconfigure() {
+    reconfigure() {
+      if (disposed) {
+        return Promise.resolve();
+      }
+      const task = (async () => {
       generation += 1;
       const myGeneration = generation;
       const [vm, apiKey] = await Promise.all([
@@ -226,7 +283,10 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       if (disposed || myGeneration !== generation) {
         return;
       }
-      teardown();
+      await retireActive(true);
+      if (disposed || myGeneration !== generation) {
+        return;
+      }
       if (vm.hubBaseUrl === null || apiKey === null || apiKey.trim().length === 0) {
         return; // hub off — delegators stay inert
       }
@@ -268,6 +328,12 @@ export function createHubModule(options: HubModuleOptions): HubModule {
             return;
           }
           for (const persona of stored) {
+            // Reconfigure/dispose can retire this client while an earlier
+            // persona request is in flight. Do not start another request with
+            // credentials that are no longer active.
+            if (disposed || myGeneration !== generation) {
+              return;
+            }
             if (persona.builtin === true) {
               continue;
             }
@@ -306,6 +372,29 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       void hooks.replayPending().catch((error: unknown) => {
         onWarn(`[hub] summary replay failed (${error instanceof Error ? error.message : String(error)})`);
       });
+      })();
+      return trackReconfigure(task);
+    },
+
+    quiesce() {
+      if (quiescePromise !== null) {
+        return quiescePromise;
+      }
+      disposed = true;
+      generation += 1;
+      const terminal = (async () => {
+        const results: PromiseSettledResult<unknown>[] = [];
+        while (reconfigureTasks.size > 0) {
+          results.push(...await Promise.allSettled([...reconfigureTasks]));
+        }
+        results.push(...await Promise.allSettled([
+          retireActive(false),
+          acceptance.quiesce(),
+        ]));
+        rethrowFirstRejected(results);
+      })();
+      quiescePromise = terminal;
+      return terminal;
     },
 
     dispose() {

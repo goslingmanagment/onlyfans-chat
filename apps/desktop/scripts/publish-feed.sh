@@ -21,6 +21,7 @@ case "$stage_dir" in
   "$feed_dir"/.incoming/*) ;;
   *) echo "unsafe stage directory: $stage_dir" >&2; exit 1 ;;
 esac
+stage_validated=true
 
 lock_dir="$feed_dir/.publish.lock.d"
 lock_mode=none
@@ -30,7 +31,19 @@ cleanup_lock() {
     rmdir "$lock_dir" 2>/dev/null || true
   fi
 }
-trap cleanup_lock EXIT
+cleanup() {
+  local status=$?
+  trap - EXIT
+  cleanup_lock
+  # Only a canonical stage proven to be inside this feed's .incoming directory
+  # may be removed. This runs on validation, locking, hash, semver, and move
+  # failures so a rejected publication cannot accumulate staged release bytes.
+  if [[ "$stage_validated" == true && -d "$stage_dir" ]]; then
+    rm -rf -- "$stage_dir"
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
 
 if command -v flock >/dev/null 2>&1; then
   # Kernel-owned advisory locks disappear on SIGKILL and reboot; the lock file

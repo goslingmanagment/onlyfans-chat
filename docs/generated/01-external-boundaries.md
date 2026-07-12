@@ -148,10 +148,12 @@ outbox).
     kind:'ai_acceptance', observedAt, payload:{ operationId, requestId/generationRef?,
     feature, action:'shown'|'copied'|'inserted'|'sent', accountId, conversationId,
     edited? } }` (`apps/desktop/src/main/hub/acceptance-reporter.ts:86-101`).
-  - **One-time local-history harvest** — deterministic-id observation rows for the local
+  - **Revision-aware local-history harvest** — deterministic-id observation rows for the local
     tables `messages, fan_transactions, outbox, message_guard_events, usage_events,
-    ai_spend_log, credit_log`, `clientEventId = UUIDv5(machineId:table:rowPk)`
-    (`apps/desktop/src/main/harvest/index.ts:50-58,167-187`). Detail: `09`, `11`.
+    ai_spend_log, credit_log`, with v2 ids binding machine, table, unambiguous natural key,
+    source schema, and canonical content hash. Persistent SQLite revision triggers and an
+    uploaded-fingerprint ledger make same-row UPDATEs and rowid reuse visible without
+    re-uploading an already-captured revision. Detail: `09`, `11`.
 
 ## 6. core — fan-profile (fan summary sync)
 

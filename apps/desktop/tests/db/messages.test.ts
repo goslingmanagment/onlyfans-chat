@@ -168,6 +168,19 @@ describe('messages upsert', () => {
     layer.bus.flushNow();
     expect(flushed).toEqual([{ scope: 'messages', accountId: 'acct_1', chatId: '101' }]);
   });
+
+  it('keeps a durable PPV unlock monotonic across stale message upserts', () => {
+    layer.messages.upsertMany([sampleMessage({ price: 25, isOpened: false })]);
+
+    layer.messages.markOpened('acct_1', '101', 'm1');
+    expect(layer.messages.get('acct_1', '101', 'm1')?.isOpened).toBe(true);
+
+    layer.messages.upsertMany([sampleMessage({ price: 25, isOpened: false })]);
+    expect(layer.messages.get('acct_1', '101', 'm1')?.isOpened).toBe(true);
+
+    layer.messages.upsertMany([sampleMessage({ price: 25, isOpened: null })]);
+    expect(layer.messages.get('acct_1', '101', 'm1')?.isOpened).toBe(true);
+  });
 });
 
 describe('messages tombstone', () => {

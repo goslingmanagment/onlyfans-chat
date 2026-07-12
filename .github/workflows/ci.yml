@@ -35,3 +35,29 @@ jobs:
 
       - name: Check (typecheck + lint + test + build)
         run: pnpm check
+
+  windows-check:
+    name: pnpm check (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        timeout-minutes: 15
+        run: pnpm install --frozen-lockfile
+
+      - name: Check (typecheck + lint + test + build)
+        timeout-minutes: 20
+        run: pnpm check

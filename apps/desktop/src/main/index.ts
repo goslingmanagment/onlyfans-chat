@@ -23,7 +23,11 @@ import { errorToFields } from '@chatgoose/shared/diagnostics/log';
 import { createKeychain, type Keychain, type SecretName } from './secrets/keychain';
 import { createDataLayer, readSchemaVersion, type DataLayer } from './db/index';
 import { SCHEMA_VERSION } from './db/migrations';
-import { createHarvestModule, type HarvestModule } from './harvest/index';
+import {
+  createHarvestModule,
+  finishHarvestDeltaBeforePurge,
+  type HarvestModule,
+} from './harvest/index';
 import { createHubClient } from '@chatgoose/shared/hub/index';
 import { createLogger, type Logger } from './diagnostics/logger';
 import { buildDiagnosticsReport } from './diagnostics/report';
@@ -50,7 +54,11 @@ import {
   createOfApiTransportClient,
 } from './ofapi/transport';
 import { createSendEngine, type SendEngine } from './send/engine';
-import { createMessageGuardRuntime, type MessageGuardRuntime } from './message-guard/runtime';
+import {
+  createMessageGuardRuntime,
+  createPrunedMessageGuardRuntime,
+  type MessageGuardRuntime,
+} from './message-guard/runtime';
 import { createVaultService, type VaultService } from './media/vault';
 import { createSpendersService, type SpendersService } from './spenders/service';
 import { createOnlineService, type OnlineService } from './online/service';
@@ -107,6 +115,7 @@ import {
   exposeUiBeforeRuntimeActivation,
   probeHubReadCredential,
   replaceRuntimeSecurityFirst,
+  runFailClosedTerminalPurge,
   sealRuntimeForTerminalOperation,
   stopRuntimeServices,
   subscribeSettingsScope,
@@ -750,7 +759,10 @@ async function rebuildOfapiRuntime(
     client: nextClient,
     hubCommandClient: nextHub.commandClient,
     data: dataLayer,
-    messageGuard: messageGuard ?? createMessageGuardRuntime({ data: dataLayer }),
+    messageGuard: messageGuard ?? createMessageGuardRuntime({
+      data: dataLayer,
+      isPruneFrozen: () => harvestIsIncomplete(),
+    }),
     toMediaUrl,
     getSettings: () => settingsStore.get(),
   });
@@ -892,6 +904,7 @@ async function rebuildOfapiRuntime(
       nextSpendersRefresh.dispose();
       engine.dispose();
       nextCoordinator.dispose();
+      await nextHub.quiesce();
       nextHub.dispose();
     }
   }
@@ -1006,11 +1019,6 @@ async function boot(): Promise<void> {
     encryptionKey: dbKey,
   });
   acceptanceTracker = createAcceptanceTracker();
-  messageGuard = createMessageGuardRuntime({
-    data,
-    ...(logger !== null ? { logger } : {}),
-  });
-  messageGuard.pruneExpired();
 
   const settingsStore = createSettingsStore({ queries: data.settings, secrets: keychain });
 
@@ -1042,6 +1050,15 @@ async function boot(): Promise<void> {
     })(),
   });
   harvestIsIncomplete = () => harvestModule.isIncomplete();
+
+  // Bind the harvest guard before any boot-time retention runs. Otherwise an
+  // incomplete prior harvest can lose old guard-audit rows during startup,
+  // before the composition root has installed the freeze predicate.
+  messageGuard = createPrunedMessageGuardRuntime({
+    data,
+    isPruneFrozen: () => harvestModule.isIncomplete(),
+    ...(logger !== null ? { logger } : {}),
+  });
 
   // Runtime seed for local/prod evidence builds. The secret is supplied by the
   // launcher and then persisted through the normal encrypted keychain path.
@@ -1354,15 +1371,33 @@ async function boot(): Promise<void> {
         // The shared terminal promise spans the ENTIRE destructive custody
         // transition. A concurrent quit/auto-updater exit must wait through DB
         // close, cache deletion and relaunch—not merely runtime deactivation.
-        await deactivateOfapiRuntime();
-        data?.close();
-        await media.cache.clear().catch(() => undefined);
-        await rm(join(userData, 'chatgoose.db'), { force: true });
-        await rm(join(userData, 'chatgoose.db-wal'), { force: true });
-        await rm(join(userData, 'chatgoose.db-shm'), { force: true });
-        await rm(join(userData, 'media-cache'), { recursive: true, force: true });
-        app.relaunch();
-        app.exit(0);
+        await runFailClosedTerminalPurge({
+          finishCustody: async () => {
+            await deactivateOfapiRuntime();
+            // The initial guard ran before the runtime drain. A final in-flight
+            // DB continuation may have appended a harvested row while
+            // deactivation was awaiting quiescence, so upload that delta only
+            // after every producer has stopped.
+            await finishHarvestDeltaBeforePurge(harvestModule);
+          },
+          closeDatabase: () => data?.close(),
+          clearMedia: () => media.cache.clear().catch(() => undefined),
+          deleteLocalData: async () => {
+            await rm(join(userData, 'chatgoose.db'), { force: true });
+            await rm(join(userData, 'chatgoose.db-wal'), { force: true });
+            await rm(join(userData, 'chatgoose.db-shm'), { force: true });
+            await rm(join(userData, 'media-cache'), { recursive: true, force: true });
+          },
+          onFailure: (error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            dialog.showErrorBox(
+              'Local data was not deleted',
+              `The purge could not complete safely. ChatGoose stopped the operation and will restart; verify local-data status before retrying.\n\n${message}`,
+            );
+          },
+          relaunch: () => app.relaunch(),
+          exit: (code) => app.exit(code),
+        });
       });
     },
     probeReadRuntimeForPatch,

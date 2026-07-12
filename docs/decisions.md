@@ -31,6 +31,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D11 | 2026-07-12 | Update recovery is forward-only; feed publication is serialized, monotonic, and atomic |
 | D12 | 2026-07-12 | Runtime custody handoff is quiescent; unsend commands keep durable idempotent lineage |
 | D13 | 2026-07-12 | Replay/telemetry obligations become durable before one-way claims or later awaits |
+| D14 | 2026-07-13 | Harvest custody is revision-aware; Core ids bind natural key plus content hash |
 
 ## Entries
 
@@ -180,3 +181,22 @@ Thin Hub message frames also carry a proof obligation into `refreshChat`: with
 automatic reads enabled the exact message row must be present, while list-only
 mode must reach that numeric platform head or a newer one before the stream
 cursor may checkpoint.
+
+**D14 (2026-07-13).** Local-history harvest completion is a revision checkpoint,
+not a rowid high-water mark. Schema v19 installs persistent INSERT/UPDATE/DELETE
+triggers for every harvested source table and retains every successfully uploaded
+`(table, natural key, content hash)` fingerprint. Dirty tables are scanned in
+full; only unseen content revisions receive deterministic v2 observation ids,
+and fingerprints plus cumulative manifest counters commit atomically only after
+the covering Core 2xx. A table becomes stable only when its trigger revision is
+unchanged across the full scan, so same-row updates, rowid reuse, and mutations
+during an upload cannot be hidden by an old completion marker. Historical
+fingerprints are never discarded: reverting to previously uploaded content
+does not re-upload or inflate reconciliation totals. Completed v1 harvests must
+perform one v2 full rescan, and a later desktop schema version forces another
+content-hashed scan before completion can be trusted. A harvest that was never started still does not block
+purge, preserving the reviewed corrupt-DB recovery path. Timestamped manifests
+are audit snapshots; reconciliation must use the atomically replaced
+`chatgoose-harvest-manifest-<machine>-latest.json` named by each snapshot's
+`reconcileUsing` field, because later revisions intentionally increase the
+machine's cumulative Core observation count.

@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HubError, type HubUsageBatchResult, type HubUsageEvent } from '../src/hub/client';
+import {
+  HUB_USAGE_BATCH_MAX_EVENTS,
+  HubError,
+  type HubUsageBatchResult,
+  type HubUsageEvent,
+} from '../src/hub/client';
 import {
   createUsageReporter,
   HUB_USAGE_DEAD_LETTER_SWEEP_MS,
@@ -407,7 +412,7 @@ describe('createUsageReporter', () => {
     expect(batches).toHaveLength(0);
   });
 
-  it('restores the persisted queue on startup: pending flush, quarantined stay parked, invalid rows deleted', async () => {
+  it('restores the persisted queue while retaining invalid business facts for diagnostics', async () => {
     const wireEvent: HubUsageEvent = {
       clientEventId: 'restored',
       feature: 'ping',
@@ -433,13 +438,14 @@ describe('createUsageReporter', () => {
     const { client, batches } = stubHubClient();
     const reporter = createUsageReporter({ client, store });
 
-    expect(calls.remove).toEqual([['corrupt']]);
+    expect(calls.remove).toEqual([]);
     expect(reporter.getPendingCount()).toBe(1);
-    expect(reporter.getQuarantined().map((pending) => pending.id)).toEqual(['parked']);
+    expect(reporter.getQuarantined().map((pending) => pending.id)).toEqual(['parked', 'corrupt']);
 
     await vi.advanceTimersByTimeAsync(1_000);
     expect(batches).toHaveLength(1);
     expect(batches[0]?.map((event) => event.clientEventId)).toEqual(['restored']);
+    expect(calls.remove).toEqual([['restored']]);
   });
 
   it('keeps a scheduled retry timer when new events arrive and flushes them together', async () => {
@@ -471,5 +477,67 @@ describe('createUsageReporter', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(batches).toHaveLength(0);
     expect(rows.has('a')).toBe(true);
+  });
+
+  it('quiesce waits for an in-flight flush before releasing the store owner', async () => {
+    const { store, rows } = memoryStore();
+    let settle!: () => void;
+    const postUsageBatch = vi.fn(
+      () => new Promise<HubUsageBatchResult>((resolve) => {
+        settle = () => resolve({ receivedCount: 1, insertedCount: 1, invalidCount: 0, dedupedCount: 0 });
+      }),
+    );
+    const reporter = createUsageReporter({
+      client: { postUsageBatch, getServerTimeOffsetMs: () => null },
+      store,
+    });
+    reporter.enqueue(makeEvent('in-flight'));
+    void reporter.flushNow();
+    await vi.waitFor(() => expect(postUsageBatch).toHaveBeenCalledTimes(1));
+
+    let released = false;
+    const stopped = reporter.quiesce().then(() => {
+      released = true;
+    });
+    await Promise.resolve();
+    expect(released).toBe(false);
+    expect(rows.has('in-flight')).toBe(true);
+
+    settle();
+    await stopped;
+    expect(rows.has('in-flight')).toBe(false);
+  });
+
+  it('quiesce finishes only the current batch and leaves later batches durable', async () => {
+    const { store, rows } = memoryStore();
+    let settleFirst!: () => void;
+    const postUsageBatch = vi.fn(
+      ({ events }: { events: HubUsageEvent[] }) =>
+        new Promise<HubUsageBatchResult>((resolve) => {
+          settleFirst = () => resolve({
+            receivedCount: events.length,
+            insertedCount: events.length,
+            invalidCount: 0,
+            dedupedCount: 0,
+          });
+        }),
+    );
+    const reporter = createUsageReporter({
+      client: { postUsageBatch, getServerTimeOffsetMs: () => null },
+      store,
+    });
+    for (let index = 0; index <= HUB_USAGE_BATCH_MAX_EVENTS; index += 1) {
+      reporter.enqueue(makeEvent(`event-${index}`));
+    }
+    void reporter.flushNow();
+    await vi.waitFor(() => expect(postUsageBatch).toHaveBeenCalledTimes(1));
+
+    const stopped = reporter.quiesce();
+    settleFirst();
+    await stopped;
+
+    expect(postUsageBatch).toHaveBeenCalledTimes(1);
+    expect(rows.size).toBe(1);
+    expect(reporter.getPendingCount()).toBe(1);
   });
 });

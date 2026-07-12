@@ -1813,6 +1813,51 @@ describe('PollingSync', () => {
       pruneSpy.mockRestore();
     });
 
+    it('freezes fan-transaction retention while a harvest is incomplete', async () => {
+      stub.setChats([]);
+      stub.setTransactions([makeTransaction({ id: 1, fanId: 101, amount: 50 })]);
+      data.fanTransactions.upsertMany([{
+        accountId: ACCT,
+        txId: 'old-custody-fact',
+        fanId: '101',
+        amount: 5,
+        net: 4,
+        type: 'tip',
+        createdAt: '2010-01-01T00:00:00.000Z',
+      }]);
+      const pruneSpy = vi.spyOn(data.fanTransactions, 'pruneOlderThan');
+      let frozen = true;
+      const sync = createPollingSync({
+        client: stub.client,
+        data,
+        toMediaUrl: (url) => `media://${Buffer.from(url).toString('base64url')}`,
+        autoReadEnabled: () => false,
+        isPruneFrozen: () => frozen,
+        sleep: async () => {},
+      });
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(stub.listTransactionsCalls.length).toBeGreaterThan(0);
+      expect(pruneSpy).not.toHaveBeenCalled();
+      expect(
+        data.db.prepare(
+          "SELECT tx_id FROM fan_transactions WHERE account_id = @accountId AND tx_id = 'old-custody-fact'",
+        ).get({ accountId: ACCT }),
+      ).toEqual({ tx_id: 'old-custody-fact' });
+
+      frozen = false;
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect(pruneSpy).toHaveBeenCalledTimes(1);
+      expect(
+        data.db.prepare(
+          "SELECT tx_id FROM fan_transactions WHERE account_id = @accountId AND tx_id = 'old-custody-fact'",
+        ).get({ accountId: ACCT }),
+      ).toBeUndefined();
+      sync.stop();
+      pruneSpy.mockRestore();
+    });
+
     it('duplicate/replayed hub messages do not double-increment unread', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
       const sync = makeSyncOff();

@@ -36,8 +36,8 @@ function decodeEvent(json: unknown): HubUsageEvent {
     return mapped;
   }
   // Neither encoding fits: hand the raw value through. The reporter validates
-  // every loaded event against the wire contract and deletes rows that fail —
-  // deletion policy stays in one place (the reporter), the store stays dumb.
+  // every loaded event against the wire contract and parks rows that fail;
+  // the raw payload remains durable for diagnostics and future repair.
   return json as HubUsageEvent;
 }
 
@@ -55,7 +55,8 @@ export type UsageSpoolState = 'pending' | 'deadLetter' | 'quarantined' | 'invali
 export type UsageSpoolInvalidReason =
   | 'non-string-payload'
   | 'malformed-json'
-  | 'non-object-json';
+  | 'non-object-json'
+  | 'invalid-contract';
 
 export interface UsageSpoolSummary {
   counts: Record<UsageSpoolState, number>;
@@ -127,6 +128,17 @@ export function summarizeUsageSpool(
       });
       continue;
     }
+    if (!hubUsageEventSchema.safeParse(decodeEvent(json)).success) {
+      counts.invalid += 1;
+      events.push({
+        id: row.id,
+        attempts: row.attempts,
+        state: 'invalid',
+        payload: json,
+        invalidReason: 'invalid-contract',
+      });
+      continue;
+    }
     const attempts = typeof row.attempts === 'number' ? row.attempts : 0;
     const state: UsageSpoolState = isQuarantinedPayload(json)
       ? 'quarantined'
@@ -155,7 +167,7 @@ export function createSqliteUsageEventStore(db: ChatGooseDb): UsageEventStore {
         try {
           json = JSON.parse(row.data.payload);
         } catch {
-          json = undefined; // corrupt JSON → fails wire validation → reporter deletes
+          json = undefined; // corrupt JSON → fails wire validation → reporter parks it
         }
         pending.push({
           id: row.data.id,

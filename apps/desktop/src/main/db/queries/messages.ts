@@ -33,7 +33,10 @@ ON CONFLICT (account_id, chat_id, message_id) DO UPDATE SET
   text_html = excluded.text_html,
   text_plain = excluded.text_plain,
   price = excluded.price,
-  is_opened = excluded.is_opened,
+  is_opened = CASE
+    WHEN messages.is_opened = 1 OR excluded.is_opened = 1 THEN 1
+    ELSE excluded.is_opened
+  END,
   is_new = excluded.is_new,
   is_tip = excluded.is_tip,
   tip_amount = excluded.tip_amount,
@@ -87,6 +90,8 @@ export interface MessagesQueries {
   ): Map<string, { textPlain: string; isSentByMe: boolean }>;
   /** Tombstone: keeps the rows, flags them deleted (SPEC §6.3). */
   markDeleted(accountId: string, chatId: string, messageIds: readonly string[]): void;
+  /** Records the durable, monotonic fact that a cached PPV message was unlocked. */
+  markOpened(accountId: string, chatId: string, messageId: string): void;
   /** Deletes rows beyond the newest `keep` for the chat; returns rows removed. */
   prune(accountId: string, chatId: string, keep?: number): number;
   count(accountId: string, chatId: string): number;
@@ -312,6 +317,19 @@ export function createMessagesQueries(db: ChatGooseDb, bus: DbChangeBus): Messag
            WHERE account_id = @account_id AND chat_id = @chat_id AND message_id IN (${placeholders})`,
         )
         .run(params);
+      if (changes > 0) {
+        bus.publish({ scope: 'messages', accountId, chatId });
+      }
+    },
+
+    markOpened(accountId, chatId, messageId) {
+      const { changes } = db
+        .prepare(
+          `UPDATE messages SET is_opened = 1
+           WHERE account_id = @account_id AND chat_id = @chat_id
+             AND message_id = @message_id AND is_opened IS NOT 1`,
+        )
+        .run({ account_id: accountId, chat_id: chatId, message_id: messageId });
       if (changes > 0) {
         bus.publish({ scope: 'messages', accountId, chatId });
       }

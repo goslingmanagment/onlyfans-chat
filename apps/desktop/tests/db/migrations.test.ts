@@ -35,7 +35,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
       expect(indexes).toContain('idx_message_guard_events_occurred');
       expect(indexes).toContain('idx_message_guard_events_hash');
-      expect(SCHEMA_VERSION).toBe(18);
+      expect(SCHEMA_VERSION).toBe(19);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       const guardCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('message_guard_events')")
@@ -174,7 +174,7 @@ describe('migration runner', () => {
       parts: JSON.stringify(['previously retained reply']),
     });
 
-    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 17, to: 18 });
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 17, to: SCHEMA_VERSION });
     expect(
       db.prepare(
         "SELECT parts, accepted_at FROM ai_acceptance_ops WHERE operation_id = '00000000-0000-4000-8000-0000000000ff'",
@@ -466,6 +466,65 @@ describe('migration runner', () => {
     expect(
       db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'unsend_commands'").get(),
     ).toEqual({ name: 'unsend_commands' });
+    db.close();
+  });
+
+  it('v18 → latest installs the harvest fingerprint ledger and revision triggers', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 18));
+    db.exec(
+      `INSERT INTO settings (key, value) VALUES
+         ('harvest.started_at', '"2026-07-12T00:00:00.000Z"'),
+         ('harvest.completed_at', '"2026-07-12T00:01:00.000Z"');
+       INSERT INTO messages (
+         account_id, chat_id, message_id, created_at, is_sent_by_me,
+         text_plain, raw, deleted
+       ) VALUES (
+         'acct_hv', '101', '1', '2026-07-12T00:00:00.000Z', 0,
+         'before', '{}', 0
+       );`,
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 18, to: SCHEMA_VERSION });
+    expect(
+      db.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'harvest_uploaded_revisions'",
+      ).get(),
+    ).toEqual({ name: 'harvest_uploaded_revisions' });
+    expect(
+      (db.prepare(
+        "SELECT COUNT(*) AS count FROM sqlite_master " +
+          "WHERE type = 'trigger' AND name LIKE 'harvest_revision_%'",
+      ).get() as { count: number }).count,
+    ).toBe(21);
+    expect(
+      (db.prepare(
+        "SELECT COUNT(*) AS count FROM sqlite_temp_master " +
+          "WHERE type = 'trigger' AND name LIKE 'harvest_revision_%'",
+      ).get() as { count: number }).count,
+    ).toBe(0);
+    expect(db.prepare("SELECT value FROM settings WHERE key = 'harvest.revision.messages'").get())
+      .toBeUndefined();
+    expect(db.prepare("SELECT value FROM settings WHERE key = 'harvest.format_version'").get())
+      .toBeUndefined();
+
+    db.exec("UPDATE messages SET text_plain = 'after' WHERE message_id = '1'");
+    expect(db.prepare("SELECT value FROM settings WHERE key = 'harvest.revision.messages'").get())
+      .toEqual({ value: '1' });
+    db.exec("DELETE FROM messages WHERE message_id = '1'");
+    expect(db.prepare("SELECT value FROM settings WHERE key = 'harvest.revision.messages'").get())
+      .toEqual({ value: '2' });
+    db.exec(
+      `INSERT INTO messages (
+         account_id, chat_id, message_id, created_at, is_sent_by_me,
+         text_plain, raw, deleted
+       ) VALUES (
+         'acct_hv', '101', '2', '2026-07-12T00:02:00.000Z', 0,
+         'reused slot', '{}', 0
+       )`,
+    );
+    expect(db.prepare("SELECT value FROM settings WHERE key = 'harvest.revision.messages'").get())
+      .toEqual({ value: '3' });
     db.close();
   });
 

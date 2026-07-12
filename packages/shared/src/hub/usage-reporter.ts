@@ -9,8 +9,9 @@
 // app start and on an hourly sweep, so a poisoned event cannot busy-loop the
 // hot queue, but it is never removed. Removal happens only for 2xx-confirmed
 // events with invalidCount 0 (a 200 that reports per-item invalids keeps the
-// batch queued for one resend, then quarantines it) and rows that fail the
-// wire contract at load. Core dedupes upstream by (userId, clientEventId) —
+// batch queued for one resend, then quarantines it). Rows that fail the wire
+// contract at load are retained as local evidence and parked in memory rather
+// than sent. Core dedupes upstream by (userId, clientEventId) —
 // the reporter does no local dedupe, and longer retry horizons (or whole-batch
 // resends) therefore cannot double-count spend.
 
@@ -123,6 +124,8 @@ export interface UsageReporter {
   /** Events parked after HUB_USAGE_DEAD_LETTER_AFTER_ATTEMPTS failures; retried on start + hourly. */
   getDeadLetterCount(): number;
   getQuarantined(): readonly PendingUsageEvent[];
+  /** Stops new work and waits for the current store-owning flush continuation. */
+  quiesce(): Promise<void>;
   /** Cancels timers; queued events stay persisted for the next session. */
   dispose(): void;
 }
@@ -160,17 +163,19 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
   let timer: unknown = null;
   let sweepTimer: unknown = null;
   let flushing = false;
+  let flushPromise: Promise<void> | null = null;
   let disposed = false;
   /** Consecutive 200s reporting invalidCount > 0 (see HUB_USAGE_INVALID_RESEND_LIMIT). */
   let consecutiveInvalidFlushes = 0;
 
   // Crash recovery: restore the persisted queue. Rows that no longer satisfy
-  // the wire contract (schema drift across app versions) are deleted — they
-  // would 400 the batch forever.
-  const invalidIds: string[] = [];
+  // the wire contract (schema drift across app versions) must not enter a
+  // batch, but they are business-fact evidence and therefore must not be
+  // deleted. Park a quarantined view in memory while leaving the raw store row
+  // untouched for diagnostics and a future repair/migration.
   for (const pending of store.load()) {
     if (!hubUsageEventSchema.safeParse(pending.event).success) {
-      invalidIds.push(pending.id);
+      quarantined.push({ ...pending, quarantined: true });
       continue;
     }
     if (pending.quarantined) {
@@ -178,9 +183,6 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
     } else {
       queue.push(pending);
     }
-  }
-  if (invalidIds.length > 0) {
-    store.remove(invalidIds);
   }
 
   function schedule(delayMs: number): void {
@@ -227,15 +229,15 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
     return { ...event, completedAt: new Date(serverNowMs).toISOString() };
   }
 
-  async function flush(): Promise<void> {
-    if (flushing) {
-      return;
-    }
+  async function performFlush(): Promise<void> {
     flushing = true;
     let retryDelayMs: number | null = null;
 
     try {
       while (queue.length > 0) {
+        if (disposed) {
+          break;
+        }
         const batch = queue.slice(0, HUB_USAGE_BATCH_MAX_EVENTS);
         const ids = batch.map((pending) => pending.id);
 
@@ -321,6 +323,31 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
     }
   }
 
+  function flush(): Promise<void> {
+    if (flushPromise !== null) {
+      return flushPromise;
+    }
+    const tracked = performFlush().finally(() => {
+      if (flushPromise === tracked) {
+        flushPromise = null;
+      }
+    });
+    flushPromise = tracked;
+    return tracked;
+  }
+
+  function disposeReporter(): void {
+    disposed = true;
+    if (timer !== null) {
+      clearTimeoutImpl(timer);
+      timer = null;
+    }
+    if (sweepTimer !== null) {
+      clearTimeoutImpl(sweepTimer);
+      sweepTimer = null;
+    }
+  }
+
   // Persisted backlog from a previous session flushes on the normal debounce.
   if (queue.length > 0) {
     schedule(HUB_USAGE_REPORT_DEBOUNCE_MS);
@@ -384,16 +411,13 @@ export function createUsageReporter(options: UsageReporterOptions): UsageReporte
       return quarantined;
     },
 
+    async quiesce() {
+      disposeReporter();
+      await flushPromise;
+    },
+
     dispose() {
-      disposed = true;
-      if (timer !== null) {
-        clearTimeoutImpl(timer);
-        timer = null;
-      }
-      if (sweepTimer !== null) {
-        clearTimeoutImpl(sweepTimer);
-        sweepTimer = null;
-      }
+      disposeReporter();
     },
   };
 }

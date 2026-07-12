@@ -645,6 +645,92 @@ describe('send engine hub command transport', () => {
     engine.dispose();
   });
 
+  it('still reads terminal status for an expired unsend already accepted by Core', async () => {
+    const clock = Date.parse('2026-07-12T12:00:00.000Z');
+    seedMessage(data, { messageId: '9001', deleted: false });
+    data.unsendCommands.ensure({
+      accountId: ACCT,
+      chatId: CHAT,
+      messageId: '9001',
+      clientCommandId: '77777777-7777-4777-8777-777777777777',
+      createdAt: new Date(clock - UNSEND_RECOVERY_MAX_AGE_MS - 1).toISOString(),
+    });
+    data.unsendCommands.setCoreCommandId(
+      ACCT,
+      CHAT,
+      '9001',
+      '88888888-8888-4888-8888-888888888888',
+    );
+    const createOfapiCommand = vi.fn();
+    const getOfapiCommand = vi.fn(async () =>
+      command('77777777-7777-4777-8777-777777777777', 'confirmed', {
+        commandId: '88888888-8888-4888-8888-888888888888',
+        kind: 'unsend_message_v1',
+        platformMessageId: '9001',
+      }),
+    );
+    const engine = createSendEngine({
+      client: makeStubClient().client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      now: () => clock,
+    });
+
+    await engine.reconcileOnBoot();
+
+    expect(createOfapiCommand).not.toHaveBeenCalled();
+    expect(getOfapiCommand).toHaveBeenCalledWith({
+      commandId: '88888888-8888-4888-8888-888888888888',
+    });
+    expect(data.messages.get(ACCT, CHAT, '9001')).toMatchObject({ deleted: true });
+    expect(data.unsendCommands.get(ACCT, CHAT, '9001')).toBeNull();
+    engine.dispose();
+  });
+
+  it('does not hot-loop status reads for an expired accepted unsend when Core keeps rejecting', async () => {
+    const clock = Date.parse('2026-07-12T12:00:00.000Z');
+    seedMessage(data, { messageId: '9001', deleted: false });
+    data.unsendCommands.ensure({
+      accountId: ACCT,
+      chatId: CHAT,
+      messageId: '9001',
+      clientCommandId: '99999999-9999-4999-8999-999999999999',
+      createdAt: new Date(clock - UNSEND_RECOVERY_MAX_AGE_MS - 1).toISOString(),
+    });
+    data.unsendCommands.setCoreCommandId(
+      ACCT,
+      CHAT,
+      '9001',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    );
+    const getOfapiCommand = vi.fn(async () => {
+      throw new HubError('http', { message: 'expired command' });
+    });
+    const engine = createSendEngine({
+      client: makeStubClient().client,
+      hubCommandClient: { createOfapiCommand: vi.fn(), getOfapiCommand },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      now: () => clock,
+      unsendRecoveryIntervalMs: 5_000,
+    });
+
+    await engine.reconcileOnBoot();
+    expect(getOfapiCommand).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(getOfapiCommand).toHaveBeenCalledTimes(1);
+    expect(data.unsendCommands.get(ACCT, CHAT, '9001')).not.toBeNull();
+    engine.dispose();
+  });
+
   it('rechecks the unsend recovery deadline when an already-armed timer fires', async () => {
     let clock = Date.parse('2026-07-12T12:00:00.000Z');
     seedMessage(data, { messageId: '9001', deleted: false });
@@ -889,6 +975,41 @@ describe('send engine hub command transport', () => {
     });
     expect(direct.sendCalls).toHaveLength(0);
     expect(direct.listMessagesCalls).toBe(0);
+    engine.dispose();
+  });
+
+  it('keeps the original failed row retryable when inserting its replacement fails', async () => {
+    const direct = makeStubClient();
+    const createOfapiCommand = vi.fn(async ({ command: request }) =>
+      command(request.clientCommandId, 'failed_retryable', {
+        lastErrorCode: 'ofapi_rate_limited',
+        lastErrorClass: 'retryable',
+      }),
+    );
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+    });
+    const original = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello'] })
+      .localIds[0]!;
+    await drain();
+    expect(data.outbox.get(original)).toMatchObject({ state: 'failed' });
+    data.db.exec(
+      `CREATE TRIGGER fail_retry_insert BEFORE INSERT ON outbox
+       WHEN NEW.retry_of IS NOT NULL
+       BEGIN SELECT RAISE(ABORT, 'simulated retry insert failure'); END`,
+    );
+
+    expect(() => engine.retry({ accountId: ACCT, localId: original, text: 'hello again' }))
+      .toThrow(/simulated retry insert failure/i);
+
+    expect(data.outbox.get(original)).toMatchObject({ state: 'failed', retryOf: null });
+    expect(data.outbox.listForChat(ACCT, CHAT)).toHaveLength(1);
     engine.dispose();
   });
 

@@ -16,6 +16,7 @@ import {
   exposeUiBeforeRuntimeActivation,
   probeHubReadCredential,
   replaceRuntimeSecurityFirst,
+  runFailClosedTerminalPurge,
   sealRuntimeForTerminalOperation,
   stopRuntimeServices,
   subscribeSettingsScope,
@@ -303,6 +304,67 @@ describe('createRuntimeMutationQueue', () => {
   });
 });
 
+describe('runFailClosedTerminalPurge', () => {
+  it('keeps the database and relaunches when final custody upload fails', async () => {
+    const order: string[] = [];
+    const failure = new Error('final harvest delta failed');
+
+    await expect(
+      runFailClosedTerminalPurge({
+        finishCustody: async () => {
+          order.push('custody');
+          throw failure;
+        },
+        closeDatabase: () => order.push('close-db'),
+        clearMedia: async () => {
+          order.push('clear-media');
+        },
+        deleteLocalData: async () => {
+          order.push('delete-data');
+        },
+        onFailure: (error) => order.push(`surface:${(error as Error).message}`),
+        relaunch: () => order.push('relaunch'),
+        exit: (code) => order.push(`exit:${code}`),
+      }),
+    ).rejects.toBe(failure);
+
+    expect(order).toEqual([
+      'custody',
+      'surface:final harvest delta failed',
+      'relaunch',
+      'exit:1',
+    ]);
+  });
+
+  it('deletes only after custody completes and then relaunches cleanly', async () => {
+    const order: string[] = [];
+    await runFailClosedTerminalPurge({
+      finishCustody: async () => {
+        order.push('custody');
+      },
+      closeDatabase: () => order.push('close-db'),
+      clearMedia: async () => {
+        order.push('clear-media');
+      },
+      deleteLocalData: async () => {
+        order.push('delete-data');
+      },
+      onFailure: () => order.push('surface'),
+      relaunch: () => order.push('relaunch'),
+      exit: (code) => order.push(`exit:${code}`),
+    });
+
+    expect(order).toEqual([
+      'custody',
+      'close-db',
+      'clear-media',
+      'delete-data',
+      'relaunch',
+      'exit:0',
+    ]);
+  });
+});
+
 describe('stopRuntimeServices', () => {
   it('stops every service and awaits send quiescence before dispose', async () => {
     const order: string[] = [];
@@ -364,6 +426,28 @@ describe('stopRuntimeServices', () => {
     releaseSync?.();
     await stopped;
     expect(order).toEqual(['sync:drain', 'coordinator', 'hub']);
+  });
+
+  it('awaits Hub reporter quiescence before releasing DB-owning services', async () => {
+    const order: string[] = [];
+    let releaseHub: (() => void) | undefined;
+    const stopped = stopRuntimeServices({
+      coordinator: { dispose: () => order.push('coordinator') },
+      disposeEventForwarding: () => order.push('events'),
+      hub: {
+        quiesce: () => new Promise<void>((resolve) => {
+          order.push('hub:quiesce');
+          releaseHub = resolve;
+        }),
+        dispose: () => order.push('hub:dispose'),
+      },
+    });
+
+    await Promise.resolve();
+    expect(order).toEqual(['coordinator', 'events', 'hub:quiesce']);
+    releaseHub?.();
+    await stopped;
+    expect(order).toEqual(['coordinator', 'events', 'hub:quiesce', 'hub:dispose']);
   });
 
   it('keeps forwarding alive for the coordinator discarded frame during disposal', async () => {
