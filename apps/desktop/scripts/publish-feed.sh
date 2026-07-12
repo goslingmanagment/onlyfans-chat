@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-feed_dir=${1:?feed directory required}
-stage_dir=${2:?stage directory required}
+feed_arg=${1:?feed directory required}
+stage_arg=${2:?stage directory required}
+
+# Git Bash passes native Windows paths to scripts invoked by Node. Resolve both
+# existing directories through Bash itself before enforcing containment; Linux
+# production paths remain unchanged and symlink escapes are collapsed.
+canonical_dir() {
+  local path=$1
+  if command -v cygpath >/dev/null 2>&1 && [[ "$path" =~ ^[A-Za-z]:\\ ]]; then
+    path=$(cygpath -u "$path")
+  fi
+  cd "$path" && pwd -P
+}
+feed_dir=$(canonical_dir "$feed_arg")
+stage_dir=$(canonical_dir "$stage_arg")
 
 case "$stage_dir" in
   "$feed_dir"/.incoming/*) ;;

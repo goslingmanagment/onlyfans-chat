@@ -102,7 +102,9 @@ describe('createFixtureCapture', () => {
 
     expect(written).toHaveLength(1);
     const file = written[0];
-    expect(file?.path).toContain('/captures/');
+    // node:path follows the runner platform; preserve the directory assertion
+    // while accepting Windows separators in the Windows release gate.
+    expect(file?.path.replaceAll('\\', '/')).toContain('/captures/');
     expect(file?.path).toMatch(/get_.*\.json$/);
     const contents = file?.contents ?? '';
     expect(contents).not.toContain('super-secret-key');
