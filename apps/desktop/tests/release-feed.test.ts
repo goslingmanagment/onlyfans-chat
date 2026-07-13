@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -62,6 +62,19 @@ function bashPathWith(prepend: string): string {
 
 function readNormalized(path: string): string {
   return readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
+}
+
+function markStaleForBash(path: string, date: Date): void {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const timestamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+    + `${pad(date.getHours())}${pad(date.getMinutes())}.${pad(date.getSeconds())}`;
+  execFileSync('bash', [
+    '-c',
+    'touch -t "$1" "$2"',
+    'bash',
+    timestamp,
+    toBashPath(path),
+  ]);
 }
 
 describe('Windows release feed policy', () => {
@@ -179,7 +192,10 @@ describe('Windows release feed policy', () => {
     mkdirSync(staleStage);
     mkdirSync(freshStage);
     const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60_000);
-    utimesSync(staleStage, fourHoursAgo, fourHoursAgo);
+    // Set the timestamp through the same Git-Bash/MSYS filesystem view used
+    // by the mocked remote `find`; Node's Win32 directory utimes are not
+    // consistently surfaced to GNU find on windows-latest.
+    markStaleForBash(staleStage, fourHoursAgo);
     fixture(releaseDir, '1.2.4', 'candidate installer');
     writeFileSync(join(scriptsDir, 'release-feed.mjs'), readFileSync(cli));
     writeFileSync(join(scriptsDir, 'publish-feed.sh'), readFileSync(publisher));
