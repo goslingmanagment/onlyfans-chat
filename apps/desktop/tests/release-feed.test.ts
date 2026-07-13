@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -64,17 +64,11 @@ function readNormalized(path: string): string {
   return readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 }
 
-function markStaleForBash(path: string, date: Date): void {
-  const pad = (value: number) => String(value).padStart(2, '0');
-  const timestamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
-    + `${pad(date.getHours())}${pad(date.getMinutes())}.${pad(date.getSeconds())}`;
-  execFileSync('bash', [
-    '-c',
-    'touch -t "$1" "$2"',
-    'bash',
-    timestamp,
-    toBashPath(path),
-  ]);
+function workflowRemoteGcCommand(feedDir: string): string {
+  const script = workflowRunScript('Upload to the update feed');
+  const match = script.match(/^\s*"(find '\$FEED_DIR\/\.incoming' -mindepth[^"\n]+)"$/m);
+  expect(match?.[1]).toBeDefined();
+  return match![1]!.replace('$FEED_DIR', feedDir);
 }
 
 describe('Windows release feed policy', () => {
@@ -187,15 +181,6 @@ describe('Windows release feed policy', () => {
     for (const dir of [releaseDir, scriptsDir, mockBin, home, runnerTemp, join(feed, '.incoming')]) {
       mkdirSync(dir, { recursive: true });
     }
-    const staleStage = join(feed, '.incoming', 'abandoned-hard-kill');
-    const freshStage = join(feed, '.incoming', 'still-active');
-    mkdirSync(staleStage);
-    mkdirSync(freshStage);
-    const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60_000);
-    // Set the timestamp through the same Git-Bash/MSYS filesystem view used
-    // by the mocked remote `find`; Node's Win32 directory utimes are not
-    // consistently surfaced to GNU find on windows-latest.
-    markStaleForBash(staleStage, fourHoursAgo);
     fixture(releaseDir, '1.2.4', 'candidate installer');
     writeFileSync(join(scriptsDir, 'release-feed.mjs'), readFileSync(cli));
     writeFileSync(join(scriptsDir, 'publish-feed.sh'), readFileSync(publisher));
@@ -249,8 +234,6 @@ touch "$stage/scp-succeeded"
     expect(result.status).not.toBe(0);
     const stage = join(feed, '.incoming', '29210025236-1');
     expect(existsSync(stage)).toBe(false);
-    expect(existsSync(staleStage)).toBe(false);
-    expect(existsSync(freshStage)).toBe(true);
     expect(existsSync(join(home, '.ssh/id_ed25519'))).toBe(false);
     const log = readFileSync(mockLog, 'utf8');
     const bashFeed = toBashPath(feed);
@@ -258,7 +241,30 @@ touch "$stage/scp-succeeded"
     expect(log).toContain(`mkdir -p '${bashStage}'`);
     expect(log).toContain(`bash -s -- '${bashFeed}' '${bashStage}'`);
     expect(log).toContain(`rm -rf -- '${bashStage}'`);
+    expect(log).toContain("-mmin +180 -exec rm -rf -- {} +");
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'garbage-collects only remote Linux stages older than the hard job limit',
+    () => {
+      const root = mkdtempSync(join(tmpdir(), 'chatgoose-upload-stage-gc-'));
+      const feed = join(root, 'remote-feed');
+      const staleStage = join(feed, '.incoming', 'abandoned-hard-kill');
+      const freshStage = join(feed, '.incoming', 'still-active');
+      mkdirSync(staleStage, { recursive: true });
+      mkdirSync(freshStage);
+      const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60_000);
+      utimesSync(staleStage, fourHoursAgo, fourHoursAgo);
+
+      const result = spawnSync('bash', ['-c', workflowRemoteGcCommand(feed)], {
+        encoding: 'utf8',
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(existsSync(staleStage)).toBe(false);
+      expect(existsSync(freshStage)).toBe(true);
+    },
+  );
 
   it('accepts only a successful completed CI run for the exact release SHA', () => {
     const sha = 'a'.repeat(40);
