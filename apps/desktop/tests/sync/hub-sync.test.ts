@@ -28,7 +28,7 @@ import type { HubSync } from '../../src/main/sync/hub-sync';
 import type { SyncProvider } from '../../src/main/sync/provider';
 import { mapHubMessage } from '../../src/main/sync/mappers';
 import { createDataLayer, type DataLayer } from '../../src/main/db/index';
-import type { MessageUpsert } from '../../src/main/db/index';
+import type { ChatUpsert, MessageUpsert } from '../../src/main/db/index';
 
 const TEST_DRIVER = 'bsqlite3-mc-node';
 const ACCT = 'acct_hub_test';
@@ -229,6 +229,7 @@ describe('createHubSync', () => {
       initialLastEventId?: number | null;
       onEventDelay?: boolean;
       clientVersion?: string;
+      accountIds?: readonly string[];
     } = {},
   ): SyncHarness {
     const { fetchImpl, calls } = makeHarness(responses);
@@ -252,7 +253,7 @@ describe('createHubSync', () => {
         }
         log.push(`event:${event.type}`);
       },
-      accountIds: [ACCT],
+      accountIds: options.accountIds ?? [ACCT],
       onSnapshot: (snapshot) => {
         log.push(`snapshot:${snapshot.page.accountId}:${snapshot.nextPageCursor ?? 'done'}`);
       },
@@ -383,8 +384,8 @@ describe('createHubSync', () => {
 
     expect(h.calls.map((call) => call.url)).toEqual([
       'https://hub.test/api/v1/events/stream?lastEventId=7',
-      'https://hub.test/api/v1/events/snapshot?accountId=acct_hub_test&afterSeq=7&pageCursor=0&limit=50',
-      'https://hub.test/api/v1/events/snapshot?accountId=acct_hub_test&afterSeq=7&pageCursor=5&limit=50&snapshotCursor=22',
+      'https://hub.test/api/v1/events/snapshot?accountId=acct_hub_test&afterSeq=7&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100',
+      'https://hub.test/api/v1/events/snapshot?accountId=acct_hub_test&afterSeq=7&pageCursor=5&limit=1&snapshotCursor=22',
       'https://hub.test/api/v1/events/stream?lastEventId=22',
     ]);
     // v1 snapshot recovery requests carry the header too, not just the SSE connect.
@@ -403,6 +404,102 @@ describe('createHubSync', () => {
     expect(h.log.at(-2)).toBe('event:typing');
     expect(h.log.at(-1)).toBe('persist:23');
     expect(h.sync.status()).toBe('live');
+    h.sync.stop();
+  });
+
+  it('checkpoints the authenticated empty v1 baseline without requesting impossible account pages', async () => {
+    const resumed = makeStream();
+    const requirement = {
+      error: 'sync_snapshot_required',
+      message: 'cursor expired',
+      statusCode: 409,
+      version: 1,
+      requestedSeq: 7,
+      oldestAvailableSeq: 12,
+      currentSeq: 20,
+      snapshotPath: '/api/v1/events/snapshot',
+    };
+    const h = makeSync([
+      { status: 409, stream: null, json: requirement },
+      { status: 200, stream: resumed },
+    ], { initialLastEventId: 7, accountIds: [] });
+
+    h.sync.start();
+    await drainMicrotasks();
+
+    expect(h.calls.map((call) => call.url)).toEqual([
+      'https://hub.test/api/v1/events/stream?lastEventId=7',
+      'https://hub.test/api/v1/events/stream?lastEventId=20',
+    ]);
+    expect(h.log).toEqual(['gap:7', 'persist:20']);
+    expect(h.lastEventId()).toBe(20);
+    h.sync.stop();
+  });
+
+  it('follows bounded state subpages and checkpoints only after terminal nextStateCursor', async () => {
+    const resumed = makeStream();
+    const requirement = {
+      error: 'sync_snapshot_required',
+      message: 'cursor expired',
+      statusCode: 409,
+      version: 1,
+      requestedSeq: 7,
+      oldestAvailableSeq: 12,
+      currentSeq: 20,
+      snapshotPath: '/api/v1/events/snapshot',
+    };
+    const snapshot = (
+      nextStateCursor: string | null,
+    ): SyncSnapshotResponse & { nextStateCursor: string | null } => ({
+      version: 1,
+      requestedAfterSeq: 7,
+      snapshotCursor: 22,
+      stateAt: '2026-06-19T18:00:00.000Z',
+      resumeAllowed: true,
+      page: {
+        pageId: 1,
+        label: 'lora-of',
+        accountId: ACCT,
+        username: 'lora',
+        authStatus: 'connected',
+        authenticated: true,
+        authChangedAt: '2026-06-19T17:00:00.000Z',
+      },
+      coverage: {
+        durableDomains: ['chat_heads', 'hot_messages', 'message_tombstones', 'account_auth'],
+        omittedDomains: [
+          { domain: 'presence', reason: 'ephemeral_not_snapshotted' },
+          { domain: 'typing', reason: 'ephemeral_not_snapshotted' },
+        ],
+        messageWindow: 'hot_projection_plus_archive_delta',
+      },
+      threads: [],
+      unresolvedTombstones: [],
+      nextPageCursor: null,
+      nextStateCursor,
+    });
+    const h = makeSync([
+      { status: 409, stream: null, json: requirement },
+      { status: 200, stream: null, json: snapshot('STATE_A') },
+      { status: 200, stream: null, json: snapshot(null) },
+      { status: 200, stream: resumed },
+    ], { initialLastEventId: 7 });
+
+    h.sync.start();
+    await drainMicrotasks();
+
+    expect(h.calls.map((call) => call.url)).toEqual([
+      'https://hub.test/api/v1/events/stream?lastEventId=7',
+      'https://hub.test/api/v1/events/snapshot?accountId=acct_hub_test&afterSeq=7&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100',
+      'https://hub.test/api/v1/events/snapshot?accountId=acct_hub_test&afterSeq=7&pageCursor=0&limit=1&snapshotCursor=22&pageMode=bounded_v1&messageLimit=100&stateCursor=STATE_A',
+      'https://hub.test/api/v1/events/stream?lastEventId=22',
+    ]);
+    expect(h.log).toEqual([
+      'gap:7',
+      `snapshot:${ACCT}:done`,
+      `snapshot:${ACCT}:done`,
+      'persist:22',
+    ]);
     h.sync.stop();
   });
 
@@ -959,6 +1056,7 @@ describe('createHubAwareSync (provider composition)', () => {
     chatId: string,
     lastMessageId: string,
     lastMessageAt: string,
+    overrides: Partial<ChatUpsert> = {},
   ): void {
     data.chats.upsert({
       accountId: ACCT,
@@ -976,6 +1074,7 @@ describe('createHubAwareSync (provider composition)', () => {
       canSendMessage: true,
       canNotSendReason: null,
       raw: {},
+      ...overrides,
     });
   }
 
@@ -1199,7 +1298,7 @@ describe('createHubAwareSync (provider composition)', () => {
           snapshotPath: HUB_V2_SNAPSHOT_PATH,
         },
       },
-      { status: 200, stream: null, json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 1, currentSeq: 80 }] } },
+      { status: 200, stream: null, json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 1, accountRef: ACCT, currentSeq: 80 }] } },
       { status: 200, stream: null, json: firstPage },
       { status: 200, stream: null, json: secondPage },
       { status: 200, stream: resumed },
@@ -1237,8 +1336,8 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(calls.map((call) => call.url)).toEqual([
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
       `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
-      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=50`,
-      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=5&limit=50&snapshotCursor=77`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=5&limit=1&snapshotCursor=77`,
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH`,
     ]);
     expect(order).toEqual(['reconciled', 'apply:101', 'apply:202', 'persist:CUR_FRESH']);
@@ -1531,6 +1630,68 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
+  it('snapshot preserves a newer numeric head when message timestamps tie', async () => {
+    const { provider, callbacks } = build();
+    const tiedAt = '2026-06-19T18:00:00.000Z';
+    seedChat('404', '6', tiedAt);
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const snapshot = emptySnapshot(ACCT);
+    snapshot.threads = [{
+      chatId: '404',
+      fanName: 'Fan 404',
+      unreadCount: 0,
+      hasUnreadTips: false,
+      lastMessageId: '5',
+      lastMessageAt: tiedAt,
+      lastMessageIsSentByMe: false,
+      lastMessagePreview: 'stale snapshot head',
+      visible: true,
+      sourceUpdatedAt: '2026-06-19T18:01:00.000Z',
+      messages: [],
+    }];
+
+    await callbacks().onSnapshot(snapshot);
+
+    expect(data.chats.get(ACCT, '404')).toMatchObject({
+      lastMessageId: '6',
+      lastMessageAt: tiedAt,
+      lastMessagePreview: 'message 6',
+      unreadCount: 1,
+    });
+    provider.stop();
+  });
+
+  it('reconciles an unresolved preview-only delete before snapshot acknowledgement', async () => {
+    const { provider, polling, callbacks } = build();
+    seedChat('505', '6', '2026-06-19T18:00:00.000Z');
+    expect(data.messages.get(ACCT, '505', '6')).toBeNull();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const snapshot = emptySnapshot(ACCT);
+    snapshot.unresolvedTombstones = [{
+      messageId: '6',
+      deletedAt: '2026-06-19T18:01:00.000Z',
+      sourceUpdatedAt: '2026-06-19T18:01:00.000Z',
+      sourceFanoutSeq: 1,
+    }];
+
+    await callbacks().onSnapshot(snapshot);
+
+    expect(polling.reconcileCalls).toEqual([ACCT]);
+    expect(data.chats.get(ACCT, '505')).toMatchObject({
+      lastMessageId: null,
+      lastMessageAt: null,
+      lastMessagePreview: '',
+      unreadCount: 0,
+    });
+    provider.stop();
+  });
+
   it('id-only messageReceived preserves the refreshChat fallback before re-emitting', async () => {
     const { provider, polling, callbacks, events, logs } = build();
     provider.start([ACCT]);
@@ -1783,7 +1944,8 @@ describe('createHubAwareSync (provider composition)', () => {
     await callbacks().onEvent({ type: 'messageDeleted', accountId: ACCT, messageId: '1000001' });
 
     expect(data.messages.get(ACCT, '4471102', '1000001')?.deleted).toBe(true);
-    expect(polling.accountRefreshCalls).toEqual([ACCT]);
+    expect(polling.reconcileCalls).toEqual([ACCT]);
+    expect(polling.accountRefreshCalls).toEqual([]);
     expect(events).toEqual([
       { type: 'chatListUpdated', accountId: ACCT },
       { type: 'messageDeleted', accountId: ACCT, messageId: '1000001', chatId: '4471102' },
@@ -1817,7 +1979,8 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
 
     await callbacks().onEvent({ type: 'messageDeleted', accountId: ACCT, messageId: 'nope' });
-    expect(polling.accountRefreshCalls).toEqual([ACCT]);
+    expect(polling.reconcileCalls).toEqual([ACCT]);
+    expect(polling.accountRefreshCalls).toEqual([]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }]);
     expect(provider.hubActivity()).toMatchObject({
       eventsToday: 1,
@@ -1835,6 +1998,35 @@ describe('createHubAwareSync (provider composition)', () => {
         fallbackByReason: { 'unknown-delete-head-refresh': 1 },
       },
       lastFallbackReason: 'unknown-delete-head-refresh',
+    });
+    provider.stop();
+  });
+
+  it('clears a stale deleted outgoing head without consuming older unread tip state', async () => {
+    const { provider, polling, callbacks } = build();
+    seedChat('outgoing-head-chat', 'outgoing-head', '2026-06-11T12:00:00.000Z', {
+      unreadCount: 1,
+      hasUnreadTips: true,
+      lastMessageIsSentByMe: true,
+    });
+    // There is deliberately no local message row. The account-head reconcile
+    // fake leaves the cached head unchanged, modeling a lagging Core list read.
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await callbacks().onEvent({
+      type: 'messageDeleted',
+      accountId: ACCT,
+      messageId: 'outgoing-head',
+    });
+
+    expect(polling.reconcileCalls).toEqual([ACCT]);
+    expect(data.chats.get(ACCT, 'outgoing-head-chat')).toMatchObject({
+      lastMessageId: null,
+      lastMessagePreview: '',
+      unreadCount: 1,
+      hasUnreadTips: true,
     });
     provider.stop();
   });
@@ -1860,7 +2052,7 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
-  it('chatListUpdated refreshes the account head and avoids duplicate list events', async () => {
+  it('chatListUpdated uses the lag-safe head refresh and avoids duplicate list events', async () => {
     const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
     await Promise.resolve();
@@ -1869,6 +2061,7 @@ describe('createHubAwareSync (provider composition)', () => {
     await callbacks().onEvent({ type: 'chatListUpdated', accountId: ACCT });
 
     expect(polling.accountRefreshCalls).toEqual([ACCT]);
+    expect(polling.reconcileCalls).toEqual([]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }]);
     provider.stop();
   });

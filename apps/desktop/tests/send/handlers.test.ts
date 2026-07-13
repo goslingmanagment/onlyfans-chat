@@ -61,6 +61,7 @@ function register(
 ): void {
   handlers.clear();
   const secrets = {
+    getSecret: async () => null,
     hasSecret: async () => false,
     setSecret: async () => undefined,
     deleteSecret: async () => undefined,

@@ -12,6 +12,7 @@ import {
   HUB_V2_SNAPSHOT_PATH,
   HUB_V2_SSE_PATH,
   type HubSseFetch,
+  type HubSnapshotRecoveryProgress,
   type HubSyncStatus,
 } from '../../src/main/sync/hub-sync';
 
@@ -155,6 +156,16 @@ function stateSnapshot(
     }],
     unresolvedTombstones: options.unresolvedTombstones ?? [],
     nextPageCursor,
+  };
+}
+
+function boundedStateSnapshot(
+  nextStateCursor: string | null,
+  options: Parameters<typeof stateSnapshot>[1] = {},
+): SyncSnapshotResponse & { nextStateCursor: string | null } {
+  return {
+    ...stateSnapshot(null, options),
+    nextStateCursor,
   };
 }
 
@@ -379,7 +390,7 @@ describe('createHubSync (protocol v2)', () => {
           snapshotPath: HUB_V2_SNAPSHOT_PATH,
         },
       },
-      { status: 200, stream: null, json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+      { status: 200, stream: null, json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 12 }] } },
       { status: 200, stream: null, json: stateSnapshot(5, { chatId: 'page-1' }) },
       { status: 200, stream: null, json: stateSnapshot(null, { chatId: 'page-2' }) },
       { status: 200, stream },
@@ -390,10 +401,10 @@ describe('createHubSync (protocol v2)', () => {
     expect(h.calls[0]!.url).toContain('cursor=CUR_STALE');
     expect(h.calls[1]!.url).toBe(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
     expect(h.calls[2]!.url).toBe(
-      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=50`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
     );
     expect(h.calls[3]!.url).toBe(
-      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=5&limit=50&snapshotCursor=22`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=5&limit=1&snapshotCursor=22`,
     );
     expect(h.calls[4]!.url).toContain('cursor=CUR_FRESH');
     // v2 snapshot handshake carries the header too, not just the SSE connect.
@@ -408,6 +419,318 @@ describe('createHubSync (protocol v2)', () => {
     h.sync.stop();
   });
 
+  it('recreates after a failed bounded page, resumes its next state cursor, and keeps the original fresh v2 target', async () => {
+    const snapshotRequired = {
+      error: 'sync_snapshot_required',
+      message: 'cursor gap',
+      statusCode: 409,
+      version: 2,
+      accounts: [{ accountId: 7, requestedSeq: 900, oldestAvailableSeq: 1, currentSeq: 12 }],
+      snapshotPath: HUB_V2_SNAPSHOT_PATH,
+    };
+    const scope = 'hub-and-bearer-scope';
+    let streamCursor = 'CUR_STALE';
+    let progress: HubSnapshotRecoveryProgress | null = null;
+    const applied: string[] = [];
+
+    const firstHarness = makeHarness([
+      { status: 409, stream: null, json: snapshotRequired },
+      {
+        status: 200,
+        stream: null,
+        json: { cursor: 'CUR_FRESH_1', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 12 }] },
+      },
+      {
+        status: 200,
+        stream: null,
+        json: boundedStateSnapshot('STATE_A', { chatId: 'already-applied' }),
+      },
+      { status: 500, stream: null },
+    ]);
+    const first = createHubSync({
+      protocol: 'v2',
+      baseUrl: 'https://hub.test',
+      apiKey: 'k',
+      accountIds: [ACCT],
+      fetchImpl: firstHarness.fetchImpl,
+      // Park after the scripted failure; the recreated instance is the retry.
+      sleep: () => new Promise<void>(() => undefined),
+      onEvent: () => undefined,
+      onSnapshot: (snapshot) => {
+        applied.push(snapshot.threads[0]?.chatId ?? 'empty');
+      },
+      onV2GapRecovered: () => [ACCT],
+      getLastEventId: () => null,
+      setLastEventId: () => undefined,
+      getV2Cursor: () => streamCursor,
+      setV2Cursor: (next) => {
+        streamCursor = next;
+      },
+      snapshotProgressScope: scope,
+      getSnapshotProgress: () => progress,
+      setSnapshotProgress: (next) => {
+        progress = next;
+      },
+      clearSnapshotProgress: () => {
+        progress = null;
+      },
+    });
+
+    first.start();
+    await drainMicrotasks();
+
+    expect(applied).toEqual(['already-applied']);
+    expect(streamCursor).toBe('CUR_STALE');
+    expect(progress).toMatchObject({
+      scope,
+      accountIndex: 0,
+      snapshotCursor: 22,
+      pageMode: 'bounded',
+      stateCursor: 'STATE_A',
+      sourceV2Cursor: 'CUR_STALE',
+      targetV2Cursor: 'CUR_FRESH_1',
+    });
+    first.stop();
+
+    const resumedStream = makeStream();
+    const secondHarness = makeHarness([
+      { status: 409, stream: null, json: snapshotRequired },
+      {
+        status: 200,
+        stream: null,
+        // This later cursor MUST NOT be paired with the older saved state walk.
+        json: { cursor: 'CUR_FRESH_2', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 20 }] },
+      },
+      {
+        status: 200,
+        stream: null,
+        json: boundedStateSnapshot(null, { chatId: 'resumed-page' }),
+      },
+      { status: 200, stream: resumedStream },
+    ]);
+    const second = createHubSync({
+      protocol: 'v2',
+      baseUrl: 'https://hub.test',
+      apiKey: 'k',
+      accountIds: [ACCT],
+      fetchImpl: secondHarness.fetchImpl,
+      sleep: () => Promise.resolve(),
+      onEvent: () => undefined,
+      onSnapshot: (snapshot) => {
+        applied.push(snapshot.threads[0]?.chatId ?? 'empty');
+      },
+      onV2GapRecovered: () => [ACCT],
+      getLastEventId: () => null,
+      setLastEventId: () => undefined,
+      getV2Cursor: () => streamCursor,
+      setV2Cursor: (next) => {
+        streamCursor = next;
+      },
+      snapshotProgressScope: scope,
+      getSnapshotProgress: () => progress,
+      setSnapshotProgress: (next) => {
+        progress = next;
+      },
+      clearSnapshotProgress: () => {
+        progress = null;
+      },
+    });
+
+    second.start();
+    await drainMicrotasks();
+
+    expect(secondHarness.calls[2]!.url).toBe(
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&snapshotCursor=22&pageMode=bounded_v1&messageLimit=100&stateCursor=STATE_A`,
+    );
+    expect(secondHarness.calls.some((call) =>
+      call.url === `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`)).toBe(false);
+    expect(applied).toEqual(['already-applied', 'resumed-page']);
+    expect(streamCursor).toBe('CUR_FRESH_1');
+    expect(secondHarness.calls[3]!.url).toContain('cursor=CUR_FRESH_1');
+    expect(secondHarness.calls[3]!.url).not.toContain('CUR_FRESH_2');
+    expect(progress).toBeNull();
+    second.stop();
+  });
+
+  it('clears a matching stale continuation and restarts fresh when Core advances the replay floor', async () => {
+    const snapshotRequired = {
+      error: 'sync_snapshot_required',
+      message: 'cursor gap',
+      statusCode: 409,
+      version: 2,
+      accounts: [{ accountId: 7, requestedSeq: 900, oldestAvailableSeq: 1, currentSeq: 40 }],
+      snapshotPath: HUB_V2_SNAPSHOT_PATH,
+    };
+    const scope = 'floor-restart-scope';
+    let streamCursor = 'CUR_STALE';
+    let progress: HubSnapshotRecoveryProgress | null = {
+      version: 1,
+      scope,
+      protocol: 'v2',
+      afterSeq: 0,
+      accountIds: [ACCT],
+      accountIndex: 0,
+      snapshotCursor: 22,
+      pageMode: 'bounded',
+      pageCursor: 0,
+      stateCursor: 'STATE_BELOW_FLOOR',
+      boundedStateAt: '2026-07-12T18:00:00.000Z',
+      sourceV2Cursor: 'CUR_STALE',
+      targetV2Cursor: 'CUR_FRESH_1',
+    };
+    const resumedStream = makeStream();
+    const { fetchImpl, calls } = makeHarness([
+      { status: 409, stream: null, json: snapshotRequired },
+      {
+        status: 200,
+        stream: null,
+        json: { cursor: 'CUR_FRESH_2', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 40 }] },
+      },
+      {
+        status: 409,
+        stream: null,
+        json: {
+          error: 'sync_snapshot_restart_required',
+          message: 'snapshot continuation is below the replay floor',
+          statusCode: 409,
+          replayFloor: 30,
+          snapshotPath: HUB_SNAPSHOT_PATH,
+        },
+      },
+      {
+        status: 200,
+        stream: null,
+        json: boundedStateSnapshot(null, { snapshotCursor: 30, chatId: 'fresh-restart' }),
+      },
+      { status: 200, stream: resumedStream },
+    ]);
+    const applied: string[] = [];
+    const sync = createHubSync({
+      protocol: 'v2',
+      baseUrl: 'https://hub.test',
+      apiKey: 'k',
+      accountIds: [ACCT],
+      fetchImpl,
+      sleep: () => Promise.resolve(),
+      onEvent: () => undefined,
+      onSnapshot: (snapshot) => {
+        applied.push(snapshot.threads[0]?.chatId ?? 'empty');
+      },
+      onV2GapRecovered: () => [ACCT],
+      getLastEventId: () => null,
+      setLastEventId: () => undefined,
+      getV2Cursor: () => streamCursor,
+      setV2Cursor: (next) => {
+        streamCursor = next;
+      },
+      snapshotProgressScope: scope,
+      getSnapshotProgress: () => progress,
+      setSnapshotProgress: (next) => {
+        progress = next;
+      },
+      clearSnapshotProgress: () => {
+        progress = null;
+      },
+    });
+
+    sync.start();
+    await drainMicrotasks();
+
+    expect(calls.map((call) => call.url)).toEqual([
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
+      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&snapshotCursor=22&pageMode=bounded_v1&messageLimit=100&stateCursor=STATE_BELOW_FLOOR`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH_1`,
+    ]);
+    expect(applied).toEqual(['fresh-restart']);
+    expect(streamCursor).toBe('CUR_FRESH_1');
+    expect(progress).toBeNull();
+    sync.stop();
+  });
+
+  it('discards durable progress when the refreshed ordered account set no longer matches', async () => {
+    const stream = makeStream();
+    const { fetchImpl, calls } = makeHarness([
+      {
+        status: 409,
+        stream: null,
+        json: {
+          error: 'sync_snapshot_required',
+          message: 'cursor gap',
+          statusCode: 409,
+          version: 2,
+          accounts: [{ accountId: 7, requestedSeq: 9, oldestAvailableSeq: 10, currentSeq: 20 }],
+          snapshotPath: HUB_V2_SNAPSHOT_PATH,
+        },
+      },
+      {
+        status: 200,
+        stream: null,
+        json: { cursor: 'CUR_NEW_BASELINE', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 20 }] },
+      },
+      {
+        status: 200,
+        stream: null,
+        json: boundedStateSnapshot(null, { snapshotCursor: 30 }),
+      },
+      { status: 200, stream },
+    ]);
+    const scope = 'same-hub-and-bearer';
+    let streamCursor = 'CUR_STALE';
+    let progress: HubSnapshotRecoveryProgress | null = {
+      version: 1,
+      scope,
+      protocol: 'v2',
+      afterSeq: 0,
+      accountIds: [NEW_ACCT],
+      accountIndex: 0,
+      snapshotCursor: 22,
+      pageMode: 'bounded',
+      pageCursor: 0,
+      stateCursor: 'STATE_FROM_DIFFERENT_GRANTS',
+      boundedStateAt: '2026-07-12T18:00:00.000Z',
+      sourceV2Cursor: 'CUR_STALE',
+      targetV2Cursor: 'CUR_OLD_BASELINE',
+    };
+    const sync = createHubSync({
+      protocol: 'v2',
+      baseUrl: 'https://hub.test',
+      apiKey: 'k',
+      accountIds: [NEW_ACCT],
+      fetchImpl,
+      sleep: () => Promise.resolve(),
+      onEvent: () => undefined,
+      onSnapshot: () => undefined,
+      onV2GapRecovered: () => [ACCT],
+      getLastEventId: () => null,
+      setLastEventId: () => undefined,
+      getV2Cursor: () => streamCursor,
+      setV2Cursor: (next) => {
+        streamCursor = next;
+      },
+      snapshotProgressScope: scope,
+      getSnapshotProgress: () => progress,
+      setSnapshotProgress: (next) => {
+        progress = next;
+      },
+      clearSnapshotProgress: () => {
+        progress = null;
+      },
+    });
+
+    sync.start();
+    await drainMicrotasks();
+
+    expect(calls[2]!.url).toBe(
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
+    );
+    expect(calls[2]!.url).not.toContain('STATE_FROM_DIFFERENT_GRANTS');
+    expect(streamCursor).toBe('CUR_NEW_BASELINE');
+    expect(progress).toBeNull();
+    sync.stop();
+  });
+
   it('does not persist the fresh cursor when a durable state page fails; recovery retries', async () => {
     const stream = makeStream();
     const snapshotRequired = {
@@ -420,10 +743,10 @@ describe('createHubSync (protocol v2)', () => {
     };
     const h = makeV2Sync([
       { status: 409, stream: null, json: snapshotRequired },
-      { status: 200, stream: null, json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+      { status: 200, stream: null, json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 12 }] } },
       { status: 200, stream: null, json: stateSnapshot(null, { chatId: 'first-attempt' }) },
       { status: 409, stream: null, json: snapshotRequired },
-      { status: 200, stream: null, json: { cursor: 'CUR_FRESH2', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+      { status: 200, stream: null, json: { cursor: 'CUR_FRESH2', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 12 }] } },
       { status: 200, stream: null, json: stateSnapshot(null, { chatId: 'second-attempt' }) },
       { status: 200, stream },
     ], { initialCursor: 'CUR_STALE', failSnapshotPages: 1 });
@@ -450,7 +773,7 @@ describe('createHubSync (protocol v2)', () => {
     const stream = makeStream();
     const h = makeV2Sync([
       { status: 403, stream: null },
-      { status: 200, stream: null, json: { cursor: 'CUR_RESCOPED', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+      { status: 200, stream: null, json: { cursor: 'CUR_RESCOPED', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 12 }] } },
       { status: 200, stream: null, json: stateSnapshot(9, { chatId: 'rescoped-1' }) },
       { status: 200, stream: null, json: stateSnapshot(null, { chatId: 'rescoped-2' }) },
       { status: 200, stream },
@@ -485,7 +808,7 @@ describe('createHubSync (protocol v2)', () => {
       {
         status: 200,
         stream: null,
-        json: { cursor: 'CUR_REPLACED', accounts: [{ accountId: 8, currentSeq: 2 }] },
+        json: { cursor: 'CUR_REPLACED', accounts: [{ accountId: 8, accountRef: NEW_ACCT, currentSeq: 2 }] },
       },
       {
         status: 200,
@@ -504,7 +827,7 @@ describe('createHubSync (protocol v2)', () => {
     expect(h.calls.map((call) => call.url)).toEqual([
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_OLD_GRANT`,
       `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
-      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${NEW_ACCT}&afterSeq=0&pageCursor=0&limit=50`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${NEW_ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_REPLACED`,
     ]);
     expect(h.calls.some((call) => call.url.includes(`accountId=${ACCT}`))).toBe(false);
@@ -522,6 +845,85 @@ describe('createHubSync (protocol v2)', () => {
       'persist:CUR_REPLACED',
       'event:messageReceived',
       'persist:CUR_NEW_EVENT',
+    ]);
+    h.sync.stop();
+  });
+
+  it('remints on grant widening and replays a new-account event after its bound state snapshot', async () => {
+    const stream = makeStream();
+    const snapshotRequired = {
+      error: 'sync_snapshot_required',
+      message: 'cursor scope changed',
+      statusCode: 409,
+      version: 2,
+      accounts: [{ accountId: 8, requestedSeq: 0, oldestAvailableSeq: 1, currentSeq: 3 }],
+      snapshotPath: HUB_V2_SNAPSHOT_PATH,
+    };
+    const h = makeV2Sync([
+      { status: 409, stream: null, json: snapshotRequired },
+      {
+        // B is granted after Core mints this A-only cursor but before Desktop's
+        // grant refresh. The mismatch must abort before any state request.
+        status: 200,
+        stream: null,
+        json: {
+          cursor: 'CUR_A_ONLY',
+          accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 12 }],
+        },
+      },
+      { status: 409, stream: null, json: snapshotRequired },
+      {
+        status: 200,
+        stream: null,
+        json: {
+          cursor: 'CUR_A_AND_B',
+          accounts: [
+            { accountId: 7, accountRef: ACCT, currentSeq: 12 },
+            { accountId: 8, accountRef: NEW_ACCT, currentSeq: 2 },
+          ],
+        },
+      },
+      { status: 200, stream: null, json: stateSnapshot(null, { accountId: ACCT, chatId: 'a-state' }) },
+      { status: 200, stream: null, json: stateSnapshot(null, { accountId: NEW_ACCT, chatId: 'b-state' }) },
+      { status: 200, stream },
+    ], {
+      initialCursor: 'CUR_STALE',
+      refreshedAccountIds: [ACCT, NEW_ACCT],
+    });
+
+    h.sync.start();
+    await drainMicrotasks();
+
+    expect(h.calls.map((call) => call.url)).toEqual([
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
+      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      // No A state walk was allowed for CUR_A_ONLY: reconnect with the still
+      // stale cursor and obtain an AB-bound baseline instead.
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
+      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${NEW_ACCT}&afterSeq=0&pageCursor=0&limit=1&snapshotCursor=22&pageMode=bounded_v1&messageLimit=100`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_A_AND_B`,
+    ]);
+    expect(h.log).toEqual([
+      'gap-recovered',
+      'gap-recovered',
+      'snapshot:a-state:done',
+      'snapshot:b-state:done',
+      'persist:CUR_A_AND_B',
+    ]);
+
+    // This B event is committed after B's state page and before/at reconnect.
+    // It must arrive from the AB cursor tail and checkpoint only after apply.
+    stream.send(messageFrame('CUR_B_AFTER_SNAPSHOT', {
+      accountId: 8,
+      accountSeq: 3,
+      accountRef: NEW_ACCT,
+    }));
+    await drainMicrotasks();
+    expect(h.log.slice(-2)).toEqual([
+      'event:messageReceived',
+      'persist:CUR_B_AFTER_SNAPSHOT',
     ]);
     h.sync.stop();
   });
@@ -575,7 +977,13 @@ describe('createHubSync (protocol v2)', () => {
       {
         status: 200,
         stream: null,
-        json: { cursor: 'CUR_PARTIAL', accounts: [{ accountId: 7, currentSeq: 12 }] },
+        json: {
+          cursor: 'CUR_PARTIAL',
+          accounts: [
+            { accountId: 7, accountRef: ACCT, currentSeq: 12 },
+            { accountId: 8, accountRef: NEW_ACCT, currentSeq: 2 },
+          ],
+        },
       },
       { status: 200, stream: null, json: stateSnapshot(null, { chatId: 'covered' }) },
       { status: 404, stream: null },
@@ -637,7 +1045,7 @@ describe('createHubSync (protocol v2)', () => {
             snapshotPath: HUB_V2_SNAPSHOT_PATH,
           },
         },
-        { status: 200, stream: null, json: { cursor: 'CUR_NOT_SAFE_YET', accounts: [{ accountId: 7, currentSeq: 12 }] } },
+        { status: 200, stream: null, json: { cursor: 'CUR_NOT_SAFE_YET', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 12 }] } },
         { status, stream: null },
       ], { initialCursor: 'CUR_STALE' });
 

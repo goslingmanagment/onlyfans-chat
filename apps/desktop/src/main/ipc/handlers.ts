@@ -20,6 +20,30 @@ import type { Logger } from '../diagnostics/logger';
 import type { MessageGuardRuntime } from '../message-guard/runtime';
 import { observeSendForAcceptance, reportFeedbackAcceptance } from '../hub/acceptance-reporter';
 import type { AcceptanceSeam, FeedbackContext } from '../hub/acceptance-reporter';
+import type { PersonaUpsertOutcome } from '../hub/index';
+import {
+  applyPendingPersonaIntents,
+  classifyPersonaMutationFailure,
+  clearPendingPersonaIntent,
+  createPendingPersonaArchive,
+  createPendingPersonaUpsert,
+  ensurePersonaStorageScope,
+  isCurrentPendingPersonaIntent,
+  isWritablePersonality,
+  loadPersonaAccountMappings,
+  loadPendingPersonaIntents,
+  mergeRemotePersonas,
+  personaCacheKey,
+  restorePendingPersonaIntent,
+  samePersonaStorageScope,
+  storePersonaAccountMappings,
+  storePendingPersonaIntent,
+  storedPersonalitySchema,
+  storedPersonalitiesSchema,
+  writablePersonalitySchema,
+  type PendingPersonaIntent,
+  type PersonaStorageScope,
+} from '../personas/pending';
 import type {
   ActivityVM,
   AiStartRequest,
@@ -171,15 +195,7 @@ const reconcileUnreadSchema = z.object({
 });
 const focusAccountSchema = z.object({ accountId: idSchema.nullable() });
 const mappingSchema = z.object({ accountId: idSchema, personalityId: z.string().nullable() });
-const personalitySchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1).max(120),
-  content: z.string().max(100_000),
-  updatedAt: z.number(),
-  builtin: z.boolean().optional(),
-  builtinVersion: z.number().optional(),
-});
-const personalityDeleteSchema = z.object({ id: z.string().min(1) });
+const personalityDeleteSchema = storedPersonalitySchema;
 const aiStartSchema = z.object({
   operationId: z.uuid(),
   feature: z.enum([
@@ -327,9 +343,6 @@ function outboxToVM(row: OutboxRow): OutboxItemVM {
   };
 }
 
-const PERSONALITIES_KEY = 'personalities';
-const personalitiesStoredSchema = z.array(personalitySchema);
-
 /** Coordinator surface pinned for the parallel ai-coordinator build. */
 export interface AiCoordinatorLike {
   start(req: AiStartRequest): void;
@@ -351,8 +364,14 @@ export interface AiCoordinatorLike {
 }
 
 export interface ReadRuntimeProbeResult {
-  /** Runs only after settingsStore.update has durably persisted the replacement. */
-  afterPersist?: () => Promise<void>;
+  /**
+   * Set only after the same probe proves the stored token dead and the pasted
+   * key valid. SettingsStore records and replays this deletion in the same
+   * durable intent as key promotion.
+   */
+  deleteDeadDeviceToken?: boolean;
+  /** Non-custody side effects (redactor/log refresh) after commit. */
+  afterCommit?: () => Promise<void>;
 }
 
 export interface IpcDeps {
@@ -374,9 +393,25 @@ export interface IpcDeps {
   /** Stage 31: kernel persona CRUD (personas are kernel config); null while
    * the hub is unconfigured — the local KV serves as the offline cache. */
   personas?: {
-    list: () => Promise<Array<{ key: string; displayName: string; systemBlock: string; updatedAt: string }>>;
-    upsert: (args: { key: string; displayName: string; systemBlock: string }) => Promise<unknown>;
-    archive: (key: string) => Promise<unknown>;
+    list: (expectedHubOrigin?: string) => Promise<Array<{
+      key: string;
+      displayName: string;
+      systemBlock: string;
+      updatedAt: string;
+      version?: number;
+    }>>;
+    upsert: (args: {
+      key: string;
+      displayName: string;
+      systemBlock: string;
+      expectedVersion: number | null;
+      expectedHubOrigin?: string;
+    }) => Promise<PersonaUpsertOutcome | void>;
+    archive: (args: {
+      key: string;
+      expectedVersion: number | null;
+      expectedHubOrigin?: string;
+    }) => Promise<unknown>;
   } | null;
   /** Null until an OFAPI read transport exists (same lifecycle as sync). */
   send: SendEngine | null;
@@ -427,9 +462,15 @@ export interface IpcDeps {
    * (no-op) when the patch clears the hub or leaves nothing to probe. The
    * caller persists ONLY after this resolves, so a bad key never reaches the
    * keychain or the settings table (SPEC §15 — no half-applied credential).
-   */
+  */
   probeReadRuntimeForPatch?: (rawPatch: unknown) => Promise<ReadRuntimeProbeResult | void>;
-  /** Called when settings.update changes direct/hub read-runtime credentials. */
+  /**
+   * Serializes the complete validate/persist/cleanup/rebuild transaction with
+   * device-token issue/sign-out. When provided, onOfapiRuntimeConfigChanged is
+   * invoked inside this task and therefore must not re-enter the same queue.
+   */
+  runReadRuntimeMutation?: <Result>(task: () => Promise<Result>) => Promise<Result>;
+  /** Called inside the mutation above when settings.update changes Hub credentials. */
   onOfapiRuntimeConfigChanged?: () => void | Promise<void>;
   /**
    * Called after any settings.update that touched hubApiKey/hubBaseUrl. Key
@@ -442,12 +483,15 @@ export interface IpcDeps {
   getCoreCreditsSummary?: () => Promise<ActivityVM['credits']['core'] | null>;
 }
 
-function normalizePersonality(parsed: z.infer<typeof personalitySchema>): Personality {
+function normalizePersonality(
+  parsed: z.infer<typeof storedPersonalitySchema>,
+): Personality {
   return {
     id: parsed.id,
     name: parsed.name,
     content: parsed.content,
     updatedAt: parsed.updatedAt,
+    ...(parsed.remoteVersion !== undefined ? { remoteVersion: parsed.remoteVersion } : {}),
     ...(parsed.builtin !== undefined ? { builtin: parsed.builtin } : {}),
     ...(parsed.builtinVersion !== undefined ? { builtinVersion: parsed.builtinVersion } : {}),
   };
@@ -456,12 +500,20 @@ function normalizePersonality(parsed: z.infer<typeof personalitySchema>): Person
 /** Stage 31: personas are kernel config; the local KV is the offline cache.
  * A fresh install still shows a mappable builtin entry — its content is a
  * placeholder until the first kernel refresh replaces it. */
-export function loadPersonalities(data: DataLayer): Personality[] {
-  const saved = (data.settings.getParsed(PERSONALITIES_KEY, personalitiesStoredSchema) ?? []).map(
-    normalizePersonality,
-  );
-  if (saved.length > 0) {
-    return saved;
+export function loadPersonalities(
+  data: DataLayer,
+  scope: PersonaStorageScope | null,
+): Personality[] {
+  const cacheKey = personaCacheKey(scope);
+  const raw = data.settings.get(cacheKey);
+  if (raw !== undefined) {
+    const parsed = storedPersonalitiesSchema.safeParse(raw);
+    if (parsed.success) {
+      // An authoritative Core list may legitimately be empty. Distinguish that
+      // from an unset cache so an archived final persona is not re-created as a
+      // local placeholder and later migrated back to Core.
+      return parsed.data.map(normalizePersonality);
+    }
   }
   const fallback: Personality[] = [{
     id: 'builtin:lora',
@@ -470,7 +522,11 @@ export function loadPersonalities(data: DataLayer): Personality[] {
     updatedAt: 0,
     builtin: true,
   }];
-  data.settings.set(PERSONALITIES_KEY, fallback);
+  // Preserve corrupt user data for diagnostics/recovery. Only initialize a
+  // placeholder when the scoped cache truly has no row.
+  if (raw === undefined) {
+    data.settings.set(cacheKey, fallback);
+  }
   return fallback;
 }
 
@@ -480,6 +536,7 @@ function kernelPersonaToLocal(persona: {
   displayName: string;
   systemBlock: string;
   updatedAt: string;
+  version?: number;
 }): Personality {
   const updatedAt = Date.parse(persona.updatedAt);
   return {
@@ -487,12 +544,193 @@ function kernelPersonaToLocal(persona: {
     name: persona.displayName,
     content: persona.systemBlock,
     updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+    ...(persona.version !== undefined ? { remoteVersion: persona.version } : {}),
     ...(persona.key === 'builtin:lora' ? { builtin: true } : {}),
   };
 }
 
+function samePersonalityList(left: readonly Personality[], right: readonly Personality[]): boolean {
+  return left.length === right.length && left.every((personality, index) => {
+    const candidate = right[index];
+    return candidate !== undefined
+      && candidate.id === personality.id
+      && candidate.name === personality.name
+      && candidate.content === personality.content
+      && candidate.updatedAt === personality.updatedAt
+      && candidate.remoteVersion === personality.remoteVersion
+      && candidate.builtin === personality.builtin
+      && candidate.builtinVersion === personality.builtinVersion;
+  });
+}
+
 export function registerIpcHandlers(deps: IpcDeps): void {
   const { data, settingsStore } = deps;
+  // A remote list request may outlive a save/archive that started after it.
+  // Fence cache commits with a mutation revision so that the delayed snapshot
+  // cannot roll the local cache back (and then be pushed back to Core at the
+  // next runtime bootstrap). Reads also remember the newest committed request
+  // so two overlapping list responses cannot regress each other.
+  let personaMutationRevision = 0;
+  let personaMutationsInFlight = 0;
+  let nextPersonaListRequest = 0;
+  let latestCommittedPersonaListRequest = 0;
+
+  const resolvePersonaContext = async (): Promise<{
+    scope: PersonaStorageScope | null;
+    hubOrigin: string | null;
+  }> => {
+    const settings = await settingsStore.get();
+    return {
+      scope: ensurePersonaStorageScope(data.settings, settings.hubBaseUrl),
+      hubOrigin: settings.hubBaseUrl === null
+        ? null
+        : new URL(settings.hubBaseUrl).origin,
+    };
+  };
+
+  const beginPersonaMutation = (): (() => void) => {
+    personaMutationsInFlight += 1;
+    personaMutationRevision += 1;
+    let ended = false;
+    return () => {
+      if (ended) {
+        return;
+      }
+      ended = true;
+      personaMutationsInFlight -= 1;
+      personaMutationRevision += 1;
+    };
+  };
+
+  const cachedPersonalitiesWithPending = (scope: PersonaStorageScope | null): Personality[] => {
+    const cached = loadPersonalities(data, scope);
+    try {
+      return applyPendingPersonaIntents(cached, loadPendingPersonaIntents(data.settings, scope));
+    } catch (error) {
+      // A corrupt journal must fail closed: preserve the local cache and never
+      // let a remote snapshot erase an intent we can no longer interpret.
+      deps.logger?.warn('hub', 'pending persona journal could not be read', safeErrorOutcome(error));
+      return cached;
+    }
+  };
+
+  const projectConfirmedPendingPersona = async (
+    scope: PersonaStorageScope | null,
+    intent: PendingPersonaIntent,
+    confirmedVersion?: number,
+  ): Promise<boolean> => {
+    // The operation may have been superseded while its request was in flight.
+    // In that case the newer journal entry is the only local source of truth.
+    if (!isCurrentPendingPersonaIntent(data.settings, scope, intent)) {
+      return false;
+    }
+    const projectedIntent = intent.kind === 'upsert' && confirmedVersion !== undefined
+      ? {
+          ...intent,
+          personality: { ...intent.personality, remoteVersion: confirmedVersion },
+        }
+      : intent;
+    if (intent.kind === 'archive') {
+      // A restart can occur after the tombstone is journaled but before the
+      // normal delete handler reaches its mapping cascade. Mapping removal is
+      // persisted first so a crash cannot leave AI enabled for an archived key.
+      const mappings = Object.fromEntries(
+        Object.entries(loadPersonaAccountMappings(data.settings, scope))
+          .filter(([, pid]) => pid !== intent.key),
+      );
+      storePersonaAccountMappings(data.settings, scope, mappings);
+    }
+    data.settings.set(
+      personaCacheKey(scope),
+      applyPendingPersonaIntents(loadPersonalities(data, scope), [projectedIntent]),
+    );
+    return true;
+  };
+
+  const retryPendingPersonas = async (
+    personas: NonNullable<IpcDeps['personas']>,
+    scope: PersonaStorageScope | null,
+    hubOrigin: string,
+  ): Promise<void> => {
+    const snapshot = loadPendingPersonaIntents(data.settings, scope);
+    for (const intent of snapshot) {
+      if (!isCurrentPendingPersonaIntent(data.settings, scope, intent)) {
+        continue;
+      }
+      let confirmedByCore = false;
+      let confirmedVersion: number | undefined;
+      let conflictResolved = false;
+      try {
+        if (intent.kind === 'upsert') {
+          const outcome = await personas.upsert({
+            key: intent.key,
+            displayName: intent.personality.name,
+            systemBlock: intent.personality.content,
+            expectedVersion: intent.expectedVersion,
+            expectedHubOrigin: hubOrigin,
+          });
+          if (outcome !== undefined) {
+            if (outcome.kind === 'upserted') {
+              confirmedVersion = outcome.persona.version;
+            } else {
+              // HubModule's finite 409 reconciler already projected the remote
+              // authoritative/recovered state and CAS-cleared this intent.
+              conflictResolved = true;
+            }
+          }
+        } else {
+          await personas.archive({
+            key: intent.key,
+            expectedVersion: intent.expectedVersion,
+            expectedHubOrigin: hubOrigin,
+          });
+        }
+        confirmedByCore = true;
+      } catch (error) {
+        const failure = classifyPersonaMutationFailure(error, intent.kind);
+        if (failure === 'already-archived') {
+          confirmedByCore = true;
+        } else {
+          // Background replay never discards an acknowledged local mutation —
+          // even a 4xx may be an auth/config problem that an operator can repair.
+          deps.logger?.warn('hub', 'pending persona replay deferred', {
+            personaKey: intent.key,
+            mutation: intent.kind,
+            failure,
+            ...safeErrorOutcome(error),
+          });
+          if (failure === 'retryable') {
+            // A transport outage applies to the lane, not just this key. Stop
+            // after one bounded attempt instead of serially paying as many as
+            // 128 request timeouts from a single UI list refresh.
+            return;
+          }
+        }
+      }
+      if (!confirmedByCore) {
+        continue;
+      }
+      if (conflictResolved) {
+        continue;
+      }
+      try {
+        // Project the acknowledged intent into the cache before clearing it.
+        // Otherwise a crash here can leave an old cache with no tombstone and
+        // the next bootstrap will resurrect it back into Core.
+        if (await projectConfirmedPendingPersona(scope, intent, confirmedVersion)) {
+          clearPendingPersonaIntent(data.settings, scope, intent);
+        }
+      } catch (error) {
+        deps.logger?.warn('hub', 'pending persona replay deferred', {
+          personaKey: intent.key,
+          mutation: intent.kind,
+          failure: 'local-projection',
+          ...safeErrorOutcome(error),
+        });
+        return;
+      }
+    }
+  };
 
   ipcMain.handle('query:accounts.list', async () => {
     const settings = await settingsStore.get();
@@ -552,18 +790,100 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   ipcMain.handle('query:personalities.list', async () => {
-    if (deps.personas) {
+    const context = await resolvePersonaContext();
+    const { scope } = context;
+    const hubOrigin = context.hubOrigin;
+    const personas = hubOrigin === null ? null : deps.personas;
+    if (personas && hubOrigin !== null) {
+      // Do not start a read whose snapshot is already known to overlap a
+      // mutation. The cached copy is the only coherent view until the write
+      // finishes.
+      if (personaMutationsInFlight > 0) {
+        return cachedPersonalitiesWithPending(scope);
+      }
+
+      // A list is also the reconnect/retry signal for durable offline edits.
+      // Fence the replay as a mutation so another list cannot observe its
+      // intermediate state; same-key wire ordering remains owned by HubModule.
       try {
-        const remote = (await deps.personas.list()).map(kernelPersonaToLocal);
-        if (remote.length > 0) {
-          data.settings.set(PERSONALITIES_KEY, remote);
-          return remote;
+        if (loadPendingPersonaIntents(data.settings, scope).length > 0) {
+          const endReplay = beginPersonaMutation();
+          try {
+            await retryPendingPersonas(personas, scope, hubOrigin);
+            // The retry may have just cleared an acknowledged intent. Serve
+            // its locally projected state for this trigger instead of issuing
+            // an immediate list that could still be an older replica/cache
+            // snapshot. The next ordinary list remains authoritative.
+            const current = await resolvePersonaContext();
+            return cachedPersonalitiesWithPending(current.scope);
+          } finally {
+            endReplay();
+          }
+        }
+      } catch (error) {
+        deps.logger?.warn('hub', 'pending persona replay could not start', safeErrorOutcome(error));
+        const current = await resolvePersonaContext();
+        return cachedPersonalitiesWithPending(current.scope);
+      }
+      if (personaMutationsInFlight > 0) {
+        return cachedPersonalitiesWithPending(scope);
+      }
+
+      const requestId = ++nextPersonaListRequest;
+      const mutationRevision = personaMutationRevision;
+      try {
+        const remote = (await personas.list(hubOrigin)).map(kernelPersonaToLocal);
+        const current = await resolvePersonaContext();
+        if (
+          current.hubOrigin !== hubOrigin
+          || !samePersonaStorageScope(scope, current.scope)
+        ) {
+          // A response from a retired Hub must not populate or even render as
+          // the newly active Hub's persona state.
+          return cachedPersonalitiesWithPending(current.scope);
+        }
+        const cachedBeforeList = loadPersonalities(data, scope);
+        const merged = mergeRemotePersonas(
+          remote,
+          cachedBeforeList,
+          loadPendingPersonaIntents(data.settings, scope),
+        );
+        const mayCommit =
+          personaMutationsInFlight === 0 &&
+          personaMutationRevision === mutationRevision &&
+          requestId > latestCommittedPersonaListRequest;
+        if (mayCommit) {
+          latestCommittedPersonaListRequest = requestId;
+          // Core's active list is authoritative for mapping validity. A
+          // persona archived on another device must disable its local account
+          // mappings before the cache commit; otherwise the coordinator keeps
+          // sending a key Core now rejects as Unknown persona. Pending upserts
+          // remain in `merged` and retain their mappings until replay settles.
+          const activeKeys = new Set(
+            merged.filter(isWritablePersonality).map((persona) => persona.id),
+          );
+          const mappings = loadPersonaAccountMappings(data.settings, scope);
+          const prunedMappings = Object.fromEntries(
+            Object.entries(mappings).filter(([, personaId]) => activeKeys.has(personaId)),
+          );
+          if (Object.keys(prunedMappings).length !== Object.keys(mappings).length) {
+            // Disable stale mappings first. A crash between these two KV writes
+            // is safe (AI is gated) and the next list repairs the cache.
+            storePersonaAccountMappings(data.settings, scope, prunedMappings);
+          }
+          // Settings writes publish a renderer invalidation for this query.
+          // Avoid a list -> identical cache write -> list feedback loop.
+          if (!samePersonalityList(cachedBeforeList, merged)) {
+            data.settings.set(personaCacheKey(scope), merged);
+          }
+          return merged;
         }
       } catch {
         // Kernel unreachable — the cached copy serves (offline tolerance).
       }
     }
-    return loadPersonalities(data);
+    const current = await resolvePersonaContext();
+    return cachedPersonalitiesWithPending(current.scope);
   });
 
   ipcMain.handle('query:sync.status', (): SyncStatusVM => {
@@ -886,31 +1206,44 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:settings.update', async (_event, rawPatch: unknown) => {
     const rawPatchObject = typeof rawPatch === 'object' && rawPatch !== null;
-    let touchedReadRuntime = rawPatchObject && 'hubApiKey' in rawPatch;
-    if (rawPatchObject && 'hubBaseUrl' in rawPatch) {
-      const current = await settingsStore.get();
-      touchedReadRuntime = touchedReadRuntime || rawPatch.hubBaseUrl !== current.hubBaseUrl;
-    }
-    // 4a (SPEC §15): for hub-affecting keys, VALIDATE a candidate read runtime
-    // built from the patch overrides BEFORE persisting. A bad key/URL rejects
-    // here with nothing written to the keychain or the settings table — no
-    // half-applied credential. Non-hub patches keep persist-then-return.
-    const probeResult =
-      touchedReadRuntime && deps.probeReadRuntimeForPatch
-        ? await deps.probeReadRuntimeForPatch(rawPatch)
-        : undefined;
-    let result = await settingsStore.update(rawPatch);
-    // A dead device token can shadow a newly validated chatter key. Cleanup is
-    // intentionally post-persist: a crash/keychain write failure must leave at
-    // least the old credential in place, never a credentialless install.
-    await probeResult?.afterPersist?.();
-    if (probeResult?.afterPersist !== undefined) {
-      // The pre-cleanup VM still reports the now-deleted device token.
-      result = await settingsStore.get();
-    }
-    if (touchedReadRuntime) {
-      await deps.onOfapiRuntimeConfigChanged?.();
-    }
+    const mayTouchReadRuntime =
+      rawPatchObject && ('hubApiKey' in rawPatch || 'hubBaseUrl' in rawPatch);
+    const persistPatch = async () => {
+      // Recompute under the credential queue: two overlapping URL patches must
+      // not make this decision from an obsolete pre-lock settings snapshot.
+      let touchedReadRuntime = rawPatchObject && 'hubApiKey' in rawPatch;
+      if (rawPatchObject && 'hubBaseUrl' in rawPatch) {
+        const current = await settingsStore.get();
+        touchedReadRuntime = touchedReadRuntime || rawPatch.hubBaseUrl !== current.hubBaseUrl;
+      }
+      // 4a (SPEC §15): for hub-affecting keys, VALIDATE a candidate read runtime
+      // built from the patch overrides BEFORE persisting. A bad key/URL rejects
+      // here with nothing written to the keychain or the settings table — no
+      // half-applied credential. Non-hub patches keep persist-then-return.
+      const probeResult =
+        touchedReadRuntime && deps.probeReadRuntimeForPatch
+          ? await deps.probeReadRuntimeForPatch(rawPatch)
+          : undefined;
+      // A dead device token shadows both the old and candidate chatter keys.
+      // Its deletion is part of SettingsStore's durable transition: before the
+      // intent the old state is intact; after it, restart recovery repeats both
+      // token cleanup and candidate-key promotion. The outer credential FIFO
+      // also prevents deleting a subsequently issued token by name.
+      const result = await settingsStore.update(rawPatch, {
+        deleteDeadHubDeviceToken: probeResult?.deleteDeadDeviceToken === true,
+      });
+      await probeResult?.afterCommit?.();
+      if (touchedReadRuntime) {
+        await deps.onOfapiRuntimeConfigChanged?.();
+      }
+      return result;
+    };
+    // The token cleanup deletes by keychain name. Keep it under the same FIFO
+    // ownership as sign-in/sign-out so it cannot delete a newer token that was
+    // issued while a validated settings update was awaiting persistence.
+    const result = mayTouchReadRuntime && deps.runReadRuntimeMutation !== undefined
+      ? await deps.runReadRuntimeMutation(persistPatch)
+      : await persistPatch();
     // Fires on hub-mode override patches only. Hub URL/key/read-transport edits
     // rebuild the read runtime above, after account-bootstrap validation.
     const touchedHubOverride =
@@ -931,57 +1264,133 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   ipcMain.handle('cmd:personalities.save', async (_event, rawArgs: unknown) => {
-    const personality = normalizePersonality(personalitySchema.parse(rawArgs));
-    if (deps.personas) {
-      try {
-        await deps.personas.upsert({
-          key: personality.id,
-          displayName: personality.name,
-          systemBlock: personality.content,
-        });
-      } catch {
-        // Offline edit: cached locally; the reconfigure sync upserts later.
+    const personality = normalizePersonality(writablePersonalitySchema.parse(rawArgs));
+    const context = await resolvePersonaContext();
+    const { scope } = context;
+    const endMutation = beginPersonaMutation();
+    try {
+      const currentPending = loadPendingPersonaIntents(data.settings, scope)
+        .find((candidate) => candidate.key === personality.id) ?? null;
+      const intent = createPendingPersonaUpsert(
+        personality,
+        personality.remoteVersion ?? null,
+        currentPending?.kind === 'upsert' ? currentPending : null,
+      );
+      const previous = storePendingPersonaIntent(data.settings, scope, intent);
+      let confirmedByCore = false;
+      let confirmedVersion: number | undefined;
+      let conflictResolved = false;
+      const hubOrigin = context.hubOrigin;
+      const personas = hubOrigin === null ? null : deps.personas;
+      if (personas && hubOrigin !== null) {
+        try {
+          const outcome = await personas.upsert({
+            key: personality.id,
+            displayName: personality.name,
+            systemBlock: personality.content,
+            expectedVersion: intent.expectedVersion,
+            expectedHubOrigin: hubOrigin,
+          });
+          if (outcome !== undefined) {
+            if (outcome.kind === 'upserted') {
+              confirmedVersion = outcome.persona.version;
+            } else {
+              conflictResolved = true;
+            }
+          }
+          confirmedByCore = true;
+        } catch (error) {
+          if (classifyPersonaMutationFailure(error, 'upsert') === 'client-rejected') {
+            // Core rejected this request deterministically. Do not report an
+            // offline success or replace a previously pending local edit.
+            restorePendingPersonaIntent(data.settings, scope, intent, previous);
+            throw error;
+          }
+          // Network/timeout/5xx: the durable intent is the retry source.
+        }
       }
+      if (conflictResolved) {
+        const current = await resolvePersonaContext();
+        return cachedPersonalitiesWithPending(current.scope);
+      }
+      const confirmedPersonality = confirmedVersion === undefined
+        ? personality
+        : { ...personality, remoteVersion: confirmedVersion };
+      const existing = loadPersonalities(data, scope);
+      const next = existing.some((entry) => entry.id === personality.id)
+        ? existing.map((entry) => (entry.id === personality.id ? confirmedPersonality : entry))
+        : [...existing, confirmedPersonality];
+      data.settings.set(personaCacheKey(scope), next);
+      if (confirmedByCore) {
+        clearPendingPersonaIntent(data.settings, scope, intent);
+      }
+      const current = await resolvePersonaContext();
+      return cachedPersonalitiesWithPending(current.scope);
+    } finally {
+      endMutation();
     }
-    const existing = loadPersonalities(data);
-    const next = existing.some((entry) => entry.id === personality.id)
-      ? existing.map((entry) => (entry.id === personality.id ? personality : entry))
-      : [...existing, personality];
-    data.settings.set(PERSONALITIES_KEY, next);
-    return next;
   });
 
   ipcMain.handle('cmd:personalities.delete', async (_event, rawArgs: unknown) => {
-    const { id } = personalityDeleteSchema.parse(rawArgs);
-    if (deps.personas) {
-      try {
-        await deps.personas.archive(id);
-      } catch {
-        // Kernel unreachable — local removal still applies; archive retries
-        // are manual (personas are rarely deleted).
+    const base = normalizePersonality(personalityDeleteSchema.parse(rawArgs));
+    const { id } = base;
+    const context = await resolvePersonaContext();
+    const { scope } = context;
+    const endMutation = beginPersonaMutation();
+    try {
+      const intent = createPendingPersonaArchive(id, base.remoteVersion ?? null, base);
+      const previous = storePendingPersonaIntent(data.settings, scope, intent);
+      let confirmedByCore = false;
+      const hubOrigin = context.hubOrigin;
+      const personas = hubOrigin === null ? null : deps.personas;
+      if (personas && hubOrigin !== null) {
+        try {
+          await personas.archive({
+            key: id,
+            expectedVersion: intent.expectedVersion,
+            expectedHubOrigin: hubOrigin,
+          });
+          confirmedByCore = true;
+        } catch (error) {
+          const failure = classifyPersonaMutationFailure(error, 'archive');
+          if (failure === 'already-archived') {
+            confirmedByCore = true;
+          } else if (failure === 'client-rejected') {
+            restorePendingPersonaIntent(data.settings, scope, intent, previous);
+            throw error;
+          }
+          // Network/timeout/5xx: keep the tombstone and retry it later.
+        }
       }
+      // Disable mappings before hiding the row. A crash after this write keeps
+      // AI gated while the durable archive intent repairs the cache on replay.
+      const mappings = Object.fromEntries(
+        Object.entries(loadPersonaAccountMappings(data.settings, scope))
+          .filter(([, pid]) => pid !== id),
+      );
+      storePersonaAccountMappings(data.settings, scope, mappings);
+      const next = loadPersonalities(data, scope).filter((entry) => entry.id !== id);
+      data.settings.set(personaCacheKey(scope), next);
+      if (confirmedByCore) {
+        clearPendingPersonaIntent(data.settings, scope, intent);
+      }
+      const current = await resolvePersonaContext();
+      return cachedPersonalitiesWithPending(current.scope);
+    } finally {
+      endMutation();
     }
-    const next = loadPersonalities(data).filter((entry) => entry.id !== id);
-    data.settings.set(PERSONALITIES_KEY, next);
-    // cascade: drop mappings pointing at the deleted personality (legacy behavior)
-    const settings = await settingsStore.get();
-    const mappings = Object.fromEntries(
-      Object.entries(settings.accountMappings).filter(([, pid]) => pid !== id),
-    );
-    await settingsStore.update({ accountMappings: mappings });
-    return next;
   });
 
   ipcMain.handle('cmd:mappings.set', async (_event, rawArgs: unknown) => {
     const args = mappingSchema.parse(rawArgs);
-    const settings = await settingsStore.get();
-    const mappings = { ...settings.accountMappings };
+    const { scope } = await resolvePersonaContext();
+    const mappings = { ...loadPersonaAccountMappings(data.settings, scope) };
     if (args.personalityId === null) {
       delete mappings[args.accountId];
     } else {
       mappings[args.accountId] = args.personalityId;
     }
-    await settingsStore.update({ accountMappings: mappings });
+    storePersonaAccountMappings(data.settings, scope, mappings);
   });
 
   ipcMain.handle('cmd:data.purge', () => deps.purge());

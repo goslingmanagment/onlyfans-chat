@@ -142,17 +142,30 @@ back to defaults. Notable defaults and the transport invariants:
 
 ## Secrets — `main/secrets/keychain.ts` (136) + `main/hub/device-token.ts`
 
-- `SECRET_NAMES`: `hubApiKey`, `hubDeviceToken` (`agency_hub_device_…`, "preferred over
-  hubApiKey when present"), `dbKey`, `mediaCacheKey` (the last two are locally-generated
-  32-byte random keys). **No OFAPI or vendor (anthropic/openRouter) keys exist** — they are
+- `SECRET_NAMES`: active `hubApiKey`/`hubDeviceToken`, encrypted transition custody
+  (`hubApiKeyStaged`, `hubDeviceTokenStaged`, `hubDeviceTokenRevoking`), and locally-generated
+  `dbKey`/`mediaCacheKey`. **No OFAPI or vendor (anthropic/openRouter) keys exist** — they are
   actively `rm`'d on every boot (`keychain.ts:49-56`). safeStorage-encrypted, one file per
   secret (dir `0o700`, file `0o600`); **no plaintext fallback** — `setSecret` throws if
-  encryption is unavailable.
-- `device-token.ts`: `issueHubDeviceToken` does the one-time login → `authIssueDeviceToken`
-  exchange and stores `hubDeviceToken` (`device-token.ts:30-64`). `resolveHubCredential`
-  prefers the device token, else the chatter key (`device-token.ts:70-78`). Note: the
-  Settings "Test" button (`key-tests.ts`) probes only `hubApiKey`, not the device token — a
-  connectivity gap (no device-token probe exists).
+  encryption is unavailable. Secret replacement writes and flushes a temporary file, atomically
+  renames it, then best-effort flushes the directory. This protocol guarantees recovery from a
+  **process crash after an awaited write**; it does **not** claim full sudden-power-loss durability
+  on Windows filesystems where directory fsync is unavailable.
+- `device-token.ts`: sign-in reserves a distinct `agency_hub_pending_device_…` credential that
+  cannot authenticate ordinary Core routes, writes encrypted custody plus a hash-bound non-secret
+  SQLite journal, then activates it and only afterward promotes it to `hubDeviceToken`. Boot/retry
+  replays lost activation responses idempotently. Sign-out similarly journals encrypted exact-token
+  custody before remote revoke; 401 is idempotent success, while offline failures keep the token
+  quarantined and use the chatter-key fallback. Terminal activation 401 clears only hash-matching
+  custody so an expired reservation cannot wedge future sign-ins; 404/5xx remain deferred for
+  rolling deploys/outages. If the user signs out while activation is deferred, that cancellation
+  bit is persisted in the activation journal; recovery atomically converts it to exact-token
+  revocation before clearing activation, so a restart cannot turn the requested sign-out back into
+  a signed-in runtime.
+- `SettingsStore.getHubConnection()` resolves Hub URL, VM, lifecycle journal, device token and
+  chatter key under one serialized queue. Runtime construction, diagnostics, and Settings "Test"
+  consume this snapshot, so they cannot pair coordinates from opposite sides of a transition and
+  never select staged/revoking custody as a bearer.
 
 ## Platform — `main/platform/*` + `main/notifications.ts`
 

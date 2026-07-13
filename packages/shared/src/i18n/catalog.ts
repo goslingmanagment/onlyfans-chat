@@ -130,6 +130,10 @@ export const UI_MESSAGES = {
   'hub.deviceToken.signOut': { en: 'Sign out', ru: 'Выйти' },
   'hub.deviceToken.signingOut': { en: 'Signing out…', ru: 'Выход…' },
   'hub.deviceToken.signOutFailed': { en: 'Sign-out failed', ru: 'Не удалось выйти' },
+  'hub.deviceToken.signOutBeforeHubChange': {
+    en: 'Sign out this device before changing the Hub URL.',
+    ru: 'Перед сменой URL хаба выйдите из этого устройства.',
+  },
   'hub.ofapiWrites.label': { en: 'OFAPI writes', ru: 'Записи OFAPI' },
   'hub.ofapiWrites.hint': {
     en: 'Text, typing, unsend, mark-read, media and PPV go through core commands. Direct is disabled.',
@@ -220,6 +224,26 @@ export const UI_MESSAGES = {
   'personalities.contentPh': {
     en: 'Personality content — who she is, how she talks…',
     ru: 'Описание личности — кто она и как говорит…',
+  },
+  'personalities.contentRequired': {
+    en: 'Personality content is required.',
+    ru: 'Описание личности не может быть пустым.',
+  },
+  'personalities.contentTooLong': {
+    en: 'Personality content must be at most {max} characters.',
+    ru: 'Описание личности должно быть не длиннее {max} символов.',
+  },
+  'personalities.contentCount': {
+    en: '{current} / {max} characters',
+    ru: '{current} / {max} символов',
+  },
+  'personalities.saveFailed': {
+    en: 'Could not save personality: {error}',
+    ru: 'Не удалось сохранить личность: {error}',
+  },
+  'personalities.deleteFailed': {
+    en: 'Could not delete personality: {error}',
+    ru: 'Не удалось удалить личность: {error}',
   },
   'mapping.title': { en: 'Account mapping', ru: 'Привязка аккаунтов' },
   'mapping.hint': {

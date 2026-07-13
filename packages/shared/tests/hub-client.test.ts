@@ -396,6 +396,89 @@ describe('createHubClient', () => {
     });
   });
 
+  describe('AI persona lifecycle contract', () => {
+    it('fails closed on a pre-revision persona response (Core must deploy first)', async () => {
+      const { fetchImpl } = stubFetch(jsonResponse(200, {
+        personas: [{
+          key: 'custom-old-core',
+          displayName: 'Old Core',
+          systemBlock: 'response has no revision token',
+          updatedAt: '2026-07-13T00:00:00.000Z',
+        }],
+      }));
+      const { client } = makeClient(fetchImpl);
+
+      const error = await captureHubError(client.listAiPersonas());
+      expect(error.reason).toBe('invalid-response');
+      expect(error.code).toBe('CG-HUB-02');
+    });
+
+    it('sends an explicit create-only version and parses the returned revision', async () => {
+      const response = {
+        key: 'custom-race',
+        displayName: 'Race-safe',
+        systemBlock: 'prompt',
+        updatedAt: '2026-07-13T00:00:00.000Z',
+        version: 1,
+      };
+      const { calls, fetchImpl } = stubFetch(jsonResponse(200, response));
+      const { client, timeouts } = makeClient(fetchImpl);
+
+      await expect(client.upsertAiPersona({
+        key: response.key,
+        displayName: response.displayName,
+        systemBlock: response.systemBlock,
+        expectedVersion: null,
+      })).resolves.toEqual(response);
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/ai/personas/custom-race');
+      expect(calls[0]?.init.method).toBe('PUT');
+      expect(JSON.parse(calls[0]?.init.body ?? '')).toEqual({
+        displayName: response.displayName,
+        systemBlock: response.systemBlock,
+        expectedVersion: null,
+      });
+      expect(timeouts).toEqual([HUB_LIST_PAGES_TIMEOUT_MS]);
+    });
+
+    it('reads archived state without requiring archived prompt content', async () => {
+      const archived = { state: 'archived' as const, key: 'custom-race', version: 2 };
+      const { calls, fetchImpl } = stubFetch(jsonResponse(200, { states: [archived] }));
+      const { client } = makeClient(fetchImpl);
+
+      await expect(client.listAiPersonaStates()).resolves.toEqual([archived]);
+      expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/ai/personas/state');
+      expect(calls[0]?.init.method).toBe('GET');
+    });
+
+    it('sends an explicit revision token for archive, including the absent sentinel', async () => {
+      const response = { archived: true, version: 4 };
+      const { calls, fetchImpl } = stubFetch(
+        jsonResponse(200, response),
+        jsonResponse(200, response),
+      );
+      const { client } = makeClient(fetchImpl);
+
+      await expect(client.archiveAiPersona({
+        key: 'custom-race',
+        expectedVersion: 3,
+      })).resolves.toEqual(response);
+      await expect(client.archiveAiPersona({
+        key: 'custom-create-timeout',
+        expectedVersion: null,
+      })).resolves.toEqual(response);
+
+      expect(calls[0]?.url).toBe(
+        'https://hub.example.com/api/v1/ai/personas/custom-race?expectedVersion=3',
+      );
+      expect(calls[1]?.url).toBe(
+        'https://hub.example.com/api/v1/ai/personas/custom-create-timeout?expectedVersion=0',
+      );
+      expect(calls.map((call) => call.init.method)).toEqual(['DELETE', 'DELETE']);
+    });
+  });
+
   describe('error mapping', () => {
     it('maps 401 to CG-HUB-01 auth failure with the status', async () => {
       const { fetchImpl } = stubFetch(jsonResponse(401, { error: 'unauthorized' }));

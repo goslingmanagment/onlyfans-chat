@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAiAcceptanceQueries } from '@main/db/index';
-import { memoryDataLayer } from './helpers';
+import {
+  AI_ACCEPTANCE_PARTS_RETENTION_COUNT,
+  createAiAcceptanceQueries,
+  createChangeBus,
+  createDataLayer,
+} from '@main/db/index';
+import { memoryDataLayer, tempDbFile, TEST_DRIVER } from './helpers';
 
 const OPERATION = {
   operationId: '00000000-0000-4000-8000-000000000099',
@@ -112,5 +117,104 @@ describe('ai_acceptance_ops', () => {
     expect(() => queries.acceptOnce(OPERATION.operationId, '2026-07-12T10:01:00.000Z'))
       .toThrow(/ledger write failed/);
     expect(queries.get(OPERATION.operationId)?.acceptedAt).toBeNull();
+  });
+
+  it('bounds full parts to the renderer-compatible operation window', () => {
+    const data = memoryDataLayer();
+    for (let index = 0; index <= AI_ACCEPTANCE_PARTS_RETENTION_COUNT; index += 1) {
+      data.aiAcceptance.remember({
+        ...OPERATION,
+        operationId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        parts: [`answer ${index}`],
+        knownAt: new Date(Date.parse(OPERATION.knownAt) + index * 1_000).toISOString(),
+      });
+    }
+
+    const oldest = data.aiAcceptance.get('00000000-0000-4000-8000-000000000000');
+    expect(oldest).toMatchObject({
+      feature: OPERATION.feature,
+      accountId: OPERATION.accountId,
+      conversationId: OPERATION.conversationId,
+      acceptedAt: null,
+      parts: [],
+    });
+    expect(
+      data.aiAcceptance.get(
+        `00000000-0000-4000-8000-${String(AI_ACCEPTANCE_PARTS_RETENTION_COUNT).padStart(12, '0')}`,
+      )?.parts,
+    ).toEqual([`answer ${AI_ACCEPTANCE_PARTS_RETENTION_COUNT}`]);
+  });
+
+  it('orders the full-parts window by completion instead of first-token time', () => {
+    const data = memoryDataLayer();
+    const slowId = '00000000-0000-4000-8000-999999999999';
+    data.aiAcceptance.remember({
+      ...OPERATION,
+      operationId: slowId,
+      parts: [],
+      knownAt: '2026-07-12T09:00:00.000Z',
+    });
+    for (let index = 1; index <= AI_ACCEPTANCE_PARTS_RETENTION_COUNT; index += 1) {
+      data.aiAcceptance.remember({
+        ...OPERATION,
+        operationId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+        parts: [`answer ${index}`],
+        knownAt: new Date(Date.parse(OPERATION.knownAt) + index * 1_000).toISOString(),
+      });
+    }
+
+    data.aiAcceptance.remember({
+      ...OPERATION,
+      operationId: slowId,
+      parts: ['slow answer completed last'],
+      knownAt: '2026-07-12T11:00:00.000Z',
+    });
+
+    expect(data.aiAcceptance.get(slowId)?.parts).toEqual(['slow answer completed last']);
+    expect(data.aiAcceptance.get('00000000-0000-4000-8000-000000000001')?.parts).toEqual([]);
+  });
+
+  it('scrubs all full text from the previous app session but keeps correlation metadata', () => {
+    const temp = tempDbFile();
+    const first = createDataLayer({
+      driverPath: TEST_DRIVER,
+      filePath: temp.file,
+      encryptionKey: 'test-ai-acceptance-key',
+      bus: createChangeBus(0),
+    });
+    first.aiAcceptance.remember(OPERATION);
+    const acceptedOperation = {
+      ...OPERATION,
+      operationId: '00000000-0000-4000-8000-000000000100',
+    };
+    first.aiAcceptance.remember(acceptedOperation);
+    expect(first.aiAcceptance.acceptOnce(
+      acceptedOperation.operationId,
+      '2026-07-12T10:05:00.000Z',
+    ).status).toBe('accepted');
+    first.close();
+
+    const reopened = createDataLayer({
+      driverPath: TEST_DRIVER,
+      filePath: temp.file,
+      encryptionKey: 'test-ai-acceptance-key',
+      bus: createChangeBus(0),
+    });
+    expect(reopened.aiAcceptance.get(OPERATION.operationId)).toMatchObject({
+      operationId: OPERATION.operationId,
+      feature: OPERATION.feature,
+      requestId: OPERATION.requestId,
+      accountId: OPERATION.accountId,
+      conversationId: OPERATION.conversationId,
+      acceptedAt: null,
+      parts: [],
+    });
+    expect(reopened.aiAcceptance.get(acceptedOperation.operationId)).toMatchObject({
+      operationId: acceptedOperation.operationId,
+      acceptedAt: '2026-07-12T10:05:00.000Z',
+      parts: [],
+    });
+    reopened.close();
+    temp.cleanup();
   });
 });

@@ -4,17 +4,35 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import {
+  beginHubDeviceTokenRevocation,
   effectiveHubBearerAfterPatch,
+  HUB_DEVICE_TOKEN_HUB_SWITCH_BLOCKED_MESSAGE,
+  HUB_DEVICE_TOKEN_REQUEST_TIMEOUT_MS,
   issueHubDeviceToken,
   probeRetryKeyAfterAuthFailure,
+  recoverHubDeviceTokenLifecycle,
+  requestHubDeviceTokenActivationCancellation,
+  revokeHubDeviceToken,
   resolveHubCredential,
 } from '../../src/main/hub/device-token';
+import {
+  HUB_DEVICE_TOKEN_ACTIVATION_KEY,
+  HUB_DEVICE_TOKEN_REVOCATION_KEY,
+} from '../../src/main/hub/credential-journal';
+import { createRuntimeMutationQueue } from '../../src/main/runtime-activation';
 
-const ISSUED = {
-  token: 'agency_hub_device_secret123',
-  id: 5,
+const PENDING = {
+  token: 'agency_hub_pending_device_secret123',
+  reservationId: 5,
   label: 'test-machine',
-  keyPrefix: 'agency_hub_device_secr',
+  keyPrefix: 'agency_hub_pending_device_secr',
+  reservationExpiresAt: '2026-07-13T10:10:00.000Z',
+};
+
+const ACTIVATED = {
+  id: PENDING.reservationId,
+  label: PENDING.label,
+  keyPrefix: PENDING.keyPrefix,
   expiresAt: '2026-10-04T00:00:00.000Z',
 };
 
@@ -25,111 +43,674 @@ function jsonResponse(status: number, body: unknown, headers: Record<string, str
   });
 }
 
+function lifecycleStorage(initialSecrets: Record<string, string> = {}) {
+  const secrets = new Map(Object.entries(initialSecrets));
+  const journals = new Map<string, unknown>();
+  const keychain = {
+    getSecret: vi.fn(async (name: string) => secrets.get(name) ?? null),
+    setSecret: vi.fn(async (name: string, value: string) => {
+      secrets.set(name, value);
+    }),
+    deleteSecret: vi.fn(async (name: string) => {
+      secrets.delete(name);
+    }),
+  };
+  const settings = {
+    get: vi.fn((key: string) => journals.get(key)),
+    set: vi.fn((key: string, value: unknown) => {
+      journals.set(key, value);
+    }),
+    remove: vi.fn((key: string) => {
+      journals.delete(key);
+    }),
+    batch: vi.fn((mutations: readonly (
+      | { kind: 'set'; key: string; value: unknown }
+      | { kind: 'remove'; key: string }
+    )[]) => {
+      const before = new Map(journals);
+      try {
+        for (const mutation of mutations) {
+          if (mutation.kind === 'set') journals.set(mutation.key, mutation.value);
+          else journals.delete(mutation.key);
+        }
+      } catch (error) {
+        journals.clear();
+        for (const [key, value] of before) journals.set(key, value);
+        throw error;
+      }
+    }),
+  };
+  return { secrets, journals, keychain, settings };
+}
+
+function requestHeaders(input: string | URL | Request, init?: RequestInit): Headers {
+  return new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+}
+
+function successfulLifecycleFetch(
+  onActivate?: (state: { authorization: string | null }) => void,
+) {
+  return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith('/api/v1/auth/login')) {
+      return jsonResponse(200, { authMethod: 'session', user: { username: 'anton' } }, {
+        'set-cookie': 'agency_hub_session=tok123; Path=/; HttpOnly',
+      });
+    }
+    if (url.endsWith('/api/v1/auth/device-tokens/reservations')) {
+      return jsonResponse(200, PENDING);
+    }
+    if (url.endsWith('/api/v1/auth/device-tokens/activate')) {
+      onActivate?.({ authorization: requestHeaders(input, init).get('authorization') });
+      return jsonResponse(200, ACTIVATED);
+    }
+    if (url.endsWith('/api/v1/auth/logout')) {
+      return jsonResponse(200, { ok: true });
+    }
+    throw new Error(`unexpected url ${url}`);
+  });
+}
+
 describe('issueHubDeviceToken', () => {
-  it('logs in, issues the token with the session cookie, stores it, and logs out', async () => {
-    const calls: Array<{ url: string; cookie: string | null; body: string | null }> = [];
-    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = String(input);
-      const headers = (init?.headers ?? {}) as Record<string, string>;
-      calls.push({ url, cookie: headers.cookie ?? null, body: (init?.body as string | undefined) ?? null });
-      if (url.endsWith('/api/v1/auth/login')) {
-        return jsonResponse(200, { authMethod: 'session', user: { username: 'anton' } }, {
-          'set-cookie': 'agency_hub_session=tok123; Path=/; HttpOnly',
-        });
-      }
-      if (url.endsWith('/api/v1/auth/device-tokens')) {
-        return jsonResponse(200, ISSUED);
-      }
-      if (url.endsWith('/api/v1/auth/logout')) {
-        return jsonResponse(200, { ok: true });
-      }
-      throw new Error(`unexpected url ${url}`);
+  it('stages encrypted custody and a non-secret journal before activation, then promotes', async () => {
+    const storage = lifecycleStorage();
+    const calls: string[] = [];
+    const fetchImpl = successfulLifecycleFetch(({ authorization }) => {
+      calls.push('activate');
+      expect(authorization).toBe(`Bearer ${PENDING.token}`);
+      expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+      expect(storage.secrets.has('hubDeviceTokenStaged')).toBe(true);
+      expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(true);
+      expect(JSON.stringify([...storage.journals.entries()])).not.toContain(PENDING.token);
     });
-    const stored: Array<{ name: string; value: string }> = [];
-    const keychain = { setSecret: async (name: string, value: string) => void stored.push({ name, value }) };
 
     const result = await issueHubDeviceToken({
       baseUrl: 'https://hub.test/',
       username: ' anton ',
       password: 'pw',
       label: 'test-machine',
-      keychain: keychain as never,
-      fetchImpl: fetchImpl as never,
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl,
     });
 
-    expect(result).toEqual({ keyPrefix: ISSUED.keyPrefix, label: 'test-machine', expiresAt: ISSUED.expiresAt });
-    expect(stored).toEqual([{ name: 'hubDeviceToken', value: ISSUED.token }]);
-    expect(calls[0]!.url).toBe('https://hub.test/api/v1/auth/login');
-    expect(JSON.parse(calls[0]!.body!)).toEqual({ username: 'anton', password: 'pw' });
-    expect(calls[1]!.url).toBe('https://hub.test/api/v1/auth/device-tokens');
-    expect(calls[1]!.cookie).toBe('agency_hub_session=tok123');
-    expect(calls[2]!.url).toBe('https://hub.test/api/v1/auth/logout');
-    expect(calls[2]!.cookie).toBe('agency_hub_session=tok123');
+    expect(result).toEqual({ keyPrefix: ACTIVATED.keyPrefix, label: 'test-machine', expiresAt: ACTIVATED.expiresAt });
+    expect(calls).toEqual(['activate']);
+    expect(storage.secrets.get('hubDeviceToken')).toBe(PENDING.token);
+    expect(storage.secrets.has('hubDeviceTokenStaged')).toBe(false);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(false);
   });
 
-  it('stamps x-client-version on the sign-in POST and the SDK static-headers seam (Stage 4 / Proposal 4.1 / N5)', async () => {
+  it('stamps x-client-version on login, reserve, activate, and logout', async () => {
     const calls: Array<{ url: string; xClientVersion: string | null }> = [];
+    const baseFetch = successfulLifecycleFetch();
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
-      const headers = (init?.headers ?? {}) as Record<string, string>;
-      calls.push({ url, xClientVersion: headers['x-client-version'] ?? null });
-      if (url.endsWith('/api/v1/auth/login')) {
-        return jsonResponse(200, { authMethod: 'session', user: { username: 'anton' } }, {
-          'set-cookie': 'agency_hub_session=tok123; Path=/; HttpOnly',
-        });
-      }
-      if (url.endsWith('/api/v1/auth/device-tokens')) {
-        return jsonResponse(200, ISSUED);
-      }
-      if (url.endsWith('/api/v1/auth/logout')) {
-        return jsonResponse(200, { ok: true });
-      }
-      throw new Error(`unexpected url ${url}`);
+      calls.push({ url, xClientVersion: requestHeaders(input, init).get('x-client-version') });
+      return baseFetch(input, init);
     });
+    const storage = lifecycleStorage();
 
     await issueHubDeviceToken({
       baseUrl: 'https://hub.test',
       username: 'anton',
       password: 'pw',
       label: 'test-machine',
-      keychain: { setSecret: async () => undefined } as never,
-      fetchImpl: fetchImpl as never,
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl,
       clientVersion: '0.1.29',
     });
 
-    expect(calls[0]!.url).toBe('https://hub.test/api/v1/auth/login');
-    expect(calls[0]!.xClientVersion).toBe('0.1.29'); // raw sign-in fetch (N5)
-    expect(calls[1]!.url).toBe('https://hub.test/api/v1/auth/device-tokens');
-    expect(calls[1]!.xClientVersion).toBe('0.1.29'); // SDK static-headers seam
-    expect(calls[2]!.url).toBe('https://hub.test/api/v1/auth/logout');
-    expect(calls[2]!.xClientVersion).toBe('0.1.29');
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://hub.test/api/v1/auth/login',
+      'https://hub.test/api/v1/auth/device-tokens/reservations',
+      'https://hub.test/api/v1/auth/device-tokens/activate',
+      'https://hub.test/api/v1/auth/logout',
+    ]);
+    expect(calls.every((call) => call.xClientVersion === '0.1.29')).toBe(true);
   });
 
   it('maps bad credentials to a clear error and stores nothing', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(401, { error: 'unauthorized' }));
     const setSecret = vi.fn();
+    const storage = lifecycleStorage();
+    storage.keychain.setSecret = setSecret;
 
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test',
       username: 'anton',
       password: 'wrong',
       label: 'm',
-      keychain: { setSecret } as never,
-      fetchImpl: fetchImpl as never,
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl,
     })).rejects.toThrow(/Invalid username or password/);
     expect(setSecret).not.toHaveBeenCalled();
   });
 
   it('fails loudly when login returns no session cookie', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(200, { ok: true }));
+    const storage = lifecycleStorage();
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test',
       username: 'anton',
       password: 'pw',
       label: 'm',
-      keychain: { setSecret: vi.fn() } as never,
-      fetchImpl: fetchImpl as never,
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl,
     })).rejects.toThrow(/no session cookie/);
+  });
+
+  it('times out an unresponsive login without publishing recoverable custody', async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = lifecycleStorage();
+      const onActivationDeferred = vi.fn();
+      let observedSignal: AbortSignal | undefined;
+      let markStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const fetchImpl = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+        observedSignal = init?.signal ?? undefined;
+        markStarted?.();
+        return new Promise<Response>(() => undefined);
+      });
+
+      const issuance = issueHubDeviceToken({
+        baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
+        keychain: storage.keychain, settings: storage.settings, fetchImpl, onActivationDeferred,
+      });
+      const settled = issuance.then(
+        () => ({ ok: true as const, error: undefined }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+      await started;
+      await vi.advanceTimersByTimeAsync(HUB_DEVICE_TOKEN_REQUEST_TIMEOUT_MS);
+
+      const result = await settled;
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatchObject({ name: 'TimeoutError' });
+      expect(observedSignal).toMatchObject({ aborted: true });
+      expect(storage.journals.size).toBe(0);
+      expect(storage.secrets.size).toBe(0);
+      expect(onActivationDeferred).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the pending token quarantined when the activation route is unavailable', async () => {
+    const storage = lifecycleStorage();
+    const baseFetch = successfulLifecycleFetch();
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/api/v1/auth/device-tokens/activate')) {
+        return jsonResponse(404, { error: 'not_found', message: 'Route not found', statusCode: 404 });
+      }
+      return baseFetch(input, init);
+    });
+
+    await expect(issueHubDeviceToken({
+      baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
+      keychain: storage.keychain, settings: storage.settings, fetchImpl,
+    })).rejects.toMatchObject({ status: 404 });
+    expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+    expect(storage.secrets.has('hubDeviceTokenStaged')).toBe(true);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(true);
+  });
+
+  it('clears an expired/terminal 401 activation so future sign-in is not wedged', async () => {
+    const storage = lifecycleStorage();
+    const baseFetch = successfulLifecycleFetch();
+    const unavailable = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/api/v1/auth/device-tokens/activate')) {
+        return jsonResponse(503, { error: 'unavailable', message: 'offline', statusCode: 503 });
+      }
+      return baseFetch(input, init);
+    });
+    await expect(issueHubDeviceToken({
+      baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
+      keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
+    })).rejects.toMatchObject({ status: 503 });
+    // Covers the crash-after-local-promotion shape too: only the exact
+    // journal-bound active copy may be removed on terminal invalidation.
+    storage.secrets.set('hubDeviceToken', PENDING.token);
+    const onDeferred = vi.fn();
+
+    await recoverHubDeviceTokenLifecycle({
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl: vi.fn(async () => jsonResponse(401, {
+        error: 'unauthorized', message: 'reservation expired', statusCode: 401,
+      })),
+      onDeferred,
+    });
+
+    expect(onDeferred).not.toHaveBeenCalled();
+    expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+    expect(storage.secrets.has('hubDeviceTokenStaged')).toBe(false);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(false);
+  });
+
+  it('recovers a lost activation response without ever exposing the pending bearer', async () => {
+    const storage = lifecycleStorage();
+    const baseFetch = successfulLifecycleFetch();
+    let activationCalls = 0;
+    const onActivationDeferred = vi.fn();
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/api/v1/auth/device-tokens/activate') && ++activationCalls === 1) {
+        throw new Error('connection reset after Core commit');
+      }
+      return baseFetch(input, init);
+    });
+
+    await expect(issueHubDeviceToken({
+      baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
+      keychain: storage.keychain, settings: storage.settings, fetchImpl, onActivationDeferred,
+    })).rejects.toThrow(/connection reset/);
+    expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+    expect(storage.secrets.has('hubDeviceTokenStaged')).toBe(true);
+    expect(onActivationDeferred).toHaveBeenCalledTimes(1);
+
+    await recoverHubDeviceTokenLifecycle({
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl,
+    });
+    expect(activationCalls).toBe(2);
+    expect(storage.secrets.get('hubDeviceToken')).toBe(PENDING.token);
+    expect(storage.secrets.has('hubDeviceTokenStaged')).toBe(false);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(false);
+  });
+
+  it('durably converts sign-out during deferred activation into exact revocation across restart', async () => {
+    const storage = lifecycleStorage({ hubApiKey: 'agency_hub_core_fallback' });
+    const baseFetch = successfulLifecycleFetch();
+    const firstProcessFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/api/v1/auth/device-tokens/activate')) {
+        throw new Error('offline during activation');
+      }
+      return baseFetch(input, init);
+    });
+    await expect(issueHubDeviceToken({
+      baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
+      keychain: storage.keychain, settings: storage.settings, fetchImpl: firstProcessFetch,
+    })).rejects.toThrow(/offline during activation/);
+
+    expect(requestHubDeviceTokenActivationCancellation(storage.settings)).toBe(true);
+    expect(storage.settings.get(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toMatchObject({
+      cancelRequested: true,
+    });
+    expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+
+    const secondProcessCalls: string[] = [];
+    const secondProcessFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      secondProcessCalls.push(url);
+      if (url.endsWith('/api/v1/auth/device-tokens/activate')) {
+        expect(requestHeaders(input, init).get('authorization')).toBe(`Bearer ${PENDING.token}`);
+        return jsonResponse(200, ACTIVATED);
+      }
+      if (url.endsWith('/api/v1/auth/device-tokens/current')) {
+        expect(requestHeaders(input, init).get('authorization')).toBe(`Bearer ${PENDING.token}`);
+        expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(false);
+        expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(true);
+        expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(true);
+        expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+        return jsonResponse(503, { error: 'unavailable', message: 'revoke offline', statusCode: 503 });
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    const deferred = vi.fn();
+    await recoverHubDeviceTokenLifecycle({
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl: secondProcessFetch,
+      onDeferred: deferred,
+    });
+    expect(deferred).toHaveBeenCalledTimes(1);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(false);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(true);
+    expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+
+    await recoverHubDeviceTokenLifecycle({
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl: vi.fn(async () => jsonResponse(401, {
+        error: 'unauthorized', message: 'already revoked', statusCode: 401,
+      })),
+    });
+    expect(secondProcessCalls).toEqual([
+      'https://hub.test/api/v1/auth/device-tokens/activate',
+      'https://hub.test/api/v1/auth/device-tokens/current',
+    ]);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(false);
+    expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(false);
+    expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+  });
+
+  it('cleans activation staging after a crash immediately following the activation-to-revocation batch', async () => {
+    const storage = lifecycleStorage({ hubApiKey: 'agency_hub_core_fallback' });
+    const baseFetch = successfulLifecycleFetch();
+    const offlineActivation = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/api/v1/auth/device-tokens/activate')) {
+        throw new Error('offline during activation');
+      }
+      return baseFetch(input, init);
+    });
+    await expect(issueHubDeviceToken({
+      baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
+      keychain: storage.keychain, settings: storage.settings, fetchImpl: offlineActivation,
+    })).rejects.toThrow(/offline during activation/);
+    requestHubDeviceTokenActivationCancellation(storage.settings);
+
+    const originalDelete = storage.keychain.deleteSecret.getMockImplementation()!;
+    let crashAtOldStagingCleanup = true;
+    storage.keychain.deleteSecret.mockImplementation(async (name) => {
+      if (name === 'hubDeviceTokenStaged' && crashAtOldStagingCleanup) {
+        crashAtOldStagingCleanup = false;
+        throw new Error('process died after journal handoff');
+      }
+      await originalDelete(name);
+    });
+
+    await recoverHubDeviceTokenLifecycle({
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl: vi.fn(async () => jsonResponse(200, ACTIVATED)),
+      onDeferred: vi.fn(),
+    });
+
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(false);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(true);
+    expect(storage.secrets.has('hubDeviceTokenStaged')).toBe(false);
+    expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(true);
+
+    await recoverHubDeviceTokenLifecycle({
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl: vi.fn(async () => jsonResponse(401, {
+        error: 'unauthorized', message: 'already revoked', statusCode: 401,
+      })),
+    });
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(false);
+    expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(false);
+  });
+
+  it('replays idempotent activation after a crash before local promotion', async () => {
+    const storage = lifecycleStorage();
+    const originalSet = storage.keychain.setSecret.getMockImplementation()!;
+    let failPromotion = true;
+    storage.keychain.setSecret.mockImplementation(async (name, value) => {
+      if (name === 'hubDeviceToken' && failPromotion) {
+        failPromotion = false;
+        throw new Error('process died before promotion');
+      }
+      await originalSet(name, value);
+    });
+    const fetchImpl = successfulLifecycleFetch();
+
+    await expect(issueHubDeviceToken({
+      baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
+      keychain: storage.keychain, settings: storage.settings, fetchImpl,
+    })).rejects.toThrow(/before promotion/);
+    expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(true);
+
+    await recoverHubDeviceTokenLifecycle({ keychain: storage.keychain, settings: storage.settings, fetchImpl });
+    expect(storage.secrets.get('hubDeviceToken')).toBe(PENDING.token);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/activate'))).toHaveLength(2);
+  });
+
+  it('returns committed activation and schedules cleanup when only the obsolete staging delete fails', async () => {
+    const storage = lifecycleStorage();
+    const originalDelete = storage.keychain.deleteSecret.getMockImplementation()!;
+    let failStagingDelete = true;
+    storage.keychain.deleteSecret.mockImplementation(async (name) => {
+      if (name === 'hubDeviceTokenStaged' && failStagingDelete) {
+        failStagingDelete = false;
+        throw new Error('staging cleanup failed');
+      }
+      await originalDelete(name);
+    });
+    const onActivationDeferred = vi.fn();
+
+    await expect(issueHubDeviceToken({
+      baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl: successfulLifecycleFetch(),
+      onActivationDeferred,
+    })).resolves.toEqual({
+      keyPrefix: ACTIVATED.keyPrefix,
+      label: ACTIVATED.label,
+      expiresAt: ACTIVATED.expiresAt,
+    });
+    expect(storage.secrets.get('hubDeviceToken')).toBe(PENDING.token);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(false);
+    expect(storage.secrets.has('hubDeviceTokenStaged')).toBe(true);
+    expect(onActivationDeferred).toHaveBeenCalledTimes(1);
+
+    await recoverHubDeviceTokenLifecycle({
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl: vi.fn(async () => {
+        throw new Error('journal-less cleanup must not call Core');
+      }),
+    });
+    expect(storage.secrets.has('hubDeviceTokenStaged')).toBe(false);
+  });
+
+  it('does not publish a journal or bearer when encrypted staging fails', async () => {
+    const storage = lifecycleStorage();
+    storage.keychain.setSecret.mockRejectedValueOnce(new Error('safeStorage write failed'));
+
+    await expect(issueHubDeviceToken({
+      baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
+      keychain: storage.keychain, settings: storage.settings, fetchImpl: successfulLifecycleFetch(),
+    })).rejects.toThrow(/safeStorage write failed/);
+    expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+    expect(storage.journals.size).toBe(0);
+  });
+});
+
+describe('revokeHubDeviceToken', () => {
+  it('revokes the exact bearer with the generated Core operation', async () => {
+    const calls: Array<{ url: string; method: string; authorization: string | null; version: string | null }> = [];
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      calls.push({
+        url: String(input),
+        method: init?.method ?? 'GET',
+        authorization: headers.get('authorization'),
+        version: headers.get('x-client-version'),
+      });
+      return jsonResponse(200, { revoked: true });
+    });
+
+    await expect(revokeHubDeviceToken({
+      baseUrl: 'https://hub.test/',
+      token: PENDING.token,
+      clientVersion: '0.1.42',
+      fetchImpl,
+    })).resolves.toBe('revoked');
+    expect(calls).toEqual([{
+      url: 'https://hub.test/api/v1/auth/device-tokens/current',
+      method: 'DELETE',
+      authorization: `Bearer ${PENDING.token}`,
+      version: '0.1.42',
+    }]);
+  });
+
+  it('treats an already-invalid bearer as safely revoked but propagates other failures', async () => {
+    const alreadyInvalid = vi.fn(async () => jsonResponse(401, {
+      error: 'unauthorized',
+      message: 'Invalid device token',
+      statusCode: 401,
+    }));
+    await expect(revokeHubDeviceToken({
+      baseUrl: 'https://hub.test',
+      token: PENDING.token,
+      fetchImpl: alreadyInvalid,
+    })).resolves.toBe('already-invalid');
+
+    const oldCore = vi.fn(async () => jsonResponse(404, {
+      error: 'not_found',
+      message: 'Route not found',
+      statusCode: 404,
+    }));
+    await expect(revokeHubDeviceToken({
+      baseUrl: 'https://hub.test',
+      token: PENDING.token,
+      fetchImpl: oldCore,
+    })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('durable device-token revocation', () => {
+  it('publishes encrypted custody and journal before the remote revoke, then removes custody', async () => {
+    const storage = lifecycleStorage({ hubDeviceToken: PENDING.token, hubApiKey: 'agency_hub_core_fallback' });
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe('https://hub.test/api/v1/auth/device-tokens/current');
+      expect(requestHeaders(input, init).get('authorization')).toBe(`Bearer ${PENDING.token}`);
+      expect(storage.secrets.get('hubDeviceToken')).toBe(PENDING.token);
+      expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(true);
+      expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(true);
+      return jsonResponse(200, { revoked: true });
+    });
+
+    await expect(beginHubDeviceTokenRevocation({
+      baseUrl: 'https://hub.test/', token: PENDING.token,
+      keychain: storage.keychain, settings: storage.settings, fetchImpl,
+    })).resolves.toBe('revoked');
+    expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+    expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(false);
+    expect(storage.secrets.get('hubApiKey')).toBe('agency_hub_core_fallback');
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(false);
+  });
+
+  it('keeps exact custody and journal quarantined while offline', async () => {
+    const storage = lifecycleStorage({ hubDeviceToken: PENDING.token });
+    const fetchImpl = vi.fn(async () => jsonResponse(503, {
+      error: 'unavailable', message: 'offline', statusCode: 503,
+    }));
+
+    await expect(beginHubDeviceTokenRevocation({
+      baseUrl: 'https://hub.test', token: PENDING.token,
+      keychain: storage.keychain, settings: storage.settings, fetchImpl,
+    })).rejects.toMatchObject({ status: 503 });
+    expect(storage.secrets.get('hubDeviceToken')).toBe(PENDING.token);
+    expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(true);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(true);
+  });
+
+  it('bounds a hung sign-out so a queued purge can proceed while revocation custody remains durable', async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = lifecycleStorage({ hubDeviceToken: PENDING.token });
+      const queue = createRuntimeMutationQueue();
+      let observedSignal: AbortSignal | undefined;
+      let markStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const fetchImpl = vi.fn((_input: string | URL | Request, init?: RequestInit) => {
+        observedSignal = init?.signal ?? undefined;
+        markStarted?.();
+        // Deliberately violates fetch's AbortSignal contract. The lifecycle's
+        // Promise.race must still release the global mutation queue.
+        return new Promise<Response>(() => undefined);
+      });
+      const signOut = queue.run(() => beginHubDeviceTokenRevocation({
+        baseUrl: 'https://hub.test', token: PENDING.token,
+        keychain: storage.keychain, settings: storage.settings, fetchImpl,
+      }));
+      const signOutSettled = signOut.then(
+        () => ({ ok: true as const, error: undefined }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+      let purgeStarted = false;
+      const purge = queue.run(async () => {
+        purgeStarted = true;
+        return 'purge-proceeded';
+      });
+
+      await started;
+      await vi.advanceTimersByTimeAsync(HUB_DEVICE_TOKEN_REQUEST_TIMEOUT_MS - 1);
+      expect(purgeStarted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+
+      const result = await signOutSettled;
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatchObject({ name: 'KernelApiError' });
+      await expect(purge).resolves.toBe('purge-proceeded');
+      expect(observedSignal).toMatchObject({ aborted: true });
+      expect(observedSignal?.reason).toMatchObject({ name: 'TimeoutError' });
+      expect(storage.secrets.get('hubDeviceToken')).toBe(PENDING.token);
+      expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(true);
+      expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers a crash after remote revoke and treats 401 as idempotent success', async () => {
+    const storage = lifecycleStorage({ hubDeviceToken: PENDING.token });
+    const originalDelete = storage.keychain.deleteSecret.getMockImplementation()!;
+    let failActiveDelete = true;
+    storage.keychain.deleteSecret.mockImplementation(async (name) => {
+      if (name === 'hubDeviceToken' && failActiveDelete) {
+        failActiveDelete = false;
+        throw new Error('process died after revoke response');
+      }
+      await originalDelete(name);
+    });
+    let revokeCalls = 0;
+    const fetchImpl = vi.fn(async () => {
+      revokeCalls += 1;
+      return revokeCalls === 1
+        ? jsonResponse(200, { revoked: true })
+        : jsonResponse(401, { error: 'unauthorized', message: 'already revoked', statusCode: 401 });
+    });
+
+    await expect(beginHubDeviceTokenRevocation({
+      baseUrl: 'https://hub.test', token: PENDING.token,
+      keychain: storage.keychain, settings: storage.settings, fetchImpl,
+    })).rejects.toThrow(/after revoke response/);
+    expect(storage.secrets.get('hubDeviceToken')).toBe(PENDING.token);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(true);
+
+    await recoverHubDeviceTokenLifecycle({ keychain: storage.keychain, settings: storage.settings, fetchImpl });
+    expect(revokeCalls).toBe(2);
+    expect(storage.secrets.has('hubDeviceToken')).toBe(false);
+    expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(false);
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(false);
+  });
+
+  it('refuses to delete a replacement token when the journal hash does not match', async () => {
+    const storage = lifecycleStorage({ hubDeviceToken: PENDING.token });
+    const offline = vi.fn(async () => jsonResponse(503, {
+      error: 'unavailable', message: 'offline', statusCode: 503,
+    }));
+    await expect(beginHubDeviceTokenRevocation({
+      baseUrl: 'https://hub.test', token: PENDING.token,
+      keychain: storage.keychain, settings: storage.settings, fetchImpl: offline,
+    })).rejects.toMatchObject({ status: 503 });
+    storage.secrets.set('hubDeviceToken', 'agency_hub_device_replacement');
+
+    await recoverHubDeviceTokenLifecycle({
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl: vi.fn(async () => jsonResponse(200, { revoked: true })),
+      onDeferred: (_kind, error) => {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toMatch(/does not match/);
+      },
+    });
+    expect(storage.secrets.get('hubDeviceToken')).toBe('agency_hub_device_replacement');
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(true);
   });
 });
 
@@ -160,7 +741,7 @@ describe('resolveHubCredential', () => {
 
 // 4a: the pre-persist validation probe (index.ts) must test EXACTLY the bearer
 // that settingsStore.update(patch) would leave active — this mirrors store.ts
-// update()'s device-token/chatter-key wipe rules so a good save is never
+// update()'s device-token/chatter-key rules so a good save is never
 // falsely rejected and a bad one never slips through.
 describe('effectiveHubBearerAfterPatch', () => {
   it('returns the new chatter key when no device token is present (the common save)', () => {
@@ -190,8 +771,8 @@ describe('effectiveHubBearerAfterPatch', () => {
     ).toBe('agency_hub_device_live');
   });
 
-  it('drops the device token on a hub switch and uses the same-patch replacement key', () => {
-    expect(
+  it('rejects a hub switch with a device token even when the patch has a replacement key', () => {
+    expect(() =>
       effectiveHubBearerAfterPatch({
         patchHubApiKey: 'agency_hub_core_forNewHub',
         patchHubBaseUrl: 'http://localhost:4000',
@@ -199,16 +780,40 @@ describe('effectiveHubBearerAfterPatch', () => {
         currentDeviceToken: 'agency_hub_device_live',
         currentHubApiKey: 'agency_hub_core_old',
       }),
-    ).toBe('agency_hub_core_forNewHub');
+    ).toThrow(HUB_DEVICE_TOKEN_HUB_SWITCH_BLOCKED_MESSAGE);
   });
 
-  it('returns null on a hub switch with no replacement key (both credentials wiped)', () => {
-    expect(
+  it('rejects a hub switch with a device token when no replacement key is present', () => {
+    expect(() =>
       effectiveHubBearerAfterPatch({
         patchHubApiKey: undefined,
         patchHubBaseUrl: 'http://localhost:4000',
         currentHubBaseUrl: 'https://gosling-agency.ru',
         currentDeviceToken: 'agency_hub_device_live',
+        currentHubApiKey: 'agency_hub_core_old',
+      }),
+    ).toThrow(HUB_DEVICE_TOKEN_HUB_SWITCH_BLOCKED_MESSAGE);
+  });
+
+  it('uses the replacement key on a hub switch after explicit device sign-out', () => {
+    expect(
+      effectiveHubBearerAfterPatch({
+        patchHubApiKey: 'agency_hub_core_forNewHub',
+        patchHubBaseUrl: 'http://localhost:4000',
+        currentHubBaseUrl: 'https://gosling-agency.ru',
+        currentDeviceToken: null,
+        currentHubApiKey: 'agency_hub_core_old',
+      }),
+    ).toBe('agency_hub_core_forNewHub');
+  });
+
+  it('returns null on a hub switch without a device token or replacement key', () => {
+    expect(
+      effectiveHubBearerAfterPatch({
+        patchHubApiKey: undefined,
+        patchHubBaseUrl: 'http://localhost:4000',
+        currentHubBaseUrl: 'https://gosling-agency.ru',
+        currentDeviceToken: null,
         currentHubApiKey: 'agency_hub_core_old',
       }),
     ).toBeNull();

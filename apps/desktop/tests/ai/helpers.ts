@@ -38,6 +38,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
   return {
     hasHubKey: true,
     hasHubDeviceToken: false,
+    hubDeviceTokenTransition: null,
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
@@ -96,9 +97,20 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
 }
 
 export function makeSettingsStore(vm: SettingsVM): SettingsStore {
+  const hubApiKey = vm.hasHubKey ? 'agency_hub_core_test' : null;
+  const deviceToken = vm.hasHubDeviceToken ? 'agency_hub_device_test' : null;
   return {
     get: () => Promise.resolve(vm),
+    getHubConnection: () => Promise.resolve({
+      settings: vm,
+      hubBaseUrl: vm.hubBaseUrl,
+      bearer: deviceToken ?? hubApiKey,
+      deviceToken,
+      hubApiKey,
+      deviceTokenTransition: null,
+    }),
     update: () => Promise.resolve(vm),
+    runCredentialMutation: (task) => task(),
   };
 }
 

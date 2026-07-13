@@ -1,5 +1,43 @@
 import { describe, expect, it } from 'vitest';
-import { isHubConfigured } from '../../src/renderer/src/features/settings/sections/hubSettingsLogic';
+import {
+  canIssueHubDeviceToken,
+  hasHubDeviceTokenCustody,
+  hubDeviceTokenStatus,
+  hubUrlChangeRequiresDeviceSignOut,
+  isHubConfigured,
+} from '../../src/renderer/src/features/settings/sections/hubSettingsLogic';
+
+describe('hasHubDeviceTokenCustody', () => {
+  it('keeps cancel/sign-out available for active and staged transitions', () => {
+    expect(hasHubDeviceTokenCustody({
+      hasHubDeviceToken: false,
+      hubDeviceTokenTransition: null,
+    })).toBe(false);
+    expect(hasHubDeviceTokenCustody({
+      hasHubDeviceToken: true,
+      hubDeviceTokenTransition: null,
+    })).toBe(true);
+    expect(hasHubDeviceTokenCustody({
+      hasHubDeviceToken: false,
+      hubDeviceTokenTransition: 'activation',
+    })).toBe(true);
+    expect(hasHubDeviceTokenCustody({
+      hasHubDeviceToken: false,
+      hubDeviceTokenTransition: 'revocation',
+    })).toBe(true);
+  });
+
+  it('prioritizes a durable revocation state over the retained active secret', () => {
+    expect(hubDeviceTokenStatus({
+      hasHubDeviceToken: true,
+      hubDeviceTokenTransition: 'revocation',
+    })).toBe('revocation');
+    expect(hubDeviceTokenStatus({
+      hasHubDeviceToken: true,
+      hubDeviceTokenTransition: null,
+    })).toBe('configured');
+  });
+});
 
 describe('isHubConfigured', () => {
   it('a legacy chatter key alone configures the hub', () => {
@@ -39,5 +77,64 @@ describe('isHubConfigured', () => {
     expect(isHubConfigured({ hubBaseUrl: null, hasHubKey: false, hasHubDeviceToken: true })).toBe(
       false,
     );
+  });
+});
+
+describe('canIssueHubDeviceToken', () => {
+  it('requires credentials and permits the first idle sign-in', () => {
+    expect(canIssueHubDeviceToken({
+      username: 'operator',
+      password: 'secret',
+      hasStoredDeviceToken: false,
+      issuePending: false,
+      signOutPending: false,
+    })).toBe(true);
+  });
+
+  it('blocks replacement and overlapping credential mutations', () => {
+    const ready = {
+      username: 'operator',
+      password: 'secret',
+      hasStoredDeviceToken: false,
+      issuePending: false,
+      signOutPending: false,
+    };
+    expect(canIssueHubDeviceToken({ ...ready, hasStoredDeviceToken: true })).toBe(false);
+    expect(canIssueHubDeviceToken({ ...ready, issuePending: true })).toBe(false);
+    expect(canIssueHubDeviceToken({ ...ready, signOutPending: true })).toBe(false);
+  });
+});
+
+describe('hubUrlChangeRequiresDeviceSignOut', () => {
+  it('blocks a different or cleared Hub origin while a device token is stored', () => {
+    const savedHubBaseUrl = 'https://gosling-agency.ru';
+    expect(hubUrlChangeRequiresDeviceSignOut({
+      draftHubBaseUrl: 'http://localhost:4000',
+      savedHubBaseUrl,
+      hasStoredDeviceToken: true,
+    })).toBe(true);
+    expect(hubUrlChangeRequiresDeviceSignOut({
+      draftHubBaseUrl: '',
+      savedHubBaseUrl,
+      hasStoredDeviceToken: true,
+    })).toBe(true);
+  });
+
+  it('allows equivalent normalized URLs and any change after sign-out', () => {
+    expect(hubUrlChangeRequiresDeviceSignOut({
+      draftHubBaseUrl: 'https://gosling-agency.ru/',
+      savedHubBaseUrl: 'https://gosling-agency.ru',
+      hasStoredDeviceToken: true,
+    })).toBe(false);
+    expect(hubUrlChangeRequiresDeviceSignOut({
+      draftHubBaseUrl: 'http://localhost:4000',
+      savedHubBaseUrl: 'https://gosling-agency.ru',
+      hasStoredDeviceToken: false,
+    })).toBe(false);
+    expect(hubUrlChangeRequiresDeviceSignOut({
+      draftHubBaseUrl: 'https://evil.example.com/path',
+      savedHubBaseUrl: 'https://gosling-agency.ru',
+      hasStoredDeviceToken: true,
+    })).toBe(false);
   });
 });

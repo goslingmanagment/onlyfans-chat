@@ -3,15 +3,24 @@
 // app userData. Plaintext exists only in main-process memory.
 
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 
 export const SECRET_NAMES = [
   'hubApiKey',
+  // Crash-safe credential replacement stages the candidate here before a
+  // non-secret SQLite intent is published. The value is still safeStorage-
+  // encrypted and is never selected as a runtime bearer directly.
+  'hubApiKeyStaged',
   // Stage 24: device-bound hub credential (agency_hub_device_…); preferred
   // over hubApiKey when present. Issued via Settings → Hub sign-in.
   'hubDeviceToken',
+  // Server-generated pending token. Never selected as a runtime bearer until
+  // Core activation and local promotion both complete.
+  'hubDeviceTokenStaged',
+  // Exact-token custody retained while a crash-safe sign-out journal exists.
+  'hubDeviceTokenRevoking',
   'dbKey',
   'mediaCacheKey',
 ] as const;
@@ -91,11 +100,34 @@ export function createKeychain(options: KeychainOptions): Keychain {
       throw new Error('OS keychain encryption is unavailable; refusing to persist secret');
     }
     await mkdir(secretsDir, { recursive: true, mode: 0o700 });
-    await writeFile(fileFor(name), safeStorage.encryptString(parsed), { mode: 0o600 });
+    const destination = fileFor(name);
+    const temporary = join(
+      secretsDir,
+      `.${secretNameSchema.parse(name)}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`,
+    );
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      handle = await open(temporary, 'wx', 0o600);
+      await handle.writeFile(safeStorage.encryptString(parsed));
+      // A completed setSecret is durable before it can become the active
+      // credential: flush the temp file, atomically replace, then best-effort
+      // flush the containing directory (directory fsync is unsupported on
+      // some Windows filesystems, where rename still provides atomic replace).
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      await rename(temporary, destination);
+      await syncDirectoryBestEffort(secretsDir);
+    } catch (error) {
+      await handle?.close().catch(() => undefined);
+      await rm(temporary, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   async function deleteSecret(name: SecretName): Promise<void> {
     await rm(fileFor(name), { force: true });
+    await syncDirectoryBestEffort(secretsDir);
   }
 
   async function hasSecret(name: SecretName): Promise<boolean> {
@@ -129,6 +161,20 @@ export function createKeychain(options: KeychainOptions): Keychain {
   }
 
   return { getSecret, setSecret, deleteSecret, hasSecret, getOrCreateGeneratedKey, deleteDecommissionedSecrets };
+}
+
+async function syncDirectoryBestEffort(path: string): Promise<void> {
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(path, 'r');
+    await handle.sync();
+  } catch {
+    // Windows commonly rejects opening/fsyncing directories. The secret file
+    // replacement itself remains atomic; the durable SQLite intent makes an
+    // interrupted credential transition replayable on the next boot.
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
 }
 
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {

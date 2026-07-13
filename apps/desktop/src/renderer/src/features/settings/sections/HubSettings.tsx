@@ -19,7 +19,13 @@ import { localizedErrorText, useLocale, useT } from '../../../lib/i18n';
 import { Badge } from '../../../design/Badge';
 import { Button } from '../../../design/Button';
 import { Section, type PatchFn } from '../SettingsSurface';
-import { isHubConfigured } from './hubSettingsLogic';
+import {
+  canIssueHubDeviceToken,
+  hasHubDeviceTokenCustody,
+  hubDeviceTokenStatus,
+  hubUrlChangeRequiresDeviceSignOut,
+  isHubConfigured,
+} from './hubSettingsLogic';
 
 type HubState = SyncStatusVM['hub'];
 
@@ -67,10 +73,17 @@ export function HubSettings({
 
   const configured = isHubConfigured(settings);
   const hub: HubState = syncStatus.data?.hub ?? 'off';
+  const hasDeviceTokenCustody = hasHubDeviceTokenCustody(settings);
+  const deviceTokenStatus = hubDeviceTokenStatus(settings);
   // The probe runs against the SAVED config — while the form holds unsaved
   // edits a green result would "verify" the wrong URL/key, so Test locks
   // until the edits are saved (or reverted).
   const formDirty = baseUrl.trim() !== (settings.hubBaseUrl ?? '') || key.trim() !== '';
+  const mustSignOutBeforeHubChange = hubUrlChangeRequiresDeviceSignOut({
+    draftHubBaseUrl: baseUrl,
+    savedHubBaseUrl: settings.hubBaseUrl,
+    hasStoredDeviceToken: hasDeviceTokenCustody,
+  });
 
   function save(): void {
     // One patch for everything: key writes go to the keychain and publish no
@@ -133,8 +146,14 @@ export function HubSettings({
             <div className="text-[13px] font-semibold">{t('hub.deviceToken.label')}</div>
             <div className="text-[11px] text-ink-low">{t('hub.deviceToken.hint')}</div>
           </div>
-          <Badge tone={settings.hasHubDeviceToken ? 'green' : 'neutral'}>
-            {settings.hasHubDeviceToken ? t('common.configured') : t('common.notSet')}
+          <Badge tone={deviceTokenStatus === 'configured' ? 'green' : deviceTokenStatus === 'unset' ? 'neutral' : 'amber'}>
+            {deviceTokenStatus === 'activation'
+                ? t('hub.deviceToken.signingIn')
+                : deviceTokenStatus === 'revocation'
+                  ? t('hub.deviceToken.signingOut')
+                  : deviceTokenStatus === 'configured'
+                    ? t('common.configured')
+                    : t('common.notSet')}
           </Badge>
           <input
             type="text"
@@ -155,7 +174,13 @@ export function HubSettings({
             className="min-w-0 flex-1 rounded-chip border border-line bg-bg1 px-3 py-1.5 text-[13px] outline-none placeholder:text-ink-low focus:border-clay-line"
           />
           <Button
-            disabled={signInUser.trim() === '' || signInPassword === '' || deviceToken.isPending}
+            disabled={!canIssueHubDeviceToken({
+              username: signInUser,
+              password: signInPassword,
+              hasStoredDeviceToken: hasDeviceTokenCustody,
+              issuePending: deviceToken.isPending,
+              signOutPending: signOutDevice.isPending,
+            })}
             onClick={() => {
               deviceToken.mutate(
                 { username: signInUser.trim(), password: signInPassword },
@@ -165,11 +190,11 @@ export function HubSettings({
           >
             {deviceToken.isPending ? t('hub.deviceToken.signingIn') : t('hub.deviceToken.signIn')}
           </Button>
-          {settings.hasHubDeviceToken && (
+          {hasDeviceTokenCustody && (
             <Button
               variant="danger"
               size="sm"
-              disabled={signOutDevice.isPending}
+              disabled={signOutDevice.isPending || deviceToken.isPending}
               onClick={() => signOutDevice.mutate()}
             >
               {signOutDevice.isPending
@@ -197,6 +222,11 @@ export function HubSettings({
           <div className="pl-47 text-[11px] text-bad">
             {deviceToken.error instanceof Error ? deviceToken.error.message : t('hub.deviceToken.failed')}
           </div>
+        )}
+        {mustSignOutBeforeHubChange && (
+          <p className="pl-47 text-[11px] text-bad">
+            {t('hub.deviceToken.signOutBeforeHubChange')}
+          </p>
         )}
         <div className="flex items-center gap-3 py-1">
           <div className="w-44 flex-none">
@@ -262,7 +292,7 @@ export function HubSettings({
           >
             {test.isPending ? t('keys.testing') : t('hub.testBtn')}
           </Button>
-          <Button size="sm" onClick={save}>
+          <Button size="sm" disabled={mustSignOutBeforeHubChange} onClick={save}>
             {t('hub.saveBtn')}
           </Button>
         </div>

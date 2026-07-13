@@ -21,8 +21,16 @@ function makeDeps(secrets: Record<string, string | null>, clientVersion?: string
     return Promise.resolve(new Response(ME_BODY, { status: 200 }));
   };
   const deps = {
-    keychain: { getSecret: (name: string) => Promise.resolve(secrets[name] ?? null) },
-    settingsStore: { get: () => Promise.resolve({ hubBaseUrl: 'https://hub.example.com' }) },
+    settingsStore: {
+      getHubConnection: () => Promise.resolve({
+        settings: {} as never,
+        hubBaseUrl: 'https://hub.example.com',
+        bearer: secrets['hubDeviceToken'] ?? secrets['hubApiKey'] ?? null,
+        deviceToken: secrets['hubDeviceToken'] ?? null,
+        hubApiKey: secrets['hubApiKey'] ?? null,
+        deviceTokenTransition: null,
+      }),
+    },
     fetchImpl,
     ...(clientVersion !== undefined ? { clientVersion } : {}),
   } as unknown as KeyTestDeps;

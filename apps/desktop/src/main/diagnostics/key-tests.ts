@@ -9,14 +9,11 @@
 
 import { toUserFacing } from '@chatgoose/shared/errors/index';
 import type { KeyTestProvider, KeyTestResultVM } from '../../preload/contract';
-import type { SecretName } from '../secrets/keychain';
 import type { SettingsStore } from '../settings/store';
 import { probeHubConnection, type HubProbeFetch } from '../hub/test-connection';
-import { resolveHubCredential } from '../hub/device-token';
 
 export interface KeyTestDeps {
-  keychain: { getSecret(name: SecretName): Promise<string | null> };
-  settingsStore: SettingsStore;
+  settingsStore: Pick<SettingsStore, 'getHubConnection'>;
   /** GET-fetch seam for the hub probe (tests). */
   fetchImpl?: HubProbeFetch;
   /** Stage 4 / Proposal 4.1: stamped on the probe as `x-client-version`. */
@@ -28,14 +25,20 @@ export async function runKeyTest(
   deps: KeyTestDeps,
 ): Promise<KeyTestResultVM> {
   try {
-    const [vm, credential] = await Promise.all([
-      deps.settingsStore.get(),
-      resolveHubCredential(deps.keychain),
-    ]);
-    if (vm.hubBaseUrl === null || credential === null || credential.length === 0) {
+    const connection = await deps.settingsStore.getHubConnection();
+    if (
+      connection.hubBaseUrl === null
+      || connection.bearer === null
+      || connection.bearer.length === 0
+    ) {
       return { ok: false, code: 'HUB_NOT_CONFIGURED', message: 'Hub base URL or credential missing — sign in or paste a chatter key.' };
     }
-    const me = await probeHubConnection(vm.hubBaseUrl, credential, deps.fetchImpl ?? fetch, deps.clientVersion);
+    const me = await probeHubConnection(
+      connection.hubBaseUrl,
+      connection.bearer,
+      deps.fetchImpl ?? fetch,
+      deps.clientVersion,
+    );
     return {
       ok: true,
       code: null,

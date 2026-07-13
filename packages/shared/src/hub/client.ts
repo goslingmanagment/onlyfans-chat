@@ -221,6 +221,9 @@ export type HubAiGatewayStreamRequest = z.input<(typeof routeSchemas)['aiGateway
 export type HubAiFeatureStreamRequest = z.input<(typeof routeSchemas)['aiFeatureStream']['body']>;
 /** Stage 31: kernel persona record (DP 9-A — personas are kernel config). */
 export type HubAiPersona = z.infer<(typeof routeSchemas)['aiPersonasList']['response'][200]>['personas'][number];
+/** Tombstone-aware lifecycle view used only for safe legacy migration. */
+export type HubAiPersonaState = z.infer<(typeof routeSchemas)['aiPersonaStates']['response'][200]>['states'][number];
+export type HubAiPersonaArchiveResult = KernelOperationResponse<'aiPersonaArchive'>;
 
 export const HUB_OFAPI_COMMAND_STATES = [
   'queued',
@@ -349,13 +352,21 @@ export interface HubClient {
   ): Promise<string>;
   /** Stage 31: kernel persona list/upsert (picker + editor + one-time sync). */
   listAiPersonas(options?: { timeoutMs?: number }): Promise<HubAiPersona[]>;
+  listAiPersonaStates(options?: { timeoutMs?: number }): Promise<HubAiPersonaState[]>;
   upsertAiPersona(args: {
     key: string;
     displayName: string;
     systemBlock: string;
+    /** Explicit CAS token; null is create-only. New Desktop code never emits the legacy omitted form. */
+    expectedVersion: number | null;
     timeoutMs?: number;
   }): Promise<HubAiPersona>;
-  archiveAiPersona(args: { key: string; timeoutMs?: number }): Promise<{ archived: boolean }>;
+  archiveAiPersona(args: {
+    key: string;
+    /** Explicit CAS token; null means the client has only an unconfirmed create. */
+    expectedVersion: number | null;
+    timeoutMs?: number;
+  }): Promise<HubAiPersonaArchiveResult>;
   /** Stage 31: stream a KERNEL-ASSEMBLED feature generation (Stage 30 route).
    *  Same SSE frames as streamAiGateway; the kernel loads context and builds
    *  the prompt — the desktop sends refs only. */
@@ -671,17 +682,30 @@ export function createHubClient(options: HubClientOptions): HubClient {
       return response.personas;
     },
 
-    async upsertAiPersona({ key, displayName, systemBlock, timeoutMs }) {
+    async listAiPersonaStates(personaOptions) {
+      const response = await delegate(() =>
+        clientFor(personaOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaStates());
+      return response.states;
+    },
+
+    async upsertAiPersona({ key, displayName, systemBlock, expectedVersion, timeoutMs }) {
       return delegate(() =>
         clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaUpsert({
           params: { key },
-          body: { displayName, systemBlock },
+          body: {
+            displayName,
+            systemBlock,
+            expectedVersion,
+          },
         }));
     },
 
-    async archiveAiPersona({ key, timeoutMs }) {
+    async archiveAiPersona({ key, expectedVersion, timeoutMs }) {
       return delegate(() =>
-        clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaArchive({ params: { key } }));
+        clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaArchive({
+          params: { key },
+          query: { expectedVersion: expectedVersion ?? 0 },
+        }));
     },
 
     async streamAiFeature({ feature, request: streamRequest, signal, debugPromptEcho }, callbacks) {

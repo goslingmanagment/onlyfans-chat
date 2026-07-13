@@ -49,16 +49,33 @@ export declare const issuedDeviceTokenResponseSchema: z.ZodObject<{
     keyPrefix: z.ZodString;
     expiresAt: z.ZodString;
 }, z.core.$strip>;
+export declare const reservedDeviceTokenResponseSchema: z.ZodObject<{
+    token: z.ZodString;
+    reservationId: z.ZodNumber;
+    label: z.ZodString;
+    keyPrefix: z.ZodString;
+    reservationExpiresAt: z.ZodString;
+}, z.core.$strip>;
+export declare const activatedDeviceTokenResponseSchema: z.ZodObject<{
+    id: z.ZodNumber;
+    label: z.ZodString;
+    expiresAt: z.ZodString;
+    keyPrefix: z.ZodString;
+}, z.core.$strip>;
 export declare const deviceTokenItemSchema: z.ZodObject<{
     id: z.ZodNumber;
     label: z.ZodString;
     keyPrefix: z.ZodString;
+    harvestMachineId: z.ZodNullable<z.ZodString>;
     isActive: z.ZodBoolean;
     expiresAt: z.ZodString;
     lastUsedAt: z.ZodNullable<z.ZodString>;
     createdAt: z.ZodString;
     revokedAt: z.ZodNullable<z.ZodString>;
     revokedReason: z.ZodNullable<z.ZodString>;
+}, z.core.$strip>;
+export declare const deviceTokenHarvestCapabilityBodySchema: z.ZodObject<{
+    machineId: z.ZodNullable<z.ZodString>;
 }, z.core.$strip>;
 export declare const accessGrantItemSchema: z.ZodObject<{
     id: z.ZodNumber;
@@ -3928,6 +3945,7 @@ export declare const aiPersonaSchema: z.ZodObject<{
     displayName: z.ZodString;
     systemBlock: z.ZodString;
     updatedAt: z.ZodString;
+    version: z.ZodNumber;
 }, z.core.$strip>;
 export declare const aiPersonasResponseSchema: z.ZodObject<{
     personas: z.ZodArray<z.ZodObject<{
@@ -3935,7 +3953,34 @@ export declare const aiPersonasResponseSchema: z.ZodObject<{
         displayName: z.ZodString;
         systemBlock: z.ZodString;
         updatedAt: z.ZodString;
+        version: z.ZodNumber;
     }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const aiPersonaStateSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
+    key: z.ZodString;
+    displayName: z.ZodString;
+    systemBlock: z.ZodString;
+    updatedAt: z.ZodString;
+    version: z.ZodNumber;
+    state: z.ZodLiteral<"active">;
+}, z.core.$strip>, z.ZodObject<{
+    state: z.ZodLiteral<"archived">;
+    key: z.ZodString;
+    version: z.ZodNumber;
+}, z.core.$strip>], "state">;
+export declare const aiPersonaStatesResponseSchema: z.ZodObject<{
+    states: z.ZodArray<z.ZodDiscriminatedUnion<[z.ZodObject<{
+        key: z.ZodString;
+        displayName: z.ZodString;
+        systemBlock: z.ZodString;
+        updatedAt: z.ZodString;
+        version: z.ZodNumber;
+        state: z.ZodLiteral<"active">;
+    }, z.core.$strip>, z.ZodObject<{
+        state: z.ZodLiteral<"archived">;
+        key: z.ZodString;
+        version: z.ZodNumber;
+    }, z.core.$strip>], "state">>;
 }, z.core.$strip>;
 export declare const aiPersonaUpsertParamsSchema: z.ZodObject<{
     key: z.ZodString;
@@ -3943,6 +3988,10 @@ export declare const aiPersonaUpsertParamsSchema: z.ZodObject<{
 export declare const aiPersonaUpsertBodySchema: z.ZodObject<{
     displayName: z.ZodString;
     systemBlock: z.ZodString;
+    expectedVersion: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+}, z.core.$strict>;
+export declare const aiPersonaArchiveQuerySchema: z.ZodObject<{
+    expectedVersion: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strict>;
 export declare const aiFeatureStreamParamsSchema: z.ZodObject<{
     feature: z.ZodString;
@@ -8428,6 +8477,17 @@ export declare const syncSnapshotRequiredResponseSchema: z.ZodObject<{
     currentSeq: z.ZodNumber;
     snapshotPath: z.ZodLiteral<"/api/v1/events/snapshot">;
 }, z.core.$strip>;
+/** A sticky snapshotCursor/stateCursor became older than cleanup's durable
+ * replay floor while a paged recovery was in progress. Clients must discard
+ * only that matching progress record and restart the snapshot without either
+ * cursor; retrying the same continuation can never succeed. */
+export declare const syncSnapshotRestartRequiredResponseSchema: z.ZodObject<{
+    error: z.ZodLiteral<"sync_snapshot_restart_required">;
+    message: z.ZodString;
+    statusCode: z.ZodLiteral<409>;
+    replayFloor: z.ZodNumber;
+    snapshotPath: z.ZodLiteral<"/api/v1/events/snapshot">;
+}, z.core.$strip>;
 export declare const domainEventFrameSchema: z.ZodObject<{
     accountId: z.ZodNumber;
     accountSeq: z.ZodNumber;
@@ -8463,6 +8523,7 @@ export declare const domainEventsSnapshotResponseSchema: z.ZodObject<{
     cursor: z.ZodString;
     accounts: z.ZodArray<z.ZodObject<{
         accountId: z.ZodNumber;
+        accountRef: z.ZodNullable<z.ZodString>;
         currentSeq: z.ZodNumber;
     }, z.core.$strip>>;
 }, z.core.$strip>;
@@ -8472,6 +8533,9 @@ export declare const syncSnapshotQuerySchema: z.ZodObject<{
     snapshotCursor: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     pageCursor: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    pageMode: z.ZodOptional<z.ZodLiteral<"bounded_v1">>;
+    stateCursor: z.ZodOptional<z.ZodString>;
+    messageLimit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strip>;
 export declare const syncSnapshotMessageSchema: z.ZodObject<{
     chatId: z.ZodString;
@@ -8661,6 +8725,7 @@ export declare const syncSnapshotResponseSchema: z.ZodObject<{
         sourceFanoutSeq: z.ZodNumber;
     }, z.core.$strip>>;
     nextPageCursor: z.ZodNullable<z.ZodNumber>;
+    nextStateCursor: z.ZodOptional<z.ZodNullable<z.ZodString>>;
 }, z.core.$strip>;
 export declare const ofapiWebhookAckResponseSchema: z.ZodObject<{
     received: z.ZodLiteral<true>;
@@ -9143,6 +9208,8 @@ export declare const routeAuthPolicySchema: z.ZodObject<{
         "any-session": "any-session";
         "owner-session": "owner-session";
         apiKey: "apiKey";
+        "device-token": "device-token";
+        "pending-device-token": "pending-device-token";
     }>;
     roles: z.ZodOptional<z.ZodArray<z.ZodEnum<{
         owner: "owner";
@@ -9998,6 +10065,9 @@ export declare const routeSchemas: {
             snapshotCursor: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
             pageCursor: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
             limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+            pageMode: z.ZodOptional<z.ZodLiteral<"bounded_v1">>;
+            stateCursor: z.ZodOptional<z.ZodString>;
+            messageLimit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -10088,6 +10158,7 @@ export declare const routeSchemas: {
                     sourceFanoutSeq: z.ZodNumber;
                 }, z.core.$strip>>;
                 nextPageCursor: z.ZodNullable<z.ZodNumber>;
+                nextStateCursor: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             }, z.core.$strip>;
             readonly 400: z.ZodObject<{
                 error: z.ZodString;
@@ -10108,6 +10179,13 @@ export declare const routeSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodLiteral<"sync_snapshot_restart_required">;
+                message: z.ZodString;
+                statusCode: z.ZodLiteral<409>;
+                replayFloor: z.ZodNumber;
+                snapshotPath: z.ZodLiteral<"/api/v1/events/snapshot">;
             }, z.core.$strip>;
         };
     };
@@ -10168,6 +10246,7 @@ export declare const routeSchemas: {
                 cursor: z.ZodString;
                 accounts: z.ZodArray<z.ZodObject<{
                     accountId: z.ZodNumber;
+                    accountRef: z.ZodNullable<z.ZodString>;
                     currentSeq: z.ZodNumber;
                 }, z.core.$strip>>;
             }, z.core.$strip>;
@@ -17283,7 +17362,36 @@ export declare const routeSchemas: {
                     displayName: z.ZodString;
                     systemBlock: z.ZodString;
                     updatedAt: z.ZodString;
+                    version: z.ZodNumber;
                 }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly aiPersonaStates: {
+        readonly auth: {
+            readonly kind: "apiKey";
+        };
+        readonly tags: readonly ["usage"];
+        readonly summary: "List active and archived kernel AI persona lifecycle state";
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                states: z.ZodArray<z.ZodDiscriminatedUnion<[z.ZodObject<{
+                    key: z.ZodString;
+                    displayName: z.ZodString;
+                    systemBlock: z.ZodString;
+                    updatedAt: z.ZodString;
+                    version: z.ZodNumber;
+                    state: z.ZodLiteral<"active">;
+                }, z.core.$strip>, z.ZodObject<{
+                    state: z.ZodLiteral<"archived">;
+                    key: z.ZodString;
+                    version: z.ZodNumber;
+                }, z.core.$strip>], "state">>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
@@ -17304,6 +17412,7 @@ export declare const routeSchemas: {
         readonly body: z.ZodObject<{
             displayName: z.ZodString;
             systemBlock: z.ZodString;
+            expectedVersion: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
         }, z.core.$strict>;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -17311,6 +17420,7 @@ export declare const routeSchemas: {
                 displayName: z.ZodString;
                 systemBlock: z.ZodString;
                 updatedAt: z.ZodString;
+                version: z.ZodNumber;
             }, z.core.$strip>;
             readonly 400: z.ZodObject<{
                 error: z.ZodString;
@@ -17318,6 +17428,11 @@ export declare const routeSchemas: {
                 statusCode: z.ZodNumber;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
@@ -17333,9 +17448,13 @@ export declare const routeSchemas: {
         readonly params: z.ZodObject<{
             key: z.ZodString;
         }, z.core.$strip>;
+        readonly querystring: z.ZodObject<{
+            expectedVersion: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+        }, z.core.$strict>;
         readonly response: {
             readonly 200: z.ZodObject<{
                 archived: z.ZodBoolean;
+                version: z.ZodNumber;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
@@ -17343,6 +17462,11 @@ export declare const routeSchemas: {
                 statusCode: z.ZodNumber;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
@@ -18062,6 +18186,90 @@ export declare const routeSchemas: {
             }, z.core.$strip>;
         };
     };
+    readonly authReserveDeviceToken: {
+        readonly auth: {
+            readonly kind: "any-session";
+        };
+        readonly tags: readonly ["auth"];
+        readonly summary: "Reserve a crash-safe device token for the caller (returned once)";
+        readonly description: string;
+        readonly body: z.ZodObject<{
+            label: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                token: z.ZodString;
+                reservationId: z.ZodNumber;
+                label: z.ZodString;
+                keyPrefix: z.ZodString;
+                reservationExpiresAt: z.ZodString;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly authActivateDeviceToken: {
+        readonly auth: {
+            readonly kind: "pending-device-token";
+        };
+        readonly tags: readonly ["auth"];
+        readonly summary: "Activate a durably staged pending device token";
+        readonly description: string;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                id: z.ZodNumber;
+                label: z.ZodString;
+                expiresAt: z.ZodString;
+                keyPrefix: z.ZodString;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly authRevokeCurrentDeviceToken: {
+        readonly auth: {
+            readonly kind: "device-token";
+        };
+        readonly tags: readonly ["auth"];
+        readonly summary: "Revoke the current device-token bearer";
+        readonly description: string;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                revoked: z.ZodLiteral<true>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
     readonly adminListDeviceTokens: {
         readonly auth: {
             readonly kind: "owner-session";
@@ -18076,6 +18284,7 @@ export declare const routeSchemas: {
                 id: z.ZodNumber;
                 label: z.ZodString;
                 keyPrefix: z.ZodString;
+                harvestMachineId: z.ZodNullable<z.ZodString>;
                 isActive: z.ZodBoolean;
                 expiresAt: z.ZodString;
                 lastUsedAt: z.ZodNullable<z.ZodString>;
@@ -18119,6 +18328,55 @@ export declare const routeSchemas: {
                 label: z.ZodString;
                 keyPrefix: z.ZodString;
                 expiresAt: z.ZodString;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminSetDeviceTokenHarvestCapability: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Bind or remove a device token's Desktop harvest capability";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            username: z.ZodString;
+            tokenId: z.ZodCoercedNumber<unknown>;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            machineId: z.ZodNullable<z.ZodString>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                id: z.ZodNumber;
+                label: z.ZodString;
+                keyPrefix: z.ZodString;
+                harvestMachineId: z.ZodNullable<z.ZodString>;
+                isActive: z.ZodBoolean;
+                expiresAt: z.ZodString;
+                lastUsedAt: z.ZodNullable<z.ZodString>;
+                createdAt: z.ZodString;
+                revokedAt: z.ZodNullable<z.ZodString>;
+                revokedReason: z.ZodNullable<z.ZodString>;
             }, z.core.$strip>;
             readonly 400: z.ZodObject<{
                 error: z.ZodString;

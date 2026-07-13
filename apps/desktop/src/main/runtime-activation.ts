@@ -176,6 +176,32 @@ export function sealRuntimeForTerminalOperation<Result>(
   return queue.sealAndRun(drain);
 }
 
+/** Stop every producer before deciding whether harvested custody is complete.
+ * A table may already be dirty when purge starts, so an eager pre-drain guard
+ * would make the final delta uploader unreachable and strand local deletion
+ * forever on otherwise healthy stores. */
+export async function drainRuntimeThenFinishCustody(options: {
+  deactivateRuntime(): Promise<void>;
+  finishCustody(): Promise<void>;
+}): Promise<void> {
+  await options.deactivateRuntime();
+  await options.finishCustody();
+}
+
+/** A destructive DB purge may not erase the only durable journal that binds an
+ * encrypted staged token to its remote activation/revocation intent. Recovery
+ * returns true while network settlement is still deferred; fail closed and
+ * preserve the DB so the next boot can resume the exact credential. */
+export async function requireSettledDeviceCredentialCustody(options: {
+  recover(): Promise<boolean>;
+}): Promise<void> {
+  if (await options.recover()) {
+    throw new Error(
+      'Local data cannot be purged while Hub device-token activation or revocation is still pending. Retry after the Hub is reachable.',
+    );
+  }
+}
+
 /** Destructive purge tail with an explicit recovery path. Once the runtime
  * queue is terminally sealed, a custody failure cannot safely return to the
  * current process. Preserve the DB, surface the error, and relaunch instead. */
@@ -345,15 +371,59 @@ export async function stopRuntimeServices(services: {
  */
 export async function replaceRuntimeSecurityFirst(options: {
   deactivate: () => Promise<void>;
+  /** Server-side invalidation, while the outgoing secret still exists. */
+  revokeCredential?: () => Promise<void>;
+  /** Local keychain deletion, only after server-side invalidation succeeds. */
+  deleteCredential?: () => Promise<void>;
   activateFallback: () => Promise<void>;
 }): Promise<void> {
   await options.deactivate();
   try {
+    await options.revokeCredential?.();
+    await options.deleteCredential?.();
     await options.activateFallback();
   } catch (error) {
     await options.deactivate();
     throw error;
   }
+}
+
+export const HUB_DEVICE_TOKEN_ALREADY_STORED_MESSAGE =
+  'A Hub device token is already stored. Sign out before signing in again.';
+
+/**
+ * One FIFO owner for the complete device-credential lifecycle. Issuance must
+ * hold the same queue as sign-out from the pre-mint existence check through
+ * keychain persistence and runtime activation; otherwise sign-out can capture
+ * token A, then delete a concurrently persisted token B. The activation and
+ * sign-out callbacks run inside the queue and therefore must not re-enter it.
+ */
+export function createSerializedCredentialLifecycle<Input, Result>(options: {
+  queue: RuntimeMutationQueue;
+  readStoredCredential(): Promise<string | null>;
+  issueAndStore(input: Input): Promise<Result>;
+  activateStoredCredential(): Promise<void>;
+  signOutTransition(): Promise<void>;
+}): {
+  issue(input: Input): Promise<Result>;
+  signOut(): Promise<void>;
+} {
+  return {
+    issue(input) {
+      return options.queue.run(async () => {
+        const current = await options.readStoredCredential();
+        if (current !== null && current.trim().length > 0) {
+          throw new Error(HUB_DEVICE_TOKEN_ALREADY_STORED_MESSAGE);
+        }
+        const issued = await options.issueAndStore(input);
+        await options.activateStoredCredential();
+        return issued;
+      });
+    },
+    signOut() {
+      return options.queue.run(options.signOutTransition);
+    },
+  };
 }
 
 /**

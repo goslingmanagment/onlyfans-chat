@@ -51,17 +51,40 @@ Two ways to produce the Windows installer:
 (mac) and `.ico` (Windows) at package time. Regenerate the PNG with
 `pnpm make:icon` (macOS-only — uses qlmanage; CI never needs it).
 
-## Code signing — not configured (owner/admin task)
+## Code signing — repository ready, credentials not configured
 
 Pilot builds ship **unsigned**:
 
 - **Windows:** SmartScreen interjects on install; the helper checklist
   (`docs/WINDOWS-VERIFICATION.md`) walks through it («Подробнее» → «Выполнить в
-  любом случае»). Buying an OV/EV code-signing cert later → configure
-  `win.certificateFile`/`CSC_LINK` and the warning goes away (EV: immediately;
-  OV: after reputation accrues).
+  любом случае»). The release workflow is prepared for electron-builder's
+  standard `CSC_LINK` path: it maps the `WINDOWS_CSC_LINK` and
+  `WINDOWS_CSC_KEY_PASSWORD` secrets into the build, rejects a half-configured
+  pair, and verifies Authenticode on both `ChatGoose.exe` and the installer.
+  `verifyUpdateCodeSignature: true` also makes a signed build embed its
+  certificate publisher so electron-updater rejects a different signer. Until
+  credentials exist, the workflow explicitly logs unsigned pilot mode. Once
+  signing is operational, set the repository variable
+  `WINDOWS_SIGNING_REQUIRED=true`; every later build then fails closed if the
+  credentials or valid signatures are absent.
 - **macOS:** `mac.identity: null` skips signing; first open is right-click →
   Open. A Developer ID + notarization removes that.
+
+External owner/admin work is still required: obtain an OV/EV certificate (or a
+compatible managed signing identity), store its material as GitHub secrets,
+validate the certificate chain on a Windows runner, and enable the required
+flag. A protected GitHub environment with release-only approvers should own
+those secrets; wiring the job to that environment must happen only after an
+administrator creates it and moves the secrets, otherwise today's unsigned
+pilot builds would be blocked. Hardware-token or cloud-only EV products may
+require their vendor's signing action instead of `CSC_LINK` and are not
+pretended to be configured here.
+
+There is one unavoidable bootstrap boundary: already-installed unsigned builds
+do not contain a trusted publisher and therefore cannot authenticate the first
+signed update. Distribute and verify that first signed installer out of band (or
+explicitly accept the existing one-time feed trust); signature pinning protects
+updates only after users are running a signed build.
 
 ## userData
 
@@ -118,6 +141,15 @@ check → download → install flow so the UX is demoable without a real feed.
    retry after an ambiguous acknowledgement is a verified no-op), verifies the
    staged installer SHA-512, moves
    versioned assets into place, and atomically renames `latest.yml` last. The
+   same lock protects feed maintenance: before testing free space it removes
+   abandoned `.incoming` stages older than 180 minutes (beyond the workflow's
+   130-minute hard timeout), then retains three installer EXEs total (always
+   protecting the EXE referenced by the current `latest.yml`), keeps all
+   historical `.blockmap` files because old clients can use them for
+   differential downloads, and requires at least 5 GiB free. Publication checks
+   that floor again after scp and before moving any candidate asset, so a disk
+   race cannot switch the manifest.
+   The
    postcheck uses normal TLS verification and downloads the served installer to
    prove its SHA-512 equals this run's manifest. If SSH acknowledgement is lost
    after the rename, the same workflow run verifies those already-built exact
@@ -135,6 +167,14 @@ the unprivileged `cgupdates` user; CI uploads over scp with the
 `UPDATES_SSH_KEY` repo secret (set 2026-06-13) and a pinned host key. Builds
 are unsigned, so the feed host being ours is the trust anchor — rotate the
 token path (nginx dir + `publish.url`) if it ever leaks somewhere noisy.
+
+Feed retention can be inspected without deleting anything by streaming
+`publish-feed.sh --maintain <feed-dir> --dry-run` on the feed host. The locked
+script accepts `CHATGOOSE_FEED_KEEP_INSTALLERS` (default `3`, minimum `2`) and
+`CHATGOOSE_FEED_MIN_FREE_KIB` (default `5242880`). Maintenance deletes only
+stable `ChatGoose-Setup-X.Y.Z.exe` files outside the retention set and stale
+one-level `.incoming` directories; dry-run deletes neither. It never deletes
+blockmaps, the current manifest, or its referenced installer.
 
 **Recovery / rollback:** Never point `latest.yml` at a lower version. The updater
 rejects downgrades, and an older binary may also reject a database migrated by a

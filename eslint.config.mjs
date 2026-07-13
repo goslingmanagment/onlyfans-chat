@@ -9,6 +9,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/out/**',
       '**/coverage/**',
+      '**/.claude/worktrees/**',
       'tmp/**',
       'docs/**',
       '**/*.gen.ts',

@@ -30,6 +30,7 @@ describe("vendored @kernel/sdk", () => {
       "getOfapiCommand",
       "cancelOfapiCommand",
       "aiPersonasList",
+      "aiPersonaStates",
       "aiPersonaUpsert",
       "aiPersonaArchive",
     ] as const;

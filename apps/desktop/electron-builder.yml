@@ -1,9 +1,9 @@
 # Packaging pipeline (PLAN item 11; build/run docs: docs/RELEASE.md).
 # Invoked via `pnpm dist` / `dist:mac` / `dist:win` after `electron-vite build`.
 #
-# Code signing is intentionally absent: pilot builds ship unsigned (owner/admin
-# decision pending a cert purchase). Windows installs show a SmartScreen warning
-# — the verification checklist (docs/WINDOWS-VERIFICATION.md) walks past it.
+# Pilot builds remain unsigned until owner/admin credentials are provisioned.
+# windows-build.yml passes electron-builder's standard CSC_* environment only
+# when those secrets exist and verifies every resulting Authenticode signature.
 
 appId: com.chatgoose.desktop
 productName: ChatGoose
@@ -27,6 +27,10 @@ asarUnpack:
 
 win:
   # icon.ico is derived from build/icon.png (1024², from icon.svg) at build time.
+  # When signing is enabled, include the certificate publisher in app-update.yml
+  # so electron-updater rejects an installer signed by a different identity.
+  # With no certificate this explicit default preserves unsigned pilot builds.
+  verifyUpdateCodeSignature: true
   target:
     - target: nsis
       arch: [x64]

@@ -329,10 +329,10 @@ export function useHubDeviceTokenIssue() {
   });
 }
 
-/** Stage 24 recovery: deletes the local device token so a stale/revoked one
- *  can't keep shadowing a fresh sign-in or the legacy chatter key. Invalidate
- *  on settle (not just success) — the delete lands even if the follow-up hub
- *  reconnect attempt errors, so the settings badge must refresh either way. */
+/** Stage 24 recovery: revokes the exact remote token before deleting its local
+ *  copy, so a stale bearer cannot survive sign-out. Invalidate on settle: the
+ *  delete may land before fallback activation rejects, while revoke failures
+ *  intentionally retain the token and surface the unchanged badge with error. */
 export function useHubSignOutDevice() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -589,6 +589,10 @@ export function useUpdateSettings() {
       queryClient.setQueryData(qk.settings, settings);
       void queryClient.invalidateQueries({ queryKey: qk.syncStatus });
       void queryClient.invalidateQueries({ queryKey: qk.activity });
+      // Hub-origin changes swap the scoped persona cache + account mappings.
+      // Do not leave the previous Hub's rows rendered from React Query memory.
+      void queryClient.invalidateQueries({ queryKey: qk.personalities });
+      void queryClient.invalidateQueries({ queryKey: qk.accounts });
     },
   });
 }
@@ -607,9 +611,12 @@ export function useSavePersonality() {
 export function useDeletePersonality() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => getBridge().invoke('cmd:personalities.delete', { id }),
+    mutationFn: (personality: Personality) =>
+      getBridge().invoke('cmd:personalities.delete', personality),
     onSuccess: (list) => {
       queryClient.setQueryData(qk.personalities, list);
+      void queryClient.invalidateQueries({ queryKey: qk.accounts });
+      void queryClient.invalidateQueries({ queryKey: qk.settings });
     },
   });
 }

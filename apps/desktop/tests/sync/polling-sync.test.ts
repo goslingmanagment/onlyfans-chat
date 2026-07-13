@@ -1788,6 +1788,81 @@ describe('PollingSync', () => {
       sync.stop();
     });
 
+    it('does not let a stale fallback REST head overwrite a newer Hub preview or unread state', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      await sync.ingestHubMessage(ACCT, '101', makeHubMessage({ id: '6' }));
+      expect(data.chats.get(ACCT, '101')).toMatchObject({
+        lastMessageId: '6',
+        lastMessagePreview: 'hub body',
+        unreadCount: 1,
+      });
+
+      // The thin-event fallback list read is still advertising head 5. Its
+      // metadata may refresh, but it cannot roll the locally durable Hub head
+      // back before HubSync checkpoints the event.
+      const refresh = sync.refreshAccountHead(ACCT);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await refresh;
+
+      expect(data.chats.get(ACCT, '101')).toMatchObject({
+        lastMessageId: '6',
+        lastMessagePreview: 'hub body',
+        lastMessageIsSentByMe: false,
+        unreadCount: 1,
+      });
+      sync.stop();
+    });
+
+    it('keeps Hub preview and unread metadata when a nudge read has only caught up to the same head ID', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+
+      await sync.ingestHubMessage(
+        ACCT,
+        '101',
+        makeHubMessage({ id: '6', createdAt: '2026-06-10T12:00:00+00:00' }),
+      );
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 6, unread: 0 })]);
+
+      // Subscription events are projected to chatListUpdated nudges. The read
+      // gateway may know the new ID while its preview/unread projection still
+      // lags the full Hub message.
+      const refresh = sync.refreshAccountHead(ACCT);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await refresh;
+
+      expect(data.chats.get(ACCT, '101')).toMatchObject({
+        lastMessageId: '6',
+        lastMessagePreview: 'hub body',
+        lastMessageIsSentByMe: false,
+        unreadCount: 1,
+      });
+      sync.stop();
+    });
+
+    it('lets the ordinary REST poll repair a missed deletion by moving the head backwards', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 6 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('6');
+
+      // Model a deletion webhook that never arrived: the upstream chat head is
+      // now the previous surviving message. Ordinary polling is the recovery
+      // surface and must not preserve the locally stale head forever.
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      await sync.pollAccount(ACCT);
+
+      expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('5');
+      sync.stop();
+    });
+
     it('freezes retention prunes while a harvest is incomplete (Stage 12)', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
       const pruneSpy = vi.spyOn(data.messages, 'prune');

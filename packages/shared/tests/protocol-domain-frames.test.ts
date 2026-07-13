@@ -7,7 +7,7 @@
 //   ppvUnlocked                 ← message.ppv_unlocked
 //   tipReceived                 ← tip.received (amountGross → amountUsd)
 //   presence                    ← presence.online/offline
-//   chatListUpdated             ← subscription.started
+//   chatListUpdated             ← subscription.started/renewed
 //   accountAuthChanged          ← account.auth_changed (status grouping)
 //   typing                      ← the ephemeral serve-time lane (not mapped here)
 //   readStateChanged            ← local-only synthesis (the server never sent it)
@@ -93,9 +93,11 @@ describe('mapDomainFrame', () => {
       .toEqual({ type: 'presence', accountId: ACCT, chatId: '777', online: false });
   });
 
-  it('maps subscription.started to the chat-list nudge', () => {
-    expect(mapDomainFrame(frame({ type: 'subscription.started' })))
-      .toEqual({ type: 'chatListUpdated', accountId: ACCT });
+  it('maps subscription starts and renewals to the chat-list nudge', () => {
+    for (const type of ['subscription.started', 'subscription.renewed']) {
+      expect(mapDomainFrame(frame({ type })))
+        .toEqual({ type: 'chatListUpdated', accountId: ACCT });
+    }
   });
 
   it('groups account.auth_changed statuses like the v1 fanout did', () => {

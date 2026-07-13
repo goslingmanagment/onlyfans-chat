@@ -384,6 +384,12 @@ export interface SettingsVM {
   /** Stage 24: a device-bound hub token is stored (preferred over the chatter key). */
   hasHubDeviceToken: boolean;
   /**
+   * Crash-safe enrollment/revocation custody is durable but deliberately not a
+   * usable bearer yet. Exposed separately so Settings can keep the cancel /
+   * sign-out affordance available while the active-token badge stays honest.
+   */
+  hubDeviceTokenTransition: 'activation' | 'revocation' | null;
+  /**
    * Kernel Stage 24 rollout-window-only fallback: 'v1' re-points the hub SSE
    * consumer at the legacy stream. Not surfaced in UI (settings-file flip per
    * the ops runbook); deleted with the v1 path after fleet confirmation.
@@ -844,7 +850,7 @@ export interface InvokeChannels {
   'cmd:sync.focusAccount': { args: { accountId: string | null }; result: void };
   'cmd:settings.update': { args: SettingsPatch; result: SettingsVM };
   'cmd:personalities.save': { args: Personality; result: Personality[] };
-  'cmd:personalities.delete': { args: { id: string }; result: Personality[] };
+  'cmd:personalities.delete': { args: Personality; result: Personality[] };
   'cmd:mappings.set': {
     args: { accountId: string; personalityId: string | null };
     result: void;

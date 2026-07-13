@@ -418,6 +418,7 @@ function buildStore(): MockStore {
   const settings: SettingsVM = {
     hasHubKey: true,
     hasHubDeviceToken: false,
+    hubDeviceTokenTransition: null,
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
@@ -1426,8 +1427,8 @@ export function createMockBridge(): ChatGooseBridge {
       emit('db:changed', { scope: 'settings' });
       return store.personalities.map((p) => ({ ...p }));
     },
-    'cmd:personalities.delete': ({ id }) => {
-      store.personalities = store.personalities.filter((p) => p.id !== id);
+    'cmd:personalities.delete': (personality) => {
+      store.personalities = store.personalities.filter((p) => p.id !== personality.id);
       emit('db:changed', { scope: 'settings' });
       return store.personalities.map((p) => ({ ...p }));
     },

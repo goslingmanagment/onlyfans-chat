@@ -51,6 +51,7 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
   return {
     hasHubKey: true,
     hasHubDeviceToken: false,
+    hubDeviceTokenTransition: null,
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
@@ -117,9 +118,23 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
 }
 
 export function makeSettingsStore(vm: SettingsVM): SettingsStore {
+  const bearer = vm.hasHubDeviceToken
+    ? 'agency_hub_device_test'
+    : vm.hasHubKey
+      ? 'agency_hub_core_test'
+      : null;
   return {
     get: () => Promise.resolve(vm),
+    getHubConnection: () => Promise.resolve({
+      settings: vm,
+      hubBaseUrl: vm.hubBaseUrl,
+      bearer,
+      deviceToken: vm.hasHubDeviceToken ? bearer : null,
+      hubApiKey: vm.hasHubKey ? 'agency_hub_core_test' : null,
+      deviceTokenTransition: null,
+    }),
     update: () => Promise.resolve(vm),
+    runCredentialMutation: (task) => task(),
   };
 }
 
@@ -302,9 +317,10 @@ export function makeFakeHubClient(
     streamAiGateway: streamAiGatewayMock,
     streamAiFeature: streamAiFeatureMock,
     listAiPersonas: vi.fn(() => Promise.resolve([])),
-    archiveAiPersona: vi.fn(() => Promise.resolve({ archived: true })),
+    listAiPersonaStates: vi.fn(() => Promise.resolve([])),
+    archiveAiPersona: vi.fn(() => Promise.resolve({ archived: true, version: 1 })),
     upsertAiPersona: vi.fn((args: { key: string; displayName: string; systemBlock: string }) =>
-      Promise.resolve({ ...args, updatedAt: new Date().toISOString() })),
+      Promise.resolve({ ...args, updatedAt: new Date().toISOString(), version: 1 })),
     getServerTimeOffsetMs: () => null,
     listPagesMock,
     getFanProfileMock,
