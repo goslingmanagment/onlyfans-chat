@@ -55,11 +55,6 @@ function toBashPath(path: string): string {
     .replaceAll('\\', '/');
 }
 
-function bashPathWith(prepend: string): string {
-  const inherited = execFileSync('bash', ['-lc', 'printf %s "$PATH"'], { encoding: 'utf8' });
-  return `${toBashPath(prepend)}:${inherited}`;
-}
-
 function readNormalized(path: string): string {
   return readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 }
@@ -213,12 +208,17 @@ touch "$stage/scp-succeeded"
     writeExecutable(join(mockBin, 'curl'), '#!/usr/bin/env bash\nexit 1\n');
     writeExecutable(join(mockBin, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
 
-    const result = spawnSync('bash', ['-c', workflowRunScript('Upload to the update feed')], {
+    const uploadScript = `export PATH="$1:$PATH"\n${workflowRunScript('Upload to the update feed')}`;
+    const result = spawnSync('bash', [
+      '-c',
+      uploadScript,
+      'chatgoose-release-harness',
+      toBashPath(mockBin),
+    ], {
       cwd: root,
       encoding: 'utf8',
       env: {
         ...process.env,
-        PATH: bashPathWith(mockBin),
         HOME: toBashPath(home),
         SSH_KEY: 'test-private-key',
         FEED_DIR: toBashPath(feed),
