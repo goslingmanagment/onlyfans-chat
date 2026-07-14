@@ -19,6 +19,7 @@ function inputs(overrides: Partial<DiagnosticsInputs> = {}): DiagnosticsInputs {
     hubActivity: null,
     credits: { balance: 100, usedToday: 3 },
     coreCredits: null,
+    harvest: { machineId: '11111111-2222-4333-8444-555555555555' },
     db: { schemaVersion: 7, counts: { accounts: 2, chats: 40, messages: 1200 } },
     outboxAudit: { cleanSends: 10 },
     errorCounts: { 'CG-OF-03': 2 },
@@ -39,6 +40,9 @@ describe('buildDiagnosticsReport', () => {
     expect(report['outboxAudit']).toMatchObject({ cleanSends: 10 });
     expect(report['errorCounts']).toEqual({ 'CG-OF-03': 2 });
     expect(report['app']).toMatchObject({ version: '0.1.0', arch: 'arm64' });
+    expect(report['harvest']).toEqual({
+      machineId: '11111111-2222-4333-8444-555555555555',
+    });
   });
 
   it('deep-redacts any leaked secret value against the live secret set', () => {

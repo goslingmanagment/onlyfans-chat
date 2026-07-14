@@ -131,7 +131,7 @@ export function createHarvestModule(options: HarvestModuleOptions) {
   let lastError: string | null = null;
   let currentTable: string | null = null;
 
-  function machineId(): string {
+  function ensureMachineId(): string {
     const existing = data.settings.get(INSTALL_ID_KEY);
     if (typeof existing === 'string' && existing.length > 0) {
       return existing;
@@ -546,6 +546,14 @@ export function createHarvestModule(options: HarvestModuleOptions) {
       };
     },
 
+    /**
+     * Local-only owner preflight. Persists the stable install identity without
+     * constructing an uploader, starting a harvest, or touching the network.
+     */
+    prepareIdentity(): { machineId: string } {
+      return { machineId: ensureMachineId() };
+    },
+
     pause(): void {
       pauseRequested = true;
     },
@@ -558,7 +566,7 @@ export function createHarvestModule(options: HarvestModuleOptions) {
       pauseRequested = false;
       lastError = null;
       try {
-        const machine = machineId();
+        const machine = ensureMachineId();
         // Validate the uploader BEFORE persisting the started marker: a Start
         // click with the Hub unconfigured must not arm the purge guard (a
         // zero-progress attempt has captured nothing worth guarding).

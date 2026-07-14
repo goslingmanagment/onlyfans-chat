@@ -397,6 +397,16 @@ export function useHarvestStatus() {
   });
 }
 
+export function useHarvestPrepareIdentity() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => getBridge().invoke('cmd:harvest.prepareIdentity', undefined),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['harvest'] });
+    },
+  });
+}
+
 export function useHarvestStart() {
   const queryClient = useQueryClient();
   return useMutation({

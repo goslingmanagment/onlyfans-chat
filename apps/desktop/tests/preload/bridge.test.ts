@@ -109,6 +109,7 @@ describe('invoke-channel registry', () => {
     expect(INVOKE_CHANNEL_NAMES.length).toBeGreaterThan(0);
     expect(INVOKE_CHANNEL_NAMES).toContain('query:accounts.list');
     expect(INVOKE_CHANNEL_NAMES).toContain('cmd:data.purge');
+    expect(INVOKE_CHANNEL_NAMES).toContain('cmd:harvest.prepareIdentity');
     expect(INVOKE_CHANNEL_NAMES).toContain('ai:start');
   });
 

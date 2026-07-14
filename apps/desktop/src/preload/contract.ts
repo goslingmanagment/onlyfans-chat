@@ -530,6 +530,10 @@ export interface HarvestStatusVM {
   tables: Record<string, HarvestTableProgressVM>;
 }
 
+export interface HarvestIdentityVM {
+  machineId: string;
+}
+
 /** Auto-update state for Settings → Updates (PLAN item 11; main/platform/updater.ts).
  *  `unsupported` = not a win32 packaged build (macOS / dev), so no feed exists. */
 export type UpdatePhaseVM =
@@ -855,6 +859,8 @@ export interface InvokeChannels {
   'cmd:localData.openFolder': { args: void; result: void };
   /** Stage 12: one-time local-history harvest to the kernel capture lane. */
   'query:harvest.status': { args: void; result: HarvestStatusVM };
+  /** Local-only preflight: creates/reuses the stable harvest install id. */
+  'cmd:harvest.prepareIdentity': { args: void; result: HarvestIdentityVM };
   'cmd:harvest.start': { args: void; result: { manifestPath: string | null } };
   'cmd:harvest.pause': { args: void; result: void };
   /** Writes a secrets-free JSON report (incl. the recent log) under userData and reveals it. */
@@ -1133,6 +1139,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'cmd:localData.openFolder': true,
   'cmd:localData.exportDiagnostics': true,
   'query:harvest.status': true,
+  'cmd:harvest.prepareIdentity': true,
   'cmd:harvest.start': true,
   'cmd:harvest.pause': true,
   'cmd:diag.logClient': true,

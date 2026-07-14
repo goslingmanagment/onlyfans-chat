@@ -4,7 +4,7 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DataLayer } from '@main/db/index';
 import { HubError, type HubIngestObservationEvent } from '@chatgoose/shared/hub/index';
@@ -81,6 +81,42 @@ function buildModule(
 }
 
 describe('harvest module', () => {
+  it('prepares and reuses a stable machine id without starting or constructing an uploader', () => {
+    const createUploader = vi.fn(() => {
+      throw new Error('uploader must stay lazy during identity preflight');
+    });
+    const harvest = createHarvestModule({
+      data,
+      createUploader,
+      appVersion: '0.1.42',
+      schemaVersion: 19,
+      manifestDir,
+    });
+
+    expect(harvest.status()).toMatchObject({ state: 'idle', machineId: null });
+    const prepared = harvest.prepareIdentity();
+
+    expect(prepared.machineId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(harvest.prepareIdentity()).toEqual(prepared);
+    expect(harvest.status()).toMatchObject({ state: 'idle', machineId: prepared.machineId });
+    expect(harvest.isIncomplete()).toBe(false);
+    expect(data.settings.get('harvest.install_id')).toBe(prepared.machineId);
+    expect(data.settings.get('harvest.started_at')).toBeUndefined();
+    expect(createUploader).not.toHaveBeenCalled();
+
+    const reloaded = createHarvestModule({
+      data,
+      createUploader,
+      appVersion: '0.1.42',
+      schemaVersion: 19,
+      manifestDir,
+    });
+    expect(reloaded.prepareIdentity()).toEqual(prepared);
+    expect(createUploader).not.toHaveBeenCalled();
+  });
+
   it('walks tables with deterministic ids and writes a reconciling manifest', async () => {
     seedMessage('1');
     seedMessage('2', { deleted: 1 });

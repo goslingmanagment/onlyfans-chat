@@ -42,6 +42,7 @@ import type {
   ActivityVM,
   AiStartRequest,
   ConversationOpenResultVM,
+  HarvestIdentityVM,
   HarvestStatusVM,
   KeyTestProvider,
   HubDeviceTokenResultVM,
@@ -422,6 +423,7 @@ export interface IpcDeps {
   } | null;
   /** Stage 12: one-time local-history harvest (Settings → Danger Zone). */
   harvest?: {
+    prepareIdentity: () => HarvestIdentityVM;
     start: () => Promise<{ manifestPath: string | null }>;
     pause: () => void;
     status: () => HarvestStatusVM;
@@ -754,10 +756,19 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   }
 
   ipcMain.handle('query:harvest.status', () => requireHarvest().status());
+  ipcMain.handle('cmd:harvest.prepareIdentity', (_event, rawArgs: unknown) => {
+    z.undefined().parse(rawArgs);
+    return requireHarvest().prepareIdentity();
+  });
   // Fire-and-forget on purpose: the run outlives any sane IPC timeout; the
   // renderer polls query:harvest.status for progress. Errors land in status().
-  ipcMain.handle('cmd:harvest.start', () => {
-    void requireHarvest().start().catch(() => undefined);
+  ipcMain.handle('cmd:harvest.start', (_event, rawArgs: unknown) => {
+    z.undefined().parse(rawArgs);
+    const harvest = requireHarvest();
+    if (harvest.status().machineId === null) {
+      throw new Error('Create and record the harvest device ID before starting the upload.');
+    }
+    void harvest.start().catch(() => undefined);
     return { manifestPath: null };
   });
   ipcMain.handle('cmd:harvest.pause', () => requireHarvest().pause());

@@ -7,6 +7,7 @@ import { useState } from 'react';
 import {
   useExportDiagnostics,
   useHarvestPause,
+  useHarvestPrepareIdentity,
   useHarvestStart,
   useHarvestStatus,
   useLocalDataStats,
@@ -32,6 +33,7 @@ export function DangerZone(): React.JSX.Element {
   const openFolder = useOpenDataFolder();
   const exportDiag = useExportDiagnostics();
   const harvestStatus = useHarvestStatus();
+  const harvestPrepareIdentity = useHarvestPrepareIdentity();
   const harvestStart = useHarvestStart();
   const harvestPause = useHarvestPause();
   const t = useT();
@@ -39,6 +41,10 @@ export function DangerZone(): React.JSX.Element {
   const [arming, setArming] = useState(false);
   const [typed, setTyped] = useState('');
   const [copied, setCopied] = useState(false);
+  const [identityCopied, setIdentityCopied] = useState(false);
+
+  const harvestMachineId =
+    harvestStatus.data?.machineId ?? harvestPrepareIdentity.data?.machineId ?? null;
 
   const filesWord =
     stats.data !== undefined
@@ -98,6 +104,49 @@ export function DangerZone(): React.JSX.Element {
         <div className="space-y-2 border-t border-line pt-3">
           <p className="text-[12.5px] font-semibold">{t('danger.harvestTitle')}</p>
           <p className="text-[11.5px] text-ink-low">{t('danger.harvestHint')}</p>
+          <div className="space-y-1.5 rounded-chip border border-line bg-bg0 px-3 py-2">
+            <p className="text-[11.5px] text-ink-low">{t('danger.harvestIdentityHint')}</p>
+            {harvestMachineId === null ? (
+              <Button
+                size="sm"
+                disabled={harvestPrepareIdentity.isPending}
+                onClick={() => harvestPrepareIdentity.mutate()}
+              >
+                {t('danger.harvestIdentityPrepare')}
+              </Button>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-semibold text-ink-mid">
+                  {t('danger.harvestIdentityLabel')}:
+                </span>
+                <code className="num break-all text-[11px] text-ink">{harvestMachineId}</code>
+                <button
+                  type="button"
+                  className="text-[11px] text-ink-low underline-offset-2 hover:underline"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(harvestMachineId).then(() => {
+                      setIdentityCopied(true);
+                      window.setTimeout(() => setIdentityCopied(false), 1500);
+                    });
+                  }}
+                >
+                  {identityCopied
+                    ? t('danger.harvestIdentityCopied')
+                    : t('danger.harvestIdentityCopy')}
+                </button>
+              </div>
+            )}
+            {harvestPrepareIdentity.isError && (
+              <p className="text-[11px] text-bad">
+                {t('danger.harvestIdentityError', {
+                  error:
+                    harvestPrepareIdentity.error instanceof Error
+                      ? harvestPrepareIdentity.error.message
+                      : String(harvestPrepareIdentity.error),
+                })}
+              </p>
+            )}
+          </div>
           {harvestStatus.data?.state === 'running' ? (
             <div className="flex items-center gap-2">
               <Button size="sm" onClick={() => harvestPause.mutate()}>
@@ -126,7 +175,7 @@ export function DangerZone(): React.JSX.Element {
               )}
               <Button
                 size="sm"
-                disabled={harvestStart.isPending}
+                disabled={harvestStart.isPending || harvestMachineId === null}
                 onClick={() => harvestStart.mutate()}
               >
                 {harvestStatus.data?.state === 'paused' || harvestStatus.data?.state === 'error'

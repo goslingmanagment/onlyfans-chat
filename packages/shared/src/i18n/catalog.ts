@@ -450,6 +450,21 @@ export const UI_MESSAGES = {
     en: 'One-time upload of local history (messages, transactions, audit) to the agency server. Safe to pause and resume; re-runs skip already-uploaded rows.',
     ru: 'Одноразовая выгрузка локальной истории (сообщения, транзакции, аудит) на сервер агентства. Можно ставить на паузу; повторный запуск пропускает уже выгруженное.',
   },
+  'danger.harvestIdentityHint': {
+    en: 'Create this stable local device ID and send it to the owner before uploading. This action does not contact the server.',
+    ru: 'Создайте стабильный локальный ID устройства и отправьте его владельцу до выгрузки. Это действие не обращается к серверу.',
+  },
+  'danger.harvestIdentityPrepare': {
+    en: 'Create device ID',
+    ru: 'Создать ID устройства',
+  },
+  'danger.harvestIdentityLabel': { en: 'Device ID', ru: 'ID устройства' },
+  'danger.harvestIdentityCopy': { en: 'Copy ID', ru: 'Скопировать ID' },
+  'danger.harvestIdentityCopied': { en: 'ID copied', ru: 'ID скопирован' },
+  'danger.harvestIdentityError': {
+    en: 'Could not create the device ID: {error}',
+    ru: 'Не удалось создать ID устройства: {error}',
+  },
   'danger.harvestStart': { en: 'Upload history to kernel', ru: 'Выгрузить историю в ядро' },
   'danger.harvestResume': { en: 'Resume upload', ru: 'Продолжить выгрузку' },
   'danger.harvestPause': { en: 'Pause', ru: 'Пауза' },

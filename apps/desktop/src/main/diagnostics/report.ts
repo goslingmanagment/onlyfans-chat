@@ -32,6 +32,8 @@ export interface DiagnosticsInputs {
   hubActivity: unknown;
   credits: unknown;
   coreCredits: unknown;
+  /** Stable local harvest identity, once prepared by the owner. */
+  harvest: { machineId: string | null };
   db: { schemaVersion: number | null; counts: Record<string, number> };
   outboxAudit: unknown;
   messageGuardAudit?: unknown;

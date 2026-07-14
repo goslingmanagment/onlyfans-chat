@@ -1935,6 +1935,7 @@ async function boot(): Promise<void> {
       },
     },
     harvest: {
+      prepareIdentity: () => harvestModule.prepareIdentity(),
       start: () => harvestModule.run(),
       pause: () => harvestModule.pause(),
       status: () => harvestModule.status(),
@@ -2067,6 +2068,9 @@ async function boot(): Promise<void> {
             hubActivity: sync?.hubActivity?.() ?? null,
             credits: client?.creditMeter.snapshot() ?? null,
             coreCredits,
+            harvest: {
+              machineId: harvestModule.status().machineId,
+            },
             db: {
               schemaVersion,
               counts: {

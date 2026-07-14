@@ -1080,6 +1080,7 @@ export function createMockBridge(): ChatGooseBridge {
     message: null,
     currentVersion: '0.0.1',
   };
+  let mockHarvestMachineId: string | null = null;
 
   function mockGuardScan(text: string) {
     return scanText(compileGuard(effectiveMessageGuardPolicy(store.settings.messageGuardPolicy)), text);
@@ -1300,11 +1301,15 @@ export function createMockBridge(): ChatGooseBridge {
     }),
     'query:harvest.status': () => ({
       state: 'idle',
-      machineId: null,
+      machineId: mockHarvestMachineId,
       currentTable: null,
       error: null,
       tables: {},
     }),
+    'cmd:harvest.prepareIdentity': () => {
+      mockHarvestMachineId ??= '11111111-2222-4333-8444-555555555555';
+      return { machineId: mockHarvestMachineId };
+    },
     'cmd:harvest.start': () => ({ manifestPath: null }),
     'cmd:harvest.pause': () => undefined,
     'cmd:diag.logClient': () => undefined,

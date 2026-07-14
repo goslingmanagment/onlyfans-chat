@@ -878,6 +878,46 @@ describe('read-only persona catalog IPC', () => {
     expect(handlers.has('cmd:personalities.save')).toBe(false);
     expect(handlers.has('cmd:personalities.delete')).toBe(false);
   });
+
+  it('prepares harvest identity locally and gates upload start on that preflight', async () => {
+    let machineId: string | null = null;
+    const prepareIdentity = vi.fn(() => {
+      machineId ??= '11111111-2222-4333-8444-555555555555';
+      return { machineId };
+    });
+    const start = vi.fn(async () => ({ manifestPath: null }));
+    register(data, {
+      harvest: {
+        prepareIdentity,
+        start,
+        pause: () => undefined,
+        status: () => ({
+          state: 'idle',
+          machineId,
+          currentTable: null,
+          error: null,
+          tables: {},
+        }),
+      },
+    });
+
+    await expect(invokeRaw('cmd:harvest.start')).rejects.toThrow(
+      'Create and record the harvest device ID',
+    );
+    expect(start).not.toHaveBeenCalled();
+
+    await expect(invokeRaw('cmd:harvest.prepareIdentity')).resolves.toEqual({
+      machineId: '11111111-2222-4333-8444-555555555555',
+    });
+    await expect(invokeRaw('cmd:harvest.prepareIdentity')).resolves.toEqual({
+      machineId: '11111111-2222-4333-8444-555555555555',
+    });
+    expect(prepareIdentity).toHaveBeenCalledTimes(2);
+    expect(start).not.toHaveBeenCalled();
+
+    await expect(invokeRaw('cmd:harvest.start')).resolves.toEqual({ manifestPath: null });
+    expect(start).toHaveBeenCalledTimes(1);
+  });
 });
 describe('cmd:hub.signOutDevice', () => {
   let data: DataLayer;
