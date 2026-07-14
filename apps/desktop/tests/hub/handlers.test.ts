@@ -4,22 +4,22 @@
 // patches only (key-only writes publish no settings-table event — the hook is
 // main's only reconnect signal).
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_AGENCY_HUB_BASE_URL } from '@chatgoose/shared';
-import { HubError } from '@chatgoose/shared/hub/index';
 import type { DataLayer } from '@main/db/index';
 import type { HubSyncStatus } from '@main/sync/hub-sync';
 import type { SyncProvider } from '@main/sync/provider';
 import { createSettingsStore } from '@main/settings/store';
-import { loadPersonalities, registerIpcHandlers } from '@main/ipc/handlers';
+import { registerIpcHandlers } from '@main/ipc/handlers';
 import type { IpcDeps } from '@main/ipc/handlers';
+import { LEGACY_PERSONA_SNAPSHOT_KEY, storePersonaCatalog } from '@main/personas/catalog';
 import {
-  createPendingPersonaArchive,
-  createPendingPersonaUpsert,
-  loadPendingPersonaIntents,
-  personaPayloadDigest,
+  personaAccountMappingsKey,
+  personaSummaryCacheIdentity,
   personaStorageScopeForHub,
-  storePendingPersonaIntent,
+  storePersonaAccountMapping,
 } from '@main/personas/pending';
 import {
   createRuntimeMutationQueue,
@@ -27,11 +27,10 @@ import {
   replaceRuntimeSecurityFirst,
 } from '@main/runtime-activation';
 import type { SecretName } from '@main/secrets/keychain';
-import type { SettingsVM, SyncStatusVM } from '../../src/preload/contract';
-import { ACCT, memoryDataLayer, seedAccount } from './helpers';
+import type { FanPanelVM, SettingsVM, SyncStatusVM } from '../../src/preload/contract';
+import { ACCT, FAN, memoryDataLayer, seedAccount } from './helpers';
 
 const TEST_PERSONA_SCOPE = personaStorageScopeForHub(DEFAULT_AGENCY_HUB_BASE_URL);
-const TEST_PERSONA_SCOPE_B = personaStorageScopeForHub('http://localhost:3100');
 
 type Handler = (event: unknown, args?: unknown) => unknown;
 const handlers = vi.hoisted(() => new Map<string, Handler>());
@@ -45,12 +44,16 @@ vi.mock('electron', () => ({
 }));
 
 // async wrapper: ipcMain.handle converts sync handler throws into rejections.
-async function invoke(channel: string, args?: unknown, event: unknown = {}): Promise<unknown> {
+async function invokeRaw(channel: string, args?: unknown, event: unknown = {}): Promise<unknown> {
   const handler = handlers.get(channel);
   if (!handler) {
     throw new Error(`no handler registered for ${channel}`);
   }
   return handler(event, args);
+}
+
+async function invoke(channel: string, args?: unknown, event: unknown = {}): Promise<unknown> {
+  return invokeRaw(channel, args, event);
 }
 
 function makeSyncStub(
@@ -174,6 +177,96 @@ describe('hub IPC wiring', () => {
     expect(onRendererReady).toHaveBeenCalledWith(42);
   });
 
+  it('never renders a same-key/version fan summary from another Hub origin', async () => {
+    seedAccount(data);
+    data.fans.upsert({
+      accountId: ACCT,
+      fanId: FAN,
+      username: 'fan',
+      name: 'Fan',
+      customName: null,
+      avatar: null,
+      about: null,
+      lastSeen: null,
+      spending: null,
+      subscription: null,
+      fetchedAt: '2026-07-13T00:00:00.000Z',
+    });
+    storePersonaAccountMapping(data.settings, TEST_PERSONA_SCOPE, ACCT, 'builtin:lora');
+    storePersonaCatalog(data.settings, TEST_PERSONA_SCOPE, [{
+      key: 'builtin:lora',
+      displayName: 'Lora',
+      version: 1,
+      status: 'active',
+    }]);
+    data.summaries.put(ACCT, FAN, {
+      body: 'Hub A summary',
+      personalityId: personaSummaryCacheIdentity(TEST_PERSONA_SCOPE, 'builtin:lora'),
+      personalityUpdatedAt: 1,
+      generatedAt: Date.parse('2026-07-13T00:00:00.000Z'),
+      spendingVerified: true,
+      subscriptionVerified: true,
+      modelId: 'kernel',
+    });
+    register(data);
+    expect((await invoke('query:fan.get', { accountId: ACCT, fanId: FAN }) as FanPanelVM).summary)
+      .toMatchObject({ body: 'Hub A summary' });
+
+    const scopeB = personaStorageScopeForHub('http://127.0.0.1:4010');
+    storePersonaAccountMapping(data.settings, scopeB, ACCT, 'builtin:lora');
+    storePersonaCatalog(data.settings, scopeB, [{
+      key: 'builtin:lora',
+      displayName: 'Different Lora',
+      version: 1,
+      status: 'active',
+    }]);
+    await invoke('cmd:settings.update', { hubBaseUrl: 'http://127.0.0.1:4010' });
+
+    expect((await invoke('query:fan.get', { accountId: ACCT, fanId: FAN }) as FanPanelVM).summary)
+      .toBeNull();
+  });
+
+  it('uses the SettingsStore fallback source for an invalid-but-parseable persisted Hub URL', async () => {
+    seedAccount(data);
+    data.fans.upsert({
+      accountId: ACCT,
+      fanId: FAN,
+      username: 'fan',
+      name: 'Fan',
+      customName: null,
+      avatar: null,
+      about: null,
+      lastSeen: null,
+      spending: null,
+      subscription: null,
+      fetchedAt: '2026-07-13T00:00:00.000Z',
+    });
+    const invalidScope = personaStorageScopeForHub('https://old.example');
+    storePersonaAccountMapping(data.settings, invalidScope, ACCT, 'builtin:lora');
+    storePersonaCatalog(data.settings, invalidScope, [{
+      key: 'builtin:lora',
+      displayName: 'Old Lora',
+      version: 1,
+      status: 'active',
+    }]);
+    data.summaries.put(ACCT, FAN, {
+      body: 'invalid-origin summary',
+      personalityId: personaSummaryCacheIdentity(invalidScope, 'builtin:lora'),
+      personalityUpdatedAt: 1,
+      generatedAt: Date.parse('2026-07-13T00:00:00.000Z'),
+      spendingVerified: true,
+      subscriptionVerified: true,
+      modelId: 'kernel',
+    });
+    data.settings.set('hubBaseUrl', 'https://old.example');
+    register(data);
+
+    const settings = await invoke('query:settings.get') as SettingsVM;
+    expect(settings.hubBaseUrl).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
+    expect((await invoke('query:fan.get', { accountId: ACCT, fanId: FAN }) as FanPanelVM).summary)
+      .toBeNull();
+  });
+
   it('query:sync.status carries the hub stream state', async () => {
     register(data, { sync: makeSyncStub('live') });
     const status = (await invoke('query:sync.status')) as SyncStatusVM;
@@ -234,6 +327,22 @@ describe('hub IPC wiring', () => {
     expect(((await invoke('query:sync.status')) as SyncStatusVM).hub).toBe('off');
   });
 
+  it('surfaces quarantined credential custody independently of sync/auth status', async () => {
+    register(data, { hubCredentialAttention: () => true });
+    expect((await invoke('query:sync.status') as SyncStatusVM).hubCredentialAttention).toBe(true);
+
+    register(data, {
+      sync: makeSyncStub('live'),
+      hubCredentialAttention: () => true,
+    });
+    const live = await invoke('query:sync.status') as SyncStatusVM;
+    expect(live.hub).toBe('live');
+    expect(live.hubCredentialAttention).toBe(true);
+
+    register(data, { hubCredentialAttention: () => false });
+    expect((await invoke('query:sync.status') as SyncStatusVM).hubCredentialAttention).toBe(false);
+  });
+
   it('splits read-runtime rebuilds from hub stream override rechecks', async () => {
     const { onHubConfigChanged, onOfapiRuntimeConfigChanged } = register(data);
     await invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_x' });
@@ -254,6 +363,17 @@ describe('hub IPC wiring', () => {
     });
     expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(3);
     expect(onHubConfigChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps mode-only rechecks on Sync without retiring the REST/AI Hub module', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../../src/main/index.ts'), 'utf8');
+    const start = source.indexOf('const recheckNextHubSyncConfig = async');
+    const end = source.indexOf('// Hub-supported writes', start);
+    const recheck = source.slice(start, end);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(recheck).toContain('await nextSync.reconfigureHub();');
+    expect(recheck).not.toContain('nextHub.reconfigure()');
   });
 
   it('skips probe/rebuild for an unchanged hub URL but preserves real URL and key transitions', async () => {
@@ -599,656 +719,112 @@ describe('hub IPC wiring', () => {
   });
 });
 
-describe('persona cache ordering', () => {
+describe('read-only persona catalog IPC', () => {
   let data: DataLayer;
 
   beforeEach(() => {
     data = memoryDataLayer();
-  });
-
-  it('preserves pre-cutover personas that do not have an updatedAt cache field', () => {
-    data.settings.set('personalities', [
-      { id: 'custom:legacy', name: 'Legacy', content: 'legacy prompt' },
-    ]);
-
-    expect(loadPersonalities(data, null)).toEqual([
-      { id: 'custom:legacy', name: 'Legacy', content: 'legacy prompt', updatedAt: 0 },
-    ]);
-  });
-
-  it('does not publish a settings invalidation for an identical remote list', async () => {
-    let remote = [{
-      key: 'custom:stable',
-      displayName: 'Stable',
-      systemBlock: 'version one',
-      updatedAt: '2026-07-13T12:00:00.000Z',
-      version: 1,
-    }];
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => remote),
-      upsert: vi.fn(async () => undefined),
-      archive: vi.fn(async () => undefined),
-    };
-    const settingsEvents: Array<{ scope: string }> = [];
-    data.bus.subscribe((events) => settingsEvents.push(...events));
-    register(data, { personas });
-
-    await invoke('query:personalities.list');
-    data.bus.flushNow();
-    expect(settingsEvents.filter((event) => event.scope === 'settings')).toHaveLength(1);
-    settingsEvents.length = 0;
-
-    await invoke('query:personalities.list');
-    data.bus.flushNow();
-    expect(settingsEvents.filter((event) => event.scope === 'settings')).toEqual([]);
-
-    remote = [{
-      ...remote[0]!,
-      systemBlock: 'version two',
-      updatedAt: '2026-07-13T12:01:00.000Z',
-      version: 2,
-    }];
-    await invoke('query:personalities.list');
-    data.bus.flushNow();
-    expect(settingsEvents.filter((event) => event.scope === 'settings')).toHaveLength(1);
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE)).toEqual([
-      expect.objectContaining({ id: 'custom:stable', content: 'version two', remoteVersion: 2 }),
-    ]);
-  });
-
-  it('discards a delayed remote list snapshot after a newer save commits', async () => {
-    data.settings.set('personalities', [
-      { id: 'custom:one', name: 'One', content: 'old prompt', updatedAt: 1 },
-    ]);
-    let resolveList!: (value: Array<{
-      key: string;
-      displayName: string;
-      systemBlock: string;
-      updatedAt: string;
-    }>) => void;
-    const listResult = new Promise<Array<{
-      key: string;
-      displayName: string;
-      systemBlock: string;
-      updatedAt: string;
-    }>>((resolve) => {
-      resolveList = resolve;
-    });
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(() => listResult),
-      upsert: vi.fn(async () => undefined),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-
-    const delayedList = invoke('query:personalities.list');
-    await vi.waitFor(() => expect(personas.list).toHaveBeenCalledTimes(1));
-    await invoke('cmd:personalities.save', {
-      id: 'custom:one',
-      name: 'One',
-      content: 'new prompt',
-      updatedAt: 2,
-    });
-    resolveList([
-      {
-        key: 'custom:one',
-        displayName: 'One',
-        systemBlock: 'old prompt',
-        updatedAt: '2026-06-01T00:00:00.000Z',
-      },
-    ]);
-
-    await expect(delayedList).resolves.toEqual([
-      { id: 'custom:one', name: 'One', content: 'new prompt', updatedAt: 2 },
-    ]);
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE)).toEqual([
-      { id: 'custom:one', name: 'One', content: 'new prompt', updatedAt: 2 },
-    ]);
-  });
-
-  it('does not let an older overlapping list response replace a newer one', async () => {
-    const resolvers: Array<(value: Array<{
-      key: string;
-      displayName: string;
-      systemBlock: string;
-      updatedAt: string;
-    }>) => void> = [];
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(() => new Promise<Array<{
-        key: string;
-        displayName: string;
-        systemBlock: string;
-        updatedAt: string;
-      }>>((resolve) => resolvers.push(resolve))),
-      upsert: vi.fn(async () => undefined),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-
-    const olderRequest = invoke('query:personalities.list');
-    const newerRequest = invoke('query:personalities.list');
-    await vi.waitFor(() => expect(resolvers).toHaveLength(2));
-    resolvers[1]?.([
-      {
-        key: 'custom:one',
-        displayName: 'One',
-        systemBlock: 'newer prompt',
-        updatedAt: '2026-06-02T00:00:00.000Z',
-      },
-    ]);
-    await newerRequest;
-    resolvers[0]?.([
-      {
-        key: 'custom:one',
-        displayName: 'One',
-        systemBlock: 'older prompt',
-        updatedAt: '2026-06-01T00:00:00.000Z',
-      },
-    ]);
-
-    await expect(olderRequest).resolves.toEqual([
-      {
-        id: 'custom:one',
-        name: 'One',
-        content: 'newer prompt',
-        updatedAt: Date.parse('2026-06-02T00:00:00.000Z'),
-      },
-    ]);
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE)[0]?.content).toBe('newer prompt');
-  });
-
-  it('prunes an account mapping when the authoritative Core list no longer contains its persona', async () => {
     seedAccount(data);
-    const local = {
-      id: 'custom:archived-elsewhere',
-      name: 'Archived elsewhere',
-      content: 'stale local prompt',
-      updatedAt: 1,
-    };
-    data.settings.set('personalities', [local]);
-    const personas: NonNullable<IpcDeps['personas']> = {
-      // Core active-list omission is the reachable result of another device
-      // archiving this key.
-      list: vi.fn(async () => []),
-      upsert: vi.fn(async () => undefined),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-    await invoke('cmd:mappings.set', { accountId: ACCT, personalityId: local.id });
-    expect((await invoke('query:settings.get') as SettingsVM).accountMappings)
-      .toEqual({ [ACCT]: local.id });
-    expect(await invoke('query:accounts.list')).toEqual([
-      expect.objectContaining({ id: ACCT, personalityId: local.id }),
-    ]);
-
-    await expect(invoke('query:personalities.list')).resolves.toEqual([]);
-
-    expect((await invoke('query:settings.get') as SettingsVM).accountMappings).toEqual({});
-    expect(await invoke('query:accounts.list')).toEqual([
-      expect.objectContaining({ id: ACCT, personalityId: null }),
-    ]);
   });
 
-  it('keeps a transient failed upsert over stale lists and clears it only after replay succeeds', async () => {
-    let offline = true;
-    let remote = [
-      {
-        key: 'builtin:lora',
-        displayName: 'Lora',
-        systemBlock: 'builtin prompt',
-        updatedAt: '2026-06-01T00:00:00.000Z',
-      },
-      {
-        key: 'custom:one',
-        displayName: 'One',
-        systemBlock: 'old prompt',
-        updatedAt: '2026-06-01T00:00:00.000Z',
-      },
-    ];
-    data.settings.set('personalities', [
-      { id: 'custom:one', name: 'One', content: 'old prompt', updatedAt: 1 },
-    ]);
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => remote),
-      upsert: vi.fn(async (args) => {
-        if (offline) throw new Error('offline');
-        remote = remote.map((persona) => persona.key === args.key
-          ? {
-              key: args.key,
-              displayName: args.displayName,
-              systemBlock: args.systemBlock,
-              updatedAt: '2026-06-02T00:00:00.000Z',
-            }
-          : persona);
-      }),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-
-    await expect(invoke('cmd:personalities.save', {
-      id: 'custom:one',
-      name: 'One',
-      content: 'new prompt',
-      updatedAt: 2,
-    })).resolves.toEqual([
-      { id: 'custom:one', name: 'One', content: 'new prompt', updatedAt: 2 },
-    ]);
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toHaveLength(1);
-
-    const staleList = await invoke('query:personalities.list') as Array<{ id: string; content: string }>;
-    expect(staleList.find((persona) => persona.id === 'custom:one')?.content).toBe('new prompt');
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE).find((persona) => persona.id === 'custom:one')?.content).toBe('new prompt');
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toHaveLength(1);
-
-    offline = false;
-    const repaired = await invoke('query:personalities.list') as Array<{ id: string; content: string }>;
-    expect(repaired.find((persona) => persona.id === 'custom:one')?.content).toBe('new prompt');
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-    expect(personas.upsert).toHaveBeenCalledTimes(3);
-  });
-
-  it('keeps a transient failed archive tombstoned across stale lists until replay succeeds', async () => {
-    let offline = true;
-    let remote = [
-      {
-        key: 'builtin:lora',
-        displayName: 'Lora',
-        systemBlock: 'builtin prompt',
-        updatedAt: '2026-06-01T00:00:00.000Z',
-      },
-      {
-        key: 'custom:one',
-        displayName: 'One',
-        systemBlock: 'prompt',
-        updatedAt: '2026-06-01T00:00:00.000Z',
-      },
-    ];
-    data.settings.set('personalities', [
-      { id: 'builtin:lora', name: 'Lora', content: 'builtin prompt', updatedAt: 1, builtin: true },
-      { id: 'custom:one', name: 'One', content: 'prompt', updatedAt: 1 },
-    ]);
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => remote),
-      upsert: vi.fn(async () => undefined),
-      archive: vi.fn(async ({ key }) => {
-        if (offline) throw new Error('offline');
-        remote = remote.filter((persona) => persona.key !== key);
-      }),
-    };
-    register(data, { personas });
-
-    const deleted = await invoke('cmd:personalities.delete', {
-      id: 'custom:one',
-      name: 'One',
-      content: 'prompt',
-      updatedAt: 1,
-    }) as Array<{ id: string }>;
-    expect(deleted.map((persona) => persona.id)).toEqual(['builtin:lora']);
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toHaveLength(1);
-
-    const staleList = await invoke('query:personalities.list') as Array<{ id: string }>;
-    expect(staleList.map((persona) => persona.id)).toEqual(['builtin:lora']);
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE).map((persona) => persona.id)).toEqual(['builtin:lora']);
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toHaveLength(1);
-
-    offline = false;
-    const repaired = await invoke('query:personalities.list') as Array<{ id: string }>;
-    expect(repaired.map((persona) => persona.id)).toEqual(['builtin:lora']);
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-    expect(personas.archive).toHaveBeenCalledTimes(3);
-  });
-
-  it('bounds an offline replay trigger at the first transport failure', async () => {
-    const first = { id: 'custom:first', name: 'First', content: 'first prompt', updatedAt: 1 };
-    const second = { id: 'custom:second', name: 'Second', content: 'second prompt', updatedAt: 1 };
-    data.settings.set('personalities', [first, second]);
-    storePendingPersonaIntent(data.settings, null, createPendingPersonaUpsert(first));
-    storePendingPersonaIntent(data.settings, null, createPendingPersonaUpsert(second));
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => []),
-      upsert: vi.fn(async () => {
-        throw new HubError('timeout');
-      }),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-
-    await expect(invoke('query:personalities.list')).resolves.toEqual([first, second]);
-    expect(personas.upsert).toHaveBeenCalledTimes(1);
-    expect(personas.upsert).toHaveBeenCalledWith(expect.objectContaining({ key: first.id }));
-    expect(personas.list).not.toHaveBeenCalled();
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toHaveLength(2);
-  });
-
-  it('projects a confirmed retry before clearing and does not regress it with an immediate stale list', async () => {
-    const cached = { id: 'custom:one', name: 'One', content: 'old prompt', updatedAt: 1 };
-    const pending = { ...cached, content: 'durable prompt', updatedAt: 2 };
-    data.settings.set('personalities', [cached]);
-    storePendingPersonaIntent(data.settings, null, createPendingPersonaUpsert(pending));
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => [{
-        key: cached.id,
-        displayName: cached.name,
-        systemBlock: cached.content,
-        updatedAt: '2026-06-01T00:00:00.000Z',
-      }]),
-      upsert: vi.fn(async () => undefined),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-
-    await expect(invoke('query:personalities.list')).resolves.toEqual([pending]);
-    expect(personas.list).not.toHaveBeenCalled();
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE)).toEqual([pending]);
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-  });
-
-  it('does not acknowledge a Core 4xx as an offline persona save', async () => {
-    data.settings.set('personalities', [
-      { id: 'custom:one', name: 'One', content: 'old prompt', updatedAt: 1 },
-    ]);
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => []),
-      upsert: vi.fn(async () => {
-        throw new HubError('bad-request', { detail: { status: 400 } });
-      }),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-
-    await expect(invoke('cmd:personalities.save', {
-      id: 'custom:one',
-      name: 'One',
-      content: 'rejected prompt',
-      updatedAt: 2,
-    })).rejects.toMatchObject({ reason: 'bad-request' });
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE)[0]?.content).toBe('old prompt');
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-  });
-
-  it('sends the cached Core revision and persists the revision returned by a save', async () => {
-    const existing = {
-      id: 'custom:versioned',
-      name: 'Versioned',
-      content: 'version three',
-      updatedAt: 1,
-      remoteVersion: 3,
-    };
-    data.settings.set('personalities', [existing]);
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => []),
-      upsert: vi.fn(async (args) => ({
-        kind: 'upserted' as const,
-        persona: {
-          key: args.key,
-          displayName: args.displayName,
-          systemBlock: args.systemBlock,
-          updatedAt: '2026-07-13T12:00:00.000Z',
-          version: 4,
-        },
-      })),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-    const edited = { ...existing, content: 'version four', updatedAt: 2 };
-
-    await expect(invoke('cmd:personalities.save', edited)).resolves.toEqual([
-      { ...edited, remoteVersion: 4 },
-    ]);
-    expect(personas.upsert).toHaveBeenCalledExactlyOnceWith({
-      key: edited.id,
-      displayName: edited.name,
-      systemBlock: edited.content,
-      expectedVersion: 3,
-      expectedHubOrigin: TEST_PERSONA_SCOPE.origin,
+  it('commits the immutable full-text snapshot before the first catalog request', async () => {
+    const legacy = [{ id: 'custom:legacy', name: 'Legacy', content: 'full private text' }];
+    const mappings = { [ACCT]: 'custom:legacy' };
+    data.settings.set('personalities', legacy);
+    data.settings.set('accountMappings', mappings);
+    const list = vi.fn(async () => {
+      expect(data.settings.get(LEGACY_PERSONA_SNAPSHOT_KEY)).toEqual(expect.objectContaining({
+        schemaVersion: 1,
+        rows: expect.objectContaining({
+          personalities: legacy,
+          accountMappings: mappings,
+        }),
+      }));
+      return [{
+        key: 'custom:legacy',
+        displayName: 'Legacy',
+        version: 7,
+        status: 'active' as const,
+      }];
     });
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE)).toEqual([
-      { ...edited, remoteVersion: 4 },
-    ]);
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-  });
+    register(data, { personas: { list } });
 
-  it('archives with the immutable editor revision instead of reloading a newer cache token', async () => {
-    const opened = {
-      id: 'custom:archive-versioned',
-      name: 'Versioned',
-      content: 'version three',
-      updatedAt: 1,
-      remoteVersion: 3,
-    };
-    data.settings.set('personalities', [
-      { ...opened, content: 'device B version four', updatedAt: 2, remoteVersion: 4 },
-    ]);
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => []),
-      upsert: vi.fn(async () => undefined),
-      archive: vi.fn(async () => ({ archived: true, version: 4 })),
-    };
-    register(data, { personas });
-
-    await expect(invoke('cmd:personalities.delete', opened)).resolves.toEqual([]);
-    expect(personas.archive).toHaveBeenCalledExactlyOnceWith({
-      key: opened.id,
-      expectedVersion: 3,
-      expectedHubOrigin: TEST_PERSONA_SCOPE.origin,
+    await expect(invokeRaw('query:personalities.list')).resolves.toEqual({
+      scopeOrigin: TEST_PERSONA_SCOPE.origin,
+      personas: [{
+        key: 'custom:legacy',
+        displayName: 'Legacy',
+        version: 7,
+        status: 'active',
+      }],
+      legacySnapshotAvailable: true,
     });
-  });
-
-  it('restores an older pending edit when a newer same-key save gets a Core 4xx', async () => {
-    let rejectDeterministically = false;
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => []),
-      upsert: vi.fn(async () => {
-        if (rejectDeterministically) {
-          throw new HubError('bad-request', { detail: { status: 400 } });
-        }
-        throw new HubError('timeout');
-      }),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-    const older = { id: 'custom:one', name: 'One', content: 'pending prompt', updatedAt: 1 };
-    await expect(invoke('cmd:personalities.save', older)).resolves.toEqual(
-      expect.arrayContaining([older]),
-    );
-
-    rejectDeterministically = true;
-    await expect(invoke('cmd:personalities.save', {
-      ...older,
-      content: 'rejected prompt',
-      updatedAt: 2,
-    })).rejects.toMatchObject({ reason: 'bad-request' });
-
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE)).toEqual(expect.arrayContaining([older]));
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([
-      expect.objectContaining({
-        kind: 'upsert',
-        key: older.id,
-        personality: older,
-      }),
-    ]);
-  });
-
-  it('inherits the prior indeterminate same-key save as durable successor lineage', async () => {
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => []),
-      upsert: vi.fn(async () => {
-        throw new HubError('timeout');
-      }),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-    const p2 = {
-      id: 'custom:successor',
-      name: 'Successor',
-      content: 'version two',
-      updatedAt: 2,
-      remoteVersion: 1,
-    };
-    const p3 = { ...p2, content: 'version three', updatedAt: 3 };
-
-    await expect(invoke('cmd:personalities.save', p2)).resolves.toEqual(
-      expect.arrayContaining([p2]),
-    );
-    await expect(invoke('cmd:personalities.save', p3)).resolves.toEqual(
-      expect.arrayContaining([p3]),
-    );
-
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([
-      expect.objectContaining({
-        kind: 'upsert',
-        key: p3.id,
-        personality: p3,
-        expectedVersion: 1,
-        predecessors: [{
-          payloadDigest: personaPayloadDigest(p2),
-          committedVersion: 2,
-        }],
-      }),
-    ]);
-  });
-
-  it('durably defers an auth-rejected persona archive for replay', async () => {
-    const existing = { id: 'custom:one', name: 'One', content: 'old prompt', updatedAt: 1 };
-    data.settings.set('personalities', [existing]);
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => []),
-      upsert: vi.fn(async () => undefined),
-      archive: vi.fn(async () => {
-        throw new HubError('auth', { detail: { status: 403 } });
-      }),
-    };
-    register(data, { personas });
-
-    await expect(invoke('cmd:personalities.delete', existing)).resolves.toEqual([]);
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE)).toEqual([]);
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([
-      expect.objectContaining({ kind: 'archive', key: existing.id }),
-    ]);
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(data.settings.get('personalities')).toEqual(legacy);
+    expect(data.settings.get('accountMappings')).toEqual(mappings);
   });
 
   it.each([
-    new HubError('auth', { detail: { status: 401 } }),
-    new HubError('http', { detail: { status: 429 } }),
-  ])('durably defers a repairable persona save failure (%s)', async (failure) => {
-    const existing = { id: 'custom:one', name: 'One', content: 'old prompt', updatedAt: 1 };
-    const edited = { ...existing, content: 'durable prompt', updatedAt: 2 };
-    data.settings.set('personalities', [existing]);
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => []),
-      upsert: vi.fn(async () => {
-        throw failure;
-      }),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-
-    await expect(invoke('cmd:personalities.save', edited)).resolves.toEqual([edited]);
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE)).toEqual([edited]);
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([
-      expect.objectContaining({ kind: 'upsert', key: edited.id, personality: edited }),
-    ]);
-  });
-
-  it('treats a replayed archive 404 as confirmed convergence', async () => {
-    const builtin = {
-      id: 'builtin:lora',
-      name: 'Lora',
-      content: 'builtin prompt',
-      updatedAt: 1,
-      builtin: true,
-    };
-    const archived = { id: 'custom:one', name: 'One', content: 'old prompt', updatedAt: 1 };
-    data.settings.set('personalities', [builtin, archived]);
-    storePendingPersonaIntent(data.settings, null, createPendingPersonaArchive(archived.id));
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => []),
-      upsert: vi.fn(async () => undefined),
-      archive: vi.fn(async () => {
-        throw new HubError('http', { detail: { status: 404 } });
-      }),
-    };
-    register(data, { personas });
-
-    await expect(invoke('query:personalities.list')).resolves.toEqual([builtin]);
-    expect(loadPersonalities(data, TEST_PERSONA_SCOPE)).toEqual([builtin]);
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-    expect(personas.list).not.toHaveBeenCalled();
-  });
-
-  it('enforces the Core persona content boundaries at the IPC trust boundary', async () => {
-    const personas: NonNullable<IpcDeps['personas']> = {
-      list: vi.fn(async () => []),
-      upsert: vi.fn(async () => undefined),
-      archive: vi.fn(async () => undefined),
-    };
-    register(data, { personas });
-
-    const payload = (content: string) => ({
-      id: 'custom:boundary',
-      name: 'Boundary',
-      content,
-      updatedAt: 1,
+    ['missing', 'custom:missing', 'unresolved'],
+    ['archived', 'custom:archived', 'archived'],
+  ] as const)('preserves a %s raw mapping while disabling its effective AI mapping', async (
+    _label,
+    mappedKey,
+    expectedState,
+  ) => {
+    data.settings.set('accountMappings', { [ACCT]: mappedKey });
+    register(data, {
+      personas: {
+        list: async () => [{
+          key: 'custom:archived',
+          displayName: 'Archived',
+          version: 4,
+          status: 'archived',
+        }],
+      },
     });
-    await expect(invoke('cmd:personalities.save', payload(''))).rejects.toThrow();
-    await expect(invoke('cmd:personalities.save', payload('x'.repeat(50_001)))).rejects.toThrow();
-    await expect(invoke('cmd:personalities.save', payload('x'.repeat(50_000)))).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: 'custom:boundary', content: 'x'.repeat(50_000) }),
-      ]),
-    );
-    expect(personas.upsert).toHaveBeenCalledTimes(1);
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
+
+    await invokeRaw('query:personalities.list');
+    const accounts = await invokeRaw('query:accounts.list') as Array<Record<string, unknown>>;
+    expect(accounts).toEqual([expect.objectContaining({
+      id: ACCT,
+      personalityId: null,
+      rawPersonalityId: mappedKey,
+      personalityMappingState: expectedState,
+    })]);
+    expect(data.settings.get(personaAccountMappingsKey(TEST_PERSONA_SCOPE))).toEqual({
+      [ACCT]: mappedKey,
+    });
   });
 
-  it('isolates cached personas, pending edits, and mappings across Hub A -> B -> A', async () => {
-    const cachedA = {
-      id: 'custom:a',
-      name: 'Persona A',
-      content: 'cached A prompt',
-      updatedAt: 1,
-    };
-    data.settings.set('personalities', [cachedA]);
-    register(data, { personas: null });
+  it('exports the immutable snapshot without exposing persona write handlers', async () => {
+    data.settings.set('personalities', [{
+      id: 'custom:backup',
+      name: 'Backup',
+      content: 'must survive',
+    }]);
+    const exportPersonaSnapshot = vi.fn(async () => ({ path: '/tmp/personas.json' }));
+    register(data, {
+      localData: {
+        stats: async () => ({ dbBytes: 0, mediaBytes: 0, mediaFiles: 0 }),
+        openFolder: async () => undefined,
+        exportDiagnostics: async () => ({ path: '/tmp/diagnostics.json' }),
+        exportPersonaSnapshot,
+      },
+    });
 
-    await expect(invoke('query:personalities.list')).resolves.toEqual([cachedA]);
-    await invoke('cmd:mappings.set', { accountId: ACCT, personalityId: cachedA.id });
-    const pendingA = { ...cachedA, content: 'pending A prompt', updatedAt: 2 };
-    await invoke('cmd:personalities.save', pendingA);
-
-    await invoke('cmd:settings.update', { hubBaseUrl: TEST_PERSONA_SCOPE_B.origin });
-    const listB = await invoke('query:personalities.list') as Array<{ id: string }>;
-    expect(listB.some((persona) => persona.id === cachedA.id)).toBe(false);
-    expect((await invoke('query:settings.get') as SettingsVM).accountMappings).toEqual({});
-
-    const pendingB = {
-      id: 'custom:b',
-      name: 'Persona B',
-      content: 'pending B prompt',
-      updatedAt: 1,
-    };
-    await invoke('cmd:personalities.save', pendingB);
-    await invoke('cmd:mappings.set', { accountId: ACCT, personalityId: pendingB.id });
-
-    await invoke('cmd:settings.update', { hubBaseUrl: TEST_PERSONA_SCOPE.origin });
-    const restoredA = await invoke('query:personalities.list') as Array<{ id: string; content: string }>;
-    expect(restoredA).toEqual([pendingA]);
-    expect((await invoke('query:settings.get') as SettingsVM).accountMappings)
-      .toEqual({ [ACCT]: cachedA.id });
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE))
-      .toEqual([expect.objectContaining({ kind: 'upsert', personality: pendingA })]);
-
-    await invoke('cmd:settings.update', { hubBaseUrl: TEST_PERSONA_SCOPE_B.origin });
-    const restoredB = await invoke('query:personalities.list') as Array<{ id: string }>;
-    expect(restoredB.some((persona) => persona.id === pendingB.id)).toBe(true);
-    expect(restoredB.some((persona) => persona.id === cachedA.id)).toBe(false);
-    expect((await invoke('query:settings.get') as SettingsVM).accountMappings)
-      .toEqual({ [ACCT]: pendingB.id });
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE_B))
-      .toEqual([expect.objectContaining({ kind: 'upsert', personality: pendingB })]);
+    await expect(invokeRaw('cmd:personalities.exportLegacySnapshot')).resolves.toEqual({
+      path: '/tmp/personas.json',
+    });
+    expect(exportPersonaSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      rows: expect.objectContaining({
+        personalities: [expect.objectContaining({ content: 'must survive' })],
+      }),
+    }));
+    expect(handlers.has('cmd:personalities.save')).toBe(false);
+    expect(handlers.has('cmd:personalities.delete')).toBe(false);
   });
 });
-
 describe('cmd:hub.signOutDevice', () => {
   let data: DataLayer;
 
@@ -1256,12 +832,16 @@ describe('cmd:hub.signOutDevice', () => {
     data = memoryDataLayer();
   });
 
-  function stubHubAuth(signOutDevice: () => Promise<void>): NonNullable<IpcDeps['hubAuth']> {
+  function stubHubAuth(
+    signOutDevice: () => Promise<void>,
+    abandonDevice: () => Promise<void> = () => Promise.resolve(),
+  ): NonNullable<IpcDeps['hubAuth']> {
     return {
       issueDeviceToken: async () => {
         throw new Error('issueDeviceToken not exercised in this test');
       },
       signOutDevice,
+      abandonDevice,
     };
   }
 
@@ -1309,5 +889,26 @@ describe('cmd:hub.signOutDevice', () => {
 
     await expect(invoke('cmd:hub.signOutDevice', { evil: true })).rejects.toThrow();
     expect(signOutDevice).not.toHaveBeenCalled();
+  });
+
+  it('delegates explicitly confirmed local-only abandonment separately from sign-out', async () => {
+    const signOutDevice = vi.fn(() => Promise.resolve());
+    const abandonDevice = vi.fn(() => Promise.resolve());
+    register(data, { hubAuth: stubHubAuth(signOutDevice, abandonDevice) });
+
+    await invoke('cmd:hub.abandonDevice');
+
+    expect(abandonDevice).toHaveBeenCalledTimes(1);
+    expect(signOutDevice).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unexpected abandonment payload at the trust boundary', async () => {
+    const abandonDevice = vi.fn(() => Promise.resolve());
+    register(data, {
+      hubAuth: stubHubAuth(() => Promise.resolve(), abandonDevice),
+    });
+
+    await expect(invoke('cmd:hub.abandonDevice', { unconfirmed: true })).rejects.toThrow();
+    expect(abandonDevice).not.toHaveBeenCalled();
   });
 });

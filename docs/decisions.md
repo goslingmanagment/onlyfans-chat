@@ -34,6 +34,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D14 | 2026-07-13 | Harvest custody is revision-aware; Core ids bind natural key plus content hash |
 | D15 | 2026-07-13 | Cross-transport state is monotonic; generated AI parts have a current-session bound |
 | D16 | 2026-07-13 | Replay-gap state snapshots page every durable row through a bounded opaque cursor |
+| D17 | 2026-07-13 | Global personas are a read-only metadata catalog; legacy client data is preserved and exportable |
 
 ## Entries
 
@@ -291,3 +292,47 @@ non-regressing `currentSeq`; an omitted account allowlist still fails closed.
 Core must deploy before the Desktop release. A single retained row remains
 indivisible, so the contract bounds rows rather than silently truncating text or
 media to advertise a byte ceiling it cannot guarantee.
+
+**D17 (2026-07-13).** Core #148 makes global persona definitions owner-admin
+content. Desktop consumes only the Hub-origin-scoped metadata catalog
+`{key, displayName, version, status}` and may mutate only its local
+account-to-persona mappings. It has no create, edit, archive, definition-sync,
+CAS, migration-write, or pending-write replay path. The transitional legacy
+Core routes do not authorize Desktop to call them. Archived and unknown mapped
+keys remain stored verbatim for recovery and export, but resolve as disabled
+and cannot start AI; only an active catalog entry is an effective mapping.
+
+Before the first catalog request, Desktop transactionally creates one immutable
+JSON snapshot of every legacy persona-related settings row, including definition
+text, aliases, caches, journals, recovery records, and mappings. That snapshot
+uses a separate key, is never rewritten—even if corrupt—and can be exported
+locally as complete JSON. Catalog refreshes likewise use a separate cache key
+and never overwrite, prune, reinterpret, or delete the source rows. Existing
+legacy rows remain in place after snapshot/export so downgrade and manual
+recovery do not depend on the backup path.
+
+Catalog refresh starts with Hub runtime activation and continues on a bounded
+cadence; it does not depend on opening Settings. In-flight refreshes are
+deduplicated and generation/origin-fenced so a retired Hub cannot commit into a
+replacement runtime. Missing keys and lower per-key versions cannot replace a
+newer cached catalog. Server persona `version`, rather than client timestamps,
+is the summary-cache fingerprint, so an admin definition change invalidates the
+corresponding cached fan summaries. A catalog metadata change invalidates both
+persona and account views because effective mappings may change.
+
+Core fan-profile versions do not yet carry the exact persona key and revision
+that generated their body. Desktop therefore does not invoke or adopt profile
+prefetch as a fan-summary cache hit—even when the remote body is newer—and
+never stamps an unproven body with the current catalog version. Local cache
+misses and persona-version mismatches run the feature gateway. Post-generation
+profile push and pending replay remain enabled for dashboard sync; both send the
+summary's original `generatedAtMs`, not the later Core append/retry time. Profile
+prefetch may be re-enabled only after the response contract supplies persona
+provenance that can be checked against the active catalog.
+
+This entry supersedes only D15's Desktop client-authoring portions: editor
+ownership, persona PUT/DELETE CAS, migration creates, conflict recovery writes,
+write journals/replay, and authoritative-list mapping pruning. D15's unrelated
+runtime-retirement, cross-transport monotonicity, command-verifier, chat-list,
+and generated-parts rules remain binding. Historical local data described by
+D15 is preservation input, not deletion authorization.

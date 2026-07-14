@@ -356,34 +356,24 @@ an SSE `401/403` received while a non-null v2 cursor exists:
 
 1. Keep the old opaque cursor persisted.
 2. GET `/api/v1/events/v2/snapshot` with the same bearer and validate the fresh
-   cursor plus its exact `{accountId, accountRef}` grant binding. The fresh
-   cursor remains in memory only.
+   cursor response. The fresh cursor remains in memory only.
 3. Invoke the grant-refresh callback. It calls read-gateway `listAccounts`,
-   reconciles polling-loop membership, and returns the current OFAPI account
-   refs. If this set differs from the response-bound refs (including duplicate
-   refs), abort before any state request or cursor checkpoint and retry the
-   handshake with the old cursor.
-4. Replace the event allowlist with the response-bound refs. If that set is
-   empty, there is no OFAPI account state to page; persist
+   reconciles polling-loop membership, replaces both local account allowlists,
+   and returns the current account ids.
+4. If the refreshed set is empty, there is no account state to page; persist
    the authenticated empty-grant cursor and reconnect with it.
-5. Otherwise, for every response-bound ref in Core's order, exhaust the
-   bounded `/api/v1/events/snapshot?afterSeq=0&pageMode=bounded_v1&limit=1`
-   walk. The first page establishes a numeric `snapshotCursor`; every
-   subsequent page and account must use and return that same cursor.
+5. Otherwise, for every refreshed account, exhaust
+   `/api/v1/events/snapshot?afterSeq=0&pageCursor=…&limit=50`. The first page
+   establishes a numeric `snapshotCursor`; every subsequent page and account
+   must use and return that same cursor.
 6. Validate account scope, requested sequence, schema, cursor stability, and
    `resumeAllowed`; await `applyHubSnapshot` for every page.
-7. Only after all response-bound accounts finish does
-   `setV2Cursor(freshCursor)` run.
+7. Only after all refreshed accounts finish does `setV2Cursor(freshCursor)` run.
 8. Reconnect v2 using that fresh cursor.
 
 The cursor is never cleared to force a cursorless connection. Core interprets
 cursorless v2 as a baseline at the current high-water mark, so that shortcut
 would make the missed interval unrecoverable.
-
-Core embeds a full-grant marker in cursors minted by the omitted-accounts
-snapshot request. If a grant changes after Desktop's verification but before
-reconnect, Core answers 403 for revocation or 409 for widening; it never fills
-a newly granted account at its current head.
 
 Failure handling is intentionally asymmetric:
 

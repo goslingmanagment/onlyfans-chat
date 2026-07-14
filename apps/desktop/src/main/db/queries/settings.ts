@@ -60,19 +60,20 @@ export function createSettingsQueries(db: ChatGooseDb, bus: DbChangeBus): Settin
         ? { ...mutation, serialized: serialize(mutation.value, mutation.key) }
         : mutation;
     });
-    let changed = false;
+    const touchedKeys = [...new Set(prepared.map((mutation) => mutation.key))];
+    const previousValues = new Map(touchedKeys.map((key) => [key, readRaw(key)]));
     db.transaction(() => {
       for (const mutation of prepared) {
         if (mutation.kind === 'set') {
           upsert.run({ key: mutation.key, value: mutation.serialized });
-          changed = true;
-        } else if (remove.run({ key: mutation.key }).changes > 0) {
-          changed = true;
+        } else {
+          remove.run({ key: mutation.key });
         }
       }
     });
-    if (changed) {
-      bus.publish({ scope: 'settings' });
+    const changedKeys = touchedKeys.filter((key) => previousValues.get(key) !== readRaw(key));
+    if (changedKeys.length > 0) {
+      bus.publish({ scope: 'settings', settingsKeys: changedKeys });
     }
   }
 

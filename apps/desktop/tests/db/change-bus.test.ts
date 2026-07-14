@@ -39,6 +39,24 @@ describe('change bus batching', () => {
     bus.dispose();
   });
 
+  it('unions changed settings keys while coalescing a settings batch', () => {
+    const bus = createChangeBus();
+    const batches: DbChangedEvent[][] = [];
+    bus.subscribe((events) => batches.push([...events]));
+
+    bus.publish({ scope: 'settings', settingsKeys: ['hubBaseUrl'] });
+    bus.publish({ scope: 'settings', settingsKeys: ['accountPageLabels', 'hubBaseUrl'] });
+    vi.advanceTimersByTime(DB_CHANGE_FLUSH_MS);
+
+    expect(batches).toEqual([[
+      {
+        scope: 'settings',
+        settingsKeys: ['hubBaseUrl', 'accountPageLabels'],
+      },
+    ]]);
+    bus.dispose();
+  });
+
   it('flushes at most once per window across sustained writes', () => {
     const bus = createChangeBus();
     let flushes = 0;

@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = resolve(import.meta.dirname, '../../..');
 const cli = resolve(repoRoot, 'apps/desktop/scripts/release-feed.mjs');
 const ciGate = resolve(repoRoot, 'apps/desktop/scripts/assert-ci-success.mjs');
+const kernelGate = resolve(repoRoot, 'apps/desktop/scripts/assert-kernel-capabilities.mjs');
 const publisher = resolve(repoRoot, 'apps/desktop/scripts/publish-feed.sh');
 const publisherEnv = {
   ...process.env,
@@ -70,6 +71,40 @@ function readNormalized(path: string): string {
 }
 
 describe('Windows release feed policy', () => {
+  it('blocks publication until production Core advertises the required lifecycle', () => {
+    const missing = spawnSync(process.execPath, [kernelGate, 'desktop-lifecycle-v2'], {
+      input: JSON.stringify({ status: 'ok', capabilities: ['older-contract'] }),
+      encoding: 'utf8',
+    });
+    expect(missing.status).not.toBe(0);
+    expect(missing.stderr).toContain('does not advertise required capability desktop-lifecycle-v2');
+
+    const ready = spawnSync(process.execPath, [kernelGate, 'desktop-lifecycle-v2'], {
+      input: JSON.stringify({ status: 'ok', capabilities: ['desktop-lifecycle-v2'] }),
+      encoding: 'utf8',
+    });
+    expect(ready.status, ready.stderr).toBe(0);
+    expect(ready.stdout).toContain('production Core capability present: desktop-lifecycle-v2');
+  });
+
+  it('rechecks the production lifecycle after staging and immediately before atomic publication', () => {
+    const script = workflowRunScript('Upload to the update feed');
+    expect(script).toContain('https://gosling-agency.ru/api/v1/health');
+    expect(script).toContain('assert-kernel-capabilities.mjs desktop-lifecycle-v2');
+    const stageIndex = script.indexOf('scp "${SSH_OPTIONS[@]}"');
+    const recheckIndex = script.indexOf('core_verified=false', stageIndex);
+    const publishIndex = script.indexOf(
+      'if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- \'$FEED_DIR\' \'$stage_dir\'"',
+      recheckIndex,
+    );
+    expect(stageIndex).toBeGreaterThan(-1);
+    expect(recheckIndex).toBeGreaterThan(stageIndex);
+    expect(publishIndex).toBeGreaterThan(recheckIndex);
+    expect(script.slice(recheckIndex, publishIndex)).toContain(
+      'assert-kernel-capabilities.mjs desktop-lifecycle-v2',
+    );
+  });
+
   it('validates local and served installer SHA-512 against latest.yml', () => {
     const dir = mkdtempSync(join(tmpdir(), 'chatgoose-release-'));
     const built = fixture(dir, '1.2.3', 'installer-one');
@@ -271,6 +306,7 @@ describe('Windows release feed policy', () => {
     }
     fixture(releaseDir, '1.2.4', 'candidate installer');
     writeFileSync(join(scriptsDir, 'release-feed.mjs'), readFileSync(cli));
+    writeFileSync(join(scriptsDir, 'assert-kernel-capabilities.mjs'), readFileSync(kernelGate));
     writeFileSync(join(scriptsDir, 'publish-feed.sh'), readFileSync(publisher));
     const mockLog = join(root, 'transport.log');
     writeExecutable(
@@ -302,7 +338,10 @@ mkdir -p "$stage"
 touch "$stage/scp-succeeded"
 `,
     );
-    writeExecutable(join(mockBin, 'curl'), '#!/usr/bin/env bash\nexit 1\n');
+    writeExecutable(
+      join(mockBin, 'curl'),
+      '#!/usr/bin/env bash\nif [[ "$*" == *"/api/v1/health"* ]]; then printf \'%s\\n\' \'{"status":"ok","capabilities":["desktop-lifecycle-v2"]}\'; exit 0; fi\nexit 1\n',
+    );
     writeExecutable(join(mockBin, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
 
     const uploadScript = `export PATH="$1:$PATH"\n${workflowRunScript('Upload to the update feed')}`;

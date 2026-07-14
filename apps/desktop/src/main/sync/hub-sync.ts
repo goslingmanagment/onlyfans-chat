@@ -596,7 +596,13 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     abort = snapshotAbort;
     let response: Awaited<ReturnType<HubSseFetch>>;
     try {
-      response = await fetchImpl(`${baseUrl}${HUB_V2_SNAPSHOT_PATH}`, {
+      const snapshotUrl = new URL(`${baseUrl}${HUB_V2_SNAPSHOT_PATH}`);
+      // Core uses the rejected, already-durable cursor as the lower bound for
+      // its safe recovery watermark. Without it, old replay-only event classes
+      // pin the new cursor near genesis and an erased account-sequence hole can
+      // send this client through the same 409 -> snapshot loop forever.
+      snapshotUrl.searchParams.set('sourceCursor', sourceV2Cursor);
+      response = await fetchImpl(snapshotUrl.toString(), {
         method: 'GET',
         headers: {
           authorization: `Bearer ${apiKey}`,

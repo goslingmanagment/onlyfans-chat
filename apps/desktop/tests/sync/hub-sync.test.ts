@@ -1335,7 +1335,11 @@ describe('createHubAwareSync (provider composition)', () => {
 
     expect(calls.map((call) => call.url)).toEqual([
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
-      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      (() => {
+        const url = new URL(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
+        url.searchParams.set('sourceCursor', 'CUR_STALE');
+        return url.toString();
+      })(),
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=5&limit=1&snapshotCursor=77`,
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH`,

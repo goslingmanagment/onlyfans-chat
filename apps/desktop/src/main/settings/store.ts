@@ -2,7 +2,7 @@
 // settings persist one row per field; API keys route to the OS keychain and
 // never appear in the DB or in any returned view model.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   DEEP_MAX_MESSAGE_COUNT,
@@ -28,7 +28,11 @@ import type {
 } from '@chatgoose/shared/types';
 import { UI_LOCALE_SETTINGS } from '@chatgoose/shared/i18n/index';
 import { UI_THEME_SETTINGS } from '@chatgoose/shared/theme';
-import type { KeyMetaVM, SettingsVM } from '../../preload/contract';
+import type {
+  HubCredentialBindingState,
+  KeyMetaVM,
+  SettingsVM,
+} from '../../preload/contract';
 import { HUB_DEVICE_TOKEN_HUB_SWITCH_BLOCKED_MESSAGE } from '../hub/device-token';
 import {
   ensurePersonaStorageScope,
@@ -38,10 +42,14 @@ import {
 } from '../personas/pending';
 import type { SecretName } from '../secrets/keychain';
 import {
+  HUB_API_KEY_BINDING_KEY,
+  HUB_DEVICE_TOKEN_BINDING_KEY,
   deviceTokenDigest,
-  parseStagedDeviceToken,
   readDeviceTokenActivation,
+  readDeviceTokenBinding,
   readDeviceTokenRevocation,
+  readHubApiKeyBinding,
+  type HubCredentialBinding,
 } from '../hub/credential-journal';
 
 // ─── Enums mirrored from shared types (satisfies ties them to the source) ──
@@ -77,7 +85,12 @@ const PROD_HUB_ORIGIN = new URL(DEFAULT_AGENCY_HUB_BASE_URL).origin;
 
 export type PersistedSettings = Omit<
   SettingsVM,
-  'hasHubKey' | 'hasHubDeviceToken' | 'hubDeviceTokenTransition' | 'keyMeta'
+  | 'hasHubKey'
+  | 'hubApiKeyBindingState'
+  | 'hasHubDeviceToken'
+  | 'hubDeviceTokenBindingState'
+  | 'hubDeviceTokenTransition'
+  | 'keyMeta'
 >;
 
 export const PERSISTED_SETTINGS_KEYS = [
@@ -162,6 +175,15 @@ const hubBaseUrlSchema = z.string().min(1).transform((value, ctx) => {
   return normalized;
 }).nullable();
 
+/** Canonical synchronous interpretation of the persisted Hub URL row.
+ * Missing/corrupt/legacy values match readField('hubBaseUrl') and fall back to
+ * the production default; valid values are normalized by the same schema. */
+export function effectivePersistedHubBaseUrl(raw: unknown): string | null {
+  if (raw === undefined) return DEFAULT_AGENCY_HUB_BASE_URL;
+  const parsed = hubBaseUrlSchema.safeParse(raw);
+  return parsed.success ? parsed.data : DEFAULT_AGENCY_HUB_BASE_URL;
+}
+
 const persistedFieldSchemas = {
   featureModels: z.record(z.enum(MODEL_SELECTABLE_FEATURES), z.string().min(1)),
   featureReasoning: z.record(z.enum(MODEL_SELECTABLE_FEATURES), z.enum(REASONING_EFFORT_VALUES)),
@@ -226,6 +248,12 @@ const persistedFieldSchemas = {
   // Color theme; 'system' follows the OS scheme (nativeTheme + matchMedia).
   uiTheme: z.enum(UI_THEME_SETTINGS),
 };
+
+/** Synchronous, schema-equivalent read for network destination fences. */
+export function effectivePersistedAccountPageLabels(raw: unknown): Record<string, string> {
+  const parsed = persistedFieldSchemas.accountPageLabels.safeParse(raw);
+  return parsed.success ? parsed.data : {};
+}
 
 interface FieldValidator<T> {
   safeParse(data: unknown): { success: true; data: T } | { success: false; data?: undefined };
@@ -361,7 +389,7 @@ const EMPTY_KEY_META: KeyMetaVM = { hub: null };
  */
 export const HUB_CREDENTIAL_TRANSITION_KEY = 'hubCredentialTransition.v1';
 
-const hubCredentialTransitionSchema = z.strictObject({
+const legacyHubCredentialTransitionSchema = z.strictObject({
   version: z.literal(1),
   id: z.string().uuid(),
   targetHubBaseUrl: hubBaseUrlSchema,
@@ -373,7 +401,31 @@ const hubCredentialTransitionSchema = z.strictObject({
   personaMappingsKey: z.string().min(1).nullable(),
 });
 
+const settingsMutationSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('set'), key: z.string().min(1), value: z.unknown() }),
+  z.strictObject({ kind: z.literal('remove'), key: z.string().min(1) }),
+]);
+
+const recoverableHubCredentialTransitionSchema = legacyHubCredentialTransitionSchema.extend({
+  version: z.literal(2),
+  /** Non-secret proof of the pre-transition active key (null = none existed). */
+  sourceKeyDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  /** The source file existed but could not be decrypted. A replacement may
+   * overwrite it, but a lost target can never roll back to it as usable. */
+  sourceKeyUnreadable: z.boolean().optional().default(false),
+  /** Non-secret proof that an already-promoted active file is the target key. */
+  targetKeyDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  /** Exact inverse of every SQLite coordinate write in this transition. */
+  rollbackMutations: z.array(settingsMutationSchema),
+});
+
+const hubCredentialTransitionSchema = z.discriminatedUnion('version', [
+  legacyHubCredentialTransitionSchema,
+  recoverableHubCredentialTransitionSchema,
+]);
+
 type HubCredentialTransition = z.infer<typeof hubCredentialTransitionSchema>;
+type RecoverableHubCredentialTransition = z.infer<typeof recoverableHubCredentialTransitionSchema>;
 
 const stagedHubApiKeySchema = z.strictObject({
   version: z.literal(1),
@@ -452,6 +504,19 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
   const { queries, secrets } = options;
   const now = options.now ?? Date.now;
 
+  function hubApiKeyDigest(value: string): string {
+    return createHash('sha256').update(value, 'utf8').digest('hex');
+  }
+
+  function credentialBinding(
+    hubBaseUrl: string | null,
+    tokenDigest: string,
+  ): HubCredentialBinding | null {
+    return hubBaseUrl === null
+      ? null
+      : { version: 1, hubBaseUrl, tokenDigest };
+  }
+
   function readField<K extends keyof PersistedSettings>(key: K): PersistedSettings[K] {
     let json: unknown;
     try {
@@ -525,9 +590,39 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
   }
 
   async function buildVm(): Promise<SettingsVM> {
-    const [hasHubKey, hasHubDeviceToken] = await Promise.all([
-      secrets.hasSecret('hubApiKey'),
-      secrets.hasSecret('hubDeviceToken'),
+    const persisted = readPersisted();
+    const bindingState = async (
+      name: 'hubApiKey' | 'hubDeviceToken',
+      readBinding: () => HubCredentialBinding | null,
+      digest: (value: string) => string,
+    ): Promise<HubCredentialBindingState> => {
+      let value: string | null;
+      try {
+        value = await secrets.getSecret(name);
+      } catch {
+        // Settings/UI must remain reachable so the user can replace or
+        // explicitly abandon an unreadable encrypted credential. Connection
+        // resolution still uses getSecret and therefore remains fail-closed.
+        return 'unreadable';
+      }
+      if (value === null) return 'none';
+      let binding: HubCredentialBinding | null;
+      try {
+        binding = readBinding();
+      } catch {
+        return 'mismatch';
+      }
+      if (binding === null) return 'unbound';
+      if (
+        persisted.hubBaseUrl === null
+        || binding.hubBaseUrl !== persisted.hubBaseUrl
+        || binding.tokenDigest !== digest(value)
+      ) return 'mismatch';
+      return 'bound';
+    };
+    const [hubApiKeyBindingState, hubDeviceTokenBindingState] = await Promise.all([
+      bindingState('hubApiKey', () => readHubApiKeyBinding(queries), hubApiKeyDigest),
+      bindingState('hubDeviceToken', () => readDeviceTokenBinding(queries), deviceTokenDigest),
     ]);
     const activation = readDeviceTokenActivation(queries);
     const revocation = readDeviceTokenRevocation(queries);
@@ -535,73 +630,96 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       throw new Error('Conflicting Hub device-token lifecycle journals; refusing credentials.');
     }
     return {
-      hasHubKey,
-      hasHubDeviceToken,
+      hasHubKey: hubApiKeyBindingState !== 'none',
+      hubApiKeyBindingState,
+      hasHubDeviceToken: hubDeviceTokenBindingState !== 'none',
+      hubDeviceTokenBindingState,
       hubDeviceTokenTransition: activation !== null
         ? 'activation'
         : revocation !== null
           ? 'revocation'
           : null,
       keyMeta: readKeyMeta(),
-      ...readPersisted(),
+      ...persisted,
     };
   }
 
   async function buildHubConnection(): Promise<HubConnectionSnapshot> {
     const settings = await buildVm();
-    const [activeDeviceToken, hubApiKey] = await Promise.all([
-      secrets.getSecret('hubDeviceToken'),
-      secrets.getSecret('hubApiKey'),
+    const readConnectionSecret = async (
+      name: 'hubDeviceToken' | 'hubApiKey',
+    ): Promise<{ value: string | null; unreadable: boolean }> => {
+      try {
+        return { value: await secrets.getSecret(name), unreadable: false };
+      } catch {
+        return { value: null, unreadable: true };
+      }
+    };
+    const [deviceCustody, apiKeyCustody] = await Promise.all([
+      readConnectionSecret('hubDeviceToken'),
+      readConnectionSecret('hubApiKey'),
     ]);
+    const activeDeviceToken = deviceCustody.value;
+    const hubApiKey = apiKeyCustody.value;
     const activation = readDeviceTokenActivation(queries);
     const revocation = readDeviceTokenRevocation(queries);
     if (activation !== null && revocation !== null) {
       throw new Error('Conflicting Hub device-token lifecycle journals; refusing credentials.');
     }
 
-    let deviceToken = activeDeviceToken?.trim() ? activeDeviceToken : null;
+    const exactBindingState = (
+      custody: { value: string | null; unreadable: boolean },
+      readBinding: () => HubCredentialBinding | null,
+      digest: (candidate: string) => string,
+    ): HubCredentialBindingState => {
+      if (custody.unreadable) return 'unreadable';
+      const value = custody.value;
+      if (value === null) return 'none';
+      let binding: HubCredentialBinding | null;
+      try {
+        binding = readBinding();
+      } catch {
+        return 'mismatch';
+      }
+      if (binding === null) return 'unbound';
+      return settings.hubBaseUrl !== null
+        && binding.hubBaseUrl === settings.hubBaseUrl
+        && binding.tokenDigest === digest(value)
+        ? 'bound'
+        : 'mismatch';
+    };
+    const exactDeviceBindingState = exactBindingState(
+      deviceCustody,
+      () => readDeviceTokenBinding(queries),
+      deviceTokenDigest,
+    );
+    const exactApiKeyBindingState = exactBindingState(
+      apiKeyCustody,
+      () => readHubApiKeyBinding(queries),
+      hubApiKeyDigest,
+    );
+    const connectionSettings: SettingsVM = {
+      ...settings,
+      hasHubDeviceToken: exactDeviceBindingState !== 'none',
+      hubDeviceTokenBindingState: exactDeviceBindingState,
+      hasHubKey: exactApiKeyBindingState !== 'none',
+      hubApiKeyBindingState: exactApiKeyBindingState,
+    };
+    let deviceToken = exactDeviceBindingState === 'bound' ? activeDeviceToken : null;
     if (activation !== null) {
-      const rawStaged = await secrets.getSecret('hubDeviceTokenStaged');
-      if (rawStaged === null) {
-        throw new Error('Hub device-token activation journal is missing encrypted custody.');
-      }
-      parseStagedDeviceToken(rawStaged, {
-        journalId: activation.id,
-        tokenDigest: activation.tokenDigest,
-      });
-      if (
-        activeDeviceToken !== null
-        && deviceTokenDigest(activeDeviceToken) !== activation.tokenDigest
-      ) {
-        throw new Error('Hub device-token activation journal does not match active custody.');
-      }
       // Even if promotion completed just before a process crash, the active
       // file is quarantined until idempotent activation replay clears the
       // journal. The legacy chatter key remains a safe offline fallback.
       deviceToken = null;
     }
     if (revocation !== null) {
-      const rawRevoking = await secrets.getSecret('hubDeviceTokenRevoking');
-      if (rawRevoking === null) {
-        throw new Error('Hub device-token revocation journal is missing encrypted custody.');
-      }
-      parseStagedDeviceToken(rawRevoking, {
-        journalId: revocation.id,
-        tokenDigest: revocation.tokenDigest,
-      });
-      if (
-        activeDeviceToken !== null
-        && deviceTokenDigest(activeDeviceToken) !== revocation.tokenDigest
-      ) {
-        throw new Error('Hub device-token revocation journal does not match active custody.');
-      }
       deviceToken = null;
     }
 
-    const normalizedKey = hubApiKey?.trim() ? hubApiKey : null;
+    const normalizedKey = exactApiKeyBindingState === 'bound' ? hubApiKey : null;
     return {
-      settings,
-      hubBaseUrl: settings.hubBaseUrl,
+      settings: connectionSettings,
+      hubBaseUrl: connectionSettings.hubBaseUrl,
       bearer: deviceToken ?? normalizedKey,
       deviceToken,
       hubApiKey: normalizedKey,
@@ -630,20 +748,46 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
     return parsed.data;
   }
 
+  class InvalidStagedHubApiKeyError extends Error {}
+  let stagedOrphanSweepPending = true;
+
+  async function cleanupStagedHubApiKeyBestEffort(): Promise<void> {
+    try {
+      await secrets.deleteSecret('hubApiKeyStaged');
+      stagedOrphanSweepPending = false;
+    } catch {
+      // Retry on the next serialized settings operation. Never fail boot after
+      // the durable journal has already committed or when only an orphan exists.
+      stagedOrphanSweepPending = true;
+    }
+  }
+
   async function readStagedHubApiKey(transition: HubCredentialTransition): Promise<string> {
-    const raw = await secrets.getSecret('hubApiKeyStaged');
+    let raw: string | null;
+    try {
+      raw = await secrets.getSecret('hubApiKeyStaged');
+    } catch (error) {
+      throw new InvalidStagedHubApiKeyError(
+        'Hub credential encrypted staging record cannot be read or decrypted.',
+        { cause: error },
+      );
+    }
     if (raw === null) {
-      throw new Error('Hub credential transition is missing its encrypted staged key.');
+      throw new InvalidStagedHubApiKeyError(
+        'Hub credential transition is missing its encrypted staged key.',
+      );
     }
     let json: unknown;
     try {
       json = JSON.parse(raw);
     } catch {
-      throw new Error('Hub credential encrypted staging record is corrupt.');
+      throw new InvalidStagedHubApiKeyError('Hub credential encrypted staging record is corrupt.');
     }
     const parsed = stagedHubApiKeySchema.safeParse(json);
     if (!parsed.success || parsed.data.transitionId !== transition.id) {
-      throw new Error('Hub credential encrypted staging record does not match its durable intent.');
+      throw new InvalidStagedHubApiKeyError(
+        'Hub credential encrypted staging record does not match its durable intent.',
+      );
     }
     return parsed.data.value;
   }
@@ -656,6 +800,34 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
         || key.startsWith('hubSync.snapshotProgress.')
       ))
       .map((key) => ({ kind: 'remove' as const, key }));
+  }
+
+  function transitionRollbackMutations(
+    patch: z.infer<typeof nonSecretSettingsPatchSchema>,
+    personaMappingsKey: string | null,
+    clearHubSyncState: boolean,
+  ): SettingsMutation[] {
+    const keys = new Set<string>(['hubBaseUrl', KEY_META_KEY]);
+    for (const key of PERSISTED_SETTINGS_KEYS) {
+      if (patch[key] === undefined) continue;
+      if (key === 'accountMappings') {
+        if (personaMappingsKey === null) {
+          throw new Error('Credential transition lost its persona-mapping rollback target.');
+        }
+        keys.add(personaMappingsKey);
+      } else {
+        keys.add(key);
+      }
+    }
+    if (clearHubSyncState) {
+      for (const mutation of oldHubSyncStateRemovals()) keys.add(mutation.key);
+    }
+    return [...keys].map((key): SettingsMutation => {
+      const value = queries.get(key);
+      return value === undefined
+        ? { kind: 'remove', key }
+        : { kind: 'set', key, value };
+    });
   }
 
   function patchMutations(
@@ -710,8 +882,20 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
     // Journal removal is the commit point. A crash before it replays the whole
     // idempotent transition; a crash after it sees a committed active pair and
     // treats the remaining encrypted staging file as an orphan.
-    queries.batch([{ kind: 'remove', key: HUB_CREDENTIAL_TRANSITION_KEY }]);
-    await secrets.deleteSecret('hubApiKeyStaged').catch(() => undefined);
+    const targetKeyDigest = stagedValue === null ? null : hubApiKeyDigest(stagedValue);
+    const apiBinding = targetKeyDigest === null
+      ? null
+      : credentialBinding(transition.targetHubBaseUrl, targetKeyDigest);
+    queries.batch([
+      ...(apiBinding === null
+        ? [{ kind: 'remove' as const, key: HUB_API_KEY_BINDING_KEY }]
+        : [{ kind: 'set' as const, key: HUB_API_KEY_BINDING_KEY, value: apiBinding }]),
+      ...(transition.deleteDeadDeviceToken
+        ? [{ kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY }]
+        : []),
+      { kind: 'remove', key: HUB_CREDENTIAL_TRANSITION_KEY },
+    ]);
+    await cleanupStagedHubApiKeyBestEffort();
   }
 
   async function finishHubCredentialTransitionWithRetry(
@@ -726,7 +910,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       // that case the target pair is already authoritative; only orphan
       // staging cleanup remains.
       if (persisted === null) {
-        await secrets.deleteSecret('hubApiKeyStaged').catch(() => undefined);
+        await cleanupStagedHubApiKeyBestEffort();
         return;
       }
       if (persisted.id !== expected.id) {
@@ -741,17 +925,123 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
     }
   }
 
-  async function recoverHubCredentialTransitionInsideQueue(): Promise<void> {
-    const pending = readHubCredentialTransition();
-    if (pending !== null) {
-      await finishHubCredentialTransitionWithRetry(pending);
+  async function recoverInvalidStagedHubApiKey(
+    transition: HubCredentialTransition,
+  ): Promise<void> {
+    if (transition.version === 1) {
+      // v1 (briefly present on unreleased builds) had neither a target digest
+      // nor inverse coordinates. There is no sound way to pair its surviving
+      // active key with possibly-applied target settings. Disable the Hub and
+      // discard the ambiguous key instead of preserving a fatal boot loop or
+      // ever presenting a key to the wrong origin.
+      await secrets.deleteSecret('hubApiKey');
+      await cleanupStagedHubApiKeyBestEffort();
+      queries.batch([
+        { kind: 'set', key: 'hubBaseUrl', value: null },
+        { kind: 'set', key: KEY_META_KEY, value: { hub: null } },
+        ...oldHubSyncStateRemovals(),
+        { kind: 'remove', key: HUB_API_KEY_BINDING_KEY },
+        { kind: 'remove', key: HUB_CREDENTIAL_TRANSITION_KEY },
+      ]);
       return;
     }
-    if (await secrets.hasSecret('hubApiKeyStaged')) {
-      // Crash after encrypted staging but before durable intent, or after
-      // commit but before staging cleanup: the active old/new pair is already
-      // self-consistent, and the unreferenced candidate must never be promoted.
-      await secrets.deleteSecret('hubApiKeyStaged');
+
+    let active: string | null = null;
+    let activeReadFailed = false;
+    try {
+      active = await secrets.getSecret('hubApiKey');
+    } catch {
+      // A journal paired with an unreadable active key has neither a provable
+      // source nor target. Route it through the foreign/ambiguous fail-closed
+      // branch, which removes the unreadable file without decrypting it.
+      activeReadFailed = true;
+    }
+    const targetIsAlreadyActive = active !== null
+      && !activeReadFailed
+      && transition.targetKeyDigest !== null
+      && hubApiKeyDigest(active) === transition.targetKeyDigest;
+    const sourceIsStillActive = !activeReadFailed && (
+      active === null
+        ? !transition.sourceKeyUnreadable && transition.sourceKeyDigest === null
+        : transition.sourceKeyDigest !== null
+          && hubApiKeyDigest(active) === transition.sourceKeyDigest
+    );
+    if (targetIsAlreadyActive) {
+      // Promotion completed before the staged copy disappeared. Re-apply the
+      // target coordinates and commit the journal without requiring that copy.
+      queries.batch([
+        ...patchMutations(transition.nonSecretPatch, transition.personaMappingsKey),
+        { kind: 'set', key: 'hubBaseUrl', value: transition.targetHubBaseUrl },
+        { kind: 'set', key: KEY_META_KEY, value: { hub: transition.targetKeyMeta } },
+        ...(transition.clearHubSyncState ? oldHubSyncStateRemovals() : []),
+      ]);
+      if (transition.deleteDeadDeviceToken) {
+        await secrets.deleteSecret('hubDeviceToken');
+      }
+      const targetBinding = credentialBinding(
+        transition.targetHubBaseUrl,
+        hubApiKeyDigest(active!),
+      );
+      if (targetBinding === null) {
+        throw new Error('Promoted Hub key has no usable target origin binding.');
+      }
+      queries.batch([
+        { kind: 'set', key: HUB_API_KEY_BINDING_KEY, value: targetBinding },
+        ...(transition.deleteDeadDeviceToken
+          ? [{ kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY }]
+          : []),
+        { kind: 'remove', key: HUB_CREDENTIAL_TRANSITION_KEY },
+      ]);
+    } else if (sourceIsStillActive) {
+      // The active file is still the pre-transition key (or is absent). Restore
+      // its exact SQLite coordinates before dropping the irrecoverable intent.
+      queries.batch([
+        ...transition.rollbackMutations,
+        { kind: 'remove', key: HUB_CREDENTIAL_TRANSITION_KEY },
+      ]);
+    } else {
+      // A third key appeared through external restore/manual replacement. It
+      // matches neither side of this intent, so pairing it with either origin
+      // would be credential disclosure. Restore unrelated settings, disable
+      // Hub coordinates, and discard the ambiguous secret fail-visibly.
+      await secrets.deleteSecret('hubApiKey');
+      queries.batch([
+        ...transition.rollbackMutations,
+        { kind: 'set', key: 'hubBaseUrl', value: null },
+        { kind: 'set', key: KEY_META_KEY, value: { hub: null } },
+        ...oldHubSyncStateRemovals(),
+        { kind: 'remove', key: HUB_API_KEY_BINDING_KEY },
+        { kind: 'remove', key: HUB_CREDENTIAL_TRANSITION_KEY },
+      ]);
+    }
+    // With no durable journal an encrypted candidate is inert. Cleanup is
+    // best-effort so AV/keychain cleanup failure cannot recreate a boot loop.
+    await cleanupStagedHubApiKeyBestEffort();
+  }
+
+  async function recoverHubCredentialTransitionInsideQueue(
+    options: { sweepOrphan?: boolean } = {},
+  ): Promise<void> {
+    const pending = readHubCredentialTransition();
+    if (pending !== null) {
+      try {
+        await finishHubCredentialTransitionWithRetry(pending);
+      } catch (error) {
+        if (!(error instanceof InvalidStagedHubApiKeyError)) throw error;
+        await recoverInvalidStagedHubApiKey(pending);
+      }
+      return;
+    }
+    // Crash after encrypted staging but before durable intent, or after commit
+    // but before cleanup: the active pair is already self-consistent and the
+    // unreferenced candidate must never be promoted. Delete unconditionally —
+    // hasSecret/getSecret decrypts the file and would turn a corrupt orphan into
+    // a fatal boot loop even though deletion itself remains possible.
+    // The composition root explicitly invokes recovery once before any IPC or
+    // runtime reads. Keep the no-journal filesystem sweep on that boot path;
+    // ordinary rejected settings operations must remain side-effect free.
+    if (options.sweepOrphan === true && stagedOrphanSweepPending) {
+      await cleanupStagedHubApiKeyBestEffort();
     }
   }
 
@@ -767,20 +1057,51 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       : before.hubBaseUrl;
     const value = rawHubApiKey?.trim() ?? '';
     const promoteStaged = rawHubApiKey !== undefined && value.length > 0;
-    const transition: HubCredentialTransition = {
-      version: 1,
+    let sourceKeyDigest: string | null = null;
+    let sourceKeyUnreadable = false;
+    try {
+      const sourceHubApiKey = await secrets.getSecret('hubApiKey');
+      sourceKeyDigest = sourceHubApiKey === null ? null : hubApiKeyDigest(sourceHubApiKey);
+    } catch {
+      // A user-supplied replacement is the recovery path for an unreadable
+      // DPAPI/keychain file. Preserve an independently durable digest only when
+      // its origin exactly matches the pre-transition coordinates. A transient
+      // decrypt failure must not turn the still-bound old key into foreign
+      // custody if candidate staging is then lost before promotion.
+      sourceKeyUnreadable = true;
+      try {
+        const binding = readHubApiKeyBinding(queries);
+        if (binding !== null && binding.hubBaseUrl === before.hubBaseUrl) {
+          sourceKeyDigest = binding.tokenDigest;
+        }
+      } catch {
+        // Corrupt/missing binding provides no rollback proof. Recovery will
+        // keep the unreadable source fail-closed instead of guessing.
+      }
+    }
+    const personaMappingsKey = nonSecretPatch.accountMappings === undefined
+      ? null
+      : personaAccountMappingsKey(
+          targetHubBaseUrl === null ? null : personaStorageScopeForHub(targetHubBaseUrl),
+        );
+    const transition: RecoverableHubCredentialTransition = {
+      version: 2,
       id: randomUUID(),
       targetHubBaseUrl,
       targetKeyMeta: promoteStaged ? { last4: value.slice(-4), setAt: now() } : null,
+      sourceKeyDigest,
+      sourceKeyUnreadable,
+      targetKeyDigest: promoteStaged ? hubApiKeyDigest(value) : null,
       keyAction: promoteStaged ? 'promote-staged' : 'delete',
       deleteDeadDeviceToken,
       clearHubSyncState: hubSwitched,
       nonSecretPatch,
-      personaMappingsKey: nonSecretPatch.accountMappings === undefined
-        ? null
-        : personaAccountMappingsKey(
-            targetHubBaseUrl === null ? null : personaStorageScopeForHub(targetHubBaseUrl),
-          ),
+      personaMappingsKey,
+      rollbackMutations: transitionRollbackMutations(
+        nonSecretPatch,
+        personaMappingsKey,
+        hubSwitched,
+      ),
     };
 
     if (promoteStaged) {
@@ -789,8 +1110,10 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
         transitionId: transition.id,
         value,
       }));
+      stagedOrphanSweepPending = true;
     } else {
       await secrets.deleteSecret('hubApiKeyStaged');
+      stagedOrphanSweepPending = false;
     }
 
     try {
@@ -801,7 +1124,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       // was never durable; only the no-intent branch may discard staging.
       const persisted = readHubCredentialTransition();
       if (persisted?.id !== transition.id) {
-        await secrets.deleteSecret('hubApiKeyStaged').catch(() => undefined);
+        await cleanupStagedHubApiKeyBestEffort();
         throw error;
       }
     }
@@ -900,7 +1223,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
     }),
 
     recoverHubCredentialTransition: () => enqueueMutation(
-      recoverHubCredentialTransitionInsideQueue,
+      () => recoverHubCredentialTransitionInsideQueue({ sweepOrphan: true }),
     ),
 
     runCredentialMutation: (task) => enqueueMutation(async () => {

@@ -40,7 +40,14 @@ import type {
 } from '@chatgoose/shared/protocol/index';
 import type { AiStartRequest, SettingsVM } from '../../preload/contract';
 import type { DataLayer } from '../db/index';
-import type { SettingsStore } from '../settings/store';
+import { loadPersonaCatalog, resolvePersonaMapping } from '../personas/catalog';
+import {
+  personaStorageScopeForHub,
+  personaSummaryCacheIdentity,
+  type PersonaStorageScope,
+} from '../personas/pending';
+import { currentPersonaSummaryIdentity } from '../personas/summary';
+import { effectivePersistedHubBaseUrl, type SettingsStore } from '../settings/store';
 import type { AiDebugInput, AiFeatureGateway, CancelFn } from './gateway';
 import { createOperationProfiler, NO_OP_PROFILER } from './profiler';
 import type { OperationProfiler, ProfilerStageHandle } from './profiler';
@@ -57,9 +64,9 @@ import type { StagedTimeouts } from './timeouts';
  */
 export interface SummaryHubHooks {
   /**
-   * Pre-generation prefetch (5 s budget owned by the hook). A non-null result
-   * is adopted as the cached summary — zero LLM calls. Must reject/resolve
-   * null on failure; the coordinator treats any throw as "no hub profile".
+   * Dormant compatibility seam. Core profiles do not yet carry the exact
+   * persona key + revision that generated their body, so the coordinator must
+   * not call or adopt this result as a version-valid summary cache entry.
    */
   prefetchSummary?: (args: {
     accountId: string;
@@ -77,8 +84,9 @@ export interface SummaryHubHooks {
 /**
  * Legacy usage_events payload shape (drain era). Stage 31: the coordinator no
  * longer writes these — the type survives so the hub module can keep mapping
- * and flushing rows PARKED by pre-cutover releases (one-release drain; the
- * diagnostics export counts what is left). Field names follow the LLM usage
+ * and interpreting rows from the retired lane for local diagnostics. Those
+ * provenance-free rows are quarantined rather than sent to a later Hub actor.
+ * Field names follow the LLM usage
  * metrics (cacheCreationInputTokens…), not core's wire contract; the hub
  * module owns the mapping (src/main/hub/usage-mapper.ts). `chatId` is the raw
  * OnlyFans id (`chat_id === fan.id`) backing core's conversationId.
@@ -165,11 +173,8 @@ export interface AiCoordinator {
 
 // ─── Trust-boundary schema (IPC args may be anything at runtime) ─────────
 
-/** Stage 31: summary-cache key sentinels — persona content and model live
- * kernel-side; a persona edit no longer invalidates the local summary cache
- * (refresh regenerates; recorded trade). */
+/** Model identity remains kernel-owned; persona identity uses Core's revision. */
 const KERNEL_MODEL_ID = 'kernel';
-const KERNEL_PERSONA_UPDATED_AT = 0;
 
 const FEATURE_TYPES = [
   'fast-reply',
@@ -226,6 +231,12 @@ interface SummaryCacheSeed {
   subscriptionVerified: boolean;
 }
 
+interface OperationPersonaIdentity {
+  scope: PersonaStorageScope;
+  cacheIdentity: string;
+  version: number;
+}
+
 interface OperationState {
   operationId: string;
   feature: OperationFeature;
@@ -255,6 +266,8 @@ interface OperationState {
   sawDebugEcho: boolean;
   /** Set only on a fan-summary cache miss; null for every other feature. */
   summarySeed: SummaryCacheSeed | null;
+  /** Exact Hub-scoped persona mapping/revision accepted before streaming. */
+  personaIdentity: OperationPersonaIdentity | null;
 }
 
 // A valid kernel echo may contain multi-megabyte prompt blocks. Debugging must
@@ -547,6 +560,9 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
   }
 
   function settleComplete(op: OperationState, rawText: string): void {
+    if (!ensurePersonaCurrent(op)) {
+      return;
+    }
     if (!beginSettle(op)) {
       return;
     }
@@ -766,27 +782,62 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
 
   /** Stage 31: the desktop resolves only the persona MAPPING — persona
    * content is kernel config. CG-FLOW-02 when the account has no mapping. */
-  function resolvePersonaKey(settings: SettingsVM, accountId: string): string {
+  function resolvePersona(
+    settings: SettingsVM,
+    accountId: string,
+  ): { key: string; version: number; cacheIdentity: string; scope: PersonaStorageScope } {
     const mappedId = settings.accountMappings[accountId];
-    if (mappedId === undefined || mappedId === '') {
+    if (
+      mappedId === undefined
+      || mappedId === ''
+      || settings.hubBaseUrl === null
+    ) {
       throw new CgError('CG-FLOW-02');
     }
-    return mappedId;
+    const scope = personaStorageScopeForHub(settings.hubBaseUrl);
+    const resolution = resolvePersonaMapping(
+      loadPersonaCatalog(deps.data.settings, scope),
+      mappedId,
+    );
+    if (resolution.state !== 'active' || resolution.version === null) {
+      throw new CgError('CG-FLOW-02', {
+        message: `Mapped persona is ${resolution.state}: ${mappedId}`,
+      });
+    }
+    return {
+      key: mappedId,
+      version: resolution.version,
+      cacheIdentity: personaSummaryCacheIdentity(scope, mappedId),
+      scope,
+    };
   }
 
-  /** Best-effort hub prefetch — any hook failure means "no hub profile". */
-  async function tryPrefetchSummary(
-    op: OperationState,
-  ): Promise<{ body: string; generatedAt: number } | null> {
-    const prefetch = deps.summaryHub?.prefetchSummary;
-    if (prefetch === undefined) {
-      return null;
+  function ensurePersonaCurrent(op: OperationState): boolean {
+    if (op.settled) return false;
+    const expected = op.personaIdentity;
+    if (expected !== null) {
+      const currentHubBaseUrl = effectivePersistedHubBaseUrl(
+        deps.data.settings.get('hubBaseUrl'),
+      );
+      const current = currentPersonaSummaryIdentity(
+        deps.data.settings,
+        expected.scope,
+        op.accountId,
+      );
+      if (
+        currentHubBaseUrl !== null
+        && new URL(currentHubBaseUrl).origin === expected.scope.origin
+        && current !== null
+        && current.cacheIdentity === expected.cacheIdentity
+        && current.version === expected.version
+      ) {
+        return true;
+      }
     }
-    try {
-      return await prefetch({ accountId: op.accountId, fanId: op.chatId });
-    } catch {
-      return null;
-    }
+    settleError(op, new CgError('CG-FLOW-02', {
+      message: 'Persona mapping changed during generation; retry the operation.',
+    }));
+    return false;
   }
 
   // ── pipeline ─────────────────────────────────────────────────────────────
@@ -805,7 +856,9 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     // Stage 31: model choice, provider keys, prompts, and context are kernel
     // config — the desktop resolves only the persona MAPPING for this
     // account (CG-FLOW-02 when unmapped; the key rides the feature call).
-    const personaKey = resolvePersonaKey(settings, op.accountId);
+    const persona = resolvePersona(settings, op.accountId);
+    op.personaIdentity = persona;
+    const personaKey = persona.key;
     const policy = getFeaturePolicy(op.feature);
     identityStage.complete();
 
@@ -818,42 +871,33 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     if (op.feature === 'fan-summary') {
       const cacheStage = op.profiler.stage('summary-cache-check');
       if (op.params.forceRegenerate === true) {
-        // Refresh = delete + regenerate (SPEC §8.5).
-        deps.data.summaries.remove(op.accountId, op.chatId);
+        // Bypass only. The last valid summary remains available until a
+        // successful replacement is committed; failure/cancel/crash must not
+        // turn Refresh into data loss.
       } else {
         const entry = deps.data.summaries.get(op.accountId, op.chatId);
-        if (isValidSummaryCacheEntry(entry, personaKey, KERNEL_PERSONA_UPDATED_AT, KERNEL_MODEL_ID)) {
+        if (
+          isValidSummaryCacheEntry(
+            entry,
+            persona.cacheIdentity,
+            persona.version,
+            KERNEL_MODEL_ID,
+          )
+        ) {
           cacheStage.complete('cache hit');
           settleCachedSummary(op, entry);
           return;
         }
-        const prefetched = await tryPrefetchSummary(op);
-        if (op.settled) {
-          return;
-        }
-        if (prefetched !== null) {
-          const entry: SummaryCacheEntry = {
-            body: prefetched.body,
-            personalityId: personaKey,
-            personalityUpdatedAt: KERNEL_PERSONA_UPDATED_AT,
-            generatedAt: prefetched.generatedAt,
-            // A hub-adopted profile counts as verified (legacy prefetch rule).
-            spendingVerified: true,
-            subscriptionVerified: true,
-            modelId: KERNEL_MODEL_ID,
-          };
-          deps.data.summaries.put(op.accountId, op.chatId, entry);
-          cacheStage.complete('hub hit');
-          settleCachedSummary(op, entry);
-          return;
-        }
+        // Core fan-profile versions currently prove only body + generation
+        // time. Without the exact persona key/revision they cannot be stamped
+        // with the current catalog version or short-circuit generation.
       }
       cacheStage.complete(op.params.forceRegenerate === true ? 'forced refresh' : 'cache miss');
       // Kernel context is ledger-backed (Stage 30) — verified by definition;
       // the legacy degraded-context guard belonged to the local loaders.
       op.summarySeed = {
-        personalityId: personaKey,
-        personalityUpdatedAt: KERNEL_PERSONA_UPDATED_AT,
+        personalityId: persona.cacheIdentity,
+        personalityUpdatedAt: persona.version,
         spendingVerified: true,
         subscriptionVerified: true,
       };
@@ -895,22 +939,22 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
   function streamCallbacks(op: OperationState) {
     return {
       onProgress: () => {
-        if (!op.settled) {
+        if (ensurePersonaCurrent(op)) {
           op.timeouts.providerActivity();
         }
       },
       onReasoningObserved: () => {
-        if (!op.settled) {
+        if (ensurePersonaCurrent(op)) {
           op.timeouts.providerActivity();
         }
       },
       onGenerationRef: (requestId: string) => {
-        if (!op.settled) {
+        if (ensurePersonaCurrent(op)) {
           op.generationRef = requestId;
         }
       },
       onQuotaRemaining: (remainingRequests: number) => {
-        if (!op.settled) {
+        if (ensurePersonaCurrent(op)) {
           op.quotaRemainingRequests = remainingRequests;
         }
       },
@@ -918,7 +962,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       // inspector had nothing real to show in production — the desktop sends
       // refs, so the persona/templates/dossier never passed through it.
       onDebugInput: (input: AiDebugInput) => {
-        if (op.settled) {
+        if (!ensurePersonaCurrent(op)) {
           return;
         }
         op.sawDebugEcho = true;
@@ -930,7 +974,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         });
       },
       onText: (text: string) => {
-        if (op.settled) {
+        if (!ensurePersonaCurrent(op)) {
           return;
         }
         if (!op.sawFirstChunk) {
@@ -959,7 +1003,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         bufferChunk(op, text);
       },
       onUsage: (usage: LlmUsageMetrics) => {
-        if (!op.settled) {
+        if (ensurePersonaCurrent(op)) {
           op.usage = usage;
         }
       },
@@ -1035,6 +1079,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         debugEchoRequested: false,
         sawDebugEcho: false,
         summarySeed: null,
+        personaIdentity: null,
       };
 
       // Synchronous reservation BEFORE the first await (legacy TOCTOU guard).

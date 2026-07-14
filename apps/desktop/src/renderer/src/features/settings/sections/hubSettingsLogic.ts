@@ -7,7 +7,9 @@ import { DEFAULT_AGENCY_HUB_BASE_URL } from '@chatgoose/shared';
 export interface HubCredentialSettings {
   hubBaseUrl: string | null;
   hasHubKey: boolean;
+  hubApiKeyBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
   hasHubDeviceToken: boolean;
+  hubDeviceTokenBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
 }
 
 export function hasHubDeviceTokenCustody(input: {
@@ -19,13 +21,16 @@ export function hasHubDeviceTokenCustody(input: {
 
 export function hubDeviceTokenStatus(input: {
   hasHubDeviceToken: boolean;
+  hubDeviceTokenBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
   hubDeviceTokenTransition: 'activation' | 'revocation' | null;
-}): 'activation' | 'revocation' | 'configured' | 'unset' {
+}): 'activation' | 'revocation' | 'configured' | 'attention' | 'unset' {
   // Revocation deliberately retains the active file until Core confirms the
   // exact bearer is dead. The durable transition is therefore authoritative
   // for UI state even while hasHubDeviceToken is still true.
   return input.hubDeviceTokenTransition
-    ?? (input.hasHubDeviceToken ? 'configured' : 'unset');
+    ?? (input.hasHubDeviceToken
+      ? input.hubDeviceTokenBindingState === 'bound' ? 'configured' : 'attention'
+      : 'unset');
 }
 
 /**
@@ -35,7 +40,10 @@ export function hubDeviceTokenStatus(input: {
  * as a key-only one.
  */
 export function isHubConfigured(settings: HubCredentialSettings): boolean {
-  return settings.hubBaseUrl !== null && (settings.hasHubKey || settings.hasHubDeviceToken);
+  return settings.hubBaseUrl !== null && (
+    settings.hubApiKeyBindingState === 'bound'
+    || settings.hubDeviceTokenBindingState === 'bound'
+  );
 }
 
 export function canIssueHubDeviceToken(input: {

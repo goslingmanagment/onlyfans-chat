@@ -186,6 +186,7 @@ export declare const healthResponseSchema: z.ZodObject<{
         ok: "ok";
     }>;
     timestamp: z.ZodString;
+    capabilities: z.ZodArray<z.ZodLiteral<"desktop-lifecycle-v2">>;
     checks: z.ZodObject<{
         api: z.ZodObject<{
             status: z.ZodLiteral<"ok">;
@@ -3956,32 +3957,6 @@ export declare const aiPersonasResponseSchema: z.ZodObject<{
         version: z.ZodNumber;
     }, z.core.$strip>>;
 }, z.core.$strip>;
-export declare const aiPersonaStateSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
-    key: z.ZodString;
-    displayName: z.ZodString;
-    systemBlock: z.ZodString;
-    updatedAt: z.ZodString;
-    version: z.ZodNumber;
-    state: z.ZodLiteral<"active">;
-}, z.core.$strip>, z.ZodObject<{
-    state: z.ZodLiteral<"archived">;
-    key: z.ZodString;
-    version: z.ZodNumber;
-}, z.core.$strip>], "state">;
-export declare const aiPersonaStatesResponseSchema: z.ZodObject<{
-    states: z.ZodArray<z.ZodDiscriminatedUnion<[z.ZodObject<{
-        key: z.ZodString;
-        displayName: z.ZodString;
-        systemBlock: z.ZodString;
-        updatedAt: z.ZodString;
-        version: z.ZodNumber;
-        state: z.ZodLiteral<"active">;
-    }, z.core.$strip>, z.ZodObject<{
-        state: z.ZodLiteral<"archived">;
-        key: z.ZodString;
-        version: z.ZodNumber;
-    }, z.core.$strip>], "state">>;
-}, z.core.$strip>;
 export declare const aiPersonaUpsertParamsSchema: z.ZodObject<{
     key: z.ZodString;
 }, z.core.$strip>;
@@ -3992,6 +3967,66 @@ export declare const aiPersonaUpsertBodySchema: z.ZodObject<{
 }, z.core.$strict>;
 export declare const aiPersonaArchiveQuerySchema: z.ZodObject<{
     expectedVersion: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+}, z.core.$strict>;
+export declare const aiPersonaCatalogItemSchema: z.ZodObject<{
+    key: z.ZodString;
+    displayName: z.ZodString;
+    version: z.ZodNumber;
+    status: z.ZodEnum<{
+        active: "active";
+        archived: "archived";
+    }>;
+}, z.core.$strip>;
+export declare const aiPersonaCatalogResponseSchema: z.ZodObject<{
+    personas: z.ZodArray<z.ZodObject<{
+        key: z.ZodString;
+        displayName: z.ZodString;
+        version: z.ZodNumber;
+        status: z.ZodEnum<{
+            active: "active";
+            archived: "archived";
+        }>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const adminAiPersonaSchema: z.ZodObject<{
+    key: z.ZodString;
+    displayName: z.ZodString;
+    systemBlock: z.ZodString;
+    updatedAt: z.ZodString;
+    version: z.ZodNumber;
+    status: z.ZodEnum<{
+        active: "active";
+        archived: "archived";
+    }>;
+}, z.core.$strip>;
+export declare const adminAiPersonasResponseSchema: z.ZodObject<{
+    personas: z.ZodArray<z.ZodObject<{
+        key: z.ZodString;
+        displayName: z.ZodString;
+        systemBlock: z.ZodString;
+        updatedAt: z.ZodString;
+        version: z.ZodNumber;
+        status: z.ZodEnum<{
+            active: "active";
+            archived: "archived";
+        }>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const adminAiPersonaCreateBodySchema: z.ZodObject<{
+    key: z.ZodString;
+    displayName: z.ZodString;
+    systemBlock: z.ZodString;
+}, z.core.$strict>;
+export declare const adminAiPersonaParamsSchema: z.ZodObject<{
+    key: z.ZodString;
+}, z.core.$strip>;
+export declare const adminAiPersonaUpdateBodySchema: z.ZodObject<{
+    displayName: z.ZodString;
+    systemBlock: z.ZodString;
+    expectedVersion: z.ZodNumber;
+}, z.core.$strict>;
+export declare const adminAiPersonaArchiveQuerySchema: z.ZodObject<{
+    expectedVersion: z.ZodCoercedNumber<unknown>;
 }, z.core.$strict>;
 export declare const aiFeatureStreamParamsSchema: z.ZodObject<{
     feature: z.ZodString;
@@ -9489,6 +9524,7 @@ export declare const routeSchemas: {
                     ok: "ok";
                 }>;
                 timestamp: z.ZodString;
+                capabilities: z.ZodArray<z.ZodLiteral<"desktop-lifecycle-v2">>;
                 checks: z.ZodObject<{
                     api: z.ZodObject<{
                         status: z.ZodLiteral<"ok">;
@@ -9509,6 +9545,7 @@ export declare const routeSchemas: {
                     ok: "ok";
                 }>;
                 timestamp: z.ZodString;
+                capabilities: z.ZodArray<z.ZodLiteral<"desktop-lifecycle-v2">>;
                 checks: z.ZodObject<{
                     api: z.ZodObject<{
                         status: z.ZodLiteral<"ok">;
@@ -10240,6 +10277,7 @@ export declare const routeSchemas: {
         readonly description: string;
         readonly querystring: z.ZodObject<{
             accounts: z.ZodOptional<z.ZodString>;
+            sourceCursor: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -17372,28 +17410,30 @@ export declare const routeSchemas: {
             }, z.core.$strip>;
         };
     };
-    readonly aiPersonaStates: {
+    readonly aiPersonaCatalog: {
         readonly auth: {
             readonly kind: "apiKey";
         };
         readonly tags: readonly ["usage"];
-        readonly summary: "List active and archived kernel AI persona lifecycle state";
+        readonly summary: "List AI persona metadata for client pickers";
         readonly response: {
             readonly 200: z.ZodObject<{
-                states: z.ZodArray<z.ZodDiscriminatedUnion<[z.ZodObject<{
+                personas: z.ZodArray<z.ZodObject<{
                     key: z.ZodString;
                     displayName: z.ZodString;
-                    systemBlock: z.ZodString;
-                    updatedAt: z.ZodString;
                     version: z.ZodNumber;
-                    state: z.ZodLiteral<"active">;
-                }, z.core.$strip>, z.ZodObject<{
-                    state: z.ZodLiteral<"archived">;
-                    key: z.ZodString;
-                    version: z.ZodNumber;
-                }, z.core.$strip>], "state">>;
+                    status: z.ZodEnum<{
+                        active: "active";
+                        archived: "archived";
+                    }>;
+                }, z.core.$strip>>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
@@ -17457,6 +17497,182 @@ export declare const routeSchemas: {
                 version: z.ZodNumber;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminAiPersonasList: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "List full active and archived AI personas for owner administration";
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                personas: z.ZodArray<z.ZodObject<{
+                    key: z.ZodString;
+                    displayName: z.ZodString;
+                    systemBlock: z.ZodString;
+                    updatedAt: z.ZodString;
+                    version: z.ZodNumber;
+                    status: z.ZodEnum<{
+                        active: "active";
+                        archived: "archived";
+                    }>;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminAiPersonaCreate: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Create an AI persona";
+        readonly body: z.ZodObject<{
+            key: z.ZodString;
+            displayName: z.ZodString;
+            systemBlock: z.ZodString;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                key: z.ZodString;
+                displayName: z.ZodString;
+                systemBlock: z.ZodString;
+                updatedAt: z.ZodString;
+                version: z.ZodNumber;
+                status: z.ZodEnum<{
+                    active: "active";
+                    archived: "archived";
+                }>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminAiPersonaUpdate: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Update an active AI persona with optimistic concurrency";
+        readonly params: z.ZodObject<{
+            key: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            displayName: z.ZodString;
+            systemBlock: z.ZodString;
+            expectedVersion: z.ZodNumber;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                key: z.ZodString;
+                displayName: z.ZodString;
+                systemBlock: z.ZodString;
+                updatedAt: z.ZodString;
+                version: z.ZodNumber;
+                status: z.ZodEnum<{
+                    active: "active";
+                    archived: "archived";
+                }>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminAiPersonaArchive: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Archive an active AI persona with optimistic concurrency";
+        readonly params: z.ZodObject<{
+            key: z.ZodString;
+        }, z.core.$strip>;
+        readonly querystring: z.ZodObject<{
+            expectedVersion: z.ZodCoercedNumber<unknown>;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                key: z.ZodString;
+                displayName: z.ZodString;
+                systemBlock: z.ZodString;
+                updatedAt: z.ZodString;
+                version: z.ZodNumber;
+                status: z.ZodEnum<{
+                    active: "active";
+                    archived: "archived";
+                }>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
@@ -20489,6 +20705,12 @@ export type AiGatewayUsage = z.infer<typeof aiGatewayUsageSchema>;
 export type AiGatewayQuota = z.infer<typeof aiGatewayQuotaSchema>;
 export type AiGatewayStreamFrame = z.infer<typeof aiGatewayStreamFrameSchema>;
 export type AiFeatureStreamFrame = z.infer<typeof aiFeatureStreamFrameSchema>;
+export type AiPersonaCatalogItem = z.infer<typeof aiPersonaCatalogItemSchema>;
+export type AiPersonaCatalogResponse = z.infer<typeof aiPersonaCatalogResponseSchema>;
+export type AdminAiPersona = z.infer<typeof adminAiPersonaSchema>;
+export type AdminAiPersonasResponse = z.infer<typeof adminAiPersonasResponseSchema>;
+export type AdminAiPersonaCreateBody = z.infer<typeof adminAiPersonaCreateBodySchema>;
+export type AdminAiPersonaUpdateBody = z.infer<typeof adminAiPersonaUpdateBodySchema>;
 export type SyncEvent = z.infer<typeof syncEventSchema>;
 export type NormalizedSyncMessage = z.infer<typeof normalizedSyncMessageSchema>;
 export type OfapiWebhookAckResponse = z.infer<typeof ofapiWebhookAckResponseSchema>;

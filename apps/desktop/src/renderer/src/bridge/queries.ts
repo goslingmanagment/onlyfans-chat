@@ -23,6 +23,7 @@ import type {
   MessageGuardBlocksReportVM,
   MessageVM,
   OutboxItemVM,
+  PersonalitiesSnapshotVM,
   SettingsPatch,
   SettingsVM,
   SpenderListVM,
@@ -36,8 +37,12 @@ import type {
   VaultItemVM,
 } from '../../../preload/contract';
 import type { MessageGuardPolicy } from '@chatgoose/shared/message-guard/index';
-import type { Personality } from '@chatgoose/shared/types';
 import { getBridge } from './bridge';
+import {
+  beginAiHubOriginChange,
+  endAiHubOriginChange,
+  resetAiJobsForHubOriginChange,
+} from '../features/ai/aiStore';
 
 export const qk = {
   accounts: ['accounts'] as const,
@@ -247,7 +252,7 @@ export function useSettings() {
 }
 
 export function usePersonalities() {
-  return useQuery<Personality[]>({
+  return useQuery<PersonalitiesSnapshotVM>({
     queryKey: qk.personalities,
     queryFn: () => getBridge().invoke('query:personalities.list', undefined),
   });
@@ -320,10 +325,18 @@ export function useHubDeviceTokenIssue() {
   return useMutation({
     mutationFn: (args: { username: string; password: string }) =>
       getBridge().invoke('cmd:hub.issueDeviceToken', args),
+    onMutate: () => {
+      beginAiHubOriginChange();
+    },
     // Activation may fail after the token is durably stored. Refresh settings
     // on either outcome so the sign-out/recovery affordance becomes visible
     // alongside the mutation error while the bounded main-process retry runs.
     onSettled: () => {
+      // Enrollment can reject after the new token is durably stored. The
+      // renderer cannot distinguish that from a pre-commit failure, so retire
+      // every result tied to the attempted principal on either outcome.
+      resetAiJobsForHubOriginChange();
+      endAiHubOriginChange();
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
     },
   });
@@ -337,7 +350,31 @@ export function useHubSignOutDevice() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => getBridge().invoke('cmd:hub.signOutDevice', undefined),
+    onMutate: () => {
+      beginAiHubOriginChange();
+    },
     onSettled: () => {
+      resetAiJobsForHubOriginChange();
+      endAiHubOriginChange();
+      void queryClient.invalidateQueries({ queryKey: ['settings'] });
+    },
+  });
+}
+
+/** Last-resort local release when an old Hub origin is permanently gone. The
+ * settings surface obtains explicit confirmation before invoking this. */
+export function useHubAbandonDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => getBridge().invoke('cmd:hub.abandonDevice', undefined),
+    onMutate: () => {
+      beginAiHubOriginChange();
+    },
+    onSuccess: () => {
+      resetAiJobsForHubOriginChange();
+    },
+    onSettled: () => {
+      endAiHubOriginChange();
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
     },
   });
@@ -585,6 +622,13 @@ export function useUpdateSettings() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (patch: SettingsPatch) => getBridge().invoke('cmd:settings.update', patch),
+    onMutate: (patch) => {
+      const blocksAi = 'hubBaseUrl' in patch
+        || 'hubApiKey' in patch
+        || 'accountPageLabels' in patch;
+      if (blocksAi) beginAiHubOriginChange();
+      return { blocksAi };
+    },
     onSuccess: (settings) => {
       queryClient.setQueryData(qk.settings, settings);
       void queryClient.invalidateQueries({ queryKey: qk.syncStatus });
@@ -593,31 +637,22 @@ export function useUpdateSettings() {
       // Do not leave the previous Hub's rows rendered from React Query memory.
       void queryClient.invalidateQueries({ queryKey: qk.personalities });
       void queryClient.invalidateQueries({ queryKey: qk.accounts });
+      void queryClient.invalidateQueries({ queryKey: ['fan'] });
+    },
+    onSettled: (_settings, _error, _patch, mutation) => {
+      if (mutation?.blocksAi === true) {
+        // Credential activation can fail after custody/settings commit. Clear
+        // old-context output even when the renderer receives a rejection.
+        resetAiJobsForHubOriginChange();
+        endAiHubOriginChange();
+      }
     },
   });
 }
 
-export function useSavePersonality() {
-  const queryClient = useQueryClient();
+export function useExportLegacyPersonaSnapshot() {
   return useMutation({
-    mutationFn: (personality: Personality) =>
-      getBridge().invoke('cmd:personalities.save', personality),
-    onSuccess: (list) => {
-      queryClient.setQueryData(qk.personalities, list);
-    },
-  });
-}
-
-export function useDeletePersonality() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (personality: Personality) =>
-      getBridge().invoke('cmd:personalities.delete', personality),
-    onSuccess: (list) => {
-      queryClient.setQueryData(qk.personalities, list);
-      void queryClient.invalidateQueries({ queryKey: qk.accounts });
-      void queryClient.invalidateQueries({ queryKey: qk.settings });
-    },
+    mutationFn: () => getBridge().invoke('cmd:personalities.exportLegacySnapshot', undefined),
   });
 }
 
@@ -626,9 +661,17 @@ export function useSetMapping() {
   return useMutation({
     mutationFn: (args: { accountId: string; personalityId: string | null }) =>
       getBridge().invoke('cmd:mappings.set', args),
+    onMutate: () => {
+      beginAiHubOriginChange();
+    },
     onSuccess: () => {
+      resetAiJobsForHubOriginChange();
       void queryClient.invalidateQueries({ queryKey: qk.accounts });
       void queryClient.invalidateQueries({ queryKey: qk.settings });
+      void queryClient.invalidateQueries({ queryKey: ['fan'] });
+    },
+    onSettled: () => {
+      endAiHubOriginChange();
     },
   });
 }

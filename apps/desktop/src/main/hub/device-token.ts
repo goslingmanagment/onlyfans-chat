@@ -12,11 +12,13 @@ import { randomUUID } from 'node:crypto';
 import { createClient, KernelApiError } from '@kernel/sdk';
 import type { Keychain } from '../secrets/keychain';
 import {
+  HUB_DEVICE_TOKEN_BINDING_KEY,
   HUB_DEVICE_TOKEN_ACTIVATION_KEY,
   HUB_DEVICE_TOKEN_REVOCATION_KEY,
   deviceTokenDigest,
   parseStagedDeviceToken,
   readDeviceTokenActivation,
+  readDeviceTokenBinding,
   readDeviceTokenRevocation,
   type CredentialJournalQueries,
   type HubDeviceTokenActivation,
@@ -59,6 +61,38 @@ export interface RevokeHubDeviceTokenInput {
 export interface DeviceTokenLifecycleStorage {
   keychain: Pick<Keychain, 'getSecret' | 'setSecret' | 'deleteSecret'>;
   settings: CredentialJournalQueries;
+}
+
+export type DeviceTokenCustodyRecovery =
+  | 'accepted-promoted-active'
+  | 'unrecoverable-activation-requires-abandonment'
+  | 'rebuilt-revocation-custody'
+  | 'unrecoverable-revocation-requires-abandonment';
+
+class UnrelatedActiveDeviceTokenError extends Error {}
+
+function deviceTokenBinding(
+  hubBaseUrl: string,
+  tokenDigest: string,
+) {
+  return { version: 1 as const, hubBaseUrl, tokenDigest };
+}
+
+function requireMatchingActiveDeviceTokenBinding(
+  settings: CredentialJournalQueries,
+  hubBaseUrl: string,
+  token: string,
+): void {
+  const binding = readDeviceTokenBinding(settings);
+  if (
+    binding === null
+    || binding.hubBaseUrl !== hubBaseUrl
+    || binding.tokenDigest !== deviceTokenDigest(token)
+  ) {
+    throw new Error(
+      'Stored Hub device token is not cryptographically bound to this Hub; re-enrol or explicitly forget it before network use.',
+    );
+  }
 }
 
 export const HUB_DEVICE_TOKEN_HUB_SWITCH_BLOCKED_MESSAGE =
@@ -285,17 +319,33 @@ async function completeHubDeviceTokenActivation(
       // local transition would permanently block future sign-in; discard only
       // custody bound to this exact hash. A 404/5xx remains deferred for
       // rolling deploys and transient outages.
-      const active = await input.keychain.getSecret('hubDeviceToken');
-      if (active !== null) {
-        if (deviceTokenDigest(active) !== journal.tokenDigest) {
-          throw new Error('Refusing to clear an active Hub device token that does not match terminal activation.', {
-            cause: error,
-          });
-        }
+      let active: string | null = null;
+      let activeUnreadable = false;
+      try {
+        active = await input.keychain.getSecret('hubDeviceToken');
+      } catch {
+        activeUnreadable = true;
+      }
+      const activeMatches = active !== null && deviceTokenDigest(active) === journal.tokenDigest;
+      if (activeMatches) {
         await input.keychain.deleteSecret('hubDeviceToken');
       }
+      let bindingMatchesJournal = false;
       try {
-        input.settings.remove(HUB_DEVICE_TOKEN_ACTIVATION_KEY);
+        const binding = readDeviceTokenBinding(input.settings);
+        bindingMatchesJournal = binding?.hubBaseUrl === journal.hubBaseUrl
+          && binding.tokenDigest === journal.tokenDigest;
+      } catch {
+        // A corrupt binding is already fail-closed and must not prevent removal
+        // of the exact terminal-dead activation journal.
+      }
+      try {
+        input.settings.batch([
+          { kind: 'remove', key: HUB_DEVICE_TOKEN_ACTIVATION_KEY },
+          ...(!activeUnreadable && (activeMatches || bindingMatchesJournal)
+            ? [{ kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY }]
+            : []),
+        ]);
       } catch (removeError) {
         if (readDeviceTokenActivation(input.settings) !== null) throw removeError;
       }
@@ -304,7 +354,22 @@ async function completeHubDeviceTokenActivation(
     throw error;
   }
 
-  if (journal.cancelRequested) {
+  // Re-check after the network wait. External profile restore/manual file
+  // replacement is outside the in-process queue and can occur while activate
+  // is in flight; never overwrite a different, origin-unknown active token.
+  let activeBeforePromotion: string | null = null;
+  let activeBeforePromotionUnreadable = false;
+  try {
+    activeBeforePromotion = await input.keychain.getSecret('hubDeviceToken');
+  } catch {
+    activeBeforePromotionUnreadable = true;
+  }
+  const unrelatedActive = activeBeforePromotionUnreadable || (
+    activeBeforePromotion !== null
+    && deviceTokenDigest(activeBeforePromotion) !== journal.tokenDigest
+  );
+
+  if (journal.cancelRequested || unrelatedActive) {
     // Sign-out was requested while activation was network-deferred. Convert
     // activation custody into a revoke journal with one atomic SQLite batch
     // before attempting DELETE. Thus a crash can observe activation intent or
@@ -314,6 +379,7 @@ async function completeHubDeviceTokenActivation(
       id: journal.id,
       hubBaseUrl: journal.hubBaseUrl,
       tokenDigest: journal.tokenDigest,
+      remoteSettled: false,
     };
     await input.keychain.setSecret('hubDeviceTokenRevoking', JSON.stringify({
       version: 1,
@@ -346,9 +412,21 @@ async function completeHubDeviceTokenActivation(
   // idempotent activation and writes the same token again.
   await input.keychain.setSecret('hubDeviceToken', staged.token);
   try {
-    input.settings.remove(HUB_DEVICE_TOKEN_ACTIVATION_KEY);
+    input.settings.batch([
+      {
+        kind: 'set',
+        key: HUB_DEVICE_TOKEN_BINDING_KEY,
+        value: deviceTokenBinding(journal.hubBaseUrl, journal.tokenDigest),
+      },
+      { kind: 'remove', key: HUB_DEVICE_TOKEN_ACTIVATION_KEY },
+    ]);
   } catch (error) {
-    if (readDeviceTokenActivation(input.settings) !== null) throw error;
+    const persistedBinding = readDeviceTokenBinding(input.settings);
+    if (
+      readDeviceTokenActivation(input.settings) !== null
+      || persistedBinding?.hubBaseUrl !== journal.hubBaseUrl
+      || persistedBinding.tokenDigest !== journal.tokenDigest
+    ) throw error;
   }
   await input.keychain.deleteSecret('hubDeviceTokenStaged').catch(() => undefined);
   return {
@@ -384,11 +462,13 @@ export async function beginHubDeviceTokenRevocation(
   if (baseUrl.length === 0 || token.length === 0) {
     throw new Error('Hub base URL and device token are required for sign-out.');
   }
+  requireMatchingActiveDeviceTokenBinding(input.settings, baseUrl, token);
   const journal: HubDeviceTokenRevocation = {
     version: 1,
     id: randomUUID(),
     hubBaseUrl: baseUrl,
     tokenDigest: deviceTokenDigest(token),
+    remoteSettled: false,
   };
   await input.keychain.setSecret('hubDeviceTokenRevoking', JSON.stringify({
     version: 1,
@@ -417,6 +497,33 @@ async function completeHubDeviceTokenRevocation(
   if (journal === null) {
     throw new Error('No pending Hub device-token revocation exists.');
   }
+  if (journal.remoteSettled) {
+    let active: string | null;
+    try {
+      active = await input.keychain.getSecret('hubDeviceToken');
+    } catch (error) {
+      throw new UnrelatedActiveDeviceTokenError(
+        'Hub device-token revocation cannot inspect active custody; explicit local abandonment is required.',
+        { cause: error },
+      );
+    }
+    if (active !== null && deviceTokenDigest(active) !== journal.tokenDigest) {
+      throw new UnrelatedActiveDeviceTokenError(
+        'Hub device-token revocation found unrelated active custody; explicit local abandonment is required.',
+      );
+    }
+    await input.keychain.deleteSecret('hubDeviceToken');
+    try {
+      input.settings.batch([
+        { kind: 'remove', key: HUB_DEVICE_TOKEN_BINDING_KEY },
+        { kind: 'remove', key: HUB_DEVICE_TOKEN_REVOCATION_KEY },
+      ]);
+    } catch (error) {
+      if (readDeviceTokenRevocation(input.settings) !== null) throw error;
+    }
+    await input.keychain.deleteSecret('hubDeviceTokenRevoking').catch(() => undefined);
+    return 'revoked';
+  }
   const rawStaged = await input.keychain.getSecret('hubDeviceTokenRevoking');
   if (rawStaged === null) {
     throw new Error('Hub device-token revocation journal is missing encrypted custody.');
@@ -432,13 +539,35 @@ async function completeHubDeviceTokenRevocation(
     ...(input.clientVersion !== undefined ? { clientVersion: input.clientVersion } : {}),
   });
 
-  const active = await input.keychain.getSecret('hubDeviceToken');
-  if (active !== null && deviceTokenDigest(active) !== journal.tokenDigest) {
-    throw new Error('Refusing to delete a Hub device token that does not match the revocation journal.');
+  let active: string | null = null;
+  let activeUnreadable = false;
+  try {
+    active = await input.keychain.getSecret('hubDeviceToken');
+  } catch {
+    activeUnreadable = true;
+  }
+  if (activeUnreadable || (active !== null && deviceTokenDigest(active) !== journal.tokenDigest)) {
+    // In-process credential mutations are serialized, so a different active
+    // token can only come from an external/partial restore. Its origin is not
+    // proven by this journal and it must never be paired with the saved Hub.
+    // Keep the journal as a visible fail-closed latch until the user explicitly
+    // abandons local custody; the remote DELETE above is idempotent if retried.
+    const settledJournal: HubDeviceTokenRevocation = { ...journal, remoteSettled: true };
+    try {
+      input.settings.set(HUB_DEVICE_TOKEN_REVOCATION_KEY, settledJournal);
+    } catch (error) {
+      if (readDeviceTokenRevocation(input.settings)?.remoteSettled !== true) throw error;
+    }
+    throw new UnrelatedActiveDeviceTokenError(
+      'Hub device-token revocation found unrelated active custody; explicit local abandonment is required.',
+    );
   }
   await input.keychain.deleteSecret('hubDeviceToken');
   try {
-    input.settings.remove(HUB_DEVICE_TOKEN_REVOCATION_KEY);
+    input.settings.batch([
+      { kind: 'remove', key: HUB_DEVICE_TOKEN_BINDING_KEY },
+      { kind: 'remove', key: HUB_DEVICE_TOKEN_REVOCATION_KEY },
+    ]);
   } catch (error) {
     if (readDeviceTokenRevocation(input.settings) !== null) throw error;
   }
@@ -454,22 +583,144 @@ export async function recoverHubDeviceTokenLifecycle(
   input: DeviceTokenLifecycleStorage & {
     fetchImpl?: typeof fetch;
     clientVersion?: string;
+    /** Saved connection coordinate used to prove the journal still belongs to
+     * the configured Hub. Omit only in isolated callers/tests that do not own
+     * settings coordinates. */
+    currentHubBaseUrl?: string | null;
     onDeferred?: (kind: 'activation' | 'revocation', error: unknown) => void;
+    onCustodyRecovery?: (
+      kind: 'activation' | 'revocation',
+      outcome: DeviceTokenCustodyRecovery,
+    ) => void;
   },
-): Promise<void> {
-  const activation = readDeviceTokenActivation(input.settings);
+): Promise<boolean> {
+  const readSecretCustody = async (
+    name: Parameters<Keychain['getSecret']>[0],
+  ): Promise<{ value: string | null; unreadable: boolean }> => {
+    try {
+      return { value: await input.keychain.getSecret(name), unreadable: false };
+    } catch {
+      return { value: null, unreadable: true };
+    }
+  };
+  const notifyRecovery = (
+    kind: 'activation' | 'revocation',
+    outcome: DeviceTokenCustodyRecovery,
+  ): void => {
+    try {
+      input.onCustodyRecovery?.(kind, outcome);
+    } catch {
+      // Diagnostics must never replace a completed custody repair.
+    }
+  };
+  const journalOriginMismatch = (
+    journal: HubDeviceTokenActivation | HubDeviceTokenRevocation,
+  ): boolean => {
+    if (input.currentHubBaseUrl === undefined) return false;
+    const current = input.currentHubBaseUrl === null
+      ? null
+      : input.currentHubBaseUrl.trim().replace(/\/+$/, '');
+    return current !== journal.hubBaseUrl;
+  };
+
+  let activation = readDeviceTokenActivation(input.settings);
   let revocation = readDeviceTokenRevocation(input.settings);
   if (activation !== null && revocation !== null) {
     throw new Error('Conflicting Hub device-token activation and revocation journals.');
   }
+  let activationRequiresAbandonment = false;
   if (activation !== null) {
+    const activationOriginMismatch = journalOriginMismatch(activation);
+    {
+      const [stagedCustody, activeCustody] = await Promise.all([
+        readSecretCustody('hubDeviceTokenStaged'),
+        readSecretCustody('hubDeviceToken'),
+      ]);
+      let stagingValid = false;
+      if (!stagedCustody.unreadable && stagedCustody.value !== null) {
+        try {
+          parseStagedDeviceToken(stagedCustody.value, {
+            journalId: activation.id,
+            tokenDigest: activation.tokenDigest,
+          });
+          stagingValid = true;
+        } catch {
+          // A corrupt or foreign staging record is equivalent to missing custody.
+        }
+      }
+      if (!stagingValid) {
+        const activeMatches = !activeCustody.unreadable
+          && activeCustody.value !== null
+          && deviceTokenDigest(activeCustody.value) === activation.tokenDigest;
+        if (activeMatches && (activation.cancelRequested || activationOriginMismatch)) {
+          // Sign-out intent still owns this token. Rebuild the encrypted staging
+          // envelope from the exact active copy so normal recovery can revoke it.
+          if (!activation.cancelRequested) {
+            requestHubDeviceTokenActivationCancellation(input.settings);
+            activation = readDeviceTokenActivation(input.settings);
+          }
+          await input.keychain.setSecret('hubDeviceTokenStaged', JSON.stringify({
+            version: 1,
+            journalId: activation!.id,
+            token: activeCustody.value,
+          }));
+        } else {
+          if (activeMatches) {
+            try {
+              input.settings.batch([
+                {
+                  kind: 'set',
+                  key: HUB_DEVICE_TOKEN_BINDING_KEY,
+                  value: deviceTokenBinding(activation.hubBaseUrl, activation.tokenDigest),
+                },
+                { kind: 'remove', key: HUB_DEVICE_TOKEN_ACTIVATION_KEY },
+              ]);
+            } catch (error) {
+              const binding = readDeviceTokenBinding(input.settings);
+              if (
+                readDeviceTokenActivation(input.settings) !== null
+                || binding?.hubBaseUrl !== activation.hubBaseUrl
+                || binding.tokenDigest !== activation.tokenDigest
+              ) throw error;
+            }
+            await input.keychain.deleteSecret('hubDeviceTokenStaged').catch(() => undefined);
+            notifyRecovery('activation', 'accepted-promoted-active');
+            activation = null;
+          } else {
+            // A lost activation response can leave a live Core token even though
+            // every local copy disappeared. Do not silently orphan it. Keep the
+            // journal as an explicit security warning until the user chooses the
+            // native-confirmed local-abandonment escape hatch.
+            activationRequiresAbandonment = true;
+            notifyRecovery('activation', 'unrecoverable-activation-requires-abandonment');
+          }
+        }
+      } else if (
+        activationOriginMismatch
+        || activeCustody.unreadable
+        || (
+          activeCustody.value !== null
+          && deviceTokenDigest(activeCustody.value) !== activation.tokenDigest
+        )
+      ) {
+        // Settle the exact journal-bound reservation against its proven origin,
+        // but retain a revocation latch for the unrelated active file. The
+        // remote token is activated only so it can be revoked idempotently.
+        requestHubDeviceTokenActivationCancellation(input.settings);
+        activation = readDeviceTokenActivation(input.settings);
+      }
+    }
+  }
+  if (activation !== null && !activationRequiresAbandonment) {
     try {
       await completeHubDeviceTokenActivation(input);
     } catch (error) {
       const terminalWasCleared = error instanceof KernelApiError
         && error.status === 401
         && readDeviceTokenActivation(input.settings) === null;
-      if (!terminalWasCleared) {
+      if (error instanceof UnrelatedActiveDeviceTokenError) {
+        notifyRecovery('revocation', 'unrecoverable-revocation-requires-abandonment');
+      } else if (!terminalWasCleared) {
         input.onDeferred?.('activation', error);
       }
     }
@@ -484,9 +735,78 @@ export async function recoverHubDeviceTokenLifecycle(
     // its durable journal on failure. Let the bounded retry own the next
     // network attempt instead of issuing two DELETEs in one recovery pass.
   } else if (revocation !== null) {
-    await completeHubDeviceTokenRevocation(input).catch((error: unknown) => {
-      input.onDeferred?.('revocation', error);
-    });
+    if (revocation.remoteSettled) {
+      await completeHubDeviceTokenRevocation(input).catch((error: unknown) => {
+        if (error instanceof UnrelatedActiveDeviceTokenError) {
+          notifyRecovery('revocation', 'unrecoverable-revocation-requires-abandonment');
+        } else {
+          input.onDeferred?.('revocation', error);
+        }
+      });
+    } else {
+      const [revokingCustody, activeCustody] = await Promise.all([
+        readSecretCustody('hubDeviceTokenRevoking'),
+        readSecretCustody('hubDeviceToken'),
+      ]);
+      let stagingValid = false;
+      if (!revokingCustody.unreadable && revokingCustody.value !== null) {
+        try {
+          parseStagedDeviceToken(revokingCustody.value, {
+            journalId: revocation.id,
+            tokenDigest: revocation.tokenDigest,
+          });
+          stagingValid = true;
+        } catch {
+          // Reconstruct only from a hash-matched active copy below.
+        }
+      }
+      if (
+        !stagingValid
+        && !activeCustody.unreadable
+        && activeCustody.value !== null
+        && deviceTokenDigest(activeCustody.value) === revocation.tokenDigest
+      ) {
+        await input.keychain.setSecret('hubDeviceTokenRevoking', JSON.stringify({
+          version: 1,
+          journalId: revocation.id,
+          token: activeCustody.value,
+        }));
+        stagingValid = true;
+        notifyRecovery('revocation', 'rebuilt-revocation-custody');
+      }
+      const activeMismatch = activeCustody.unreadable || (
+        activeCustody.value !== null
+        && deviceTokenDigest(activeCustody.value) !== revocation.tokenDigest
+      );
+      if (activeMismatch) {
+        // Revoke the exact journal token using its proven custody, then retain
+        // the journal as a settled latch for the unrelated active file.
+        if (stagingValid) {
+          await completeHubDeviceTokenRevocation(input).catch((error: unknown) => {
+            if (error instanceof UnrelatedActiveDeviceTokenError) {
+              notifyRecovery('revocation', 'unrecoverable-revocation-requires-abandonment');
+            } else {
+              input.onDeferred?.('revocation', error);
+            }
+          });
+        } else {
+          notifyRecovery('revocation', 'unrecoverable-revocation-requires-abandonment');
+        }
+      } else if (!stagingValid) {
+        // Even active===null is not proof of remote revoke under external file
+        // loss/backup-restore. Preserve the warning journal until the operator
+        // explicitly accepts possible remote-token orphaning.
+        notifyRecovery('revocation', 'unrecoverable-revocation-requires-abandonment');
+      } else {
+        await completeHubDeviceTokenRevocation(input).catch((error: unknown) => {
+          if (error instanceof UnrelatedActiveDeviceTokenError) {
+            notifyRecovery('revocation', 'unrecoverable-revocation-requires-abandonment');
+          } else {
+            input.onDeferred?.('revocation', error);
+          }
+        });
+      }
+    }
   }
 
   // Re-read after every transition. In particular, a process can die after the
@@ -502,9 +822,10 @@ export async function recoverHubDeviceTokenLifecycle(
   ): Promise<void> => {
     if (journalExists) return;
     try {
-      if (await input.keychain.getSecret(name) !== null) {
-        await input.keychain.deleteSecret(name);
-      }
+      // Deletion does not require decryption. Reading first would make a
+      // journal-less DPAPI/corrupt orphan impossible to remove and would block
+      // Hub switching/purge forever despite there being no remote intent left.
+      await input.keychain.deleteSecret(name);
     } catch (error) {
       if (input.onDeferred === undefined) throw error;
       input.onDeferred(kind, error);
@@ -512,6 +833,23 @@ export async function recoverHubDeviceTokenLifecycle(
   };
   await cleanupOrphan('hubDeviceTokenStaged', 'activation', finalActivation !== null);
   await cleanupOrphan('hubDeviceTokenRevoking', 'revocation', finalRevocation !== null);
+  return finalActivation !== null || finalRevocation !== null;
+}
+
+/** Explicit last-resort recovery for a permanently unavailable old Hub. The
+ * caller must obtain user confirmation: remote revocation is intentionally not
+ * claimed, so the old Hub may retain a live token until an admin revokes it. */
+export async function abandonHubDeviceTokenCustody(
+  input: DeviceTokenLifecycleStorage,
+): Promise<void> {
+  await input.keychain.deleteSecret('hubDeviceToken');
+  await input.keychain.deleteSecret('hubDeviceTokenStaged');
+  await input.keychain.deleteSecret('hubDeviceTokenRevoking');
+  input.settings.batch([
+    { kind: 'remove', key: HUB_DEVICE_TOKEN_BINDING_KEY },
+    { kind: 'remove', key: HUB_DEVICE_TOKEN_ACTIVATION_KEY },
+    { kind: 'remove', key: HUB_DEVICE_TOKEN_REVOCATION_KEY },
+  ]);
 }
 
 /**

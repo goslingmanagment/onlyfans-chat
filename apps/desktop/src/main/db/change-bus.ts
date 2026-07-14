@@ -52,7 +52,18 @@ export function createChangeBus(flushIntervalMs: number = DB_CHANGE_FLUSH_MS): D
       if (disposed) {
         return;
       }
-      pending.set(dedupeKey(event), event);
+      const key = dedupeKey(event);
+      const previous = pending.get(key);
+      if (previous?.scope === 'settings' && event.scope === 'settings') {
+        pending.set(key, {
+          scope: 'settings',
+          ...(previous.settingsKeys !== undefined && event.settingsKeys !== undefined
+            ? { settingsKeys: [...new Set([...previous.settingsKeys, ...event.settingsKeys])] }
+            : {}),
+        });
+      } else {
+        pending.set(key, event);
+      }
       if (timer === null) {
         timer = setTimeout(flush, flushIntervalMs);
       }

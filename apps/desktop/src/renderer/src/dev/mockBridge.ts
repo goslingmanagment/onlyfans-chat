@@ -323,6 +323,8 @@ function buildStore(): MockStore {
       isAuthenticated: true,
       unreadCount: 0,
       personalityId: 'builtin:lora',
+      rawPersonalityId: 'builtin:lora',
+      personalityMappingState: 'active',
     },
     {
       id: 'acct_lexi',
@@ -332,6 +334,8 @@ function buildStore(): MockStore {
       isAuthenticated: chance(0.5),
       unreadCount: 0,
       personalityId: null,
+      rawPersonalityId: null,
+      personalityMappingState: 'unmapped',
     },
   ];
 
@@ -417,7 +421,9 @@ function buildStore(): MockStore {
 
   const settings: SettingsVM = {
     hasHubKey: true,
+    hubApiKeyBindingState: 'bound',
     hasHubDeviceToken: false,
+    hubDeviceTokenBindingState: 'none',
     hubDeviceTokenTransition: null,
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
@@ -501,6 +507,7 @@ function buildStore(): MockStore {
       state: 'live',
       hub: 'live',
       hubMode: 'live',
+      hubCredentialAttention: false,
       hubModeOverride: 'auto',
       hubLastEventAt: new Date().toISOString(),
       hubLastEventType: 'messages.received',
@@ -1116,7 +1123,18 @@ export function createMockBridge(): ChatGooseBridge {
     },
     'query:settings.get': () => ({ ...store.settings }),
     'cmd:app.rendererReady': () => undefined,
-    'query:personalities.list': () => store.personalities.map((p) => ({ ...p })),
+    'query:personalities.list': () => ({
+      scopeOrigin: store.settings.hubBaseUrl === null
+        ? null
+        : new URL(store.settings.hubBaseUrl).origin,
+      personas: store.personalities.map((persona) => ({
+        key: persona.id,
+        displayName: persona.name,
+        version: persona.remoteVersion ?? 1,
+        status: 'active' as const,
+      })),
+      legacySnapshotAvailable: true,
+    }),
     'query:sync.status': () => ({
       ...store.sync,
       freshness: { ...store.sync.freshness },
@@ -1162,7 +1180,12 @@ export function createMockBridge(): ChatGooseBridge {
         pendingSummaries: 2,
         syncedSummariesToday: 0,
       },
-      ai: { gatewayConfigured: store.settings.hubBaseUrl !== null && store.settings.hasHubKey },
+      ai: {
+        gatewayConfigured: store.settings.hubBaseUrl !== null && (
+          store.settings.hubApiKeyBindingState === 'bound'
+          || store.settings.hubDeviceTokenBindingState === 'bound'
+        ),
+      },
       sends: { ...store.sync.sendsToday },
       credits: {
         core: {
@@ -1249,6 +1272,14 @@ export function createMockBridge(): ChatGooseBridge {
     }),
     'cmd:hub.signOutDevice': () => {
       store.settings = { ...store.settings, hasHubDeviceToken: false };
+      emit('db:changed', { scope: 'settings' });
+    },
+    'cmd:hub.abandonDevice': () => {
+      store.settings = {
+        ...store.settings,
+        hasHubDeviceToken: false,
+        hubDeviceTokenTransition: null,
+      };
       emit('db:changed', { scope: 'settings' });
     },
     'cmd:keys.test': () => {
@@ -1420,21 +1451,14 @@ export function createMockBridge(): ChatGooseBridge {
       }
       return { ...store.settings };
     },
-    'cmd:personalities.save': (personality) => {
-      const idx = store.personalities.findIndex((p) => p.id === personality.id);
-      if (idx >= 0) store.personalities[idx] = personality;
-      else store.personalities.push(personality);
-      emit('db:changed', { scope: 'settings' });
-      return store.personalities.map((p) => ({ ...p }));
-    },
-    'cmd:personalities.delete': (personality) => {
-      store.personalities = store.personalities.filter((p) => p.id !== personality.id);
-      emit('db:changed', { scope: 'settings' });
-      return store.personalities.map((p) => ({ ...p }));
-    },
+    'cmd:personalities.exportLegacySnapshot': () => ({ path: '/tmp/chatgoose-persona-backup.json' }),
     'cmd:mappings.set': ({ accountId, personalityId }) => {
       const account = store.accounts.find((a) => a.id === accountId);
-      if (account !== undefined) account.personalityId = personalityId;
+      if (account !== undefined) {
+        account.personalityId = personalityId;
+        account.rawPersonalityId = personalityId;
+        account.personalityMappingState = personalityId === null ? 'unmapped' : 'active';
+      }
       const mappings = { ...store.settings.accountMappings };
       if (personalityId === null) delete mappings[accountId];
       else mappings[accountId] = personalityId;

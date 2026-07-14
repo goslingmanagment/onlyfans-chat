@@ -50,7 +50,9 @@ export function seedAccount(data: DataLayer, username = 'loravie', id = ACCT): v
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
     hasHubKey: true,
+    hubApiKeyBindingState: 'bound',
     hasHubDeviceToken: false,
+    hubDeviceTokenBindingState: 'none',
     hubDeviceTokenTransition: null,
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
@@ -189,6 +191,7 @@ export function makeFakeHubClient(
     putFanProfile: () => Promise<unknown>;
     postUsageBatch: (args: { events: HubUsageEvent[] }) => Promise<HubUsageBatchResult>;
     getOfapiCreditsSummary: () => Promise<HubOfapiCreditsSummary>;
+    listAiPersonaCatalog: HubClient['listAiPersonaCatalog'];
     streamAiGateway: (
       args: { request: HubAiGatewayStreamRequest },
       callbacks: HubAiGatewayStreamCallbacks,
@@ -316,11 +319,9 @@ export function makeFakeHubClient(
     cancelOfapiCommand: vi.fn(() => Promise.resolve({ ...commandResponse, state: 'cancelled' })),
     streamAiGateway: streamAiGatewayMock,
     streamAiFeature: streamAiFeatureMock,
-    listAiPersonas: vi.fn(() => Promise.resolve([])),
-    listAiPersonaStates: vi.fn(() => Promise.resolve([])),
-    archiveAiPersona: vi.fn(() => Promise.resolve({ archived: true, version: 1 })),
-    upsertAiPersona: vi.fn((args: { key: string; displayName: string; systemBlock: string }) =>
-      Promise.resolve({ ...args, updatedAt: new Date().toISOString(), version: 1 })),
+    listAiPersonaCatalog: vi.fn(
+      overrides.listAiPersonaCatalog ?? (() => Promise.resolve([])),
+    ),
     getServerTimeOffsetMs: () => null,
     listPagesMock,
     getFanProfileMock,

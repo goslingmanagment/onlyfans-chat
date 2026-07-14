@@ -16,11 +16,14 @@ import {
   drainRuntimeThenFinishCustody,
   exitAfterFatalBoot,
   exposeUiBeforeRuntimeActivation,
+  finishPurgeCustody,
+  hubCredentialNeedsAttention,
   probeHubReadCredential,
   requireSettledDeviceCredentialCustody,
   replaceRuntimeSecurityFirst,
   runFailClosedTerminalPurge,
   sealRuntimeForTerminalOperation,
+  settleDeviceCredentialBeforePurge,
   stopRuntimeServices,
   subscribeSettingsScope,
   validateThenReconcileOnBoot,
@@ -50,6 +53,29 @@ describe('activateRuntimeNonFatal (4b)', () => {
       activateRuntimeNonFatal(() => Promise.resolve(), onFailure),
     ).resolves.toBe(true);
     expect(onFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('hubCredentialNeedsAttention', () => {
+  const bound = {
+    hasHubKey: true,
+    hubApiKeyBindingState: 'bound' as const,
+    hasHubDeviceToken: false,
+    hubDeviceTokenBindingState: 'none' as const,
+    hubDeviceTokenTransition: null,
+  };
+
+  it('surfaces a surviving lifecycle journal even when every custody file is missing', () => {
+    expect(hubCredentialNeedsAttention({
+      ...bound,
+      hasHubKey: false,
+      hubApiKeyBindingState: 'none',
+      hubDeviceTokenTransition: 'revocation',
+    })).toBe(true);
+  });
+
+  it('does not flag an exact bound credential with no lifecycle journal', () => {
+    expect(hubCredentialNeedsAttention(bound)).toBe(false);
   });
 });
 
@@ -203,6 +229,36 @@ describe('createBoundedRetry', () => {
     retry.cancel();
     await vi.advanceTimersByTimeAsync(100);
     expect(task).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-arms a durable retry obligation after each bounded series exhausts', async () => {
+    vi.useFakeTimers();
+    const error = new Error('hub still offline');
+    const task = vi.fn(() => Promise.reject(error));
+    const onExhausted = vi.fn();
+    const retry = createBoundedRetry({
+      task,
+      delaysMs: [10, 20],
+      repeatAfterExhaustionMs: 100,
+      onExhausted,
+    });
+
+    retry.start();
+    await vi.advanceTimersByTimeAsync(30);
+    expect(task).toHaveBeenCalledTimes(2);
+    expect(onExhausted).toHaveBeenCalledTimes(1);
+    expect(retry.pending()).toBe(true);
+
+    // The repetition pause starts a fresh bounded series; its normal first
+    // delay still applies, so no tight loop is possible after exhaustion.
+    await vi.advanceTimersByTimeAsync(109);
+    expect(task).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(task).toHaveBeenCalledTimes(3);
+
+    retry.cancel();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(task).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -429,6 +485,20 @@ describe('runFailClosedTerminalPurge', () => {
     expect(order).toEqual(['deactivate', 'harvest-delta']);
   });
 
+  it('finishes the final harvest before revoking the only device bearer', async () => {
+    const order: string[] = [];
+    await finishPurgeCustody({
+      settlePendingCredential: async () => { order.push('settle-pending'); },
+      finishHarvest: async () => { order.push('harvest-with-live-bearer'); },
+      settleActiveDeviceCredential: async () => { order.push('revoke-device'); },
+    });
+    expect(order).toEqual([
+      'settle-pending',
+      'harvest-with-live-bearer',
+      'revoke-device',
+    ]);
+  });
+
   it('keeps the database and relaunches when final custody upload fails', async () => {
     const order: string[] = [];
     const failure = new Error('final harvest delta failed');
@@ -470,6 +540,64 @@ describe('runFailClosedTerminalPurge', () => {
     await expect(requireSettledDeviceCredentialCustody({
       recover: async () => false,
     })).resolves.toBeUndefined();
+  });
+
+  it('revokes a bound active device token before its DB origin binding can be purged', async () => {
+    const order: string[] = [];
+    const recover = vi.fn(async () => {
+      order.push('recover');
+      return false;
+    });
+    const revoke = vi.fn(async () => {
+      order.push('revoke');
+    });
+
+    await settleDeviceCredentialBeforePurge({
+      recover,
+      read: async () => ({
+        hasDeviceTokenCustody: true,
+        bindingState: 'bound',
+        hubBaseUrl: 'https://hub.test',
+        deviceToken: 'agency_hub_device_exact',
+      }),
+      revoke,
+    });
+
+    expect(order).toEqual(['recover', 'revoke', 'recover']);
+    expect(revoke).toHaveBeenCalledWith({
+      hubBaseUrl: 'https://hub.test',
+      deviceToken: 'agency_hub_device_exact',
+    });
+  });
+
+  it('preserves the DB when device-token custody has no provable origin', async () => {
+    const revoke = vi.fn();
+    await expect(settleDeviceCredentialBeforePurge({
+      recover: async () => false,
+      read: async () => ({
+        hasDeviceTokenCustody: true,
+        bindingState: 'unbound',
+        hubBaseUrl: 'https://gosling-agency.ru',
+        deviceToken: null,
+      }),
+      revoke,
+    })).rejects.toThrow(/cannot be purged.*no provable Hub origin/i);
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
+  it('does not contact the Hub when no device-token custody survives', async () => {
+    const revoke = vi.fn();
+    await expect(settleDeviceCredentialBeforePurge({
+      recover: async () => false,
+      read: async () => ({
+        hasDeviceTokenCustody: false,
+        bindingState: 'none',
+        hubBaseUrl: 'https://gosling-agency.ru',
+        deviceToken: null,
+      }),
+      revoke,
+    })).resolves.toBeUndefined();
+    expect(revoke).not.toHaveBeenCalled();
   });
 
   it('deletes only after custody completes and then relaunches cleanly', async () => {
@@ -716,6 +844,19 @@ describe('activateStoredCredentialWithRetry', () => {
         scheduleRetry,
       }),
     ).resolves.toBeUndefined();
+    expect(scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it('does not schedule an automatic retry for a permanently rejected credential', async () => {
+    const cause = new Error('HTTP 401');
+    const scheduleRetry = vi.fn();
+
+    await expect(activateStoredCredentialWithRetry({
+      activate: () => Promise.reject(cause),
+      scheduleRetry,
+      shouldRetry: () => false,
+    })).rejects.toThrow(/credential was rejected/i);
+
     expect(scheduleRetry).not.toHaveBeenCalled();
   });
 });

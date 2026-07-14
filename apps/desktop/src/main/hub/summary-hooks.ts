@@ -36,6 +36,10 @@ export interface SummaryHubHooksOptions {
   client: Pick<HubClient, 'getFanProfile' | 'putFanProfile'>;
   data: DataLayer;
   resolvePageLabel: (accountId: string) => Promise<string | null>;
+  /** Exact current Hub-origin + mapping + persona-revision proof. */
+  isSummaryCurrent: (accountId: string, entry: SummaryCacheEntry) => boolean;
+  /** Exact synchronous page-label proof immediately before/after transport. */
+  isPageLabelCurrent: (accountId: string, pageLabel: string) => boolean;
   now?: () => number;
 }
 
@@ -57,7 +61,13 @@ function withBudget<T>(promise: Promise<T>, budgetMs: number, fallback: T): Prom
 }
 
 export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryHubSyncHooks {
-  const { client, data, resolvePageLabel } = options;
+  const {
+    client,
+    data,
+    resolvePageLabel,
+    isSummaryCurrent,
+    isPageLabelCurrent,
+  } = options;
   const now = options.now ?? (() => Date.now());
   let replayTimer: ReturnType<typeof setTimeout> | null = null;
   let replaying: Promise<void> | null = null;
@@ -92,20 +102,18 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
     };
   }
 
-  /**
-   * Sets hub_sync_state on the row IF its body still matches — never clobbers
-   * a summary that was regenerated or replaced while the hub call ran.
-   */
+  /** Sets hub_sync_state only on the exact body + generation being delivered. */
   function markSyncState(
     accountId: string,
     fanId: string,
     body: string,
+    generatedAt: number,
     state: HubSummarySyncState['state'],
     reason?: HubSummarySyncState['reason'],
   ): void {
     try {
       const entry = data.summaries.get(accountId, fanId);
-      if (entry === null || entry.body !== body) {
+      if (entry === null || entry.body !== body || entry.generatedAt !== generatedAt) {
         return;
       }
       data.summaries.put(accountId, fanId, {
@@ -168,11 +176,11 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
     } catch {
       // Cache hydration is best-effort; the returned value still gets adopted.
     }
-    // The coordinator's adopt path re-puts the entry without hubSyncState in
-    // the same tick we resolve — re-mark on the next macrotask (body-guarded)
-    // so 'synced' sticks on the adopted row.
+    // This legacy read adapter is not exposed by the Hub composition while
+    // profiles lack persona provenance. Keep its own hydration bookkeeping
+    // exact in case the contract later grows the required fields.
     setTimeout(() => {
-      if (!disposed) markSyncState(accountId, fanId, version.body, 'synced');
+      if (!disposed) markSyncState(accountId, fanId, version.body, generatedAt, 'synced');
     }, 0);
     return { body: version.body, generatedAt };
   }
@@ -188,29 +196,59 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
     (replayTimer as unknown as { unref?: () => void }).unref?.();
   }
 
-  async function doPush(accountId: string, fanId: string, body: string): Promise<boolean> {
+  async function doPush(
+    accountId: string,
+    fanId: string,
+    body: string,
+    generatedAtMs: number,
+  ): Promise<boolean> {
     if (disposed) {
       return false;
     }
+    const isCurrentDelivery = (): boolean => {
+      const entry = data.summaries.get(accountId, fanId);
+      return entry !== null
+        && entry.body === body
+        && entry.generatedAt === generatedAtMs
+        && isSummaryCurrent(accountId, entry);
+    };
+    // A pending row from another Hub origin is deliberately parked. Its body
+    // may be valid again if that origin is restored, but it must never ride the
+    // currently configured Hub client.
+    if (!isCurrentDelivery()) {
+      return true;
+    }
     if (body.length === 0 || Buffer.byteLength(body, 'utf8') > HUB_PROFILE_MAX_BYTES) {
-      markSyncState(accountId, fanId, body, 'rejected', 'oversize');
+      markSyncState(accountId, fanId, body, generatedAtMs, 'rejected', 'oversize');
       return true; // explicit non-retriable classification
     }
     // Persist the replay obligation before the first await. A crash, runtime
     // swap, or process exit during page resolution/network I/O must leave a row
     // the next configured hook can discover.
-    markSyncState(accountId, fanId, body, 'pending', 'delivery-pending');
+    markSyncState(accountId, fanId, body, generatedAtMs, 'pending', 'delivery-pending');
     const pageLabel = await resolvePageLabel(accountId);
     if (disposed) {
       return false;
     }
+    if (!isCurrentDelivery()) {
+      return true;
+    }
     if (pageLabel === null) {
-      markSyncState(accountId, fanId, body, 'pending', 'page-unresolved');
+      markSyncState(accountId, fanId, body, generatedAtMs, 'pending', 'page-unresolved');
+      return false;
+    }
+    if (!isPageLabelCurrent(accountId, pageLabel)) {
       return false;
     }
     const delivered = await withBudget(
       client
-        .putFanProfile({ pageLabel, fanId, body, timeoutMs: HUB_PROFILE_PUT_TIMEOUT_MS })
+        .putFanProfile({
+          pageLabel,
+          fanId,
+          body,
+          generatedAtMs,
+          timeoutMs: HUB_PROFILE_PUT_TIMEOUT_MS,
+        })
         .then(
           () => true,
           () => false,
@@ -221,13 +259,16 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
     if (disposed) {
       return delivered;
     }
-    markSyncState(
-      accountId,
-      fanId,
-      body,
-      delivered ? 'synced' : 'pending',
-      delivered ? undefined : 'delivery-failed',
-    );
+    if (isCurrentDelivery() && isPageLabelCurrent(accountId, pageLabel)) {
+      markSyncState(
+        accountId,
+        fanId,
+        body,
+        generatedAtMs,
+        delivered ? 'synced' : 'pending',
+        delivered ? undefined : 'delivery-failed',
+      );
+    }
     return delivered;
   }
 
@@ -243,18 +284,29 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
         if (disposed) {
           return;
         }
+        if (!isSummaryCurrent(pending.accountId, pending.entry)) {
+          continue;
+        }
         try {
-          await doPush(pending.accountId, pending.fanId, pending.entry.body);
+          await doPush(
+            pending.accountId,
+            pending.fanId,
+            pending.entry.body,
+            pending.entry.generatedAt,
+          );
         } catch {
           markSyncState(
             pending.accountId,
             pending.fanId,
             pending.entry.body,
+            pending.entry.generatedAt,
             'pending',
             'delivery-failed',
           );
         }
       }
+      // Even an ineligible row stays on a cheap local timer: a later mapping
+      // restore can make it current without rebuilding the Hub runtime.
       if (!disposed && data.summaries.listHubSyncPending(1).length > 0) {
         scheduleReplay();
       }
@@ -275,14 +327,14 @@ export function createSummaryHubHooks(options: SummaryHubHooksOptions): SummaryH
       // result is abandoned and generation proceeds (hub down ≠ broken Scan).
       withBudget(track(doPrefetch(accountId, fanId)), HUB_PROFILE_GET_TIMEOUT_MS, null),
 
-    pushSummary: async ({ accountId, fanId, body }) => {
+    pushSummary: async ({ accountId, fanId, body, generatedAt }) => {
       try {
-        const delivered = await track(doPush(accountId, fanId, body));
+        const delivered = await track(doPush(accountId, fanId, body, generatedAt));
         if (!delivered) {
           scheduleReplay();
         }
       } catch {
-        markSyncState(accountId, fanId, body, 'pending', 'delivery-failed');
+        markSyncState(accountId, fanId, body, generatedAt, 'pending', 'delivery-failed');
         scheduleReplay();
       }
     },

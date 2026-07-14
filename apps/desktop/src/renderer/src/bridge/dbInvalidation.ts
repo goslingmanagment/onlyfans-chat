@@ -12,6 +12,7 @@ export interface DbInvalidationEvent {
   scope: DbInvalidationScope;
   accountId?: string | undefined;
   chatId?: string | undefined;
+  settingsKeys?: string[] | undefined;
 }
 
 export type InvalidationKey = readonly string[];
@@ -35,6 +36,20 @@ function chatListInvalidationKeys(accountId: string): InvalidationKey[] {
 // local DB joins and must refresh without another /fans/active read.
 function onlineInvalidationKeys(accountId: string): InvalidationKey[] {
   return [['online', accountId]];
+}
+
+/** Settings rows whose successful replacement changes the identity or route
+ * of persona-dependent AI output. Unknown/legacy settings events stay
+ * fail-neutral here; direct renderer mutations fence their own transition. */
+export function settingsKeysInvalidateAiContext(settingsKeys: readonly string[] | undefined): boolean {
+  return settingsKeys?.some((key) =>
+    key === 'hubBaseUrl'
+    || key === 'runtime.aiContext'
+    || key === 'accountPageLabels'
+    || key === 'accountMappings'
+    || key.startsWith('personalities.catalog.')
+    || key.startsWith('personalities.accountMappings.'),
+  ) ?? false;
 }
 
 export function dbChangedInvalidationKeysForEvent(
@@ -84,7 +99,9 @@ export function dbChangedInvalidationKeysForEvent(
           : []),
       ];
     case 'settings':
-      return [['settings'], ['personalities'], ['guard-config']];
+      // Persona catalog metadata and local mappings are settings rows, but
+      // account VMs expose their resolved/archived state as well.
+      return [['settings'], ['personalities'], ['accounts'], ['fan'], ['guard-config']];
     case 'guard':
       return [
         ['guard-config'],

@@ -91,6 +91,12 @@ export function StatusBar(): React.JSX.Element {
           <Key>HUB AUTH</Key>
         </Segment>
       )}
+      {status?.hubCredentialAttention && (
+        <Segment tip={STATUS_BAR_TIPS.hubCredential} onClick={openActivity} className="text-bad">
+          <span className="h-[6px] w-[6px] rounded-full bg-bad" />
+          <Key>HUB CREDENTIAL</Key>
+        </Segment>
+      )}
       <Segment tip={STATUS_BAR_TIPS.credits} onClick={openActivity}>
         <span>
           <Key>

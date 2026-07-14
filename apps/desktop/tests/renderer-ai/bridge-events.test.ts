@@ -26,6 +26,7 @@ import { attachBridgeEvents } from '../../src/renderer/src/bridge/events';
 import { qk } from '../../src/renderer/src/bridge/queries';
 import { useSettingsCache } from '../../src/renderer/src/state/settingsCache';
 import { useUiStore } from '../../src/renderer/src/state/uiStore';
+import * as aiStore from '../../src/renderer/src/features/ai/aiStore';
 
 describe('attachBridgeEvents', () => {
   beforeEach(() => {
@@ -55,6 +56,27 @@ describe('attachBridgeEvents', () => {
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: qk.accounts });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['online', 'acct_1'] });
     detach();
+  });
+
+  it('resets AI jobs only for committed AI-context settings rows', () => {
+    const queryClient = new QueryClient();
+    const resetSpy = vi.spyOn(aiStore, 'resetAiJobsForHubOriginChange');
+    const detach = attachBridgeEvents(queryClient);
+
+    for (const listener of bridgeMock.listeners.get('db:changed') ?? []) {
+      listener({ scope: 'settings', settingsKeys: ['soundEnabled'] });
+    }
+    expect(resetSpy).not.toHaveBeenCalled();
+
+    for (const listener of bridgeMock.listeners.get('db:changed') ?? []) {
+      listener({
+        scope: 'settings',
+        settingsKeys: ['personalities.catalog.v1.scope-digest'],
+      });
+    }
+    expect(resetSpy).toHaveBeenCalledTimes(1);
+    detach();
+    resetSpy.mockRestore();
   });
 
   it('builds a message toast from the incoming frame instead of the stale chat preview', () => {

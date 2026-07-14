@@ -12,13 +12,16 @@ export interface PageLabelResolverOptions {
   listPages: () => Promise<HubPage[]>;
   /** OnlyFans username of the local account row, or null when unknown. */
   getAccountUsername: (accountId: string) => string | null;
-  /** Current settings.accountPageLabels map. */
-  getOverrides: () => Promise<Record<string, string>>;
+  /** Current settings.accountPageLabels map; synchronous routing fence. */
+  getOverrides: () => Record<string, string>;
   now?: () => number;
 }
 
 export interface PageLabelResolver {
   resolve(accountId: string): Promise<string | null>;
+  /** Current label from synchronous overrides/account identity + cached pages.
+   * undefined means the page list has not been resolved yet. */
+  current(accountId: string): string | null | undefined;
 }
 
 export function createPageLabelResolver(options: PageLabelResolverOptions): PageLabelResolver {
@@ -53,10 +56,25 @@ export function createPageLabelResolver(options: PageLabelResolverOptions): Page
     }
   }
 
+  function current(accountId: string): string | null | undefined {
+    const overrides = options.getOverrides();
+    const override = overrides[accountId]?.trim();
+    if (override !== undefined && override !== '') {
+      return override;
+    }
+    const username = options.getAccountUsername(accountId);
+    if (username === null || username.trim() === '') {
+      return null;
+    }
+    if (cache === null) {
+      return undefined;
+    }
+    return matchPageLabelForUsername(username, cache.pages);
+  }
+
   return {
     async resolve(accountId) {
-      const overrides = await options.getOverrides();
-      const override = overrides[accountId]?.trim();
+      const override = options.getOverrides()[accountId]?.trim();
       if (override !== undefined && override !== '') {
         return override;
       }
@@ -68,7 +86,9 @@ export function createPageLabelResolver(options: PageLabelResolverOptions): Page
       if (pages === null) {
         return null;
       }
-      return matchPageLabelForUsername(username, pages);
+      // Re-read the synchronous override/account coordinates after the await.
+      return current(accountId) ?? null;
     },
+    current,
   };
 }

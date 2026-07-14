@@ -11,6 +11,8 @@ import type { AiFeatureGateway } from '../ai/gateway';
 export interface FeatureAiGatewayOptions {
   client: Pick<HubClient, 'streamAiFeature'>;
   resolvePageLabel: (accountId: string) => Promise<string | null>;
+  /** Exact synchronous page-label proof for the full operation lifetime. */
+  isPageLabelCurrent: (accountId: string, pageLabel: string) => boolean;
 }
 
 // Kernel gate codes (#120): the kernel stamps each product-gate 400 with a
@@ -80,6 +82,7 @@ export function createFeatureAiGateway(options: FeatureAiGatewayOptions): AiFeat
   return {
     stream(req, cb) {
       const controller = new AbortController();
+      let routeInvalidated = false;
 
       void (async () => {
         try {
@@ -93,6 +96,19 @@ export function createFeatureAiGateway(options: FeatureAiGatewayOptions): AiFeat
               detail: { providerMessage: req.accountId },
             });
           }
+          const ensureCurrentRoute = (): boolean => {
+            if (controller.signal.aborted) return false;
+            if (options.isPageLabelCurrent(req.accountId, pageLabel)) return true;
+            if (!routeInvalidated) {
+              routeInvalidated = true;
+              controller.abort();
+              cb.onError?.(new CgError('CG-FLOW-02', {
+                message: 'Core page mapping changed during generation; retry the operation.',
+              }));
+            }
+            return false;
+          };
+          if (!ensureCurrentRoute()) return;
 
           const rawText = await options.client.streamAiFeature(
             {
@@ -112,21 +128,34 @@ export function createFeatureAiGateway(options: FeatureAiGatewayOptions): AiFeat
               },
             },
             {
-              onProgress: () => cb.onProgress?.(),
-              onReasoningDelta: (text) => cb.onReasoningDelta?.(text),
-              onStopReason: (stopReason) => cb.onStopReason?.(stopReason),
-              onUsage: (usage) => cb.onUsage?.(usage),
+              onProgress: () => {
+                if (ensureCurrentRoute()) cb.onProgress?.();
+              },
+              onReasoningDelta: (text) => {
+                if (ensureCurrentRoute()) cb.onReasoningDelta?.(text);
+              },
+              onStopReason: (stopReason) => {
+                if (ensureCurrentRoute()) cb.onStopReason?.(stopReason);
+              },
+              onUsage: (usage) => {
+                if (ensureCurrentRoute()) cb.onUsage?.(usage);
+              },
               onMeta: (meta) => {
+                if (!ensureCurrentRoute()) return;
                 cb.onGenerationRef?.(meta.requestId);
                 if (meta.quotaRemainingRequests !== null) {
                   cb.onQuotaRemaining?.(meta.quotaRemainingRequests);
                 }
               },
-              onDebugInput: (input) => cb.onDebugInput?.(input),
-              onText: (text) => cb.onText(text),
+              onDebugInput: (input) => {
+                if (ensureCurrentRoute()) cb.onDebugInput?.(input);
+              },
+              onText: (text) => {
+                if (ensureCurrentRoute()) cb.onText(text);
+              },
             },
           );
-          if (!controller.signal.aborted) {
+          if (ensureCurrentRoute()) {
             cb.onComplete(rawText);
           }
         } catch (error) {

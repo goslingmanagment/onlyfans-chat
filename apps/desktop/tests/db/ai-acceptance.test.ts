@@ -72,6 +72,22 @@ describe('ai_acceptance_ops', () => {
     expect(data.aiSpendLog.rowsSince('2026-07-12')).toEqual([]);
   });
 
+  it('discards only unaccepted operation correlation on a Hub-origin switch', () => {
+    const data = memoryDataLayer();
+    data.aiAcceptance.remember(OPERATION);
+    const accepted = { ...OPERATION, operationId: '00000000-0000-4000-8000-000000000098' };
+    data.aiAcceptance.remember(accepted);
+    expect(data.aiAcceptance.acceptOnce(accepted.operationId, '2026-07-12T10:01:00.000Z').status)
+      .toBe('accepted');
+
+    expect(data.aiAcceptance.discardUnaccepted()).toBe(1);
+    expect(data.aiAcceptance.get(OPERATION.operationId)).toBeNull();
+    expect(data.aiAcceptance.get(accepted.operationId)?.acceptedAt).toBe(
+      '2026-07-12T10:01:00.000Z',
+    );
+    data.close();
+  });
+
   it('does not let a duplicate operation id rewrite authoritative metadata', () => {
     const data = memoryDataLayer();
     data.aiAcceptance.remember(OPERATION);

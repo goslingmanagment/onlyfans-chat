@@ -30,10 +30,12 @@ describe('hasHubDeviceTokenCustody', () => {
   it('prioritizes a durable revocation state over the retained active secret', () => {
     expect(hubDeviceTokenStatus({
       hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'bound',
       hubDeviceTokenTransition: 'revocation',
     })).toBe('revocation');
     expect(hubDeviceTokenStatus({
       hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'bound',
       hubDeviceTokenTransition: null,
     })).toBe('configured');
   });
@@ -45,7 +47,9 @@ describe('isHubConfigured', () => {
       isHubConfigured({
         hubBaseUrl: 'https://hub.example.com',
         hasHubKey: true,
+        hubApiKeyBindingState: 'bound',
         hasHubDeviceToken: false,
+        hubDeviceTokenBindingState: 'none',
       }),
     ).toBe(true);
   });
@@ -55,7 +59,9 @@ describe('isHubConfigured', () => {
       isHubConfigured({
         hubBaseUrl: 'https://hub.example.com',
         hasHubKey: false,
+        hubApiKeyBindingState: 'none',
         hasHubDeviceToken: true,
+        hubDeviceTokenBindingState: 'bound',
       }),
     ).toBe(true);
   });
@@ -65,18 +71,42 @@ describe('isHubConfigured', () => {
       isHubConfigured({
         hubBaseUrl: 'https://hub.example.com',
         hasHubKey: false,
+        hubApiKeyBindingState: 'none',
         hasHubDeviceToken: false,
+        hubDeviceTokenBindingState: 'none',
       }),
     ).toBe(false);
   });
 
   it('no base URL leaves the hub unconfigured even with a credential', () => {
-    expect(isHubConfigured({ hubBaseUrl: null, hasHubKey: true, hasHubDeviceToken: false })).toBe(
+    expect(isHubConfigured({
+      hubBaseUrl: null,
+      hasHubKey: true,
+      hubApiKeyBindingState: 'bound',
+      hasHubDeviceToken: false,
+      hubDeviceTokenBindingState: 'none',
+    })).toBe(
       false,
     );
-    expect(isHubConfigured({ hubBaseUrl: null, hasHubKey: false, hasHubDeviceToken: true })).toBe(
+    expect(isHubConfigured({
+      hubBaseUrl: null,
+      hasHubKey: false,
+      hubApiKeyBindingState: 'none',
+      hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'bound',
+    })).toBe(
       false,
     );
+  });
+
+  it('quarantines existing credentials whose saved Hub origin is not proven', () => {
+    expect(isHubConfigured({
+      hubBaseUrl: 'https://hub.example.com',
+      hasHubKey: true,
+      hubApiKeyBindingState: 'unbound',
+      hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'mismatch',
+    })).toBe(false);
   });
 });
 

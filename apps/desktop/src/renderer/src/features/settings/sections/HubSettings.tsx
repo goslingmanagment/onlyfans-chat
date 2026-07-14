@@ -10,6 +10,7 @@ import type { KeyTestResultVM, SettingsVM, SyncStatusVM } from '../../../../../p
 import type { UiLocale, UiTranslator } from '@chatgoose/shared/i18n/index';
 import {
   useAccounts,
+  useHubAbandonDevice,
   useHubDeviceTokenIssue,
   useHubSignOutDevice,
   useKeyTest,
@@ -64,6 +65,7 @@ export function HubSettings({
   const [signInPassword, setSignInPassword] = useState('');
   const deviceToken = useHubDeviceTokenIssue();
   const signOutDevice = useHubSignOutDevice();
+  const abandonDevice = useHubAbandonDevice();
   const [labels, setLabels] = useState<Record<string, string>>(settings.accountPageLabels);
   const accounts = useAccounts();
   const syncStatus = useSyncStatus();
@@ -75,6 +77,9 @@ export function HubSettings({
   const hub: HubState = syncStatus.data?.hub ?? 'off';
   const hasDeviceTokenCustody = hasHubDeviceTokenCustody(settings);
   const deviceTokenStatus = hubDeviceTokenStatus(settings);
+  const showAbandonDevice = settings.hubDeviceTokenTransition !== null
+    || settings.hubDeviceTokenBindingState !== 'bound'
+    || signOutDevice.isError;
   // The probe runs against the SAVED config — while the form holds unsaved
   // edits a green result would "verify" the wrong URL/key, so Test locks
   // until the edits are saved (or reverted).
@@ -128,8 +133,12 @@ export function HubSettings({
             <div className="text-[13px] font-semibold">{t('hub.key.label')}</div>
             <div className="text-[11px] text-ink-low">{t('hub.key.hint')}</div>
           </div>
-          <Badge tone={settings.hasHubKey ? 'green' : 'neutral'}>
-            {settings.hasHubKey ? t('common.configured') : t('common.notSet')}
+          <Badge tone={settings.hubApiKeyBindingState === 'bound' ? 'green' : settings.hasHubKey ? 'amber' : 'neutral'}>
+            {settings.hubApiKeyBindingState === 'bound'
+              ? t('common.configured')
+              : settings.hasHubKey
+                ? t('hub.credentialAttention')
+                : t('common.notSet')}
           </Badge>
           <input
             type="password"
@@ -153,7 +162,9 @@ export function HubSettings({
                   ? t('hub.deviceToken.signingOut')
                   : deviceTokenStatus === 'configured'
                     ? t('common.configured')
-                    : t('common.notSet')}
+                    : deviceTokenStatus === 'attention'
+                      ? t('hub.credentialAttention')
+                      : t('common.notSet')}
           </Badge>
           <input
             type="text"
@@ -179,7 +190,7 @@ export function HubSettings({
               password: signInPassword,
               hasStoredDeviceToken: hasDeviceTokenCustody,
               issuePending: deviceToken.isPending,
-              signOutPending: signOutDevice.isPending,
+              signOutPending: signOutDevice.isPending || abandonDevice.isPending,
             })}
             onClick={() => {
               deviceToken.mutate(
@@ -194,12 +205,29 @@ export function HubSettings({
             <Button
               variant="danger"
               size="sm"
-              disabled={signOutDevice.isPending || deviceToken.isPending}
+              disabled={
+                signOutDevice.isPending || abandonDevice.isPending || deviceToken.isPending
+              }
               onClick={() => signOutDevice.mutate()}
             >
               {signOutDevice.isPending
                 ? t('hub.deviceToken.signingOut')
                 : t('hub.deviceToken.signOut')}
+            </Button>
+          )}
+          {hasDeviceTokenCustody && showAbandonDevice && (
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={
+                abandonDevice.isPending || signOutDevice.isPending || deviceToken.isPending
+              }
+              title={t('hub.deviceToken.abandonHint')}
+              onClick={() => abandonDevice.mutate()}
+            >
+              {abandonDevice.isPending
+                ? t('hub.deviceToken.abandoning')
+                : t('hub.deviceToken.abandon')}
             </Button>
           )}
         </div>
@@ -211,11 +239,24 @@ export function HubSettings({
             })}
           </div>
         )}
+        {settings.hasHubKey && settings.hubApiKeyBindingState !== 'bound' && (
+          <p className="pl-47 text-[11px] text-bad">{t('hub.key.bindingAttention')}</p>
+        )}
+        {settings.hasHubDeviceToken && settings.hubDeviceTokenBindingState !== 'bound' && (
+          <p className="pl-47 text-[11px] text-bad">{t('hub.deviceToken.bindingAttention')}</p>
+        )}
         {signOutDevice.isError && (
           <div className="pl-47 text-[11px] text-bad">
             {signOutDevice.error instanceof Error
               ? signOutDevice.error.message
               : t('hub.deviceToken.signOutFailed')}
+          </div>
+        )}
+        {abandonDevice.isError && (
+          <div className="pl-47 text-[11px] text-bad">
+            {abandonDevice.error instanceof Error
+              ? abandonDevice.error.message
+              : t('hub.deviceToken.abandonFailed')}
           </div>
         )}
         {deviceToken.isError && (

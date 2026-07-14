@@ -1,6 +1,9 @@
 // Kernel Stage 21: the event-stream v2 resume cursor. Opaque on the wire —
 // base64url JSON `{v: 2, w: {<accountId>: <highSeq>, …}}` for legacy/subset
-// cursors or `{v: 3, w: {…}, s: "granted"}` for an exact-grant binding.
+// cursors, `{v: 3, w: {…}, s: "granted"}` for an exact-grant binding, or
+// v4 with `r: "snapshot"` while a completed state snapshot is authorizing one
+// bounded replay across erased ledger gaps. The recovery marker is removed
+// before the connection enters the live lane.
 // Shared by the server (modules/events) and the SDK helper so both ends agree
 // byte-for-byte; clients never construct or inspect it.
 // Isomorphic base64url (no Buffer): this file ships to the browser through
@@ -34,18 +37,34 @@ function fromBase64Url(text) {
         return null;
     }
 }
-export function encodeDomainEventCursor(watermarks, options = {}) {
-    const w = {};
-    // Sorted keys → deterministic encoding (cursor equality is comparable in tests).
-    for (const accountId of [...watermarks.keys()].sort((a, b) => a - b)) {
-        w[String(accountId)] = watermarks.get(accountId);
+function sortedRecord(values) {
+    const record = {};
+    for (const accountId of [...values.keys()].sort((a, b) => a - b)) {
+        record[String(accountId)] = values.get(accountId);
     }
+    return record;
+}
+export function encodeDomainEventCursor(watermarks, options = {}) {
+    // Sorted keys → deterministic encoding (cursor equality is comparable in tests).
+    const w = sortedRecord(watermarks);
+    const version = options.recovery?.kind === "snapshot"
+        ? 4
+        : options.scope === undefined ? 2 : 3;
     return toBase64Url(JSON.stringify({
         // A distinct version makes rollback fail closed: old Core rejects a bound
         // cursor instead of ignoring `s` and widening it at a new account's head.
-        v: options.scope === undefined ? 2 : 3,
+        v: version,
         w,
         ...(options.scope === undefined ? {} : { s: options.scope }),
+        ...(options.recovery === undefined
+            ? {}
+            : {
+                r: options.recovery.kind,
+                e: options.recovery.erasureEpoch,
+                b: sortedRecord(options.recovery.base),
+                t: sortedRecord(options.recovery.targets),
+                c: sortedRecord(options.recovery.retainedCounts),
+            }),
     }));
 }
 export function decodeDomainEventCursor(text) {
@@ -64,15 +83,37 @@ export function decodeDomainEventCursor(text) {
         return { ok: false, reason: "not_object" };
     }
     const candidate = parsed;
-    if (candidate.v !== 2 && candidate.v !== 3) {
+    if (candidate.v !== 2 && candidate.v !== 3 && candidate.v !== 4) {
         return { ok: false, reason: "unknown_version" };
     }
     if (typeof candidate.w !== "object" || candidate.w === null || Array.isArray(candidate.w)) {
         return { ok: false, reason: "missing_watermarks" };
     }
     if ((candidate.v === 2 && candidate.s !== undefined)
-        || (candidate.v === 3 && candidate.s !== "granted")) {
+        || (candidate.v === 3 && candidate.s !== "granted")
+        || (candidate.v === 4 && candidate.s !== undefined && candidate.s !== "granted")) {
         return { ok: false, reason: "invalid_scope" };
+    }
+    if (((candidate.v === 2 || candidate.v === 3)
+        && (candidate.r !== undefined
+            || candidate.e !== undefined
+            || candidate.b !== undefined
+            || candidate.t !== undefined
+            || candidate.c !== undefined))
+        || (candidate.v === 4 && (candidate.r !== "snapshot"
+            || typeof candidate.e !== "number"
+            || !Number.isInteger(candidate.e)
+            || candidate.e < 0
+            || typeof candidate.b !== "object"
+            || candidate.b === null
+            || Array.isArray(candidate.b)
+            || typeof candidate.t !== "object"
+            || candidate.t === null
+            || Array.isArray(candidate.t)
+            || typeof candidate.c !== "object"
+            || candidate.c === null
+            || Array.isArray(candidate.c)))) {
+        return { ok: false, reason: "invalid_recovery" };
     }
     const watermarks = new Map();
     for (const [key, value] of Object.entries(candidate.w)) {
@@ -85,9 +126,50 @@ export function decodeDomainEventCursor(text) {
         }
         watermarks.set(accountId, value);
     }
+    const parseRecoveryMap = (value) => {
+        const result = new Map();
+        for (const [key, item] of Object.entries(value)) {
+            const accountId = Number(key);
+            if (!Number.isInteger(accountId) || accountId <= 0)
+                return null;
+            if (typeof item !== "number" || !Number.isInteger(item) || item < 0)
+                return null;
+            result.set(accountId, item);
+        }
+        return result;
+    };
+    let recovery = null;
+    if (candidate.v === 4) {
+        const base = parseRecoveryMap(candidate.b);
+        const targets = parseRecoveryMap(candidate.t);
+        const retainedCounts = parseRecoveryMap(candidate.c);
+        if (base === null || targets === null || retainedCounts === null) {
+            return { ok: false, reason: "invalid_recovery_topology" };
+        }
+        const keys = [...watermarks.keys()].sort((left, right) => left - right);
+        if (keys.length !== base.size
+            || keys.length !== targets.size
+            || keys.length !== retainedCounts.size
+            || keys.some((accountId) => (!base.has(accountId)
+                || !targets.has(accountId)
+                || !retainedCounts.has(accountId)
+                || base.get(accountId) > watermarks.get(accountId)
+                || watermarks.get(accountId) > targets.get(accountId)
+                || retainedCounts.get(accountId) > targets.get(accountId) - base.get(accountId)))) {
+            return { ok: false, reason: "invalid_recovery_topology" };
+        }
+        recovery = {
+            kind: "snapshot",
+            erasureEpoch: candidate.e,
+            base,
+            targets,
+            retainedCounts,
+        };
+    }
     return {
         ok: true,
         watermarks,
-        scope: candidate.v === 3 ? "granted" : null,
+        scope: candidate.s === "granted" ? "granted" : null,
+        recovery,
     };
 }

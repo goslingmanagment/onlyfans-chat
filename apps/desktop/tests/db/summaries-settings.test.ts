@@ -45,7 +45,7 @@ describe('summaries cache (SPEC §8.5)', () => {
     expect(layer.summaries.get('acct_1', '102')).toEqual(minimal);
   });
 
-  it('replaces on put (refresh = delete + regenerate)', () => {
+  it('replaces the prior entry on successful refresh put', () => {
     layer.summaries.put('acct_1', '101', full);
     layer.summaries.remove('acct_1', '101');
     expect(layer.summaries.get('acct_1', '101')).toBeNull();
@@ -113,7 +113,22 @@ describe('settings(key, value JSON)', () => {
     layer.bus.subscribe((events) => flushed.push(...events));
     layer.settings.set('soundEnabled', true);
     layer.bus.flushNow();
-    expect(flushed).toEqual([{ scope: 'settings' }]);
+    expect(flushed).toEqual([{ scope: 'settings', settingsKeys: ['soundEnabled'] }]);
+  });
+
+  it('does not publish a settings event when a batch leaves the stored value unchanged', () => {
+    layer.settings.set('soundEnabled', true);
+    layer.bus.flushNow();
+    const flushed: unknown[] = [];
+    layer.bus.subscribe((events) => flushed.push(...events));
+
+    layer.settings.batch([
+      { kind: 'set', key: 'soundEnabled', value: false },
+      { kind: 'set', key: 'soundEnabled', value: true },
+    ]);
+    layer.bus.flushNow();
+
+    expect(flushed).toEqual([]);
   });
 });
 

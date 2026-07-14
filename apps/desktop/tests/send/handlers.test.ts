@@ -11,6 +11,7 @@ import type { AiCoordinatorLike, IpcDeps } from '@main/ipc/handlers';
 import { utcDayOf } from '@main/ipc/activity';
 import {
   ACCEPTANCE_SPOOL_SETTINGS_KEY,
+  createAcceptanceTracker,
   enqueueAcceptanceEvent,
 } from '@main/hub/acceptance-reporter';
 import { ACCT, CHAT, memoryDataLayer } from './helpers';
@@ -167,6 +168,50 @@ describe('send-channel IPC handlers', () => {
       parts: ['hello', 'world'],
     });
     expect(result).toEqual({ localIds: ['local-1'], sequenceId: null });
+  });
+
+  it('keeps inserted acceptance correlation when sendParts rejects, then reports the successful retry', async () => {
+    const tracker = createAcceptanceTracker();
+    const enqueue = vi.fn();
+    tracker.trackInserted(ACCT, CHAT, {
+      operationId: 'op-inserted',
+      requestId: 'request-inserted',
+      feature: 'fast-reply',
+      text: 'suggested reply',
+    });
+    register(data, engine, null, {
+      acceptance: {
+        enqueue,
+        trackInserted: tracker.trackInserted,
+        consumeForSend: tracker.consumeForSend,
+      },
+    });
+    vi.mocked(engine.sendParts).mockImplementationOnce(() => {
+      throw new Error('outbox insert failed');
+    });
+
+    await expect(
+      invoke('cmd:send.message', {
+        accountId: ACCT,
+        chatId: CHAT,
+        parts: ['suggested reply'],
+      }),
+    ).rejects.toThrow(/outbox insert failed/);
+    expect(enqueue).not.toHaveBeenCalled();
+
+    await expect(
+      invoke('cmd:send.message', {
+        accountId: ACCT,
+        chatId: CHAT,
+        parts: ['suggested reply'],
+      }),
+    ).resolves.toEqual({ localIds: ['local-1'], sequenceId: null });
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      operationId: 'op-inserted',
+      action: 'sent',
+      edited: false,
+    }));
   });
 
   it('send commands fail cleanly when no engine exists (no write transport)', async () => {

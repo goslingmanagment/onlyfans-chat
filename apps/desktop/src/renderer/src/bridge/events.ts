@@ -15,14 +15,21 @@ import { playNotificationBlip } from '../lib/sound';
 import { uiMessage } from '@chatgoose/shared/i18n/index';
 import { messageNotificationBody } from '@chatgoose/shared/notifications/index';
 import { currentLocale } from '../lib/i18n';
-import { handleAiOperationEvent } from '../features/ai/aiStore';
+import {
+  handleAiOperationEvent,
+  resetAiJobsForHubOriginChange,
+} from '../features/ai/aiStore';
 import { syncStatusInvalidationKeysForEvent } from './syncInvalidation';
-import { dbChangedInvalidationKeysForEvent } from './dbInvalidation';
+import {
+  dbChangedInvalidationKeysForEvent,
+  settingsKeysInvalidateAiContext,
+} from './dbInvalidation';
 
 const dbChangedSchema = z.object({
   scope: z.enum(['accounts', 'chats', 'messages', 'fans', 'summaries', 'settings', 'outbox', 'guard']),
   accountId: z.string().optional(),
   chatId: z.string().optional(),
+  settingsKeys: z.array(z.string()).optional(),
 });
 
 const FLUSH_MS = 50;
@@ -59,6 +66,9 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
   }
 
   function handleDbChanged(event: z.infer<typeof dbChangedSchema>): void {
+    if (event.scope === 'settings' && settingsKeysInvalidateAiContext(event.settingsKeys)) {
+      resetAiJobsForHubOriginChange();
+    }
     for (const key of dbChangedInvalidationKeysForEvent(event)) {
       queueInvalidate(key);
     }

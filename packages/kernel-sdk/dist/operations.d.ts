@@ -1,4 +1,20 @@
 export declare const kernelOperations: {
+    readonly adminAiPersonaArchive: {
+        readonly method: "DELETE";
+        readonly path: "/api/v1/admin/ai/personas/:key";
+    };
+    readonly adminAiPersonaCreate: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ai/personas";
+    };
+    readonly adminAiPersonaUpdate: {
+        readonly method: "PUT";
+        readonly path: "/api/v1/admin/ai/personas/:key";
+    };
+    readonly adminAiPersonasList: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/ai/personas";
+    };
     readonly adminAssignPage: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/users/:username/pages";
@@ -231,9 +247,9 @@ export declare const kernelOperations: {
         readonly method: "DELETE";
         readonly path: "/api/v1/ai/personas/:key";
     };
-    readonly aiPersonaStates: {
+    readonly aiPersonaCatalog: {
         readonly method: "GET";
-        readonly path: "/api/v1/ai/personas/state";
+        readonly path: "/api/v1/ai/persona-catalog";
     };
     readonly aiPersonaUpsert: {
         readonly method: "PUT";

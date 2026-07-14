@@ -2,19 +2,21 @@
 // client, the persisted usage reporter and the summary hooks, rebuilt whenever
 // the hub config (base URL + chatter key) changes. Unconfigured hub = inert
 // delegators — prefetch resolves null, push no-ops, and usage events stay
-// parked in usage_events for a later configured session (today's behavior).
+// parked in usage_events. Provenance-free pre-cutover usage rows are
+// quarantined locally instead of being attributed to whichever Hub logs in next.
 
-import { createHubClient, createUsageReporter } from '@chatgoose/shared/hub/index';
+import {
+  createHubClient,
+  createUsageReporter,
+  hubUsageEventSchema,
+} from '@chatgoose/shared/hub/index';
 import { HubError } from '@chatgoose/shared/hub/index';
 import type {
-  HubAiPersona,
-  HubAiPersonaArchiveResult,
-  HubAiPersonaState,
+  HubAiPersonaCatalogEntry,
   HubClient,
   HubOfapiCreditsSummary,
   UsageReporter,
 } from '@chatgoose/shared/hub/index';
-import type { Personality } from '@chatgoose/shared/types';
 import type { SummaryHubHooks, UsageEventRecord } from '../ai/index';
 import type { DataLayer } from '../db/index';
 import type { SettingsStore } from '../settings/store';
@@ -22,35 +24,23 @@ import type { Keychain } from '../secrets/keychain';
 import { createPageLabelResolver } from './page-resolver';
 import { createSqliteUsageEventStore } from './usage-store';
 import { createSummaryHubHooks } from './summary-hooks';
+import { isCurrentPersonaSummary } from '../personas/summary';
+import { effectivePersistedAccountPageLabels } from '../settings/store';
 import type { SummaryHubSyncHooks } from './summary-hooks';
 import { mapUsagePayloadToHubEvent } from './usage-mapper';
 import { createFeatureAiGateway } from './ai-feature-gateway';
-import { createAcceptanceReporter, createAcceptanceTracker } from './acceptance-reporter';
+import {
+  acceptanceDestinationIdentity,
+  createAcceptanceReporter,
+  createAcceptanceTracker,
+} from './acceptance-reporter';
 import type { AcceptanceEventInput, AcceptanceReporter, AcceptanceTracker } from './acceptance-reporter';
 import type { AiFeatureGateway } from '../ai/gateway';
+import { ensurePersonaStorageScope, type PersonaStorageScope } from '../personas/pending';
 import {
-  applyPendingPersonaIntents,
-  bootstrapPersonalitiesSchema,
-  classifyPersonaMutationFailure,
-  clearPendingPersonaIntent,
-  ensurePersonaStorageScope,
-  isLegacyPersonaBootstrapRequired,
-  isCurrentPendingPersonaIntent,
-  isWritablePersonality,
-  legacyRecoveredPersona,
-  loadPersonaAccountMappings,
-  loadPendingPersonaIntents,
-  markLegacyPersonaBootstrapComplete,
-  personaCacheKey,
-  storePersonaAccountMappings,
-  storeLegacyPersonaRecovery,
-  type PendingPersonaIntent,
-  type PersonaStorageScope,
-} from '../personas/pending';
-import {
-  reconcilePersonaUpsertConflict,
-  type PersonaConflictResolution,
-} from '../personas/reconcile';
+  ensureLegacyPersonaSnapshot,
+  storePersonaCatalog,
+} from '../personas/catalog';
 
 export { createPageLabelResolver, PAGE_LIST_CACHE_TTL_MS } from './page-resolver';
 export type { PageLabelResolver, PageLabelResolverOptions } from './page-resolver';
@@ -59,6 +49,8 @@ export { createSummaryHubHooks, HUB_PROFILE_MAX_BYTES } from './summary-hooks';
 export type { HubSummarySyncState, SummaryHubHooksOptions } from './summary-hooks';
 export { mapUsagePayloadToHubEvent, usageEventPayloadSchema } from './usage-mapper';
 export type { MappedHubUsageEvent } from './usage-mapper';
+
+export const PERSONA_CATALOG_REFRESH_MS = 5 * 60_000;
 
 export interface HubModuleOptions {
   data: DataLayer;
@@ -80,21 +72,9 @@ export interface HubModule {
   summaryHub: SummaryHubHooks;
   /** Stage 31: the kernel feature-service lane (AI mode 'feature'). */
   aiFeatureGateway: AiFeatureGateway;
-  /** Stage 31: kernel persona CRUD delegators (null-tolerant at call sites). */
+  /** Metadata-only persona catalog. Global definitions are owner-managed. */
   personas: {
-    list: (expectedHubOrigin?: string) => Promise<HubAiPersona[]>;
-    upsert: (args: {
-      key: string;
-      displayName: string;
-      systemBlock: string;
-      expectedVersion: number | null;
-      expectedHubOrigin?: string;
-    }) => Promise<PersonaUpsertOutcome>;
-    archive: (args: {
-      key: string;
-      expectedVersion: number | null;
-      expectedHubOrigin?: string;
-    }) => Promise<HubAiPersonaArchiveResult>;
+    list: (expectedHubOrigin?: string) => Promise<HubAiPersonaCatalogEntry[]>;
   };
   /** Stage 31: acceptance lifecycle spool (KV-backed; drains when active). */
   acceptance: AcceptanceReporter;
@@ -105,8 +85,9 @@ export interface HubModule {
   /** Stable delegator for C6b text-command intake/status recovery. */
   commandClient: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand' | 'cancelOfapiCommand'>;
   /** DRAIN-ONLY (Stage 31): nothing calls this post-cutover — the coordinator
-   * stopped writing usage_events. It stays one release so rows parked by
-   * pre-cutover versions still map and flush; remove with the drain lane. */
+   * stopped writing usage_events. Pre-cutover rows have no destination actor
+   * and stay quarantined; this compatibility seam accepts only events created
+   * while the current credential-bound runtime is active. */
   onUsageEvent: (event: UsageEventRecord) => void;
   /** Page-scoped core OFAPI spend summary for Activity/diagnostics; null when hub is off/unreachable. */
   getOfapiCreditsSummary(): Promise<HubOfapiCreditsSummary | null>;
@@ -117,16 +98,15 @@ export interface HubModule {
   dispose(): void;
 }
 
-export type PersonaUpsertOutcome =
-  | { kind: 'upserted'; persona: HubAiPersona }
-  | PersonaConflictResolution;
-
 interface ActiveHub {
   client: HubClient;
   personaScope: PersonaStorageScope;
+  acceptanceDestinationIdentity: string;
   reporter: UsageReporter;
   hooks: SummaryHubSyncHooks;
   aiFeatureGateway: AiFeatureGateway;
+  catalogRefreshTimer: ReturnType<typeof setInterval> | null;
+  catalogRefreshRunning: boolean;
 }
 
 export function createHubModule(options: HubModuleOptions): HubModule {
@@ -134,11 +114,21 @@ export function createHubModule(options: HubModuleOptions): HubModule {
   const createClient = options.createClient ?? ((args) => createHubClient(args));
   const onWarn = options.onWarn ?? ((message: string) => console.warn(message));
   const store = createSqliteUsageEventStore(data.db);
+  const unscopedLegacyUsage = store.load().filter(
+    (pending) => !pending.quarantined && hubUsageEventSchema.safeParse(pending.event).success,
+  );
+  if (unscopedLegacyUsage.length > 0) {
+    store.markQuarantined(unscopedLegacyUsage.map((pending) => pending.id));
+    onWarn(
+      `[hub] quarantined ${String(unscopedLegacyUsage.length)} provenance-free legacy usage event(s)`,
+    );
+  }
 
   let active: ActiveHub | null = null;
   const acceptance = createAcceptanceReporter({
     data,
     getClient: () => active?.client ?? null,
+    getDestinationIdentity: () => active?.acceptanceDestinationIdentity ?? null,
     onWarn,
   });
   const acceptanceTracker = createAcceptanceTracker();
@@ -148,83 +138,7 @@ export function createHubModule(options: HubModuleOptions): HubModule {
   const reconfigureTasks = new Set<Promise<void>>();
   let quiescePromise: Promise<void> | null = null;
   let retirementTail: Promise<void> = Promise.resolve();
-  /**
-   * Persona writes are global Core configuration. Keep one mutation lane per
-   * key so a stale bootstrap request already on the wire always settles before
-   * a later user save or archive starts its revision-checked mutation.
-   */
-  const personaMutationTails = new Map<string, Promise<void>>();
   const personaOperations = new Set<Promise<unknown>>();
-  type LatestPersonaIntent =
-    | {
-        kind: 'upsert';
-        args: {
-          key: string;
-          displayName: string;
-          systemBlock: string;
-          expectedVersion: number | null;
-        };
-      }
-    | { kind: 'archive' };
-  // The same custom key may legitimately exist in two different Hub tenants.
-  // Keep the bootstrap/user-intent arbitration tenant-scoped as well as the
-  // durable cache; otherwise an unfinished migration on A could reuse a later
-  // same-key edit made on B when the user switches back to A.
-  const latestPersonaIntents = new Map<string, LatestPersonaIntent>();
-
-  function errorStatus(error: unknown): number | null {
-    if (error === null || typeof error !== 'object') {
-      return null;
-    }
-    const record = error as Record<string, unknown>;
-    if (typeof record['status'] === 'number') {
-      return record['status'];
-    }
-    const detail = record['detail'];
-    if (detail !== null && typeof detail === 'object') {
-      const status = (detail as Record<string, unknown>)['status'];
-      return typeof status === 'number' ? status : null;
-    }
-    return null;
-  }
-
-  function personaIntentIdentity(origin: string, key: string): string {
-    return JSON.stringify([origin, key]);
-  }
-
-  function restoreLatestPersonaIntent(
-    identity: string,
-    rejected: LatestPersonaIntent,
-    previous: LatestPersonaIntent | undefined,
-  ): void {
-    if (latestPersonaIntents.get(identity) !== rejected) {
-      return;
-    }
-    if (previous === undefined) {
-      latestPersonaIntents.delete(identity);
-    } else {
-      latestPersonaIntents.set(identity, previous);
-    }
-  }
-
-  function serializePersonaMutation<Result>(
-    key: string,
-    mutation: () => Promise<Result>,
-  ): Promise<Result> {
-    const previous = personaMutationTails.get(key) ?? Promise.resolve();
-    const task = previous.then(mutation, mutation);
-    const settled = task.then(
-      () => undefined,
-      () => undefined,
-    );
-    personaMutationTails.set(key, settled);
-    void settled.then(() => {
-      if (personaMutationTails.get(key) === settled) {
-        personaMutationTails.delete(key);
-      }
-    });
-    return task;
-  }
 
   function trackPersonaOperation<Result>(operation: Promise<Result>): Promise<Result> {
     personaOperations.add(operation);
@@ -241,254 +155,40 @@ export function createHubModule(options: HubModuleOptions): HubModule {
     }
   }
 
-  async function drainPersonaMutations(): Promise<void> {
-    while (personaMutationTails.size > 0) {
-      await Promise.allSettled([...personaMutationTails.values()]);
-    }
-  }
-
-  async function projectConfirmedPendingPersona(
-    scope: PersonaStorageScope,
-    intent: PendingPersonaIntent,
-    confirmedVersion?: number,
-  ): Promise<boolean> {
-    if (!isCurrentPendingPersonaIntent(data.settings, scope, intent)) {
-      return false;
-    }
-    const cacheKey = personaCacheKey(scope);
-    const raw = data.settings.get(cacheKey);
-    const cached = raw === undefined
-      ? []
-      // These values came through JSON-backed settings. The schema supplies
-      // updatedAt for pre-cutover rows and strips explicit undefined values.
-      : bootstrapPersonalitiesSchema.parse(raw) as Personality[];
-    const projectedIntent = intent.kind === 'upsert' && confirmedVersion !== undefined
-      ? {
-          ...intent,
-          personality: { ...intent.personality, remoteVersion: confirmedVersion },
-        }
-      : intent;
-    if (intent.kind === 'archive') {
-      // Mapping removal is the safety gate. Persist it before the cache
-      // projection so a crash cannot leave AI enabled for an archived key.
-      const mappings = Object.fromEntries(
-        Object.entries(loadPersonaAccountMappings(data.settings, scope))
-          .filter(([, pid]) => pid !== intent.key),
-      );
-      storePersonaAccountMappings(data.settings, scope, mappings);
-    }
-    data.settings.set(
-      cacheKey,
-      applyPendingPersonaIntents(cached, [projectedIntent]),
-    );
-    return true;
-  }
-
-  async function upsertPendingPersona(
+  async function fetchPersonaCatalog(
     client: HubClient,
     scope: PersonaStorageScope,
-    intent: Extract<PendingPersonaIntent, { kind: 'upsert' }>,
-  ): Promise<PersonaUpsertOutcome> {
-    try {
-      const persona = await client.upsertAiPersona({
-        key: intent.key,
-        displayName: intent.personality.name,
-        systemBlock: intent.personality.content,
-        expectedVersion: intent.expectedVersion,
-      });
-      return { kind: 'upserted', persona };
-    } catch (error) {
-      if (errorStatus(error) !== 409) {
-        throw error;
-      }
-      return reconcilePersonaUpsertConflict({
-        settings: data.settings,
-        scope,
-        intent,
-        remote: {
-          listStates: () => client.listAiPersonaStates(),
-          upsertCreateOnly: (args) => client.upsertAiPersona({
-            ...args,
-            expectedVersion: null,
-          }),
-          upsertExpectedVersion: (args) => client.upsertAiPersona(args),
-        },
-      });
-    }
-  }
-
-  function activePersonaStateToPersona(
-    state: Extract<HubAiPersonaState, { state: 'active' }>,
-  ): HubAiPersona {
-    return {
-      key: state.key,
-      displayName: state.displayName,
-      systemBlock: state.systemBlock,
-      updatedAt: state.updatedAt,
-      version: state.version,
-    };
-  }
-
-  function projectArchiveConflict(
-    scope: PersonaStorageScope,
-    intent: Extract<PendingPersonaIntent, { kind: 'archive' }>,
-    state: Extract<HubAiPersonaState, { state: 'active' }>,
-  ): void {
-    if (!isCurrentPendingPersonaIntent(data.settings, scope, intent)) {
-      return;
-    }
-    const persona = activePersonaStateToPersona(state);
-    const updatedAt = Date.parse(persona.updatedAt);
-    const local: Personality = {
-      id: persona.key,
-      name: persona.displayName,
-      content: persona.systemBlock,
-      updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
-      remoteVersion: persona.version,
-      ...(persona.key === 'builtin:lora' ? { builtin: true } : {}),
-    };
-    const key = personaCacheKey(scope);
-    const raw = data.settings.get(key);
-    const cached = raw === undefined
-      ? []
-      : bootstrapPersonalitiesSchema.parse(raw) as Personality[];
-    data.settings.set(
-      key,
-      cached.some((candidate) => candidate.id === local.id)
-        ? cached.map((candidate) => candidate.id === local.id ? local : candidate)
-        : [...cached, local],
-    );
-    clearPendingPersonaIntent(data.settings, scope, intent);
-  }
-
-  async function listPersonaStatesForArchive(client: HubClient): Promise<HubAiPersonaState[]> {
-    try {
-      return await client.listAiPersonaStates();
-    } catch (error) {
-      if (errorStatus(error) === 404) {
-        // Do not let the generic DELETE-404 idempotency classifier mistake a
-        // missing preflight route on an old Core for an already archived row.
-        throw new HubError('invalid-response', {
-          message: 'Core does not expose revision-safe persona archive state',
-        });
-      }
-      throw error;
-    }
-  }
-
-  async function archivePendingPersona(
-    client: HubClient,
-    scope: PersonaStorageScope,
-    intent: Extract<PendingPersonaIntent, { kind: 'archive' }>,
-  ): Promise<HubAiPersonaArchiveResult> {
-    // Capability + lifecycle preflight is mandatory. An old Core ignores
-    // unknown DELETE query fields and would otherwise archive unconditionally
-    // before its revision-less response failed validation.
-    const preflight = (await listPersonaStatesForArchive(client))
-      .find((state) => state.key === intent.key);
-    if (preflight?.state === 'archived') {
-      return { archived: true, version: preflight.version };
-    }
-    const firstExpectedVersion =
-      preflight?.state === 'active'
-      && intent.expectedVersion === null
-      && intent.basePersonality !== null
-      && preflight.displayName === intent.basePersonality.name
-      && preflight.systemBlock === intent.basePersonality.content
-        ? preflight.version
-        : intent.expectedVersion;
-    try {
-      return await client.archiveAiPersona({
-        key: intent.key,
-        expectedVersion: firstExpectedVersion,
-      });
-    } catch (error) {
-      if (errorStatus(error) !== 409) {
-        throw error;
-      }
-
-      let current = (await listPersonaStatesForArchive(client))
-        .find((state) => state.key === intent.key);
-      if (current?.state === 'archived') {
-        return { archived: true, version: current.version };
-      }
-
-      // A create-only save may have committed while its response was lost. An
-      // exact payload match proves that this is the row the user deleted; retry
-      // with the now-observed revision. Legacy journals without the base remain
-      // fail-closed.
-      if (
-        current?.state === 'active'
-        && intent.expectedVersion === null
-        && intent.basePersonality !== null
-        && current.displayName === intent.basePersonality.name
-        && current.systemBlock === intent.basePersonality.content
-      ) {
-        try {
-          return await client.archiveAiPersona({
-            key: intent.key,
-            expectedVersion: current.version,
-          });
-        } catch (retryError) {
-          if (errorStatus(retryError) !== 409) {
-            throw retryError;
-          }
-          current = (await listPersonaStatesForArchive(client))
-            .find((state) => state.key === intent.key);
-          if (current?.state === 'archived') {
-            return { archived: true, version: current.version };
-          }
-          if (current?.state === 'active') {
-            projectArchiveConflict(scope, intent, current);
-          }
-          throw retryError;
-        }
-      }
-
-      if (current?.state === 'active') {
-        // A newer active revision won. Make that row visible again and clear
-        // the stale tombstone before surfacing the 409 to an interactive caller.
-        projectArchiveConflict(scope, intent, current);
-      }
-      throw error;
-    }
-  }
-
-  function projectLegacyConfirmedVersion(
-    scope: PersonaStorageScope,
-    source: Personality,
-    confirmed: HubAiPersona,
-  ): void {
+    expectedGeneration: number,
+  ): Promise<HubAiPersonaCatalogEntry[]> {
+    ensureLegacyPersonaSnapshot(data.settings, scope.origin);
+    const catalog = await client.listAiPersonaCatalog();
     if (
-      confirmed.key !== source.id
-      || latestPersonaIntents.has(personaIntentIdentity(scope.origin, source.id))
-      || loadPendingPersonaIntents(data.settings, scope).some((intent) => intent.key === source.id)
+      disposed
+      || generation !== expectedGeneration
+      || active?.client !== client
+      || active.personaScope.origin !== scope.origin
     ) {
-      return;
+      throw new HubError('network', {
+        message: 'Hub persona catalog belonged to a retired runtime',
+      });
     }
-    const key = personaCacheKey(scope);
-    const parsed = bootstrapPersonalitiesSchema.safeParse(data.settings.get(key));
-    if (!parsed.success) {
-      return;
-    }
-    const index = parsed.data.findIndex((candidate) =>
-      candidate.id === source.id
-      && candidate.name === source.name
-      && candidate.content === source.content
-      && candidate.updatedAt === source.updatedAt);
-    if (index === -1) {
-      return;
-    }
-    const updatedAt = Date.parse(confirmed.updatedAt);
-    const next = [...parsed.data];
-    next[index] = {
-      ...next[index]!,
-      name: confirmed.displayName,
-      content: confirmed.systemBlock,
-      updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
-      remoteVersion: confirmed.version,
-    };
-    data.settings.set(key, next);
+    return storePersonaCatalog(data.settings, scope, catalog);
+  }
+
+  function refreshPersonaCatalog(activeHub: ActiveHub, expectedGeneration: number): void {
+    if (activeHub.catalogRefreshRunning) return;
+    activeHub.catalogRefreshRunning = true;
+    void trackPersonaOperation(fetchPersonaCatalog(
+      activeHub.client,
+      activeHub.personaScope,
+      expectedGeneration,
+    )).catch((error: unknown) => {
+      onWarn('[hub] persona catalog refresh failed', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }).finally(() => {
+      activeHub.catalogRefreshRunning = false;
+    });
   }
 
   function rethrowFirstRejected(results: PromiseSettledResult<unknown>[]): void {
@@ -502,11 +202,14 @@ export function createHubModule(options: HubModuleOptions): HubModule {
 
   async function performRetirement(waitForAcceptance: boolean): Promise<void> {
     const retiring = active;
+    if (retiring?.catalogRefreshTimer !== null && retiring?.catalogRefreshTimer !== undefined) {
+      clearInterval(retiring.catalogRefreshTimer);
+      retiring.catalogRefreshTimer = null;
+    }
     active = null;
-    // Reads and the one-time legacy migration can outlive the client pointer.
-    // Drain them before a replacement Hub is published so an A response cannot
-    // populate B's cache after a runtime switch.
-    await Promise.all([drainPersonaOperations(), drainPersonaMutations()]);
+    // A metadata request can outlive the client pointer. Drain it before a
+    // replacement Hub is published so an A response cannot populate B's cache.
+    await drainPersonaOperations();
     const owners: Promise<unknown>[] = [];
     if (retiring !== null) {
       retiring.hooks.dispose();
@@ -545,6 +248,9 @@ export function createHubModule(options: HubModuleOptions): HubModule {
 
   function teardown(): void {
     // Reporter dispose keeps queued events persisted (crash-safe store).
+    if (active?.catalogRefreshTimer !== null && active?.catalogRefreshTimer !== undefined) {
+      clearInterval(active.catalogRefreshTimer);
+    }
     active?.reporter.dispose();
     active?.hooks.dispose();
     active = null;
@@ -552,8 +258,6 @@ export function createHubModule(options: HubModuleOptions): HubModule {
 
   return {
     summaryHub: {
-      prefetchSummary: (args) =>
-        active?.hooks.prefetchSummary?.(args) ?? Promise.resolve(null),
       pushSummary: (args) => active?.hooks.pushSummary?.(args) ?? Promise.resolve(),
     },
 
@@ -568,103 +272,11 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         const client = active.client;
         const requestScope = active.personaScope;
         const requestGeneration = generation;
-        return trackPersonaOperation((async () => {
-          const result = await client.listAiPersonas();
-          if (
-            disposed
-            || requestGeneration !== generation
-            || active?.client !== client
-            || active.personaScope.origin !== requestScope.origin
-          ) {
-            throw new HubError('network', { message: 'Hub persona list belonged to a retired runtime' });
-          }
-          return result;
-        })());
-      },
-      upsert: async ({ expectedHubOrigin, ...args }) => {
-        const requestGeneration = generation;
-        const requestOrigin = expectedHubOrigin ?? active?.personaScope.origin ?? null;
-        const identity = requestOrigin === null
-          ? null
-          : personaIntentIdentity(requestOrigin, args.key);
-        const previous = identity === null ? undefined : latestPersonaIntents.get(identity);
-        const intent: LatestPersonaIntent = { kind: 'upsert', args };
-        if (identity !== null) {
-          latestPersonaIntents.set(identity, intent);
-        }
-        try {
-          return await serializePersonaMutation(args.key, async () => {
-            if (
-              disposed
-              || active === null
-              || requestGeneration !== generation
-              || (expectedHubOrigin !== undefined && active.personaScope.origin !== expectedHubOrigin)
-            ) {
-              throw new HubError('network', { message: 'Hub personas are not configured' });
-            }
-            const currentActive = active;
-            const pending = loadPendingPersonaIntents(data.settings, currentActive.personaScope)
-              .find((candidate): candidate is Extract<PendingPersonaIntent, { kind: 'upsert' }> =>
-                candidate.kind === 'upsert'
-                && candidate.key === args.key
-                && candidate.expectedVersion === args.expectedVersion
-                && candidate.personality.name === args.displayName
-                && candidate.personality.content === args.systemBlock);
-            if (pending !== undefined) {
-              return upsertPendingPersona(currentActive.client, currentActive.personaScope, pending);
-            }
-            const persona = await currentActive.client.upsertAiPersona(args);
-            return { kind: 'upserted' as const, persona };
-          });
-        } catch (error) {
-          if (identity !== null) {
-            restoreLatestPersonaIntent(identity, intent, previous);
-          }
-          throw error;
-        }
-      },
-      archive: async ({ key, expectedVersion, expectedHubOrigin }) => {
-        const requestGeneration = generation;
-        const requestOrigin = expectedHubOrigin ?? active?.personaScope.origin ?? null;
-        const identity = requestOrigin === null
-          ? null
-          : personaIntentIdentity(requestOrigin, key);
-        const previous = identity === null ? undefined : latestPersonaIntents.get(identity);
-        const intent: LatestPersonaIntent = { kind: 'archive' };
-        if (identity !== null) {
-          latestPersonaIntents.set(identity, intent);
-        }
-        try {
-          return await serializePersonaMutation(key, async () => {
-            if (
-              disposed
-              || active === null
-              || requestGeneration !== generation
-              || (expectedHubOrigin !== undefined && active.personaScope.origin !== expectedHubOrigin)
-            ) {
-              throw new HubError('network', { message: 'Hub personas are not configured' });
-            }
-            const currentActive = active;
-            const pending = loadPendingPersonaIntents(data.settings, currentActive.personaScope)
-              .find((candidate): candidate is Extract<PendingPersonaIntent, { kind: 'archive' }> =>
-                candidate.kind === 'archive'
-                && candidate.key === key
-                && candidate.expectedVersion === expectedVersion);
-            if (pending !== undefined) {
-              return archivePendingPersona(currentActive.client, currentActive.personaScope, pending);
-            }
-            // A new Desktop must never let an old Core strip the CAS query and
-            // perform an unconditional archive. The state operation is the
-            // additive capability probe and completes before DELETE.
-            await listPersonaStatesForArchive(currentActive.client);
-            return currentActive.client.archiveAiPersona({ key, expectedVersion });
-          });
-        } catch (error) {
-          if (identity !== null) {
-            restoreLatestPersonaIntent(identity, intent, previous);
-          }
-          throw error;
-        }
+        return trackPersonaOperation(fetchPersonaCatalog(
+          client,
+          requestScope,
+          requestGeneration,
+        ));
       },
     },
 
@@ -763,6 +375,9 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       if (personaScope === null) {
         throw new Error('configured Hub did not resolve a persona storage scope');
       }
+      // This synchronous, one-transaction snapshot is the migration boundary:
+      // no persona network read may begin before it succeeds.
+      ensureLegacyPersonaSnapshot(data.settings, personaScope.origin);
       const client = createClient({
         baseUrl: vm.hubBaseUrl,
         apiKey,
@@ -771,12 +386,16 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       const resolver = createPageLabelResolver({
         listPages: () => client.listPages(),
         getAccountUsername: (accountId) => data.accounts.get(accountId)?.username ?? null,
-        getOverrides: async () => (await settingsStore.get()).accountPageLabels,
+        getOverrides: () => effectivePersistedAccountPageLabels(
+          data.settings.get('accountPageLabels'),
+        ),
       });
-      // Stage 31 drain mode: no producer remains (the kernel gateway ledger is
-      // authoritative); the reporter only flushes usage_events rows parked by
-      // pre-cutover releases. Planned removal once the fleet's diagnostics
-      // show the drain counter at zero (§5).
+      const isPageLabelCurrent = (accountId: string, pageLabel: string): boolean =>
+        resolver.current(accountId) === pageLabel;
+      // No coordinator producer remains (the kernel gateway ledger is
+      // authoritative). The reporter remains only as a compatibility seam for
+      // an event produced in this credential-bound runtime; pre-cutover rows
+      // were quarantined above because they carry no destination provenance.
       const reporter = createUsageReporter({
         client,
         store,
@@ -788,288 +407,46 @@ export function createHubModule(options: HubModuleOptions): HubModule {
           });
         },
       });
-      // Durable offline intents replay on every reconnect. The old Stage-31
-      // cache migration is separate and genuinely one-time: it belongs only to
-      // the Hub that claimed the legacy global keys and uses Core's lifecycle
-      // state/create-only contract. Client clocks never decide which payload
-      // wins, and an archived tombstone can never be resurrected by migration.
-      const personaRecovery = (async () => {
-        try {
-          // Durable intents are replayed before the legacy local bootstrap.
-          // The compare-and-swap clear is intentionally after the confirmed
-          // Core response, so crash/timeout windows remain safely retryable.
-          const replayedKeys = new Set<string>();
-          const pendingSnapshot = loadPendingPersonaIntents(data.settings, personaScope);
-          for (const intent of pendingSnapshot) {
-            if (disposed || myGeneration !== generation) {
-              return;
-            }
-            try {
-              await serializePersonaMutation(intent.key, async () => {
-                if (
-                  disposed ||
-                  myGeneration !== generation ||
-                  !isCurrentPendingPersonaIntent(data.settings, personaScope, intent)
-                ) {
-                  return;
-                }
-                if (intent.kind === 'upsert') {
-                  const outcome = await upsertPendingPersona(client, personaScope, intent);
-                  if (outcome.kind === 'upserted') {
-                    // Cache projection is part of acknowledgement. Clearing
-                    // first would let a crash leave stale local content with no
-                    // revision token and the next bootstrap could write it back.
-                    if (
-                      await projectConfirmedPendingPersona(
-                        personaScope,
-                        intent,
-                        outcome.persona.version,
-                      ) &&
-                      clearPendingPersonaIntent(data.settings, personaScope, intent)
-                    ) {
-                      replayedKeys.add(intent.key);
-                    }
-                  } else if (!isCurrentPendingPersonaIntent(data.settings, personaScope, intent)) {
-                    // Conflict reconciliation owns its projection + CAS clear.
-                    replayedKeys.add(intent.key);
-                  }
-                  return;
-                }
-                try {
-                  await archivePendingPersona(client, personaScope, intent);
-                } catch (error) {
-                  if (classifyPersonaMutationFailure(error, intent.kind) !== 'already-archived') {
-                    throw error;
-                  }
-                }
-                // Cache projection is part of acknowledgement. Clearing first
-                // would let a crash leave stale local content that the next
-                // legacy bootstrap could write back over Core.
-                if (
-                  await projectConfirmedPendingPersona(personaScope, intent) &&
-                  clearPendingPersonaIntent(data.settings, personaScope, intent)
-                ) {
-                  replayedKeys.add(intent.key);
-                }
-              });
-            } catch (error) {
-              const failure = classifyPersonaMutationFailure(error, intent.kind);
-              onWarn('[hub] pending persona replay deferred', {
-                personaKey: intent.key,
-                mutation: intent.kind,
-                failure,
-                reason: error instanceof HubError ? error.reason : undefined,
-              });
-              if (failure === 'retryable') {
-                // One blackholed request is enough to establish that this
-                // trigger cannot make progress. Preserve the remaining bounded
-                // journal and avoid serially paying up to 128 timeouts.
-                return;
-              }
-            }
-          }
-
-          if (!isLegacyPersonaBootstrapRequired(data.settings, personaScope)) {
-            return;
-          }
-          let stateByKey = new Map(
-            (await client.listAiPersonaStates()).map((state) => [state.key, state] as const),
-          );
-          const refreshPersonaStates = async (): Promise<void> => {
-            stateByKey = new Map(
-              (await client.listAiPersonaStates()).map((state) => [state.key, state] as const),
-            );
-          };
-          if (disposed || myGeneration !== generation) {
-            return;
-          }
-          const cacheKey = personaCacheKey(personaScope);
-          const rawStored = data.settings.get(cacheKey);
-          if (rawStored === undefined) {
-            markLegacyPersonaBootstrapComplete(data.settings, personaScope);
-            return;
-          }
-          const parsedStored = bootstrapPersonalitiesSchema.safeParse(rawStored);
-          if (!parsedStored.success) {
-            onWarn('[hub] legacy persona cache could not be migrated', {
-              scope: personaScope.origin,
-              reason: 'invalid-cache',
-            });
-            return;
-          }
-          const stored: Personality[] = parsedStored.data.map((persona) => ({
-            id: persona.id,
-            name: persona.name,
-            content: persona.content,
-            updatedAt: persona.updatedAt,
-            ...(persona.remoteVersion !== undefined
-              ? { remoteVersion: persona.remoteVersion }
-              : {}),
-            ...(persona.builtin !== undefined ? { builtin: persona.builtin } : {}),
-            ...(persona.builtinVersion !== undefined
-              ? { builtinVersion: persona.builtinVersion }
-              : {}),
-          }));
-          for (const persona of stored) {
-            // Reconfigure/dispose can retire this client while an earlier
-            // persona request is in flight. Do not start another request with
-            // credentials that are no longer active.
-            if (disposed || myGeneration !== generation) {
-              return;
-            }
-            if (persona.builtin === true) {
-              continue;
-            }
-            if (
-              replayedKeys.has(persona.id) ||
-              loadPendingPersonaIntents(data.settings, personaScope)
-                .some((intent) => intent.key === persona.id)
-            ) {
-              // A still-pending intent is the sole source of truth. Never let a
-              // cached bootstrap PUT undo its tombstone or newer content.
-              continue;
-            }
-            if (!isWritablePersonality(persona)) {
-              // Pre-fix builds accepted empty/100k content. Preserve it in the
-              // cache for repair rather than dropping every persona or sending
-              // a deterministic Core 400.
-              onWarn('[hub] local persona is outside the Core write contract', {
-                personaKey: persona.id,
-                contentLength: persona.content.length,
-              });
-              storeLegacyPersonaRecovery(data.settings, personaScope, {
-                personality: persona as Personality,
-                reason: 'outside-core-contract',
-                remoteVersion: stateByKey.get(persona.id)?.version ?? null,
-              });
-              continue;
-            }
-            const latestIntent = latestPersonaIntents.get(
-              personaIntentIdentity(personaScope.origin, persona.id),
-            );
-            if (latestIntent !== undefined) {
-              // Interactive intent is serialized on the same key and already
-              // owns both the cache and Core mutation. Bootstrap must not turn
-              // the older captured row into a recovery duplicate.
-              continue;
-            }
-
-            // At most one refresh is needed to close a state-list -> create
-            // race. A second 409 defers the whole migration to a later trigger;
-            // it never falls back to an unconditional LWW PUT.
-            for (let attempt = 0; attempt < 2; attempt += 1) {
-              const remote = stateByKey.get(persona.id);
-              if (remote?.state === 'archived') {
-                storeLegacyPersonaRecovery(data.settings, personaScope, {
-                  personality: persona,
-                  reason: 'remote-archived',
-                  remoteVersion: remote.version,
-                });
-                const mappings = Object.fromEntries(
-                  Object.entries(loadPersonaAccountMappings(data.settings, personaScope))
-                    .filter(([, personaId]) => personaId !== persona.id),
-                );
-                storePersonaAccountMappings(data.settings, personaScope, mappings);
-                break;
-              }
-              if (
-                remote?.state === 'active'
-                && remote.displayName === persona.name
-                && remote.systemBlock === persona.content
-              ) {
-                projectLegacyConfirmedVersion(personaScope, persona, remote);
-                break;
-              }
-
-              let createArgs = {
-                key: persona.id,
-                displayName: persona.name,
-                systemBlock: persona.content,
-              };
-              if (remote?.state === 'active') {
-                storeLegacyPersonaRecovery(data.settings, personaScope, {
-                  personality: persona,
-                  reason: 'active-conflict',
-                  remoteVersion: remote.version,
-                });
-                createArgs = legacyRecoveredPersona(persona);
-                const recoveryState = stateByKey.get(createArgs.key);
-                if (recoveryState?.state === 'archived') {
-                  storeLegacyPersonaRecovery(data.settings, personaScope, {
-                    personality: persona,
-                    reason: 'recovery-key-archived',
-                    remoteVersion: recoveryState.version,
-                  });
-                  break;
-                }
-                if (recoveryState?.state === 'active') {
-                  if (
-                    recoveryState.displayName !== createArgs.displayName
-                    || recoveryState.systemBlock !== createArgs.systemBlock
-                  ) {
-                    storeLegacyPersonaRecovery(data.settings, personaScope, {
-                      personality: persona,
-                      reason: 'recovery-key-conflict',
-                      remoteVersion: recoveryState.version,
-                    });
-                    onWarn('[hub] deterministic legacy persona recovery key is occupied', {
-                      personaKey: persona.id,
-                      recoveryKey: createArgs.key,
-                    });
-                  }
-                  break;
-                }
-              }
-
-              try {
-                const created = await serializePersonaMutation(createArgs.key, async () => {
-                  // This task may have waited behind a mutation from the
-                  // retiring generation. Re-check immediately before wire IO.
-                  if (disposed || myGeneration !== generation) {
-                    return null;
-                  }
-                  return client.upsertAiPersona({ ...createArgs, expectedVersion: null });
-                });
-                if (created !== null) {
-                  stateByKey.set(createArgs.key, {
-                    state: 'active',
-                    ...created,
-                  } satisfies HubAiPersonaState);
-                  projectLegacyConfirmedVersion(personaScope, persona, created);
-                }
-                break;
-              } catch (error) {
-                if (errorStatus(error) !== 409 || attempt === 1) {
-                  throw error;
-                }
-                await refreshPersonaStates();
-              }
-            }
-          }
-          if (!disposed && myGeneration === generation) {
-            markLegacyPersonaBootstrapComplete(data.settings, personaScope);
-          }
-        } catch (error) {
-          onWarn(`[hub] persona sync failed (${error instanceof Error ? error.message : String(error)})`);
-        }
-      })();
-      void trackPersonaOperation(personaRecovery);
 
       const hooks = createSummaryHubHooks({
         client,
         data,
         resolvePageLabel: (accountId) => resolver.resolve(accountId),
+        isSummaryCurrent: (accountId, entry) => isCurrentPersonaSummary(
+          data.settings,
+          personaScope,
+          accountId,
+          entry,
+        ),
+        isPageLabelCurrent,
       });
-      active = {
+      const nextActive: ActiveHub = {
         client,
         personaScope,
+        acceptanceDestinationIdentity: acceptanceDestinationIdentity(
+          personaScope.origin,
+          apiKey,
+        ),
         reporter,
         hooks,
         aiFeatureGateway: createFeatureAiGateway({
           client,
           resolvePageLabel: (accountId) => resolver.resolve(accountId),
+          isPageLabelCurrent,
         }),
+        catalogRefreshTimer: null,
+        catalogRefreshRunning: false,
       };
+      active = nextActive;
+      // Refresh metadata at runtime activation so AI cache validation does not
+      // depend on opening Settings first. Failure keeps the last catalog and
+      // never falls back to uploading legacy full-text rows.
+      refreshPersonaCatalog(nextActive, myGeneration);
+      nextActive.catalogRefreshTimer = setInterval(() => {
+        if (active === nextActive && generation === myGeneration && !disposed) {
+          refreshPersonaCatalog(nextActive, myGeneration);
+        }
+      }, PERSONA_CATALOG_REFRESH_MS);
       // A40 (W4.6): drain the acceptance spool as soon as a working client
       // exists — flushNow had zero product callers, so events parked while
       // the hub was unconfigured waited for the next enqueue to reschedule.
@@ -1095,7 +472,7 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         while (reconfigureTasks.size > 0) {
           results.push(...await Promise.allSettled([...reconfigureTasks]));
         }
-        await Promise.all([drainPersonaOperations(), drainPersonaMutations()]);
+        await drainPersonaOperations();
         results.push(...await Promise.allSettled([
           retireActive(false),
           acceptance.quiesce(),

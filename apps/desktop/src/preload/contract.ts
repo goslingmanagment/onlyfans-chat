@@ -10,7 +10,6 @@ import type {
   ReasoningEffort,
   ReplyMode,
   ReplyTone,
-  Personality,
 } from '@chatgoose/shared/types';
 import type { OperationEvent, SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { LogLevel } from '@chatgoose/shared/diagnostics/log';
@@ -32,7 +31,25 @@ export interface AccountVM {
   avatarUrl: string | null; // media:// URL
   isAuthenticated: boolean;
   unreadCount: number;
+  /** Effective active mapping used by AI gates. */
   personalityId: string | null;
+  /** Exact local selection; retained even when the catalog entry disappears. */
+  rawPersonalityId: string | null;
+  personalityMappingState: 'unmapped' | 'active' | 'archived' | 'unresolved';
+}
+
+export interface PersonaCatalogEntryVM {
+  key: string;
+  displayName: string;
+  version: number;
+  status: 'active' | 'archived';
+}
+
+export interface PersonalitiesSnapshotVM {
+  /** Scope that owns this cached metadata catalog and local mappings. */
+  scopeOrigin: string | null;
+  personas: PersonaCatalogEntryVM[];
+  legacySnapshotAvailable: boolean;
 }
 
 export type ChatFilter = 'all' | 'unread' | 'with_tips';
@@ -155,6 +172,8 @@ export interface SyncStatusVM {
   hub: 'off' | 'connecting' | 'live' | 'degraded' | 'auth-failed' | 'stopped';
   /** Coarse operator mode: live push, degraded configured push, or no hub. */
   hubMode: 'live' | 'degraded' | 'off';
+  /** Stored Hub custody exists but is quarantined until its origin is re-proven. */
+  hubCredentialAttention: boolean;
   /** Dev/support-only override for comparing polling vs hub behavior. */
   hubModeOverride: HubModeOverrideSetting;
   hubLastEventAt: string | null;
@@ -330,8 +349,17 @@ export interface UnreadReconcileSettingsVM {
   hiddenMaxPages: number;
 }
 
+export type HubCredentialBindingState =
+  | 'none'
+  | 'bound'
+  | 'unbound'
+  | 'mismatch'
+  | 'unreadable';
+
 export interface SettingsVM {
   hasHubKey: boolean;
+  /** Whether the encrypted Hub key is proven to belong to the saved origin. */
+  hubApiKeyBindingState: HubCredentialBindingState;
   featureModels: Record<ModelSelectableFeature, string>;
   featureReasoning: Record<ModelSelectableFeature, ReasoningEffort>;
   quickMessageCount: number;
@@ -383,6 +411,8 @@ export interface SettingsVM {
   hubModeOverride: HubModeOverrideSetting;
   /** Stage 24: a device-bound hub token is stored (preferred over the chatter key). */
   hasHubDeviceToken: boolean;
+  /** Whether the encrypted device token is proven to belong to the saved origin. */
+  hubDeviceTokenBindingState: HubCredentialBindingState;
   /**
    * Crash-safe enrollment/revocation custody is durable but deliberately not a
    * usable bearer yet. Exposed separately so Settings can keep the cancel /
@@ -529,7 +559,14 @@ export interface AiFeatureCostsVM {
 }
 
 export type SettingsPatch = Partial<
-  Omit<SettingsVM, 'hasHubKey' | 'hasHubDeviceToken' | 'keyMeta'>
+  Omit<
+    SettingsVM,
+    | 'hasHubKey'
+    | 'hubApiKeyBindingState'
+    | 'hasHubDeviceToken'
+    | 'hubDeviceTokenBindingState'
+    | 'keyMeta'
+  >
 > & {
   /** Chatter key (`agency_hub_core_…`) — write-only into the keychain. */
   hubApiKey?: string;
@@ -567,6 +604,8 @@ export interface DbChangedEvent {
   scope: 'accounts' | 'chats' | 'messages' | 'fans' | 'summaries' | 'settings' | 'outbox' | 'guard';
   accountId?: string;
   chatId?: string;
+  /** Exact settings rows changed by this batch. Present for settings events. */
+  settingsKeys?: string[];
 }
 
 // ─── Send pipeline (SPEC §7) ─────────────────────────────────────────────
@@ -783,7 +822,7 @@ export interface InvokeChannels {
   'query:settings.get': { args: void; result: SettingsVM };
   /** Post-commit renderer acknowledgement used by boot/release smoke. */
   'cmd:app.rendererReady': { args: void; result: void };
-  'query:personalities.list': { args: void; result: Personality[] };
+  'query:personalities.list': { args: void; result: PersonalitiesSnapshotVM };
   'query:sync.status': { args: void; result: SyncStatusVM };
   /** Settings → Activity panel: data flow + credit/AI ledgers (read-only). */
   'query:activity.summary': { args: void; result: ActivityVM };
@@ -807,6 +846,8 @@ export interface InvokeChannels {
   };
   /** Stage 24 recovery: deletes the device token from the keychain (Settings → Hub). */
   'cmd:hub.signOutDevice': { args: void; result: void };
+  /** Explicit local-only escape hatch when the old Hub can no longer revoke. */
+  'cmd:hub.abandonDevice': { args: void; result: void };
   /** Danger zone: encrypted local cache footprint. */
   'query:localData.stats': { args: void; result: LocalDataStatsVM };
   'cmd:localData.openFolder': { args: void; result: void };
@@ -849,8 +890,7 @@ export interface InvokeChannels {
   };
   'cmd:sync.focusAccount': { args: { accountId: string | null }; result: void };
   'cmd:settings.update': { args: SettingsPatch; result: SettingsVM };
-  'cmd:personalities.save': { args: Personality; result: Personality[] };
-  'cmd:personalities.delete': { args: Personality; result: Personality[] };
+  'cmd:personalities.exportLegacySnapshot': { args: void; result: { path: string } };
   'cmd:mappings.set': {
     args: { accountId: string; personalityId: string | null };
     result: void;
@@ -1086,6 +1126,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'cmd:keys.test': true,
   'cmd:hub.issueDeviceToken': true,
   'cmd:hub.signOutDevice': true,
+  'cmd:hub.abandonDevice': true,
   'query:localData.stats': true,
   'cmd:localData.openFolder': true,
   'cmd:localData.exportDiagnostics': true,
@@ -1105,8 +1146,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'cmd:sync.reconcileUnread': true,
   'cmd:sync.focusAccount': true,
   'cmd:settings.update': true,
-  'cmd:personalities.save': true,
-  'cmd:personalities.delete': true,
+  'cmd:personalities.exportLegacySnapshot': true,
   'cmd:mappings.set': true,
   'cmd:data.purge': true,
   'ai:start': true,

@@ -284,12 +284,20 @@ describe('createHubClient', () => {
       const { calls, fetchImpl } = stubFetch(jsonResponse(200, PROFILE_VERSION));
       const { client, timeouts } = makeClient(fetchImpl);
 
-      const version = await client.putFanProfile({ pageLabel: 'stella-of', fanId: '9', body: 'New profile' });
+      const version = await client.putFanProfile({
+        pageLabel: 'stella-of',
+        fanId: '9',
+        body: 'New profile',
+        generatedAtMs: 1_718_000_000_000,
+      });
 
       expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/pages/stella-of/fans/9/profile');
       expect(calls[0]?.init.method).toBe('PUT');
       expect(calls[0]?.init.headers['content-type']).toBe('application/json');
-      expect(calls[0]?.init.body).toBe(JSON.stringify({ body: 'New profile' }));
+      expect(calls[0]?.init.body).toBe(JSON.stringify({
+        body: 'New profile',
+        generatedAtMs: 1_718_000_000_000,
+      }));
       expect(timeouts).toEqual([HUB_PROFILE_PUT_TIMEOUT_MS]);
       expect(version).toEqual(PROFILE_VERSION);
     });
@@ -299,7 +307,12 @@ describe('createHubClient', () => {
       const { client } = makeClient(fetchImpl);
 
       const error = await captureHubError(
-        client.putFanProfile({ pageLabel: 'p', fanId: '1', body: 'x'.repeat(HUB_PROFILE_MAX_CHARS + 1) }),
+        client.putFanProfile({
+          pageLabel: 'p',
+          fanId: '1',
+          body: 'x'.repeat(HUB_PROFILE_MAX_CHARS + 1),
+          generatedAtMs: 1_718_000_000_000,
+        }),
       );
       expect(error.reason).toBe('bad-request');
       expect(calls).toHaveLength(0);
@@ -309,7 +322,12 @@ describe('createHubClient', () => {
       const { calls, fetchImpl } = stubFetch();
       const { client } = makeClient(fetchImpl);
 
-      const error = await captureHubError(client.putFanProfile({ pageLabel: 'p', fanId: '1', body: '' }));
+      const error = await captureHubError(client.putFanProfile({
+        pageLabel: 'p',
+        fanId: '1',
+        body: '',
+        generatedAtMs: 1_718_000_000_000,
+      }));
       expect(error.reason).toBe('bad-request');
       expect(calls).toHaveLength(0);
     });
@@ -318,7 +336,12 @@ describe('createHubClient', () => {
       const { fetchImpl } = stubFetch(jsonResponse(404, { error: 'not found' }));
       const { client } = makeClient(fetchImpl);
 
-      const error = await captureHubError(client.putFanProfile({ pageLabel: 'gone', fanId: '1', body: 'b' }));
+      const error = await captureHubError(client.putFanProfile({
+        pageLabel: 'gone',
+        fanId: '1',
+        body: 'b',
+        generatedAtMs: 1_718_000_000_000,
+      }));
       expect(error.reason).toBe('http');
       expect(error.detail?.status).toBe(404);
     });
@@ -396,86 +419,31 @@ describe('createHubClient', () => {
     });
   });
 
-  describe('AI persona lifecycle contract', () => {
-    it('fails closed on a pre-revision persona response (Core must deploy first)', async () => {
-      const { fetchImpl } = stubFetch(jsonResponse(200, {
-        personas: [{
-          key: 'custom-old-core',
-          displayName: 'Old Core',
-          systemBlock: 'response has no revision token',
-          updatedAt: '2026-07-13T00:00:00.000Z',
-        }],
-      }));
-      const { client } = makeClient(fetchImpl);
-
-      const error = await captureHubError(client.listAiPersonas());
-      expect(error.reason).toBe('invalid-response');
-      expect(error.code).toBe('CG-HUB-02');
-    });
-
-    it('sends an explicit create-only version and parses the returned revision', async () => {
-      const response = {
-        key: 'custom-race',
-        displayName: 'Race-safe',
-        systemBlock: 'prompt',
-        updatedAt: '2026-07-13T00:00:00.000Z',
-        version: 1,
-      };
-      const { calls, fetchImpl } = stubFetch(jsonResponse(200, response));
+  describe('AI persona catalog contract', () => {
+    it('reads metadata without exposing or sending persona system text', async () => {
+      const personas = [
+        { key: 'builtin:lora', displayName: 'Lora', version: 3, status: 'active' as const },
+        { key: 'custom:old', displayName: 'Old', version: 8, status: 'archived' as const },
+      ];
+      const { calls, fetchImpl } = stubFetch(jsonResponse(200, { personas }));
       const { client, timeouts } = makeClient(fetchImpl);
 
-      await expect(client.upsertAiPersona({
-        key: response.key,
-        displayName: response.displayName,
-        systemBlock: response.systemBlock,
-        expectedVersion: null,
-      })).resolves.toEqual(response);
-
+      await expect(client.listAiPersonaCatalog()).resolves.toEqual(personas);
       expect(calls).toHaveLength(1);
-      expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/ai/personas/custom-race');
-      expect(calls[0]?.init.method).toBe('PUT');
-      expect(JSON.parse(calls[0]?.init.body ?? '')).toEqual({
-        displayName: response.displayName,
-        systemBlock: response.systemBlock,
-        expectedVersion: null,
-      });
+      expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/ai/persona-catalog');
+      expect(calls[0]?.init.method).toBe('GET');
+      expect(calls[0]?.init.body).toBeUndefined();
       expect(timeouts).toEqual([HUB_LIST_PAGES_TIMEOUT_MS]);
     });
 
-    it('reads archived state without requiring archived prompt content', async () => {
-      const archived = { state: 'archived' as const, key: 'custom-race', version: 2 };
-      const { calls, fetchImpl } = stubFetch(jsonResponse(200, { states: [archived] }));
+    it('rejects a catalog row without a server revision', async () => {
+      const { fetchImpl } = stubFetch(jsonResponse(200, {
+        personas: [{ key: 'custom:bad', displayName: 'Bad', status: 'active' }],
+      }));
       const { client } = makeClient(fetchImpl);
 
-      await expect(client.listAiPersonaStates()).resolves.toEqual([archived]);
-      expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/ai/personas/state');
-      expect(calls[0]?.init.method).toBe('GET');
-    });
-
-    it('sends an explicit revision token for archive, including the absent sentinel', async () => {
-      const response = { archived: true, version: 4 };
-      const { calls, fetchImpl } = stubFetch(
-        jsonResponse(200, response),
-        jsonResponse(200, response),
-      );
-      const { client } = makeClient(fetchImpl);
-
-      await expect(client.archiveAiPersona({
-        key: 'custom-race',
-        expectedVersion: 3,
-      })).resolves.toEqual(response);
-      await expect(client.archiveAiPersona({
-        key: 'custom-create-timeout',
-        expectedVersion: null,
-      })).resolves.toEqual(response);
-
-      expect(calls[0]?.url).toBe(
-        'https://hub.example.com/api/v1/ai/personas/custom-race?expectedVersion=3',
-      );
-      expect(calls[1]?.url).toBe(
-        'https://hub.example.com/api/v1/ai/personas/custom-create-timeout?expectedVersion=0',
-      );
-      expect(calls.map((call) => call.init.method)).toEqual(['DELETE', 'DELETE']);
+      const error = await captureHubError(client.listAiPersonaCatalog());
+      expect(error.reason).toBe('invalid-response');
     });
   });
 

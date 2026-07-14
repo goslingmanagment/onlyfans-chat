@@ -53,6 +53,10 @@ jobs:
         timeout-minutes: 15
         run: pnpm install --frozen-lockfile
 
+      - name: Assert release SDK vendor provenance is clean
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        run: node apps/desktop/scripts/assert-release-sdk-vendor.mjs
+
       - name: Check (typecheck + lint + test + build)
         timeout-minutes: 25
         run: pnpm check
@@ -109,6 +113,28 @@ jobs:
           done
           if [ "$ci_verified" != true ]; then
             echo "::error::Release commit $release_sha has no successful exact-SHA CI run"
+            exit 1
+          fi
+
+      - name: Assert production Core supports this Desktop lifecycle
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          core_verified=false
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --location \
+              --connect-timeout 10 --max-time 30 \
+              "https://gosling-agency.ru/api/v1/health" \
+              | node apps/desktop/scripts/assert-kernel-capabilities.mjs desktop-lifecycle-v2; then
+              core_verified=true
+              break
+            fi
+            echo "production Core lifecycle verification attempt $attempt failed; retrying"
+            sleep 10
+          done
+          if [ "$core_verified" != true ]; then
+            echo "::error::Production Core must deploy desktop-lifecycle-v2 before this Desktop can publish"
             exit 1
           fi
 
@@ -259,6 +285,27 @@ jobs:
             "bash -s -- --maintain '$FEED_DIR'" < apps/desktop/scripts/publish-feed.sh
           ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "mkdir -p '$stage_dir'"
           scp "${SSH_OPTIONS[@]}" apps/desktop/release/*.exe apps/desktop/release/*.blockmap apps/desktop/release/latest.yml "cgupdates@45.8.230.111:$stage_dir/"
+          # The initial capability gate is intentionally repeated after the
+          # potentially slow maintenance/scp work and immediately before the
+          # only command that can atomically replace latest.yml. A Core rollback
+          # during build, signing, smoke, or upload therefore cannot silently
+          # publish this Desktop lifecycle.
+          core_verified=false
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --location \
+              --connect-timeout 10 --max-time 30 \
+              "https://gosling-agency.ru/api/v1/health" \
+              | node apps/desktop/scripts/assert-kernel-capabilities.mjs desktop-lifecycle-v2; then
+              core_verified=true
+              break
+            fi
+            echo "publication-boundary Core lifecycle verification attempt $attempt failed; retrying"
+            sleep 10
+          done
+          if [ "$core_verified" != true ]; then
+            echo "::error::Production Core lost desktop-lifecycle-v2 before publication"
+            exit 1
+          fi
           # Server-side lock + monotonic version check; assets are renamed into
           # place first and latest.yml is one final same-filesystem atomic rename.
           if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- '$FEED_DIR' '$stage_dir'" < apps/desktop/scripts/publish-feed.sh; then

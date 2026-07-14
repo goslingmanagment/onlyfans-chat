@@ -4,23 +4,20 @@
 // and clean teardown when the config is removed.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createHubModule } from '@main/hub/index';
+import { createHubModule, PERSONA_CATALOG_REFRESH_MS } from '@main/hub/index';
 import type { SettingsStore } from '@main/settings/store';
 import type { UsageEventRecord } from '@main/ai/index';
 import type { Keychain } from '@main/secrets/keychain';
 import {
-  createPendingPersonaArchive,
-  createPendingPersonaUpsert,
-  ensurePersonaStorageScope,
-  legacyRecoveredPersona,
-  loadPendingPersonaIntents,
-  personaAccountMappingsKey,
-  personaCacheKey,
-  personaLegacyRecoveryKey,
+  LEGACY_PERSONA_SNAPSHOT_KEY,
+  loadPersonaCatalog,
+  storePersonaCatalog,
+} from '@main/personas/catalog';
+import {
   personaStorageScopeForHub,
-  storePendingPersonaIntent,
+  personaSummaryCacheIdentity,
+  storePersonaAccountMapping,
 } from '@main/personas/pending';
-import { HubError } from '@chatgoose/shared/hub/index';
 import {
   insertCoordinatorRow,
   makeFakeHubClient,
@@ -35,23 +32,6 @@ import {
 } from './helpers';
 
 const TEST_PERSONA_SCOPE = personaStorageScopeForHub('https://hub.example.com');
-
-interface PersonaUpsertArgs {
-  key: string;
-  displayName: string;
-  systemBlock: string;
-  expectedVersion?: number | null;
-}
-
-function personaResponse(args: PersonaUpsertArgs, version = 1) {
-  return {
-    key: args.key,
-    displayName: args.displayName,
-    systemBlock: args.systemBlock,
-    updatedAt: new Date().toISOString(),
-    version,
-  };
-}
 
 function makeKeychain(hubApiKey: string | null): Pick<Keychain, 'getSecret'> {
   return { getSecret: (name) => Promise.resolve(name === 'hubApiKey' ? hubApiKey : null) };
@@ -107,9 +87,7 @@ describe('createHubModule', () => {
     });
     await module.reconfigure();
 
-    await expect(
-      module.summaryHub.prefetchSummary?.({ accountId: 'acct_hub', fanId: FAN }),
-    ).resolves.toBeNull();
+    expect(module.summaryHub.prefetchSummary).toBeUndefined();
     await expect(
       module.summaryHub.pushSummary?.({ accountId: 'acct_hub', fanId: FAN, body: 'x', generatedAt: 1 }),
     ).resolves.toBeUndefined();
@@ -153,7 +131,7 @@ describe('createHubModule', () => {
     module.dispose();
   });
 
-  it('flushes the persisted backlog from a previous session on reconfigure', async () => {
+  it('quarantines a provenance-free backlog instead of sending it to the next Hub', async () => {
     vi.useFakeTimers();
     const data = memoryDataLayer();
     insertCoordinatorRow(data, rawCoordinatorPayload({ clientEventId: 'op-backlog' }));
@@ -169,15 +147,18 @@ describe('createHubModule', () => {
     await module.reconfigure();
     await vi.advanceTimersByTimeAsync(1_000);
 
-    expect(client.batches.flat().map((event) => event.clientEventId)).toEqual(['op-backlog']);
-    expect(usageEventRowCount(data)).toBe(0);
+    expect(client.batches).toHaveLength(0);
+    expect(usageEventRowCount(data)).toBe(1);
+    const row = data.db.prepare(
+      'SELECT payload FROM usage_events WHERE client_event_id = @id',
+    ).get({ id: 'op-backlog' }) as { payload: string };
+    expect(JSON.parse(row.payload)).toMatchObject({ quarantined: true });
     module.dispose();
   });
 
   it('shares quiescence and waits for the retiring usage reporter exactly once', async () => {
     vi.useFakeTimers();
     const data = memoryDataLayer();
-    insertCoordinatorRow(data, rawCoordinatorPayload({ clientEventId: 'op-quiesce' }));
     let settleBatch!: () => void;
     const postUsageBatch = vi.fn(
       ({ events }: { events: unknown[] }) =>
@@ -205,6 +186,7 @@ describe('createHubModule', () => {
       createClient: () => client,
     });
     await module.reconfigure();
+    module.onUsageEvent(usagePayload({ clientEventId: 'op-quiesce' }));
     await vi.advanceTimersByTimeAsync(1_000);
     expect(postUsageBatch).toHaveBeenCalledTimes(1);
 
@@ -230,7 +212,6 @@ describe('createHubModule', () => {
   it('serializes reporter retirement before a concurrent replacement is installed', async () => {
     vi.useFakeTimers();
     const data = memoryDataLayer();
-    insertCoordinatorRow(data, rawCoordinatorPayload({ clientEventId: 'op-retire' }));
     let settleOld!: () => void;
     const oldPost = vi.fn(
       ({ events }: { events: unknown[] }) =>
@@ -262,6 +243,7 @@ describe('createHubModule', () => {
       createClient,
     });
     await module.reconfigure();
+    module.onUsageEvent(usagePayload({ clientEventId: 'op-retire' }));
     await vi.advanceTimersByTimeAsync(1_000);
     expect(oldPost).toHaveBeenCalledTimes(1);
 
@@ -308,940 +290,22 @@ describe('createHubModule', () => {
     module.dispose();
   });
 
-  it('does not start another persona upsert after reconfigure retires the client', async () => {
+  it('snapshots legacy text before the activation catalog request and never uploads it', async () => {
     const data = memoryDataLayer();
-    data.settings.set('personalities', [
-      { id: 'custom:first', name: 'First', content: 'First prompt' },
-      { id: 'custom:second', name: 'Second', content: 'Second prompt' },
-    ]);
-    let releaseFirst!: () => void;
-    const firstInFlight = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    const client = makeFakeHubClient();
-    const upsertAiPersona = vi.fn(async (args: PersonaUpsertArgs) => {
-      if (args.key === 'custom:first') {
-        await firstInFlight;
-      }
-      return personaResponse(args);
-    });
-    client.upsertAiPersona = upsertAiPersona;
-    let current = makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true });
-    const module = createHubModule({
-      data,
-      settingsStore: makeDynamicSettingsStore(() => current),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => expect(upsertAiPersona).toHaveBeenCalledTimes(1));
-
-    current = makeSettingsVM({
-      hubBaseUrl: null,
-      hasHubKey: false,
-      keyMeta: { hub: null },
-    });
-    const retiring = module.reconfigure();
-    await Promise.resolve();
-    releaseFirst();
-    await retiring;
-
-    expect(upsertAiPersona).toHaveBeenCalledTimes(1);
-    module.dispose();
-  });
-
-  it.each(['upsert', 'archive'] as const)(
-    'replays a durable pending persona %s before legacy bootstrap after restart',
-    async (action) => {
-      const data = memoryDataLayer();
-      const pendingPersona = {
-        id: 'custom:pending',
-        name: 'Pending',
-        content: 'new durable prompt',
-        updatedAt: 2,
-      };
-      data.settings.set('personalities', [
-        // This is deliberately stale for the upsert case and deliberately
-        // still present for the archive case, matching the two crash windows
-        // between journal persistence, network completion and cache update.
-        { ...pendingPersona, content: 'stale cached prompt', updatedAt: 1 },
-        { id: 'custom:sentinel', name: 'Sentinel', content: 'bootstrap complete', updatedAt: 1 },
-      ]);
-      storePendingPersonaIntent(
-        data.settings,
-        null,
-        action === 'upsert'
-          ? createPendingPersonaUpsert(pendingPersona)
-          : createPendingPersonaArchive(pendingPersona.id),
-      );
-
-      const client = makeFakeHubClient();
-      const upsertAiPersona = vi.fn(
-        (args: PersonaUpsertArgs) => Promise.resolve(personaResponse(args)),
-      );
-      const archiveAiPersona = vi.fn(() => Promise.resolve({ archived: true, version: 2 }));
-      client.upsertAiPersona = upsertAiPersona;
-      client.archiveAiPersona = archiveAiPersona;
-      const module = createHubModule({
-        data,
-        settingsStore: makeSettingsStore(
-          makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
-        ),
-        keychain: makeKeychain('agency_hub_core_x'),
-        createClient: () => client,
-      });
-
-      await module.reconfigure();
-      await vi.waitFor(() => {
-        expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-        expect(upsertAiPersona).toHaveBeenCalledWith(expect.objectContaining({
-          key: 'custom:sentinel',
-        }));
-      });
-
-      const pendingUpserts = upsertAiPersona.mock.calls
-        .map(([args]) => args)
-        .filter((args) => args.key === pendingPersona.id);
-      const cachedAfterReplay = data.settings.get(personaCacheKey(TEST_PERSONA_SCOPE)) as Array<{
-        id: string;
-        content: string;
-        remoteVersion?: number;
-      }>;
-      expect(cachedAfterReplay.find((persona) => persona.id === 'custom:sentinel')?.remoteVersion)
-        .toBe(1);
-      if (action === 'upsert') {
-        expect(pendingUpserts).toEqual([{
-          key: pendingPersona.id,
-          displayName: pendingPersona.name,
-          systemBlock: pendingPersona.content,
-          expectedVersion: null,
-        }]);
-        expect(cachedAfterReplay.find((persona) => persona.id === pendingPersona.id)?.content)
-          .toBe(pendingPersona.content);
-        expect(archiveAiPersona).not.toHaveBeenCalled();
-      } else {
-        expect(pendingUpserts).toEqual([]);
-        expect(cachedAfterReplay.some((persona) => persona.id === pendingPersona.id)).toBe(false);
-        expect(archiveAiPersona).toHaveBeenCalledExactlyOnceWith({
-          key: pendingPersona.id,
-          expectedVersion: null,
-        });
-      }
-      module.dispose();
-    },
-  );
-
-  it('stops restart replay after the first transport failure and retains later intents', async () => {
-    const data = memoryDataLayer();
-    const first = { id: 'custom:first', name: 'First', content: 'first prompt', updatedAt: 1 };
-    const second = { id: 'custom:second', name: 'Second', content: 'second prompt', updatedAt: 1 };
-    data.settings.set('personalities', [first, second]);
-    storePendingPersonaIntent(data.settings, null, createPendingPersonaUpsert(first));
-    storePendingPersonaIntent(data.settings, null, createPendingPersonaUpsert(second));
-    const client = makeFakeHubClient();
-    const upsertAiPersona = vi.fn(async () => {
-      throw new Error('offline');
-    });
-    client.upsertAiPersona = upsertAiPersona;
-    const onWarn = vi.fn();
-    const module = createHubModule({
-      data,
-      settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
-      ),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-      onWarn,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => expect(onWarn).toHaveBeenCalledWith(
-      '[hub] pending persona replay deferred',
-      expect.objectContaining({ personaKey: first.id, failure: 'retryable' }),
-    ));
-
-    expect(upsertAiPersona).toHaveBeenCalledTimes(1);
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toHaveLength(2);
-    module.dispose();
-  });
-
-  it('preserves an offline stale edit as a recovered copy instead of overwriting a newer device', async () => {
-    const data = memoryDataLayer();
-    const base = {
-      id: 'custom:shared',
-      name: 'Shared',
-      content: 'version one',
-      updatedAt: 1,
-      remoteVersion: 1,
-    };
-    const offlineEdit = { ...base, content: 'A offline edit', updatedAt: 2 };
-    data.settings.set('personalities', [base]);
-    storePendingPersonaIntent(
-      data.settings,
-      null,
-      createPendingPersonaUpsert(offlineEdit, 1),
-    );
-
-    const newerRemote = {
-      state: 'active' as const,
-      key: base.id,
-      displayName: base.name,
-      systemBlock: 'B newer edit',
-      updatedAt: '2026-07-13T12:00:00.000Z',
-      version: 2,
-    };
-    const states = [newerRemote];
-    const recoveredArgs = legacyRecoveredPersona(offlineEdit);
-    const client = makeFakeHubClient();
-    client.listAiPersonaStates = vi.fn(async () => states);
-    const upsertAiPersona = vi.fn(async (args: PersonaUpsertArgs) => {
-      if (args.key === base.id) {
-        expect(args.expectedVersion).toBe(1);
-        throw new HubError('http', { detail: { status: 409 } });
-      }
-      expect(args).toEqual({ ...recoveredArgs, expectedVersion: null });
-      const recovered = personaResponse(args, 1);
-      states.push({ state: 'active', ...recovered });
-      return recovered;
-    });
-    client.upsertAiPersona = upsertAiPersona;
-    const module = createHubModule({
-      data,
-      settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: TEST_PERSONA_SCOPE.origin, hasHubKey: true }),
-      ),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => {
-      expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-    });
-
-    const cached = data.settings.get(personaCacheKey(TEST_PERSONA_SCOPE)) as Array<{
-      id: string;
-      content: string;
-      remoteVersion?: number;
-    }>;
-    expect(cached).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: base.id, content: 'B newer edit', remoteVersion: 2 }),
-      expect.objectContaining({
-        id: recoveredArgs.key,
-        content: offlineEdit.content,
-        remoteVersion: 1,
-      }),
-    ]));
-    expect(upsertAiPersona).toHaveBeenCalledTimes(2);
-    expect(upsertAiPersona.mock.calls.every(([args]) => 'expectedVersion' in args)).toBe(true);
-    module.dispose();
-  });
-
-  it('rejects a stale archive after another device edits and restores the newer active row', async () => {
-    const data = memoryDataLayer();
-    const staleBase = {
-      id: 'custom:stale-archive',
-      name: 'Shared',
-      content: 'version one',
-      updatedAt: 1,
-      remoteVersion: 1,
-    };
-    data.settings.set(personaCacheKey(TEST_PERSONA_SCOPE), [staleBase]);
-    storePendingPersonaIntent(
-      data.settings,
-      TEST_PERSONA_SCOPE,
-      createPendingPersonaArchive(staleBase.id, 1, staleBase),
-    );
-
-    const newer = {
-      state: 'active' as const,
-      key: staleBase.id,
-      displayName: 'Device B',
-      systemBlock: 'version two',
-      updatedAt: '2026-07-13T12:00:00.000Z',
-      version: 2,
-    };
-    const client = makeFakeHubClient();
-    client.listAiPersonaStates = vi.fn(async () => [newer]);
-    const archiveAiPersona = vi.fn(async () => {
-      throw new HubError('http', { detail: { status: 409 } });
-    });
-    client.archiveAiPersona = archiveAiPersona;
-    const module = createHubModule({
-      data,
-      settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: TEST_PERSONA_SCOPE.origin, hasHubKey: true }),
-      ),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => {
-      expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-    });
-
-    expect(archiveAiPersona).toHaveBeenCalledExactlyOnceWith({
-      key: staleBase.id,
-      expectedVersion: 1,
-    });
-    expect(data.settings.get(personaCacheKey(TEST_PERSONA_SCOPE))).toEqual([
-      expect.objectContaining({
-        id: staleBase.id,
-        name: newer.displayName,
-        content: newer.systemBlock,
-        remoteVersion: 2,
-      }),
-    ]);
-    module.dispose();
-  });
-
-  it('archives a create whose success response was lost only after an exact payload match', async () => {
-    const data = memoryDataLayer();
-    const unconfirmed = {
-      id: 'custom:create-timeout',
-      name: 'Create timeout',
-      content: 'exact local payload',
-      updatedAt: 1,
-      remoteVersion: null,
-    };
-    data.settings.set(personaCacheKey(TEST_PERSONA_SCOPE), [unconfirmed]);
-    storePendingPersonaIntent(
-      data.settings,
-      TEST_PERSONA_SCOPE,
-      createPendingPersonaArchive(unconfirmed.id, null, unconfirmed),
-    );
-
-    const active = {
-      state: 'active' as const,
-      key: unconfirmed.id,
-      displayName: unconfirmed.name,
-      systemBlock: unconfirmed.content,
-      updatedAt: '2026-07-13T12:00:00.000Z',
-      version: 1,
-    };
-    const client = makeFakeHubClient();
-    client.listAiPersonaStates = vi.fn(async () => [active]);
-    const archiveAiPersona = vi.fn(async (args: { expectedVersion: number | null }) => {
-      if (args.expectedVersion === null) {
-        throw new HubError('http', { detail: { status: 409 } });
-      }
-      return { archived: true, version: 2 };
-    });
-    client.archiveAiPersona = archiveAiPersona;
-    const module = createHubModule({
-      data,
-      settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: TEST_PERSONA_SCOPE.origin, hasHubKey: true }),
-      ),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => {
-      expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-    });
-
-    expect(archiveAiPersona).toHaveBeenCalledExactlyOnceWith({
-      key: unconfirmed.id,
-      expectedVersion: 1,
-    });
-    expect(data.settings.get(personaCacheKey(TEST_PERSONA_SCOPE))).toEqual([]);
-    module.dispose();
-  });
-
-  it('does not send DELETE when an old Core lacks the persona-state CAS preflight', async () => {
-    const data = memoryDataLayer();
-    const base = {
-      id: 'custom:old-core-delete',
-      name: 'Old Core guard',
-      content: 'must not be deleted unconditionally',
-      updatedAt: 1,
-      remoteVersion: 3,
-    };
-    data.settings.set(personaCacheKey(TEST_PERSONA_SCOPE), [base]);
-    storePendingPersonaIntent(
-      data.settings,
-      TEST_PERSONA_SCOPE,
-      createPendingPersonaArchive(base.id, 3, base),
-    );
-    const client = makeFakeHubClient();
-    client.listAiPersonaStates = vi.fn(async () => {
-      throw new HubError('http', { detail: { status: 404 } });
-    });
-    const archiveAiPersona = vi.fn(async () => ({ archived: true, version: 4 }));
-    client.archiveAiPersona = archiveAiPersona;
-    const onWarn = vi.fn();
-    const module = createHubModule({
-      data,
-      settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: TEST_PERSONA_SCOPE.origin, hasHubKey: true }),
-      ),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-      onWarn,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => expect(onWarn).toHaveBeenCalledWith(
-      '[hub] pending persona replay deferred',
-      expect.objectContaining({ personaKey: base.id }),
-    ));
-
-    expect(archiveAiPersona).not.toHaveBeenCalled();
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toHaveLength(1);
-    module.dispose();
-  });
-
-  it('quarantines a stale save against a remote tombstone and never retries the 409', async () => {
-    const data = memoryDataLayer();
-    const stale = {
-      id: 'custom:archived-remotely',
-      name: 'Archived remotely',
-      content: 'A stale edit',
-      updatedAt: 2,
-      remoteVersion: 1,
-    };
-    data.settings.set('personalities', [stale]);
-    data.settings.set('accountMappings', { acct_one: stale.id });
-    storePendingPersonaIntent(data.settings, null, createPendingPersonaUpsert(stale, 1));
-
-    const client = makeFakeHubClient();
-    client.listAiPersonaStates = vi.fn(async () => [{
-      state: 'archived' as const,
-      key: stale.id,
-      version: 2,
-    }]);
-    const upsertAiPersona = vi.fn(async (args: PersonaUpsertArgs) => {
-      expect(args).toEqual({
-        key: stale.id,
-        displayName: stale.name,
-        systemBlock: stale.content,
-        expectedVersion: 1,
-      });
-      throw new HubError('http', { detail: { status: 409 } });
-    });
-    client.upsertAiPersona = upsertAiPersona;
-    const settingsStore = makeSettingsStore(
-      makeSettingsVM({ hubBaseUrl: TEST_PERSONA_SCOPE.origin, hasHubKey: true }),
-    );
-    const module = createHubModule({
-      data,
-      settingsStore,
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => {
-      expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-    });
-    expect(data.settings.get(personaCacheKey(TEST_PERSONA_SCOPE))).toEqual([]);
-    expect(data.settings.get(personaLegacyRecoveryKey(TEST_PERSONA_SCOPE))).toMatchObject({
-      entries: [{
-        sourceKey: stale.id,
-        reason: 'remote-archived',
-        remoteVersion: 2,
-        personality: stale,
-      }],
-    });
-    expect(data.settings.get(personaAccountMappingsKey(TEST_PERSONA_SCOPE))).toEqual({});
-
-    await module.reconfigure();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(upsertAiPersona).toHaveBeenCalledTimes(1);
-    module.dispose();
-  });
-
-  it('replays safely after a crash window following recovered-copy creation', async () => {
-    const data = memoryDataLayer();
-    const base = {
-      id: 'custom:crash-conflict',
-      name: 'Crash conflict',
-      content: 'old',
-      updatedAt: 1,
-      remoteVersion: 1,
-    };
-    const offlineEdit = { ...base, content: 'durable local', updatedAt: 2 };
-    data.settings.set('personalities', [base]);
-    storePendingPersonaIntent(data.settings, null, createPendingPersonaUpsert(offlineEdit, 1));
-
-    const newerRemote = {
-      state: 'active' as const,
-      key: base.id,
-      displayName: base.name,
-      systemBlock: 'newer remote',
-      updatedAt: '2026-07-13T12:00:00.000Z',
-      version: 2,
-    };
-    const states = [newerRemote];
-    const recoveredArgs = legacyRecoveredPersona(offlineEdit);
-    const client = makeFakeHubClient();
-    client.listAiPersonaStates = vi.fn(async () => states);
-    let recoveredCreates = 0;
-    let failNextProjection = false;
-    client.upsertAiPersona = vi.fn(async (args: PersonaUpsertArgs) => {
-      if (args.key === base.id) {
-        throw new HubError('http', { detail: { status: 409 } });
-      }
-      recoveredCreates += 1;
-      const recovered = personaResponse(args, 1);
-      states.push({ state: 'active', ...recovered });
-      failNextProjection = true;
-      return recovered;
-    });
-    const originalSet = data.settings.set.bind(data.settings);
-    data.settings.set = (key, value) => {
-      if (failNextProjection && key === personaCacheKey(TEST_PERSONA_SCOPE)) {
-        failNextProjection = false;
-        throw new Error('simulated crash before local conflict projection');
-      }
-      originalSet(key, value);
-    };
-    const onWarn = vi.fn();
-    const module = createHubModule({
-      data,
-      settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: TEST_PERSONA_SCOPE.origin, hasHubKey: true }),
-      ),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-      onWarn,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => expect(onWarn).toHaveBeenCalledWith(
-      '[hub] pending persona replay deferred',
-      expect.objectContaining({ personaKey: base.id }),
-    ));
-    expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toHaveLength(1);
-
-    await module.reconfigure();
-    await vi.waitFor(() => {
-      expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-    });
-    const cached = data.settings.get(personaCacheKey(TEST_PERSONA_SCOPE)) as Array<{
-      id: string;
-      content: string;
-    }>;
-    expect(cached).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: base.id, content: 'newer remote' }),
-      expect.objectContaining({ id: recoveredArgs.key, content: offlineEdit.content }),
-    ]));
-    expect(recoveredCreates).toBe(1);
-    module.dispose();
-  });
-
-  it.each(['save', 'archive'] as const)(
-    'serializes an interactive persona %s behind an in-flight bootstrap upsert',
-    async (action) => {
-      const data = memoryDataLayer();
-      data.settings.set('personalities', [
-        { id: 'custom:race', name: 'Cached', content: 'stale cached prompt' },
-      ]);
-      let releaseBootstrap!: () => void;
-      const bootstrapInFlight = new Promise<void>((resolve) => {
-        releaseBootstrap = resolve;
-      });
-      let remotePersona: { displayName: string; systemBlock: string } | null = null;
-      const client = makeFakeHubClient();
-      const upsertAiPersona = vi.fn(async (args: PersonaUpsertArgs) => {
-        if (upsertAiPersona.mock.calls.length === 1) {
-          await bootstrapInFlight;
-        }
-        remotePersona = { displayName: args.displayName, systemBlock: args.systemBlock };
-        return personaResponse(args);
-      });
-      const archiveAiPersona = vi.fn(async () => {
-        remotePersona = null;
-        return { archived: true, version: 2 };
-      });
-      client.upsertAiPersona = upsertAiPersona;
-      client.archiveAiPersona = archiveAiPersona;
-      const module = createHubModule({
-        data,
-        settingsStore: makeSettingsStore(
-          makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
-        ),
-        keychain: makeKeychain('agency_hub_core_x'),
-        createClient: () => client,
-      });
-
-      await module.reconfigure();
-      await vi.waitFor(() => expect(upsertAiPersona).toHaveBeenCalledTimes(1));
-
-      const interactive = action === 'save'
-        ? module.personas.upsert({
-            key: 'custom:race',
-            displayName: 'New',
-            systemBlock: 'new prompt',
-            expectedVersion: null,
-          })
-        : module.personas.archive({ key: 'custom:race', expectedVersion: null });
-      await Promise.resolve();
-      await Promise.resolve();
-
-      // The stale bootstrap write must settle before the newer user intent is
-      // allowed onto the wire. Otherwise its late response can overwrite the
-      // save or resurrect the archive in Core's last-write-wins repository.
-      expect(upsertAiPersona).toHaveBeenCalledTimes(1);
-      expect(archiveAiPersona).not.toHaveBeenCalled();
-
-      releaseBootstrap();
-      await interactive;
-
-      if (action === 'save') {
-        expect(remotePersona).toEqual({ displayName: 'New', systemBlock: 'new prompt' });
-        expect(upsertAiPersona).toHaveBeenCalledTimes(2);
-      } else {
-        expect(remotePersona).toBeNull();
-        expect(archiveAiPersona).toHaveBeenCalledTimes(1);
-      }
-      module.dispose();
-    },
-  );
-
-  it.each(['save', 'archive'] as const)(
-    'does not enqueue stale cached data for a later persona after an interactive %s',
-    async (action) => {
-      const data = memoryDataLayer();
-      data.settings.set('personalities', [
-        { id: 'custom:blocker', name: 'Blocker', content: 'block bootstrap' },
-        { id: 'custom:race', name: 'Cached', content: 'stale cached prompt' },
-        { id: 'custom:sentinel', name: 'Sentinel', content: 'bootstrap complete' },
-      ]);
-      let releaseBlocker!: () => void;
-      const blocked = new Promise<void>((resolve) => {
-        releaseBlocker = resolve;
-      });
-      const client = makeFakeHubClient();
-      const upsertAiPersona = vi.fn(async (args: PersonaUpsertArgs) => {
-        if (args.key === 'custom:blocker') {
-          await blocked;
-        }
-        return personaResponse(args);
-      });
-      const archiveAiPersona = vi.fn(async () => ({ archived: true, version: 2 }));
-      client.upsertAiPersona = upsertAiPersona;
-      client.archiveAiPersona = archiveAiPersona;
-      const module = createHubModule({
-        data,
-        settingsStore: makeSettingsStore(
-          makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
-        ),
-        keychain: makeKeychain('agency_hub_core_x'),
-        createClient: () => client,
-      });
-
-      await module.reconfigure();
-      await vi.waitFor(() => expect(upsertAiPersona).toHaveBeenCalledTimes(1));
-      if (action === 'save') {
-        await module.personas.upsert({
-          key: 'custom:race',
-          displayName: 'New',
-          systemBlock: 'new prompt',
-          expectedVersion: null,
-        });
-      } else {
-        await module.personas.archive({ key: 'custom:race', expectedVersion: null });
-      }
-
-      releaseBlocker();
-      if (action === 'save') {
-        await vi.waitFor(() => expect(upsertAiPersona).toHaveBeenCalledTimes(3));
-        expect(
-          upsertAiPersona.mock.calls
-            .map(([args]) => args)
-            .filter((args) => args.key === 'custom:race'),
-        ).toEqual([
-          {
-            key: 'custom:race',
-            displayName: 'New',
-            systemBlock: 'new prompt',
-            expectedVersion: null,
-          },
-        ]);
-      } else {
-        await vi.waitFor(() => expect(upsertAiPersona).toHaveBeenCalledTimes(2));
-        expect(upsertAiPersona).not.toHaveBeenCalledWith(expect.objectContaining({
-          key: 'custom:race',
-        }));
-        expect(archiveAiPersona).toHaveBeenCalledTimes(1);
-      }
-      module.dispose();
-    },
-  );
-
-  it('runs legacy bootstrap once and treats identical active Core content as migrated', async () => {
-    const data = memoryDataLayer();
-    data.settings.set('personalities', [
-      { id: 'custom:shared', name: 'Same', content: 'same prompt', updatedAt: 1 },
-    ]);
-    const client = makeFakeHubClient();
-    const listAiPersonaStates = vi.fn(async () => [{
-      state: 'active' as const,
-      key: 'custom:shared',
-      displayName: 'Same',
-      systemBlock: 'same prompt',
-      updatedAt: '2026-07-13T00:00:00.000Z',
-      version: 7,
-    }]);
-    const upsertAiPersona = vi.fn(async (args: PersonaUpsertArgs) => personaResponse(args));
-    client.listAiPersonaStates = listAiPersonaStates;
-    client.upsertAiPersona = upsertAiPersona;
-    const module = createHubModule({
-      data,
-      settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
-      ),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => expect(listAiPersonaStates).toHaveBeenCalledTimes(1));
-    expect(data.settings.get(personaCacheKey(TEST_PERSONA_SCOPE))).toEqual([
-      expect.objectContaining({
-        id: 'custom:shared',
-        content: 'same prompt',
-        remoteVersion: 7,
-      }),
-    ]);
-    // Retirement drains the first migration before starting the second
-    // generation. Its completion marker makes this reconfigure a no-op.
-    await module.reconfigure();
-
-    expect(listAiPersonaStates).toHaveBeenCalledTimes(1);
-    expect(upsertAiPersona).not.toHaveBeenCalled();
-    module.dispose();
-  });
-
-  it('never overwrites an active Core row from a future-dated legacy cache and creates one recovered copy', async () => {
-    const data = memoryDataLayer();
-    const local = {
-      id: 'custom:offline',
-      name: 'Offline edit',
-      content: 'ambiguous unsynced local prompt',
-      // A broken/future client clock must have no conflict-resolution power.
-      updatedAt: Date.parse('2035-07-14T00:00:00.000Z'),
-    };
-    data.settings.set('personalities', [local]);
-    const client = makeFakeHubClient();
-    client.listAiPersonaStates = vi.fn(async () => [{
-      state: 'active' as const,
-      key: local.id,
-      displayName: 'Remote winner',
-      systemBlock: 'authoritative Core prompt',
-      updatedAt: '2026-07-13T00:00:00.000Z',
-      version: 7,
-    }]);
-    const upsertAiPersona = vi.fn(async (args: PersonaUpsertArgs) => personaResponse(args));
-    client.upsertAiPersona = upsertAiPersona;
-    const module = createHubModule({
-      data,
-      settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
-      ),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-    });
-
-    await module.reconfigure();
-    const recovered = legacyRecoveredPersona(local);
-    await vi.waitFor(() => expect(upsertAiPersona).toHaveBeenCalledExactlyOnceWith({
-      ...recovered,
-      expectedVersion: null,
-    }));
-    expect(upsertAiPersona).not.toHaveBeenCalledWith(expect.objectContaining({ key: local.id }));
-    expect(data.settings.get(personaLegacyRecoveryKey(TEST_PERSONA_SCOPE))).toMatchObject({
-      version: 1,
-      entries: [{
-        sourceKey: local.id,
-        reason: 'active-conflict',
-        personality: local,
-        remoteVersion: 7,
-      }],
-    });
-    await module.reconfigure();
-    expect(upsertAiPersona).toHaveBeenCalledTimes(1);
-    module.dispose();
-  });
-
-  it('preserves a remote tombstone and records the legacy cache payload without a PUT', async () => {
-    const data = memoryDataLayer();
-    const local = {
-      id: 'custom:archived-elsewhere',
-      name: 'Offline edit',
-      content: 'must not resurrect',
-      updatedAt: Date.parse('2035-07-14T00:00:00.000Z'),
-    };
-    data.settings.set('personalities', [local]);
-    const client = makeFakeHubClient();
-    const listAiPersonaStates = vi.fn(async () => [{
-      state: 'archived' as const,
-      key: local.id,
-      version: 9,
-    }]);
-    const upsertAiPersona = vi.fn(async (args: PersonaUpsertArgs) => personaResponse(args));
-    client.listAiPersonaStates = listAiPersonaStates;
-    client.upsertAiPersona = upsertAiPersona;
-    const module = createHubModule({
-      data,
-      settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
-      ),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => expect(listAiPersonaStates).toHaveBeenCalledTimes(1));
-    expect(upsertAiPersona).not.toHaveBeenCalled();
-    expect(data.settings.get(personaLegacyRecoveryKey(TEST_PERSONA_SCOPE))).toMatchObject({
-      entries: [{
-        sourceKey: local.id,
-        reason: 'remote-archived',
-        personality: local,
-        remoteVersion: 9,
-      }],
-    });
-    await module.reconfigure();
-    expect(listAiPersonaStates).toHaveBeenCalledTimes(1);
-    expect(upsertAiPersona).not.toHaveBeenCalled();
-    module.dispose();
-  });
-
-  it('refreshes a list-to-create conflict once and never falls back to an unconditional PUT', async () => {
-    const data = memoryDataLayer();
-    const local = {
-      id: 'custom:create-race',
-      name: 'Local',
-      content: 'lost create race',
-      updatedAt: 1,
-    };
-    data.settings.set('personalities', [local]);
-    const client = makeFakeHubClient();
-    const listAiPersonaStates = vi.fn()
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{
-        state: 'archived' as const,
-        key: local.id,
-        version: 2,
-      }]);
-    const upsertAiPersona = vi.fn(async () => {
-      throw new HubError('http', { detail: { status: 409 } });
-    });
-    client.listAiPersonaStates = listAiPersonaStates;
-    client.upsertAiPersona = upsertAiPersona;
-    const module = createHubModule({
-      data,
-      settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
-      ),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: () => client,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => expect(listAiPersonaStates).toHaveBeenCalledTimes(2));
-    expect(upsertAiPersona).toHaveBeenCalledExactlyOnceWith({
-      key: local.id,
-      displayName: local.name,
-      systemBlock: local.content,
-      expectedVersion: null,
-    });
-    expect(data.settings.get(personaLegacyRecoveryKey(TEST_PERSONA_SCOPE))).toMatchObject({
-      entries: [{ sourceKey: local.id, reason: 'remote-archived', remoteVersion: 2 }],
-    });
-    await module.reconfigure();
-    expect(listAiPersonaStates).toHaveBeenCalledTimes(2);
-    expect(upsertAiPersona).toHaveBeenCalledTimes(1);
-    module.dispose();
-  });
-
-  it('does not reuse a same-key Hub B edit when Hub A legacy bootstrap resumes', async () => {
-    const data = memoryDataLayer();
-    const hubA = 'https://hub.example.com';
-    const hubB = 'http://localhost:3100';
-    const localA = {
-      id: 'custom:shared',
-      name: 'A cached',
-      content: 'A-only cached prompt',
-      updatedAt: 1,
-    };
-    data.settings.set('personalities', [localA]);
-
-    let current = makeSettingsVM({ hubBaseUrl: hubA, hasHubKey: true });
-    const clientA = makeFakeHubClient();
-    const clientB = makeFakeHubClient();
-    const listA = vi.fn()
-      .mockRejectedValueOnce(new Error('A temporarily unavailable'))
-      .mockResolvedValue([]);
-    const upsertA = vi.fn(async (args: PersonaUpsertArgs) => personaResponse(args));
-    const upsertB = vi.fn(async (args: PersonaUpsertArgs) => personaResponse(args));
-    clientA.listAiPersonaStates = listA;
-    clientA.upsertAiPersona = upsertA;
-    clientB.upsertAiPersona = upsertB;
-    const module = createHubModule({
-      data,
-      settingsStore: makeDynamicSettingsStore(() => current),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: ({ baseUrl }) => baseUrl === hubA ? clientA : clientB,
-    });
-
-    await module.reconfigure();
-    await vi.waitFor(() => expect(listA).toHaveBeenCalledTimes(1));
-
-    current = makeSettingsVM({ hubBaseUrl: hubB, hasHubKey: true });
-    await module.reconfigure();
-    await module.personas.upsert({
-      key: localA.id,
-      displayName: 'B edit',
-      systemBlock: 'B-only prompt',
-      expectedVersion: null,
-      expectedHubOrigin: hubB,
-    });
-    expect(upsertB).toHaveBeenCalledExactlyOnceWith({
-      key: localA.id,
-      displayName: 'B edit',
-      systemBlock: 'B-only prompt',
-      expectedVersion: null,
-    });
-
-    current = makeSettingsVM({ hubBaseUrl: hubA, hasHubKey: true });
-    await module.reconfigure();
-    await vi.waitFor(() => expect(upsertA).toHaveBeenCalledExactlyOnceWith({
-      key: localA.id,
-      displayName: localA.name,
-      systemBlock: localA.content,
-      expectedVersion: null,
-    }));
-    expect(upsertA).not.toHaveBeenCalledWith(expect.objectContaining({
-      displayName: 'B edit',
-    }));
-    module.dispose();
-  });
-
-  it('drains and rejects a persona list response from a retired runtime', async () => {
-    const data = memoryDataLayer();
-    let releaseList!: () => void;
-    const delayed = new Promise<void>((resolve) => {
-      releaseList = resolve;
-    });
-    const client = makeFakeHubClient();
-    const listAiPersonas = vi.fn(async () => {
-      await delayed;
+    const legacy = [{ id: 'custom:legacy', name: 'Legacy', content: 'private full text' }];
+    data.settings.set('personalities', legacy);
+    const listAiPersonaCatalog = vi.fn(async () => {
+      expect(data.settings.get(LEGACY_PERSONA_SNAPSHOT_KEY)).toEqual(expect.objectContaining({
+        rows: expect.objectContaining({ personalities: legacy }),
+      }));
       return [{
-        key: 'custom:old-hub',
-        displayName: 'Old Hub',
-        systemBlock: 'must not escape retirement',
-        updatedAt: '2026-07-13T00:00:00.000Z',
-        version: 1,
+        key: 'custom:legacy',
+        displayName: 'Legacy',
+        version: 5,
+        status: 'active' as const,
       }];
     });
-    client.listAiPersonas = listAiPersonas;
+    const client = makeFakeHubClient({ listAiPersonaCatalog });
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
@@ -1250,27 +314,30 @@ describe('createHubModule', () => {
       keychain: makeKeychain('agency_hub_core_x'),
       createClient: () => client,
     });
+
     await module.reconfigure();
-
-    const oldList = module.personas.list();
-    await vi.waitFor(() => expect(listAiPersonas).toHaveBeenCalledTimes(1));
-    const quiescing = module.quiesce();
-    releaseList();
-
-    await expect(oldList).rejects.toMatchObject({ reason: 'network' });
-    await quiescing;
+    await vi.waitFor(() => expect(listAiPersonaCatalog).toHaveBeenCalledTimes(1));
+    expect(data.settings.get('personalities')).toEqual(legacy);
+    expect(loadPersonaCatalog(data.settings, TEST_PERSONA_SCOPE)).toEqual([{
+      key: 'custom:legacy',
+      displayName: 'Legacy',
+      version: 5,
+      status: 'active',
+    }]);
     module.dispose();
   });
 
-  it('rejects persona operations when IPC expects a different active Hub origin', async () => {
+  it('refreshes catalog metadata on a bounded cadence and publishes mapping invalidation state', async () => {
+    vi.useFakeTimers();
     const data = memoryDataLayer();
-    const client = makeFakeHubClient();
-    const listAiPersonas = vi.fn(async () => []);
-    const upsertAiPersona = vi.fn(async (args: PersonaUpsertArgs) => personaResponse(args));
-    const archiveAiPersona = vi.fn(async () => ({ archived: true, version: 2 }));
-    client.listAiPersonas = listAiPersonas;
-    client.upsertAiPersona = upsertAiPersona;
-    client.archiveAiPersona = archiveAiPersona;
+    const catalogs = [
+      [{ key: 'custom:one', displayName: 'One', version: 1, status: 'active' as const }],
+      [{ key: 'custom:one', displayName: 'One', version: 2, status: 'archived' as const }],
+    ];
+    const listAiPersonaCatalog = vi.fn(async () => catalogs.shift() ?? catalogs[0] ?? []);
+    const client = makeFakeHubClient({ listAiPersonaCatalog });
+    const settingsEvents: Array<{ scope: string; settingsKeys?: string[] }> = [];
+    data.bus.subscribe((events) => settingsEvents.push(...events));
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
@@ -1279,83 +346,43 @@ describe('createHubModule', () => {
       keychain: makeKeychain('agency_hub_core_x'),
       createClient: () => client,
     });
+
     await module.reconfigure();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(listAiPersonaCatalog).toHaveBeenCalledTimes(1);
+    data.bus.flushNow();
+    settingsEvents.length = 0;
 
-    await expect(module.personas.list('http://localhost:3100'))
-      .rejects.toMatchObject({ reason: 'network' });
-    await expect(module.personas.upsert({
-      key: 'custom:b',
-      displayName: 'B',
-      systemBlock: 'B prompt',
-      expectedVersion: null,
-      expectedHubOrigin: 'http://localhost:3100',
-    })).rejects.toMatchObject({ reason: 'network' });
-    await expect(module.personas.archive({
-      key: 'custom:b',
-      expectedVersion: null,
-      expectedHubOrigin: 'http://localhost:3100',
-    }))
-      .rejects.toMatchObject({ reason: 'network' });
-
-    expect(listAiPersonas).not.toHaveBeenCalled();
-    expect(upsertAiPersona).not.toHaveBeenCalled();
-    expect(archiveAiPersona).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(PERSONA_CATALOG_REFRESH_MS);
+    expect(listAiPersonaCatalog).toHaveBeenCalledTimes(2);
+    expect(loadPersonaCatalog(data.settings, TEST_PERSONA_SCOPE)?.[0]).toEqual(
+      expect.objectContaining({ version: 2, status: 'archived' }),
+    );
+    data.bus.flushNow();
+    expect(settingsEvents).toContainEqual(expect.objectContaining({
+      scope: 'settings',
+      settingsKeys: expect.arrayContaining([
+        expect.stringMatching(/^personalities\.catalog\./),
+      ]),
+    }));
     module.dispose();
   });
-
-  it('never replays Hub A pending persona state into Hub B and resumes it on return to A', async () => {
-    const data = memoryDataLayer();
-    const pendingA = {
-      id: 'custom:a',
-      name: 'A',
-      content: 'A-only prompt',
-      updatedAt: 1,
-    };
-    data.settings.set('personalities', [pendingA]);
-    storePendingPersonaIntent(data.settings, null, createPendingPersonaUpsert(pendingA));
-    const hubA = 'https://hub.example.com';
-    const hubB = 'http://localhost:3100';
-    ensurePersonaStorageScope(data.settings, hubA);
-
-    let current = makeSettingsVM({ hubBaseUrl: hubB, hasHubKey: true });
-    const clientA = makeFakeHubClient();
-    const clientB = makeFakeHubClient();
-    const upsertA = vi.fn(async (args: PersonaUpsertArgs) => personaResponse(args));
-    const upsertB = vi.fn(async (args: PersonaUpsertArgs) => personaResponse(args));
-    clientA.upsertAiPersona = upsertA;
-    clientB.upsertAiPersona = upsertB;
-    const module = createHubModule({
-      data,
-      settingsStore: makeDynamicSettingsStore(() => current),
-      keychain: makeKeychain('agency_hub_core_x'),
-      createClient: ({ baseUrl }) => baseUrl === hubA ? clientA : clientB,
-    });
-
-    await module.reconfigure();
-    await Promise.resolve();
-    expect(upsertB).not.toHaveBeenCalled();
-
-    current = makeSettingsVM({ hubBaseUrl: hubA, hasHubKey: true });
-    await module.reconfigure();
-    await vi.waitFor(() => {
-      expect(loadPendingPersonaIntents(data.settings, TEST_PERSONA_SCOPE)).toEqual([]);
-    });
-    expect(upsertA).toHaveBeenCalledExactlyOnceWith({
-      key: pendingA.id,
-      displayName: pendingA.name,
-      systemBlock: pendingA.content,
-      expectedVersion: null,
-    });
-    expect(upsertB).not.toHaveBeenCalled();
-    module.dispose();
-  });
-
   it('replays a pending summary as soon as Hub configuration becomes active', async () => {
     const data = memoryDataLayer();
     seedAccount(data);
+    storePersonaAccountMapping(data.settings, TEST_PERSONA_SCOPE, 'acct_hub', 'builtin:lora');
+    storePersonaCatalog(data.settings, TEST_PERSONA_SCOPE, [{
+      key: 'builtin:lora',
+      displayName: 'Lora',
+      version: 1,
+      status: 'active',
+    }]);
     seedSummary(data, {
       body: 'pending local summary',
       generatedAt: Date.parse('2026-07-12T00:00:00.000Z'),
+      personalityId: personaSummaryCacheIdentity(TEST_PERSONA_SCOPE, 'builtin:lora'),
+      personalityUpdatedAt: 1,
+      modelId: 'kernel',
       hubSyncState: {
         state: 'pending',
         reason: 'delivery-failed',
@@ -1376,9 +403,66 @@ describe('createHubModule', () => {
     await vi.waitFor(() => expect(client.putFanProfileMock).toHaveBeenCalledTimes(1));
 
     expect(client.putFanProfileMock).toHaveBeenCalledWith(
-      expect.objectContaining({ fanId: FAN, body: 'pending local summary' }),
+      expect.objectContaining({
+        fanId: FAN,
+        body: 'pending local summary',
+        generatedAtMs: Date.parse('2026-07-12T00:00:00.000Z'),
+      }),
     );
     expect(data.summaries.get('acct_hub', FAN)?.hubSyncState).toMatchObject({ state: 'synced' });
+    module.dispose();
+  });
+
+  it('does not carry a summary completed during an A-to-B retirement into Hub B', async () => {
+    const data = memoryDataLayer();
+    seedAccount(data);
+    let releaseOldCatalog!: () => void;
+    const oldCatalog = new Promise<[]>(resolve => {
+      releaseOldCatalog = () => resolve([]);
+    });
+    const oldClient = makeFakeHubClient({
+      listAiPersonaCatalog: () => oldCatalog,
+    });
+    const replacementClient = makeFakeHubClient();
+    const createClient = vi.fn()
+      .mockReturnValueOnce(oldClient)
+      .mockReturnValue(replacementClient);
+    let settings = makeSettingsVM({ hubBaseUrl: 'https://hub-a.example.com', hasHubKey: true });
+    const module = createHubModule({
+      data,
+      settingsStore: makeDynamicSettingsStore(() => settings),
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient,
+    });
+    await module.reconfigure();
+    expect(oldClient.listAiPersonaCatalog).toHaveBeenCalledTimes(1);
+
+    settings = makeSettingsVM({ hubBaseUrl: 'https://hub-b.example.com', hasHubKey: true });
+    const replacement = module.reconfigure();
+    await vi.waitFor(async () => {
+      expect(await module.getOfapiCreditsSummary()).toBeNull();
+    });
+
+    const body = 'completed while Hub runtime was null';
+    const generatedAt = Date.parse('2026-07-13T22:30:00.000Z');
+    seedSummary(data, { body, generatedAt });
+    await module.summaryHub.pushSummary?.({
+      accountId: 'acct_hub',
+      fanId: FAN,
+      body,
+      generatedAt,
+    });
+
+    expect(oldClient.putFanProfileMock).not.toHaveBeenCalled();
+    expect(data.summaries.get('acct_hub', FAN)?.hubSyncState).toBeUndefined();
+
+    releaseOldCatalog();
+    await replacement;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(replacementClient.putFanProfileMock).not.toHaveBeenCalled();
+    expect(data.summaries.get('acct_hub', FAN)).toMatchObject({ body, generatedAt });
+    expect(data.summaries.get('acct_hub', FAN)?.hubSyncState).toBeUndefined();
     module.dispose();
   });
 

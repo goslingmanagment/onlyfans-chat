@@ -25,7 +25,10 @@ export function SpendersSettings({
   const accountId = selectedId ?? accountList[0]?.id ?? null;
   // Stage 24 / DP 8: reads are hub-only.
   const hasOfapiReadAccess =
-    settings.hubBaseUrl !== null && (settings.hasHubKey || settings.hasHubDeviceToken);
+    settings.hubBaseUrl !== null && (
+      settings.hubApiKeyBindingState === 'bound'
+      || settings.hubDeviceTokenBindingState === 'bound'
+    );
 
   const lists = useSpenderLists(accountId, hasOfapiReadAccess);
   const mapped = accountId !== null ? (settings.spendersListMappings[accountId] ?? []) : [];

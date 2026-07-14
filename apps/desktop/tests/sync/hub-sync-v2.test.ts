@@ -19,6 +19,12 @@ import {
 const ACCT = 'acct_hub_v2_test';
 const NEW_ACCT = 'acct_hub_v2_new';
 
+function v2SnapshotRequest(sourceCursor: string): string {
+  const url = new URL(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
+  url.searchParams.set('sourceCursor', sourceCursor);
+  return url.toString();
+}
+
 interface FakeStream {
   send(text: string): void;
   close(): void;
@@ -399,7 +405,7 @@ describe('createHubSync (protocol v2)', () => {
     await drainMicrotasks();
 
     expect(h.calls[0]!.url).toContain('cursor=CUR_STALE');
-    expect(h.calls[1]!.url).toBe(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
+    expect(h.calls[1]!.url).toBe(v2SnapshotRequest('CUR_STALE'));
     expect(h.calls[2]!.url).toBe(
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
     );
@@ -638,7 +644,7 @@ describe('createHubSync (protocol v2)', () => {
 
     expect(calls.map((call) => call.url)).toEqual([
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
-      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      v2SnapshotRequest('CUR_STALE'),
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&snapshotCursor=22&pageMode=bounded_v1&messageLimit=100&stateCursor=STATE_BELOW_FLOOR`,
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH_1`,
@@ -782,7 +788,7 @@ describe('createHubSync (protocol v2)', () => {
     await drainMicrotasks();
 
     expect(h.calls[0]!.url).toContain('cursor=CUR_OUT_OF_GRANT');
-    expect(h.calls[1]!.url).toBe(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
+    expect(h.calls[1]!.url).toBe(v2SnapshotRequest('CUR_OUT_OF_GRANT'));
     expect(h.calls[2]!.url).toContain(`${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0`);
     expect(h.calls[3]!.url).toContain('pageCursor=9');
     expect(h.calls[4]!.url).toContain('cursor=CUR_RESCOPED');
@@ -826,7 +832,7 @@ describe('createHubSync (protocol v2)', () => {
 
     expect(h.calls.map((call) => call.url)).toEqual([
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_OLD_GRANT`,
-      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      v2SnapshotRequest('CUR_OLD_GRANT'),
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${NEW_ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_REPLACED`,
     ]);
@@ -896,11 +902,11 @@ describe('createHubSync (protocol v2)', () => {
 
     expect(h.calls.map((call) => call.url)).toEqual([
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
-      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      v2SnapshotRequest('CUR_STALE'),
       // No A state walk was allowed for CUR_A_ONLY: reconnect with the still
       // stale cursor and obtain an AB-bound baseline instead.
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
-      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      v2SnapshotRequest('CUR_STALE'),
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${NEW_ACCT}&afterSeq=0&pageCursor=0&limit=1&snapshotCursor=22&pageMode=bounded_v1&messageLimit=100`,
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_A_AND_B`,
@@ -944,7 +950,7 @@ describe('createHubSync (protocol v2)', () => {
 
     expect(h.calls.map((call) => call.url)).toEqual([
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_REVOKED`,
-      `https://hub.test${HUB_V2_SNAPSHOT_PATH}`,
+      v2SnapshotRequest('CUR_REVOKED'),
       `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_EMPTY`,
     ]);
     expect(h.log).toEqual(['gap-recovered', 'persist:CUR_EMPTY']);
@@ -1023,7 +1029,7 @@ describe('createHubSync (protocol v2)', () => {
     await drainMicrotasks();
 
     expect(h.calls).toHaveLength(2);
-    expect(h.calls[1]!.url).toBe(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
+    expect(h.calls[1]!.url).toBe(v2SnapshotRequest('CUR_DEAD'));
     expect(h.log).toEqual([]);
     expect(h.cursor()).toBe('CUR_DEAD');
     expect(h.sync.status()).toBe('auth-failed');

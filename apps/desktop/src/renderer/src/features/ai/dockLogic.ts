@@ -262,7 +262,9 @@ export interface AiGateInput {
 
 export interface AiTransportSettings {
   hasHubKey: boolean;
+  hubApiKeyBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
   hasHubDeviceToken: boolean;
+  hubDeviceTokenBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
   hubBaseUrl: string | null;
 }
 
@@ -270,7 +272,10 @@ export interface AiTransportSettings {
  * a hub connection IS the AI configuration (vendor keys retired). Either
  * credential counts: the device token (preferred) or the legacy chatter key. */
 export function hasConfiguredAiTransport(settings: AiTransportSettings): boolean {
-  return settings.hubBaseUrl !== null && (settings.hasHubKey || settings.hasHubDeviceToken);
+  return settings.hubBaseUrl !== null && (
+    settings.hubApiKeyBindingState === 'bound'
+    || settings.hubDeviceTokenBindingState === 'bound'
+  );
 }
 
 export type AiGate =

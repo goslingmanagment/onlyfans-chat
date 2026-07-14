@@ -132,7 +132,8 @@ export function chatRowToVM(row: ChatRow, avatarUrl: string | null): ChatListIte
 export function accountToVM(
   row: AccountListRow,
   avatarUrl: string | null,
-  personalityId: string | null,
+  rawPersonalityId: string | null,
+  personalityMappingState: AccountVM['personalityMappingState'],
 ): AccountVM {
   return {
     id: row.id,
@@ -143,7 +144,9 @@ export function accountToVM(
     // only a hard unauthenticated state drives the re-auth banner.
     isAuthenticated: row.authState !== 'unauthenticated',
     unreadCount: row.unreadTotal,
-    personalityId,
+    personalityId: personalityMappingState === 'active' ? rawPersonalityId : null,
+    rawPersonalityId,
+    personalityMappingState,
   };
 }
 

@@ -48,6 +48,9 @@ function makeQueryClient(): QueryClient {
   queryClient.setQueryData(qk.settings, {
     // Stage 31: a hub connection IS the AI configuration.
     hasHubKey: true,
+    hubApiKeyBindingState: 'bound',
+    hasHubDeviceToken: false,
+    hubDeviceTokenBindingState: 'none',
     hubBaseUrl: 'https://hub.example.com',
     defaultReplyTone: 'casual',
   } as SettingsVM);

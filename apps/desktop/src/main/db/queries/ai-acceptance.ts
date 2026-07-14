@@ -56,6 +56,8 @@ export interface AiAcceptanceQueries {
   acceptOnce(operationId: string, acceptedAt: string): AiAcceptanceResult;
   /** App-start lifecycle: renderer state did not survive, so no old full text is actionable. */
   scrubPartsFromPreviousSession(): number;
+  /** Hub-origin switch: old operation ids are no longer actionable in this renderer. */
+  discardUnaccepted(): number;
 }
 
 function decode(raw: unknown): AiAcceptanceOperation | null {
@@ -190,6 +192,12 @@ export function createAiAcceptanceQueries(
            SET parts = '[]'
            WHERE parts <> '[]'`,
         )
+        .run().changes;
+    },
+
+    discardUnaccepted() {
+      return db
+        .prepare('DELETE FROM ai_acceptance_ops WHERE accepted_at IS NULL')
         .run().changes;
     },
   };

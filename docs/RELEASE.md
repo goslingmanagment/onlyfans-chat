@@ -115,15 +115,42 @@ check → download → install flow so the UX is demoable without a real feed.
 
 **Release ritual:**
 
+> **Credential-origin migration for the lifecycle-v2 release is mandatory.**
+> Builds through v0.1.41 stored API keys/device tokens without a durable Hub
+> origin+digest binding. The new build deliberately quarantines that legacy
+> custody instead of risking a loopback/restored credential being sent to the
+> production default after Local Data purge or partial profile restore. On the
+> first upgraded boot, operators must re-paste the chatter API key. For a legacy
+> device token they must use **Forget locally**, have an administrator revoke the
+> old token on its original Hub, and then sign the device in again. The status bar
+> shows **HUB CREDENTIAL** until this is complete. Do not publish this release
+> until the fleet owner has scheduled and communicated that re-enrolment and the
+> old-Hub token inventory/revocation path is ready.
+
 1. Bump `version` in `apps/desktop/package.json`, run `pnpm check`, and commit on
    `main`.
 2. Push `main` and wait for **both** release-prerequisite CI jobs to pass on that exact
    commit: the existing Linux `pnpm check` and `pnpm check (Windows)`. Do not
    create the release tag while either job is pending or failing; this catches
    Windows path, line-ending, and native-toolchain regressions before a version
-   is consumed. GitHub plan restrictions prevent protected required checks on
+   is consumed. The tag/publish workflow also rejects the vendored SDK unless
+   `kernel-sdk.vendor.json.sourceCommit` is exactly a clean 40-character
+   lowercase commit SHA; a `-dirty` SDK snapshot may be tested locally but must
+   never enter an installer. GitHub plan restrictions prevent protected required checks on
    this private repository, so `windows-build` also queries Actions and refuses
    to build or publish unless the exact tag SHA already has a successful CI run.
+   For lifecycle-contract releases it also reads production Core's public health
+   response and requires `desktop-lifecycle-v2`; a tag cannot publish while Core
+   is still on the old reserve/activate or snapshot contract. Persona rollout is
+   gated separately: the shipped Desktop must take the immutable local legacy
+   backup before its first catalog read, expose the JSON export, preserve raw
+   mappings, and contain no client persona write/replay path. Client-side
+   persona CAS/editor support is no longer a release prerequisite because
+   global definitions are owner-managed in Core. Until fan-profile responses
+   carry the exact persona key and version, the packaged Desktop must not adopt
+   profile prefetch as a summary cache hit or stamp its body with the current
+   catalog version. Summary push/replay stays enabled and must preserve the
+   original `generatedAtMs` across retries.
 3. `git tag v<version> && git push origin v<version>`. Publication rejects a
    tag whose commit is not an ancestor of `origin/main`.
 4. The serialized `windows-build` workflow reruns the full `pnpm check`, builds

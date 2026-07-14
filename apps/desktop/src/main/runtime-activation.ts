@@ -27,6 +27,23 @@ export async function activateRuntimeNonFatal(
   }
 }
 
+/** A durable lifecycle journal can outlive every readable custody file. Keep
+ * that possible remote-orphan state globally visible even when no active local
+ * secret remains for the ordinary hasCredential checks to observe. */
+export function hubCredentialNeedsAttention(settings: {
+  hasHubKey: boolean;
+  hubApiKeyBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
+  hasHubDeviceToken: boolean;
+  hubDeviceTokenBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
+  hubDeviceTokenTransition: 'activation' | 'revocation' | null;
+}): boolean {
+  return (
+    settings.hasHubKey && settings.hubApiKeyBindingState !== 'bound'
+  ) || (
+    settings.hasHubDeviceToken && settings.hubDeviceTokenBindingState !== 'bound'
+  ) || settings.hubDeviceTokenTransition !== null;
+}
+
 /** Expose the cached/local UI before beginning any remote runtime activation.
  * Registration and renderer load remain fatal startup work; activation runs in
  * the background and reports its eventual status through the supplied hooks. */
@@ -202,6 +219,53 @@ export async function requireSettledDeviceCredentialCustody(options: {
   }
 }
 
+export interface PurgeDeviceCredentialSnapshot {
+  hasDeviceTokenCustody: boolean;
+  bindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
+  hubBaseUrl: string | null;
+  deviceToken: string | null;
+}
+
+/** A DB purge destroys the only durable origin binding for an active device
+ * token. Revoke the exact bound token first; otherwise preserve the DB and
+ * require the explicit local-abandonment flow, which warns about remote risk. */
+export async function settleDeviceCredentialBeforePurge(options: {
+  recover(): Promise<boolean>;
+  read(): Promise<PurgeDeviceCredentialSnapshot>;
+  revoke(input: { hubBaseUrl: string; deviceToken: string }): Promise<void>;
+}): Promise<void> {
+  await requireSettledDeviceCredentialCustody({ recover: options.recover });
+  const current = await options.read();
+  if (!current.hasDeviceTokenCustody) return;
+  if (
+    current.bindingState !== 'bound'
+    || current.hubBaseUrl === null
+    || current.deviceToken === null
+  ) {
+    throw new Error(
+      'Local data cannot be purged while a device token has no provable Hub origin. Use “Forget locally” first only if an administrator will revoke the legacy token.',
+    );
+  }
+  await options.revoke({
+    hubBaseUrl: current.hubBaseUrl,
+    deviceToken: current.deviceToken,
+  });
+  await requireSettledDeviceCredentialCustody({ recover: options.recover });
+}
+
+/** Preserve the live bearer through the final history upload, then revoke it
+ * before the DB containing its binding is deleted. This ordering is required
+ * for device-token-only profiles. */
+export async function finishPurgeCustody(options: {
+  settlePendingCredential(): Promise<void>;
+  finishHarvest(): Promise<void>;
+  settleActiveDeviceCredential(): Promise<void>;
+}): Promise<void> {
+  await options.settlePendingCredential();
+  await options.finishHarvest();
+  await options.settleActiveDeviceCredential();
+}
+
 /** Destructive purge tail with an explicit recovery path. Once the runtime
  * queue is terminally sealed, a custody failure cannot safely return to the
  * current process. Preserve the DB, surface the error, and relaunch instead. */
@@ -238,6 +302,10 @@ export async function runFailClosedTerminalPurge(options: {
 export function createBoundedRetry(options: {
   task: () => Promise<void>;
   delaysMs: readonly number[];
+  /** Optional pause before starting another bounded series. Reserved for
+   * durable idempotent obligations that must eventually settle (credentials),
+   * never for indeterminate one-way commands. */
+  repeatAfterExhaustionMs?: number;
   onAttemptFailure?: (error: unknown, attempt: number) => void;
   onExhausted?: (lastError: unknown) => void;
   onSuccess?: (attempt: number) => void;
@@ -246,6 +314,14 @@ export function createBoundedRetry(options: {
     if (!Number.isFinite(delay) || delay < 0) {
       throw new Error(`Retry delay must be a non-negative finite number, got ${String(delay)}`);
     }
+  }
+  if (
+    options.repeatAfterExhaustionMs !== undefined
+    && (!Number.isFinite(options.repeatAfterExhaustionMs) || options.repeatAfterExhaustionMs < 0)
+  ) {
+    throw new Error(
+      `Retry repetition delay must be a non-negative finite number, got ${String(options.repeatAfterExhaustionMs)}`,
+    );
   }
 
   let generation = 0;
@@ -266,6 +342,13 @@ export function createBoundedRetry(options: {
     const delay = options.delaysMs[nextAttempt];
     if (delay === undefined) {
       options.onExhausted?.(lastError);
+      if (options.repeatAfterExhaustionMs !== undefined) {
+        nextAttempt = 0;
+        timer = setTimeout(() => {
+          timer = null;
+          scheduleNext(series, lastError);
+        }, options.repeatAfterExhaustionMs);
+      }
       return;
     }
     const attempt = nextAttempt + 1;
@@ -434,15 +517,21 @@ export function createSerializedCredentialLifecycle<Input, Result>(options: {
 export async function activateStoredCredentialWithRetry(options: {
   activate: () => Promise<void>;
   scheduleRetry: () => void;
+  shouldRetry?: (error: unknown) => boolean;
   onFailure?: (error: unknown) => void;
 }): Promise<void> {
   try {
     await options.activate();
   } catch (error) {
     options.onFailure?.(error);
-    options.scheduleRetry();
+    const retryScheduled = options.shouldRetry?.(error) ?? true;
+    if (retryScheduled) {
+      options.scheduleRetry();
+    }
     throw new Error(
-      'Device sign-in succeeded, but ChatGoose could not activate the runtime. The token is stored and retrying automatically.',
+      retryScheduled
+        ? 'Device sign-in succeeded, but ChatGoose could not activate the runtime. The token is stored and retrying automatically.'
+        : 'Device sign-in succeeded, but the stored credential was rejected. Sign out or authenticate again to restore Hub access.',
       { cause: error },
     );
   }

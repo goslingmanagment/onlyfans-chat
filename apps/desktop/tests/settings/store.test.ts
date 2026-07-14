@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_FEATURE_MODELS,
   DEFAULT_FEATURE_REASONING,
@@ -10,10 +10,13 @@ import {
   createSettingsStore,
 } from '@main/settings/store';
 import {
+  HUB_API_KEY_BINDING_KEY,
+  HUB_DEVICE_TOKEN_BINDING_KEY,
   HUB_DEVICE_TOKEN_ACTIVATION_KEY,
   HUB_DEVICE_TOKEN_REVOCATION_KEY,
   deviceTokenDigest,
 } from '@main/hub/credential-journal';
+import { abandonHubDeviceTokenCustody } from '@main/hub/device-token';
 import type { SecretStoreLike, SettingsQueries } from '@main/settings/store';
 import {
   LEGACY_PERSONA_SCOPE_CLAIM_KEY,
@@ -110,6 +113,11 @@ function seedActiveHubPair(
   queries.set('hubBaseUrl', hubBaseUrl);
   queries.set('keyMeta', { hub: { last4: 'old1', setAt: 1 } });
   secrets.values.set('hubApiKey', 'agency_hub_core_old1');
+  queries.set(HUB_API_KEY_BINDING_KEY, {
+    version: 1,
+    hubBaseUrl,
+    tokenDigest: deviceTokenDigest('agency_hub_core_old1'),
+  });
 }
 
 describe('settings store', () => {
@@ -232,6 +240,7 @@ describe('settings store', () => {
 
     const vm = await store.update({ hubApiKey: 'agency_hub_core_a4f2' });
     expect(vm.keyMeta.hub).toEqual({ last4: 'a4f2', setAt: 1_750_000_000_000 });
+    expect(vm.hubApiKeyBindingState).toBe('bound');
 
     // last4 is the only key-derived material allowed in the table.
     const tableDump = JSON.stringify([...queries.rows.entries()]);
@@ -240,6 +249,7 @@ describe('settings store', () => {
 
     const cleared = await store.update({ hubApiKey: '' });
     expect(cleared.keyMeta.hub).toBeNull();
+    expect(cleared.hubApiKeyBindingState).toBe('none');
   });
 
   it.each(['hubBaseUrl', 'keyMeta'] as const)(
@@ -327,6 +337,266 @@ describe('settings store', () => {
     expect(queries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeUndefined();
   });
 
+  it('rolls back to the old Hub pair when the staged key disappears before promotion', async () => {
+    const baseQueries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    seedActiveHubPair(baseQueries, baseSecrets);
+    baseQueries.set('debugMode', false);
+    baseQueries.set('hubSync.v2Cursor.acct_old', { cursor: 'old-cursor' });
+    let failPromotion = true;
+    const secrets: FakeSecrets = {
+      ...baseSecrets,
+      setSecret: (name, value) => {
+        if (failPromotion && name === 'hubApiKey') {
+          return Promise.reject(new Error('simulated promotion crash'));
+        }
+        return baseSecrets.setSecret(name, value);
+      },
+    };
+    const replacement = 'agency_hub_core_missing_stage_1122';
+    const store = createSettingsStore({ queries: baseQueries, secrets, now: () => 4 });
+
+    await expect(store.update({
+      hubBaseUrl: 'http://localhost:4000',
+      hubApiKey: replacement,
+      debugMode: true,
+    })).rejects.toThrow('simulated promotion crash');
+    expect(baseQueries.get('hubBaseUrl')).toBe('http://localhost:4000');
+    expect(baseQueries.get('hubSync.v2Cursor.acct_old')).toBeUndefined();
+    baseSecrets.values.delete('hubApiKeyStaged');
+
+    failPromotion = false;
+    const restarted = createSettingsStore({ queries: baseQueries, secrets, now: () => 4 });
+    await expect(restarted.recoverHubCredentialTransition?.()).resolves.toBeUndefined();
+
+    expect(baseSecrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
+    expect(baseQueries.get('hubBaseUrl')).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
+    expect(baseQueries.get('debugMode')).toBe(false);
+    expect(baseQueries.get('hubSync.v2Cursor.acct_old')).toEqual({ cursor: 'old-cursor' });
+    expect(baseQueries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeUndefined();
+  });
+
+  it('uses the exact old binding to survive a transient source decrypt failure and lost staging', async () => {
+    const queries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    seedActiveHubPair(queries, baseSecrets);
+    let failSourceRead = true;
+    let failPromotion = true;
+    const secrets: FakeSecrets = {
+      ...baseSecrets,
+      getSecret: (name) => {
+        if (name === 'hubApiKey' && failSourceRead) {
+          failSourceRead = false;
+          return Promise.reject(new Error('transient DPAPI read failure'));
+        }
+        return baseSecrets.getSecret(name);
+      },
+      setSecret: (name, value) => {
+        if (name === 'hubApiKey' && failPromotion) {
+          return Promise.reject(new Error('simulated promotion crash'));
+        }
+        return baseSecrets.setSecret(name, value);
+      },
+    };
+    const store = createSettingsStore({ queries, secrets, now: () => 4 });
+
+    await expect(store.update({
+      hubBaseUrl: 'http://localhost:4000',
+      hubApiKey: 'agency_hub_core_candidate_lost_7711',
+      debugMode: true,
+    })).rejects.toThrow('simulated promotion crash');
+    expect(queries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toMatchObject({
+      sourceKeyUnreadable: true,
+      sourceKeyDigest: deviceTokenDigest('agency_hub_core_old1'),
+    });
+    baseSecrets.values.delete('hubApiKeyStaged');
+    failPromotion = false;
+
+    const restarted = createSettingsStore({ queries, secrets, now: () => 4 });
+    await expect(restarted.recoverHubCredentialTransition?.()).resolves.toBeUndefined();
+
+    expect(baseSecrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
+    expect(queries.get('hubBaseUrl')).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
+    expect(queries.get('debugMode')).toBeUndefined();
+    expect(queries.get(HUB_API_KEY_BINDING_KEY)).toMatchObject({
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      tokenDigest: deviceTokenDigest('agency_hub_core_old1'),
+    });
+    expect(queries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeUndefined();
+  });
+
+  it('rolls back instead of boot-looping on a mismatched encrypted staging record', async () => {
+    const queries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    seedActiveHubPair(queries, baseSecrets);
+    let failPromotion = true;
+    const secrets: FakeSecrets = {
+      ...baseSecrets,
+      setSecret: (name, value) => {
+        if (failPromotion && name === 'hubApiKey') {
+          return Promise.reject(new Error('simulated promotion crash'));
+        }
+        return baseSecrets.setSecret(name, value);
+      },
+    };
+    const store = createSettingsStore({ queries, secrets, now: () => 5 });
+    await expect(store.update({
+      hubBaseUrl: 'http://localhost:4000',
+      hubApiKey: 'agency_hub_core_target_2233',
+    })).rejects.toThrow('simulated promotion crash');
+    baseSecrets.values.set('hubApiKeyStaged', JSON.stringify({
+      version: 1,
+      transitionId: '00000000-0000-4000-8000-000000000099',
+      value: 'agency_hub_core_foreign',
+    }));
+
+    failPromotion = false;
+    const restarted = createSettingsStore({ queries, secrets, now: () => 5 });
+    await expect(restarted.recoverHubCredentialTransition?.()).resolves.toBeUndefined();
+
+    expect(baseSecrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
+    expect(baseSecrets.values.has('hubApiKeyStaged')).toBe(false);
+    expect(queries.get('hubBaseUrl')).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
+    expect(queries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeUndefined();
+  });
+
+  it('rolls back instead of boot-looping when encrypted staging cannot be decrypted', async () => {
+    const queries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    seedActiveHubPair(queries, baseSecrets);
+    let failPromotion = true;
+    const writingSecrets: FakeSecrets = {
+      ...baseSecrets,
+      setSecret: (name, value) => {
+        if (failPromotion && name === 'hubApiKey') {
+          return Promise.reject(new Error('simulated promotion crash'));
+        }
+        return baseSecrets.setSecret(name, value);
+      },
+    };
+    const store = createSettingsStore({ queries, secrets: writingSecrets, now: () => 5 });
+    await expect(store.update({
+      hubBaseUrl: 'http://localhost:4000',
+      hubApiKey: 'agency_hub_core_target_6677',
+      debugMode: true,
+    })).rejects.toThrow('simulated promotion crash');
+
+    failPromotion = false;
+    const unreadableSecrets: FakeSecrets = {
+      ...baseSecrets,
+      getSecret: (name) => name === 'hubApiKeyStaged'
+        ? Promise.reject(new Error('DPAPI decrypt failed'))
+        : baseSecrets.getSecret(name),
+    };
+    const restarted = createSettingsStore({ queries, secrets: unreadableSecrets, now: () => 5 });
+    await expect(restarted.recoverHubCredentialTransition?.()).resolves.toBeUndefined();
+
+    expect(baseSecrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
+    expect(baseSecrets.values.has('hubApiKeyStaged')).toBe(false);
+    expect(queries.get('hubBaseUrl')).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
+    expect(queries.get('debugMode')).toBeUndefined();
+    expect(queries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeUndefined();
+  });
+
+  it('disables Hub instead of pairing a foreign active key with rollback coordinates', async () => {
+    const queries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    seedActiveHubPair(queries, baseSecrets);
+    queries.set('debugMode', false);
+    let failPromotion = true;
+    const secrets: FakeSecrets = {
+      ...baseSecrets,
+      setSecret: (name, value) => {
+        if (failPromotion && name === 'hubApiKey') {
+          return Promise.reject(new Error('simulated promotion crash'));
+        }
+        return baseSecrets.setSecret(name, value);
+      },
+    };
+    const store = createSettingsStore({ queries, secrets, now: () => 5 });
+    await expect(store.update({
+      hubBaseUrl: 'http://localhost:4000',
+      hubApiKey: 'agency_hub_core_target_4455',
+      debugMode: true,
+    })).rejects.toThrow('simulated promotion crash');
+    baseSecrets.values.set('hubApiKey', 'agency_hub_core_foreign_restore');
+    baseSecrets.values.delete('hubApiKeyStaged');
+
+    failPromotion = false;
+    const restarted = createSettingsStore({ queries, secrets, now: () => 5 });
+    await expect(restarted.recoverHubCredentialTransition?.()).resolves.toBeUndefined();
+
+    expect(baseSecrets.values.has('hubApiKey')).toBe(false);
+    expect(queries.get('hubBaseUrl')).toBeNull();
+    expect(queries.get('keyMeta')).toEqual({ hub: null });
+    expect(queries.get('debugMode')).toBe(false);
+    expect(queries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeUndefined();
+  });
+
+  it('finishes forward when the target key was promoted before its staged copy disappeared', async () => {
+    const baseQueries = createFakeQueries();
+    const secrets = createFakeSecrets();
+    seedActiveHubPair(baseQueries, secrets);
+    let failJournalRemoval = true;
+    const queries: FakeQueries = {
+      ...baseQueries,
+      batch: (mutations) => {
+        if (
+          failJournalRemoval
+          && mutations.some((mutation) => (
+            mutation.kind === 'remove' && mutation.key === HUB_CREDENTIAL_TRANSITION_KEY
+          ))
+        ) {
+          throw new Error('simulated crash before journal commit');
+        }
+        baseQueries.batch(mutations);
+      },
+    };
+    const replacement = 'agency_hub_core_already_promoted_3344';
+    const store = createSettingsStore({ queries, secrets, now: () => 6 });
+
+    await expect(store.update({
+      hubBaseUrl: 'http://localhost:4000',
+      hubApiKey: replacement,
+    })).rejects.toThrow('simulated crash before journal commit');
+    expect(secrets.values.get('hubApiKey')).toBe(replacement);
+    secrets.values.delete('hubApiKeyStaged');
+
+    failJournalRemoval = false;
+    const restarted = createSettingsStore({ queries, secrets, now: () => 6 });
+    await expect(restarted.recoverHubCredentialTransition?.()).resolves.toBeUndefined();
+
+    expect(secrets.values.get('hubApiKey')).toBe(replacement);
+    expect(baseQueries.get('hubBaseUrl')).toBe('http://localhost:4000');
+    expect(baseQueries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeUndefined();
+  });
+
+  it('fails visible for an unrecoverable legacy v1 transition with no source proof', async () => {
+    const queries = createFakeQueries();
+    const secrets = createFakeSecrets();
+    seedActiveHubPair(queries, secrets);
+    queries.set('hubBaseUrl', 'http://localhost:4000');
+    queries.set(HUB_CREDENTIAL_TRANSITION_KEY, {
+      version: 1,
+      id: '00000000-0000-4000-8000-000000000088',
+      targetHubBaseUrl: 'http://localhost:4000',
+      targetKeyMeta: { last4: '7788', setAt: 7 },
+      keyAction: 'promote-staged',
+      deleteDeadDeviceToken: false,
+      clearHubSyncState: true,
+      nonSecretPatch: {},
+      personaMappingsKey: null,
+    });
+
+    const restarted = createSettingsStore({ queries, secrets });
+    await expect(restarted.recoverHubCredentialTransition?.()).resolves.toBeUndefined();
+
+    expect(secrets.values.has('hubApiKey')).toBe(false);
+    expect(queries.get('hubBaseUrl')).toBeNull();
+    expect(queries.get('keyMeta')).toEqual({ hub: null });
+    expect(queries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeUndefined();
+  });
+
   it('replays proven-dead device-token cleanup from the same durable replacement intent', async () => {
     const queries = createFakeQueries();
     const baseSecrets = createFakeSecrets();
@@ -379,6 +649,125 @@ describe('settings store', () => {
     expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
     expect(secrets.values.has('hubApiKeyStaged')).toBe(false);
     expect((await restarted.get()).hubBaseUrl).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
+  });
+
+  it('deletes a journal-less unreadable staging orphan without trying to decrypt it', async () => {
+    const queries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    seedActiveHubPair(queries, baseSecrets);
+    baseSecrets.values.set('hubApiKeyStaged', 'corrupt-dpapi-blob');
+    const stagedReads = vi.fn();
+    const unreadableSecrets: FakeSecrets = {
+      ...baseSecrets,
+      getSecret: (name) => {
+        if (name === 'hubApiKeyStaged') {
+          stagedReads();
+          return Promise.reject(new Error('DPAPI decrypt failed'));
+        }
+        return baseSecrets.getSecret(name);
+      },
+      hasSecret: (name) => name === 'hubApiKeyStaged'
+        ? Promise.reject(new Error('DPAPI decrypt failed'))
+        : baseSecrets.hasSecret(name),
+    };
+
+    const restarted = createSettingsStore({ queries, secrets: unreadableSecrets });
+    await expect(restarted.recoverHubCredentialTransition?.()).resolves.toBeUndefined();
+
+    expect(stagedReads).not.toHaveBeenCalled();
+    expect(baseSecrets.values.has('hubApiKeyStaged')).toBe(false);
+    expect(baseSecrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
+  });
+
+  it('keeps a bound API fallback usable when the device token cannot be decrypted', async () => {
+    const queries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    seedActiveHubPair(queries, baseSecrets);
+    baseSecrets.values.set('hubDeviceToken', 'unreadable-encrypted-blob');
+    const unreadableSecrets: FakeSecrets = {
+      ...baseSecrets,
+      getSecret: (name) => name === 'hubDeviceToken'
+        ? Promise.reject(new Error('DPAPI decrypt failed'))
+        : baseSecrets.getSecret(name),
+      hasSecret: (name) => name === 'hubDeviceToken'
+        ? Promise.reject(new Error('DPAPI decrypt failed'))
+        : baseSecrets.hasSecret(name),
+    };
+    const store = createSettingsStore({ queries, secrets: unreadableSecrets });
+
+    await expect(store.get()).resolves.toMatchObject({
+      hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'unreadable',
+    });
+    await expect(store.getHubConnection()).resolves.toMatchObject({
+      bearer: 'agency_hub_core_old1',
+      deviceToken: null,
+      hubApiKey: 'agency_hub_core_old1',
+      settings: { hubDeviceTokenBindingState: 'unreadable' },
+    });
+    await expect(abandonHubDeviceTokenCustody({
+      keychain: unreadableSecrets,
+      settings: queries,
+    })).resolves.toBeUndefined();
+    expect(baseSecrets.values.has('hubDeviceToken')).toBe(false);
+  });
+
+  it('keeps a bound device credential usable when the API key cannot be decrypted', async () => {
+    const queries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    seedActiveHubPair(queries, baseSecrets);
+    const deviceToken = 'agency_hub_device_independent_fallback';
+    baseSecrets.values.set('hubDeviceToken', deviceToken);
+    queries.set(HUB_DEVICE_TOKEN_BINDING_KEY, {
+      version: 1,
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      tokenDigest: deviceTokenDigest(deviceToken),
+    });
+    const unreadableSecrets: FakeSecrets = {
+      ...baseSecrets,
+      getSecret: (name) => name === 'hubApiKey'
+        ? Promise.reject(new Error('DPAPI decrypt failed'))
+        : baseSecrets.getSecret(name),
+      hasSecret: (name) => name === 'hubApiKey'
+        ? Promise.reject(new Error('DPAPI decrypt failed'))
+        : baseSecrets.hasSecret(name),
+    };
+    const store = createSettingsStore({ queries, secrets: unreadableSecrets });
+
+    await expect(store.getHubConnection()).resolves.toMatchObject({
+      bearer: deviceToken,
+      deviceToken,
+      hubApiKey: null,
+      settings: { hubApiKeyBindingState: 'unreadable' },
+    });
+  });
+
+  it('replaces an unreadable active Hub API key without decrypting the old file', async () => {
+    const queries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    seedActiveHubPair(queries, baseSecrets);
+    const unreadableValue = baseSecrets.values.get('hubApiKey');
+    const recoveringSecrets: FakeSecrets = {
+      ...baseSecrets,
+      getSecret: (name) => name === 'hubApiKey'
+        && baseSecrets.values.get(name) === unreadableValue
+        ? Promise.reject(new Error('DPAPI decrypt failed'))
+        : baseSecrets.getSecret(name),
+      hasSecret: (name) => name === 'hubApiKey'
+        && baseSecrets.values.get(name) === unreadableValue
+        ? Promise.reject(new Error('DPAPI decrypt failed'))
+        : baseSecrets.hasSecret(name),
+    };
+    const store = createSettingsStore({ queries, secrets: recoveringSecrets, now: () => 8 });
+
+    await expect(store.get()).resolves.toMatchObject({ hasHubKey: true });
+    const result = await store.update({ hubApiKey: 'agency_hub_core_recovered_8899' });
+
+    expect(result.hasHubKey).toBe(true);
+    expect(result.hubApiKeyBindingState).toBe('bound');
+    expect(result.keyMeta.hub).toEqual({ last4: '8899', setAt: 8 });
+    expect(baseSecrets.values.get('hubApiKey')).toBe('agency_hub_core_recovered_8899');
+    expect(queries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeUndefined();
   });
 
   it('keeps the old pair and removes staging when durable intent publication fails', async () => {
@@ -585,6 +974,7 @@ describe('settings store', () => {
     const { store, queries } = createStore();
     const vm = await store.update({ hubApiKey: 'agency_hub_core_secret9' });
     expect(vm.hasHubKey).toBe(true);
+    expect(vm.hubApiKeyBindingState).toBe('bound');
 
     const tableDump = JSON.stringify([...queries.rows.entries()]);
     expect(tableDump).not.toContain('agency_hub_core_secret9');
@@ -593,6 +983,28 @@ describe('settings store', () => {
     const vmDump = JSON.stringify(vm);
     expect(vmDump).not.toContain('agency_hub_core_secret9');
     expect(Object.keys(vm)).not.toContain('hubApiKey');
+  });
+
+  it('quarantines readable legacy secrets when a fresh or purged DB has no origin bindings', async () => {
+    const queries = createFakeQueries();
+    const secrets = createFakeSecrets();
+    secrets.values.set('hubApiKey', 'agency_hub_core_loopback_old');
+    secrets.values.set('hubDeviceToken', 'agency_hub_device_loopback_old');
+    const store = createSettingsStore({ queries, secrets });
+
+    await expect(store.get()).resolves.toMatchObject({
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      hasHubKey: true,
+      hubApiKeyBindingState: 'unbound',
+      hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'unbound',
+    });
+    await expect(store.getHubConnection()).resolves.toMatchObject({
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      bearer: null,
+      hubApiKey: null,
+      deviceToken: null,
+    });
   });
 
   it('clears a key when the patch value is empty/whitespace', async () => {
@@ -730,6 +1142,39 @@ describe('settings store', () => {
       .resolves.toMatchObject({ hubBaseUrl: 'http://localhost:4000' });
   });
 
+  it('permits an origin migration after explicit local abandonment of unavailable-old-Hub custody', async () => {
+    const { store, queries, secrets } = createStore();
+    const token = 'agency_hub_device_old_origin';
+    const id = '00000000-0000-4000-8000-000000000011';
+    secrets.values.set('hubDeviceToken', token);
+    secrets.values.set('hubDeviceTokenRevoking', JSON.stringify({
+      version: 1, journalId: id, token,
+    }));
+    queries.set(HUB_DEVICE_TOKEN_REVOCATION_KEY, {
+      version: 1,
+      id,
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      tokenDigest: deviceTokenDigest(token),
+    });
+
+    await expect(store.update({
+      hubBaseUrl: 'http://localhost:4000',
+      hubApiKey: 'agency_hub_core_new_origin',
+    })).rejects.toThrow(/sign out.*device token.*Hub URL/i);
+
+    await abandonHubDeviceTokenCustody({ keychain: secrets, settings: queries });
+    await expect(store.update({
+      hubBaseUrl: 'http://localhost:4000',
+      hubApiKey: 'agency_hub_core_new_origin',
+    })).resolves.toMatchObject({
+      hubBaseUrl: 'http://localhost:4000',
+      hasHubDeviceToken: false,
+      hasHubKey: true,
+    });
+    expect(secrets.values.has('hubDeviceToken')).toBe(false);
+    expect(queries.get(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBeUndefined();
+  });
+
   it('keeps the hub key when the Hub host changes with a replacement key', async () => {
     const { store, secrets } = createStore();
     await store.update({
@@ -865,6 +1310,11 @@ describe('settings store', () => {
       entered();
       await blocked;
       await secrets.setSecret('hubApiKey', 'agency_hub_core_new2');
+      queries.set(HUB_API_KEY_BINDING_KEY, {
+        version: 1,
+        hubBaseUrl: 'http://localhost:4000',
+        tokenDigest: deviceTokenDigest('agency_hub_core_new2'),
+      });
     });
     await enteredPromise;
 
@@ -885,6 +1335,65 @@ describe('settings store', () => {
     });
   });
 
+  it('never trusts a stale API-key binding when the secret changes between VM and connection reads', async () => {
+    const queries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    seedActiveHubPair(queries, baseSecrets);
+    let apiReads = 0;
+    const secrets: FakeSecrets = {
+      ...baseSecrets,
+      getSecret: (name) => {
+        if (name === 'hubApiKey') {
+          apiReads += 1;
+          return Promise.resolve(apiReads === 1
+            ? 'agency_hub_core_old1'
+            : 'agency_hub_core_foreign_restore');
+        }
+        return baseSecrets.getSecret(name);
+      },
+    };
+    const store = createSettingsStore({ queries, secrets });
+
+    await expect(store.getHubConnection()).resolves.toMatchObject({
+      bearer: null,
+      hubApiKey: null,
+    });
+    expect(apiReads).toBe(2);
+  });
+
+  it('never trusts a stale device binding when the secret changes between VM and connection reads', async () => {
+    const queries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    const token = 'agency_hub_device_bound_original';
+    queries.set('hubBaseUrl', DEFAULT_AGENCY_HUB_BASE_URL);
+    queries.set(HUB_DEVICE_TOKEN_BINDING_KEY, {
+      version: 1,
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      tokenDigest: deviceTokenDigest(token),
+    });
+    baseSecrets.values.set('hubDeviceToken', token);
+    let deviceReads = 0;
+    const secrets: FakeSecrets = {
+      ...baseSecrets,
+      getSecret: (name) => {
+        if (name === 'hubDeviceToken') {
+          deviceReads += 1;
+          return Promise.resolve(deviceReads === 1
+            ? token
+            : 'agency_hub_device_foreign_restore');
+        }
+        return baseSecrets.getSecret(name);
+      },
+    };
+    const store = createSettingsStore({ queries, secrets });
+
+    await expect(store.getHubConnection()).resolves.toMatchObject({
+      bearer: null,
+      deviceToken: null,
+    });
+    expect(deviceReads).toBe(2);
+  });
+
   it.each([
     { kind: 'activation' as const, journalKey: HUB_DEVICE_TOKEN_ACTIVATION_KEY, stagedName: 'hubDeviceTokenStaged' as const },
     { kind: 'revocation' as const, journalKey: HUB_DEVICE_TOKEN_REVOCATION_KEY, stagedName: 'hubDeviceTokenRevoking' as const },
@@ -898,6 +1407,16 @@ describe('settings store', () => {
       : '00000000-0000-4000-8000-000000000002';
     secrets.values.set('hubDeviceToken', token);
     secrets.values.set('hubApiKey', 'agency_hub_core_fallback');
+    queries.set(HUB_API_KEY_BINDING_KEY, {
+      version: 1,
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      tokenDigest: deviceTokenDigest('agency_hub_core_fallback'),
+    });
+    queries.set(HUB_DEVICE_TOKEN_BINDING_KEY, {
+      version: 1,
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      tokenDigest: deviceTokenDigest(token),
+    });
     secrets.values.set(stagedName, JSON.stringify({ version: 1, journalId: id, token }));
     queries.set(journalKey, {
       version: 1,
@@ -920,7 +1439,7 @@ describe('settings store', () => {
     });
   });
 
-  it('fails closed when an activation journal is paired with different active custody', async () => {
+  it('quarantines device custody when activation recovery has not reconciled it yet', async () => {
     const { store, queries, secrets } = createStore();
     const stagedToken = 'agency_hub_pending_device_staged';
     const id = '00000000-0000-4000-8000-000000000003';
@@ -939,6 +1458,10 @@ describe('settings store', () => {
       reservationExpiresAt: '2026-07-13T17:10:00.000Z',
     });
 
-    await expect(store.getHubConnection()).rejects.toThrow(/does not match active custody/);
+    await expect(store.getHubConnection()).resolves.toMatchObject({
+      bearer: null,
+      deviceToken: null,
+      deviceTokenTransition: 'activation',
+    });
   });
 });

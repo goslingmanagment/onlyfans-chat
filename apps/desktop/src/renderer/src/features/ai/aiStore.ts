@@ -99,6 +99,15 @@ export interface AiDockState {
 
 const MAX_RUNNING_JOBS = 3;
 const MAX_TERMINAL_JOBS = 24;
+let hubOriginChangesInFlight = 0;
+
+export function beginAiHubOriginChange(): void {
+  hubOriginChangesInFlight += 1;
+}
+
+export function endAiHubOriginChange(): void {
+  hubOriginChangesInFlight = Math.max(0, hubOriginChangesInFlight - 1);
+}
 
 function aiStartRejection(error: unknown): UserFacingErrorPayload {
   const normalized = toUserFacing(error);
@@ -234,6 +243,26 @@ function disposeStream(operationId: string): void {
   streamsByOperation.delete(operationId);
 }
 
+/** Drop persona-dependent results when the configured Hub origin changes.
+ * Human-authored draft/tone preferences stay intact. Late frames from the
+ * retired main runtime are ignored because their jobs no longer exist. */
+export function resetAiJobsForHubOriginChange(): void {
+  for (const job of Object.values(useAiStore.getState().jobsById)) {
+    if (job.status === 'running') {
+      void getBridge().invoke('ai:cancel', { operationId: job.operationId });
+    }
+  }
+  for (const operationId of [...streamsByOperation.keys()]) {
+    disposeStream(operationId);
+  }
+  useAiStore.setState(
+    withVisibleFields(() => ({
+      jobsById: {},
+      jobsByConversation: {},
+    })),
+  );
+}
+
 export function registerStreamSink(operationId: string, apply: SinkApply): () => void {
   const stream = streamsByOperation.get(operationId);
   if (stream === undefined) return () => undefined;
@@ -334,6 +363,15 @@ export function startAiFeature(
   ctx: AiStartContext,
   opts: { draftText?: string; forceRegenerate?: boolean } = {},
 ): void {
+  if (hubOriginChangesInFlight > 0) {
+    useUiStore.getState().pushToast({
+      title: 'Hub settings updating',
+      body: 'Wait for the Hub switch to finish, then try again.',
+      accountId: ctx.accountId,
+      chatId: ctx.chatId,
+    });
+    return;
+  }
   const state = useAiStore.getState();
   const key = conversationKey(ctx.accountId, ctx.chatId);
   const existingOperationId = state.jobsByConversation[key];

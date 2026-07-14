@@ -71,6 +71,7 @@ import { registerIpcHandlers } from './ipc/handlers';
 import { createAiCoordinator, type AiCoordinator } from './ai/index';
 import { createHubModule, type HubModule } from './hub/index';
 import {
+  acceptanceDestinationIdentity,
   createAcceptanceTracker,
   enqueueAcceptanceEvent,
   type AcceptanceTracker,
@@ -78,6 +79,7 @@ import {
 import { summarizeUsageSpool } from './hub/usage-store';
 import { hostname, tmpdir } from 'node:os';
 import {
+  abandonHubDeviceTokenCustody,
   effectiveHubBearerAfterPatch,
   beginHubDeviceTokenRevocation,
   issueHubDeviceToken,
@@ -117,10 +119,13 @@ import {
   drainRuntimeThenFinishCustody,
   exitAfterFatalBoot,
   exposeUiBeforeRuntimeActivation,
+  finishPurgeCustody,
+  hubCredentialNeedsAttention,
   probeHubReadCredential,
   requireSettledDeviceCredentialCustody,
   runFailClosedTerminalPurge,
   sealRuntimeForTerminalOperation,
+  settleDeviceCredentialBeforePurge,
   stopRuntimeServices,
   subscribeSettingsScope,
   validateThenReconcileOnBoot,
@@ -155,8 +160,11 @@ let spendersService: SpendersService | null = null;
 let onlineService: OnlineService | null = null;
 let spendersRefresh: SpendersRefreshService | null = null;
 let hub: HubModule | null = null;
-/** Process-scoped so inserted→sent correlation survives credential runtime swaps. */
+/** Process-scoped so inserted→sent correlation survives runtime rebuilds for
+ * the same destination actor. Credential/principal swaps clear it at commit. */
 let acceptanceTracker: AcceptanceTracker | null = null;
+/** Exact Hub origin + credential/principal fingerprint owning acceptance state. */
+let activeAcceptanceDestinationIdentity: string | null = null;
 let disposeEventForwarding: (() => void) | null = null;
 let disposeRuntimeSettingsWatcher: (() => void) | null = null;
 let disposeRuntimeCreditMeter: (() => void) | null = null;
@@ -172,6 +180,9 @@ let recheckHubConfig: (() => Promise<void>) | null = null;
  *  null — the existing banner + sign-out UI engage instead of a false
  *  "not configured". Cleared by any successful initOfapi. */
 let bootHubAuthFailed = false;
+/** Raw credential custody exists but its Hub origin/digest binding is absent or
+ * invalid. Kept separate from auth failure because no network request is made. */
+let hubCredentialAttention = false;
 
 /** OfApiError and HubError both carry code CG-HUB-01 for hub auth rejections. */
 function isHubAuthFailure(error: unknown): boolean {
@@ -475,9 +486,37 @@ async function rebuildOfapiRuntime(
   settingsStore: SettingsStore,
   isBoot: boolean,
 ): Promise<void> {
-  const initialConnection = await settingsStore.getHubConnection();
+  const classifyCredentialAttention = hubCredentialNeedsAttention;
+  const attentionSettings = await settingsStore.get();
+  hubCredentialAttention = classifyCredentialAttention(attentionSettings);
+  let initialConnection: Awaited<ReturnType<SettingsStore['getHubConnection']>>;
+  try {
+    initialConnection = await settingsStore.getHubConnection();
+  } catch (error) {
+    // A second keychain read can fail after buildVm already classified custody
+    // (DPAPI/profile mutation). Refresh the visible latch before propagating the
+    // fail-closed activation error so Settings is not the only recovery surface.
+    try {
+      hubCredentialAttention = classifyCredentialAttention(await settingsStore.get());
+    } catch {
+      hubCredentialAttention = hubCredentialAttention
+        || attentionSettings.hasHubKey
+        || attentionSettings.hasHubDeviceToken;
+    }
+    throw error;
+  }
   const initialSettings = initialConnection.settings;
+  // getHubConnection performs its own keychain reads after buildVm. Surface a
+  // credential that became unreadable or mismatched during that second read;
+  // otherwise the connection correctly fails closed but the global recovery
+  // indicator can remain stale until Settings is opened.
+  hubCredentialAttention = hubCredentialAttention
+    || classifyCredentialAttention(initialSettings);
   const hubApiKey = initialConnection.bearer;
+  const nextAcceptanceDestinationIdentity =
+    initialSettings.hubBaseUrl !== null && hubApiKey !== null
+      ? acceptanceDestinationIdentity(initialSettings.hubBaseUrl, hubApiKey)
+      : null;
   const creditMeter = createCreditMeter();
   const onError =
     (transport: 'hub'): NonNullable<OfApiClientOptions['onError']> =>
@@ -628,18 +667,18 @@ async function rebuildOfapiRuntime(
     soundEnabled: boolean;
   } | null = initialSettings;
 
-  // Hub config fingerprint: reconfigure the SSE connection only when the base
+  // Hub Sync config fingerprint: reconfigure the SSE connection only when the base
   // URL or the chatter key actually changed — NOT on every settings write
   // (HubSync itself persists hubSync.lastEventId into the settings table, so a
   // naive resubscribe-on-settings-change would loop the stream forever).
-  async function hubConfigFingerprint(): Promise<string> {
+  async function hubSyncConfigFingerprint(): Promise<string> {
     const connection = await settingsStore.getHubConnection();
     const vm = connection.settings;
     settingsCache = vm;
     const hubKey = connection.bearer;
     return `${vm.hubBaseUrl ?? ''}\n${hubKey ?? ''}\n${vm.hubModeOverride}\n${vm.hubSyncProtocol}`;
   }
-  let hubFingerprint = await hubConfigFingerprint();
+  let hubSyncFingerprint = await hubSyncConfigFingerprint();
 
   // 4d: attach the runtime settings watcher at CANDIDATE creation — before the
   // (possibly slow) account bootstrap below — so a settings write DURING the
@@ -765,8 +804,10 @@ async function rebuildOfapiRuntime(
     },
   });
 
-  // Hub REST cluster (SPEC §8.5/§8.6): summary prefetch/push + usage reporter.
-  // Inert until hub config exists; rebuilt by recheckHubConfig on changes.
+  // Hub REST cluster (SPEC §8.5/§8.6): summary push + usage reporter. It stays
+  // alive for this candidate runtime's whole lifetime. URL/bearer changes
+  // replace the complete runtime; a mode-only SSE reconnect must not retire it
+  // underneath an already-streaming AI operation.
   const nextHub = createHubModule({
     data: dataLayer,
     settingsStore,
@@ -778,11 +819,11 @@ async function rebuildOfapiRuntime(
   });
   await nextHub.reconfigure();
 
-  const recheckNextHubConfig = async (): Promise<void> => {
-    const next = await hubConfigFingerprint();
-    if (next !== hubFingerprint) {
-      hubFingerprint = next;
-      await Promise.all([nextSync.reconfigureHub(), nextHub.reconfigure()]);
+  const recheckNextHubSyncConfig = async (): Promise<void> => {
+    const next = await hubSyncConfigFingerprint();
+    if (next !== hubSyncFingerprint) {
+      hubSyncFingerprint = next;
+      await nextSync.reconfigureHub();
     }
   };
   // Hub-supported writes (text, typing, unsend, mark-read, media/PPV) are the
@@ -900,6 +941,13 @@ async function rebuildOfapiRuntime(
 
     await deactivateOfapiRuntime();
 
+    const aiDestinationChanged =
+      activeAcceptanceDestinationIdentity !== nextAcceptanceDestinationIdentity;
+    if (aiDestinationChanged) {
+      acceptanceTracker?.clear();
+      dataLayer.aiAcceptance.discardUnaccepted();
+    }
+
     client = nextClient;
     sync = nextSync;
     hub = nextHub;
@@ -909,7 +957,14 @@ async function rebuildOfapiRuntime(
     spendersService = nextSpendersService;
     onlineService = nextOnlineService;
     spendersRefresh = nextSpendersRefresh;
-    recheckHubConfig = recheckNextHubConfig;
+    activeAcceptanceDestinationIdentity = nextAcceptanceDestinationIdentity;
+    if (aiDestinationChanged) {
+      // Covers background device-token activation/recovery as well as direct
+      // Settings mutations: renderer results from the old actor are no longer
+      // actionable once the credential-bound runtime commits.
+      dataLayer.bus.publish({ scope: 'settings', settingsKeys: ['runtime.aiContext'] });
+    }
+    recheckHubConfig = recheckNextHubSyncConfig;
     // Adopt the candidate watcher attached at creation (4d) as the live one.
     disposeRuntimeSettingsWatcher = disposeCandidateSettingsWatcher;
     disposeCandidateSettingsWatcher = null;
@@ -1042,7 +1097,20 @@ async function boot(): Promise<void> {
       'hubDeviceTokenStaged',
       'hubDeviceTokenRevoking',
     ];
-    const values = await Promise.all(names.map((name) => keychain.getSecret(name)));
+    const values = await Promise.all(names.map(async (name) => {
+      try {
+        return await keychain.getSecret(name);
+      } catch (error) {
+        // An unreadable encrypted credential must not prevent the Settings UI
+        // (and its native-confirmed recovery action) from opening. Bearer
+        // resolution still fails closed when it attempts to read the secret.
+        logger?.warn('hub', 'credential could not be decrypted for redaction', {
+          secretName: name,
+          ...errorToFields(error),
+        });
+        return null;
+      }
+    }));
     redactionSecrets = values.flatMap((value) => {
       if (typeof value !== 'string' || value.length === 0) return [];
       try {
@@ -1076,19 +1144,38 @@ async function boot(): Promise<void> {
   // transition before the redactor or any runtime resolves a Hub bearer.
   await settingsStore.recoverHubCredentialTransition?.();
   await refreshRedactionSecrets();
+  let deviceCredentialRecoveryRequiresUserAction = false;
   const recoverDeviceCredentialJournals = async (): Promise<boolean> => {
+    deviceCredentialRecoveryRequiresUserAction = false;
     let deferred = false;
-    await settingsStore.runCredentialMutation(() => recoverHubDeviceTokenLifecycle({
+    let requiresUserAction = false;
+    const currentHubBaseUrl = (await settingsStore.get()).hubBaseUrl;
+    const journalStillPending = await settingsStore.runCredentialMutation(() => recoverHubDeviceTokenLifecycle({
       keychain,
       settings: bootData.settings,
+      currentHubBaseUrl,
       clientVersion: app.getVersion(),
       onDeferred: (kind, error) => {
         deferred = true;
         logger?.warn('hub', `device-token ${kind} recovery deferred`, errorToFields(error));
       },
+      onCustodyRecovery: (kind, outcome) => {
+        requiresUserAction = requiresUserAction
+          || outcome.endsWith('-requires-abandonment');
+        logger?.warn('hub', 'device-token custody journal recovery outcome', {
+          kind,
+          outcome,
+          remoteRevocationUncertain: outcome.startsWith('unrecoverable-'),
+          requiresUserAction: outcome.endsWith('-requires-abandonment'),
+        });
+      },
     }));
     await refreshRedactionSecrets();
-    return deferred;
+    deviceCredentialRecoveryRequiresUserAction = requiresUserAction;
+    // A missing/corrupt custody file intentionally keeps its journal as a
+    // user-visible security latch without a network error callback. Treat that
+    // state as unsettled too, so terminal purge cannot erase the only warning.
+    return deferred || journalStillPending;
   };
 
   // Stage 12: one-time local-history harvest to the kernel capture lane.
@@ -1239,6 +1326,12 @@ async function boot(): Promise<void> {
       'boot read-runtime activation failed; continuing with no runtime',
       { ...errorToFields(error), bootHubAuthFailed },
     );
+    // A valid stored credential can fail ordinary boot solely because the Hub
+    // is offline. The UI is already available, but without this re-arm the
+    // runtime would remain null until a manual settings/sign-in mutation.
+    if (!bootHubAuthFailed) {
+      postSignInRuntimeRetry?.start();
+    }
   };
 
   let postSignInRuntimeRetry: ReturnType<typeof createBoundedRetry> | null = null;
@@ -1277,11 +1370,20 @@ async function boot(): Promise<void> {
   deviceCredentialRecoveryRetry = createBoundedRetry({
     task: () => ofapiRuntimeMutations.run(async () => {
       if (await recoverDeviceCredentialJournals()) {
+        if (deviceCredentialRecoveryRequiresUserAction) {
+          // Permanent local-attention state: keep purge fail-closed, but do not
+          // spin connectivity retries until the user explicitly abandons it.
+          return;
+        }
         throw new Error('Hub device-token recovery is still waiting for connectivity.');
       }
       await rebuildOfapiRuntimeFromSettingsInsideMutation();
     }),
     delaysMs: [5_000, 30_000, 2 * 60_000, 10 * 60_000],
+    // Credential activation/revocation is a durable idempotent obligation, not
+    // an indeterminate command. Keep retrying in bounded, observable series so
+    // an outage longer than the first ~12.6 minutes does not require restart.
+    repeatAfterExhaustionMs: 60_000,
     onAttemptFailure: (error, attempt) => {
       logger?.warn('hub', 'device-token lifecycle retry deferred', {
         attempt,
@@ -1289,24 +1391,40 @@ async function boot(): Promise<void> {
       });
     },
     onExhausted: (error) => {
-      logger?.error('hub', 'device-token lifecycle retry budget exhausted', errorToFields(error));
+      logger?.error(
+        'hub',
+        'device-token lifecycle retry series exhausted; re-arming',
+        errorToFields(error),
+      );
     },
     onSuccess: (attempt) => {
-      logger?.info('hub', 'device-token lifecycle recovery succeeded', { attempt });
+      if (deviceCredentialRecoveryRequiresUserAction) {
+        logger?.warn('hub', 'device-token lifecycle awaits explicit local recovery', { attempt });
+      } else {
+        logger?.info('hub', 'device-token lifecycle recovery succeeded', { attempt });
+      }
     },
   });
 
   postSignInRuntimeRetry = createBoundedRetry({
     task: () => rebuildOfapiRuntimeFromSettings({ cancelPendingRetry: false }),
     delaysMs: [1_000, 5_000, 15_000],
+    repeatAfterExhaustionMs: 60_000,
     onAttemptFailure: (error, attempt) => {
+      if (isHubAuthFailure(error)) {
+        bootHubAuthFailed = true;
+        // cancel() advances the retry generation; createBoundedRetry therefore
+        // refuses to schedule the next attempt after this callback returns.
+        postSignInRuntimeRetry?.cancel();
+        emitSyncStatusFrame();
+      }
       logger?.warn('hub', 'automatic post-sign-in runtime retry failed', {
         attempt,
         ...errorToFields(error),
       });
     },
     onExhausted: (error) => {
-      logger?.error('hub', 'post-sign-in runtime retry budget exhausted', errorToFields(error));
+      logger?.error('hub', 'runtime retry series exhausted; re-arming', errorToFields(error));
       emitSyncStatusFrame();
     },
     onSuccess: (attempt) => {
@@ -1325,6 +1443,12 @@ async function boot(): Promise<void> {
     queue: ofapiRuntimeMutations,
     readStoredCredential: async () => {
       const connection = await settingsStore.getHubConnection();
+      if (
+        connection.settings.hasHubDeviceToken
+        && connection.settings.hubDeviceTokenBindingState !== 'bound'
+      ) {
+        return 'quarantined-unbound';
+      }
       return connection.deviceToken
         ?? (connection.deviceTokenTransition === null ? null : 'quarantined-transition');
     },
@@ -1361,11 +1485,12 @@ async function boot(): Promise<void> {
       await activateStoredCredentialWithRetry({
         activate: rebuildOfapiRuntimeFromSettingsInsideMutation,
         scheduleRetry: () => postSignInRuntimeRetry?.start(),
+        shouldRetry: (error) => !isHubAuthFailure(error),
         onFailure: (error) => {
           bootHubAuthFailed = isHubAuthFailure(error);
           logger?.error(
             'hub',
-            'post-sign-in runtime rebuild failed; device token stored and automatic retry scheduled',
+            'post-sign-in runtime rebuild failed; device token remains stored',
             errorToFields(error),
           );
           emitSyncStatusFrame();
@@ -1380,6 +1505,15 @@ async function boot(): Promise<void> {
       deviceCredentialRecoveryRetry?.cancel();
       const liveData = data;
       let connection = await settingsStore.getHubConnection();
+      if (
+        connection.settings.hasHubDeviceToken
+        && connection.settings.hubDeviceTokenBindingState !== 'bound'
+        && connection.deviceTokenTransition === null
+      ) {
+        throw new Error(
+          'The stored device token has no provable Hub origin. Use “Forget locally”, then sign in again; ask an administrator to revoke the legacy token on the old Hub.',
+        );
+      }
       await deactivateOfapiRuntime();
       let revocationError: unknown = null;
       let revocationPending = false;
@@ -1482,10 +1616,20 @@ async function boot(): Promise<void> {
     if (patch.hubApiKey === undefined && patch.hubBaseUrl === undefined) {
       return;
     }
-    const currentConnection = await settingsStore.getHubConnection();
-    const current = currentConnection.settings;
-    const currentDeviceToken = currentConnection.deviceToken;
-    const currentHubApiKey = currentConnection.hubApiKey;
+    const current = await settingsStore.get();
+    const hubSwitched = patch.hubBaseUrl !== undefined
+      && patch.hubBaseUrl !== current.hubBaseUrl;
+    // A pasted replacement does not need to decrypt the old chatter key. Keep
+    // that recovery path available for DPAPI/profile corruption while still
+    // resolving a stored device token when one can shadow the candidate key.
+    const needsStoredConnection = current.hasHubDeviceToken
+      || current.hubDeviceTokenTransition !== null
+      || (patch.hubApiKey === undefined && !hubSwitched);
+    const currentConnection = needsStoredConnection
+      ? await settingsStore.getHubConnection()
+      : null;
+    const currentDeviceToken = currentConnection?.deviceToken ?? null;
+    const currentHubApiKey = currentConnection?.hubApiKey ?? null;
     const hubBaseUrl = patch.hubBaseUrl !== undefined ? patch.hubBaseUrl : current.hubBaseUrl;
     const credential = effectiveHubBearerAfterPatch({
       patchHubApiKey: patch.hubApiKey,
@@ -1521,7 +1665,7 @@ async function boot(): Promise<void> {
         usedCredential: credential,
         currentDeviceToken,
         patchHubApiKey: patch.hubApiKey,
-        hubSwitched: patch.hubBaseUrl !== undefined && patch.hubBaseUrl !== current.hubBaseUrl,
+        hubSwitched,
         authFailure: isHubAuthFailure(error),
       });
       if (retryKey === null) {
@@ -1580,7 +1724,7 @@ async function boot(): Promise<void> {
           if (module !== null) {
             module.acceptance.enqueue(event);
           } else {
-            enqueueAcceptanceEvent(bootData, event);
+            enqueueAcceptanceEvent(bootData, event, activeAcceptanceDestinationIdentity);
           }
         },
         trackInserted: tracker.trackInserted,
@@ -1607,6 +1751,7 @@ async function boot(): Promise<void> {
     },
     // I116-2 (W4.1): boot-auth latch — read live, the flag flips on rebuilds.
     bootHubAuthFailed: () => bootHubAuthFailed,
+    hubCredentialAttention: () => hubCredentialAttention,
     purge: async () => {
       // Re-entry guard: a double-fired cmd:data.purge would otherwise call
       // app.relaunch() twice before exit — Electron then spawns TWO instances
@@ -1632,10 +1777,35 @@ async function boot(): Promise<void> {
             await drainRuntimeThenFinishCustody({
               deactivateRuntime: deactivateOfapiRuntime,
               finishCustody: async () => {
-                await requireSettledDeviceCredentialCustody({
-                  recover: recoverDeviceCredentialJournals,
+                await finishPurgeCustody({
+                  settlePendingCredential: () => requireSettledDeviceCredentialCustody({
+                    recover: recoverDeviceCredentialJournals,
+                  }),
+                  finishHarvest: () => finishHarvestDeltaBeforePurge(harvestModule),
+                  settleActiveDeviceCredential: () => settleDeviceCredentialBeforePurge({
+                    recover: recoverDeviceCredentialJournals,
+                    read: async () => {
+                      const connection = await settingsStore.getHubConnection();
+                      return {
+                        hasDeviceTokenCustody: connection.settings.hasHubDeviceToken,
+                        bindingState: connection.settings.hubDeviceTokenBindingState,
+                        hubBaseUrl: connection.hubBaseUrl,
+                        deviceToken: connection.deviceToken,
+                      };
+                    },
+                    revoke: async ({ hubBaseUrl, deviceToken }) => {
+                      await settingsStore.runCredentialMutation(() => (
+                        beginHubDeviceTokenRevocation({
+                          baseUrl: hubBaseUrl,
+                          token: deviceToken,
+                          keychain,
+                          settings: bootData.settings,
+                          clientVersion: app.getVersion(),
+                        })
+                      ));
+                    },
+                  }),
                 });
-                await finishHarvestDeltaBeforePurge(harvestModule);
               },
             });
           },
@@ -1712,6 +1882,50 @@ async function boot(): Promise<void> {
           emitSyncStatusFrame();
         }
       },
+      abandonDevice: async () => {
+        const confirmationOptions = {
+          type: 'warning' as const,
+          title: uiMessage(uiLocale, 'hub.deviceToken.abandon'),
+          message: uiMessage(uiLocale, 'hub.deviceToken.abandonConfirm'),
+          buttons: [
+            uiMessage(uiLocale, 'common.cancel'),
+            uiMessage(uiLocale, 'hub.deviceToken.abandon'),
+          ],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        };
+        const confirmation = mainWindow !== null && !mainWindow.isDestroyed()
+          ? await dialog.showMessageBox(mainWindow, confirmationOptions)
+          : await dialog.showMessageBox(confirmationOptions);
+        if (confirmation.response !== 1) {
+          return;
+        }
+        postSignInRuntimeRetry?.cancel();
+        deviceCredentialRecoveryRetry?.cancel();
+        await ofapiRuntimeMutations.run(async () => {
+          await deactivateOfapiRuntime();
+          await settingsStore.runCredentialMutation(() => abandonHubDeviceTokenCustody({
+            keychain,
+            settings: bootData.settings,
+          }));
+          await refreshRedactionSecrets();
+          try {
+            await rebuildOfapiRuntimeFromSettingsInsideMutation();
+          } catch (error) {
+            // Local abandonment already committed. A missing/bad fallback must
+            // not falsely report that the old device token is still retained.
+            bootHubAuthFailed = isHubAuthFailure(error);
+            logger?.warn(
+              'hub',
+              'device token abandoned locally; fallback runtime remains unavailable',
+              errorToFields(error),
+            );
+          }
+          reattachEventForwarding();
+          emitSyncStatusFrame();
+        });
+      },
     },
     harvest: {
       start: () => harvestModule.run(),
@@ -1749,6 +1963,13 @@ async function boot(): Promise<void> {
       },
       openFolder: async () => {
         await shell.openPath(userData);
+      },
+      exportPersonaSnapshot: async (snapshot) => {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const file = join(userData, `chatgoose-persona-backup-${stamp}.json`);
+        await writeFile(file, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
+        shell.showItemInFolder(file);
+        return { path: file };
       },
       exportDiagnostics: async () => {
         const vm = await settingsStore.get();

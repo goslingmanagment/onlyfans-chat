@@ -33,6 +33,16 @@ export type PingSegment = 'segment-a' | 'segment-b' | 'active';
 /** PPV purchase state as rendered in transcript labels. */
 export type PpvState = 'purchased' | 'not purchased' | 'unknown';
 
+/**
+ * A local persona payload that needs an explicit user review. These markers are
+ * part of the renderer VM/cache only; Core never receives them as persona
+ * content. `sourceKey` identifies the edit that produced a recovered copy.
+ */
+export type PersonalitySyncIssue =
+  | { kind: 'recovered-copy'; sourceKey: string }
+  | { kind: 'client-rejected'; sourceKey: string }
+  | { kind: 'quarantined'; sourceKey: string };
+
 export interface Personality {
   id: string;
   name: string;
@@ -46,6 +56,8 @@ export interface Personality {
    * token so an offline/stale save can never fall back to last-write-wins.
    */
   remoteVersion?: number | null;
+  /** Durable local review state for conflict/replay outcomes. */
+  syncIssue?: PersonalitySyncIssue;
   builtin?: boolean;
   builtinVersion?: number;
 }

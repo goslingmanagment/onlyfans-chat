@@ -219,11 +219,10 @@ export type HubIngestBatchResult = KernelOperationResponse<'ingestObservations'>
 export type HubAiGatewayStreamRequest = z.input<(typeof routeSchemas)['aiGatewayStream']['body']>;
 /** Stage 31: kernel feature-service request — refs, not assembled blocks. */
 export type HubAiFeatureStreamRequest = z.input<(typeof routeSchemas)['aiFeatureStream']['body']>;
-/** Stage 31: kernel persona record (DP 9-A — personas are kernel config). */
-export type HubAiPersona = z.infer<(typeof routeSchemas)['aiPersonasList']['response'][200]>['personas'][number];
-/** Tombstone-aware lifecycle view used only for safe legacy migration. */
-export type HubAiPersonaState = z.infer<(typeof routeSchemas)['aiPersonaStates']['response'][200]>['states'][number];
-export type HubAiPersonaArchiveResult = KernelOperationResponse<'aiPersonaArchive'>;
+/** Metadata-only catalog available to bearer-authenticated clients. */
+export type HubAiPersonaCatalogEntry = z.infer<
+  (typeof routeSchemas)['aiPersonaCatalog']['response'][200]
+>['personas'][number];
 
 export const HUB_OFAPI_COMMAND_STATES = [
   'queued',
@@ -330,6 +329,8 @@ export interface HubClient {
     pageLabel: string;
     fanId: string;
     body: string;
+    /** Original Scan generation time; Core append time is not dossier age. */
+    generatedAtMs: number;
     timeoutMs?: number;
   }): Promise<HubProfileVersion>;
   postUsageBatch(args: { events: HubUsageEvent[]; timeoutMs?: number }): Promise<HubUsageBatchResult>;
@@ -350,23 +351,8 @@ export interface HubClient {
     args: { request: HubAiGatewayStreamRequest; signal?: HubAbortSignalLike },
     callbacks: HubAiGatewayStreamCallbacks,
   ): Promise<string>;
-  /** Stage 31: kernel persona list/upsert (picker + editor + one-time sync). */
-  listAiPersonas(options?: { timeoutMs?: number }): Promise<HubAiPersona[]>;
-  listAiPersonaStates(options?: { timeoutMs?: number }): Promise<HubAiPersonaState[]>;
-  upsertAiPersona(args: {
-    key: string;
-    displayName: string;
-    systemBlock: string;
-    /** Explicit CAS token; null is create-only. New Desktop code never emits the legacy omitted form. */
-    expectedVersion: number | null;
-    timeoutMs?: number;
-  }): Promise<HubAiPersona>;
-  archiveAiPersona(args: {
-    key: string;
-    /** Explicit CAS token; null means the client has only an unconfirmed create. */
-    expectedVersion: number | null;
-    timeoutMs?: number;
-  }): Promise<HubAiPersonaArchiveResult>;
+  /** Global persona definitions are owner-managed; clients receive metadata only. */
+  listAiPersonaCatalog(options?: { timeoutMs?: number }): Promise<HubAiPersonaCatalogEntry[]>;
   /** Stage 31: stream a KERNEL-ASSEMBLED feature generation (Stage 30 route).
    *  Same SSE frames as streamAiGateway; the kernel loads context and builds
    *  the prompt — the desktop sends refs only. */
@@ -540,7 +526,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
       }
     },
 
-    async putFanProfile({ pageLabel, fanId, body, timeoutMs }) {
+    async putFanProfile({ pageLabel, fanId, body, generatedAtMs, timeoutMs }) {
       if (body.length === 0 || body.length > HUB_PROFILE_MAX_CHARS) {
         // Core's zod would 400 this deterministically; fail before the wire.
         throw new HubError('bad-request', {
@@ -551,7 +537,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
       // fans — SPEC §9.1), so 404 maps to HubError 'http'.
       return delegate(() => clientFor(timeoutMs ?? HUB_PROFILE_PUT_TIMEOUT_MS).upsertFanProfile({
         params: { pageLabel, platformUserId: fanId },
-        body: { body },
+        body: { body, generatedAtMs },
       }));
     },
 
@@ -676,36 +662,10 @@ export function createHubClient(options: HubClientOptions): HubClient {
       return state.rawText;
     },
 
-    async listAiPersonas(personaOptions) {
+    async listAiPersonaCatalog(personaOptions) {
       const response = await delegate(() =>
-        clientFor(personaOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonasList());
+        clientFor(personaOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaCatalog());
       return response.personas;
-    },
-
-    async listAiPersonaStates(personaOptions) {
-      const response = await delegate(() =>
-        clientFor(personaOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaStates());
-      return response.states;
-    },
-
-    async upsertAiPersona({ key, displayName, systemBlock, expectedVersion, timeoutMs }) {
-      return delegate(() =>
-        clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaUpsert({
-          params: { key },
-          body: {
-            displayName,
-            systemBlock,
-            expectedVersion,
-          },
-        }));
-    },
-
-    async archiveAiPersona({ key, expectedVersion, timeoutMs }) {
-      return delegate(() =>
-        clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaArchive({
-          params: { key },
-          query: { expectedVersion: expectedVersion ?? 0 },
-        }));
     },
 
     async streamAiFeature({ feature, request: streamRequest, signal, debugPromptEcho }, callbacks) {

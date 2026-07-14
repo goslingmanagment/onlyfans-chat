@@ -3,6 +3,8 @@ import { z } from 'zod';
 
 export const HUB_DEVICE_TOKEN_ACTIVATION_KEY = 'hubDeviceTokenActivation.v1';
 export const HUB_DEVICE_TOKEN_REVOCATION_KEY = 'hubDeviceTokenRevocation.v1';
+export const HUB_DEVICE_TOKEN_BINDING_KEY = 'hubDeviceTokenBinding.v1';
+export const HUB_API_KEY_BINDING_KEY = 'hubApiKeyBinding.v1';
 
 const journalBaseSchema = z.strictObject({
   version: z.literal(1),
@@ -21,7 +23,11 @@ export const hubDeviceTokenActivationSchema = journalBaseSchema.extend({
   cancelRequested: z.boolean().optional().default(false),
 });
 
-export const hubDeviceTokenRevocationSchema = journalBaseSchema;
+export const hubDeviceTokenRevocationSchema = journalBaseSchema.extend({
+  /** Core already accepted the exact-token revoke, but unrelated active local
+   * custody still requires explicit abandonment before the latch can clear. */
+  remoteSettled: z.boolean().optional().default(false),
+});
 
 export const stagedDeviceTokenSchema = z.strictObject({
   version: z.literal(1),
@@ -29,9 +35,16 @@ export const stagedDeviceTokenSchema = z.strictObject({
   token: z.string().min(1),
 });
 
+export const hubCredentialBindingSchema = z.strictObject({
+  version: z.literal(1),
+  hubBaseUrl: z.string().url(),
+  tokenDigest: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
 export type HubDeviceTokenActivation = z.infer<typeof hubDeviceTokenActivationSchema>;
 export type HubDeviceTokenRevocation = z.infer<typeof hubDeviceTokenRevocationSchema>;
 export type StagedDeviceToken = z.infer<typeof stagedDeviceTokenSchema>;
+export type HubCredentialBinding = z.infer<typeof hubCredentialBindingSchema>;
 
 export interface CredentialJournalQueries {
   get(key: string): unknown;
@@ -79,6 +92,18 @@ export function readDeviceTokenRevocation(
   queries: Pick<CredentialJournalQueries, 'get'>,
 ): HubDeviceTokenRevocation | null {
   return readJournal(queries, HUB_DEVICE_TOKEN_REVOCATION_KEY, hubDeviceTokenRevocationSchema);
+}
+
+export function readDeviceTokenBinding(
+  queries: Pick<CredentialJournalQueries, 'get'>,
+): HubCredentialBinding | null {
+  return readJournal(queries, HUB_DEVICE_TOKEN_BINDING_KEY, hubCredentialBindingSchema);
+}
+
+export function readHubApiKeyBinding(
+  queries: Pick<CredentialJournalQueries, 'get'>,
+): HubCredentialBinding | null {
+  return readJournal(queries, HUB_API_KEY_BINDING_KEY, hubCredentialBindingSchema);
 }
 
 export function parseStagedDeviceToken(

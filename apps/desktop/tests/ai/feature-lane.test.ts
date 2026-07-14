@@ -28,6 +28,7 @@ import {
   makeSettingsStore,
   makeSettingsVM,
   memoryDataLayer,
+  seedActivePersonaCatalog,
   startRequest,
   makeStubFeatureGateway,
 } from './helpers';
@@ -41,6 +42,7 @@ describe('AI feature lane (Stage 31)', () => {
   let coordinator: AiCoordinator;
 
   function build(settings: SettingsVM = makeSettingsVM()): void {
+    seedActivePersonaCatalog(data, settings);
     coordinator = createAiCoordinator({
       data,
       settingsStore: makeSettingsStore(settings),
@@ -241,9 +243,11 @@ describe('AI feature lane (Stage 31)', () => {
 
   it("emits 'shown' with the generation ref at first token (Stage 31 Task 2)", async () => {
     const acceptance: Array<Record<string, unknown>> = [];
+    const settings = makeSettingsVM();
+    seedActivePersonaCatalog(data, settings);
     coordinator = createAiCoordinator({
       data,
-      settingsStore: makeSettingsStore(makeSettingsVM()),
+      settingsStore: makeSettingsStore(settings),
       featureGateway: featureGateway.gateway,
       onAcceptanceEvent: (event) => acceptance.push(event as never),
     });
@@ -291,9 +295,11 @@ describe('AI feature lane (Stage 31)', () => {
   });
 
   it('errors with CG-HUB-02 when the lane is selected but not wired', async () => {
+    const settings = makeSettingsVM();
+    seedActivePersonaCatalog(data, settings);
     coordinator = createAiCoordinator({
       data,
-      settingsStore: makeSettingsStore(makeSettingsVM()),
+      settingsStore: makeSettingsStore(settings),
     });
     coordinator.subscribe((event) => frames.push(event));
     coordinator.start(startRequest());
@@ -311,11 +317,13 @@ describe('feature gateway adapter (Stage 31)', () => {
       callbacks: HubAiGatewayStreamCallbacks,
     ) => Promise<string>,
     resolvePageLabel: (accountId: string) => Promise<string | null> = () => Promise.resolve('lora-of'),
+    isPageLabelCurrent: (accountId: string, pageLabel: string) => boolean = () => true,
   ) {
     const events: Array<{ kind: string; value?: unknown }> = [];
     const adapter = createFeatureAiGateway({
       client: { streamAiFeature: streamAiFeature as never },
       resolvePageLabel,
+      isPageLabelCurrent,
     });
     const cancel = adapter.stream(
       {
@@ -362,6 +370,55 @@ describe('feature gateway adapter (Stage 31)', () => {
       { kind: 'text', value: 'ok' },
       { kind: 'complete', value: 'ok' },
     ]);
+  });
+
+  it('does not start a kernel stream with a page label resolved before an override change', async () => {
+    let release!: (label: string | null) => void;
+    let destination = 'old-coordinate';
+    const streamAiFeature = vi.fn(() => Promise.resolve('wrong-page result'));
+    const { events } = run(
+      streamAiFeature,
+      () => new Promise<string | null>((resolve) => {
+        release = resolve;
+      }),
+      (_accountId, pageLabel) => pageLabel === destination,
+    );
+    destination = 'new-coordinate';
+    release('old-page');
+    await flushAsync();
+
+    expect(streamAiFeature).not.toHaveBeenCalled();
+    expect(events).toHaveLength(1);
+    expect((events[0]?.value as { code: string }).code).toBe('CG-FLOW-02');
+  });
+
+  it('aborts and errors when the page route changes after the kernel stream starts', async () => {
+    let callbacks!: HubAiGatewayStreamCallbacks;
+    let finish!: (value: string) => void;
+    let currentPage = 'page-a';
+    const { events } = run(
+      (_args, streamCallbacks) => {
+        callbacks = streamCallbacks;
+        return new Promise<string>((resolve) => {
+          finish = resolve;
+        });
+      },
+      async () => 'page-a',
+      (_accountId, pageLabel) => pageLabel === currentPage,
+    );
+    await flushAsync();
+    callbacks.onText('valid prefix');
+    currentPage = 'page-b';
+    callbacks.onText('stale suffix');
+    finish('stale completion');
+    await flushAsync();
+
+    expect(events.filter((event) => event.kind === 'complete')).toHaveLength(0);
+    expect(events.filter((event) => event.kind === 'text')).toEqual([
+      { kind: 'text', value: 'valid prefix' },
+    ]);
+    expect((events.find((event) => event.kind === 'error')?.value as { code: string }).code)
+      .toBe('CG-FLOW-02');
   });
 
   it('maps the kernel product-gate messages back to the legacy CG codes', async () => {
@@ -426,6 +483,7 @@ describe('feature gateway adapter (Stage 31)', () => {
     const adapter = createFeatureAiGateway({
       client,
       resolvePageLabel: () => Promise.resolve('lora-of'),
+      isPageLabelCurrent: () => true,
     });
     const events: Array<{ kind: string; value?: unknown }> = [];
     adapter.stream(
@@ -497,6 +555,7 @@ describe('feature gateway adapter (Stage 31)', () => {
     const adapter = createFeatureAiGateway({
       client,
       resolvePageLabel: () => Promise.resolve('lora-of'),
+      isPageLabelCurrent: () => true,
     });
     const events: Array<{ kind: string; value?: unknown }> = [];
     adapter.stream(
@@ -545,6 +604,7 @@ describe('feature gateway adapter (Stage 31)', () => {
     const adapter = createFeatureAiGateway({
       client,
       resolvePageLabel: () => Promise.resolve('lora-of'),
+      isPageLabelCurrent: () => true,
     });
     const events: Array<{ kind: string; value?: unknown }> = [];
     adapter.stream(
@@ -594,6 +654,7 @@ describe('feature gateway adapter (Stage 31)', () => {
     const adapter = createFeatureAiGateway({
       client,
       resolvePageLabel: () => Promise.resolve('lora-of'),
+      isPageLabelCurrent: () => true,
     });
     const events: Array<{ kind: string; value?: unknown }> = [];
     adapter.stream(
