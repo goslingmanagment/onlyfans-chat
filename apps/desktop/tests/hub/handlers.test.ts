@@ -4,16 +4,34 @@
 // patches only (key-only writes publish no settings-table event — the hook is
 // main's only reconnect signal).
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_AGENCY_HUB_BASE_URL } from '@chatgoose/shared';
 import type { DataLayer } from '@main/db/index';
 import type { HubSyncStatus } from '@main/sync/hub-sync';
 import type { SyncProvider } from '@main/sync/provider';
 import { createSettingsStore } from '@main/settings/store';
 import { registerIpcHandlers } from '@main/ipc/handlers';
 import type { IpcDeps } from '@main/ipc/handlers';
+import { LEGACY_PERSONA_SNAPSHOT_KEY, storePersonaCatalog } from '@main/personas/catalog';
+import {
+  personaAccountMappingsKey,
+  personaSummaryCacheIdentity,
+  personaStorageScopeForHub,
+  storePersonaAccountMapping,
+} from '@main/personas/pending';
+import {
+  createRuntimeMutationQueue,
+  createSerializedCredentialLifecycle,
+  replaceRuntimeSecurityFirst,
+} from '@main/runtime-activation';
 import type { SecretName } from '@main/secrets/keychain';
-import type { SettingsVM, SyncStatusVM } from '../../src/preload/contract';
-import { ACCT, memoryDataLayer } from './helpers';
+import type { FanPanelVM, SettingsVM, SyncStatusVM } from '../../src/preload/contract';
+import { ACCT, FAN, memoryDataLayer, seedAccount } from './helpers';
+
+const TEST_PERSONA_SCOPE = personaStorageScopeForHub(DEFAULT_AGENCY_HUB_BASE_URL);
+const TEST_DEFINITION_ID = 'v1:test-persona-definition';
 
 type Handler = (event: unknown, args?: unknown) => unknown;
 const handlers = vi.hoisted(() => new Map<string, Handler>());
@@ -27,12 +45,16 @@ vi.mock('electron', () => ({
 }));
 
 // async wrapper: ipcMain.handle converts sync handler throws into rejections.
-async function invoke(channel: string, args?: unknown, event: unknown = {}): Promise<unknown> {
+async function invokeRaw(channel: string, args?: unknown, event: unknown = {}): Promise<unknown> {
   const handler = handlers.get(channel);
   if (!handler) {
     throw new Error(`no handler registered for ${channel}`);
   }
   return handler(event, args);
+}
+
+async function invoke(channel: string, args?: unknown, event: unknown = {}): Promise<unknown> {
+  return invokeRaw(channel, args, event);
 }
 
 function makeSyncStub(
@@ -96,10 +118,16 @@ function register(
   handlers.clear();
   const onHubConfigChanged = vi.fn();
   const onOfapiRuntimeConfigChanged = vi.fn();
+  const secretValues = new Map<SecretName, string>();
   const secrets = {
-    hasSecret: async () => false,
-    setSecret: async () => undefined,
-    deleteSecret: async () => undefined,
+    getSecret: async (name: SecretName) => secretValues.get(name) ?? null,
+    hasSecret: async (name: SecretName) => secretValues.has(name),
+    setSecret: async (name: SecretName, value: string) => {
+      secretValues.set(name, value);
+    },
+    deleteSecret: async (name: SecretName) => {
+      secretValues.delete(name);
+    },
   };
   registerIpcHandlers({
     data,
@@ -148,6 +176,107 @@ describe('hub IPC wiring', () => {
     register(data, { onRendererReady });
     await invoke('cmd:app.rendererReady', undefined, { sender: { id: 42 } });
     expect(onRendererReady).toHaveBeenCalledWith(42);
+  });
+
+  it('never renders a same-key/version fan summary from another Hub origin', async () => {
+    seedAccount(data);
+    data.fans.upsert({
+      accountId: ACCT,
+      fanId: FAN,
+      username: 'fan',
+      name: 'Fan',
+      customName: null,
+      avatar: null,
+      about: null,
+      lastSeen: null,
+      spending: null,
+      subscription: null,
+      fetchedAt: '2026-07-13T00:00:00.000Z',
+    });
+    storePersonaAccountMapping(data.settings, TEST_PERSONA_SCOPE, ACCT, 'builtin:lora');
+    storePersonaCatalog(data.settings, TEST_PERSONA_SCOPE, [{
+      key: 'builtin:lora',
+      displayName: 'Lora',
+      version: 1,
+      status: 'active',
+      definitionId: `${TEST_DEFINITION_ID}:hub-a`,
+    }]);
+    data.summaries.put(ACCT, FAN, {
+      body: 'Hub A summary',
+      personalityId: personaSummaryCacheIdentity(
+        TEST_PERSONA_SCOPE,
+        'builtin:lora',
+        `${TEST_DEFINITION_ID}:hub-a`,
+      ),
+      personalityUpdatedAt: 1,
+      generatedAt: Date.parse('2026-07-13T00:00:00.000Z'),
+      spendingVerified: true,
+      subscriptionVerified: true,
+      modelId: 'kernel',
+    });
+    register(data);
+    expect((await invoke('query:fan.get', { accountId: ACCT, fanId: FAN }) as FanPanelVM).summary)
+      .toMatchObject({ body: 'Hub A summary' });
+
+    const scopeB = personaStorageScopeForHub('http://127.0.0.1:4010');
+    storePersonaAccountMapping(data.settings, scopeB, ACCT, 'builtin:lora');
+    storePersonaCatalog(data.settings, scopeB, [{
+      key: 'builtin:lora',
+      displayName: 'Different Lora',
+      version: 1,
+      status: 'active',
+      definitionId: `${TEST_DEFINITION_ID}:hub-b`,
+    }]);
+    await invoke('cmd:settings.update', { hubBaseUrl: 'http://127.0.0.1:4010' });
+
+    expect((await invoke('query:fan.get', { accountId: ACCT, fanId: FAN }) as FanPanelVM).summary)
+      .toBeNull();
+  });
+
+  it('uses the SettingsStore fallback source for an invalid-but-parseable persisted Hub URL', async () => {
+    seedAccount(data);
+    data.fans.upsert({
+      accountId: ACCT,
+      fanId: FAN,
+      username: 'fan',
+      name: 'Fan',
+      customName: null,
+      avatar: null,
+      about: null,
+      lastSeen: null,
+      spending: null,
+      subscription: null,
+      fetchedAt: '2026-07-13T00:00:00.000Z',
+    });
+    const invalidScope = personaStorageScopeForHub('https://old.example');
+    storePersonaAccountMapping(data.settings, invalidScope, ACCT, 'builtin:lora');
+    storePersonaCatalog(data.settings, invalidScope, [{
+      key: 'builtin:lora',
+      displayName: 'Old Lora',
+      version: 1,
+      status: 'active',
+      definitionId: `${TEST_DEFINITION_ID}:old-hub`,
+    }]);
+    data.summaries.put(ACCT, FAN, {
+      body: 'invalid-origin summary',
+      personalityId: personaSummaryCacheIdentity(
+        invalidScope,
+        'builtin:lora',
+        `${TEST_DEFINITION_ID}:old-hub`,
+      ),
+      personalityUpdatedAt: 1,
+      generatedAt: Date.parse('2026-07-13T00:00:00.000Z'),
+      spendingVerified: true,
+      subscriptionVerified: true,
+      modelId: 'kernel',
+    });
+    data.settings.set('hubBaseUrl', 'https://old.example');
+    register(data);
+
+    const settings = await invoke('query:settings.get') as SettingsVM;
+    expect(settings.hubBaseUrl).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
+    expect((await invoke('query:fan.get', { accountId: ACCT, fanId: FAN }) as FanPanelVM).summary)
+      .toBeNull();
   });
 
   it('query:sync.status carries the hub stream state', async () => {
@@ -210,6 +339,22 @@ describe('hub IPC wiring', () => {
     expect(((await invoke('query:sync.status')) as SyncStatusVM).hub).toBe('off');
   });
 
+  it('surfaces quarantined credential custody independently of sync/auth status', async () => {
+    register(data, { hubCredentialAttention: () => true });
+    expect((await invoke('query:sync.status') as SyncStatusVM).hubCredentialAttention).toBe(true);
+
+    register(data, {
+      sync: makeSyncStub('live'),
+      hubCredentialAttention: () => true,
+    });
+    const live = await invoke('query:sync.status') as SyncStatusVM;
+    expect(live.hub).toBe('live');
+    expect(live.hubCredentialAttention).toBe(true);
+
+    register(data, { hubCredentialAttention: () => false });
+    expect((await invoke('query:sync.status') as SyncStatusVM).hubCredentialAttention).toBe(false);
+  });
+
   it('splits read-runtime rebuilds from hub stream override rechecks', async () => {
     const { onHubConfigChanged, onOfapiRuntimeConfigChanged } = register(data);
     await invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_x' });
@@ -230,6 +375,17 @@ describe('hub IPC wiring', () => {
     });
     expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(3);
     expect(onHubConfigChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps mode-only rechecks on Sync without retiring the REST/AI Hub module', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../../src/main/index.ts'), 'utf8');
+    const start = source.indexOf('const recheckNextHubSyncConfig = async');
+    const end = source.indexOf('// Hub-supported writes', start);
+    const recheck = source.slice(start, end);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(recheck).toContain('await nextSync.reconfigureHub();');
+    expect(recheck).not.toContain('nextHub.reconfigure()');
   });
 
   it('skips probe/rebuild for an unchanged hub URL but preserves real URL and key transitions', async () => {
@@ -269,15 +425,17 @@ describe('hub IPC wiring', () => {
   // ── 4a: validate the hub read runtime BEFORE persisting the credential ──
 
   function statefulSecrets(seed: SecretName[] = []): {
+    getSecret: (name: SecretName) => Promise<string | null>;
     hasSecret: (name: SecretName) => Promise<boolean>;
-    setSecret: (name: SecretName) => Promise<void>;
+    setSecret: (name: SecretName, value: string) => Promise<void>;
     deleteSecret: (name: SecretName) => Promise<void>;
   } {
-    const values = new Set<SecretName>(seed);
+    const values = new Map<SecretName, string>(seed.map((name) => [name, `value-${name}`]));
     return {
+      getSecret: (name) => Promise.resolve(values.get(name) ?? null),
       hasSecret: (name) => Promise.resolve(values.has(name)),
-      setSecret: (name) => {
-        values.add(name);
+      setSecret: (name, value) => {
+        values.set(name, value);
         return Promise.resolve();
       },
       deleteSecret: (name) => {
@@ -325,14 +483,50 @@ describe('hub IPC wiring', () => {
     expect(((await invoke('query:settings.get')) as SettingsVM).hasHubKey).toBe(true);
   });
 
-  it('4a: performs stale-token cleanup only after the replacement key persists', async () => {
+  it('rejects a Hub URL switch with a stored device token before IPC mutates credentials or rebuilds', async () => {
+    const values = new Map<SecretName, string>([
+      ['hubApiKey', 'agency_hub_core_old'],
+      ['hubDeviceToken', 'agency_hub_device_live'],
+    ]);
+    const setSecret = vi.fn(async (name: SecretName, value: string) => {
+      values.set(name, value);
+    });
+    const deleteSecret = vi.fn(async (name: SecretName) => {
+      values.delete(name);
+    });
+    const settingsStore = createSettingsStore({
+      queries: data.settings,
+      secrets: {
+        getSecret: async (name) => values.get(name) ?? null,
+        hasSecret: async (name) => values.has(name),
+        setSecret,
+        deleteSecret,
+      },
+    });
+    const { onOfapiRuntimeConfigChanged } = register(data, { settingsStore });
+
+    await expect(invoke('cmd:settings.update', {
+      hubBaseUrl: 'http://localhost:4000',
+      hubApiKey: 'agency_hub_core_new',
+    })).rejects.toThrow(/sign out.*device token.*Hub URL/i);
+
+    expect(setSecret).not.toHaveBeenCalled();
+    expect(deleteSecret).not.toHaveBeenCalled();
+    expect(onOfapiRuntimeConfigChanged).not.toHaveBeenCalled();
+    expect(values.get('hubApiKey')).toBe('agency_hub_core_old');
+    expect(values.get('hubDeviceToken')).toBe('agency_hub_device_live');
+    expect((await settingsStore.get()).hubBaseUrl).toBe('https://gosling-agency.ru');
+  });
+
+  it('4a: commits proven-dead-token cleanup before replacement-key promotion', async () => {
     const order: string[] = [];
-    const values = new Set<SecretName>(['hubDeviceToken']);
+    const values = new Map<SecretName, string>([['hubDeviceToken', 'device-dead']]);
     const secrets = {
+      getSecret: (name: SecretName) => Promise.resolve(values.get(name) ?? null),
       hasSecret: (name: SecretName) => Promise.resolve(values.has(name)),
-      setSecret: (name: SecretName) => {
+      setSecret: (name: SecretName, value: string) => {
         order.push(`persist:${name}`);
-        values.add(name);
+        values.set(name, value);
         return Promise.resolve();
       },
       deleteSecret: (name: SecretName) => {
@@ -348,8 +542,9 @@ describe('hub IPC wiring', () => {
     const probeReadRuntimeForPatch = vi.fn(async () => {
       order.push('probe');
       return {
-        afterPersist: async () => {
-          await secrets.deleteSecret('hubDeviceToken');
+        deleteDeadDeviceToken: true,
+        afterCommit: async () => {
+          order.push('commit');
         },
       };
     });
@@ -359,26 +554,40 @@ describe('hub IPC wiring', () => {
       hubApiKey: 'agency_hub_core_replacement',
     })) as SettingsVM;
 
-    expect(order).toEqual(['probe', 'persist:hubApiKey', 'cleanup:hubDeviceToken', 'rebuild']);
+    expect(order).toEqual([
+      'probe',
+      'persist:hubApiKeyStaged',
+      'cleanup:hubDeviceToken',
+      'persist:hubApiKey',
+      'cleanup:hubApiKeyStaged',
+      'commit',
+      'rebuild',
+    ]);
     expect(result.hasHubKey).toBe(true);
     expect(result.hasHubDeviceToken).toBe(false);
   });
 
-  it('4a: never runs stale-token cleanup when replacement persistence fails', async () => {
-    const cleanup = vi.fn(async () => undefined);
+  it('4a: carries proven-dead-token cleanup inside the durable settings commit', async () => {
+    const update = vi.fn(async (_patch: unknown, options?: { deleteDeadHubDeviceToken?: boolean }) => {
+      expect(options?.deleteDeadHubDeviceToken).toBe(true);
+      throw new Error('must not persist');
+    });
+    const backingStore = createSettingsStore({ queries: data.settings, secrets: statefulSecrets() });
     const settingsStore: IpcDeps['settingsStore'] = {
-      get: () => createSettingsStore({ queries: data.settings, secrets: statefulSecrets() }).get(),
-      update: () => Promise.reject(new Error('keychain write failed')),
+      get: () => backingStore.get(),
+      getHubConnection: () => backingStore.getHubConnection(),
+      update,
+      runCredentialMutation: (task) => task(),
     };
     register(data, {
       settingsStore,
-      probeReadRuntimeForPatch: async () => ({ afterPersist: cleanup }),
+      probeReadRuntimeForPatch: async () => ({ deleteDeadDeviceToken: true }),
     });
 
     await expect(
       invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_replacement' }),
-    ).rejects.toThrow(/keychain write failed/);
-    expect(cleanup).not.toHaveBeenCalled();
+    ).rejects.toThrow(/must not persist/);
+    expect(update).toHaveBeenCalledTimes(1);
   });
 
   it('4a: non-hub settings patches skip the read-runtime probe', async () => {
@@ -401,8 +610,275 @@ describe('hub IPC wiring', () => {
     ).rejects.toThrow(/account bootstrap failed/);
     expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(1);
   });
+
+  it('serializes stale-token cleanup with sign-out and the next sign-in', async () => {
+    const queue = createRuntimeMutationQueue();
+    const order: string[] = [];
+    let storedDeviceToken: string | null = 'device-a';
+    let hasHubKey = false;
+    let stagedHubApiKey: string | null = null;
+    let mintCount = 0;
+    let releaseCleanup: (() => void) | undefined;
+    let cleanupStarted: (() => void) | undefined;
+    const cleanupStartedPromise = new Promise<void>((resolve) => {
+      cleanupStarted = resolve;
+    });
+    const secrets = {
+      getSecret: async (name: SecretName) => {
+        if (name === 'hubDeviceToken') return storedDeviceToken;
+        if (name === 'hubApiKey') return hasHubKey ? 'hub-key' : null;
+        if (name === 'hubApiKeyStaged') return stagedHubApiKey;
+        return null;
+      },
+      hasSecret: async (name: SecretName) => {
+        if (name === 'hubDeviceToken') return storedDeviceToken !== null;
+        if (name === 'hubApiKey') return hasHubKey;
+        return name === 'hubApiKeyStaged' && stagedHubApiKey !== null;
+      },
+      setSecret: async (name: SecretName, value: string) => {
+        if (name === 'hubApiKey') {
+          hasHubKey = true;
+        } else if (name === 'hubApiKeyStaged') {
+          stagedHubApiKey = value;
+        }
+      },
+      deleteSecret: async (name: SecretName) => {
+        if (name === 'hubDeviceToken') {
+          order.push('cleanup:start');
+          cleanupStarted?.();
+          await new Promise<void>((resolve) => {
+            releaseCleanup = () => {
+              order.push('cleanup:delete');
+              resolve();
+            };
+          });
+          storedDeviceToken = null;
+        } else if (name === 'hubApiKeyStaged') {
+          stagedHubApiKey = null;
+        }
+      },
+    };
+    const settingsStore = createSettingsStore({ queries: data.settings, secrets });
+    const lifecycle = createSerializedCredentialLifecycle<string, string>({
+      queue,
+      readStoredCredential: async () => storedDeviceToken,
+      issueAndStore: async (credential) => {
+        mintCount += 1;
+        order.push(`issue:${credential}`);
+        storedDeviceToken = credential;
+        return credential;
+      },
+      activateStoredCredential: async () => {
+        order.push('activate:stored');
+      },
+      signOutTransition: async () => {
+        const captured = storedDeviceToken;
+        await replaceRuntimeSecurityFirst({
+          deactivate: async () => {
+            order.push('deactivate');
+          },
+          ...(captured !== null
+            ? {
+                revokeCredential: async () => {
+                  order.push(`revoke:${captured}`);
+                },
+              }
+            : {}),
+          deleteCredential: async () => {
+            order.push(`delete:${storedDeviceToken ?? 'none'}`);
+            storedDeviceToken = null;
+          },
+          activateFallback: async () => {
+            order.push('activate:fallback');
+          },
+        });
+      },
+    });
+    register(data, {
+      settingsStore,
+      runReadRuntimeMutation: (task) => queue.run(task),
+      probeReadRuntimeForPatch: async () => ({ deleteDeadDeviceToken: true }),
+      onOfapiRuntimeConfigChanged: async () => {
+        order.push('rebuild');
+      },
+    });
+
+    const settingsUpdate = invoke('cmd:settings.update', {
+      hubApiKey: 'agency_hub_core_replacement',
+    });
+    await cleanupStartedPromise;
+    const signOut = lifecycle.signOut();
+    const nextSignIn = lifecycle.issue('device-b');
+    await Promise.resolve();
+    expect(mintCount).toBe(0);
+
+    releaseCleanup?.();
+    await settingsUpdate;
+    await signOut;
+    await expect(nextSignIn).resolves.toBe('device-b');
+    expect(storedDeviceToken).toBe('device-b');
+    expect(mintCount).toBe(1);
+    expect(order).toEqual([
+      'cleanup:start',
+      'cleanup:delete',
+      'rebuild',
+      'deactivate',
+      'delete:none',
+      'activate:fallback',
+      'issue:device-b',
+      'activate:stored',
+    ]);
+  });
 });
 
+describe('read-only persona catalog IPC', () => {
+  let data: DataLayer;
+
+  beforeEach(() => {
+    data = memoryDataLayer();
+    seedAccount(data);
+  });
+
+  it('commits the immutable full-text snapshot before the first catalog request', async () => {
+    const legacy = [{ id: 'custom:legacy', name: 'Legacy', content: 'full private text' }];
+    const mappings = { [ACCT]: 'custom:legacy' };
+    data.settings.set('personalities', legacy);
+    data.settings.set('accountMappings', mappings);
+    const list = vi.fn(async () => {
+      expect(data.settings.get(LEGACY_PERSONA_SNAPSHOT_KEY)).toEqual(expect.objectContaining({
+        schemaVersion: 1,
+        rows: expect.objectContaining({
+          personalities: legacy,
+          accountMappings: mappings,
+        }),
+      }));
+      const catalog = [{
+        key: 'custom:legacy',
+        displayName: 'Legacy',
+        version: 7,
+        status: 'active' as const,
+        definitionId: `${TEST_DEFINITION_ID}:legacy`,
+      }];
+      storePersonaCatalog(data.settings, TEST_PERSONA_SCOPE, catalog);
+      return catalog;
+    });
+    register(data, { personas: { list } });
+
+    await expect(invokeRaw('query:personalities.list')).resolves.toEqual({
+      scopeOrigin: TEST_PERSONA_SCOPE.origin,
+      personas: [{
+        key: 'custom:legacy',
+        displayName: 'Legacy',
+        version: 7,
+        status: 'active',
+        definitionId: `${TEST_DEFINITION_ID}:legacy`,
+      }],
+      legacySnapshotAvailable: true,
+    });
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(data.settings.get('personalities')).toEqual(legacy);
+    expect(data.settings.get('accountMappings')).toEqual(mappings);
+  });
+
+  it.each([
+    ['missing', 'custom:missing', 'unresolved'],
+    ['archived', 'custom:archived', 'archived'],
+  ] as const)('preserves a %s raw mapping while disabling its effective AI mapping', async (
+    _label,
+    mappedKey,
+    expectedState,
+  ) => {
+    data.settings.set('accountMappings', { [ACCT]: mappedKey });
+    register(data, {
+      personas: {
+        list: async () => {
+          const catalog = [{
+            key: 'custom:archived',
+            displayName: 'Archived',
+            version: 4,
+            status: 'archived' as const,
+            definitionId: `${TEST_DEFINITION_ID}:archived`,
+          }];
+          storePersonaCatalog(data.settings, TEST_PERSONA_SCOPE, catalog);
+          return catalog;
+        },
+      },
+    });
+
+    await invokeRaw('query:personalities.list');
+    const accounts = await invokeRaw('query:accounts.list') as Array<Record<string, unknown>>;
+    expect(accounts).toEqual([expect.objectContaining({
+      id: ACCT,
+      personalityId: null,
+      rawPersonalityId: mappedKey,
+      personalityMappingState: expectedState,
+    })]);
+    expect(data.settings.get(personaAccountMappingsKey(TEST_PERSONA_SCOPE))).toEqual({
+      [ACCT]: mappedKey,
+    });
+  });
+
+  it('publishes an account-scoped mapping invalidation without resetting unrelated AI', async () => {
+    storePersonaCatalog(data.settings, TEST_PERSONA_SCOPE, [{
+      key: 'custom:active',
+      displayName: 'Active',
+      version: 1,
+      status: 'active',
+      definitionId: `${TEST_DEFINITION_ID}:active`,
+    }]);
+    data.bus.flushNow();
+    const events: Array<{
+      scope: string;
+      accountId?: string;
+      settingsKeys?: string[];
+    }> = [];
+    data.bus.subscribe((batch) => events.push(...batch));
+    register(data);
+
+    await invokeRaw('cmd:mappings.set', {
+      accountId: ACCT,
+      personalityId: 'custom:active',
+    });
+    data.bus.flushNow();
+
+    expect(events).toContainEqual({
+      scope: 'settings',
+      accountId: ACCT,
+      settingsKeys: [personaAccountMappingsKey(TEST_PERSONA_SCOPE)],
+    });
+    expect(data.settings.get(personaAccountMappingsKey(TEST_PERSONA_SCOPE))).toEqual({
+      [ACCT]: 'custom:active',
+    });
+  });
+
+  it('exports the immutable snapshot without exposing persona write handlers', async () => {
+    data.settings.set('personalities', [{
+      id: 'custom:backup',
+      name: 'Backup',
+      content: 'must survive',
+    }]);
+    const exportPersonaSnapshot = vi.fn(async () => ({ path: '/tmp/personas.json' }));
+    register(data, {
+      localData: {
+        stats: async () => ({ dbBytes: 0, mediaBytes: 0, mediaFiles: 0 }),
+        openFolder: async () => undefined,
+        exportDiagnostics: async () => ({ path: '/tmp/diagnostics.json' }),
+        exportPersonaSnapshot,
+      },
+    });
+
+    await expect(invokeRaw('cmd:personalities.exportLegacySnapshot')).resolves.toEqual({
+      path: '/tmp/personas.json',
+    });
+    expect(exportPersonaSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      rows: expect.objectContaining({
+        personalities: [expect.objectContaining({ content: 'must survive' })],
+      }),
+    }));
+    expect(handlers.has('cmd:personalities.save')).toBe(false);
+    expect(handlers.has('cmd:personalities.delete')).toBe(false);
+  });
+});
 describe('cmd:hub.signOutDevice', () => {
   let data: DataLayer;
 
@@ -410,23 +886,28 @@ describe('cmd:hub.signOutDevice', () => {
     data = memoryDataLayer();
   });
 
-  function stubHubAuth(signOutDevice: () => Promise<void>): NonNullable<IpcDeps['hubAuth']> {
+  function stubHubAuth(
+    signOutDevice: () => Promise<void>,
+    abandonDevice: () => Promise<void> = () => Promise.resolve(),
+  ): NonNullable<IpcDeps['hubAuth']> {
     return {
       issueDeviceToken: async () => {
         throw new Error('issueDeviceToken not exercised in this test');
       },
       signOutDevice,
+      abandonDevice,
     };
   }
 
   it('delegates the complete security-first token/runtime transition to hubAuth', async () => {
     // Real settings store + a stateful secrets fake, seeded with a device
     // token — mirrors an installed, signed-in chatter.
-    const secretValues = new Set<SecretName>(['hubDeviceToken']);
+    const secretValues = new Map<SecretName, string>([['hubDeviceToken', 'device-live']]);
     const secrets = {
+      getSecret: (name: SecretName) => Promise.resolve(secretValues.get(name) ?? null),
       hasSecret: (name: SecretName) => Promise.resolve(secretValues.has(name)),
-      setSecret: (name: SecretName) => {
-        secretValues.add(name);
+      setSecret: (name: SecretName, value: string) => {
+        secretValues.set(name, value);
         return Promise.resolve();
       },
       deleteSecret: (name: SecretName) => {
@@ -462,5 +943,26 @@ describe('cmd:hub.signOutDevice', () => {
 
     await expect(invoke('cmd:hub.signOutDevice', { evil: true })).rejects.toThrow();
     expect(signOutDevice).not.toHaveBeenCalled();
+  });
+
+  it('delegates explicitly confirmed local-only abandonment separately from sign-out', async () => {
+    const signOutDevice = vi.fn(() => Promise.resolve());
+    const abandonDevice = vi.fn(() => Promise.resolve());
+    register(data, { hubAuth: stubHubAuth(signOutDevice, abandonDevice) });
+
+    await invoke('cmd:hub.abandonDevice');
+
+    expect(abandonDevice).toHaveBeenCalledTimes(1);
+    expect(signOutDevice).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unexpected abandonment payload at the trust boundary', async () => {
+    const abandonDevice = vi.fn(() => Promise.resolve());
+    register(data, {
+      hubAuth: stubHubAuth(() => Promise.resolve(), abandonDevice),
+    });
+
+    await expect(invoke('cmd:hub.abandonDevice', { unconfirmed: true })).rejects.toThrow();
+    expect(abandonDevice).not.toHaveBeenCalled();
   });
 });

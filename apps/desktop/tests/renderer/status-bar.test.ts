@@ -94,6 +94,7 @@ describe('selectStatusAge', () => {
     state: 'live',
     hub: 'live',
     hubMode: 'live',
+    hubCredentialAttention: false,
     hubModeOverride: 'auto',
     hubLastEventAt: '2026-06-11T10:14:00.000Z',
     hubLastEventType: 'messageReceived',

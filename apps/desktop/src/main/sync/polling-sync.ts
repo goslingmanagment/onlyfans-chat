@@ -24,6 +24,7 @@ import {
   mapMessage,
   type ToMediaUrl,
 } from './mappers';
+import { compareMessageIds } from './message-id';
 import type {
   SyncListener,
   SyncProvider,
@@ -1014,15 +1015,6 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     }
   }
 
-  function compareMessageIds(a: string, b: string): number {
-    if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
-      const left = BigInt(a);
-      const right = BigInt(b);
-      return left < right ? -1 : left > right ? 1 : 0;
-    }
-    return a < b ? -1 : a > b ? 1 : 0;
-  }
-
   function listHeadReachedExpectedMessage(
     accountId: string,
     chatId: string,
@@ -1158,9 +1150,20 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     return cached.lastMessageId !== null && next.lastMessageId === null;
   }
 
-  function applyLocalHeadGuard(accountId: string, next: ChatUpsert): ChatUpsert {
+  function applyLocalHeadGuard(
+    accountId: string,
+    next: ChatUpsert,
+    preserveEqualHeadMetadata: boolean,
+  ): ChatUpsert {
     const cached = data.chats.get(accountId, next.chatId);
-    if (cached === null || !cachedHeadIsNewer(cached, next)) {
+    const sameHead =
+      cached !== null &&
+      cached.lastMessageId !== null &&
+      cached.lastMessageId === next.lastMessageId;
+    if (
+      cached === null ||
+      (!cachedHeadIsNewer(cached, next) && !(preserveEqualHeadMetadata && sameHead))
+    ) {
       return next;
     }
     return {
@@ -1178,14 +1181,22 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   function upsertChatRows(
     accountId: string,
     chats: readonly OfApiChat[],
-    options: { preserveLocalHead?: boolean } = {},
+    options: { preserveLocalHead?: boolean; preserveEqualHeadMetadata?: boolean } = {},
   ): void {
     const chatUpserts = [];
     const fetchedAt = new Date(now()).toISOString();
     for (const chat of chats) {
       const mapped = mapChat(accountId, chat, toMediaUrl);
       if (mapped) {
-        chatUpserts.push(options.preserveLocalHead === true ? applyLocalHeadGuard(accountId, mapped) : mapped);
+        chatUpserts.push(
+          options.preserveLocalHead === true
+            ? applyLocalHeadGuard(
+                accountId,
+                mapped,
+                options.preserveEqualHeadMetadata === true,
+              )
+            : mapped,
+        );
       }
       if (chat.fan != null) {
         data.fans.upsert(mapFan(accountId, chat.fan, toMediaUrl, fetchedAt));
@@ -1353,10 +1364,22 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   async function runAccountHeadRefresh(
     accountId: string,
     loop: { lastSuccessAt: number | null; consecutiveFailures: number },
+    preserveLocalHead: boolean,
   ): Promise<void> {
     try {
       const head = await walkChatPages(accountId, 0, 1, 'hot-poll');
-      upsertChatRows(accountId, head.chats);
+      // Thin-message fallback reads can lag the event they are proving. Only
+      // those callers (including chatListUpdated nudges projected from
+      // subscription events) preserve a newer local Hub head. Authoritative
+      // delete and ordinary polling reads must remain able to move a head
+      // backwards to the previous surviving message (or null).
+      upsertChatRows(
+        accountId,
+        head.chats,
+        preserveLocalHead
+          ? { preserveLocalHead: true, preserveEqualHeadMetadata: true }
+          : {},
+      );
       loop.lastSuccessAt = now();
       loop.consecutiveFailures = 0;
       armUnreadReconcile(accountId);
@@ -1370,7 +1393,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   /** Awaitable immediate head refresh for recovery/diagnostics. It participates
    * in the same per-account single-flight guard as pollAccount: wait for the
    * current owner, claim synchronously, and release in finally. */
-  async function reconcileAccountHeadNowInner(accountId: string): Promise<void> {
+  async function reconcileAccountHeadNowInner(
+    accountId: string,
+    preserveLocalHead: boolean,
+  ): Promise<void> {
     const loop = loops.get(accountId);
     if (!loop) {
       return;
@@ -1395,14 +1421,14 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       if (loops.get(accountId) !== loop) {
         return;
       }
-      await runAccountHeadRefresh(accountId, loop);
+      await runAccountHeadRefresh(accountId, loop, preserveLocalHead);
     } finally {
       loop.inFlight = false;
     }
   }
 
   function reconcileAccountHeadNow(accountId: string): Promise<void> {
-    return trackActive(reconcileAccountHeadNowInner(accountId));
+    return trackActive(reconcileAccountHeadNowInner(accountId, false));
   }
 
   function runPendingHubListRefresh(accountId: string, pending: PendingHubListRefresh): void {
@@ -1420,7 +1446,8 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     hubListRefreshes.delete(accountId);
     // Use the awaitable single-flight owner: a normal poll already in flight is
     // waited out instead of turning the Hub obligation into a false success.
-    void reconcileAccountHeadNow(accountId).then(pending.resolve, pending.reject);
+    void trackActive(reconcileAccountHeadNowInner(accountId, true))
+      .then(pending.resolve, pending.reject);
   }
 
   function armHubListRefresh(accountId: string, pending: PendingHubListRefresh): void {
@@ -1622,6 +1649,9 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       // reached it. On a capped/failed tail the old head remains the detector,
       // so the next poll retries instead of converting a transient gap into a
       // permanent one.
+      // Ordinary polling is an authoritative reconciliation surface when a
+      // deletion webhook never arrived. Unlike a thin-event fallback, it must
+      // be allowed to publish a real backward/null head.
       upsertChatRows(accountId, head.chats);
 
       emit({ type: 'chatListUpdated', accountId });

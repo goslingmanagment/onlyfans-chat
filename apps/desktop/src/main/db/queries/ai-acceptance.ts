@@ -24,6 +24,10 @@ const rowSchema = z.object({
 
 const partsSchema = z.array(z.string());
 
+/** Conservative current-session upper bound matching the renderer's 24-job
+ * terminal history. Older full text is not needed for any reachable success. */
+export const AI_ACCEPTANCE_PARTS_RETENTION_COUNT = 24;
+
 export interface AiAcceptanceKnownOperation {
   operationId: string;
   feature: string;
@@ -50,6 +54,10 @@ export interface AiAcceptanceQueries {
   get(operationId: string): AiAcceptanceOperation | null;
   /** Atomically claim operationId and increment ai_spend_log.inserted once. */
   acceptOnce(operationId: string, acceptedAt: string): AiAcceptanceResult;
+  /** App-start lifecycle: renderer state did not survive, so no old full text is actionable. */
+  scrubPartsFromPreviousSession(): number;
+  /** Hub-origin switch: old operation ids are no longer actionable in this renderer. */
+  discardUnaccepted(): number;
 }
 
 function decode(raw: unknown): AiAcceptanceOperation | null {
@@ -90,35 +98,63 @@ export function createAiAcceptanceQueries(
         .get({ operation_id: operationId }),
     );
 
+  const scrubOutsideRendererWindow = (): number =>
+    db
+      .prepare(
+        `UPDATE ai_acceptance_ops
+         SET parts = '[]'
+         WHERE accepted_at IS NULL
+           AND parts <> '[]'
+           AND operation_id NOT IN (
+             SELECT operation_id
+             FROM ai_acceptance_ops
+             WHERE accepted_at IS NULL AND parts <> '[]'
+             ORDER BY known_at DESC, operation_id DESC
+             LIMIT @retain_count
+           )`,
+      )
+      .run({ retain_count: AI_ACCEPTANCE_PARTS_RETENTION_COUNT }).changes;
+
   return {
     remember(operation) {
       assertKnown(operation);
-      db.prepare(
-        `INSERT INTO ai_acceptance_ops (
-           operation_id, feature, day, request_id, account_id,
-           conversation_id, parts, known_at, accepted_at
-         ) VALUES (
-           @operation_id, @feature, @day, @request_id, @account_id,
-           @conversation_id, @parts, @known_at, NULL
-         )
-         ON CONFLICT (operation_id) DO UPDATE SET
-           request_id = COALESCE(ai_acceptance_ops.request_id, excluded.request_id),
-           account_id = COALESCE(ai_acceptance_ops.account_id, excluded.account_id),
-           conversation_id = COALESCE(ai_acceptance_ops.conversation_id, excluded.conversation_id),
-           parts = CASE
-             WHEN ai_acceptance_ops.accepted_at IS NULL
-                  AND json_array_length(excluded.parts) > 0 THEN excluded.parts
-             ELSE ai_acceptance_ops.parts
-           END`,
-      ).run({
-        operation_id: operation.operationId,
-        feature: operation.feature,
-        day: operation.day,
-        request_id: operation.requestId,
-        account_id: operation.accountId,
-        conversation_id: operation.conversationId,
-        parts: JSON.stringify(operation.parts),
-        known_at: operation.knownAt,
+      db.transaction(() => {
+        db.prepare(
+          `INSERT INTO ai_acceptance_ops (
+             operation_id, feature, day, request_id, account_id,
+             conversation_id, parts, known_at, accepted_at
+           ) VALUES (
+             @operation_id, @feature, @day, @request_id, @account_id,
+             @conversation_id, @parts, @known_at, NULL
+           )
+           ON CONFLICT (operation_id) DO UPDATE SET
+             request_id = COALESCE(ai_acceptance_ops.request_id, excluded.request_id),
+             account_id = COALESCE(ai_acceptance_ops.account_id, excluded.account_id),
+             conversation_id = COALESCE(ai_acceptance_ops.conversation_id, excluded.conversation_id),
+             known_at = CASE
+               WHEN ai_acceptance_ops.accepted_at IS NULL
+                    AND json_array_length(excluded.parts) > 0
+                    AND excluded.known_at > ai_acceptance_ops.known_at THEN excluded.known_at
+               ELSE ai_acceptance_ops.known_at
+             END,
+             parts = CASE
+               WHEN ai_acceptance_ops.accepted_at IS NULL
+                    AND json_array_length(excluded.parts) > 0 THEN excluded.parts
+               ELSE ai_acceptance_ops.parts
+             END`,
+        ).run({
+          operation_id: operation.operationId,
+          feature: operation.feature,
+          day: operation.day,
+          request_id: operation.requestId,
+          account_id: operation.accountId,
+          conversation_id: operation.conversationId,
+          parts: JSON.stringify(operation.parts),
+          known_at: operation.knownAt,
+        });
+        if (operation.parts.length > 0) {
+          scrubOutsideRendererWindow();
+        }
       });
     },
 
@@ -147,6 +183,22 @@ export function createAiAcceptanceQueries(
         aiSpendLog.markInserted(operation.day, operation.feature);
         return { status: 'accepted', operation: { ...operation, acceptedAt } };
       });
+    },
+
+    scrubPartsFromPreviousSession() {
+      return db
+        .prepare(
+          `UPDATE ai_acceptance_ops
+           SET parts = '[]'
+           WHERE parts <> '[]'`,
+        )
+        .run().changes;
+    },
+
+    discardUnaccepted() {
+      return db
+        .prepare('DELETE FROM ai_acceptance_ops WHERE accepted_at IS NULL')
+        .run().changes;
     },
   };
 }

@@ -1128,6 +1128,40 @@ describe('send engine hub command transport', () => {
     engine.dispose();
   });
 
+  it('keeps a POST-intake auth failure verifier-owned without enabling manual retry', async () => {
+    const direct = makeStubClient();
+    const createOfapiCommand = vi.fn(async ({ command: request }) =>
+      command(request.clientCommandId, 'queued'),
+    );
+    const getOfapiCommand = vi.fn(async () => {
+      throw new HubError('auth', { message: 'device token expired during status polling' });
+    });
+    const engine = createSendEngine({
+      client: direct.client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: () => Promise.resolve({ markAsReadOnOpen: false }),
+      sleep: () => Promise.resolve(),
+      hubCommandPollIntervalMs: 0,
+      hubCommandPollLimit: 2,
+    });
+
+    const localId = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello'] }).localIds[0]!;
+    await drain();
+
+    expect(data.outbox.get(localId)).toMatchObject({
+      state: 'unconfirmed',
+      coreCommandId: '11111111-1111-4111-8111-111111111111',
+      errorCode: 'CG-HUB-01',
+    });
+    expect(() => engine.retry({ accountId: ACCT, localId, text: 'hello again' }))
+      .toThrow(/unconfirmed.*verify or dismiss/i);
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+    engine.dispose();
+  });
+
   it('keeps an untyped or status-mismatched intake failure indeterminate', async () => {
     const direct = makeStubClient();
     // kernelCode without its matching serialization status is NOT proof —

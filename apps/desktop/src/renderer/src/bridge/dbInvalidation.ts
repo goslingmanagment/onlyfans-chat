@@ -12,6 +12,7 @@ export interface DbInvalidationEvent {
   scope: DbInvalidationScope;
   accountId?: string | undefined;
   chatId?: string | undefined;
+  settingsKeys?: string[] | undefined;
 }
 
 export type InvalidationKey = readonly string[];
@@ -35,6 +36,38 @@ function chatListInvalidationKeys(accountId: string): InvalidationKey[] {
 // local DB joins and must refresh without another /fans/active read.
 function onlineInvalidationKeys(accountId: string): InvalidationKey[] {
   return [['online', accountId]];
+}
+
+/** Only main's committed runtime swap proves that Hub origin/principal changed.
+ * Catalog and mapping writes are fenced per operation in main and need query
+ * invalidation, never a renderer-wide AI reset. */
+export function settingsKeysInvalidateAiContext(settingsKeys: readonly string[] | undefined): boolean {
+  return settingsKeys?.includes('runtime.aiContext') ?? false;
+}
+
+function settingsInvalidationKeys(event: DbInvalidationEvent): InvalidationKey[] {
+  const keys = event.settingsKeys;
+  const invalidations: InvalidationKey[] = [['settings']];
+  if (keys === undefined) return invalidations;
+  const catalogChanged = keys.some((key) => key.startsWith('personalities.catalog.'));
+  const mappingChanged = keys.some((key) =>
+    key === 'accountMappings' || key.startsWith('personalities.accountMappings.'));
+  const runtimeChanged = keys.includes('runtime.aiContext') || keys.includes('hubBaseUrl');
+  if (catalogChanged || runtimeChanged) invalidations.push(['personalities']);
+  if (
+    catalogChanged
+    || mappingChanged
+    || runtimeChanged
+    || keys.includes('accountPageLabels')
+  ) {
+    invalidations.push(['accounts']);
+  }
+  if (catalogChanged || runtimeChanged) {
+    invalidations.push(['fan']);
+  } else if (mappingChanged && event.accountId !== undefined) {
+    invalidations.push(['fan', event.accountId]);
+  }
+  return invalidations;
 }
 
 export function dbChangedInvalidationKeysForEvent(
@@ -84,7 +117,7 @@ export function dbChangedInvalidationKeysForEvent(
           : []),
       ];
     case 'settings':
-      return [['settings'], ['personalities'], ['guard-config']];
+      return settingsInvalidationKeys(event);
     case 'guard':
       return [
         ['guard-config'],

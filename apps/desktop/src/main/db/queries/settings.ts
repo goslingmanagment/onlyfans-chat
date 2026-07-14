@@ -17,9 +17,15 @@ export interface SettingsQueries {
   getParsed<T>(key: string, schema: z.ZodType<T>): T | undefined;
   set(key: string, value: unknown): void;
   remove(key: string): void;
+  /** One SQLite transaction and one settings-bus publication. */
+  batch(mutations: readonly SettingsMutation[]): void;
   /** All settings except schema_version. */
   all(): Record<string, unknown>;
 }
+
+export type SettingsMutation =
+  | { kind: 'set'; key: string; value: unknown }
+  | { kind: 'remove'; key: string };
 
 function guardKey(key: string): void {
   if (key === SCHEMA_VERSION_KEY) {
@@ -31,6 +37,44 @@ export function createSettingsQueries(db: ChatGooseDb, bus: DbChangeBus): Settin
   function readRaw(key: string): string | undefined {
     const row: unknown = db.prepare('SELECT value FROM settings WHERE key = @key').get({ key });
     return row === undefined ? undefined : valueRowSchema.parse(row).value;
+  }
+
+  const upsert = db.prepare(
+    'INSERT INTO settings (key, value) VALUES (@key, @value) ' +
+      'ON CONFLICT (key) DO UPDATE SET value = excluded.value',
+  );
+  const remove = db.prepare('DELETE FROM settings WHERE key = @key');
+
+  function serialize(value: unknown, key: string): string {
+    const serialized: string | undefined = JSON.stringify(value);
+    if (serialized === undefined) {
+      throw new Error(`Setting "${key}" is not JSON-serializable`);
+    }
+    return serialized;
+  }
+
+  function batch(mutations: readonly SettingsMutation[]): void {
+    const prepared = mutations.map((mutation) => {
+      guardKey(mutation.key);
+      return mutation.kind === 'set'
+        ? { ...mutation, serialized: serialize(mutation.value, mutation.key) }
+        : mutation;
+    });
+    const touchedKeys = [...new Set(prepared.map((mutation) => mutation.key))];
+    const previousValues = new Map(touchedKeys.map((key) => [key, readRaw(key)]));
+    db.transaction(() => {
+      for (const mutation of prepared) {
+        if (mutation.kind === 'set') {
+          upsert.run({ key: mutation.key, value: mutation.serialized });
+        } else {
+          remove.run({ key: mutation.key });
+        }
+      }
+    });
+    const changedKeys = touchedKeys.filter((key) => previousValues.get(key) !== readRaw(key));
+    if (changedKeys.length > 0) {
+      bus.publish({ scope: 'settings', settingsKeys: changedKeys });
+    }
   }
 
   return {
@@ -59,26 +103,14 @@ export function createSettingsQueries(db: ChatGooseDb, bus: DbChangeBus): Settin
     },
 
     set(key, value) {
-      guardKey(key);
-      // JSON.stringify returns undefined at runtime for non-serializable roots.
-      const serialized: string | undefined = JSON.stringify(value);
-      if (serialized === undefined) {
-        throw new Error(`Setting "${key}" is not JSON-serializable`);
-      }
-      db.prepare(
-        'INSERT INTO settings (key, value) VALUES (@key, @value) ' +
-          'ON CONFLICT (key) DO UPDATE SET value = excluded.value',
-      ).run({ key, value: serialized });
-      bus.publish({ scope: 'settings' });
+      batch([{ kind: 'set', key, value }]);
     },
 
     remove(key) {
-      guardKey(key);
-      const { changes } = db.prepare('DELETE FROM settings WHERE key = @key').run({ key });
-      if (changes > 0) {
-        bus.publish({ scope: 'settings' });
-      }
+      batch([{ kind: 'remove', key }]);
     },
+
+    batch,
 
     all() {
       const rows = db

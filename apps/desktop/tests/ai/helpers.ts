@@ -17,11 +17,21 @@ import type { OfApiMessage, OfApiTransaction, OfApiUser } from '@main/ofapi/sche
 import type { SettingsStore } from '@main/settings/store';
 import type { Keychain } from '@main/secrets/keychain';
 import type { AiFeatureGateway, AiFeatureGatewayRequest, AiGatewayCallbacks } from '@main/ai/gateway';
+import { storePersonaCatalog } from '@main/personas/catalog';
+import {
+  personaStorageScopeForHub,
+  storePersonaAccountMapping,
+} from '@main/personas/pending';
 import type { AiStartRequest, SettingsVM } from '../../src/preload/contract';
 
 export const ACCT = 'acct_test';
 export const CHAT = '4242';
 export const TEST_DRIVER = 'bsqlite3-mc-node';
+export const TEST_PERSONA_DEFINITION_ID = 'v1:test-persona-definition';
+
+export function testPersonaDefinitionId(key: string, version = 1): string {
+  return `${TEST_PERSONA_DEFINITION_ID}:${key}:${String(version)}`;
+}
 
 export function memoryDataLayer(): DataLayer {
   return createDataLayer({
@@ -37,7 +47,10 @@ export function memoryDataLayer(): DataLayer {
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
     hasHubKey: true,
+    hubApiKeyBindingState: 'bound',
     hasHubDeviceToken: false,
+    hubDeviceTokenBindingState: 'none',
+    hubDeviceTokenTransition: null,
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
@@ -96,10 +109,51 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
 }
 
 export function makeSettingsStore(vm: SettingsVM): SettingsStore {
+  const hubApiKey = vm.hasHubKey ? 'agency_hub_core_test' : null;
+  const deviceToken = vm.hasHubDeviceToken ? 'agency_hub_device_test' : null;
   return {
     get: () => Promise.resolve(vm),
+    getHubConnection: () => Promise.resolve({
+      settings: vm,
+      hubBaseUrl: vm.hubBaseUrl,
+      bearer: deviceToken ?? hubApiKey,
+      deviceToken,
+      hubApiKey,
+      deviceTokenTransition: null,
+    }),
     update: () => Promise.resolve(vm),
+    runCredentialMutation: (task) => task(),
   };
+}
+
+/**
+ * The production coordinator consumes the server metadata catalog, not just
+ * the local account mapping. Keep tests honest by seeding active metadata for
+ * every persona key their fixture maps.
+ */
+export function seedActivePersonaCatalog(
+  data: DataLayer,
+  settings: SettingsVM,
+  versions: Readonly<Record<string, number>> = {},
+): void {
+  if (settings.hubBaseUrl === null) return;
+  data.settings.set('hubBaseUrl', settings.hubBaseUrl);
+  const scope = personaStorageScopeForHub(settings.hubBaseUrl);
+  const keys = [...new Set(Object.values(settings.accountMappings).filter((key) => key !== ''))];
+  for (const [accountId, personaKey] of Object.entries(settings.accountMappings)) {
+    storePersonaAccountMapping(data.settings, scope, accountId, personaKey || null);
+  }
+  storePersonaCatalog(
+    data.settings,
+    scope,
+    keys.map((key) => ({
+      key,
+      displayName: key,
+      version: versions[key] ?? 1,
+      status: 'active' as const,
+      definitionId: testPersonaDefinitionId(key, versions[key] ?? 1),
+    })),
+  );
 }
 
 // ─── keychain ─────────────────────────────────────────────────────────────

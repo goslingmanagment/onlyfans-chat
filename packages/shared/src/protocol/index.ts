@@ -336,6 +336,15 @@ export const syncSnapshotRequiredSchema = z.object({
 });
 export type SyncSnapshotRequired = z.infer<typeof syncSnapshotRequiredSchema>;
 
+export const syncSnapshotRestartRequiredSchema = z.object({
+  error: z.literal('sync_snapshot_restart_required'),
+  message: z.string(),
+  statusCode: z.literal(409),
+  replayFloor: z.number().int().nonnegative(),
+  snapshotPath: z.literal('/api/v1/events/snapshot'),
+});
+export type SyncSnapshotRestartRequired = z.infer<typeof syncSnapshotRestartRequiredSchema>;
+
 const syncSnapshotTimestampSchema = z.string().refine(
   (value) => Number.isFinite(Date.parse(value)),
   'Expected an ISO timestamp',
@@ -398,6 +407,9 @@ export const syncSnapshotResponseSchema = z.object({
     }),
   ),
   nextPageCursor: z.number().int().nonnegative().nullable(),
+  /** Present (including terminal null) only when Core accepted the additive
+   * bounded_v1 protocol. Absent means an old/legacy Core response. */
+  nextStateCursor: z.string().min(1).max(2_048).nullable().optional(),
 });
 export type SyncSnapshotResponse = z.infer<typeof syncSnapshotResponseSchema>;
 
@@ -459,10 +471,14 @@ export const domainSnapshotRequiredSchema = z.object({
 export type DomainSnapshotRequired = z.infer<typeof domainSnapshotRequiredSchema>;
 
 export const domainSnapshotResponseSchema = z.object({
-  /** Fresh opaque cursor over the granted accounts ("now" watermarks). */
+  /** Opaque replay cursor bound to the exact numeric grant snapshot represented
+   * by accounts. The cursor may remain behind a state-recovery barrier. */
   cursor: z.string().min(1),
   accounts: z.array(z.object({
     accountId: z.number().int(),
+    /** Platform-native OFAPI id used to walk the matching durable state. Null
+     * for granted pages outside the OFAPI-backed Desktop lane. */
+    accountRef: z.string().min(1).nullable(),
     currentSeq: z.number().int().nonnegative(),
   })),
 });
@@ -555,6 +571,7 @@ export function mapDomainFrame(frame: DomainEventFrame): SyncEvent | null {
       };
     }
     case 'subscription.started':
+    case 'subscription.renewed':
       return { type: 'chatListUpdated', accountId };
     case 'account.auth_changed': {
       const status = typeof data.status === 'string' ? data.status : null;

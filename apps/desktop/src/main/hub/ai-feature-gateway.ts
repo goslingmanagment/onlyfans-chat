@@ -11,6 +11,17 @@ import type { AiFeatureGateway } from '../ai/gateway';
 export interface FeatureAiGatewayOptions {
   client: Pick<HubClient, 'streamAiFeature'>;
   resolvePageLabel: (accountId: string) => Promise<string | null>;
+  /** Exact synchronous page-label proof for the full operation lifetime. */
+  isPageLabelCurrent: (accountId: string, pageLabel: string) => boolean;
+  /** A precondition rejection or missing/mismatched meta proof means the local
+   * full catalog snapshot is stale. The Hub owner refreshes it; the adapter
+   * never patches one key or retries the generation itself. */
+  onPersonaDefinitionStale?: (details: {
+    personaKey: string | undefined;
+    expectedDefinitionId: string;
+    appliedDefinitionId: string | undefined;
+    reason: 'precondition-rejected' | 'meta-proof-missing-or-mismatched';
+  }) => void;
 }
 
 // Kernel gate codes (#120): the kernel stamps each product-gate 400 with a
@@ -20,6 +31,9 @@ const KERNEL_GATE_CODES: Record<string, () => CgError> = {
   gate_hi_greeting_limit: () => new CgError('CG-FLOW-09'),
   gate_ping_active: () => new CgError('CG-FLOW-05'),
   gate_draft_required: () => new CgError('CG-APP-01', { message: 'Draft text is required for this feature' }),
+  persona_definition_changed: () => new CgError('CG-FLOW-02', {
+    message: 'Persona definition changed before generation; catalog refresh required.',
+  }),
 };
 
 /**
@@ -80,6 +94,46 @@ export function createFeatureAiGateway(options: FeatureAiGatewayOptions): AiFeat
   return {
     stream(req, cb) {
       const controller = new AbortController();
+      let invalidated = false;
+      let personaDefinitionVerified = false;
+      let staleReported = false;
+
+      const reportPersonaDefinitionStale = (
+        reason: 'precondition-rejected' | 'meta-proof-missing-or-mismatched',
+        appliedDefinitionId: string | undefined,
+      ): void => {
+        if (staleReported) return;
+        staleReported = true;
+        try {
+          options.onPersonaDefinitionStale?.({
+            personaKey: req.personaKey,
+            expectedDefinitionId: req.expectedPersonaDefinitionId,
+            appliedDefinitionId,
+            reason,
+          });
+        } catch {
+          // Catalog refresh is recovery-only; reporting cannot break the
+          // operation's deterministic terminal error.
+        }
+      };
+
+      const invalidateOperation = (
+        message: string,
+        staleDefinition?: { appliedDefinitionId: string | undefined },
+      ): false => {
+        if (!controller.signal.aborted && !invalidated) {
+          invalidated = true;
+          if (staleDefinition !== undefined) {
+            reportPersonaDefinitionStale(
+              'meta-proof-missing-or-mismatched',
+              staleDefinition.appliedDefinitionId,
+            );
+          }
+          controller.abort();
+          cb.onError?.(new CgError('CG-FLOW-02', { message }));
+        }
+        return false;
+      };
 
       void (async () => {
         try {
@@ -93,6 +147,21 @@ export function createFeatureAiGateway(options: FeatureAiGatewayOptions): AiFeat
               detail: { providerMessage: req.accountId },
             });
           }
+          const ensureCurrentRoute = (): boolean => {
+            if (controller.signal.aborted) return false;
+            if (options.isPageLabelCurrent(req.accountId, pageLabel)) return true;
+            return invalidateOperation(
+              'Core page mapping changed during generation; retry the operation.',
+            );
+          };
+          const ensurePersonaDefinitionVerified = (): boolean => {
+            if (personaDefinitionVerified) return true;
+            return invalidateOperation(
+              'Core did not prove it applied the selected persona definition; refresh and retry.',
+              { appliedDefinitionId: undefined },
+            );
+          };
+          if (!ensureCurrentRoute()) return;
 
           const rawText = await options.client.streamAiFeature(
             {
@@ -108,29 +177,67 @@ export function createFeatureAiGateway(options: FeatureAiGatewayOptions): AiFeat
                 ...(req.mode !== undefined ? { replyMode: req.mode as never } : {}),
                 ...(req.draftText !== undefined ? { draftText: req.draftText } : {}),
                 ...(req.personaKey !== undefined ? { personaKey: req.personaKey } : {}),
+                expectedPersonaDefinitionId: req.expectedPersonaDefinitionId,
                 isRegeneration: req.isRegeneration,
               },
             },
             {
-              onProgress: () => cb.onProgress?.(),
-              onReasoningDelta: (text) => cb.onReasoningDelta?.(text),
-              onStopReason: (stopReason) => cb.onStopReason?.(stopReason),
-              onUsage: (usage) => cb.onUsage?.(usage),
+              onProgress: () => {
+                if (ensureCurrentRoute()) cb.onProgress?.();
+              },
+              onReasoningDelta: (text) => {
+                if (ensureCurrentRoute() && ensurePersonaDefinitionVerified()) {
+                  cb.onReasoningDelta?.(text);
+                }
+              },
+              onStopReason: (stopReason) => {
+                if (ensureCurrentRoute() && ensurePersonaDefinitionVerified()) {
+                  cb.onStopReason?.(stopReason);
+                }
+              },
+              onUsage: (usage) => {
+                if (ensureCurrentRoute() && ensurePersonaDefinitionVerified()) {
+                  cb.onUsage?.(usage);
+                }
+              },
               onMeta: (meta) => {
+                if (!ensureCurrentRoute()) return;
+                if (meta.personaDefinitionId !== req.expectedPersonaDefinitionId) {
+                  invalidateOperation(
+                    'Core applied a different persona definition; refresh and retry.',
+                    { appliedDefinitionId: meta.personaDefinitionId },
+                  );
+                  return;
+                }
+                personaDefinitionVerified = true;
                 cb.onGenerationRef?.(meta.requestId);
                 if (meta.quotaRemainingRequests !== null) {
                   cb.onQuotaRemaining?.(meta.quotaRemainingRequests);
                 }
               },
-              onDebugInput: (input) => cb.onDebugInput?.(input),
-              onText: (text) => cb.onText(text),
+              onDebugInput: (input) => {
+                if (ensureCurrentRoute() && ensurePersonaDefinitionVerified()) {
+                  cb.onDebugInput?.(input);
+                }
+              },
+              onText: (text) => {
+                if (ensureCurrentRoute() && ensurePersonaDefinitionVerified()) {
+                  cb.onText(text);
+                }
+              },
             },
           );
-          if (!controller.signal.aborted) {
+          if (ensureCurrentRoute() && ensurePersonaDefinitionVerified()) {
             cb.onComplete(rawText);
           }
         } catch (error) {
           if (!controller.signal.aborted) {
+            if (
+              error instanceof HubError
+              && error.detail?.kernelCode === 'persona_definition_changed'
+            ) {
+              reportPersonaDefinitionStale('precondition-rejected', undefined);
+            }
             cb.onError?.(toGatewayError(error));
           }
         }

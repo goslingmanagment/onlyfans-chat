@@ -23,6 +23,7 @@ import type {
   MessageGuardBlocksReportVM,
   MessageVM,
   OutboxItemVM,
+  PersonalitiesSnapshotVM,
   SettingsPatch,
   SettingsVM,
   SpenderListVM,
@@ -36,8 +37,11 @@ import type {
   VaultItemVM,
 } from '../../../preload/contract';
 import type { MessageGuardPolicy } from '@chatgoose/shared/message-guard/index';
-import type { Personality } from '@chatgoose/shared/types';
 import { getBridge } from './bridge';
+import {
+  beginAiHubOriginChange,
+  endAiHubOriginChange,
+} from '../features/ai/aiStore';
 
 export const qk = {
   accounts: ['accounts'] as const,
@@ -247,7 +251,7 @@ export function useSettings() {
 }
 
 export function usePersonalities() {
-  return useQuery<Personality[]>({
+  return useQuery<PersonalitiesSnapshotVM>({
     queryKey: qk.personalities,
     queryFn: () => getBridge().invoke('query:personalities.list', undefined),
   });
@@ -320,24 +324,50 @@ export function useHubDeviceTokenIssue() {
   return useMutation({
     mutationFn: (args: { username: string; password: string }) =>
       getBridge().invoke('cmd:hub.issueDeviceToken', args),
+    onMutate: () => {
+      beginAiHubOriginChange();
+    },
     // Activation may fail after the token is durably stored. Refresh settings
     // on either outcome so the sign-out/recovery affordance becomes visible
     // alongside the mutation error while the bounded main-process retry runs.
     onSettled: () => {
+      // Main publishes runtime.aiContext only if the effective principal
+      // actually changed; that committed event owns any global AI reset.
+      endAiHubOriginChange();
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
     },
   });
 }
 
-/** Stage 24 recovery: deletes the local device token so a stale/revoked one
- *  can't keep shadowing a fresh sign-in or the legacy chatter key. Invalidate
- *  on settle (not just success) — the delete lands even if the follow-up hub
- *  reconnect attempt errors, so the settings badge must refresh either way. */
+/** Stage 24 recovery: revokes the exact remote token before deleting its local
+ *  copy, so a stale bearer cannot survive sign-out. Invalidate on settle: the
+ *  delete may land before fallback activation rejects, while revoke failures
+ *  intentionally retain the token and surface the unchanged badge with error. */
 export function useHubSignOutDevice() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => getBridge().invoke('cmd:hub.signOutDevice', undefined),
+    onMutate: () => {
+      beginAiHubOriginChange();
+    },
     onSettled: () => {
+      endAiHubOriginChange();
+      void queryClient.invalidateQueries({ queryKey: ['settings'] });
+    },
+  });
+}
+
+/** Last-resort local release when an old Hub origin is permanently gone. The
+ * settings surface obtains explicit confirmation before invoking this. */
+export function useHubAbandonDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => getBridge().invoke('cmd:hub.abandonDevice', undefined),
+    onMutate: () => {
+      beginAiHubOriginChange();
+    },
+    onSettled: () => {
+      endAiHubOriginChange();
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
     },
   });
@@ -585,32 +615,38 @@ export function useUpdateSettings() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (patch: SettingsPatch) => getBridge().invoke('cmd:settings.update', patch),
-    onSuccess: (settings) => {
+    onMutate: (patch) => {
+      const blocksAi = 'hubBaseUrl' in patch
+        || 'hubApiKey' in patch;
+      if (blocksAi) beginAiHubOriginChange();
+      return { blocksAi };
+    },
+    onSuccess: (settings, patch) => {
       queryClient.setQueryData(qk.settings, settings);
       void queryClient.invalidateQueries({ queryKey: qk.syncStatus });
       void queryClient.invalidateQueries({ queryKey: qk.activity });
+      if ('hubBaseUrl' in patch || 'hubApiKey' in patch) {
+        // Hub replacement swaps the scoped catalog + mappings. Main's
+        // runtime.aiContext event separately resets jobs only when its exact
+        // origin/principal fingerprint actually changed.
+        void queryClient.invalidateQueries({ queryKey: qk.personalities });
+        void queryClient.invalidateQueries({ queryKey: qk.accounts });
+        void queryClient.invalidateQueries({ queryKey: ['fan'] });
+      } else if ('accountPageLabels' in patch) {
+        void queryClient.invalidateQueries({ queryKey: qk.accounts });
+      }
+    },
+    onSettled: (_settings, _error, _patch, mutation) => {
+      if (mutation?.blocksAi === true) {
+        endAiHubOriginChange();
+      }
     },
   });
 }
 
-export function useSavePersonality() {
-  const queryClient = useQueryClient();
+export function useExportLegacyPersonaSnapshot() {
   return useMutation({
-    mutationFn: (personality: Personality) =>
-      getBridge().invoke('cmd:personalities.save', personality),
-    onSuccess: (list) => {
-      queryClient.setQueryData(qk.personalities, list);
-    },
-  });
-}
-
-export function useDeletePersonality() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => getBridge().invoke('cmd:personalities.delete', { id }),
-    onSuccess: (list) => {
-      queryClient.setQueryData(qk.personalities, list);
-    },
+    mutationFn: () => getBridge().invoke('cmd:personalities.exportLegacySnapshot', undefined),
   });
 }
 
@@ -619,9 +655,10 @@ export function useSetMapping() {
   return useMutation({
     mutationFn: (args: { accountId: string; personalityId: string | null }) =>
       getBridge().invoke('cmd:mappings.set', args),
-    onSuccess: () => {
+    onSuccess: (_result, args) => {
       void queryClient.invalidateQueries({ queryKey: qk.accounts });
       void queryClient.invalidateQueries({ queryKey: qk.settings });
+      void queryClient.invalidateQueries({ queryKey: ['fan', args.accountId] });
     },
   });
 }

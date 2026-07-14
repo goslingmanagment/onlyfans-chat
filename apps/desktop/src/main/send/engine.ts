@@ -520,6 +520,8 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       return sent;
     } catch (error) {
       const unavailable = isHubWriteUnavailable(error);
+      const freshRow = data.outbox.get(row.localId);
+      const acceptedByCore = freshRow !== null && freshRow.coreCommandId !== null;
       // Intake is idempotent on localId/clientCommandId. A transport failure may
       // have happened after core accepted the command, so never fall back to a
       // direct send; recovery repeats intake with the same id and reads status.
@@ -532,15 +534,19 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       // precisely because the kernel proved no command exists (a manual
       // retry mints a new clientCommandId).
       const preIntakeRejected =
-        !unavailable && isDefinitePreIntakeRejection(error, data.outbox.get(row.localId));
+        !unavailable && isDefinitePreIntakeRejection(error, freshRow);
+      // Auth/bad-config is terminal only while intake is still provably absent.
+      // Once coreCommandId is durable, even a 401 came from STATUS polling:
+      // Core owns the accepted command and only the verifier may settle it.
+      const terminalFailure = (unavailable && !acceptedByCore) || preIntakeRejected;
       data.outbox.transition({
         localId: row.localId,
         from: ['sending'],
-        to: unavailable || preIntakeRejected ? 'failed' : 'unconfirmed',
+        to: terminalFailure ? 'failed' : 'unconfirmed',
         errorCode: hubFailureCode(error, unavailable || preIntakeRejected),
         errorMessage: error instanceof Error ? error.message : String(error),
       });
-      if (!unavailable && !preIntakeRejected) {
+      if (!terminalFailure) {
         scheduleVerify(row.accountId, row.chatId);
       }
       return false;

@@ -92,16 +92,34 @@ export const issuedDeviceTokenResponseSchema = z.object({
     keyPrefix: z.string(),
     expiresAt: isoTimestamp,
 });
+export const reservedDeviceTokenResponseSchema = z.object({
+    // Distinct-prefix raw reservation bearer, returned exactly once.  It cannot
+    // authenticate ordinary routes until the activation move commits.
+    token: z.string(),
+    reservationId: intId,
+    label: z.string(),
+    keyPrefix: z.string(),
+    reservationExpiresAt: isoTimestamp,
+});
+export const activatedDeviceTokenResponseSchema = issuedDeviceTokenResponseSchema.omit({
+    token: true,
+});
 export const deviceTokenItemSchema = z.object({
     id: intId,
     label: z.string(),
     keyPrefix: z.string(),
+    harvestMachineId: z.string().uuid().nullable(),
     isActive: z.boolean(),
     expiresAt: isoTimestamp,
     lastUsedAt: isoTimestamp.nullable(),
     createdAt: isoTimestamp,
     revokedAt: isoTimestamp.nullable(),
     revokedReason: z.string().nullable(),
+});
+export const deviceTokenHarvestCapabilityBodySchema = z.object({
+    // null explicitly removes the capability; a UUID binds the token to that
+    // one preserved Desktop database identity.
+    machineId: z.string().uuid().nullable(),
 });
 export const accessGrantItemSchema = z.object({
     id: intId,
@@ -168,6 +186,8 @@ export const systemCheckSchema = z.object({
 export const healthResponseSchema = z.object({
     status: serviceHealthStatusEnum,
     timestamp: isoTimestamp,
+    contractHash: z.string().regex(/^[a-f0-9]{64}$/),
+    capabilities: z.array(z.literal("desktop-lifecycle-v2")),
     checks: z.object({
         api: z.object({
             status: z.literal("ok"),
@@ -1581,6 +1601,7 @@ export const aiGatewayStreamFrameSchema = z.discriminatedUnion("type", [
         model: z.string(),
         provider: z.enum(["anthropic", "openrouter"]),
         providerResponseId: z.string().nullable(),
+        personaDefinitionId: z.string().min(16).max(100).optional(),
         quota: aiGatewayQuotaSchema,
     }).strict(),
     z.object({
@@ -1616,13 +1637,15 @@ export const aiFeatureStreamFrameSchema = z.union([
     aiFeatureDebugInputFrameSchema,
 ]);
 // Stage 29 restricted capture class (DP 6-A): owner-only reads.
-// Stage 31: personas are kernel config (DP 9-A single-tenant) — the desktop
-// picker/editor reads and writes here; account→persona mappings stay local.
+// Personas are global single-tenant owner content. Legacy full-text client
+// routes remain during the read-only-client rollout; new clients consume only
+// the metadata catalog and the owner dashboard uses the separate admin CRUD.
 export const aiPersonaSchema = z.object({
     key: z.string().min(1).max(120),
     displayName: z.string().min(1).max(120),
     systemBlock: z.string().min(1).max(50_000),
     updatedAt: z.string(),
+    version: z.number().int().positive(),
 });
 export const aiPersonasResponseSchema = z.object({
     personas: z.array(aiPersonaSchema),
@@ -1633,6 +1656,63 @@ export const aiPersonaUpsertParamsSchema = z.object({
 export const aiPersonaUpsertBodySchema = z.object({
     displayName: z.string().min(1).max(120),
     systemBlock: z.string().min(1).max(50_000),
+    // Omitted keeps shipped clients on their transitional last-write-wins lane.
+    // null is create-only; a number is an optimistic active-revision update.
+    expectedVersion: z.number().int().positive().nullable().optional(),
+}).strict();
+export const aiPersonaArchiveQuerySchema = z.object({
+    // Query strings cannot carry null. Zero is the explicit create-only/absent
+    // sentinel; positive values archive exactly that active revision.
+    expectedVersion: z.coerce.number().int().nonnegative().optional(),
+}).strict();
+export const aiPersonaCatalogItemSchema = z.object({
+    key: z.string().min(1).max(120),
+    displayName: z.string().min(1).max(120),
+    version: z.number().int().positive(),
+    // Opaque identity of the exact definition bytes. Clients compare it but do
+    // not parse it; it is independent of monotonic revision after DB restore.
+    definitionId: z.string().min(16).max(100),
+    status: z.enum(["active", "archived"]),
+});
+export const aiPersonaCatalogResponseSchema = z.object({
+    personas: z.array(aiPersonaCatalogItemSchema),
+});
+const adminAiPersonaCreateKeySchema = z.string()
+    .trim()
+    .min(1)
+    .max(120)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9:_-]*$/, "Use letters, numbers, colon, underscore, or hyphen");
+// Existing rows may have been created through the shipped legacy API, whose
+// key contract allowed any non-empty 120-character string. Admin path params
+// must preserve that exact key so the owner can update/archive every row that
+// appears in the admin list. The narrower policy applies only to new keys.
+const adminAiPersonaExistingKeySchema = z.string().min(1).max(120);
+const adminAiPersonaDisplayNameSchema = z.string().trim().min(1).max(120);
+const adminAiPersonaSystemBlockSchema = z.string()
+    .min(1)
+    .max(50_000)
+    .refine((value) => /\S/.test(value), "System prompt must contain non-whitespace text");
+export const adminAiPersonaSchema = aiPersonaSchema.extend({
+    status: z.enum(["active", "archived"]),
+});
+export const adminAiPersonasResponseSchema = z.object({
+    personas: z.array(adminAiPersonaSchema),
+});
+export const adminAiPersonaCreateBodySchema = z.object({
+    key: adminAiPersonaCreateKeySchema,
+    displayName: adminAiPersonaDisplayNameSchema,
+    systemBlock: adminAiPersonaSystemBlockSchema,
+}).strict();
+export const adminAiPersonaParamsSchema = z.object({
+    key: adminAiPersonaExistingKeySchema,
+});
+export const adminAiPersonaUpdateBodySchema = z.object({
+    displayName: adminAiPersonaDisplayNameSchema,
+    systemBlock: adminAiPersonaSystemBlockSchema,
+    expectedVersion: z.number().int().positive(),
+}).strict();
+export const adminAiPersonaArchiveQuerySchema = z.object({
+    expectedVersion: z.coerce.number().int().positive(),
 }).strict();
 // Stage 30 feature services: kernel-side prompt assembly over the gateway.
 export const aiFeatureStreamParamsSchema = z.object({
@@ -1645,6 +1725,7 @@ export const aiFeatureStreamBodySchema = z.object({
     conversationRef: z.string().min(1).max(255),
     fanRef: z.string().min(1).max(255).nullable().optional(),
     personaKey: z.string().min(1).max(120).nullable().optional(),
+    expectedPersonaDefinitionId: z.string().min(16).max(100).optional(),
     model: z.string().min(1).max(100).optional(),
     reasoningEffort: aiGatewayReasoningEffortSchema.optional(),
     replyTone: z.enum(["none", "casual", "flirty", "upsell", "spicy"]).optional(),
@@ -2687,6 +2768,17 @@ export const syncSnapshotRequiredResponseSchema = z.object({
     currentSeq: z.number().int().nonnegative(),
     snapshotPath: z.literal("/api/v1/events/snapshot"),
 });
+/** A sticky snapshotCursor/stateCursor became older than cleanup's durable
+ * replay floor while a paged recovery was in progress. Clients must discard
+ * only that matching progress record and restart the snapshot without either
+ * cursor; retrying the same continuation can never succeed. */
+export const syncSnapshotRestartRequiredResponseSchema = z.object({
+    error: z.literal("sync_snapshot_restart_required"),
+    message: z.string(),
+    statusCode: z.literal(409),
+    replayFloor: z.number().int().nonnegative(),
+    snapshotPath: z.literal("/api/v1/events/snapshot"),
+});
 // --- Event stream v2 (kernel Stage 21): domain_events, per-account ordering ---
 export const domainEventFrameSchema = z.object({
     accountId: z.number().int().positive(),
@@ -2731,10 +2823,16 @@ export const domainEventsSnapshotRequiredResponseSchema = z.object({
     snapshotPath: z.literal("/api/v1/events/v2/snapshot"),
 });
 export const domainEventsSnapshotResponseSchema = z.object({
-    // Fresh opaque cursor over the requested accounts' current high-waters.
+    // Opaque replay cursor over the requested accounts. It ordinarily points at
+    // current high-waters, but may remain before a retained OFAPI event that is
+    // not yet represented by the durable state snapshot. accounts.currentSeq
+    // remains the raw committed high-water for diagnostics.
     cursor: z.string(),
     accounts: z.array(z.object({
         accountId: z.number().int().positive(),
+        // Platform-native OFAPI id used by Desktop's durable state endpoint. Null
+        // for pages that are not backed by OFAPI.
+        accountRef: z.string().min(1).nullable(),
         currentSeq: z.number().int().nonnegative(),
     })),
 });
@@ -2744,6 +2842,12 @@ export const syncSnapshotQuerySchema = z.object({
     snapshotCursor: z.coerce.number().int().nonnegative().optional(),
     pageCursor: z.coerce.number().int().nonnegative().default(0),
     limit: z.coerce.number().int().min(1).max(50).default(25),
+    // Additive bounded-v1 protocol. Old servers strip these unknown query
+    // fields and return the legacy page shape; upgraded clients detect the
+    // absent nextStateCursor and continue with legacy thread pagination.
+    pageMode: z.literal("bounded_v1").optional(),
+    stateCursor: z.string().min(1).max(2_048).regex(/^[A-Za-z0-9_-]+$/).optional(),
+    messageLimit: z.coerce.number().int().min(1).max(200).default(100),
 });
 export const syncSnapshotMessageSchema = z.object({
     chatId: syncEventIdSchema,
@@ -2803,6 +2907,9 @@ export const syncSnapshotResponseSchema = z.object({
     threads: z.array(syncSnapshotThreadSchema),
     unresolvedTombstones: z.array(syncSnapshotUnresolvedTombstoneSchema),
     nextPageCursor: z.number().int().nonnegative().nullable(),
+    // Present (including terminal null) only for bounded_v1 responses. Its
+    // absence is the backwards-compatible old-Core/legacy-mode signal.
+    nextStateCursor: z.string().min(1).max(2_048).nullable().optional(),
 });
 export const ofapiWebhookAckResponseSchema = z.object({
     received: z.literal(true),
@@ -3273,7 +3380,8 @@ export const ofapiDmColdArchiveStatusResponseSchema = z.object({
 //   session        cookie-session dashboard roles (owner/team_lead)
 //   any-session    any live cookie session, any human role (self-serve auth)
 //   owner-session  cookie session with the owner role (admin surface, swagger/openapi)
-//   apiKey         bearer API key (desktop/extension lanes)
+//   apiKey         bearer API key or device token (desktop/extension lanes)
+//   device-token   device-token bearer only (current-device self-service)
 //   any            any authenticated principal; finer scoping stays in the service
 // scope:"page" = the middleware resolves params.pageLabel and requires canAccessPage
 // before any handler runs; page ids derived from query/body stay handler-checked.
@@ -3281,7 +3389,7 @@ export const ofapiDmColdArchiveStatusResponseSchema = z.object({
 // device tokens additively).
 export const routeAuthPolicySchema = z
     .object({
-    kind: z.enum(["public", "hmac", "monitoring", "session", "any-session", "owner-session", "apiKey", "any"]),
+    kind: z.enum(["public", "hmac", "monitoring", "session", "any-session", "owner-session", "apiKey", "device-token", "pending-device-token", "any"]),
     roles: z.array(userRoleEnum).nonempty().optional(),
     scope: z.enum(["page", "none"]).optional(),
 })
@@ -3303,6 +3411,8 @@ export function routeSecurityFromAuth(auth) {
         case "owner-session":
             return [{ cookieAuth: [] }];
         case "apiKey":
+        case "device-token":
+        case "pending-device-token":
             return [{ bearerAuth: [] }];
         case "any":
             return [{ cookieAuth: [] }, { bearerAuth: [] }];
@@ -3640,10 +3750,12 @@ export const routeSchemas = {
         auth: { kind: "apiKey" },
         tags: ["events"],
         summary: "Current durable sync state for replay-gap recovery",
-        description: "Chatter-key scoped, paginated snapshot for one assigned OFAPI account. "
-            + "The cursor is captured before state reads; clients apply every page idempotently, "
-            + "persist snapshotCursor only after the final page, then resume SSE from that cursor. "
-            + "No OFAPI requests or historical DM backfill are performed.",
+        description: "Chatter-key scoped snapshot for one assigned OFAPI account. The legacy "
+            + "pageCursor mode paginates threads. Additive pageMode=bounded_v1 uses an opaque, "
+            + "scope-bound stateCursor to page unresolved tombstones and per-thread messages "
+            + "with messageLimit<=200; clients apply every page idempotently and persist "
+            + "snapshotCursor only after nextStateCursor=null. No message is truncated and no "
+            + "OFAPI request or historical DM backfill is performed.",
         querystring: syncSnapshotQuerySchema,
         response: {
             200: syncSnapshotResponseSchema,
@@ -3651,6 +3763,7 @@ export const routeSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+            409: syncSnapshotRestartRequiredResponseSchema,
         },
     },
     eventsV2Stream: {
@@ -3679,11 +3792,19 @@ export const routeSchemas = {
         tags: ["events"],
         summary: "Fresh v2 cursor (and per-account heads) for cold start or gap recovery",
         description: "Returns the current per-account high-water cursor for the requested "
-            + "accounts (comma-separated ids; omitted = every granted account). State "
-            + "payloads ride the consumer stages (24/33) additively — v2's snapshot role "
-            + "here is the cursor-reset handshake.",
+            + "accounts (comma-separated ids; omitted = every granted account), including "
+            + "the platform-native accountRef needed for each durable OFAPI state walk. An "
+            + "omitted-accounts cursor is bound to that exact grant keyset: reconnect returns "
+            + "409 rather than widening a stale cursor at a newly granted account's head. "
+            + "Gap-recovery callers pass the rejected opaque sourceCursor so already-applied "
+            + "history is not replayed again; Core also advances past erased sequence holes. "
+            + "State payloads ride the consumer stages (24/33) additively — v2's snapshot "
+            + "role here is the cursor-reset handshake.",
         querystring: z.object({
             accounts: z.string().regex(/^\d+(,\d+)*$/).optional(),
+            // Rejected resume cursor whose already-applied watermarks bound replay
+            // after the caller completes the durable per-account state walk.
+            sourceCursor: z.string().min(1).optional(),
         }),
         response: {
             200: domainEventsSnapshotResponseSchema,
@@ -4037,7 +4158,7 @@ export const routeSchemas = {
         querystring: z.object({
             // 'lifetime' or a month window ('2026-06') — the projection's window values.
             window: z.string().regex(/^(lifetime|\d{4}-\d{2})$/).default("lifetime"),
-            limit: z.coerce.number().int().min(1).max(500).default(150),
+            limit: z.coerce.number().int().min(1).max(1000).default(150),
         }),
         response: {
             200: z.object({
@@ -4675,6 +4796,16 @@ export const routeSchemas = {
             401: errorResponseSchema,
         },
     },
+    aiPersonaCatalog: {
+        auth: { kind: "apiKey" },
+        tags: ["usage"],
+        summary: "List AI persona metadata for client pickers",
+        response: {
+            200: aiPersonaCatalogResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+        },
+    },
     aiPersonaUpsert: {
         auth: { kind: "apiKey" },
         tags: ["usage"],
@@ -4685,6 +4816,7 @@ export const routeSchemas = {
             200: aiPersonaSchema,
             400: errorResponseSchema,
             401: errorResponseSchema,
+            409: errorResponseSchema,
         },
     },
     aiPersonaArchive: {
@@ -4692,10 +4824,64 @@ export const routeSchemas = {
         tags: ["usage"],
         summary: "Archive a kernel AI persona (soft retire)",
         params: aiPersonaUpsertParamsSchema,
+        querystring: aiPersonaArchiveQuerySchema,
         response: {
-            200: z.object({ archived: z.boolean() }),
+            200: z.object({ archived: z.boolean(), version: z.number().int().positive() }),
             401: errorResponseSchema,
             404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminAiPersonasList: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "List full active and archived AI personas for owner administration",
+        response: {
+            200: adminAiPersonasResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+        },
+    },
+    adminAiPersonaCreate: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Create an AI persona",
+        body: adminAiPersonaCreateBodySchema,
+        response: {
+            200: adminAiPersonaSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminAiPersonaUpdate: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Update an active AI persona with optimistic concurrency",
+        params: adminAiPersonaParamsSchema,
+        body: adminAiPersonaUpdateBodySchema,
+        response: {
+            200: adminAiPersonaSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminAiPersonaArchive: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Archive an active AI persona with optimistic concurrency",
+        params: adminAiPersonaParamsSchema,
+        querystring: adminAiPersonaArchiveQuerySchema,
+        response: {
+            200: adminAiPersonaSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
         },
     },
     aiFeatureStream: {
@@ -4713,6 +4899,7 @@ export const routeSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+            409: errorResponseSchema,
             429: errorResponseSchema,
             503: errorResponseSchema,
         },
@@ -4904,6 +5091,46 @@ export const routeSchemas = {
             403: errorResponseSchema,
         },
     },
+    authReserveDeviceToken: {
+        auth: { kind: "any-session" },
+        tags: ["auth"],
+        summary: "Reserve a crash-safe device token for the caller (returned once)",
+        description: "Creates a short-lived pending credential in a separate table. "
+            + "It cannot authenticate ordinary API routes and must be explicitly activated "
+            + "after the client has durably staged local custody.",
+        body: deviceTokenLabelBodySchema,
+        response: {
+            200: reservedDeviceTokenResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+        },
+    },
+    authActivateDeviceToken: {
+        auth: { kind: "pending-device-token" },
+        tags: ["auth"],
+        summary: "Activate a durably staged pending device token",
+        description: "Accepts only the distinct pending-device-token bearer. Atomically "
+            + "moves its digest into active device_tokens and deletes the reservation. "
+            + "Retrying after a lost success response is idempotent.",
+        response: {
+            200: activatedDeviceTokenResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+        },
+    },
+    authRevokeCurrentDeviceToken: {
+        auth: { kind: "device-token" },
+        tags: ["auth"],
+        summary: "Revoke the current device-token bearer",
+        description: "Revokes exactly the credential authenticating this request. "
+            + "Cookie sessions and API keys are rejected; sibling device tokens are untouched.",
+        response: {
+            200: z.object({ revoked: z.literal(true) }),
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+        },
+    },
     adminListDeviceTokens: {
         auth: { kind: "owner-session" },
         tags: ["admin"],
@@ -4924,6 +5151,25 @@ export const routeSchemas = {
         body: deviceTokenLabelBodySchema,
         response: {
             200: issuedDeviceTokenResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    adminSetDeviceTokenHarvestCapability: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Bind or remove a device token's Desktop harvest capability",
+        description: "Owner-only machine binding. Rebinding one machine atomically "
+            + "transfers its harvest authority from the previous device token.",
+        params: z.object({
+            username: z.string().min(1),
+            tokenId: z.coerce.number().int().positive(),
+        }),
+        body: deviceTokenHarvestCapabilityBodySchema,
+        response: {
+            200: deviceTokenItemSchema,
             400: errorResponseSchema,
             401: errorResponseSchema,
             403: errorResponseSchema,

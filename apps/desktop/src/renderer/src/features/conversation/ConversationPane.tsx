@@ -12,6 +12,7 @@ import type { ThreadHistoryLoadState } from './Thread';
 import { handleConversationChange } from '../ai/aiStore';
 import { resetVaultForConversation } from '../vault/vaultStore';
 import { useT } from '../../lib/i18n';
+import { conversationPersonaNotice } from './personaMappingNotice';
 
 export function ConversationPane(): React.JSX.Element {
   const t = useT();
@@ -126,16 +127,16 @@ export function ConversationPane(): React.JSX.Element {
     );
   }
 
-  const unmapped = account !== null && account.personalityId === null;
+  const personaNotice = conversationPersonaNotice(account);
   // expiry is handled by the effect above clearing the store
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg0">
       <ConversationHeader accountId={accountId} chat={chat} fan={fan.data ?? null} />
-      {unmapped && (
+      {personaNotice !== null && (
         <div className="flex flex-none items-center gap-3 border-b border-amber-line bg-amber-bg px-[18px] py-2 text-[12.5px] text-amber">
-          <span className="font-semibold">{t('conv.gateMapTitle')}</span>
-          <span className="text-amber/80">{t('conv.gateMapBody')}</span>
+          <span className="font-semibold">{t(personaNotice.titleKey, personaNotice.params)}</span>
+          <span className="text-amber/80">{t(personaNotice.bodyKey, personaNotice.params)}</span>
           <button
             type="button"
             onClick={() => setView('settings')}

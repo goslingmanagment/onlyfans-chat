@@ -4,11 +4,10 @@
 
 import { ipcMain } from 'electron';
 import { z } from 'zod';
-import type { Personality } from '@chatgoose/shared/types';
 import { analyzePingSegment } from '@chatgoose/shared/transcript/index';
 import { messageGuardPolicySchema } from '@chatgoose/shared/message-guard/index';
 import type { DataLayer, OutboxRow } from '../db/index';
-import type { SettingsStore } from '../settings/store';
+import { effectivePersistedHubBaseUrl, type SettingsStore } from '../settings/store';
 import type { CreditMeter } from '../ofapi/credit-meter';
 import type { SendEngine } from '../send/engine';
 import { auditOutbox } from '../send/audit';
@@ -18,8 +17,27 @@ import type { SpendersRefreshService } from '../spenders/refresh';
 import type { OnlineService } from '../online/service';
 import type { Logger } from '../diagnostics/logger';
 import type { MessageGuardRuntime } from '../message-guard/runtime';
-import { observeSendForAcceptance, reportFeedbackAcceptance } from '../hub/acceptance-reporter';
+import {
+  acceptedSuggestionText,
+  observeSendForAcceptance,
+  reportFeedbackAcceptance,
+} from '../hub/acceptance-reporter';
 import type { AcceptanceSeam, FeedbackContext } from '../hub/acceptance-reporter';
+import {
+  ensurePersonaStorageScope,
+  loadPersonaAccountMappings,
+  personaAccountMappingsKey,
+  storePersonaAccountMapping,
+  type PersonaStorageScope,
+} from '../personas/pending';
+import {
+  ensureLegacyPersonaSnapshot,
+  loadPersonaCatalog,
+  resolvePersonaMapping,
+  type LegacyPersonaSnapshot,
+  type PersonaCatalogEntry,
+} from '../personas/catalog';
+import { isCurrentPersonaSummary } from '../personas/summary';
 import type {
   ActivityVM,
   AiStartRequest,
@@ -171,15 +189,6 @@ const reconcileUnreadSchema = z.object({
 });
 const focusAccountSchema = z.object({ accountId: idSchema.nullable() });
 const mappingSchema = z.object({ accountId: idSchema, personalityId: z.string().nullable() });
-const personalitySchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1).max(120),
-  content: z.string().max(100_000),
-  updatedAt: z.number(),
-  builtin: z.boolean().optional(),
-  builtinVersion: z.number().optional(),
-});
-const personalityDeleteSchema = z.object({ id: z.string().min(1) });
 const aiStartSchema = z.object({
   operationId: z.uuid(),
   feature: z.enum([
@@ -327,9 +336,6 @@ function outboxToVM(row: OutboxRow): OutboxItemVM {
   };
 }
 
-const PERSONALITIES_KEY = 'personalities';
-const personalitiesStoredSchema = z.array(personalitySchema);
-
 /** Coordinator surface pinned for the parallel ai-coordinator build. */
 export interface AiCoordinatorLike {
   start(req: AiStartRequest): void;
@@ -351,8 +357,14 @@ export interface AiCoordinatorLike {
 }
 
 export interface ReadRuntimeProbeResult {
-  /** Runs only after settingsStore.update has durably persisted the replacement. */
-  afterPersist?: () => Promise<void>;
+  /**
+   * Set only after the same probe proves the stored token dead and the pasted
+   * key valid. SettingsStore records and replays this deletion in the same
+   * durable intent as key promotion.
+   */
+  deleteDeadDeviceToken?: boolean;
+  /** Non-custody side effects (redactor/log refresh) after commit. */
+  afterCommit?: () => Promise<void>;
 }
 
 export interface IpcDeps {
@@ -366,17 +378,16 @@ export interface IpcDeps {
    *  sync is null then, and reporting hub:'off' hid the failure behind a
    *  false "not configured". Cleared by any successful runtime rebuild. */
   bootHubAuthFailed?: () => boolean;
+  /** True when credential custody is quarantined because its Hub origin cannot be proven. */
+  hubCredentialAttention?: () => boolean;
   creditMeter: CreditMeter | null;
   coordinator: AiCoordinatorLike | null;
   /** Stage 31 acceptance lifecycle: copied/inserted (feedback) and
    * sent+edited (send-path observer) enqueue here; absent = lane off. */
   acceptance?: AcceptanceSeam | null;
-  /** Stage 31: kernel persona CRUD (personas are kernel config); null while
-   * the hub is unconfigured — the local KV serves as the offline cache. */
+  /** Metadata-only global persona catalog; definitions are owner-managed. */
   personas?: {
-    list: () => Promise<Array<{ key: string; displayName: string; systemBlock: string; updatedAt: string }>>;
-    upsert: (args: { key: string; displayName: string; systemBlock: string }) => Promise<unknown>;
-    archive: (key: string) => Promise<unknown>;
+    list: (expectedHubOrigin?: string) => Promise<PersonaCatalogEntry[]>;
   } | null;
   /** Null until an OFAPI read transport exists (same lifecycle as sync). */
   send: SendEngine | null;
@@ -399,12 +410,15 @@ export interface IpcDeps {
     issueDeviceToken: (args: { username: string; password: string }) => Promise<HubDeviceTokenResultVM>;
     /** Security-first recovery: deletes the token, deactivates its runtime, then tries fallback. */
     signOutDevice: () => Promise<void>;
+    /** Explicit last resort after the old Hub is permanently unavailable. */
+    abandonDevice: () => Promise<void>;
   } | null;
   /** Danger-zone capabilities (paths/shell live only in the composition root). */
   localData?: {
     stats: () => Promise<LocalDataStatsVM>;
     openFolder: () => Promise<void>;
     exportDiagnostics: () => Promise<{ path: string }>;
+    exportPersonaSnapshot: (snapshot: LegacyPersonaSnapshot) => Promise<{ path: string }>;
   } | null;
   /** Stage 12: one-time local-history harvest (Settings → Danger Zone). */
   harvest?: {
@@ -427,9 +441,15 @@ export interface IpcDeps {
    * (no-op) when the patch clears the hub or leaves nothing to probe. The
    * caller persists ONLY after this resolves, so a bad key never reaches the
    * keychain or the settings table (SPEC §15 — no half-applied credential).
-   */
+  */
   probeReadRuntimeForPatch?: (rawPatch: unknown) => Promise<ReadRuntimeProbeResult | void>;
-  /** Called when settings.update changes direct/hub read-runtime credentials. */
+  /**
+   * Serializes the complete validate/persist/cleanup/rebuild transaction with
+   * device-token issue/sign-out. When provided, onOfapiRuntimeConfigChanged is
+   * invoked inside this task and therefore must not re-enter the same queue.
+   */
+  runReadRuntimeMutation?: <Result>(task: () => Promise<Result>) => Promise<Result>;
+  /** Called inside the mutation above when settings.update changes Hub credentials. */
   onOfapiRuntimeConfigChanged?: () => void | Promise<void>;
   /**
    * Called after any settings.update that touched hubApiKey/hubBaseUrl. Key
@@ -442,63 +462,38 @@ export interface IpcDeps {
   getCoreCreditsSummary?: () => Promise<ActivityVM['credits']['core'] | null>;
 }
 
-function normalizePersonality(parsed: z.infer<typeof personalitySchema>): Personality {
-  return {
-    id: parsed.id,
-    name: parsed.name,
-    content: parsed.content,
-    updatedAt: parsed.updatedAt,
-    ...(parsed.builtin !== undefined ? { builtin: parsed.builtin } : {}),
-    ...(parsed.builtinVersion !== undefined ? { builtinVersion: parsed.builtinVersion } : {}),
-  };
-}
-
-/** Stage 31: personas are kernel config; the local KV is the offline cache.
- * A fresh install still shows a mappable builtin entry — its content is a
- * placeholder until the first kernel refresh replaces it. */
-export function loadPersonalities(data: DataLayer): Personality[] {
-  const saved = (data.settings.getParsed(PERSONALITIES_KEY, personalitiesStoredSchema) ?? []).map(
-    normalizePersonality,
-  );
-  if (saved.length > 0) {
-    return saved;
-  }
-  const fallback: Personality[] = [{
-    id: 'builtin:lora',
-    name: 'Lora',
-    content: '(kernel-managed persona — connect Agency Hub to view and edit)',
-    updatedAt: 0,
-    builtin: true,
-  }];
-  data.settings.set(PERSONALITIES_KEY, fallback);
-  return fallback;
-}
-
-/** Kernel → local Personality mapping (the picker/editor VM shape). */
-function kernelPersonaToLocal(persona: {
-  key: string;
-  displayName: string;
-  systemBlock: string;
-  updatedAt: string;
-}): Personality {
-  const updatedAt = Date.parse(persona.updatedAt);
-  return {
-    id: persona.key,
-    name: persona.displayName,
-    content: persona.systemBlock,
-    updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
-    ...(persona.key === 'builtin:lora' ? { builtin: true } : {}),
-  };
-}
-
 export function registerIpcHandlers(deps: IpcDeps): void {
   const { data, settingsStore } = deps;
+  const resolvePersonaContext = (): {
+    scope: PersonaStorageScope | null;
+    hubOrigin: string | null;
+  } => {
+    // Persona source is a synchronous settings-row coordinate. Reading it
+    // directly avoids returning an A snapshot after SettingsStore.get() awaited
+    // keychain I/O while a concurrent settings update committed Hub B.
+    const hubBaseUrl = effectivePersistedHubBaseUrl(data.settings.get('hubBaseUrl'));
+    return {
+      scope: ensurePersonaStorageScope(data.settings, hubBaseUrl),
+      hubOrigin: hubBaseUrl === null
+        ? null
+        : new URL(hubBaseUrl).origin,
+    };
+  };
 
-  ipcMain.handle('query:accounts.list', async () => {
-    const settings = await settingsStore.get();
-    return data.accounts.list().map((row) =>
-      accountToVM(row, row.avatar, settings.accountMappings[row.id] ?? null),
-    );
+  ipcMain.handle('query:accounts.list', () => {
+    const { scope } = resolvePersonaContext();
+    const catalog = scope === null ? null : loadPersonaCatalog(data.settings, scope);
+    const accountMappings = loadPersonaAccountMappings(data.settings, scope);
+    return data.accounts.list().map((row) => {
+      const rawPersonalityId = accountMappings[row.id] ?? null;
+      const resolution = resolvePersonaMapping(catalog, rawPersonalityId);
+      return accountToVM(
+        row,
+        row.avatar,
+        rawPersonalityId,
+        resolution.state,
+      );
+    });
   });
 
   ipcMain.handle('query:chats.list', (_event, rawArgs: unknown) => {
@@ -540,7 +535,16 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     if (!row) {
       return null;
     }
-    const summary = data.summaries.get(args.accountId, args.fanId);
+    const { scope } = resolvePersonaContext();
+    const candidate = data.summaries.get(args.accountId, args.fanId);
+    const summary = scope !== null && isCurrentPersonaSummary(
+      data.settings,
+      scope,
+      args.accountId,
+      candidate,
+    )
+      ? candidate
+      : null;
     return fanToVM(row, row.avatar, summary);
   });
 
@@ -552,18 +556,45 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   ipcMain.handle('query:personalities.list', async () => {
-    if (deps.personas) {
+    const context = resolvePersonaContext();
+    const snapshot = ensureLegacyPersonaSnapshot(data.settings, context.hubOrigin);
+    if (context.scope === null || context.hubOrigin === null) {
+      return {
+        scopeOrigin: null,
+        personas: [],
+        legacySnapshotAvailable: snapshot.schemaVersion === 1,
+      };
+    }
+
+    let catalog = loadPersonaCatalog(data.settings, context.scope) ?? [];
+    if (deps.personas !== null && deps.personas !== undefined) {
       try {
-        const remote = (await deps.personas.list()).map(kernelPersonaToLocal);
-        if (remote.length > 0) {
-          data.settings.set(PERSONALITIES_KEY, remote);
-          return remote;
+        const remote = await deps.personas.list(context.hubOrigin);
+        const current = resolvePersonaContext();
+        if (current.scope?.origin === context.scope.origin) {
+          // HubModule is the sole catalog writer and request-generation owner.
+          // The IPC query only returns its committed latest-started snapshot.
+          catalog = remote;
         }
-      } catch {
-        // Kernel unreachable — the cached copy serves (offline tolerance).
+      } catch (error) {
+        deps.logger?.warn('hub', 'persona catalog refresh failed', safeErrorOutcome(error));
       }
     }
-    return loadPersonalities(data);
+    const current = resolvePersonaContext();
+    if (current.scope?.origin !== context.scope.origin) {
+      return {
+        scopeOrigin: current.scope?.origin ?? null,
+        personas: current.scope === null
+          ? []
+          : loadPersonaCatalog(data.settings, current.scope) ?? [],
+        legacySnapshotAvailable: true,
+      };
+    }
+    return {
+      scopeOrigin: context.scope.origin,
+      personas: catalog,
+      legacySnapshotAvailable: true,
+    };
   });
 
   ipcMain.handle('query:sync.status', (): SyncStatusVM => {
@@ -586,6 +617,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       state: hubStatus === 'live' ? 'live' : syncStatus.state,
       hub: hubStatus,
       hubMode: deps.sync?.hubMode?.() ?? 'off',
+      hubCredentialAttention: deps.hubCredentialAttention?.() === true,
       hubModeOverride: deps.sync?.hubModeOverride?.() ?? 'auto',
       hubLastEventAt:
         hubActivity?.lastEventAt == null ? null : new Date(hubActivity.lastEventAt).toISOString(),
@@ -622,7 +654,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       creditMeter: deps.creditMeter,
       coreCredits,
       // Stage 31: AI is the kernel feature lane — configured = hub transport up.
-      ai: { gatewayConfigured: settings.hubBaseUrl !== null && (settings.hasHubKey || settings.hasHubDeviceToken) },
+      ai: {
+        gatewayConfigured: settings.hubBaseUrl !== null && (
+          settings.hubApiKeyBindingState === 'bound'
+          || settings.hubDeviceTokenBindingState === 'bound'
+        ),
+      },
     });
   });
 
@@ -684,6 +721,14 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     await deps.hubAuth.signOutDevice();
   });
 
+  ipcMain.handle('cmd:hub.abandonDevice', async (_event, rawArgs: unknown) => {
+    hubSignOutDeviceSchema.parse(rawArgs ?? {});
+    if (!deps.hubAuth) {
+      throw new Error('Hub sign-in is not available in this build.');
+    }
+    await deps.hubAuth.abandonDevice();
+  });
+
   function requireLocalData(): NonNullable<IpcDeps['localData']> {
     if (!deps.localData) {
       throw new Error('Local-data tools are not available in this build.');
@@ -694,6 +739,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('query:localData.stats', () => requireLocalData().stats());
   ipcMain.handle('cmd:localData.openFolder', () => requireLocalData().openFolder());
   ipcMain.handle('cmd:localData.exportDiagnostics', () => requireLocalData().exportDiagnostics());
+  ipcMain.handle('cmd:personalities.exportLegacySnapshot', async (_event, rawArgs: unknown) => {
+    z.undefined().parse(rawArgs);
+    const context = resolvePersonaContext();
+    const snapshot = ensureLegacyPersonaSnapshot(data.settings, context.hubOrigin);
+    return requireLocalData().exportPersonaSnapshot(snapshot);
+  });
 
   function requireHarvest(): NonNullable<IpcDeps['harvest']> {
     if (!deps.harvest) {
@@ -886,31 +937,44 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:settings.update', async (_event, rawPatch: unknown) => {
     const rawPatchObject = typeof rawPatch === 'object' && rawPatch !== null;
-    let touchedReadRuntime = rawPatchObject && 'hubApiKey' in rawPatch;
-    if (rawPatchObject && 'hubBaseUrl' in rawPatch) {
-      const current = await settingsStore.get();
-      touchedReadRuntime = touchedReadRuntime || rawPatch.hubBaseUrl !== current.hubBaseUrl;
-    }
-    // 4a (SPEC §15): for hub-affecting keys, VALIDATE a candidate read runtime
-    // built from the patch overrides BEFORE persisting. A bad key/URL rejects
-    // here with nothing written to the keychain or the settings table — no
-    // half-applied credential. Non-hub patches keep persist-then-return.
-    const probeResult =
-      touchedReadRuntime && deps.probeReadRuntimeForPatch
-        ? await deps.probeReadRuntimeForPatch(rawPatch)
-        : undefined;
-    let result = await settingsStore.update(rawPatch);
-    // A dead device token can shadow a newly validated chatter key. Cleanup is
-    // intentionally post-persist: a crash/keychain write failure must leave at
-    // least the old credential in place, never a credentialless install.
-    await probeResult?.afterPersist?.();
-    if (probeResult?.afterPersist !== undefined) {
-      // The pre-cleanup VM still reports the now-deleted device token.
-      result = await settingsStore.get();
-    }
-    if (touchedReadRuntime) {
-      await deps.onOfapiRuntimeConfigChanged?.();
-    }
+    const mayTouchReadRuntime =
+      rawPatchObject && ('hubApiKey' in rawPatch || 'hubBaseUrl' in rawPatch);
+    const persistPatch = async () => {
+      // Recompute under the credential queue: two overlapping URL patches must
+      // not make this decision from an obsolete pre-lock settings snapshot.
+      let touchedReadRuntime = rawPatchObject && 'hubApiKey' in rawPatch;
+      if (rawPatchObject && 'hubBaseUrl' in rawPatch) {
+        const current = await settingsStore.get();
+        touchedReadRuntime = touchedReadRuntime || rawPatch.hubBaseUrl !== current.hubBaseUrl;
+      }
+      // 4a (SPEC §15): for hub-affecting keys, VALIDATE a candidate read runtime
+      // built from the patch overrides BEFORE persisting. A bad key/URL rejects
+      // here with nothing written to the keychain or the settings table — no
+      // half-applied credential. Non-hub patches keep persist-then-return.
+      const probeResult =
+        touchedReadRuntime && deps.probeReadRuntimeForPatch
+          ? await deps.probeReadRuntimeForPatch(rawPatch)
+          : undefined;
+      // A dead device token shadows both the old and candidate chatter keys.
+      // Its deletion is part of SettingsStore's durable transition: before the
+      // intent the old state is intact; after it, restart recovery repeats both
+      // token cleanup and candidate-key promotion. The outer credential FIFO
+      // also prevents deleting a subsequently issued token by name.
+      const result = await settingsStore.update(rawPatch, {
+        deleteDeadHubDeviceToken: probeResult?.deleteDeadDeviceToken === true,
+      });
+      await probeResult?.afterCommit?.();
+      if (touchedReadRuntime) {
+        await deps.onOfapiRuntimeConfigChanged?.();
+      }
+      return result;
+    };
+    // The token cleanup deletes by keychain name. Keep it under the same FIFO
+    // ownership as sign-in/sign-out so it cannot delete a newer token that was
+    // issued while a validated settings update was awaiting persistence.
+    const result = mayTouchReadRuntime && deps.runReadRuntimeMutation !== undefined
+      ? await deps.runReadRuntimeMutation(persistPatch)
+      : await persistPatch();
     // Fires on hub-mode override patches only. Hub URL/key/read-transport edits
     // rebuild the read runtime above, after account-bootstrap validation.
     const touchedHubOverride =
@@ -930,58 +994,29 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return result;
   });
 
-  ipcMain.handle('cmd:personalities.save', async (_event, rawArgs: unknown) => {
-    const personality = normalizePersonality(personalitySchema.parse(rawArgs));
-    if (deps.personas) {
-      try {
-        await deps.personas.upsert({
-          key: personality.id,
-          displayName: personality.name,
-          systemBlock: personality.content,
-        });
-      } catch {
-        // Offline edit: cached locally; the reconfigure sync upserts later.
-      }
-    }
-    const existing = loadPersonalities(data);
-    const next = existing.some((entry) => entry.id === personality.id)
-      ? existing.map((entry) => (entry.id === personality.id ? personality : entry))
-      : [...existing, personality];
-    data.settings.set(PERSONALITIES_KEY, next);
-    return next;
-  });
-
-  ipcMain.handle('cmd:personalities.delete', async (_event, rawArgs: unknown) => {
-    const { id } = personalityDeleteSchema.parse(rawArgs);
-    if (deps.personas) {
-      try {
-        await deps.personas.archive(id);
-      } catch {
-        // Kernel unreachable — local removal still applies; archive retries
-        // are manual (personas are rarely deleted).
-      }
-    }
-    const next = loadPersonalities(data).filter((entry) => entry.id !== id);
-    data.settings.set(PERSONALITIES_KEY, next);
-    // cascade: drop mappings pointing at the deleted personality (legacy behavior)
-    const settings = await settingsStore.get();
-    const mappings = Object.fromEntries(
-      Object.entries(settings.accountMappings).filter(([, pid]) => pid !== id),
-    );
-    await settingsStore.update({ accountMappings: mappings });
-    return next;
-  });
-
-  ipcMain.handle('cmd:mappings.set', async (_event, rawArgs: unknown) => {
+  ipcMain.handle('cmd:mappings.set', (_event, rawArgs: unknown) => {
     const args = mappingSchema.parse(rawArgs);
-    const settings = await settingsStore.get();
-    const mappings = { ...settings.accountMappings };
-    if (args.personalityId === null) {
-      delete mappings[args.accountId];
-    } else {
-      mappings[args.accountId] = args.personalityId;
+    const { scope } = resolvePersonaContext();
+    if (args.personalityId !== null) {
+      const catalog = scope === null ? null : loadPersonaCatalog(data.settings, scope);
+      if (resolvePersonaMapping(catalog, args.personalityId).state !== 'active') {
+        throw new Error('Cannot map an account to an inactive or unresolved personality.');
+      }
     }
-    await settingsStore.update({ accountMappings: mappings });
+    storePersonaAccountMapping(
+      data.settings,
+      scope,
+      args.accountId,
+      args.personalityId,
+    );
+    // SettingsQueries emits the changed storage key; add the affected account
+    // as a separate coalescing lane so every renderer can invalidate only its
+    // fan queries while main's operation-level persona fence handles streams.
+    data.bus.publish({
+      scope: 'settings',
+      accountId: args.accountId,
+      settingsKeys: [personaAccountMappingsKey(scope)],
+    });
   });
 
   ipcMain.handle('cmd:data.purge', () => deps.purge());
@@ -1115,9 +1150,10 @@ export function registerIpcHandlers(deps: IpcDeps): void {
           operationId: reportingContext.operationId,
           requestId: reportingContext.requestId,
           feature: reportingContext.feature,
-          text:
-            reportingContext.parts[args.partIndex ?? 0]
-            ?? reportingContext.parts.join('\n'),
+          text: acceptedSuggestionText(
+            reportingContext.parts,
+            args.partIndex ?? null,
+          ),
         });
       }
       shouldReport = false;
@@ -1150,9 +1186,11 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:send.message', (_event, rawArgs: unknown) => {
     const args = sendMessageSchema.parse(rawArgs);
+    const result = requireSend().sendParts(args);
     // Stage 31 acceptance ('sent'): observe-only by construction — the hook
-    // receives no send engine (see acceptance-reporter.ts); the send call
-    // below is byte-identical either way.
+    // receives no send engine (see acceptance-reporter.ts). Observe only after
+    // sendParts has durably accepted the rows; validation/DB failures must keep
+    // the inserted suggestion available for a later successful send.
     if (deps.acceptance) {
       try {
         observeSendForAcceptance(deps.acceptance, args, new Date().toISOString());
@@ -1160,7 +1198,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
         // Telemetry must never block a send.
       }
     }
-    return requireSend().sendParts(args);
+    return result;
   });
 
   ipcMain.handle('cmd:send.retry', (_event, rawArgs: unknown) => {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { syncStatusInvalidationKeysForEvent } from '../../src/renderer/src/bridge/syncInvalidation';
-import { dbChangedInvalidationKeysForEvent } from '../../src/renderer/src/bridge/dbInvalidation';
+import {
+  dbChangedInvalidationKeysForEvent,
+  settingsKeysInvalidateAiContext,
+} from '../../src/renderer/src/bridge/dbInvalidation';
 
 describe('syncStatusInvalidationKeysForEvent', () => {
   it.each(['messageReceived', 'messageSent'] as const)(
@@ -12,6 +15,45 @@ describe('syncStatusInvalidationKeysForEvent', () => {
 });
 
 describe('dbChangedInvalidationKeysForEvent', () => {
+  it('refreshes persona and account views when catalog metadata changes', () => {
+    expect(dbChangedInvalidationKeysForEvent({
+      scope: 'settings',
+      settingsKeys: ['personalities.catalog.v1.scope'],
+    })).toEqual([
+      ['settings'],
+      ['personalities'],
+      ['accounts'],
+      ['fan'],
+    ]);
+  });
+
+  it('limits account mapping invalidation to the affected account when supplied', () => {
+    expect(dbChangedInvalidationKeysForEvent({
+      scope: 'settings',
+      accountId: 'acct_1',
+      settingsKeys: ['personalities.accountMappings.v2.scope'],
+    })).toEqual([
+      ['settings'],
+      ['accounts'],
+      ['fan', 'acct_1'],
+    ]);
+    expect(dbChangedInvalidationKeysForEvent({
+      scope: 'settings',
+      settingsKeys: ['personalities.accountMappings.v2.scope'],
+    })).toEqual([
+      ['settings'],
+      ['accounts'],
+    ]);
+  });
+
+  it('keeps unrelated and legacy keyless settings events settings-only', () => {
+    expect(dbChangedInvalidationKeysForEvent({
+      scope: 'settings',
+      settingsKeys: ['soundEnabled'],
+    })).toEqual([['settings']]);
+    expect(dbChangedInvalidationKeysForEvent({ scope: 'settings' })).toEqual([['settings']]);
+  });
+
   it.each([
     [
       { scope: 'chats' as const, accountId: 'acct_1', chatId: '101' },
@@ -48,5 +90,22 @@ describe('dbChangedInvalidationKeysForEvent', () => {
     ],
   ])('%s invalidates account-scoped read models', (event, expected) => {
     expect(dbChangedInvalidationKeysForEvent(event)).toEqual(expected);
+  });
+});
+
+describe('settingsKeysInvalidateAiContext', () => {
+  it('recognizes only main\'s committed runtime identity event', () => {
+    expect(settingsKeysInvalidateAiContext(['runtime.aiContext'])).toBe(true);
+  });
+
+  it('does not reset AI for patches, catalog, mappings, or legacy keyless events', () => {
+    expect(settingsKeysInvalidateAiContext([
+      'hubBaseUrl',
+      'accountPageLabels',
+      'accountMappings',
+      'personalities.catalog.v1.scope-digest',
+      'personalities.accountMappings.v2.scope-digest',
+    ])).toBe(false);
+    expect(settingsKeysInvalidateAiContext(undefined)).toBe(false);
   });
 });

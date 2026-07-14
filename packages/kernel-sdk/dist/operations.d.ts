@@ -1,4 +1,20 @@
 export declare const kernelOperations: {
+    readonly adminAiPersonaArchive: {
+        readonly method: "DELETE";
+        readonly path: "/api/v1/admin/ai/personas/:key";
+    };
+    readonly adminAiPersonaCreate: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ai/personas";
+    };
+    readonly adminAiPersonaUpdate: {
+        readonly method: "PUT";
+        readonly path: "/api/v1/admin/ai/personas/:key";
+    };
+    readonly adminAiPersonasList: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/ai/personas";
+    };
     readonly adminAssignPage: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/users/:username/pages";
@@ -151,6 +167,10 @@ export declare const kernelOperations: {
         readonly method: "DELETE";
         readonly path: "/api/v1/admin/users/:username/models/:modelSlug";
     };
+    readonly adminSetDeviceTokenHarvestCapability: {
+        readonly method: "PATCH";
+        readonly path: "/api/v1/admin/users/:username/device-tokens/:tokenId/harvest-capability";
+    };
     readonly adminSetPassword: {
         readonly method: "PATCH";
         readonly path: "/api/v1/admin/users/:username/password";
@@ -227,6 +247,10 @@ export declare const kernelOperations: {
         readonly method: "DELETE";
         readonly path: "/api/v1/ai/personas/:key";
     };
+    readonly aiPersonaCatalog: {
+        readonly method: "GET";
+        readonly path: "/api/v1/ai/persona-catalog";
+    };
     readonly aiPersonaUpsert: {
         readonly method: "PUT";
         readonly path: "/api/v1/ai/personas/:key";
@@ -255,6 +279,10 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/archive/search";
     };
+    readonly authActivateDeviceToken: {
+        readonly method: "POST";
+        readonly path: "/api/v1/auth/device-tokens/activate";
+    };
     readonly authChangePassword: {
         readonly method: "POST";
         readonly path: "/api/v1/auth/change-password";
@@ -262,6 +290,14 @@ export declare const kernelOperations: {
     readonly authIssueDeviceToken: {
         readonly method: "POST";
         readonly path: "/api/v1/auth/device-tokens";
+    };
+    readonly authReserveDeviceToken: {
+        readonly method: "POST";
+        readonly path: "/api/v1/auth/device-tokens/reservations";
+    };
+    readonly authRevokeCurrentDeviceToken: {
+        readonly method: "DELETE";
+        readonly path: "/api/v1/auth/device-tokens/current";
     };
     readonly cancelOfapiCommand: {
         readonly method: "POST";

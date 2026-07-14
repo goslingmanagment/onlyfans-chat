@@ -1,7 +1,7 @@
 // Modal-free settings surface (own view next to the rail): sticky section nav
 // (scrollspy) + card sections. P1 scope grew through P5 + the settings-UX
 // revamp: keys (+tests), hub (+test), models (+cost hints), context sizes,
-// personalities CRUD + account mapping, behavior (language / UI scale /
+// read-only persona catalog + local account mapping, behavior (language / UI scale /
 // spend-style previews), local data tools (PRD F9).
 
 import { useEffect, useRef, useState } from 'react';

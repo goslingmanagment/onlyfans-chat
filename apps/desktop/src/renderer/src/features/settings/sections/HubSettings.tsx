@@ -10,6 +10,7 @@ import type { KeyTestResultVM, SettingsVM, SyncStatusVM } from '../../../../../p
 import type { UiLocale, UiTranslator } from '@chatgoose/shared/i18n/index';
 import {
   useAccounts,
+  useHubAbandonDevice,
   useHubDeviceTokenIssue,
   useHubSignOutDevice,
   useKeyTest,
@@ -19,7 +20,13 @@ import { localizedErrorText, useLocale, useT } from '../../../lib/i18n';
 import { Badge } from '../../../design/Badge';
 import { Button } from '../../../design/Button';
 import { Section, type PatchFn } from '../SettingsSurface';
-import { isHubConfigured } from './hubSettingsLogic';
+import {
+  canIssueHubDeviceToken,
+  hasHubDeviceTokenCustody,
+  hubDeviceTokenStatus,
+  hubUrlChangeRequiresDeviceSignOut,
+  isHubConfigured,
+} from './hubSettingsLogic';
 
 type HubState = SyncStatusVM['hub'];
 
@@ -58,6 +65,7 @@ export function HubSettings({
   const [signInPassword, setSignInPassword] = useState('');
   const deviceToken = useHubDeviceTokenIssue();
   const signOutDevice = useHubSignOutDevice();
+  const abandonDevice = useHubAbandonDevice();
   const [labels, setLabels] = useState<Record<string, string>>(settings.accountPageLabels);
   const accounts = useAccounts();
   const syncStatus = useSyncStatus();
@@ -67,10 +75,20 @@ export function HubSettings({
 
   const configured = isHubConfigured(settings);
   const hub: HubState = syncStatus.data?.hub ?? 'off';
+  const hasDeviceTokenCustody = hasHubDeviceTokenCustody(settings);
+  const deviceTokenStatus = hubDeviceTokenStatus(settings);
+  const showAbandonDevice = settings.hubDeviceTokenTransition !== null
+    || settings.hubDeviceTokenBindingState !== 'bound'
+    || signOutDevice.isError;
   // The probe runs against the SAVED config — while the form holds unsaved
   // edits a green result would "verify" the wrong URL/key, so Test locks
   // until the edits are saved (or reverted).
   const formDirty = baseUrl.trim() !== (settings.hubBaseUrl ?? '') || key.trim() !== '';
+  const mustSignOutBeforeHubChange = hubUrlChangeRequiresDeviceSignOut({
+    draftHubBaseUrl: baseUrl,
+    savedHubBaseUrl: settings.hubBaseUrl,
+    hasStoredDeviceToken: hasDeviceTokenCustody,
+  });
 
   function save(): void {
     // One patch for everything: key writes go to the keychain and publish no
@@ -115,8 +133,12 @@ export function HubSettings({
             <div className="text-[13px] font-semibold">{t('hub.key.label')}</div>
             <div className="text-[11px] text-ink-low">{t('hub.key.hint')}</div>
           </div>
-          <Badge tone={settings.hasHubKey ? 'green' : 'neutral'}>
-            {settings.hasHubKey ? t('common.configured') : t('common.notSet')}
+          <Badge tone={settings.hubApiKeyBindingState === 'bound' ? 'green' : settings.hasHubKey ? 'amber' : 'neutral'}>
+            {settings.hubApiKeyBindingState === 'bound'
+              ? t('common.configured')
+              : settings.hasHubKey
+                ? t('hub.credentialAttention')
+                : t('common.notSet')}
           </Badge>
           <input
             type="password"
@@ -133,8 +155,16 @@ export function HubSettings({
             <div className="text-[13px] font-semibold">{t('hub.deviceToken.label')}</div>
             <div className="text-[11px] text-ink-low">{t('hub.deviceToken.hint')}</div>
           </div>
-          <Badge tone={settings.hasHubDeviceToken ? 'green' : 'neutral'}>
-            {settings.hasHubDeviceToken ? t('common.configured') : t('common.notSet')}
+          <Badge tone={deviceTokenStatus === 'configured' ? 'green' : deviceTokenStatus === 'unset' ? 'neutral' : 'amber'}>
+            {deviceTokenStatus === 'activation'
+                ? t('hub.deviceToken.signingIn')
+                : deviceTokenStatus === 'revocation'
+                  ? t('hub.deviceToken.signingOut')
+                  : deviceTokenStatus === 'configured'
+                    ? t('common.configured')
+                    : deviceTokenStatus === 'attention'
+                      ? t('hub.credentialAttention')
+                      : t('common.notSet')}
           </Badge>
           <input
             type="text"
@@ -155,7 +185,13 @@ export function HubSettings({
             className="min-w-0 flex-1 rounded-chip border border-line bg-bg1 px-3 py-1.5 text-[13px] outline-none placeholder:text-ink-low focus:border-clay-line"
           />
           <Button
-            disabled={signInUser.trim() === '' || signInPassword === '' || deviceToken.isPending}
+            disabled={!canIssueHubDeviceToken({
+              username: signInUser,
+              password: signInPassword,
+              hasStoredDeviceToken: hasDeviceTokenCustody,
+              issuePending: deviceToken.isPending,
+              signOutPending: signOutDevice.isPending || abandonDevice.isPending,
+            })}
             onClick={() => {
               deviceToken.mutate(
                 { username: signInUser.trim(), password: signInPassword },
@@ -165,16 +201,33 @@ export function HubSettings({
           >
             {deviceToken.isPending ? t('hub.deviceToken.signingIn') : t('hub.deviceToken.signIn')}
           </Button>
-          {settings.hasHubDeviceToken && (
+          {hasDeviceTokenCustody && (
             <Button
               variant="danger"
               size="sm"
-              disabled={signOutDevice.isPending}
+              disabled={
+                signOutDevice.isPending || abandonDevice.isPending || deviceToken.isPending
+              }
               onClick={() => signOutDevice.mutate()}
             >
               {signOutDevice.isPending
                 ? t('hub.deviceToken.signingOut')
                 : t('hub.deviceToken.signOut')}
+            </Button>
+          )}
+          {hasDeviceTokenCustody && showAbandonDevice && (
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={
+                abandonDevice.isPending || signOutDevice.isPending || deviceToken.isPending
+              }
+              title={t('hub.deviceToken.abandonHint')}
+              onClick={() => abandonDevice.mutate()}
+            >
+              {abandonDevice.isPending
+                ? t('hub.deviceToken.abandoning')
+                : t('hub.deviceToken.abandon')}
             </Button>
           )}
         </div>
@@ -186,6 +239,12 @@ export function HubSettings({
             })}
           </div>
         )}
+        {settings.hasHubKey && settings.hubApiKeyBindingState !== 'bound' && (
+          <p className="pl-47 text-[11px] text-bad">{t('hub.key.bindingAttention')}</p>
+        )}
+        {settings.hasHubDeviceToken && settings.hubDeviceTokenBindingState !== 'bound' && (
+          <p className="pl-47 text-[11px] text-bad">{t('hub.deviceToken.bindingAttention')}</p>
+        )}
         {signOutDevice.isError && (
           <div className="pl-47 text-[11px] text-bad">
             {signOutDevice.error instanceof Error
@@ -193,10 +252,22 @@ export function HubSettings({
               : t('hub.deviceToken.signOutFailed')}
           </div>
         )}
+        {abandonDevice.isError && (
+          <div className="pl-47 text-[11px] text-bad">
+            {abandonDevice.error instanceof Error
+              ? abandonDevice.error.message
+              : t('hub.deviceToken.abandonFailed')}
+          </div>
+        )}
         {deviceToken.isError && (
           <div className="pl-47 text-[11px] text-bad">
             {deviceToken.error instanceof Error ? deviceToken.error.message : t('hub.deviceToken.failed')}
           </div>
+        )}
+        {mustSignOutBeforeHubChange && (
+          <p className="pl-47 text-[11px] text-bad">
+            {t('hub.deviceToken.signOutBeforeHubChange')}
+          </p>
         )}
         <div className="flex items-center gap-3 py-1">
           <div className="w-44 flex-none">
@@ -262,7 +333,7 @@ export function HubSettings({
           >
             {test.isPending ? t('keys.testing') : t('hub.testBtn')}
           </Button>
-          <Button size="sm" onClick={save}>
+          <Button size="sm" disabled={mustSignOutBeforeHubChange} onClick={save}>
             {t('hub.saveBtn')}
           </Button>
         </div>

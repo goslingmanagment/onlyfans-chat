@@ -20,9 +20,16 @@ function hooksWith(
   data: DataLayer,
   client = makeFakeHubClient(),
   pageLabel: string | null = 'Lora',
+  isSummaryCurrent: (accountId: string, entry: NonNullable<ReturnType<DataLayer['summaries']['get']>>) => boolean = () => true,
 ) {
   const resolvePageLabel = vi.fn(() => Promise.resolve(pageLabel));
-  const hooks = createSummaryHubHooks({ client, data, resolvePageLabel });
+  const hooks = createSummaryHubHooks({
+    client,
+    data,
+    resolvePageLabel,
+    isSummaryCurrent,
+    isPageLabelCurrent: () => true,
+  });
   return { hooks, client, resolvePageLabel };
 }
 
@@ -125,6 +132,8 @@ describe('prefetchSummary', () => {
       client: makeFakeHubClient(),
       data,
       resolvePageLabel,
+      isSummaryCurrent: () => true,
+      isPageLabelCurrent: () => true,
     });
     const publicPrefetch = hooks.prefetchSummary?.({ accountId: ACCT, fanId: FAN });
     await Promise.resolve();
@@ -155,7 +164,12 @@ describe('pushSummary', () => {
 
     await hooks.pushSummary?.({ accountId: ACCT, fanId: FAN, body: HUB_BODY, generatedAt: HUB_AT_MS });
     expect(client.putFanProfileMock).toHaveBeenCalledWith(
-      expect.objectContaining({ pageLabel: 'Lora', fanId: FAN, body: HUB_BODY }),
+      expect.objectContaining({
+        pageLabel: 'Lora',
+        fanId: FAN,
+        body: HUB_BODY,
+        generatedAtMs: HUB_AT_MS,
+      }),
     );
     expect(hubSyncStateOf(data)).toMatchObject({ state: 'synced' });
   });
@@ -264,6 +278,8 @@ describe('pushSummary', () => {
     const first = createSummaryHubHooks({
       client: makeFakeHubClient(),
       data,
+      isSummaryCurrent: () => true,
+      isPageLabelCurrent: () => true,
       resolvePageLabel: () => new Promise<string | null>((resolve) => {
         resolvePage = resolve;
       }),
@@ -288,11 +304,13 @@ describe('pushSummary', () => {
       client: replacementClient,
       data,
       resolvePageLabel: async () => 'acct-page',
+      isSummaryCurrent: () => true,
+      isPageLabelCurrent: () => true,
     });
     await replacement.replayPending();
 
     expect(replacementClient.putFanProfileMock).toHaveBeenCalledWith(
-      expect.objectContaining({ body: HUB_BODY }),
+      expect.objectContaining({ body: HUB_BODY, generatedAtMs: HUB_AT_MS }),
     );
     expect(hubSyncStateOf(data)).toMatchObject({ state: 'synced' });
     replacement.dispose();
@@ -311,6 +329,129 @@ describe('pushSummary', () => {
 
     expect(client.putFanProfileMock).toHaveBeenCalledTimes(1);
     expect(data.summaries.get(ACCT, FAN)?.body).toBe('new local body');
+    hooks.dispose();
+  });
+
+  it('parks a pending Hub A summary instead of replaying it through Hub B', async () => {
+    const data = memoryDataLayer();
+    seedSummary(data, {
+      body: HUB_BODY,
+      generatedAt: HUB_AT_MS,
+      personalityId: 'source-A',
+    });
+    const offlineA = makeFakeHubClient({ putFanProfile: () => Promise.reject(new Error('offline')) });
+    const hooksA = createSummaryHubHooks({
+      client: offlineA,
+      data,
+      resolvePageLabel: async () => 'acct-page',
+      isSummaryCurrent: (_accountId, entry) => entry.personalityId === 'source-A',
+      isPageLabelCurrent: () => true,
+    });
+    await hooksA.pushSummary?.({ accountId: ACCT, fanId: FAN, body: HUB_BODY, generatedAt: HUB_AT_MS });
+    hooksA.dispose();
+
+    const clientB = makeFakeHubClient();
+    const hooksB = createSummaryHubHooks({
+      client: clientB,
+      data,
+      resolvePageLabel: async () => 'acct-page',
+      isSummaryCurrent: (_accountId, entry) => entry.personalityId === 'source-B',
+      isPageLabelCurrent: () => true,
+    });
+    await hooksB.replayPending();
+    expect(clientB.putFanProfileMock).not.toHaveBeenCalled();
+    expect(hubSyncStateOf(data)).toMatchObject({ state: 'pending' });
+    hooksB.dispose();
+
+    const onlineA = makeFakeHubClient();
+    const replacementA = createSummaryHubHooks({
+      client: onlineA,
+      data,
+      resolvePageLabel: async () => 'acct-page',
+      isSummaryCurrent: (_accountId, entry) => entry.personalityId === 'source-A',
+      isPageLabelCurrent: () => true,
+    });
+    await replacementA.replayPending();
+    expect(onlineA.putFanProfileMock).toHaveBeenCalledTimes(1);
+    replacementA.dispose();
+  });
+
+  it('keeps a parked row retryable when its persona mapping becomes current again', async () => {
+    vi.useFakeTimers();
+    const data = memoryDataLayer();
+    seedSummary(data, {
+      body: HUB_BODY,
+      generatedAt: HUB_AT_MS,
+      personalityId: 'source-A',
+      hubSyncState: { state: 'pending', at: HUB_AT, reason: 'delivery-failed' },
+    });
+    let current = false;
+    const client = makeFakeHubClient();
+    const hooks = createSummaryHubHooks({
+      client,
+      data,
+      resolvePageLabel: async () => 'acct-page',
+      isSummaryCurrent: () => current,
+      isPageLabelCurrent: () => true,
+    });
+
+    await hooks.replayPending();
+    expect(client.putFanProfileMock).not.toHaveBeenCalled();
+    current = true;
+    await vi.advanceTimersByTimeAsync(SUMMARY_REPLAY_DELAY_MS);
+
+    expect(client.putFanProfileMock).toHaveBeenCalledTimes(1);
+    hooks.dispose();
+  });
+
+  it('rechecks persona identity after page resolution and never PUTs a remapped summary', async () => {
+    const data = memoryDataLayer();
+    seedSummary(data, { body: HUB_BODY, generatedAt: HUB_AT_MS, personalityId: 'source-A' });
+    let current = true;
+    let resolvePage!: (value: string | null) => void;
+    const client = makeFakeHubClient();
+    const hooks = createSummaryHubHooks({
+      client,
+      data,
+      resolvePageLabel: () => new Promise<string | null>((resolve) => {
+        resolvePage = resolve;
+      }),
+      isSummaryCurrent: () => current,
+      isPageLabelCurrent: () => true,
+    });
+
+    const push = hooks.pushSummary?.({ accountId: ACCT, fanId: FAN, body: HUB_BODY, generatedAt: HUB_AT_MS });
+    current = false;
+    resolvePage('acct-page');
+    await push;
+
+    expect(client.putFanProfileMock).not.toHaveBeenCalled();
+    hooks.dispose();
+  });
+
+  it('rechecks page destination after resolution and never PUTs to a replaced override', async () => {
+    const data = memoryDataLayer();
+    seedSummary(data, { body: HUB_BODY, generatedAt: HUB_AT_MS });
+    let destination = 'old-page-coordinate';
+    let resolvePage!: (value: string | null) => void;
+    const client = makeFakeHubClient();
+    const hooks = createSummaryHubHooks({
+      client,
+      data,
+      resolvePageLabel: () => new Promise<string | null>((resolve) => {
+        resolvePage = resolve;
+      }),
+      isSummaryCurrent: () => true,
+      isPageLabelCurrent: (_accountId, pageLabel) => pageLabel === destination,
+    });
+
+    const push = hooks.pushSummary?.({ accountId: ACCT, fanId: FAN, body: HUB_BODY, generatedAt: HUB_AT_MS });
+    destination = 'new-page-coordinate';
+    resolvePage('old-page');
+    await push;
+
+    expect(client.putFanProfileMock).not.toHaveBeenCalled();
+    expect(hubSyncStateOf(data)).toMatchObject({ state: 'pending' });
     hooks.dispose();
   });
 });

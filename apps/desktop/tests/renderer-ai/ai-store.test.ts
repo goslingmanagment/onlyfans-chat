@@ -25,9 +25,12 @@ vi.mock('../../src/renderer/src/bridge/bridge', () => ({
 import {
   useAiStore,
   activateToneFromMenu,
+  beginAiHubOriginChange,
+  endAiHubOriginChange,
   setToneMenuOpen,
   handleConversationChange,
   handleAiOperationEvent,
+  resetAiJobsForHubOriginChange,
   startAiFeature,
   type AiStartContext,
 } from '../../src/renderer/src/features/ai/aiStore';
@@ -172,6 +175,55 @@ describe('handleConversationChange (sticky-within-chat / reset-on-switch)', () =
 
     handleConversationChange(CTX.accountId, CTX.chatId);
     expect(useAiStore.getState().op?.operationId).toBe(operationId);
+  });
+
+  it('drops every old-Hub AI result while preserving the human draft and tone state', () => {
+    useAiStore.setState({ draftText: 'human draft', toneOverride: 'flirty', preferSplit: true });
+    startAiFeature('fast-reply', CTX);
+    const operationId = useAiStore.getState().op?.operationId;
+    expect(operationId).toBeTruthy();
+    handleAiOperationEvent({
+      type: 'operation:complete',
+      operationId: operationId!,
+      feature: 'fast-reply',
+      result: { rawText: 'Hub A result', parts: ['Hub A result'], splitModeRequested: false },
+    });
+    expect(useAiStore.getState().view).not.toBeNull();
+
+    resetAiJobsForHubOriginChange();
+
+    expect(useAiStore.getState()).toMatchObject({
+      jobsById: {},
+      jobsByConversation: {},
+      op: null,
+      view: null,
+      debugPrompt: null,
+      draftText: 'human draft',
+      toneOverride: 'flirty',
+      preferSplit: true,
+    });
+    // A late terminal frame from the retired runtime cannot resurrect A data.
+    handleAiOperationEvent({
+      type: 'operation:complete',
+      operationId: operationId!,
+      feature: 'fast-reply',
+      result: { rawText: 'late Hub A result', parts: ['late Hub A result'], splitModeRequested: false },
+    });
+    expect(useAiStore.getState().view).toBeNull();
+  });
+
+  it('does not admit a new job while a Hub-origin mutation is in flight', () => {
+    beginAiHubOriginChange();
+    try {
+      startAiFeature('fast-reply', CTX);
+      expect(invoke).not.toHaveBeenCalled();
+      expect(useAiStore.getState().jobsById).toEqual({});
+      expect(useUiStore.getState().toasts.at(-1)).toMatchObject({
+        title: 'Hub settings updating',
+      });
+    } finally {
+      endAiHubOriginChange();
+    }
   });
 
   it('blocks the fourth concurrent generation with a visible toast', () => {

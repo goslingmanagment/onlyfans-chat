@@ -5,7 +5,11 @@
 // timeouts, sanitizer/XML result pipeline, CG-coded errors.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { QUICK_OPERATION_TIMEOUT_MS, STREAM_CHUNK_FLUSH_MS } from '@chatgoose/shared/constants';
+import {
+  DEFAULT_AGENCY_HUB_BASE_URL,
+  QUICK_OPERATION_TIMEOUT_MS,
+  STREAM_CHUNK_FLUSH_MS,
+} from '@chatgoose/shared/constants';
 import { CgError } from '@chatgoose/shared/errors/index';
 import { parseOperationEvent } from '@chatgoose/shared/protocol/index';
 import type { OperationEvent } from '@chatgoose/shared/protocol/index';
@@ -13,6 +17,12 @@ import type { LlmUsageMetrics } from '@chatgoose/shared/usage-metrics';
 import { createAiCoordinator } from '@main/ai/index';
 import type { AiCoordinator, AiCoordinatorDeps } from '@main/ai/index';
 import type { DataLayer } from '@main/db/index';
+import { personaCatalogKey, storePersonaCatalog } from '@main/personas/catalog';
+import {
+  personaStorageScopeForHub,
+  personaSummaryCacheIdentity,
+  storePersonaAccountMapping,
+} from '@main/personas/pending';
 import {
   ACCT,
   CHAT,
@@ -22,7 +32,9 @@ import {
   makeSettingsVM,
   makeStubFeatureGateway,
   memoryDataLayer,
+  seedActivePersonaCatalog,
   startRequest,
+  testPersonaDefinitionId,
 } from './helpers';
 import type { StubFeatureGateway } from './helpers';
 import type { SettingsVM } from '../../src/preload/contract';
@@ -45,6 +57,7 @@ describe('AiCoordinator', () => {
     settings: SettingsVM = makeSettingsVM(),
     overrides: Partial<AiCoordinatorDeps> = {},
   ): void {
+    seedActivePersonaCatalog(data, settings);
     coordinator = createAiCoordinator({
       data,
       settingsStore: makeSettingsStore(settings),
@@ -278,10 +291,314 @@ describe('AiCoordinator', () => {
     expect(gateway.calls).toHaveLength(0);
   });
 
+  it.each([
+    ['missing catalog metadata', null],
+    ['an archived catalog entry', 'archived'],
+  ] as const)('gates on %s with CG-FLOW-02 before the gateway', async (_label, state) => {
+    const settings = makeSettingsVM();
+    build(settings);
+    const scope = personaStorageScopeForHub(settings.hubBaseUrl!);
+    if (state === null) {
+      data.settings.remove(personaCatalogKey(scope));
+    } else {
+      storePersonaCatalog(data.settings, scope, [{
+        key: 'builtin:lora',
+        displayName: 'Lora',
+        version: 1,
+        status: state,
+        definitionId: testPersonaDefinitionId('builtin:lora'),
+      }]);
+    }
+
+    coordinator.start(startRequest());
+    await flushAsync();
+
+    expect(framesOfType(frames, 'operation:error')[0]?.error.code).toBe('CG-FLOW-02');
+    expect(gateway.calls).toHaveLength(0);
+  });
+
   it('passes the mapped persona key on the feature request (custom personas kernel-synced)', async () => {
     build(makeSettingsVM({ accountMappings: { [ACCT]: 'p-custom' } }));
     await startAndReachStream();
     expect(gateway.calls[0]?.personaKey).toBe('p-custom');
+  });
+
+  it('invalidates a fan-summary cache entry when the server persona definition changes', async () => {
+    const settings = makeSettingsVM();
+    const prefetchSummary = vi.fn(async () => ({
+      body: 'hub body with unknown persona provenance',
+      generatedAt: 456,
+    }));
+    build(settings, { summaryHub: { prefetchSummary } });
+    const scope = personaStorageScopeForHub(settings.hubBaseUrl!);
+    data.summaries.put(ACCT, CHAT, {
+      body: 'cached v1',
+      personalityId: personaSummaryCacheIdentity(
+        scope,
+        'builtin:lora',
+        testPersonaDefinitionId('builtin:lora'),
+      ),
+      personalityUpdatedAt: 1,
+      generatedAt: 123,
+      spendingVerified: true,
+      subscriptionVerified: true,
+      modelId: 'kernel',
+    });
+
+    coordinator.start(startRequest({ feature: 'fan-summary' }));
+    await flushAsync();
+    expect(gateway.calls).toHaveLength(0);
+    expect(framesOfType(frames, 'operation:complete')[0]?.result).toMatchObject({
+      rawText: 'cached v1',
+      summaryMeta: { cached: true },
+    });
+
+    storePersonaCatalog(data.settings, scope, [{
+      key: 'builtin:lora',
+      displayName: 'Lora',
+      version: 2,
+      status: 'active',
+      definitionId: testPersonaDefinitionId('builtin:lora', 2),
+    }]);
+    coordinator.start(startRequest({ operationId: 'op-v2', feature: 'fan-summary' }));
+    await flushAsync();
+    expect(gateway.calls).toHaveLength(1);
+    expect(prefetchSummary).not.toHaveBeenCalled();
+    expect(data.summaries.get(ACCT, CHAT)).toMatchObject({
+      body: 'cached v1',
+      personalityUpdatedAt: 1,
+    });
+
+    gateway.cb?.onComplete('generated v2');
+    await flushAsync();
+    expect(data.summaries.get(ACCT, CHAT)).toMatchObject({
+      body: 'generated v2',
+      personalityUpdatedAt: 0,
+    });
+  });
+
+  it('keeps in-flight work and summary cache valid across numeric version restore', async () => {
+    const settings = makeSettingsVM();
+    const scope = personaStorageScopeForHub(settings.hubBaseUrl!);
+    const definitionId = testPersonaDefinitionId('builtin:lora');
+    build(settings);
+
+    await startAndReachStream({ feature: 'fan-summary' });
+    storePersonaCatalog(data.settings, scope, [{
+      key: 'builtin:lora',
+      displayName: 'Lora restored',
+      version: 2,
+      status: 'active',
+      definitionId,
+    }]);
+    gateway.cb?.onComplete('same exact definition');
+    await flushAsync();
+
+    expect(framesOfType(frames, 'operation:error')).toHaveLength(0);
+    expect(framesOfType(frames, 'operation:complete')).toHaveLength(1);
+    expect(data.summaries.get(ACCT, CHAT)).toMatchObject({
+      body: 'same exact definition',
+      personalityUpdatedAt: 0,
+    });
+
+    storePersonaCatalog(data.settings, scope, [{
+      key: 'builtin:lora',
+      displayName: 'Lora restored again',
+      version: 1,
+      status: 'active',
+      definitionId,
+    }]);
+    coordinator.start(startRequest({ operationId: 'op-restored-cache', feature: 'fan-summary' }));
+    await flushAsync();
+
+    expect(gateway.calls).toHaveLength(1);
+    expect(framesOfType(frames, 'operation:complete').at(-1)?.result).toMatchObject({
+      rawText: 'same exact definition',
+      summaryMeta: { cached: true },
+    });
+  });
+
+  it('does not reuse a same-key/version fan-summary from another Hub origin', async () => {
+    const settingsA = makeSettingsVM({ hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL });
+    const settingsB = makeSettingsVM({ hubBaseUrl: 'http://localhost:3100' });
+    const scopeA = personaStorageScopeForHub(settingsA.hubBaseUrl!);
+    const scopeB = personaStorageScopeForHub(settingsB.hubBaseUrl!);
+    data.summaries.put(ACCT, CHAT, {
+      body: 'Hub A summary',
+      personalityId: personaSummaryCacheIdentity(
+        scopeA,
+        'builtin:lora',
+        testPersonaDefinitionId('builtin:lora'),
+      ),
+      personalityUpdatedAt: 1,
+      generatedAt: 123,
+      spendingVerified: true,
+      subscriptionVerified: true,
+      modelId: 'kernel',
+    });
+    build(settingsB);
+
+    coordinator.start(startRequest({ feature: 'fan-summary' }));
+    await flushAsync();
+
+    expect(gateway.calls).toHaveLength(1);
+    expect(framesOfType(frames, 'operation:complete')).toHaveLength(0);
+    gateway.cb?.onComplete('Hub B summary');
+    await flushAsync();
+    expect(data.summaries.get(ACCT, CHAT)).toMatchObject({
+      body: 'Hub B summary',
+      personalityId: personaSummaryCacheIdentity(
+        scopeB,
+        'builtin:lora',
+        testPersonaDefinitionId('builtin:lora'),
+      ),
+      personalityUpdatedAt: 0,
+    });
+  });
+
+  it('preserves the last valid summary when a forced refresh fails', async () => {
+    const settings = makeSettingsVM();
+    const scope = personaStorageScopeForHub(settings.hubBaseUrl!);
+    data.summaries.put(ACCT, CHAT, {
+      body: 'last good summary',
+      personalityId: personaSummaryCacheIdentity(
+        scope,
+        'builtin:lora',
+        testPersonaDefinitionId('builtin:lora'),
+      ),
+      personalityUpdatedAt: 1,
+      generatedAt: 123,
+      spendingVerified: true,
+      subscriptionVerified: true,
+      modelId: 'kernel',
+    });
+    build(settings);
+
+    await startAndReachStream({
+      feature: 'fan-summary',
+      params: { forceRegenerate: true },
+    });
+    expect(data.summaries.get(ACCT, CHAT)?.body).toBe('last good summary');
+    gateway.cb?.onError?.(new CgError('CG-API-01'));
+    await flushAsync();
+
+    expect(framesOfType(frames, 'operation:error')).toHaveLength(1);
+    expect(data.summaries.get(ACCT, CHAT)).toMatchObject({
+      body: 'last good summary',
+      personalityId: personaSummaryCacheIdentity(
+        scope,
+        'builtin:lora',
+        testPersonaDefinitionId('builtin:lora'),
+      ),
+      personalityUpdatedAt: 1,
+    });
+  });
+
+  it('rejects a stale summary completion after a mid-stream persona remap', async () => {
+    const settings = makeSettingsVM({ accountMappings: { [ACCT]: 'persona-p' } });
+    const scope = personaStorageScopeForHub(settings.hubBaseUrl!);
+    const pushSummary = vi.fn(async () => undefined);
+    build(settings, { summaryHub: { pushSummary } });
+    storePersonaCatalog(data.settings, scope, [
+      {
+        key: 'persona-p',
+        displayName: 'P',
+        version: 1,
+        status: 'active',
+        definitionId: testPersonaDefinitionId('persona-p'),
+      },
+      {
+        key: 'persona-q',
+        displayName: 'Q',
+        version: 1,
+        status: 'active',
+        definitionId: testPersonaDefinitionId('persona-q'),
+      },
+    ]);
+    data.summaries.put(ACCT, CHAT, {
+      body: 'valid Q summary',
+      personalityId: personaSummaryCacheIdentity(
+        scope,
+        'persona-q',
+        testPersonaDefinitionId('persona-q'),
+      ),
+      personalityUpdatedAt: 1,
+      generatedAt: 123,
+      spendingVerified: true,
+      subscriptionVerified: true,
+      modelId: 'kernel',
+    });
+
+    await startAndReachStream({ feature: 'fan-summary' });
+    expect(gateway.calls[0]?.personaKey).toBe('persona-p');
+    storePersonaAccountMapping(data.settings, scope, ACCT, 'persona-q');
+    gateway.cb?.onComplete('stale P summary');
+    await flushAsync();
+
+    expect(framesOfType(frames, 'operation:error')[0]?.error.code).toBe('CG-FLOW-02');
+    expect(framesOfType(frames, 'operation:complete')).toHaveLength(0);
+    expect(data.summaries.get(ACCT, CHAT)?.body).toBe('valid Q summary');
+    expect(pushSummary).not.toHaveBeenCalled();
+  });
+
+  it('stops a reply stream when its persona mapping changes', async () => {
+    const settings = makeSettingsVM({ accountMappings: { [ACCT]: 'persona-p' } });
+    const scope = personaStorageScopeForHub(settings.hubBaseUrl!);
+    build(settings);
+    storePersonaCatalog(data.settings, scope, [
+      {
+        key: 'persona-p',
+        displayName: 'P',
+        version: 1,
+        status: 'active',
+        definitionId: testPersonaDefinitionId('persona-p'),
+      },
+      {
+        key: 'persona-q',
+        displayName: 'Q',
+        version: 1,
+        status: 'active',
+        definitionId: testPersonaDefinitionId('persona-q'),
+      },
+    ]);
+
+    await startAndReachStream();
+    storePersonaAccountMapping(data.settings, scope, ACCT, 'persona-q');
+    gateway.cb?.onText('stale P reply');
+    gateway.cb?.onComplete('stale P reply');
+    await flushAsync();
+
+    expect(framesOfType(frames, 'operation:error')[0]?.error.code).toBe('CG-FLOW-02');
+    expect(framesOfType(frames, 'operation:chunk')).toHaveLength(0);
+    expect(framesOfType(frames, 'operation:complete')).toHaveLength(0);
+  });
+
+  it('stops a reply stream when the persisted Hub origin changes', async () => {
+    const settings = makeSettingsVM({ hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL });
+    build(settings);
+
+    await startAndReachStream();
+    data.settings.set('hubBaseUrl', 'http://localhost:3100');
+    gateway.cb?.onComplete('stale Hub A reply');
+    await flushAsync();
+
+    expect(framesOfType(frames, 'operation:error')[0]?.error.code).toBe('CG-FLOW-02');
+    expect(framesOfType(frames, 'operation:complete')).toHaveLength(0);
+  });
+
+  it('does not adopt an unproven Hub profile when no local fan-summary exists', async () => {
+    const prefetchSummary = vi.fn(async () => ({
+      body: 'remote body with no persona revision',
+      generatedAt: 456,
+    }));
+    build(makeSettingsVM(), { summaryHub: { prefetchSummary } });
+
+    coordinator.start(startRequest({ feature: 'fan-summary' }));
+    await flushAsync();
+
+    expect(prefetchSummary).not.toHaveBeenCalled();
+    expect(gateway.calls).toHaveLength(1);
+    expect(data.summaries.get(ACCT, CHAT)).toBeNull();
   });
 
   it('reports the gateway-priced spend and records the local spend log', async () => {

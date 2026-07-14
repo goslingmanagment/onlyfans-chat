@@ -62,6 +62,11 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
   const db = openDatabase(options);
   const bus = options.bus ?? createChangeBus();
   const aiSpendLog = createAiSpendLogQueries(db);
+  const aiAcceptance = createAiAcceptanceQueries(db, aiSpendLog);
+  // Renderer job state is process-local. After a restart no prior generated
+  // result remains actionable, so retain durable correlation/accounting
+  // metadata but not reply text written by this or an older app version.
+  aiAcceptance.scrubPartsFromPreviousSession();
   return {
     db,
     bus,
@@ -75,7 +80,7 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     outbox: createOutboxQueries(db, bus),
     creditLog: createCreditLogQueries(db),
     aiSpendLog,
-    aiAcceptance: createAiAcceptanceQueries(db, aiSpendLog),
+    aiAcceptance,
     mediaUrls: createMediaUrlsQueries(db),
     threadFetchLog: createThreadFetchLogQueries(db),
     messageGuardEvents: createMessageGuardEventsQueries(db, bus),
@@ -143,7 +148,10 @@ export { createCreditLogQueries } from './queries/credit-log';
 export type { CreditLogQueries } from './queries/credit-log';
 export { createAiSpendLogQueries } from './queries/ai-spend';
 export type { AiSpendLogQueries, AiSpendRunArgs } from './queries/ai-spend';
-export { createAiAcceptanceQueries } from './queries/ai-acceptance';
+export {
+  AI_ACCEPTANCE_PARTS_RETENTION_COUNT,
+  createAiAcceptanceQueries,
+} from './queries/ai-acceptance';
 export type {
   AiAcceptanceKnownOperation,
   AiAcceptanceOperation,

@@ -219,8 +219,10 @@ export type HubIngestBatchResult = KernelOperationResponse<'ingestObservations'>
 export type HubAiGatewayStreamRequest = z.input<(typeof routeSchemas)['aiGatewayStream']['body']>;
 /** Stage 31: kernel feature-service request — refs, not assembled blocks. */
 export type HubAiFeatureStreamRequest = z.input<(typeof routeSchemas)['aiFeatureStream']['body']>;
-/** Stage 31: kernel persona record (DP 9-A — personas are kernel config). */
-export type HubAiPersona = z.infer<(typeof routeSchemas)['aiPersonasList']['response'][200]>['personas'][number];
+/** Metadata-only catalog available to bearer-authenticated clients. */
+export type HubAiPersonaCatalogEntry = z.infer<
+  (typeof routeSchemas)['aiPersonaCatalog']['response'][200]
+>['personas'][number];
 
 export const HUB_OFAPI_COMMAND_STATES = [
   'queued',
@@ -280,7 +282,12 @@ export interface HubAiGatewayStreamCallbacks {
   /** Stage 31: the gateway meta frame — requestId is the generation ref
    * (the acceptance correlation key kernel-side). quotaRemainingRequests is
    * the page's remaining daily gateway budget (null = kernel didn't say). */
-  onMeta?: (meta: { requestId: string; clientRequestId: string; quotaRemainingRequests: number | null }) => void;
+  onMeta?: (meta: {
+    requestId: string;
+    clientRequestId: string;
+    personaDefinitionId: string | undefined;
+    quotaRemainingRequests: number | null;
+  }) => void;
   onDebugInput?: (input: HubAiDebugInput) => void;
 }
 
@@ -327,6 +334,8 @@ export interface HubClient {
     pageLabel: string;
     fanId: string;
     body: string;
+    /** Original Scan generation time; Core append time is not dossier age. */
+    generatedAtMs: number;
     timeoutMs?: number;
   }): Promise<HubProfileVersion>;
   postUsageBatch(args: { events: HubUsageEvent[]; timeoutMs?: number }): Promise<HubUsageBatchResult>;
@@ -347,15 +356,8 @@ export interface HubClient {
     args: { request: HubAiGatewayStreamRequest; signal?: HubAbortSignalLike },
     callbacks: HubAiGatewayStreamCallbacks,
   ): Promise<string>;
-  /** Stage 31: kernel persona list/upsert (picker + editor + one-time sync). */
-  listAiPersonas(options?: { timeoutMs?: number }): Promise<HubAiPersona[]>;
-  upsertAiPersona(args: {
-    key: string;
-    displayName: string;
-    systemBlock: string;
-    timeoutMs?: number;
-  }): Promise<HubAiPersona>;
-  archiveAiPersona(args: { key: string; timeoutMs?: number }): Promise<{ archived: boolean }>;
+  /** Global persona definitions are owner-managed; clients receive metadata only. */
+  listAiPersonaCatalog(options?: { timeoutMs?: number }): Promise<HubAiPersonaCatalogEntry[]>;
   /** Stage 31: stream a KERNEL-ASSEMBLED feature generation (Stage 30 route).
    *  Same SSE frames as streamAiGateway; the kernel loads context and builds
    *  the prompt — the desktop sends refs only. */
@@ -529,7 +531,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
       }
     },
 
-    async putFanProfile({ pageLabel, fanId, body, timeoutMs }) {
+    async putFanProfile({ pageLabel, fanId, body, generatedAtMs, timeoutMs }) {
       if (body.length === 0 || body.length > HUB_PROFILE_MAX_CHARS) {
         // Core's zod would 400 this deterministically; fail before the wire.
         throw new HubError('bad-request', {
@@ -540,7 +542,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
       // fans — SPEC §9.1), so 404 maps to HubError 'http'.
       return delegate(() => clientFor(timeoutMs ?? HUB_PROFILE_PUT_TIMEOUT_MS).upsertFanProfile({
         params: { pageLabel, platformUserId: fanId },
-        body: { body },
+        body: { body, generatedAtMs },
       }));
     },
 
@@ -614,7 +616,12 @@ export function createHubClient(options: HubClientOptions): HubClient {
           callbacks.onProgress?.();
           switch (frame.type) {
             case 'meta':
-              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId, quotaRemainingRequests: frame.quota.remainingRequestsToday });
+              callbacks.onMeta?.({
+                requestId: frame.requestId,
+                clientRequestId: frame.clientRequestId,
+                personaDefinitionId: frame.personaDefinitionId,
+                quotaRemainingRequests: frame.quota.remainingRequestsToday,
+              });
               return;
             case 'content_delta':
               state.rawText += frame.text;
@@ -665,23 +672,10 @@ export function createHubClient(options: HubClientOptions): HubClient {
       return state.rawText;
     },
 
-    async listAiPersonas(personaOptions) {
+    async listAiPersonaCatalog(personaOptions) {
       const response = await delegate(() =>
-        clientFor(personaOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonasList());
+        clientFor(personaOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaCatalog());
       return response.personas;
-    },
-
-    async upsertAiPersona({ key, displayName, systemBlock, timeoutMs }) {
-      return delegate(() =>
-        clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaUpsert({
-          params: { key },
-          body: { displayName, systemBlock },
-        }));
-    },
-
-    async archiveAiPersona({ key, timeoutMs }) {
-      return delegate(() =>
-        clientFor(timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaArchive({ params: { key } }));
     },
 
     async streamAiFeature({ feature, request: streamRequest, signal, debugPromptEcho }, callbacks) {
@@ -714,7 +708,12 @@ export function createHubClient(options: HubClientOptions): HubClient {
               });
               return;
             case 'meta':
-              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId, quotaRemainingRequests: frame.quota.remainingRequestsToday });
+              callbacks.onMeta?.({
+                requestId: frame.requestId,
+                clientRequestId: frame.clientRequestId,
+                personaDefinitionId: frame.personaDefinitionId,
+                quotaRemainingRequests: frame.quota.remainingRequestsToday,
+              });
               return;
             case 'content_delta':
               state.rawText += frame.text;

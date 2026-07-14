@@ -10,6 +10,7 @@ import type { HubIngestObservationEvent } from '@chatgoose/shared/hub/index';
 import type { DataLayer } from '@main/db/index';
 import {
   ACCEPTANCE_SPOOL_SETTINGS_KEY,
+  acceptanceDestinationIdentity,
   createAcceptanceReporter,
   createAcceptanceTracker,
   enqueueAcceptanceEvent,
@@ -39,11 +40,16 @@ describe('acceptance reporter (spool + drain)', () => {
   let batches: HubIngestObservationEvent[][];
   let failWith: unknown | null;
   let client: { postIngestObservations: ReturnType<typeof vi.fn> } | null;
+  let destinationIdentity: string | null;
 
   beforeEach(() => {
     data = memoryDataLayer();
     batches = [];
     failWith = null;
+    destinationIdentity = acceptanceDestinationIdentity(
+      'https://hub-a.example.test',
+      'credential-a',
+    );
     client = {
       postIngestObservations: vi.fn((args: { events: HubIngestObservationEvent[] }) => {
         if (failWith !== null) {
@@ -63,6 +69,7 @@ describe('acceptance reporter (spool + drain)', () => {
     return createAcceptanceReporter({
       data,
       getClient: () => client as never,
+      getDestinationIdentity: () => destinationIdentity,
       onWarn: (message) => warns.push(message),
     });
   }
@@ -101,7 +108,11 @@ describe('acceptance reporter (spool + drain)', () => {
 
   it('drains an event durably enqueued while no credential runtime existed', async () => {
     client = null;
-    enqueueAcceptanceEvent(data, event({ operationId: 'op-runtime-gap' }));
+    enqueueAcceptanceEvent(
+      data,
+      event({ operationId: 'op-runtime-gap' }),
+      destinationIdentity,
+    );
     const reporter = makeReporter();
     expect(reporter.pending()).toBe(1);
 
@@ -115,6 +126,74 @@ describe('acceptance reporter (spool + drain)', () => {
 
     expect(reporter.pending()).toBe(0);
     expect(batches[0]?.[0]?.payload['operationId']).toBe('op-runtime-gap');
+    reporter.dispose();
+  });
+
+  it('parks Hub A telemetry while Hub B is active and drains each event only to its destination', async () => {
+    const reporter = makeReporter();
+    reporter.enqueue(event({ operationId: 'op-a' }));
+    destinationIdentity = acceptanceDestinationIdentity(
+      'https://hub-b.example.test',
+      'credential-b',
+    );
+    reporter.enqueue(event({ operationId: 'op-b', at: '2026-07-06T12:00:01.000Z' }));
+
+    await reporter.flushNow();
+    expect(batches.flat().map((item) => item.payload['operationId'])).toEqual(['op-b']);
+    expect(reporter.pending()).toBe(1);
+
+    destinationIdentity = acceptanceDestinationIdentity(
+      'https://hub-a.example.test',
+      'credential-a',
+    );
+    await reporter.flushNow();
+    expect(batches.flat().map((item) => item.payload['operationId'])).toEqual(['op-b', 'op-a']);
+    expect(reporter.pending()).toBe(0);
+    reporter.dispose();
+  });
+
+  it('separates different credential principals at the same Hub origin', async () => {
+    const reporter = makeReporter();
+    const principalA = acceptanceDestinationIdentity(
+      'https://hub.example.test/some/path',
+      'credential-a',
+    );
+    const principalB = acceptanceDestinationIdentity(
+      'https://hub.example.test/another/path',
+      'credential-b',
+    );
+    expect(principalA).not.toBe(principalB);
+    expect(principalA).not.toContain('credential-a');
+
+    destinationIdentity = principalA;
+    reporter.enqueue(event({ operationId: 'op-principal-a' }));
+    destinationIdentity = principalB;
+    reporter.enqueue(
+      event({ operationId: 'op-principal-b', at: '2026-07-06T12:00:01.000Z' }),
+    );
+
+    await reporter.flushNow();
+    expect(batches.flat().map((item) => item.payload['operationId'])).toEqual([
+      'op-principal-b',
+    ]);
+    expect(reporter.pending()).toBe(1);
+
+    destinationIdentity = principalA;
+    await reporter.flushNow();
+    expect(batches.flat().map((item) => item.payload['operationId'])).toEqual([
+      'op-principal-b',
+      'op-principal-a',
+    ]);
+    expect(reporter.pending()).toBe(0);
+    reporter.dispose();
+  });
+
+  it('never sends a legacy spool row without destination provenance', async () => {
+    enqueueAcceptanceEvent(data, event({ operationId: 'op-unscoped' }));
+    const reporter = makeReporter();
+    await reporter.flushNow();
+    expect(client?.postIngestObservations).not.toHaveBeenCalled();
+    expect(reporter.pending()).toBe(1);
     reporter.dispose();
   });
 
@@ -231,6 +310,7 @@ describe('acceptance reporter (spool + drain)', () => {
     enqueueAcceptanceEvent(
       data,
       event({ operationId: 'op-new-runtime', at: '2026-07-06T12:02:00.000Z' }),
+      destinationIdentity,
     );
     settleOld?.();
     await oldFlush;
@@ -272,6 +352,7 @@ describe('acceptance reporter (spool + drain)', () => {
     enqueueAcceptanceEvent(
       data,
       event({ operationId: 'op-new-client', at: '2026-07-06T12:03:00.000Z' }),
+      destinationIdentity,
     );
     const newBatches: HubIngestObservationEvent[][] = [];
     client = {
@@ -341,7 +422,7 @@ describe('acceptance tracker + IPC hook bodies', () => {
     parts: ['hey you 😘', 'miss me?'],
   };
 
-  it('feedback: copied enqueues; inserted also tracks the part text', () => {
+  it('feedback: copied enqueues; inserted part 1 tracks the first part', () => {
     const { seam, enqueued } = makeSeam();
     reportFeedbackAcceptance(seam, CONTEXT, 'copied', null, AT);
     expect(enqueued).toHaveLength(1);
@@ -349,9 +430,31 @@ describe('acceptance tracker + IPC hook bodies', () => {
 
     reportFeedbackAcceptance(seam, CONTEXT, 'inserted', 1, AT);
     // Unedited send of the tracked part → sent with edited=false.
-    observeSendForAcceptance(seam, { accountId: 'acct_test', chatId: '4242', parts: ['miss me?'] }, AT);
+    observeSendForAcceptance(seam, { accountId: 'acct_test', chatId: '4242', parts: ['hey you 😘'] }, AT);
     expect(enqueued.map((item) => item.action)).toEqual(['copied', 'inserted', 'sent']);
     expect(enqueued[2]).toMatchObject({ action: 'sent', edited: false, requestId: 'gen-7' });
+  });
+
+  it('tracks the last numbered part with the 1-based feedback contract', () => {
+    const { seam, enqueued } = makeSeam();
+    reportFeedbackAcceptance(seam, CONTEXT, 'inserted', 2, AT);
+    observeSendForAcceptance(
+      seam,
+      { accountId: 'acct_test', chatId: '4242', parts: ['miss me?'] },
+      AT,
+    );
+    expect(enqueued[1]).toMatchObject({ action: 'sent', edited: false });
+  });
+
+  it('tracks partIndex 0 as the whole split reply', () => {
+    const { seam, enqueued } = makeSeam();
+    reportFeedbackAcceptance(seam, CONTEXT, 'inserted', 0, AT);
+    observeSendForAcceptance(
+      seam,
+      { accountId: 'acct_test', chatId: '4242', parts: CONTEXT.parts },
+      AT,
+    );
+    expect(enqueued[1]).toMatchObject({ action: 'sent', edited: false });
   });
 
   it('sent is one-shot and detects edits', () => {
@@ -367,6 +470,18 @@ describe('acceptance tracker + IPC hook bodies', () => {
     // Second send in the same conversation: nothing tracked anymore.
     observeSendForAcceptance(seam, { accountId: 'acct_test', chatId: '4242', parts: ['again'] }, AT);
     expect(enqueued).toHaveLength(2);
+  });
+
+  it('clears inserted-to-sent correlation on a destination-actor switch', () => {
+    const tracker = createAcceptanceTracker();
+    tracker.trackInserted('acct_test', '4242', {
+      operationId: 'op-a',
+      requestId: 'gen-a',
+      feature: 'fast-reply',
+      text: 'Hub A suggestion',
+    });
+    tracker.clear();
+    expect(tracker.consumeForSend('acct_test', '4242', 'Hub A suggestion')).toBeNull();
   });
 
   it('send observer is observe-only: frozen args survive, no event without a tracked insert', () => {

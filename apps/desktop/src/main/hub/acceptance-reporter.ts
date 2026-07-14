@@ -62,6 +62,8 @@ const spooledEventSchema = z.object({
   edited: z.boolean().optional(),
   at: z.string(),
   attempts: z.number().int().min(0),
+  /** Missing only on legacy rows, which are never safe to deliver. */
+  destinationIdentity: z.string().min(1).nullable().optional(),
 });
 
 type SpooledEvent = z.infer<typeof spooledEventSchema>;
@@ -82,6 +84,8 @@ export interface AcceptanceReporterOptions {
   data: Pick<DataLayer, 'settings'>;
   /** Null while the hub is unconfigured — events keep spooling. */
   getClient: () => Pick<HubClient, 'postIngestObservations'> | null;
+  /** Exact Hub origin + credential/principal fingerprint for enqueue and drain. */
+  getDestinationIdentity: () => string | null;
   onWarn?: (message: string) => void;
 }
 
@@ -90,9 +94,10 @@ export interface AcceptanceReporterOptions {
 export function enqueueAcceptanceEvent(
   data: Pick<DataLayer, 'settings'>,
   event: AcceptanceEventInput,
+  destinationIdentity: string | null = null,
 ): void {
   const spool = data.settings.getParsed(ACCEPTANCE_SPOOL_SETTINGS_KEY, spoolSchema) ?? [];
-  spool.push({ ...event, attempts: 0 });
+  spool.push({ ...event, attempts: 0, destinationIdentity });
   data.settings.set(
     ACCEPTANCE_SPOOL_SETTINGS_KEY,
     spool.length > SPOOL_CAP ? spool.slice(spool.length - SPOOL_CAP) : spool,
@@ -101,7 +106,9 @@ export function enqueueAcceptanceEvent(
 
 function toWireEvent(event: SpooledEvent): HubIngestObservationEvent {
   return {
-    clientEventId: uuidV5(`${event.operationId}:${event.action}:${event.at}`),
+    clientEventId: uuidV5(
+      `${event.destinationIdentity ?? 'unscoped'}:${event.operationId}:${event.action}:${event.at}`,
+    ),
     kind: 'ai_acceptance',
     observedAt: event.at,
     payload: {
@@ -114,6 +121,13 @@ function toWireEvent(event: SpooledEvent): HubIngestObservationEvent {
       ...(event.edited !== undefined ? { edited: event.edited } : {}),
     },
   };
+}
+
+/** No bearer material is persisted; the digest still separates actors using
+ * different credentials at the same Hub origin. */
+export function acceptanceDestinationIdentity(hubOrigin: string, bearer: string): string {
+  const digest = createHash('sha256').update(bearer).digest('hex');
+  return `${new URL(hubOrigin).origin}|sha256:${digest}`;
 }
 
 export function createAcceptanceReporter(options: AcceptanceReporterOptions): AcceptanceReporter {
@@ -195,21 +209,32 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
           return;
         }
         const client = options.getClient();
-        if (client === null) {
+        const destinationIdentity = options.getDestinationIdentity();
+        if (client === null || destinationIdentity === null) {
           return; // hub unconfigured — spool waits
         }
         const spool = load();
         if (spool.length === 0) {
           return;
         }
-        const batch = spool.slice(0, BATCH_MAX);
+        // Rows for another destination actor stay parked for a possible switch back.
+        // Legacy rows without provenance are intentionally fail-closed.
+        const batch = spool
+          .filter((event) => event.destinationIdentity === destinationIdentity)
+          .slice(0, BATCH_MAX);
+        if (batch.length === 0) {
+          return;
+        }
         try {
           await client.postIngestObservations({ events: batch.map(toWireEvent) });
           updatePostedBatch(batch, () => null);
           if (disposed) {
             return;
           }
-          if (options.getClient() !== client) {
+          if (
+            options.getClient() !== client
+            || options.getDestinationIdentity() !== destinationIdentity
+          ) {
             flushAgain = true;
             return;
           }
@@ -220,7 +245,10 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
           if (disposed) {
             return;
           }
-          if (options.getClient() !== client) {
+          if (
+            options.getClient() !== client
+            || options.getDestinationIdentity() !== destinationIdentity
+          ) {
             flushAgain = true;
             return;
           }
@@ -280,7 +308,7 @@ export function createAcceptanceReporter(options: AcceptanceReporterOptions): Ac
       if (disposed) {
         return;
       }
-      enqueueAcceptanceEvent(options.data, event);
+      enqueueAcceptanceEvent(options.data, event, options.getDestinationIdentity());
       schedule();
     },
     pending() {
@@ -321,6 +349,8 @@ export interface AcceptanceTracker {
     chatId: string,
     sentText: string,
   ): (InsertedSuggestion & { edited: boolean }) | null;
+  /** Destination-actor switch: old insertion correlation must not become new-principal telemetry. */
+  clear(): void;
 }
 
 export function createAcceptanceTracker(): AcceptanceTracker {
@@ -338,6 +368,9 @@ export function createAcceptanceTracker(): AcceptanceTracker {
       }
       byConversation.delete(key);
       return { ...tracked, edited: sentText.trim() !== tracked.text.trim() };
+    },
+    clear() {
+      byConversation.clear();
     },
   };
 }
@@ -357,6 +390,18 @@ export interface FeedbackContext {
   accountId: string;
   chatId: string;
   parts: string[];
+}
+
+/** Renderer feedback uses 0 for the whole split reply and 1..N for one part.
+ * Normalize to the same newline-joined text that cmd:send.message observes. */
+export function acceptedSuggestionText(
+  parts: readonly string[],
+  partIndex: number | null,
+): string {
+  if (partIndex === null || partIndex === 0) {
+    return parts.join('\n');
+  }
+  return parts[partIndex - 1] ?? parts.join('\n');
 }
 
 /** cmd:ai.feedback → capture lane (+ insertion tracking for sent/edited). */
@@ -381,7 +426,7 @@ export function reportFeedbackAcceptance(
       operationId: context.operationId,
       requestId: context.requestId,
       feature: context.feature,
-      text: context.parts[partIndex ?? 0] ?? context.parts.join('\n'),
+      text: acceptedSuggestionText(context.parts, partIndex),
     });
   }
 }

@@ -10,7 +10,6 @@ export {
   boundDebugPromptInput,
   DEBUG_PROMPT_BLOCK_CHAR_BUDGET,
   DEBUG_PROMPT_MANIFEST_CHAR_BUDGET,
-  PERSONALITIES_SETTINGS_KEY,
 } from './coordinator';
 export type { AiCoordinator, AiCoordinatorDeps, SummaryHubHooks, UsageEventRecord } from './coordinator';
 export type {

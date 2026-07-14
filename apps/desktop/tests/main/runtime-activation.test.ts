@@ -12,12 +12,18 @@ import {
   createBeforeQuitBarrier,
   createBoundedRetry,
   createRuntimeMutationQueue,
+  createSerializedCredentialLifecycle,
+  drainRuntimeThenFinishCustody,
   exitAfterFatalBoot,
   exposeUiBeforeRuntimeActivation,
+  finishPurgeCustody,
+  hubCredentialNeedsAttention,
   probeHubReadCredential,
+  requireSettledDeviceCredentialCustody,
   replaceRuntimeSecurityFirst,
   runFailClosedTerminalPurge,
   sealRuntimeForTerminalOperation,
+  settleDeviceCredentialBeforePurge,
   stopRuntimeServices,
   subscribeSettingsScope,
   validateThenReconcileOnBoot,
@@ -47,6 +53,29 @@ describe('activateRuntimeNonFatal (4b)', () => {
       activateRuntimeNonFatal(() => Promise.resolve(), onFailure),
     ).resolves.toBe(true);
     expect(onFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('hubCredentialNeedsAttention', () => {
+  const bound = {
+    hasHubKey: true,
+    hubApiKeyBindingState: 'bound' as const,
+    hasHubDeviceToken: false,
+    hubDeviceTokenBindingState: 'none' as const,
+    hubDeviceTokenTransition: null,
+  };
+
+  it('surfaces a surviving lifecycle journal even when every custody file is missing', () => {
+    expect(hubCredentialNeedsAttention({
+      ...bound,
+      hasHubKey: false,
+      hubApiKeyBindingState: 'none',
+      hubDeviceTokenTransition: 'revocation',
+    })).toBe(true);
+  });
+
+  it('does not flag an exact bound credential with no lifecycle journal', () => {
+    expect(hubCredentialNeedsAttention(bound)).toBe(false);
   });
 });
 
@@ -201,6 +230,36 @@ describe('createBoundedRetry', () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(task).toHaveBeenCalledTimes(2);
   });
+
+  it('re-arms a durable retry obligation after each bounded series exhausts', async () => {
+    vi.useFakeTimers();
+    const error = new Error('hub still offline');
+    const task = vi.fn(() => Promise.reject(error));
+    const onExhausted = vi.fn();
+    const retry = createBoundedRetry({
+      task,
+      delaysMs: [10, 20],
+      repeatAfterExhaustionMs: 100,
+      onExhausted,
+    });
+
+    retry.start();
+    await vi.advanceTimersByTimeAsync(30);
+    expect(task).toHaveBeenCalledTimes(2);
+    expect(onExhausted).toHaveBeenCalledTimes(1);
+    expect(retry.pending()).toBe(true);
+
+    // The repetition pause starts a fresh bounded series; its normal first
+    // delay still applies, so no tight loop is possible after exhaustion.
+    await vi.advanceTimersByTimeAsync(109);
+    expect(task).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(task).toHaveBeenCalledTimes(3);
+
+    retry.cancel();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(task).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe('createRuntimeMutationQueue', () => {
@@ -304,7 +363,142 @@ describe('createRuntimeMutationQueue', () => {
   });
 });
 
+describe('createSerializedCredentialLifecycle', () => {
+  it('finishes sign-out deletion before a concurrently requested sign-in can issue or store', async () => {
+    const queue = createRuntimeMutationQueue();
+    const order: string[] = [];
+    let storedCredential: string | null = 'device-a';
+    let releaseRevoke: (() => void) | undefined;
+    let revokeStarted: (() => void) | undefined;
+    const revokeStartedPromise = new Promise<void>((resolve) => {
+      revokeStarted = resolve;
+    });
+
+    const lifecycle = createSerializedCredentialLifecycle<string, string>({
+      queue,
+      readStoredCredential: async () => storedCredential,
+      issueAndStore: async (nextCredential) => {
+        order.push(`issue:${nextCredential}`);
+        storedCredential = nextCredential;
+        return nextCredential;
+      },
+      activateStoredCredential: async () => {
+        order.push('activate:stored');
+      },
+      signOutTransition: async () => {
+        const credential = storedCredential;
+        await replaceRuntimeSecurityFirst({
+          deactivate: async () => {
+            order.push('deactivate');
+          },
+          revokeCredential: () => new Promise<void>((resolve) => {
+            order.push(`revoke:${credential ?? 'none'}`);
+            releaseRevoke = resolve;
+            revokeStarted?.();
+          }),
+          deleteCredential: async () => {
+            order.push(`delete:${storedCredential ?? 'none'}`);
+            storedCredential = null;
+          },
+          activateFallback: async () => {
+            order.push('activate:fallback');
+          },
+        });
+      },
+    });
+
+    const signOut = lifecycle.signOut();
+    await revokeStartedPromise;
+    const signIn = lifecycle.issue('device-b');
+    await Promise.resolve();
+    expect(order).toEqual(['deactivate', 'revoke:device-a']);
+
+    releaseRevoke?.();
+    await signOut;
+    await expect(signIn).resolves.toBe('device-b');
+    expect(storedCredential).toBe('device-b');
+    expect(order).toEqual([
+      'deactivate',
+      'revoke:device-a',
+      'delete:device-a',
+      'activate:fallback',
+      'issue:device-b',
+      'activate:stored',
+    ]);
+  });
+
+  it('allows at most one mint across concurrent and repeated sign-ins', async () => {
+    const queue = createRuntimeMutationQueue();
+    let storedCredential: string | null = null;
+    let mintCount = 0;
+    let releaseFirstMint: (() => void) | undefined;
+    let firstMintStarted: (() => void) | undefined;
+    const firstMintStartedPromise = new Promise<void>((resolve) => {
+      firstMintStarted = resolve;
+    });
+    const lifecycle = createSerializedCredentialLifecycle<string, string>({
+      queue,
+      readStoredCredential: async () => storedCredential,
+      issueAndStore: (credential) => new Promise<string>((resolve) => {
+        mintCount += 1;
+        firstMintStarted?.();
+        releaseFirstMint = () => {
+          storedCredential = credential;
+          resolve(credential);
+        };
+      }),
+      activateStoredCredential: async () => undefined,
+      signOutTransition: async () => undefined,
+    });
+
+    const first = lifecycle.issue('device-a');
+    await firstMintStartedPromise;
+    const concurrent = lifecycle.issue('device-b');
+    await Promise.resolve();
+    expect(mintCount).toBe(1);
+
+    releaseFirstMint?.();
+    await expect(first).resolves.toBe('device-a');
+    await expect(concurrent).rejects.toThrow(/sign out before signing in again/i);
+    await expect(lifecycle.issue('device-c')).rejects.toThrow(/sign out before signing in again/i);
+    expect(storedCredential).toBe('device-a');
+    expect(mintCount).toBe(1);
+  });
+});
+
 describe('runFailClosedTerminalPurge', () => {
+  it('stops producers before reconciling custody that was already dirty at purge entry', async () => {
+    const order: string[] = [];
+    let producersStopped = false;
+
+    await drainRuntimeThenFinishCustody({
+      deactivateRuntime: async () => {
+        order.push('deactivate');
+        producersStopped = true;
+      },
+      finishCustody: async () => {
+        expect(producersStopped).toBe(true);
+        order.push('harvest-delta');
+      },
+    });
+
+    expect(order).toEqual(['deactivate', 'harvest-delta']);
+  });
+
+  it('finishes the final harvest before revoking the only device bearer', async () => {
+    const order: string[] = [];
+    await finishPurgeCustody({
+      settlePendingCredential: async () => { order.push('settle-pending'); },
+      finishHarvest: async () => { order.push('harvest-with-live-bearer'); },
+      settleActiveDeviceCredential: async () => { order.push('revoke-device'); },
+    });
+    expect(order).toEqual([
+      'settle-pending',
+      'harvest-with-live-bearer',
+      'revoke-device',
+    ]);
+  });
+
   it('keeps the database and relaunches when final custody upload fails', async () => {
     const order: string[] = [];
     const failure = new Error('final harvest delta failed');
@@ -334,6 +528,76 @@ describe('runFailClosedTerminalPurge', () => {
       'relaunch',
       'exit:1',
     ]);
+  });
+
+  it('refuses destructive purge while exact device-token settlement is deferred', async () => {
+    const recover = vi.fn(async () => true);
+
+    await expect(requireSettledDeviceCredentialCustody({ recover }))
+      .rejects.toThrow(/cannot be purged.*device-token.*pending/i);
+    expect(recover).toHaveBeenCalledTimes(1);
+
+    await expect(requireSettledDeviceCredentialCustody({
+      recover: async () => false,
+    })).resolves.toBeUndefined();
+  });
+
+  it('revokes a bound active device token before its DB origin binding can be purged', async () => {
+    const order: string[] = [];
+    const recover = vi.fn(async () => {
+      order.push('recover');
+      return false;
+    });
+    const revoke = vi.fn(async () => {
+      order.push('revoke');
+    });
+
+    await settleDeviceCredentialBeforePurge({
+      recover,
+      read: async () => ({
+        hasDeviceTokenCustody: true,
+        bindingState: 'bound',
+        hubBaseUrl: 'https://hub.test',
+        deviceToken: 'agency_hub_device_exact',
+      }),
+      revoke,
+    });
+
+    expect(order).toEqual(['recover', 'revoke', 'recover']);
+    expect(revoke).toHaveBeenCalledWith({
+      hubBaseUrl: 'https://hub.test',
+      deviceToken: 'agency_hub_device_exact',
+    });
+  });
+
+  it('preserves the DB when device-token custody has no provable origin', async () => {
+    const revoke = vi.fn();
+    await expect(settleDeviceCredentialBeforePurge({
+      recover: async () => false,
+      read: async () => ({
+        hasDeviceTokenCustody: true,
+        bindingState: 'unbound',
+        hubBaseUrl: 'https://gosling-agency.ru',
+        deviceToken: null,
+      }),
+      revoke,
+    })).rejects.toThrow(/cannot be purged.*no provable Hub origin/i);
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
+  it('does not contact the Hub when no device-token custody survives', async () => {
+    const revoke = vi.fn();
+    await expect(settleDeviceCredentialBeforePurge({
+      recover: async () => false,
+      read: async () => ({
+        hasDeviceTokenCustody: false,
+        bindingState: 'none',
+        hubBaseUrl: 'https://gosling-agency.ru',
+        deviceToken: null,
+      }),
+      revoke,
+    })).resolves.toBeUndefined();
+    expect(revoke).not.toHaveBeenCalled();
   });
 
   it('deletes only after custody completes and then relaunches cleanly', async () => {
@@ -512,6 +776,47 @@ describe('replaceRuntimeSecurityFirst', () => {
     });
     expect(order).toEqual(['deactivate', 'fallback']);
   });
+
+  it('revokes the remote credential before deleting its local copy and activating fallback', async () => {
+    const order: string[] = [];
+    await replaceRuntimeSecurityFirst({
+      deactivate: async () => {
+        order.push('deactivate');
+      },
+      revokeCredential: async () => {
+        order.push('revoke');
+      },
+      deleteCredential: async () => {
+        order.push('delete');
+      },
+      activateFallback: async () => {
+        order.push('fallback');
+      },
+    });
+    expect(order).toEqual(['deactivate', 'revoke', 'delete', 'fallback']);
+  });
+
+  it('keeps the local credential and fallback untouched when remote revocation fails', async () => {
+    const order: string[] = [];
+    await expect(
+      replaceRuntimeSecurityFirst({
+        deactivate: async () => {
+          order.push('deactivate');
+        },
+        revokeCredential: async () => {
+          order.push('revoke');
+          throw new Error('revoke unavailable');
+        },
+        deleteCredential: async () => {
+          order.push('delete');
+        },
+        activateFallback: async () => {
+          order.push('fallback');
+        },
+      }),
+    ).rejects.toThrow(/revoke unavailable/);
+    expect(order).toEqual(['deactivate', 'revoke', 'deactivate']);
+  });
 });
 
 describe('activateStoredCredentialWithRetry', () => {
@@ -539,6 +844,19 @@ describe('activateStoredCredentialWithRetry', () => {
         scheduleRetry,
       }),
     ).resolves.toBeUndefined();
+    expect(scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  it('does not schedule an automatic retry for a permanently rejected credential', async () => {
+    const cause = new Error('HTTP 401');
+    const scheduleRetry = vi.fn();
+
+    await expect(activateStoredCredentialWithRetry({
+      activate: () => Promise.reject(cause),
+      scheduleRetry,
+      shouldRetry: () => false,
+    })).rejects.toThrow(/credential was rejected/i);
+
     expect(scheduleRetry).not.toHaveBeenCalled();
   });
 });
@@ -655,6 +973,7 @@ describe('subscribeSettingsScope (4d)', () => {
     // pre-4d post-swap wiring) makes this test fail — the gate stays stale.
     const data = memoryDataLayer();
     const secrets = {
+      getSecret: async () => null,
       hasSecret: async () => false,
       setSecret: async () => undefined,
       deleteSecret: async () => undefined,

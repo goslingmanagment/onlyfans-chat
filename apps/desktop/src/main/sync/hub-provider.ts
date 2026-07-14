@@ -16,6 +16,7 @@ import type {
 } from '@chatgoose/shared/protocol/index';
 import type { DataLayer } from '../db/index';
 import type { HubSync, HubSyncStatus } from './hub-sync';
+import { compareMessageIds } from './message-id';
 import type { SyncListener, SyncProvider, SyncStatusSnapshot } from './provider';
 
 export type HubMode = 'live' | 'degraded' | 'off';
@@ -405,9 +406,70 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     return null;
   }
 
+  /**
+   * An unresolved Core tombstone can target a preview-only cached head: with
+   * auto-read disabled there is deliberately no local message row to mark.
+   * Reconciliation normally replaces it with the previous upstream head; if
+   * the read projection still lags, clear only the exact deleted head so it
+   * cannot remain visible after the recovery cursor is checkpointed.
+   */
+  function clearStillTombstonedCachedHeads(
+    accountId: string,
+    messageIds: readonly string[],
+  ): void {
+    for (const messageId of new Set(messageIds)) {
+      const row: unknown = data.db
+        .prepare(
+          'SELECT chat_id FROM chats WHERE account_id = @account_id AND last_message_id = @message_id',
+        )
+        .get({ account_id: accountId, message_id: messageId });
+      if (
+        typeof row !== 'object'
+        || row === null
+        || !('chat_id' in row)
+        || typeof row.chat_id !== 'string'
+      ) {
+        continue;
+      }
+      const current = data.chats.get(accountId, row.chat_id);
+      if (current === null || current.lastMessageId !== messageId) {
+        continue;
+      }
+      // An outgoing cached head never contributes to unread/tip aggregates.
+      // When the authoritative list still lags this tombstone, clearing that
+      // head must not consume an older unread fan message that remains in the
+      // thread. Incoming heads retain the existing best-effort decrement until
+      // the next authoritative reconciliation replaces the whole tuple.
+      const outgoingHead = current.lastMessageIsSentByMe;
+      const unreadCount = outgoingHead
+        ? current.unreadCount
+        : Math.max(0, current.unreadCount - 1);
+      data.chats.upsert({
+        accountId: current.accountId,
+        chatId: current.chatId,
+        fanName: current.fanName,
+        avatar: current.avatar,
+        unreadCount,
+        hasUnreadTips: outgoingHead
+          ? current.hasUnreadTips
+          : (unreadCount === 0 ? false : current.hasUnreadTips),
+        lastMessageAt: null,
+        lastMessagePreview: '',
+        lastMessageIsSentByMe: false,
+        lastMessageId: null,
+        lastReadMessageId: current.lastReadMessageId,
+        pinned: current.pinned,
+        canSendMessage: current.canSendMessage,
+        canNotSendReason: current.canNotSendReason,
+        raw: { source: 'hub-delete-tombstone', deletedMessageId: messageId },
+      });
+    }
+  }
+
   function snapshotHeadIsCurrent(
     thread: SyncSnapshotThread,
     existingAt: string | null,
+    existingMessageId: string | null,
     existingHeadWasDeleted: boolean,
   ): boolean {
     // A tombstone is an authoritative reason for a head to move backwards or
@@ -415,13 +477,26 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     if (existingHeadWasDeleted) {
       return true;
     }
-    if (thread.lastMessageAt === null) {
-      return existingAt === null;
-    }
-    if (existingAt === null) {
+    if (thread.lastMessageId === existingMessageId) {
       return true;
     }
-    return Date.parse(thread.lastMessageAt) >= Date.parse(existingAt);
+    if (thread.lastMessageId === null) {
+      return existingMessageId === null;
+    }
+    if (existingMessageId === null) {
+      return true;
+    }
+    if (thread.lastMessageAt !== null && existingAt !== null) {
+      const snapshotMs = Date.parse(thread.lastMessageAt);
+      const existingMs = Date.parse(existingAt);
+      if (!Number.isNaN(snapshotMs) && !Number.isNaN(existingMs) && snapshotMs !== existingMs) {
+        return snapshotMs > existingMs;
+      }
+    }
+    // OF timestamps can tie. The durable numeric message id is the remaining
+    // monotonic signal; without this tie-break a delayed M5 snapshot can
+    // overwrite a locally observed M6 and then be checkpointed permanently.
+    return compareMessageIds(thread.lastMessageId, existingMessageId) >= 0;
   }
 
   function upsertSnapshotThread(
@@ -443,6 +518,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     const useSnapshotHead = snapshotHeadIsCurrent(
       thread,
       existing?.lastMessageAt ?? null,
+      existing?.lastMessageId ?? null,
       existingHeadWasDeleted,
     );
     const hasUnreadTips = useSnapshotHead
@@ -558,7 +634,20 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     for (const thread of snapshot.threads) {
       upsertSnapshotThread(snapshot.page.accountId, thread, tombstonedMessageIds);
     }
-    emit({ type: 'chatListUpdated', accountId: snapshot.page.accountId });
+    if (snapshot.unresolvedTombstones.length > 0) {
+      // Core intentionally cannot attach these deletes to a thread. With
+      // auto-read off Desktop may likewise have only a cached chat preview and
+      // no message row, so a local tombstone alone cannot repair the head.
+      // Await one authoritative account reconciliation before HubSync may
+      // persist this page's continuation/checkpoint.
+      await polling.reconcileAccountHeadNow(snapshot.page.accountId);
+      clearStillTombstonedCachedHeads(
+        snapshot.page.accountId,
+        snapshot.unresolvedTombstones.map((item) => item.messageId),
+      );
+    } else {
+      emit({ type: 'chatListUpdated', accountId: snapshot.page.accountId });
+    }
     onLog('info', 'hub snapshot page applied', {
       accountId: snapshot.page.accountId,
       snapshotCursor: snapshot.snapshotCursor,
@@ -699,17 +788,24 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
             accountId: event.accountId,
             messageId: event.messageId,
           });
-          await polling.refreshAccountHead(event.accountId);
+          await polling.reconcileAccountHeadNow(event.accountId);
+          clearStillTombstonedCachedHeads(event.accountId, [event.messageId]);
           return; // unknown message: nothing to tombstone, drop silently
         }
         // Tombstone (deleted=1) publishes bus scope 'messages' for the chat.
         data.messages.markDeleted(event.accountId, chatId, [event.messageId]);
-        await polling.refreshAccountHead(event.accountId);
+        await polling.reconcileAccountHeadNow(event.accountId);
+        clearStillTombstonedCachedHeads(event.accountId, [event.messageId]);
         emit({ ...event, chatId });
         recordApplied(event.type);
         break;
       }
       case 'chatListUpdated':
+        // This event is a nudge, not a replacement chat snapshot. In
+        // particular, subscription events are projected to chatListUpdated
+        // while the read gateway may still advertise the previous message
+        // head. Preserve a newer Hub-delivered head until an authoritative
+        // ordinary poll or messageDeleted reconciliation proves otherwise.
         await polling.refreshAccountHead(event.accountId);
         recordApplied(event.type);
         break;

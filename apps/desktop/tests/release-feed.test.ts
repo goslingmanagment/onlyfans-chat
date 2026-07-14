@@ -1,6 +1,15 @@
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,10 +17,13 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = resolve(import.meta.dirname, '../../..');
 const cli = resolve(repoRoot, 'apps/desktop/scripts/release-feed.mjs');
 const ciGate = resolve(repoRoot, 'apps/desktop/scripts/assert-ci-success.mjs');
+const kernelGate = resolve(repoRoot, 'apps/desktop/scripts/assert-kernel-capabilities.mjs');
+const releaseSdkGate = resolve(repoRoot, 'apps/desktop/scripts/assert-release-sdk-vendor.mjs');
 const publisher = resolve(repoRoot, 'apps/desktop/scripts/publish-feed.sh');
 const publisherEnv = {
   ...process.env,
   CHATGOOSE_ALLOW_PORTABLE_LOCK_FALLBACK: '1',
+  CHATGOOSE_FEED_MIN_FREE_KIB: '0',
 };
 
 function fixture(dir: string, version: string, body: string): { manifest: string; artifact: string; sha: string } {
@@ -59,14 +71,41 @@ function readNormalized(path: string): string {
   return readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 }
 
-function workflowRemoteGcCommand(feedDir: string): string {
-  const script = workflowRunScript('Upload to the update feed');
-  const match = script.match(/^\s*"(find '\$FEED_DIR\/\.incoming' -mindepth[^"\n]+)"$/m);
-  expect(match?.[1]).toBeDefined();
-  return match![1]!.replace('$FEED_DIR', feedDir);
-}
-
 describe('Windows release feed policy', () => {
+  it('blocks publication until production Core advertises the required lifecycle', () => {
+    const missing = spawnSync(process.execPath, [kernelGate, 'desktop-lifecycle-v2'], {
+      input: JSON.stringify({ status: 'ok', capabilities: ['older-contract'] }),
+      encoding: 'utf8',
+    });
+    expect(missing.status).not.toBe(0);
+    expect(missing.stderr).toContain('does not advertise required capability desktop-lifecycle-v2');
+
+    const ready = spawnSync(process.execPath, [kernelGate, 'desktop-lifecycle-v2'], {
+      input: JSON.stringify({ status: 'ok', capabilities: ['desktop-lifecycle-v2'] }),
+      encoding: 'utf8',
+    });
+    expect(ready.status, ready.stderr).toBe(0);
+    expect(ready.stdout).toContain('production Core capability present: desktop-lifecycle-v2');
+  });
+
+  it('rechecks the production lifecycle after staging and immediately before atomic publication', () => {
+    const script = workflowRunScript('Upload to the update feed');
+    expect(script).toContain('https://gosling-agency.ru/api/v1/health');
+    expect(script).toContain('assert-kernel-capabilities.mjs desktop-lifecycle-v2');
+    const stageIndex = script.indexOf('scp "${SSH_OPTIONS[@]}"');
+    const recheckIndex = script.indexOf('core_verified=false', stageIndex);
+    const publishIndex = script.indexOf(
+      'if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- \'$FEED_DIR\' \'$stage_dir\'"',
+      recheckIndex,
+    );
+    expect(stageIndex).toBeGreaterThan(-1);
+    expect(recheckIndex).toBeGreaterThan(stageIndex);
+    expect(publishIndex).toBeGreaterThan(recheckIndex);
+    expect(script.slice(recheckIndex, publishIndex)).toContain(
+      'assert-kernel-capabilities.mjs desktop-lifecycle-v2',
+    );
+  });
+
   it('validates local and served installer SHA-512 against latest.yml', () => {
     const dir = mkdtempSync(join(tmpdir(), 'chatgoose-release-'));
     const built = fixture(dir, '1.2.3', 'installer-one');
@@ -122,6 +161,94 @@ describe('Windows release feed policy', () => {
     expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.5');
   });
 
+  it('dry-runs and applies bounded installer retention while protecting latest.yml and every blockmap', () => {
+    const root = mkdtempSync(join(tmpdir(), 'chatgoose-feed-retention-'));
+    const feed = join(root, 'feed');
+    mkdirSync(join(feed, '.incoming'), { recursive: true });
+    for (const version of ['1.2.1', '1.2.2', '1.2.3', '1.2.4']) {
+      fixture(feed, version, `installer-${version}`);
+    }
+    for (const version of ['8.8.8', '9.9.9']) {
+      writeFileSync(join(feed, `ChatGoose-Setup-${version}.exe`), `orphan-${version}`);
+      writeFileSync(join(feed, `ChatGoose-Setup-${version}.exe.blockmap`), `blockmap-${version}`);
+    }
+
+    const env = { ...publisherEnv, CHATGOOSE_FEED_KEEP_INSTALLERS: '2' };
+    // Linux flock intentionally keeps this inode in place forever. Compare
+    // only managed feed entries: unlinking/recreating the lock path could let
+    // two publishers lock different inodes concurrently.
+    const managedEntries = (): string[] => readdirSync(feed)
+      .filter((name) => name !== '.publish.lock')
+      .sort();
+    const beforeDryRun = managedEntries();
+    const dryRun = spawnSync('bash', [publisher, '--maintain', feed, '--dry-run'], {
+      env,
+      encoding: 'utf8',
+    });
+    expect(dryRun.status, dryRun.stderr).toBe(0);
+    expect(dryRun.stdout).toContain('retention would remove installer=');
+    expect(managedEntries()).toEqual(beforeDryRun);
+
+    const applied = spawnSync('bash', [publisher, '--maintain', feed], { env, encoding: 'utf8' });
+    expect(applied.status, applied.stderr).toBe(0);
+    expect(readdirSync(feed).filter((name) => name.endsWith('.exe')).sort()).toEqual([
+      'ChatGoose-Setup-1.2.4.exe',
+      'ChatGoose-Setup-9.9.9.exe',
+    ]);
+    expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.4');
+    for (const version of ['1.2.1', '1.2.2', '1.2.3', '1.2.4', '8.8.8', '9.9.9']) {
+      expect(existsSync(join(feed, `ChatGoose-Setup-${version}.exe.blockmap`))).toBe(true);
+    }
+  });
+
+  it('retains the current and previous installers before publishing the new manifest last', () => {
+    const root = mkdtempSync(join(tmpdir(), 'chatgoose-feed-publish-retention-'));
+    const feed = join(root, 'feed');
+    mkdirSync(join(feed, '.incoming'), { recursive: true });
+    for (const version of ['1.2.1', '1.2.2', '1.2.3']) {
+      fixture(feed, version, `installer-${version}`);
+    }
+
+    const stage = join(feed, '.incoming', 'run-retained');
+    mkdirSync(stage);
+    fixture(stage, '1.2.4', 'candidate');
+    const result = spawnSync('bash', [publisher, feed, stage], {
+      env: { ...publisherEnv, CHATGOOSE_FEED_KEEP_INSTALLERS: '3' },
+      encoding: 'utf8',
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readdirSync(feed).filter((name) => name.endsWith('.exe')).sort()).toEqual([
+      'ChatGoose-Setup-1.2.2.exe',
+      'ChatGoose-Setup-1.2.3.exe',
+      'ChatGoose-Setup-1.2.4.exe',
+    ]);
+    expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.4');
+    expect(existsSync(join(feed, 'ChatGoose-Setup-1.2.1.exe.blockmap'))).toBe(true);
+  });
+
+  it('fails below the disk-space floor without switching the manifest or leaking the stage', () => {
+    const root = mkdtempSync(join(tmpdir(), 'chatgoose-feed-disk-floor-'));
+    const feed = join(root, 'feed');
+    mkdirSync(join(feed, '.incoming'), { recursive: true });
+    fixture(feed, '1.2.3', 'current');
+    const stage = join(feed, '.incoming', 'run-no-space');
+    mkdirSync(stage);
+    fixture(stage, '1.2.4', 'candidate');
+
+    const result = spawnSync('bash', [publisher, feed, stage], {
+      env: { ...publisherEnv, CHATGOOSE_FEED_MIN_FREE_KIB: '999999999999999' },
+      encoding: 'utf8',
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/free space/i);
+    expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.3');
+    expect(readFileSync(join(feed, 'ChatGoose-Setup-1.2.3.exe'), 'utf8')).toBe('current');
+    expect(existsSync(join(feed, 'ChatGoose-Setup-1.2.4.exe'))).toBe(false);
+    expect(existsSync(stage)).toBe(false);
+  });
+
   it('cleans a rejected validated stage but never deletes an unsafe directory', () => {
     const root = mkdtempSync(join(tmpdir(), 'chatgoose-feed-cleanup-'));
     const feed = join(root, 'feed');
@@ -135,6 +262,14 @@ describe('Windows release feed policy', () => {
     expect(spawnSync('bash', [publisher, feed, badHash], { env: publisherEnv }).status).not.toBe(0);
     expect(existsSync(badHash)).toBe(false);
     expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.3');
+
+    const invalidRetention = join(feed, '.incoming', 'run-invalid-retention');
+    mkdirSync(invalidRetention);
+    fixture(invalidRetention, '1.2.4', 'candidate');
+    expect(spawnSync('bash', [publisher, feed, invalidRetention], {
+      env: { ...publisherEnv, CHATGOOSE_FEED_KEEP_INSTALLERS: '1' },
+    }).status).not.toBe(0);
+    expect(existsSync(invalidRetention)).toBe(false);
 
     const unsafe = join(root, 'outside-incoming');
     mkdirSync(unsafe);
@@ -173,12 +308,29 @@ describe('Windows release feed policy', () => {
     const home = join(root, 'home');
     const runnerTemp = join(root, 'runner-temp');
     const feed = join(root, 'remote-feed');
-    for (const dir of [releaseDir, scriptsDir, mockBin, home, runnerTemp, join(feed, '.incoming')]) {
+    const kernelSdkDir = join(root, 'packages/kernel-sdk');
+    for (const dir of [
+      releaseDir,
+      scriptsDir,
+      mockBin,
+      home,
+      runnerTemp,
+      kernelSdkDir,
+      join(feed, '.incoming'),
+    ]) {
       mkdirSync(dir, { recursive: true });
     }
     fixture(releaseDir, '1.2.4', 'candidate installer');
     writeFileSync(join(scriptsDir, 'release-feed.mjs'), readFileSync(cli));
+    writeFileSync(join(scriptsDir, 'assert-kernel-capabilities.mjs'), readFileSync(kernelGate));
+    writeFileSync(join(scriptsDir, 'assert-release-sdk-vendor.mjs'), readFileSync(releaseSdkGate));
     writeFileSync(join(scriptsDir, 'publish-feed.sh'), readFileSync(publisher));
+    const fixtureContractHash = 'a'.repeat(64);
+    writeFileSync(join(kernelSdkDir, 'kernel-sdk.vendor.json'), JSON.stringify({
+      contractHash: fixtureContractHash,
+      sourceCommit: 'b'.repeat(40),
+      source: 'release test fixture',
+    }));
     const mockLog = join(root, 'transport.log');
     writeExecutable(
       join(mockBin, 'ssh'),
@@ -186,6 +338,10 @@ describe('Windows release feed policy', () => {
 set -eu
 printf 'ssh %s\\n' "$*" >> "$MOCK_LOG"
 remote_command="\${!#}"
+if [[ "$remote_command" == *"bash -s -- --maintain"* ]]; then
+  cat >/dev/null
+  exit 0
+fi
 if [[ "$remote_command" == *"bash -s --"* ]]; then
   exit 1
 fi
@@ -205,7 +361,31 @@ mkdir -p "$stage"
 touch "$stage/scp-succeeded"
 `,
     );
-    writeExecutable(join(mockBin, 'curl'), '#!/usr/bin/env bash\nexit 1\n');
+    writeExecutable(
+      join(mockBin, 'curl'),
+      `#!/usr/bin/env bash
+set -eu
+if [[ "$*" != *"/api/v1/health"* ]]; then exit 1; fi
+output=""
+write_out=""
+while (( $# > 0 )); do
+  if [[ "$1" == "--output" ]]; then
+    output="$2"
+    shift 2
+    continue
+  fi
+  if [[ "$1" == "--write-out" ]]; then
+    write_out="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+body='{"status":"ok","capabilities":["desktop-lifecycle-v2"],"contractHash":"${fixtureContractHash}"}'
+if [[ -n "$output" ]]; then printf '%s\n' "$body" > "$output"; else printf '%s\n' "$body"; fi
+if [[ -n "$write_out" ]]; then printf '200'; fi
+`,
+    );
     writeExecutable(join(mockBin, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
 
     const uploadScript = `export PATH="$1:$PATH"\n${workflowRunScript('Upload to the update feed')}`;
@@ -241,28 +421,48 @@ touch "$stage/scp-succeeded"
     expect(log).toContain(`mkdir -p '${bashStage}'`);
     expect(log).toContain(`bash -s -- '${bashFeed}' '${bashStage}'`);
     expect(log).toContain(`rm -rf -- '${bashStage}'`);
-    expect(log).toContain("-mmin +180 -exec rm -rf -- {} +");
+    expect(log.indexOf(`bash -s -- --maintain '${bashFeed}'`)).toBeLessThan(
+      log.indexOf(`mkdir -p '${bashStage}'`),
+    );
   });
 
   it.skipIf(process.platform === 'win32')(
-    'garbage-collects only remote Linux stages older than the hard job limit',
+    'reclaims stale stages before enforcing the disk floor',
     () => {
       const root = mkdtempSync(join(tmpdir(), 'chatgoose-upload-stage-gc-'));
       const feed = join(root, 'remote-feed');
       const staleStage = join(feed, '.incoming', 'abandoned-hard-kill');
       const freshStage = join(feed, '.incoming', 'still-active');
+      const mockBin = join(root, 'mock-bin');
       mkdirSync(staleStage, { recursive: true });
       mkdirSync(freshStage);
+      mkdirSync(mockBin);
+      fixture(feed, '1.2.3', 'current');
       const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60_000);
       utimesSync(staleStage, fourHoursAgo, fourHoursAgo);
+      writeExecutable(join(mockBin, 'df'), `#!/usr/bin/env bash
+if [[ -d "$STALE_STAGE" ]]; then
+  printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nmock 100 99 1 99%% /\n'
+else
+  printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\nmock 10000000 1 9999999 1%% /\n'
+fi
+`);
 
-      const result = spawnSync('bash', ['-c', workflowRemoteGcCommand(feed)], {
+      const result = spawnSync('bash', [publisher, '--maintain', feed], {
         encoding: 'utf8',
+        env: {
+          ...publisherEnv,
+          PATH: `${mockBin}:${process.env.PATH ?? ''}`,
+          STALE_STAGE: staleStage,
+          CHATGOOSE_FEED_MIN_FREE_KIB: '5000000',
+        },
       });
 
-      expect(result.status, result.stderr).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(existsSync(staleStage)).toBe(false);
       expect(existsSync(freshStage)).toBe(true);
+      expect(result.stdout).toContain('maintenance removed stale stage=abandoned-hard-kill');
+      expect(result.stdout).toContain('available_kib=9999999');
     },
   );
 
@@ -287,6 +487,41 @@ touch "$stage/scp-succeeded"
     expect(pending.status).not.toBe(0);
   });
 
+  it('keeps unsigned pilot builds optional but fails closed for partial or required signing', () => {
+    const script = workflowRunScript('Validate optional Windows signing configuration');
+    const run = (overrides: Record<string, string>) => {
+      const root = mkdtempSync(join(tmpdir(), 'chatgoose-signing-gate-'));
+      const output = join(root, 'github-output');
+      const result = spawnSync('bash', ['-c', script], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          CSC_LINK: '',
+          CSC_KEY_PASSWORD: '',
+          WINDOWS_SIGNING_REQUIRED: 'false',
+          GITHUB_OUTPUT: output,
+          ...overrides,
+        },
+      });
+      return { result, output: existsSync(output) ? readFileSync(output, 'utf8') : '' };
+    };
+
+    const pilot = run({});
+    expect(pilot.result.status, pilot.result.stderr).toBe(0);
+    expect(pilot.output).toContain('expected=false');
+
+    expect(run({ CSC_LINK: 'certificate' }).result.status).not.toBe(0);
+    expect(run({ WINDOWS_SIGNING_REQUIRED: 'true' }).result.status).not.toBe(0);
+
+    const configured = run({
+      CSC_LINK: 'certificate',
+      CSC_KEY_PASSWORD: 'password',
+      WINDOWS_SIGNING_REQUIRED: 'true',
+    });
+    expect(configured.result.status, configured.result.stderr).toBe(0);
+    expect(configured.output).toContain('expected=true');
+  });
+
   it('pins the repository-controlled workflow gates and roll-forward runbook', () => {
     const workflow = readNormalized(resolve(repoRoot, '.github/workflows/windows-build.yml'));
     const ci = readNormalized(resolve(repoRoot, '.github/workflows/ci.yml'));
@@ -298,6 +533,11 @@ touch "$stage/scp-succeeded"
     expect(workflow).toContain('run: pnpm check');
     expect(workflow).toContain('publish-feed.sh');
     expect(workflow).toContain('command -v flock');
+    expect(workflow).toContain("bash -s -- --maintain '$FEED_DIR'");
+    expect(workflow).toContain('WINDOWS_CSC_LINK');
+    expect(workflow).toContain('WINDOWS_SIGNING_REQUIRED');
+    expect(workflow).toContain('Get-AuthenticodeSignature');
+    expect(workflow).toContain("-Pattern '^publisherName:'");
     expect(workflow).toMatch(/SSH acknowledgement was lost/);
     expect(workflow).toMatch(/ambiguous publication verification attempt/);
     expect(workflow).toMatch(/for attempt in 1 2 3 4 5 6/);
@@ -319,7 +559,6 @@ touch "$stage/scp-succeeded"
     expect(workflow).toContain('-o ConnectTimeout=10');
     expect(workflow).toContain('--max-time 120');
     expect(workflow).toContain('assert-ci-success.mjs');
-    expect(workflow).toContain("-mmin +180 -exec rm -rf -- {} +");
     expect(workflow).not.toMatch(/curl[^\n]*\s-k/);
 
     // Keep the existing Linux required-check identity while adding the same
@@ -334,7 +573,12 @@ touch "$stage/scp-succeeded"
     expect(release).toMatch(/wait for \*\*both\*\* release-prerequisite CI jobs/i);
     expect(release).toMatch(/pnpm check \(Windows\)/);
     expect(release).toMatch(/refuses\s+to build or publish unless the exact tag SHA/i);
+    expect(release).toMatch(/WINDOWS_SIGNING_REQUIRED/);
+    expect(release).toMatch(/protected GitHub environment/i);
     expect(release).not.toMatch(/rolls the fleet to whatever `latest\.yml` points at/i);
+
+    const builder = readNormalized(resolve(repoRoot, 'apps/desktop/electron-builder.yml'));
+    expect(builder).toMatch(/verifyUpdateCodeSignature:\s*true/);
 
     const rootPackage = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8')) as {
       pnpm?: { overrides?: Record<string, string> };
@@ -344,5 +588,8 @@ touch "$stage/scp-succeeded"
     const publisherScript = readFileSync(publisher, 'utf8');
     expect(publisherScript).toContain('flock -n');
     expect(publisherScript).toMatch(/already published version=/);
+    expect(publisherScript).toContain('CHATGOOSE_FEED_KEEP_INSTALLERS');
+    expect(publisherScript).toContain('CHATGOOSE_FEED_MIN_FREE_KIB');
+    expect(publisherScript).toContain('-mmin +180 -print0');
   });
 });

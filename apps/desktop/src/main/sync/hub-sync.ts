@@ -19,11 +19,13 @@ import {
   parseDomainEventFrame,
   parseSyncEvent,
   syncSnapshotRequiredSchema,
+  syncSnapshotRestartRequiredSchema,
   syncSnapshotResponseSchema,
   type SyncEvent,
   type SyncSnapshotRequired,
   type SyncSnapshotResponse,
 } from '@chatgoose/shared/protocol/index';
+import { z } from 'zod';
 import type { SleepFn } from '../ofapi/rate-limiter';
 
 export const HUB_SSE_PATH = '/api/v1/events/stream';
@@ -32,11 +34,56 @@ export const HUB_SNAPSHOT_PATH = '/api/v1/events/snapshot';
 export const HUB_V2_SSE_PATH = '/api/v1/events/v2/stream';
 export const HUB_V2_SNAPSHOT_PATH = '/api/v1/events/v2/snapshot';
 export type HubSyncProtocol = 'v2' | 'v1';
+export type HubSnapshotPageMode = 'probe' | 'bounded' | 'legacy';
+export const HUB_SNAPSHOT_MESSAGE_LIMIT = 100;
+export const HUB_SNAPSHOT_CURSOR_CONTRACT = 'bounded_v1';
+
+/**
+ * Durable "next request" for a replay-gap state walk. The record is written
+ * only after onSnapshot has applied the preceding page, so resuming it can
+ * skip already-committed pages without ever advancing the stream checkpoint.
+ * v2 also pins the fresh target cursor minted for that exact state walk: using
+ * a newer fresh cursor with an older persisted state cursor would skip the
+ * events between the two baselines.
+ */
+export interface HubSnapshotRecoveryProgress {
+  version: 2;
+  scope: string;
+  protocol: HubSyncProtocol;
+  cursorContract: typeof HUB_SNAPSHOT_CURSOR_CONTRACT;
+  messageLimit: number;
+  afterSeq: number;
+  accountIds: string[];
+  accountIndex: number;
+  snapshotCursor: number;
+  pageMode: HubSnapshotPageMode;
+  pageCursor: number;
+  stateCursor: string | null;
+  boundedStateAt: string | null;
+  sourceV2Cursor: string | null;
+  targetV2Cursor: string | null;
+}
 /** Server announces `retry: 3000` on connect; floor until it does. */
 export const HUB_DEFAULT_RETRY_MS = 3_000;
 export const HUB_RECONNECT_CAP_MS = 30_000;
 /** Heartbeat is every 30 s — 45 s of total byte silence means a dead pipe. */
 export const HUB_WATCHDOG_MS = 45_000;
+const HUB_SNAPSHOT_RESTART_LIMIT = 3;
+
+const hubBadRequestResponseSchema = z.discriminatedUnion('error', [
+  // Service-level BadRequestError from Core's AppError handler.
+  z.object({
+    error: z.literal('bad_request'),
+    message: z.string().min(1),
+    statusCode: z.literal(400),
+  }).strict(),
+  // Fastify/Zod query validation fails before the route service runs.
+  z.object({
+    error: z.literal('Bad Request'),
+    message: z.string().min(1),
+    statusCode: z.literal(400),
+  }).strict(),
+]);
 
 // ─── SSE frame parser (per the WHATWG SSE spec, subset core emits) ────────
 
@@ -205,6 +252,15 @@ export interface HubSyncOptions {
    * cursor and reconnect cursor-less: core interprets no cursor as "start now". */
   clearV2Cursor?: () => void;
   /**
+   * Durable replay-gap page progress. Production wiring scopes both the key
+   * and this embedded value to the normalized Hub origin + bearer hash. Omit
+   * the complete group only in isolated tests that do not exercise restart.
+   */
+  snapshotProgressScope?: string;
+  getSnapshotProgress?: () => HubSnapshotRecoveryProgress | null;
+  setSnapshotProgress?: (progress: HubSnapshotRecoveryProgress) => void;
+  clearSnapshotProgress?: () => void;
+  /**
    * Authenticated v2 rebaseline hook: refreshes the read-gateway account grant
    * set and returns the current OFAPI account ids. HubSync replaces its event
    * allowlist with this set before applying durable state pages.
@@ -235,6 +291,26 @@ class HubSnapshotAuthError extends Error {
   }
 }
 
+class HubSnapshotRestartRequiredError extends Error {
+  constructor(
+    readonly replayFloor: number,
+    readonly persistedProgress: HubSnapshotRecoveryProgress | null,
+  ) {
+    super(`hub snapshot continuation is below replay floor ${replayFloor}`);
+    this.name = 'HubSnapshotRestartRequiredError';
+  }
+}
+
+class HubSnapshotPersistedCursorRejectedError extends Error {
+  constructor(
+    message: string,
+    readonly persistedProgress: HubSnapshotRecoveryProgress,
+  ) {
+    super(`Core rejected persisted snapshot continuation: ${message}`);
+    this.name = 'HubSnapshotPersistedCursorRejectedError';
+  }
+}
+
 function isSnapshotAuthError(error: unknown): error is HubSnapshotAuthError {
   return error instanceof HubSnapshotAuthError;
 }
@@ -255,6 +331,20 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   if (protocol === 'v2' && (options.getV2Cursor === undefined || options.setV2Cursor === undefined)) {
     throw new Error('createHubSync: protocol v2 requires getV2Cursor/setV2Cursor');
   }
+  const snapshotProgressParts = [
+    options.snapshotProgressScope,
+    options.getSnapshotProgress,
+    options.setSnapshotProgress,
+    options.clearSnapshotProgress,
+  ];
+  const hasAnySnapshotProgressPart = snapshotProgressParts.some((part) => part !== undefined);
+  const hasSnapshotProgressStore = snapshotProgressParts.every((part) => part !== undefined);
+  if (hasAnySnapshotProgressPart && !hasSnapshotProgressStore) {
+    throw new Error('createHubSync: durable snapshot progress requires scope/get/set/clear');
+  }
+  if (hasSnapshotProgressStore && options.snapshotProgressScope!.trim().length === 0) {
+    throw new Error('createHubSync: snapshot progress scope must not be blank');
+  }
 
   let running = false;
   let status: HubSyncStatus = 'stopped';
@@ -266,6 +356,164 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   let allowedAccountIds = options.accountIds === undefined
     ? null
     : new Set(options.accountIds);
+
+  function orderedAccountIds(): string[] {
+    if (allowedAccountIds === null) {
+      return [];
+    }
+    return [...allowedAccountIds];
+  }
+
+  function sameAccountSet(left: readonly string[], right: readonly string[]): boolean {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+  }
+
+  function sameUniqueUnorderedAccountSet(
+    left: readonly string[],
+    right: readonly string[],
+  ): boolean {
+    const leftSet = new Set(left);
+    const rightSet = new Set(right);
+    if (leftSet.size !== left.length || rightSet.size !== right.length) {
+      return false;
+    }
+    if (leftSet.size !== rightSet.size) {
+      return false;
+    }
+    for (const value of leftSet) {
+      if (!rightSet.has(value)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function sameSnapshotProgress(
+    left: HubSnapshotRecoveryProgress,
+    right: HubSnapshotRecoveryProgress,
+  ): boolean {
+    return left.version === right.version
+      && left.scope === right.scope
+      && left.protocol === right.protocol
+      && left.cursorContract === right.cursorContract
+      && left.messageLimit === right.messageLimit
+      && left.afterSeq === right.afterSeq
+      && sameAccountSet(left.accountIds, right.accountIds)
+      && left.accountIndex === right.accountIndex
+      && left.snapshotCursor === right.snapshotCursor
+      && left.pageMode === right.pageMode
+      && left.pageCursor === right.pageCursor
+      && left.stateCursor === right.stateCursor
+      && left.boundedStateAt === right.boundedStateAt
+      && left.sourceV2Cursor === right.sourceV2Cursor
+      && left.targetV2Cursor === right.targetV2Cursor;
+  }
+
+  function clearStoredSnapshotProgress(
+    expected?: HubSnapshotRecoveryProgress,
+  ): boolean {
+    if (!hasSnapshotProgressStore) {
+      return expected === undefined;
+    }
+    if (expected !== undefined) {
+      // Synchronous settings reads/writes run without an await boundary in the
+      // sole Electron main process. Compare immediately before remove so a
+      // restart can never erase a newer recovery record.
+      const current = options.getSnapshotProgress!();
+      if (current === null || !sameSnapshotProgress(current, expected)) {
+        return false;
+      }
+    }
+    try {
+      options.clearSnapshotProgress!();
+      return true;
+    } catch (error) {
+      // A failed cleanup cannot invalidate an already-written stream
+      // checkpoint. Any later gap rejects this stale record by afterSeq/source.
+      options.onWarn?.('hub snapshot progress cleanup failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  function validProgressShape(progress: HubSnapshotRecoveryProgress): boolean {
+    if (
+      progress.version !== 2
+      || progress.scope !== options.snapshotProgressScope
+      || progress.cursorContract !== HUB_SNAPSHOT_CURSOR_CONTRACT
+      || progress.messageLimit !== HUB_SNAPSHOT_MESSAGE_LIMIT
+      || !Number.isSafeInteger(progress.afterSeq)
+      || progress.afterSeq < 0
+      || !Number.isSafeInteger(progress.accountIndex)
+      || progress.accountIndex < 0
+      || progress.accountIndex > progress.accountIds.length
+      || !Number.isSafeInteger(progress.snapshotCursor)
+      || progress.snapshotCursor < 0
+      || !Number.isSafeInteger(progress.pageCursor)
+      || progress.pageCursor < 0
+    ) {
+      return false;
+    }
+    if (progress.accountIndex === progress.accountIds.length) {
+      return progress.pageMode === 'probe'
+        && progress.pageCursor === 0
+        && progress.stateCursor === null
+        && progress.boundedStateAt === null;
+    }
+    if (progress.pageMode === 'bounded') {
+      return progress.pageCursor === 0
+        && progress.stateCursor !== null
+        && progress.stateCursor.length > 0
+        && progress.boundedStateAt !== null
+        && progress.boundedStateAt.length > 0;
+    }
+    if (progress.pageMode === 'legacy') {
+      return progress.stateCursor === null && progress.boundedStateAt === null;
+    }
+    return progress.pageMode === 'probe'
+      && progress.accountIndex > 0
+      && progress.pageCursor === 0
+      && progress.stateCursor === null
+      && progress.boundedStateAt === null;
+  }
+
+  function readReusableSnapshotProgress(
+    afterSeq: number,
+    accountIds: readonly string[],
+    sourceV2Cursor: string | null,
+  ): HubSnapshotRecoveryProgress | null {
+    if (!hasSnapshotProgressStore) {
+      return null;
+    }
+    const progress = options.getSnapshotProgress!();
+    if (progress === null) {
+      return null;
+    }
+    const cursorBindingMatches = protocol === 'v2'
+      ? sourceV2Cursor !== null
+        && progress.sourceV2Cursor === sourceV2Cursor
+        && progress.targetV2Cursor !== null
+        && progress.targetV2Cursor.length > 0
+      : progress.sourceV2Cursor === null && progress.targetV2Cursor === null;
+    if (
+      !validProgressShape(progress)
+      || progress.protocol !== protocol
+      || progress.afterSeq !== afterSeq
+      || !sameAccountSet(progress.accountIds, accountIds)
+      || !cursorBindingMatches
+    ) {
+      clearStoredSnapshotProgress();
+      return null;
+    }
+    return progress;
+  }
+
+  function persistSnapshotProgress(progress: HubSnapshotRecoveryProgress): void {
+    if (hasSnapshotProgressStore) {
+      options.setSnapshotProgress!(progress);
+    }
+  }
 
   function setStatus(next: HubSyncStatus): void {
     if (status !== next) {
@@ -367,18 +615,28 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     }
   }
 
-  /** v2 recovery obtains a fresh opaque cursor, refreshes read-gateway grants,
-   * then exhausts the existing durable state-snapshot endpoint for every
-   * currently granted account. The state pages carry chat heads, hot/archive
-   * messages, tips and tombstones without OFAPI body reads. Persist only after
-   * all pages apply; on any failure the stale cursor remains and recovery
-   * retries from the start. */
+  /** v2 recovery obtains one cursor plus its atomically bound account refs,
+   * verifies that an independent read-gateway refresh still names exactly that
+   * set, then snapshots only those response-bound refs. A resumed page walk
+   * keeps the OLD fresh target stored with that walk; pairing its state cursor
+   * with a newly minted target would create an event-loss interval between the
+   * two baselines. */
   async function recoverV2Cursor(): Promise<void> {
+    const sourceV2Cursor = options.getV2Cursor!();
+    if (sourceV2Cursor === null) {
+      throw new Error('hub v2 recovery requires the rejected source cursor');
+    }
     const snapshotAbort = new AbortController();
     abort = snapshotAbort;
     let response: Awaited<ReturnType<HubSseFetch>>;
     try {
-      response = await fetchImpl(`${baseUrl}${HUB_V2_SNAPSHOT_PATH}`, {
+      const snapshotUrl = new URL(`${baseUrl}${HUB_V2_SNAPSHOT_PATH}`);
+      // Core uses the rejected, already-durable cursor as the lower bound for
+      // its safe recovery watermark. Without it, old replay-only event classes
+      // pin the new cursor near genesis and an erased account-sequence hole can
+      // send this client through the same 409 -> snapshot loop forever.
+      snapshotUrl.searchParams.set('sourceCursor', sourceV2Cursor);
+      response = await fetchImpl(snapshotUrl.toString(), {
         method: 'GET',
         headers: {
           authorization: `Bearer ${apiKey}`,
@@ -405,34 +663,69 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     if (!running) {
       throw new Error('hub v2 snapshot recovery stopped');
     }
-    const freshCursor = parsed.data.cursor;
+    const newlyMintedCursor = parsed.data.cursor;
+    const boundAccountIds = parsed.data.accounts.flatMap((account) =>
+      account.accountRef === null ? [] : [account.accountRef]);
     if (options.onV2GapRecovered === undefined) {
       throw new Error('hub v2 account grant refresh is not configured');
     }
     const refreshedAccountIds = await options.onV2GapRecovered();
-    allowedAccountIds = new Set(refreshedAccountIds);
+    if (!running) {
+      throw new Error('hub v2 snapshot recovery stopped after grant refresh');
+    }
+    if (!sameUniqueUnorderedAccountSet(boundAccountIds, refreshedAccountIds)) {
+      throw new Error('hub v2 snapshot grant scope changed while minting recovery cursor');
+    }
+    // Preserve Core's numeric-account order. It is part of the cursor response
+    // binding and makes durable page progress stable across restarts.
+    const accountIds = boundAccountIds;
+    allowedAccountIds = new Set(accountIds);
+    const reusableProgress = readReusableSnapshotProgress(0, accountIds, sourceV2Cursor);
+    const targetV2Cursor = reusableProgress?.targetV2Cursor ?? newlyMintedCursor;
+    const cursorBinding = { sourceV2Cursor, targetV2Cursor };
     // Shrink-to-zero is a valid authenticated grant state. There is no account
     // state to page, but the empty fresh cursor must still replace the stale
     // cursor so the client does not loop forever on the revoked grant.
-    if (allowedAccountIds.size > 0) {
-      await recoverStateSnapshots(0);
+    if (accountIds.length > 0) {
+      await recoverStateSnapshots(0, accountIds, cursorBinding, reusableProgress);
+    } else {
+      clearStoredSnapshotProgress();
     }
     if (!running) {
       throw new Error('hub v2 snapshot recovery stopped');
     }
-    options.setV2Cursor!(freshCursor);
+    // Checkpoint first. A crash before cleanup leaves a harmless record whose
+    // source no longer matches getV2Cursor; the next gap refuses to reuse it.
+    options.setV2Cursor!(targetV2Cursor);
+    clearStoredSnapshotProgress();
   }
 
   /** Applies a complete, sticky-cursor state snapshot without advancing either
    * SSE cursor. The caller owns the final protocol-specific checkpoint. */
-  async function recoverStateSnapshots(afterSeq: number): Promise<number> {
+  async function recoverStateSnapshotsOnce(
+    afterSeq: number,
+    accountIds: readonly string[],
+    cursorBinding: { sourceV2Cursor: string; targetV2Cursor: string } | null,
+    reusableProgress: HubSnapshotRecoveryProgress | null,
+  ): Promise<number> {
     if (allowedAccountIds === null || options.onSnapshot === undefined) {
       throw new Error('hub snapshot recovery is not configured');
     }
-    let snapshotCursor: number | null = null;
-    let appliedSnapshotPage = false;
-    for (const accountId of allowedAccountIds) {
-      let pageCursor = 0;
+    let snapshotCursor: number | null = reusableProgress?.snapshotCursor ?? null;
+    let lastPersistedProgress = reusableProgress;
+    let accountIndex = reusableProgress?.accountIndex ?? 0;
+    if (accountIndex === accountIds.length && snapshotCursor !== null) {
+      return snapshotCursor;
+    }
+    for (; accountIndex < accountIds.length; accountIndex += 1) {
+      const accountId = accountIds[accountIndex]!;
+      const resumesThisAccount = reusableProgress?.accountIndex === accountIndex;
+      let pageCursor = resumesThisAccount ? reusableProgress.pageCursor : 0;
+      let stateCursor = resumesThisAccount ? reusableProgress.stateCursor : null;
+      let boundedStateAt = resumesThisAccount ? reusableProgress.boundedStateAt : null;
+      let pageMode: HubSnapshotPageMode = resumesThisAccount
+        ? reusableProgress.pageMode
+        : 'probe';
       for (;;) {
         if (!running) {
           throw new Error('hub snapshot recovery stopped');
@@ -440,11 +733,32 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         const url = new URL(`${baseUrl}${HUB_SNAPSHOT_PATH}`);
         url.searchParams.set('accountId', accountId);
         url.searchParams.set('afterSeq', String(afterSeq));
-        url.searchParams.set('pageCursor', String(pageCursor));
-        url.searchParams.set('limit', '50');
+        // `limit=1` is also the old-Core fallback bound: an older server strips
+        // bounded_v1's additive fields, but will then return at most one
+        // (complete) thread before the client continues legacy pagination.
+        url.searchParams.set('pageCursor', String(pageMode === 'legacy' ? pageCursor : 0));
+        url.searchParams.set('limit', '1');
         if (snapshotCursor !== null) {
           url.searchParams.set('snapshotCursor', String(snapshotCursor));
         }
+        if (pageMode !== 'legacy') {
+          url.searchParams.set('pageMode', 'bounded_v1');
+          url.searchParams.set('messageLimit', String(HUB_SNAPSHOT_MESSAGE_LIMIT));
+          if (stateCursor !== null) {
+            url.searchParams.set('stateCursor', stateCursor);
+          }
+        }
+        // Only the exact continuation loaded at recovery start gets the
+        // compatibility restart. A 400 on a fresh request, or on a cursor
+        // minted during this run, is a real contract failure and must surface.
+        const resumesPersistedStateCursor = reusableProgress !== null
+          && lastPersistedProgress === reusableProgress
+          && accountIndex === reusableProgress.accountIndex
+          && snapshotCursor === reusableProgress.snapshotCursor
+          && pageMode === reusableProgress.pageMode
+          && pageCursor === reusableProgress.pageCursor
+          && stateCursor !== null
+          && stateCursor === reusableProgress.stateCursor;
         const snapshotAbort = new AbortController();
         abort = snapshotAbort;
         let response: Awaited<ReturnType<HubSseFetch>>;
@@ -461,6 +775,24 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         } finally {
           if (abort === snapshotAbort) {
             abort = null;
+          }
+        }
+        if (response.status === 409 && response.json !== undefined) {
+          const restart = syncSnapshotRestartRequiredSchema.safeParse(await response.json());
+          if (restart.success) {
+            throw new HubSnapshotRestartRequiredError(
+              restart.data.replayFloor,
+              lastPersistedProgress,
+            );
+          }
+        }
+        if (response.status === 400 && response.json !== undefined) {
+          const badRequest = hubBadRequestResponseSchema.safeParse(await response.json());
+          if (badRequest.success && resumesPersistedStateCursor) {
+            throw new HubSnapshotPersistedCursorRejectedError(
+              badRequest.data.message,
+              reusableProgress,
+            );
           }
         }
         if (response.status === 404) {
@@ -493,27 +825,194 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         if (!snapshot.resumeAllowed) {
           throw new Error('hub snapshot is partial; cursor advancement refused');
         }
+        let nextAccountIndex = accountIndex;
+        let nextPageMode: HubSnapshotPageMode;
+        let nextPageCursor: number;
+        let nextStateCursor: string | null;
+        let nextBoundedStateAt: string | null;
+        if (snapshot.nextStateCursor !== undefined) {
+          if (snapshot.nextPageCursor !== null) {
+            throw new Error('hub bounded snapshot returned an ambiguous legacy page cursor');
+          }
+          const stateAt = boundedStateAt ?? snapshot.stateAt;
+          if (snapshot.stateAt !== stateAt) {
+            throw new Error('hub bounded snapshot state timestamp changed during recovery');
+          }
+          if (snapshot.nextStateCursor === null) {
+            nextAccountIndex = accountIndex + 1;
+            nextPageMode = 'probe';
+            nextPageCursor = 0;
+            nextStateCursor = null;
+            nextBoundedStateAt = null;
+          } else {
+            if (snapshot.nextStateCursor === stateCursor) {
+              throw new Error('hub bounded snapshot cursor did not advance');
+            }
+            nextPageMode = 'bounded';
+            nextPageCursor = 0;
+            nextStateCursor = snapshot.nextStateCursor;
+            nextBoundedStateAt = stateAt;
+          }
+        } else if (snapshot.nextPageCursor === null) {
+          // Old Core terminal page.
+          nextAccountIndex = accountIndex + 1;
+          nextPageMode = 'probe';
+          nextPageCursor = 0;
+          nextStateCursor = null;
+          nextBoundedStateAt = null;
+        } else {
+          // Old Core (or a Core rollback during a bounded walk) strips the
+          // additive fields. The current page is idempotent; persist its
+          // returned thread cursor and continue one complete thread at a time.
+          nextPageMode = 'legacy';
+          nextPageCursor = snapshot.nextPageCursor;
+          nextStateCursor = null;
+          nextBoundedStateAt = null;
+        }
+
         if (!running) {
           throw new Error('hub snapshot recovery stopped');
         }
         await options.onSnapshot(snapshot);
-        appliedSnapshotPage = true;
-        if (snapshot.nextPageCursor === null) {
+        // A controlled runtime retirement may close the DB as soon as stop()
+        // returns. Do not introduce a new post-stop settings write; repeating
+        // this idempotent page after the next activation is the safe fallback.
+        if (!running) {
+          throw new Error('hub snapshot recovery stopped after page apply');
+        }
+        // Store the NEXT request only after the current page is durably and
+        // idempotently applied. A persistence failure leaves the stream cursor
+        // stale, so repeating this page is safe and cannot skip state.
+        const nextProgress: HubSnapshotRecoveryProgress = {
+          version: 2,
+          scope: options.snapshotProgressScope ?? '',
+          protocol,
+          cursorContract: HUB_SNAPSHOT_CURSOR_CONTRACT,
+          messageLimit: HUB_SNAPSHOT_MESSAGE_LIMIT,
+          afterSeq,
+          accountIds: [...accountIds],
+          accountIndex: nextAccountIndex,
+          snapshotCursor,
+          pageMode: nextPageMode,
+          pageCursor: nextPageCursor,
+          stateCursor: nextStateCursor,
+          boundedStateAt: nextBoundedStateAt,
+          sourceV2Cursor: cursorBinding?.sourceV2Cursor ?? null,
+          targetV2Cursor: cursorBinding?.targetV2Cursor ?? null,
+        };
+        persistSnapshotProgress(nextProgress);
+        lastPersistedProgress = nextProgress;
+
+        if (nextAccountIndex !== accountIndex) {
           break;
         }
-        pageCursor = snapshot.nextPageCursor;
+        pageMode = nextPageMode;
+        pageCursor = nextPageCursor;
+        stateCursor = nextStateCursor;
+        boundedStateAt = nextBoundedStateAt;
       }
     }
-    if (!appliedSnapshotPage || snapshotCursor === null) {
+    if (snapshotCursor === null) {
       throw new Error('hub snapshot recovery produced no snapshot pages');
     }
     return snapshotCursor;
   }
 
+  async function recoverStateSnapshots(
+    afterSeq: number,
+    accountIds: readonly string[],
+    cursorBinding: { sourceV2Cursor: string; targetV2Cursor: string } | null,
+    reusableProgress: HubSnapshotRecoveryProgress | null,
+  ): Promise<number> {
+    let progress = reusableProgress;
+    let floorRestartCount = 0;
+    let persistedCursorRestarted = false;
+    for (;;) {
+      try {
+        return await recoverStateSnapshotsOnce(
+          afterSeq,
+          accountIds,
+          cursorBinding,
+          progress,
+        );
+      } catch (error) {
+        if (error instanceof HubSnapshotPersistedCursorRejectedError) {
+          if (persistedCursorRestarted) {
+            throw error;
+          }
+          if (!clearStoredSnapshotProgress(error.persistedProgress)) {
+            throw new Error(
+              'hub snapshot progress changed during persisted-cursor restart',
+              { cause: error },
+            );
+          }
+          options.onWarn?.('hub persisted snapshot cursor rejected; restarting once fresh', {
+            error: error.message,
+          });
+          persistedCursorRestarted = true;
+          progress = null;
+          continue;
+        }
+        if (!(error instanceof HubSnapshotRestartRequiredError)) {
+          throw error;
+        }
+        if (
+          error.persistedProgress !== null
+          && !clearStoredSnapshotProgress(error.persistedProgress)
+        ) {
+          throw new Error('hub snapshot progress changed during floor restart', { cause: error });
+        }
+        if (floorRestartCount >= HUB_SNAPSHOT_RESTART_LIMIT) {
+          throw new Error(
+            `hub snapshot replay floor kept moving after ${HUB_SNAPSHOT_RESTART_LIMIT + 1} attempts`,
+            { cause: error },
+          );
+        }
+        options.onWarn?.('hub snapshot floor advanced; restarting state walk', {
+          replayFloor: error.replayFloor,
+          restartAttempt: floorRestartCount + 1,
+        });
+        floorRestartCount += 1;
+        progress = null;
+      }
+    }
+  }
+
   async function recoverSnapshots(requirement: SyncSnapshotRequired): Promise<void> {
-    const snapshotCursor = await recoverStateSnapshots(requirement.requestedSeq);
+    if (allowedAccountIds === null) {
+      throw new Error('hub snapshot recovery account allowlist is not configured');
+    }
+    const accountIds = orderedAccountIds();
+    // v1 has one global fanout sequence. An authenticated bootstrap with no
+    // locally assigned accounts has no durable account projection to page; the
+    // server's advertised current sequence is therefore the complete empty
+    // baseline. Without this terminal case the client would retry the same 409
+    // forever. A later grant rebuilds the runtime and performs normal account
+    // bootstrap before starting its stream.
+    if (accountIds.length === 0) {
+      if (requirement.currentSeq < requirement.requestedSeq) {
+        throw new Error('hub empty snapshot baseline moved backwards');
+      }
+      if (running) {
+        options.setLastEventId(requirement.currentSeq);
+        clearStoredSnapshotProgress();
+      }
+      return;
+    }
+    const reusableProgress = readReusableSnapshotProgress(
+      requirement.requestedSeq,
+      accountIds,
+      null,
+    );
+    const snapshotCursor = await recoverStateSnapshots(
+      requirement.requestedSeq,
+      accountIds,
+      null,
+      reusableProgress,
+    );
     if (running) {
       options.setLastEventId(snapshotCursor);
+      clearStoredSnapshotProgress();
     }
   }
 

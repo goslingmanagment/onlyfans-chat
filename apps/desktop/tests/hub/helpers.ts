@@ -50,7 +50,10 @@ export function seedAccount(data: DataLayer, username = 'loravie', id = ACCT): v
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
     hasHubKey: true,
+    hubApiKeyBindingState: 'bound',
     hasHubDeviceToken: false,
+    hubDeviceTokenBindingState: 'none',
+    hubDeviceTokenTransition: null,
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
@@ -117,9 +120,23 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
 }
 
 export function makeSettingsStore(vm: SettingsVM): SettingsStore {
+  const bearer = vm.hasHubDeviceToken
+    ? 'agency_hub_device_test'
+    : vm.hasHubKey
+      ? 'agency_hub_core_test'
+      : null;
   return {
     get: () => Promise.resolve(vm),
+    getHubConnection: () => Promise.resolve({
+      settings: vm,
+      hubBaseUrl: vm.hubBaseUrl,
+      bearer,
+      deviceToken: vm.hasHubDeviceToken ? bearer : null,
+      hubApiKey: vm.hasHubKey ? 'agency_hub_core_test' : null,
+      deviceTokenTransition: null,
+    }),
     update: () => Promise.resolve(vm),
+    runCredentialMutation: (task) => task(),
   };
 }
 
@@ -174,6 +191,7 @@ export function makeFakeHubClient(
     putFanProfile: () => Promise<unknown>;
     postUsageBatch: (args: { events: HubUsageEvent[] }) => Promise<HubUsageBatchResult>;
     getOfapiCreditsSummary: () => Promise<HubOfapiCreditsSummary>;
+    listAiPersonaCatalog: HubClient['listAiPersonaCatalog'];
     streamAiGateway: (
       args: { request: HubAiGatewayStreamRequest },
       callbacks: HubAiGatewayStreamCallbacks,
@@ -301,10 +319,9 @@ export function makeFakeHubClient(
     cancelOfapiCommand: vi.fn(() => Promise.resolve({ ...commandResponse, state: 'cancelled' })),
     streamAiGateway: streamAiGatewayMock,
     streamAiFeature: streamAiFeatureMock,
-    listAiPersonas: vi.fn(() => Promise.resolve([])),
-    archiveAiPersona: vi.fn(() => Promise.resolve({ archived: true })),
-    upsertAiPersona: vi.fn((args: { key: string; displayName: string; systemBlock: string }) =>
-      Promise.resolve({ ...args, updatedAt: new Date().toISOString() })),
+    listAiPersonaCatalog: vi.fn(
+      overrides.listAiPersonaCatalog ?? (() => Promise.resolve([])),
+    ),
     getServerTimeOffsetMs: () => null,
     listPagesMock,
     getFanProfileMock,

@@ -5,7 +5,9 @@ const KIND_DESCRIPTIONS = {
     "session": "dashboard cookie session (owner/team_lead)",
     "any-session": "any live cookie session, any human role",
     "owner-session": "dashboard cookie session, owner role only",
-    "apiKey": "bearer API key",
+    "apiKey": "bearer API key or device token",
+    "device-token": "device-token bearer only",
+    "pending-device-token": "short-lived pending device-token bearer, activation route only",
     "any": "any authenticated principal",
 };
 export function renderAuthorizationPolicyMarkdown(rows) {

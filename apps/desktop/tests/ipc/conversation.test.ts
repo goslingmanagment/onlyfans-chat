@@ -59,6 +59,7 @@ describe('cmd:conversation.refresh IPC handler', () => {
     data = memoryDataLayer();
     sync = makeSyncStub();
     const secrets = {
+      getSecret: async () => null,
       hasSecret: async () => false,
       setSecret: async () => undefined,
       deleteSecret: async () => undefined,

@@ -90,7 +90,7 @@ export interface SummariesQueries {
     fanId: string;
     entry: SummaryCacheEntry;
   }>;
-  /** Refresh = delete + regenerate (SPEC §8.5). */
+  /** Successful refresh atomically replaces the prior valid entry. */
   remove(accountId: string, fanId: string): void;
 }
 

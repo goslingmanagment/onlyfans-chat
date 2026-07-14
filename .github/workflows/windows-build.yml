@@ -6,8 +6,9 @@
 # Trigger manually (Actions → windows-build → Run workflow) or push a v* tag;
 # download ChatGoose-Setup-<version>.exe from the run's artifacts.
 #
-# The artifact is UNSIGNED (code signing is an owner/admin task) — installing
-# it walks through SmartScreen, see docs/WINDOWS-VERIFICATION.md.
+# The pilot remains unsigned until owner-provisioned credentials exist. The
+# workflow validates and verifies Authenticode automatically once they do; see
+# docs/RELEASE.md for the external setup that is still required.
 
 name: windows-build
 
@@ -51,6 +52,10 @@ jobs:
       - name: Install dependencies
         timeout-minutes: 15
         run: pnpm install --frozen-lockfile
+
+      - name: Assert release SDK vendor provenance is clean
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        run: node apps/desktop/scripts/assert-release-sdk-vendor.mjs
 
       - name: Check (typecheck + lint + test + build)
         timeout-minutes: 25
@@ -111,9 +116,101 @@ jobs:
             exit 1
           fi
 
+      - name: Assert production Core supports this Desktop lifecycle
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          core_health="$RUNNER_TEMP/core-health-before-build.json"
+          core_verified=false
+          for attempt in 1 2 3 4 5 6; do
+            if core_http_status=$(curl --fail --silent --show-error \
+              --connect-timeout 10 --max-time 30 \
+              "https://gosling-agency.ru/api/v1/health" \
+              --output "$core_health" --write-out '%{http_code}') \
+              && [ "$core_http_status" = 200 ] \
+              && node apps/desktop/scripts/assert-kernel-capabilities.mjs desktop-lifecycle-v2 < "$core_health" \
+              && node apps/desktop/scripts/assert-release-sdk-vendor.mjs \
+                packages/kernel-sdk/kernel-sdk.vendor.json --health "$core_health"; then
+              core_verified=true
+              break
+            fi
+            echo "production Core lifecycle/contract verification attempt $attempt failed; retrying"
+            sleep 10
+          done
+          if [ "$core_verified" != true ]; then
+            echo "::error::Production Core must deploy desktop-lifecycle-v2 with this Desktop's exact SDK contractHash before publication"
+            exit 1
+          fi
+
+      - name: Validate optional Windows signing configuration
+        id: signing
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+          WINDOWS_SIGNING_REQUIRED: ${{ vars.WINDOWS_SIGNING_REQUIRED }}
+        run: |
+          required="${WINDOWS_SIGNING_REQUIRED:-false}"
+          case "$required" in
+            true|false) ;;
+            *) echo "::error::WINDOWS_SIGNING_REQUIRED must be true or false"; exit 1 ;;
+          esac
+
+          expected=false
+          if [ -n "$CSC_LINK" ] || [ -n "$CSC_KEY_PASSWORD" ]; then
+            if [ -z "$CSC_LINK" ] || [ -z "$CSC_KEY_PASSWORD" ]; then
+              echo "::error::WINDOWS_CSC_LINK and WINDOWS_CSC_KEY_PASSWORD must be configured together"
+              exit 1
+            fi
+            expected=true
+          fi
+          if [ "$required" = true ] && [ "$expected" != true ]; then
+            echo "::error::Windows signing is required but signing credentials are unavailable"
+            exit 1
+          fi
+          echo "expected=$expected" >> "$GITHUB_OUTPUT"
+          if [ "$expected" != true ]; then
+            echo "Unsigned pilot mode: Authenticode credentials are not configured"
+          fi
+
       - name: Build Windows installer
         timeout-minutes: 25
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: pnpm dist:win
+
+      - name: Verify Authenticode when signing is configured or required
+        shell: pwsh
+        env:
+          SIGNING_EXPECTED: ${{ steps.signing.outputs.expected }}
+        run: |
+          if ($env:SIGNING_EXPECTED -ne "true") {
+            Write-Host "Unsigned pilot mode: skipping Authenticode verification"
+            exit 0
+          }
+          $targets = @("apps/desktop/release/win-unpacked/ChatGoose.exe")
+          $targets += @(Get-ChildItem "apps/desktop/release/ChatGoose-Setup-*.exe" | ForEach-Object FullName)
+          if ($targets.Count -lt 2) {
+            Write-Error "Expected both packaged application and installer for signature verification"
+            exit 1
+          }
+          $updateConfig = "apps/desktop/release/win-unpacked/resources/app-update.yml"
+          if (-not (Test-Path $updateConfig) -or
+              -not (Select-String -LiteralPath $updateConfig -Pattern '^publisherName:' -Quiet)) {
+            Write-Error "Signed build is missing publisherName in app-update.yml"
+            exit 1
+          }
+          foreach ($target in $targets) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $target
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+                $null -eq $signature.SignerCertificate) {
+              Write-Error "Invalid Authenticode signature on $target (status=$($signature.Status))"
+              exit 1
+            }
+            Write-Host "Valid Authenticode signature on $target ($($signature.SignerCertificate.Subject))"
+          }
 
       # Packaged-launch smoke gate (D8): 0.1.30/0.1.31 shipped installers whose
       # main process died at module load — windowless, no error, invisible to
@@ -184,14 +281,41 @@ jobs:
           version=$(printf '%s\n' "$metadata" | awk -F= '$1 == "version" { print $2 }')
           artifact=$(printf '%s\n' "$metadata" | awk -F= '$1 == "artifact" { print $2 }')
           sha512=$(printf '%s\n' "$metadata" | awk -F= '$1 == "sha512" { print $2 }')
-          ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "command -v flock >/dev/null && command -v openssl >/dev/null && command -v cmp >/dev/null"
-          # EXIT traps cannot run after a hard runner loss. A stage older than
-          # the job's 130-minute maximum cannot belong to a live publisher, so
-          # reclaim it before staging the next release.
+          ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "command -v flock >/dev/null && command -v openssl >/dev/null && command -v cmp >/dev/null && command -v df >/dev/null"
+          # Reclaim hard-killed stages and old installers, then enforce the
+          # free-space floor before scp. All three actions use the same
+          # server-side lock as publication. Blockmaps remain available so
+          # clients on retained or older versions can use deltas.
           ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 \
-            "find '$FEED_DIR/.incoming' -mindepth 1 -maxdepth 1 -type d -mmin +180 -exec rm -rf -- {} +"
+            "bash -s -- --maintain '$FEED_DIR'" < apps/desktop/scripts/publish-feed.sh
           ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "mkdir -p '$stage_dir'"
           scp "${SSH_OPTIONS[@]}" apps/desktop/release/*.exe apps/desktop/release/*.blockmap apps/desktop/release/latest.yml "cgupdates@45.8.230.111:$stage_dir/"
+          # The initial capability gate is intentionally repeated after the
+          # potentially slow maintenance/scp work and immediately before the
+          # only command that can atomically replace latest.yml. A Core rollback
+          # during build, signing, smoke, or upload therefore cannot silently
+          # publish this Desktop lifecycle.
+          core_health="$RUNNER_TEMP/core-health-at-publication.json"
+          core_verified=false
+          for attempt in 1 2 3 4 5 6; do
+            if core_http_status=$(curl --fail --silent --show-error \
+              --connect-timeout 10 --max-time 30 \
+              "https://gosling-agency.ru/api/v1/health" \
+              --output "$core_health" --write-out '%{http_code}') \
+              && [ "$core_http_status" = 200 ] \
+              && node apps/desktop/scripts/assert-kernel-capabilities.mjs desktop-lifecycle-v2 < "$core_health" \
+              && node apps/desktop/scripts/assert-release-sdk-vendor.mjs \
+                packages/kernel-sdk/kernel-sdk.vendor.json --health "$core_health"; then
+              core_verified=true
+              break
+            fi
+            echo "publication-boundary Core lifecycle/contract verification attempt $attempt failed; retrying"
+            sleep 10
+          done
+          if [ "$core_verified" != true ]; then
+            echo "::error::Production Core lost desktop-lifecycle-v2 or this Desktop's exact SDK contractHash before publication"
+            exit 1
+          fi
           # Server-side lock + monotonic version check; assets are renamed into
           # place first and latest.yml is one final same-filesystem atomic rename.
           if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- '$FEED_DIR' '$stage_dir'" < apps/desktop/scripts/publish-feed.sh; then

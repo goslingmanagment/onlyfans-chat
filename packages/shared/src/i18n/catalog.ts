@@ -113,6 +113,11 @@ export const UI_MESSAGES = {
   'hub.baseUrl.hint': { en: "your agency's core server", ru: 'core-сервер вашего агентства' },
   'hub.key.label': { en: 'Chatter API key', ru: 'API-ключ чаттера' },
   'hub.key.hint': { en: 'agency_hub_core_… — set-only', ru: 'agency_hub_core_… — только запись' },
+  'hub.credentialAttention': { en: 'attention', ru: 'нужно действие' },
+  'hub.key.bindingAttention': {
+    en: 'This stored key is quarantined because its Hub origin cannot be proven. Paste the key again to bind it safely.',
+    ru: 'Сохранённый ключ изолирован: его Hub нельзя подтвердить. Вставьте ключ заново, чтобы безопасно привязать его.',
+  },
   'hub.deviceToken.label': { en: 'Device sign-in', ru: 'Вход устройства' },
   'hub.deviceToken.hint': {
     en: 'One-time login; issues a device token held in the keychain',
@@ -130,6 +135,28 @@ export const UI_MESSAGES = {
   'hub.deviceToken.signOut': { en: 'Sign out', ru: 'Выйти' },
   'hub.deviceToken.signingOut': { en: 'Signing out…', ru: 'Выход…' },
   'hub.deviceToken.signOutFailed': { en: 'Sign-out failed', ru: 'Не удалось выйти' },
+  'hub.deviceToken.abandon': { en: 'Forget locally', ru: 'Забыть локально' },
+  'hub.deviceToken.abandoning': { en: 'Forgetting…', ru: 'Удаление…' },
+  'hub.deviceToken.abandonFailed': {
+    en: 'Could not remove local device credentials',
+    ru: 'Не удалось удалить локальные данные устройства',
+  },
+  'hub.deviceToken.abandonHint': {
+    en: 'Last resort when the old Hub is permanently unavailable',
+    ru: 'Аварийный вариант, если старый Hub окончательно недоступен',
+  },
+  'hub.deviceToken.abandonConfirm': {
+    en: 'Forget this device token locally without contacting the old Hub? The old Hub may retain a live token until an administrator revokes it. Use this only when the old Hub is permanently unavailable.',
+    ru: 'Удалить токен устройства только локально, не обращаясь к старому Hub? На старом Hub токен может остаться активным, пока администратор его не отзовёт. Используйте это только если старый Hub окончательно недоступен.',
+  },
+  'hub.deviceToken.signOutBeforeHubChange': {
+    en: 'Sign out this device before changing the Hub URL.',
+    ru: 'Перед сменой URL хаба выйдите из этого устройства.',
+  },
+  'hub.deviceToken.bindingAttention': {
+    en: 'This device token is quarantined because its Hub origin cannot be proven. Forget it locally, then sign in again. An administrator should revoke any legacy token on the old Hub.',
+    ru: 'Токен устройства изолирован: его Hub нельзя подтвердить. Удалите его локально и войдите заново. Старый токен нужно отозвать администратору на прежнем Hub.',
+  },
   'hub.ofapiWrites.label': { en: 'OFAPI writes', ru: 'Записи OFAPI' },
   'hub.ofapiWrites.hint': {
     en: 'Text, typing, unsend, mark-read, media and PPV go through core commands. Direct is disabled.',
@@ -210,24 +237,45 @@ export const UI_MESSAGES = {
     en: "The model's voice — accounts must map to one before AI activates.",
     ru: 'Голос модели — пока аккаунт не привязан к личности, ИИ выключен.',
   },
-  'personalities.builtIn': { en: 'built-in', ru: 'встроенная' },
-  'personalities.new': { en: '+ New personality', ru: '+ Новая личность' },
-  'personalities.empty': {
-    en: 'Select a personality to edit, or create a new one.',
-    ru: 'Выберите личность для правки или создайте новую.',
+  'personalities.readOnlyHint': {
+    en: 'Global voices are managed by an administrator. This app only selects them for accounts.',
+    ru: 'Глобальными персонами управляет администратор. Здесь их можно только назначать аккаунтам.',
   },
-  'personalities.namePh': { en: 'Name', ru: 'Имя' },
-  'personalities.contentPh': {
-    en: 'Personality content — who she is, how she talks…',
-    ru: 'Описание личности — кто она и как говорит…',
+  'personalities.archived': { en: 'archived', ru: 'в архиве' },
+  'personalities.catalogUnavailable': {
+    en: 'Persona catalog is unavailable. Existing mappings are preserved but AI stays disabled until it refreshes.',
+    ru: 'Каталог персон недоступен. Привязки сохранены, но ИИ выключен до обновления каталога.',
+  },
+  'personalities.exportLegacy': {
+    en: 'Export legacy persona backup',
+    ru: 'Экспорт старых персон',
+  },
+  'personalities.exported': { en: 'Saved: {path}', ru: 'Сохранено: {path}' },
+  'personalities.exportFailed': {
+    en: 'Could not export backup: {error}',
+    ru: 'Не удалось экспортировать резервную копию: {error}',
   },
   'mapping.title': { en: 'Account mapping', ru: 'Привязка аккаунтов' },
   'mapping.hint': {
     en: 'Unmapped accounts show an AI gate banner in the conversation.',
     ru: 'Непривязанные аккаунты показывают баннер «ИИ выключен» в переписке.',
   },
+  'mapping.readOnlyHint': {
+    en: 'Mappings stay local. Missing or archived personas remain recorded but cannot run AI.',
+    ru: 'Привязки хранятся локально. Удалённая или архивная персона остаётся записанной, но ИИ для неё не запускается.',
+  },
   'mapping.unmapped': { en: '— unmapped (AI disabled) —', ru: '— не привязан (ИИ выключен) —' },
   'mapping.aiDisabled': { en: 'AI disabled', ru: 'ИИ выключен' },
+  'mapping.unresolved': { en: 'unresolved', ru: 'не найдена' },
+  'mapping.archived': { en: 'archived', ru: 'в архиве' },
+  'mapping.unresolvedSelection': {
+    en: '{persona} — unavailable (preserved)',
+    ru: '{persona} — недоступна (привязка сохранена)',
+  },
+  'mapping.archivedSelection': {
+    en: '{persona} — archived (preserved)',
+    ru: '{persona} — в архиве (привязка сохранена)',
+  },
 
   // ── Behavior ──────────────────────────────────────────────────────────────
   'behavior.title': { en: 'Behavior', ru: 'Поведение' },
@@ -389,8 +437,8 @@ export const UI_MESSAGES = {
   // ── Local data (danger zone) ──────────────────────────────────────────────
   'danger.title': { en: 'Local data', ru: 'Локальные данные' },
   'danger.hint': {
-    en: 'Purges the encrypted local cache (chats, messages, media). Nothing is deleted upstream.',
-    ru: 'Очищает зашифрованный локальный кэш (чаты, сообщения, медиа). На серверах ничего не удаляется.',
+    en: 'Purges the encrypted local cache (chats, messages, media). The device sign-in is revoked on Hub first; the Hub key must be entered again.',
+    ru: 'Очищает зашифрованный локальный кэш (чаты, сообщения, медиа). Сначала вход устройства отзывается на Hub; ключ Hub потребуется ввести заново.',
   },
   'danger.stats': {
     en: 'Database {db} · media cache {media} ({files})',
@@ -423,8 +471,8 @@ export const UI_MESSAGES = {
     ru: 'Удалить весь локальный кэш?',
   },
   'danger.purgeKernelWarning': {
-    en: 'The server holds no copy of local messages, transactions, or telemetry yet — purging deletes them permanently. Recent chats re-sync from OFAPI; older history does not.',
-    ru: 'На сервере ещё нет копии локальных сообщений, транзакций и телеметрии — очистка удалит их безвозвратно. Свежие чаты пересинхронизируются из OFAPI, старая история — нет.',
+    en: 'The server holds no copy of local messages, transactions, or telemetry yet — purging deletes them permanently. Recent chats re-sync from OFAPI; older history does not. Any device token is remotely revoked before deletion; re-enter the Hub key or sign in this device again afterward.',
+    ru: 'На сервере ещё нет копии локальных сообщений, транзакций и телеметрии — очистка удалит их безвозвратно. Свежие чаты пересинхронизируются из OFAPI, старая история — нет. Перед удалением токен устройства будет отозван на Hub; после очистки заново введите ключ Hub или выполните вход устройства.',
   },
   'danger.purgeExportFirst': {
     en: 'Export diagnostics first',
@@ -1021,6 +1069,22 @@ export const UI_MESSAGES = {
   'conv.navHintJump': { en: 'to jump', ru: 'перейти' },
   'conv.gateMapTitle': { en: 'Map a personality to enable AI', ru: 'Привяжите личность, чтобы включить ИИ' },
   'conv.gateMapBody': { en: '— this account has no personality yet.', ru: '— у этого аккаунта ещё нет личности.' },
+  'conv.gateArchivedTitle': {
+    en: 'AI disabled: persona archived',
+    ru: 'ИИ выключен: персона в архиве',
+  },
+  'conv.gateArchivedBody': {
+    en: '— {persona} remains selected locally. Choose an active persona in Settings.',
+    ru: '— привязка к {persona} сохранена локально. Выберите активную персону в настройках.',
+  },
+  'conv.gateUnresolvedTitle': {
+    en: 'AI disabled: persona unavailable',
+    ru: 'ИИ выключен: персона недоступна',
+  },
+  'conv.gateUnresolvedBody': {
+    en: '— {persona} is absent from the current catalog. The mapping remains preserved.',
+    ru: '— {persona} отсутствует в текущем каталоге. Привязка остаётся сохранённой.',
+  },
   'conv.isTyping': { en: '{name} is typing', ru: '{name} печатает' },
   'conv.emptyTitle': { en: 'No messages yet', ru: 'Сообщений пока нет' },
   'conv.emptyHint': { en: 'This conversation has no history.', ru: 'В этой переписке нет истории.' },

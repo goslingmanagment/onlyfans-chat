@@ -29,9 +29,7 @@ describe("vendored @kernel/sdk", () => {
       "createOfapiCommand",
       "getOfapiCommand",
       "cancelOfapiCommand",
-      "aiPersonasList",
-      "aiPersonaUpsert",
-      "aiPersonaArchive",
+      "aiPersonaCatalog",
     ] as const;
     for (const op of delegatedOps) {
       expect(op in kernelOperations, `kernelOperations.${op}`).toBe(true);

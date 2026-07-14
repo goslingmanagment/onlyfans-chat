@@ -32,6 +32,9 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D12 | 2026-07-12 | Runtime custody handoff is quiescent; unsend commands keep durable idempotent lineage |
 | D13 | 2026-07-12 | Replay/telemetry obligations become durable before one-way claims or later awaits |
 | D14 | 2026-07-13 | Harvest custody is revision-aware; Core ids bind natural key plus content hash |
+| D15 | 2026-07-13 | Cross-transport state is monotonic; generated AI parts have a current-session bound |
+| D16 | 2026-07-13 | Replay-gap state snapshots page every durable row through a bounded opaque cursor |
+| D17 | 2026-07-13 | Global personas are a read-only metadata catalog; legacy client data is preserved and exportable |
 
 ## Entries
 
@@ -200,3 +203,159 @@ are audit snapshots; reconciliation must use the atomically replaced
 `chatgoose-harvest-manifest-<machine>-latest.json` named by each snapshot's
 `reconcileUsing` field, because later revisions intentionally increase the
 machine's cumulative Core observation count.
+
+**D15 (2026-07-13).** Cross-transport state is monotonic and newer interactive
+intent wins. Per-persona Core mutations are serialized so an already-started
+cached bootstrap PUT settles before a later save/archive, and a retired
+generation is rechecked before starting another PUT. Remote persona-list cache
+commits are fenced by a local mutation revision, so a response captured before
+a newer save/archive cannot roll that intent back or be pushed to Core after a
+restart. Persona cache rows, durable pending intents, and account mappings are
+scoped by the normalized persisted Hub origin. The pre-scope global rows are
+claimed to one origin before any copy and copied idempotently, so a crash cannot
+resume them into a newly configured Hub; switching A -> B -> A preserves each
+origin's independent state. The Stage-31 legacy cache migration is one-time and
+remote-first over Core's full active/archived state. Every migration create is
+create-only (`expectedVersion: null`), so a list/create race or tombstone can
+never fall back to an unconditional last-write-wins PUT. Client timestamps have
+no conflict-resolution authority: an identical active row is already migrated,
+an archived key is preserved only in the local recovery record, and divergent
+active content is copied to a deterministic `Recovered` key while the original
+Core row remains authoritative. Core revisions serialize numeric CAS updates.
+A legacy omitted-version PUT may create an absent row or confirm byte-identical
+active content, but divergent content returns 409; reconnecting v0.1.41
+therefore cannot overwrite a newer writer. Post-upgrade Desktop cache rows and
+pending journals round-trip the Core revision, and every interactive or replayed PUT sends an explicit
+`expectedVersion` (`null` is create-only when no revision is known). A CAS 409
+has finite reconciliation: an archived original is removed from cache and
+mappings after its payload is durably quarantined; divergent active content
+stays authoritative while the stale local edit is preserved under a
+deterministic create-only recovery key. Neither path retries the stale write or
+falls back to an omitted-version PUT. An authoritative active list also prunes
+mappings to remotely archived personas before committing the local cache.
+Archive is revision-CAS as well: Desktop sends the revision captured with the
+exact editor payload, and Core refuses stale or omitted-version deletes of an
+active row. Replaying an already committed archive is idempotent. A create whose
+success response was lost may be archived only after the full active payload
+matches the durable local base and Desktop retries against the observed numeric
+revision. Desktop also completes the revision-bearing lifecycle-state preflight
+before DELETE, so an old Core cannot strip an unknown query field and archive
+unconditionally before its legacy response fails validation. The editor keeps
+an immutable base token while open; a live list
+refresh never rebases an older draft or delete onto a newer revision.
+Indeterminate same-key saves carry a bounded set of predecessor payload
+digests plus their exact possible committed revisions. If Core proves it is at
+one of those predecessors, Desktop persists the observed revision before one
+CAS attempt for the latest successor; crash, lost-response, and P2 -> P3 -> P4
+chains therefore keep the original key instead of manufacturing a recovered
+copy. A 409 refresh is bounded and falls back to the normal foreign-writer
+reconciliation. While save/delete owns a draft, editor navigation, New, Cancel,
+and draft inputs stay locked so its late completion cannot discard another
+unsaved editor session.
+This Desktop contract requires revision-bearing persona responses and the full
+active/archived state route, so Core must deploy before Desktop. Core continues
+to accept v0.1.41's absent-key creates and identical replays, but deliberately
+rejects its divergent active-row PUTs and active-row DELETEs. Old Desktop keeps
+the edit in its local cache but cannot mutate shared Core state until upgraded;
+this is a fail-closed compatibility degradation, not full write compatibility.
+Persona reads/background work are drained and origin-fenced across runtime
+retirement. A REST chat-list snapshot
+may refresh non-head metadata but cannot replace a newer locally durable Hub
+head, preview, direction, or unread tuple. Once command intake has durably
+stored `core_command_id`, status/auth uncertainty belongs to the verifier and
+never becomes a retryable `failed` row; pre-intake auth/config rejection remains
+retryable because Core accepted no command. Durable AI acceptance rows keep
+correlation/accounting metadata, but full generated parts are bounded to the
+newest 24 completed operations in the current process (matching the renderer's
+terminal-job cap) and scrubbed at the next app session because renderer job
+state does not survive restart.
+
+**D16 (2026-07-13).** Replay-gap recovery uses Core #146's additive
+`pageMode=bounded_v1` state cursor. Each response carries at most 100 durable
+message/tombstone rows by default; repeated thread metadata is applied
+idempotently. After each successful page application, Desktop durably stores
+the next page/state cursor, sticky snapshot cursor, account index and ordered
+grant set under a Hub-origin+bearer-scoped key. The progress schema is v2 and
+also pins `cursorContract=bounded_v1` plus `messageLimit=100`, so a stored
+cursor is never replayed under different paging semantics. A restart resumes that next
+request only when scope, protocol, account set, rejected source cursor and
+`afterSeq` still match; otherwise it discards the walk and starts a new
+snapshot. For v2, the record also pins the original fresh target cursor: a
+newer auth handshake may validate the retry, but cannot be paired with an older
+state walk because that would skip intervening events. The stream cursor is
+persisted only after every account reaches terminal `nextStateCursor=null`, and
+only then is page progress cleared. The first request also sends legacy
+`limit=1`. If an old or rolled-back Core strips the additive fields and omits
+`nextStateCursor`, the desktop switches to its returned thread cursor and
+persists the next one-thread legacy page rather than truncating recovery or
+clearing the stale stream cursor. If Core returns a typed 400 (`bad_request`
+from the service or Fastify's `Bad Request`) for the exact persisted
+`stateCursor`, Desktop compare-clears only that unchanged progress record and
+performs one fresh bounded restart. A concurrent newer record is never erased;
+a 400 from the fresh walk or from a cursor minted during the current run is a
+contract failure and surfaces without another restart. An authenticated v1 gap
+with an explicit
+empty assigned-account set has no state pages, so it checkpoints Core's
+non-regressing `currentSeq`; an omitted account allowlist still fails closed.
+Core must deploy before the Desktop release. A single retained row remains
+indivisible, so the contract bounds rows rather than silently truncating text or
+media to advertise a byte ceiling it cannot guarantee.
+
+**D17 (2026-07-13).** Core #148 makes global persona definitions owner-admin
+content. Desktop consumes only the Hub-origin-scoped metadata catalog
+`{key, displayName, version, status, definitionId}` and may mutate only its local
+account-to-persona mappings. It has no create, edit, archive, definition-sync,
+CAS, migration-write, or pending-write replay path. The transitional legacy
+Core routes do not authorize Desktop to call them. Archived and unknown mapped
+keys remain stored verbatim for recovery and export, but resolve as disabled
+and cannot start AI; only an active catalog entry is an effective mapping.
+
+Before the first catalog request, Desktop transactionally creates one immutable
+JSON snapshot of every legacy persona-related settings row, including definition
+text, aliases, caches, journals, recovery records, and mappings. That snapshot
+uses a separate key, is never rewritten—even if corrupt—and can be exported
+locally as complete JSON. Catalog refreshes likewise use a separate cache key
+and never overwrite, prune, reinterpret, or delete the source rows. Existing
+legacy rows remain in place after snapshot/export so downgrade and manual
+recovery do not depend on the backup path.
+
+Catalog refresh starts with Hub runtime activation and continues on a bounded
+cadence; it does not depend on opening Settings. HubModule is the only catalog
+writer. Every request receives a per-runtime start generation, and only the
+latest-started response may atomically replace the complete snapshot; an older
+response that settles later cannot commit. Missing keys and lower numeric
+versions are accepted, with a loud diagnostic and dependent query invalidation,
+when they belong to that latest-started full response: Core may have been
+restored to another catalog incarnation, while per-key max merging would
+resurrect removed tombstones. `definitionId`, derived by Core from the exact
+definition, is the restore-safe catalog incarnation and prevents cache reuse
+after an observed definition change; numeric `version` remains
+display/lifecycle metadata and is never a monotonic acceptance guard. It is not
+by itself proof of which definition Core applied if an owner edit races between
+catalog GET and feature generation. Therefore every Desktop feature request
+carries `expectedPersonaDefinitionId`; Core rejects a changed definition before
+context/quota/provider work and echoes `personaDefinitionId` in the first meta
+frame. Desktop accepts no text, usage, completion or summary cache write until
+that echo equals the expected opaque id. A 409 precondition rejection or a
+missing/mismatched echo terminates only that operation and triggers a full
+catalog refresh; it never retries generation or patches/max-merges one key. A
+catalog metadata change invalidates persona, account and affected fan views,
+while main's per-operation persona fence rejects a result after a locally
+observed mapping/definition change.
+
+Core fan-profile versions do not yet carry the exact persona key and revision
+that generated their body. Desktop therefore does not invoke or adopt profile
+prefetch as a fan-summary cache hit—even when the remote body is newer—and
+never stamps an unproven body with the current catalog version. Local cache
+misses and persona-version mismatches run the feature gateway. Post-generation
+profile push and pending replay remain enabled for dashboard sync; both send the
+summary's original `generatedAtMs`, not the later Core append/retry time. Profile
+prefetch may be re-enabled only after the response contract supplies persona
+provenance that can be checked against the active catalog.
+
+This entry supersedes only D15's Desktop client-authoring portions: editor
+ownership, persona PUT/DELETE CAS, migration creates, conflict recovery writes,
+write journals/replay, and authoritative-list mapping pruning. D15's unrelated
+runtime-retirement, cross-transport monotonicity, command-verifier, chat-list,
+and generated-parts rules remain binding. Historical local data described by
+D15 is preservation input, not deletion authorization.

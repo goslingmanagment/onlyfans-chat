@@ -19,7 +19,7 @@ function makeResolver(options: {
     listPages,
     // 'username' explicitly set to null must pass through (missing account row).
     getAccountUsername: () => ('username' in options ? options.username ?? null : 'loravie'),
-    getOverrides: () => Promise.resolve(options.overrides ?? {}),
+    getOverrides: () => options.overrides ?? {},
     ...(options.now !== undefined ? { now: options.now } : {}),
   });
   return { resolver, listPages };
@@ -61,13 +61,18 @@ describe('createPageLabelResolver', () => {
 
   it('caches the pages list inside the TTL and refetches after expiry', async () => {
     let nowMs = 0;
-    const { resolver, listPages } = makeResolver({ now: () => nowMs });
-    await resolver.resolve(ACCT);
-    await resolver.resolve(ACCT);
+    let pageLabel = 'Lora';
+    const { resolver, listPages } = makeResolver({
+      now: () => nowMs,
+      listPages: () => Promise.resolve([hubPage({ label: pageLabel })]),
+    });
+    await expect(resolver.resolve(ACCT)).resolves.toBe('Lora');
+    await expect(resolver.resolve(ACCT)).resolves.toBe('Lora');
     expect(listPages).toHaveBeenCalledTimes(1);
 
     nowMs = PAGE_LIST_CACHE_TTL_MS; // exactly at TTL = expired
-    await resolver.resolve(ACCT);
+    pageLabel = 'Renamed';
+    await expect(resolver.resolve(ACCT)).resolves.toBe('Renamed');
     expect(listPages).toHaveBeenCalledTimes(2);
   });
 
@@ -75,6 +80,24 @@ describe('createPageLabelResolver', () => {
     const { resolver, listPages } = makeResolver({});
     await Promise.all([resolver.resolve(ACCT), resolver.resolve(ACCT), resolver.resolve(ACCT)]);
     expect(listPages).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-reads a manual override after an awaited page-list request', async () => {
+    let overrides: Record<string, string> = {};
+    let release!: (pages: HubPage[]) => void;
+    const resolver = createPageLabelResolver({
+      listPages: () => new Promise<HubPage[]>((resolve) => {
+        release = resolve;
+      }),
+      getAccountUsername: () => 'loravie',
+      getOverrides: () => overrides,
+    });
+    const pending = resolver.resolve(ACCT);
+    overrides = { [ACCT]: 'NewOverride' };
+    release([hubPage({ username: 'loravie', label: 'OldHeuristic' })]);
+
+    await expect(pending).resolves.toBe('NewOverride');
+    expect(resolver.current(ACCT)).toBe('NewOverride');
   });
 
   it('a failed pages fetch resolves null instead of throwing', async () => {

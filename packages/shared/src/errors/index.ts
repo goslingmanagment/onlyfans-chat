@@ -101,12 +101,12 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
   },
   'CG-FLOW-01': {
     message: 'No model personalities are configured.',
-    recovery: 'Open Settings and create at least one personality.',
+    recovery: 'Ask an administrator to configure an active personality in Agency Hub.',
     settingsLink: true,
   },
   'CG-FLOW-02': {
-    message: 'No model personality is assigned for this account.',
-    recovery: 'Open Settings and map this OnlyFans account to a personality.',
+    message: 'No active model personality is assigned for this account.',
+    recovery: 'Open Settings and map this account to an active personality. Archived or missing mappings stay saved but cannot run AI.',
     settingsLink: true,
   },
   'CG-FLOW-03': {

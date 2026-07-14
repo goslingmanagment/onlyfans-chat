@@ -77,6 +77,15 @@ describe('keychain', () => {
     expect(await second.getSecret('hubDeviceToken')).toBe('device-token-1');
   });
 
+  it('atomically replaces a secret and leaves no temporary file behind', async () => {
+    const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
+    await keychain.setSecret('hubApiKey', 'old-key');
+    await keychain.setSecret('hubApiKey', 'replacement-key');
+
+    expect(await keychain.getSecret('hubApiKey')).toBe('replacement-key');
+    expect((await readdir(secretsDir)).sort()).toEqual(['hubApiKey.secret']);
+  });
+
   it('returns null / false for missing secrets', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
     expect(await keychain.getSecret('dbKey')).toBeNull();
