@@ -4,6 +4,7 @@
 // and clean teardown when the config is removed.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HubError } from '@chatgoose/shared/hub/index';
 import { createHubModule, PERSONA_CATALOG_REFRESH_MS } from '@main/hub/index';
 import type { SettingsStore } from '@main/settings/store';
 import type { UsageEventRecord } from '@main/ai/index';
@@ -32,6 +33,11 @@ import {
 } from './helpers';
 
 const TEST_PERSONA_SCOPE = personaStorageScopeForHub('https://hub.example.com');
+const TEST_DEFINITION_ID = 'v1:test-persona-definition';
+
+function definitionId(key: string, incarnation = '1'): string {
+  return `${TEST_DEFINITION_ID}:${key}:${incarnation}`;
+}
 
 function makeKeychain(hubApiKey: string | null): Pick<Keychain, 'getSecret'> {
   return { getSecret: (name) => Promise.resolve(name === 'hubApiKey' ? hubApiKey : null) };
@@ -303,6 +309,7 @@ describe('createHubModule', () => {
         displayName: 'Legacy',
         version: 5,
         status: 'active' as const,
+        definitionId: definitionId('custom:legacy', '5'),
       }];
     });
     const client = makeFakeHubClient({ listAiPersonaCatalog });
@@ -323,19 +330,42 @@ describe('createHubModule', () => {
       displayName: 'Legacy',
       version: 5,
       status: 'active',
+      definitionId: definitionId('custom:legacy', '5'),
     }]);
     module.dispose();
   });
 
-  it('refreshes catalog metadata on a bounded cadence and publishes mapping invalidation state', async () => {
+  it('accepts and loudly invalidates a restored full catalog on the bounded cadence', async () => {
     vi.useFakeTimers();
     const data = memoryDataLayer();
     const catalogs = [
-      [{ key: 'custom:one', displayName: 'One', version: 1, status: 'active' as const }],
-      [{ key: 'custom:one', displayName: 'One', version: 2, status: 'archived' as const }],
+      [
+        {
+          key: 'custom:one',
+          displayName: 'One',
+          version: 2,
+          status: 'archived' as const,
+          definitionId: definitionId('custom:one', 'before'),
+        },
+        {
+          key: 'custom:removed',
+          displayName: 'Removed',
+          version: 4,
+          status: 'archived' as const,
+          definitionId: definitionId('custom:removed', 'before'),
+        },
+      ],
+      [{
+        key: 'custom:one',
+        displayName: 'One restored',
+        version: 1,
+        status: 'active' as const,
+        definitionId: definitionId('custom:one', 'restored'),
+      }],
     ];
     const listAiPersonaCatalog = vi.fn(async () => catalogs.shift() ?? catalogs[0] ?? []);
     const client = makeFakeHubClient({ listAiPersonaCatalog });
+    const onWarn = vi.fn();
     const settingsEvents: Array<{ scope: string; settingsKeys?: string[] }> = [];
     data.bus.subscribe((events) => settingsEvents.push(...events));
     const module = createHubModule({
@@ -345,6 +375,7 @@ describe('createHubModule', () => {
       ),
       keychain: makeKeychain('agency_hub_core_x'),
       createClient: () => client,
+      onWarn,
     });
 
     await module.reconfigure();
@@ -356,7 +387,15 @@ describe('createHubModule', () => {
     await vi.advanceTimersByTimeAsync(PERSONA_CATALOG_REFRESH_MS);
     expect(listAiPersonaCatalog).toHaveBeenCalledTimes(2);
     expect(loadPersonaCatalog(data.settings, TEST_PERSONA_SCOPE)?.[0]).toEqual(
-      expect.objectContaining({ version: 2, status: 'archived' }),
+      expect.objectContaining({ version: 1, status: 'active' }),
+    );
+    expect(loadPersonaCatalog(data.settings, TEST_PERSONA_SCOPE)).toHaveLength(1);
+    expect(onWarn).toHaveBeenCalledWith(
+      '[hub] persona catalog incarnation changed; accepting full replacement',
+      expect.objectContaining({
+        missingKeys: ['custom:removed'],
+        lowerVersions: [{ key: 'custom:one', previous: 2, next: 1 }],
+      }),
     );
     data.bus.flushNow();
     expect(settingsEvents).toContainEqual(expect.objectContaining({
@@ -367,6 +406,136 @@ describe('createHubModule', () => {
     }));
     module.dispose();
   });
+
+  it('lets the latest-started catalog request win when responses settle out of order', async () => {
+    const data = memoryDataLayer();
+    let resolveFirst!: (value: Array<{
+      key: string;
+      displayName: string;
+      version: number;
+      status: 'active' | 'archived';
+      definitionId: string;
+    }>) => void;
+    let resolveSecond!: typeof resolveFirst;
+    const first = new Promise<Parameters<typeof resolveFirst>[0]>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const second = new Promise<Parameters<typeof resolveSecond>[0]>((resolve) => {
+      resolveSecond = resolve;
+    });
+    let request = 0;
+    const listAiPersonaCatalog = vi.fn(() => {
+      request += 1;
+      return request === 1 ? first : second;
+    });
+    const client = makeFakeHubClient({ listAiPersonaCatalog });
+    const module = createHubModule({
+      data,
+      settingsStore: makeSettingsStore(
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+      ),
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient: () => client,
+    });
+
+    await module.reconfigure();
+    expect(listAiPersonaCatalog).toHaveBeenCalledTimes(1);
+    const foreground = module.personas.list(TEST_PERSONA_SCOPE.origin);
+    expect(listAiPersonaCatalog).toHaveBeenCalledTimes(2);
+
+    const latest = [{
+      key: 'custom:one',
+      displayName: 'Latest started',
+      version: 1,
+      status: 'active' as const,
+      definitionId: definitionId('custom:one', 'latest'),
+    }];
+    resolveSecond(latest);
+    await expect(foreground).resolves.toEqual(latest);
+    resolveFirst([{
+      key: 'custom:one',
+      displayName: 'Older request',
+      version: 99,
+      status: 'archived',
+      definitionId: definitionId('custom:one', 'older'),
+    }]);
+    await vi.waitFor(() => {
+      expect(loadPersonaCatalog(data.settings, TEST_PERSONA_SCOPE)).toEqual(latest);
+    });
+    module.dispose();
+  });
+
+  it('refreshes the full catalog after a persona generation precondition rejection', async () => {
+    const data = memoryDataLayer();
+    seedAccount(data);
+    const initial = [{
+      key: 'builtin:lora',
+      displayName: 'Lora',
+      version: 1,
+      definitionId: definitionId('builtin:lora', 'before-edit'),
+      status: 'active' as const,
+    }];
+    const refreshed = [{
+      key: 'builtin:lora',
+      displayName: 'Lora edited',
+      version: 2,
+      definitionId: definitionId('builtin:lora', 'after-edit'),
+      status: 'active' as const,
+    }];
+    const catalogs = [initial, refreshed];
+    const listAiPersonaCatalog = vi.fn(async () => catalogs.shift() ?? refreshed);
+    const client = makeFakeHubClient({
+      listAiPersonaCatalog,
+      streamAiFeature: () => Promise.reject(new HubError('http', {
+        message: 'definition changed',
+        detail: { status: 409, kernelCode: 'persona_definition_changed' },
+      })),
+    });
+    const onWarn = vi.fn();
+    const module = createHubModule({
+      data,
+      settingsStore: makeSettingsStore(
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+      ),
+      keychain: makeKeychain('agency_hub_core_x'),
+      createClient: () => client,
+      onWarn,
+    });
+    await module.reconfigure();
+    await vi.waitFor(() => expect(listAiPersonaCatalog).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+
+    const errors: unknown[] = [];
+    module.aiFeatureGateway.stream(
+      {
+        feature: 'fast-reply',
+        clientRequestId: '55555555-5555-4555-8555-555555555555',
+        accountId: 'acct_hub',
+        chatId: FAN,
+        personaKey: 'builtin:lora',
+        expectedPersonaDefinitionId: initial[0]!.definitionId,
+        isRegeneration: false,
+      },
+      {
+        onText: () => undefined,
+        onComplete: () => undefined,
+        onError: (error) => errors.push(error),
+      },
+    );
+
+    await vi.waitFor(() => expect(listAiPersonaCatalog).toHaveBeenCalledTimes(2));
+    expect(errors).toEqual([expect.objectContaining({ code: 'CG-FLOW-02' })]);
+    expect(loadPersonaCatalog(data.settings, TEST_PERSONA_SCOPE)).toEqual(refreshed);
+    expect(onWarn).toHaveBeenCalledWith(
+      '[hub] persona definition proof rejected; refreshing full catalog',
+      expect.objectContaining({
+        personaKey: 'builtin:lora',
+        reason: 'precondition-rejected',
+      }),
+    );
+    module.dispose();
+  });
+
   it('replays a pending summary as soon as Hub configuration becomes active', async () => {
     const data = memoryDataLayer();
     seedAccount(data);
@@ -376,11 +545,16 @@ describe('createHubModule', () => {
       displayName: 'Lora',
       version: 1,
       status: 'active',
+      definitionId: definitionId('builtin:lora'),
     }]);
     seedSummary(data, {
       body: 'pending local summary',
       generatedAt: Date.parse('2026-07-12T00:00:00.000Z'),
-      personalityId: personaSummaryCacheIdentity(TEST_PERSONA_SCOPE, 'builtin:lora'),
+      personalityId: personaSummaryCacheIdentity(
+        TEST_PERSONA_SCOPE,
+        'builtin:lora',
+        definitionId('builtin:lora'),
+      ),
       personalityUpdatedAt: 1,
       modelId: 'kernel',
       hubSyncState: {
@@ -389,7 +563,15 @@ describe('createHubModule', () => {
         at: '2026-07-12T00:00:00.000Z',
       },
     });
-    const client = makeFakeHubClient();
+    const client = makeFakeHubClient({
+      listAiPersonaCatalog: () => Promise.resolve([{
+        key: 'builtin:lora',
+        displayName: 'Lora',
+        version: 1,
+        status: 'active',
+        definitionId: definitionId('builtin:lora'),
+      }]),
+    });
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(

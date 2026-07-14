@@ -31,6 +31,7 @@ import type { FanPanelVM, SettingsVM, SyncStatusVM } from '../../src/preload/con
 import { ACCT, FAN, memoryDataLayer, seedAccount } from './helpers';
 
 const TEST_PERSONA_SCOPE = personaStorageScopeForHub(DEFAULT_AGENCY_HUB_BASE_URL);
+const TEST_DEFINITION_ID = 'v1:test-persona-definition';
 
 type Handler = (event: unknown, args?: unknown) => unknown;
 const handlers = vi.hoisted(() => new Map<string, Handler>());
@@ -198,10 +199,15 @@ describe('hub IPC wiring', () => {
       displayName: 'Lora',
       version: 1,
       status: 'active',
+      definitionId: `${TEST_DEFINITION_ID}:hub-a`,
     }]);
     data.summaries.put(ACCT, FAN, {
       body: 'Hub A summary',
-      personalityId: personaSummaryCacheIdentity(TEST_PERSONA_SCOPE, 'builtin:lora'),
+      personalityId: personaSummaryCacheIdentity(
+        TEST_PERSONA_SCOPE,
+        'builtin:lora',
+        `${TEST_DEFINITION_ID}:hub-a`,
+      ),
       personalityUpdatedAt: 1,
       generatedAt: Date.parse('2026-07-13T00:00:00.000Z'),
       spendingVerified: true,
@@ -219,6 +225,7 @@ describe('hub IPC wiring', () => {
       displayName: 'Different Lora',
       version: 1,
       status: 'active',
+      definitionId: `${TEST_DEFINITION_ID}:hub-b`,
     }]);
     await invoke('cmd:settings.update', { hubBaseUrl: 'http://127.0.0.1:4010' });
 
@@ -248,10 +255,15 @@ describe('hub IPC wiring', () => {
       displayName: 'Old Lora',
       version: 1,
       status: 'active',
+      definitionId: `${TEST_DEFINITION_ID}:old-hub`,
     }]);
     data.summaries.put(ACCT, FAN, {
       body: 'invalid-origin summary',
-      personalityId: personaSummaryCacheIdentity(invalidScope, 'builtin:lora'),
+      personalityId: personaSummaryCacheIdentity(
+        invalidScope,
+        'builtin:lora',
+        `${TEST_DEFINITION_ID}:old-hub`,
+      ),
       personalityUpdatedAt: 1,
       generatedAt: Date.parse('2026-07-13T00:00:00.000Z'),
       spendingVerified: true,
@@ -740,12 +752,15 @@ describe('read-only persona catalog IPC', () => {
           accountMappings: mappings,
         }),
       }));
-      return [{
+      const catalog = [{
         key: 'custom:legacy',
         displayName: 'Legacy',
         version: 7,
         status: 'active' as const,
+        definitionId: `${TEST_DEFINITION_ID}:legacy`,
       }];
+      storePersonaCatalog(data.settings, TEST_PERSONA_SCOPE, catalog);
+      return catalog;
     });
     register(data, { personas: { list } });
 
@@ -756,6 +771,7 @@ describe('read-only persona catalog IPC', () => {
         displayName: 'Legacy',
         version: 7,
         status: 'active',
+        definitionId: `${TEST_DEFINITION_ID}:legacy`,
       }],
       legacySnapshotAvailable: true,
     });
@@ -775,12 +791,17 @@ describe('read-only persona catalog IPC', () => {
     data.settings.set('accountMappings', { [ACCT]: mappedKey });
     register(data, {
       personas: {
-        list: async () => [{
-          key: 'custom:archived',
-          displayName: 'Archived',
-          version: 4,
-          status: 'archived',
-        }],
+        list: async () => {
+          const catalog = [{
+            key: 'custom:archived',
+            displayName: 'Archived',
+            version: 4,
+            status: 'archived' as const,
+            definitionId: `${TEST_DEFINITION_ID}:archived`,
+          }];
+          storePersonaCatalog(data.settings, TEST_PERSONA_SCOPE, catalog);
+          return catalog;
+        },
       },
     });
 
@@ -794,6 +815,39 @@ describe('read-only persona catalog IPC', () => {
     })]);
     expect(data.settings.get(personaAccountMappingsKey(TEST_PERSONA_SCOPE))).toEqual({
       [ACCT]: mappedKey,
+    });
+  });
+
+  it('publishes an account-scoped mapping invalidation without resetting unrelated AI', async () => {
+    storePersonaCatalog(data.settings, TEST_PERSONA_SCOPE, [{
+      key: 'custom:active',
+      displayName: 'Active',
+      version: 1,
+      status: 'active',
+      definitionId: `${TEST_DEFINITION_ID}:active`,
+    }]);
+    data.bus.flushNow();
+    const events: Array<{
+      scope: string;
+      accountId?: string;
+      settingsKeys?: string[];
+    }> = [];
+    data.bus.subscribe((batch) => events.push(...batch));
+    register(data);
+
+    await invokeRaw('cmd:mappings.set', {
+      accountId: ACCT,
+      personalityId: 'custom:active',
+    });
+    data.bus.flushNow();
+
+    expect(events).toContainEqual({
+      scope: 'settings',
+      accountId: ACCT,
+      settingsKeys: [personaAccountMappingsKey(TEST_PERSONA_SCOPE)],
+    });
+    expect(data.settings.get(personaAccountMappingsKey(TEST_PERSONA_SCOPE))).toEqual({
+      [ACCT]: 'custom:active',
     });
   });
 

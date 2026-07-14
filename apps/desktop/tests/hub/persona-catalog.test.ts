@@ -2,10 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   LEGACY_PERSONA_SNAPSHOT_KEY,
   ensureLegacyPersonaSnapshot,
+  inspectPersonaCatalogReplacement,
   loadPersonaCatalog,
+  resolvePersonaMapping,
   storePersonaCatalog,
 } from '@main/personas/catalog';
-import { personaStorageScopeForHub } from '@main/personas/pending';
+import {
+  personaStorageScopeForHub,
+  personaSummaryCacheIdentity,
+} from '@main/personas/pending';
 
 class MemorySettings {
   readonly values = new Map<string, unknown>();
@@ -101,26 +106,74 @@ describe('legacy persona snapshot', () => {
 });
 
 describe('persona metadata catalog', () => {
-  it('uses a separate key and refuses an out-of-order response', () => {
+  it('uses a separate key and accepts a latest full replacement across Core restore', () => {
     const settings = new MemorySettings();
     settings.set('personalities', [{ id: 'legacy', content: 'never replace' }]);
-    storePersonaCatalog(settings, SCOPE, [{
+    const previous = [
+      {
+        key: 'custom:one',
+        displayName: 'One',
+        version: 2,
+        status: 'archived' as const,
+        definitionId: 'v1:test-definition-before-one',
+      },
+      {
+        key: 'custom:removed',
+        displayName: 'Removed',
+        version: 4,
+        status: 'archived' as const,
+        definitionId: 'v1:test-definition-before-removed',
+      },
+    ];
+    storePersonaCatalog(settings, SCOPE, previous);
+    const restored = [{
       key: 'custom:one',
-      displayName: 'One',
-      version: 2,
-      status: 'archived',
+      displayName: 'One restored',
+      version: 1,
+      status: 'active' as const,
+      definitionId: 'v1:test-definition-restored-one',
+    }];
+    expect(inspectPersonaCatalogReplacement(previous, restored)).toEqual({
+      missingKeys: ['custom:removed'],
+      lowerVersions: [{ key: 'custom:one', previous: 2, next: 1 }],
+    });
+    storePersonaCatalog(settings, SCOPE, restored);
+
+    expect(loadPersonaCatalog(settings, SCOPE)).toEqual(restored);
+    expect(settings.get('personalities')).toEqual([{ id: 'legacy', content: 'never replace' }]);
+  });
+
+  it('invalidates a transitional cached catalog that lacks definitionId', () => {
+    const settings = new MemorySettings();
+    settings.set(`personalities.catalog.v1.${SCOPE.digest}`, [{
+      key: 'custom:old',
+      displayName: 'Old cache',
+      version: 9,
+      status: 'active',
     }]);
+
+    expect(loadPersonaCatalog(settings, SCOPE)).toBeNull();
+    expect(resolvePersonaMapping(loadPersonaCatalog(settings, SCOPE), 'custom:old'))
+      .toEqual({ state: 'unresolved', version: null, definitionId: null });
+  });
+
+  it('requires opaque definitionId in the current cache identity', () => {
+    const settings = new MemorySettings();
     storePersonaCatalog(settings, SCOPE, [{
       key: 'custom:one',
       displayName: 'One',
       version: 1,
       status: 'active',
+      definitionId: 'v1:opaque-definition-hash',
     }]);
 
-    expect(loadPersonaCatalog(settings, SCOPE)).toEqual([expect.objectContaining({
-      version: 2,
-      status: 'archived',
-    })]);
-    expect(settings.get('personalities')).toEqual([{ id: 'legacy', content: 'never replace' }]);
+    const resolution = resolvePersonaMapping(loadPersonaCatalog(settings, SCOPE), 'custom:one');
+    if (resolution.state !== 'active') throw new Error('expected active persona');
+    expect(resolution.definitionId).toBe('v1:opaque-definition-hash');
+    expect(personaSummaryCacheIdentity(
+      SCOPE,
+      'custom:one',
+      resolution.definitionId,
+    )).toContain('persona-summary:v2:');
   });
 });

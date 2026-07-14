@@ -121,20 +121,25 @@ jobs:
         timeout-minutes: 5
         shell: bash
         run: |
+          core_health="$RUNNER_TEMP/core-health-before-build.json"
           core_verified=false
           for attempt in 1 2 3 4 5 6; do
-            if curl --fail --silent --show-error --location \
+            if core_http_status=$(curl --fail --silent --show-error \
               --connect-timeout 10 --max-time 30 \
               "https://gosling-agency.ru/api/v1/health" \
-              | node apps/desktop/scripts/assert-kernel-capabilities.mjs desktop-lifecycle-v2; then
+              --output "$core_health" --write-out '%{http_code}') \
+              && [ "$core_http_status" = 200 ] \
+              && node apps/desktop/scripts/assert-kernel-capabilities.mjs desktop-lifecycle-v2 < "$core_health" \
+              && node apps/desktop/scripts/assert-release-sdk-vendor.mjs \
+                packages/kernel-sdk/kernel-sdk.vendor.json --health "$core_health"; then
               core_verified=true
               break
             fi
-            echo "production Core lifecycle verification attempt $attempt failed; retrying"
+            echo "production Core lifecycle/contract verification attempt $attempt failed; retrying"
             sleep 10
           done
           if [ "$core_verified" != true ]; then
-            echo "::error::Production Core must deploy desktop-lifecycle-v2 before this Desktop can publish"
+            echo "::error::Production Core must deploy desktop-lifecycle-v2 with this Desktop's exact SDK contractHash before publication"
             exit 1
           fi
 
@@ -290,20 +295,25 @@ jobs:
           # only command that can atomically replace latest.yml. A Core rollback
           # during build, signing, smoke, or upload therefore cannot silently
           # publish this Desktop lifecycle.
+          core_health="$RUNNER_TEMP/core-health-at-publication.json"
           core_verified=false
           for attempt in 1 2 3 4 5 6; do
-            if curl --fail --silent --show-error --location \
+            if core_http_status=$(curl --fail --silent --show-error \
               --connect-timeout 10 --max-time 30 \
               "https://gosling-agency.ru/api/v1/health" \
-              | node apps/desktop/scripts/assert-kernel-capabilities.mjs desktop-lifecycle-v2; then
+              --output "$core_health" --write-out '%{http_code}') \
+              && [ "$core_http_status" = 200 ] \
+              && node apps/desktop/scripts/assert-kernel-capabilities.mjs desktop-lifecycle-v2 < "$core_health" \
+              && node apps/desktop/scripts/assert-release-sdk-vendor.mjs \
+                packages/kernel-sdk/kernel-sdk.vendor.json --health "$core_health"; then
               core_verified=true
               break
             fi
-            echo "publication-boundary Core lifecycle verification attempt $attempt failed; retrying"
+            echo "publication-boundary Core lifecycle/contract verification attempt $attempt failed; retrying"
             sleep 10
           done
           if [ "$core_verified" != true ]; then
-            echo "::error::Production Core lost desktop-lifecycle-v2 before publication"
+            echo "::error::Production Core lost desktop-lifecycle-v2 or this Desktop's exact SDK contractHash before publication"
             exit 1
           fi
           # Server-side lock + monotonic version check; assets are renamed into

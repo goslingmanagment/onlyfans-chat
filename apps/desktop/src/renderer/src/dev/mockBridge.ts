@@ -1130,8 +1130,9 @@ export function createMockBridge(): ChatGooseBridge {
       personas: store.personalities.map((persona) => ({
         key: persona.id,
         displayName: persona.name,
-        version: persona.remoteVersion ?? 1,
+        version: persona.builtinVersion ?? 1,
         status: 'active' as const,
+        definitionId: `v1:mock-persona-definition:${persona.id}:${String(persona.builtinVersion ?? 1)}`,
       })),
       legacySnapshotAvailable: true,
     }),

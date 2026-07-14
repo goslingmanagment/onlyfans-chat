@@ -65,7 +65,12 @@ import { createOnlineService, type OnlineService } from './online/service';
 import { createSpendersRefresh, type SpendersRefreshService } from './spenders/refresh';
 import { createPollingSync, syncAccounts } from './sync/polling-sync';
 import { createBudgetGuard } from './sync/budget-guard';
-import { createHubSync, type HubSnapshotRecoveryProgress } from './sync/hub-sync';
+import {
+  createHubSync,
+  HUB_SNAPSHOT_CURSOR_CONTRACT,
+  HUB_SNAPSHOT_MESSAGE_LIMIT,
+  type HubSnapshotRecoveryProgress,
+} from './sync/hub-sync';
 import { createHubAwareSync, type HubAwareSync } from './sync/hub-provider';
 import { registerIpcHandlers } from './ipc/handlers';
 import { createAiCoordinator, type AiCoordinator } from './ai/index';
@@ -720,9 +725,11 @@ async function rebuildOfapiRuntime(
   const lastEventIdSchema = z.number().int().nonnegative();
   const v2CursorSchema = z.string().min(1);
   const snapshotRecoveryProgressSchema: z.ZodType<HubSnapshotRecoveryProgress> = z.strictObject({
-    version: z.literal(1),
+    version: z.literal(2),
     scope: z.string().min(1),
     protocol: z.enum(['v2', 'v1']),
+    cursorContract: z.literal(HUB_SNAPSHOT_CURSOR_CONTRACT),
+    messageLimit: z.literal(HUB_SNAPSHOT_MESSAGE_LIMIT),
     afterSeq: z.number().int().nonnegative(),
     accountIds: z.array(z.string().min(1)).max(1_000),
     accountIndex: z.number().int().nonnegative(),

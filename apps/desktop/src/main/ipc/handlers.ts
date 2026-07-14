@@ -26,6 +26,7 @@ import type { AcceptanceSeam, FeedbackContext } from '../hub/acceptance-reporter
 import {
   ensurePersonaStorageScope,
   loadPersonaAccountMappings,
+  personaAccountMappingsKey,
   storePersonaAccountMapping,
   type PersonaStorageScope,
 } from '../personas/pending';
@@ -33,7 +34,6 @@ import {
   ensureLegacyPersonaSnapshot,
   loadPersonaCatalog,
   resolvePersonaMapping,
-  storePersonaCatalog,
   type LegacyPersonaSnapshot,
   type PersonaCatalogEntry,
 } from '../personas/catalog';
@@ -572,7 +572,9 @@ export function registerIpcHandlers(deps: IpcDeps): void {
         const remote = await deps.personas.list(context.hubOrigin);
         const current = resolvePersonaContext();
         if (current.scope?.origin === context.scope.origin) {
-          catalog = storePersonaCatalog(data.settings, context.scope, remote);
+          // HubModule is the sole catalog writer and request-generation owner.
+          // The IPC query only returns its committed latest-started snapshot.
+          catalog = remote;
         }
       } catch (error) {
         deps.logger?.warn('hub', 'persona catalog refresh failed', safeErrorOutcome(error));
@@ -1007,6 +1009,14 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       args.accountId,
       args.personalityId,
     );
+    // SettingsQueries emits the changed storage key; add the affected account
+    // as a separate coalescing lane so every renderer can invalidate only its
+    // fan queries while main's operation-level persona fence handles streams.
+    data.bus.publish({
+      scope: 'settings',
+      accountId: args.accountId,
+      settingsKeys: [personaAccountMappingsKey(scope)],
+    });
   });
 
   ipcMain.handle('cmd:data.purge', () => deps.purge());

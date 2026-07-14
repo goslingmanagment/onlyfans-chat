@@ -139,16 +139,25 @@ check → download → install flow so the UX is demoable without a real feed.
    never enter an installer. GitHub plan restrictions prevent protected required checks on
    this private repository, so `windows-build` also queries Actions and refuses
    to build or publish unless the exact tag SHA already has a successful CI run.
-   For lifecycle-contract releases it also reads production Core's public health
-   response and requires `desktop-lifecycle-v2`; a tag cannot publish while Core
-   is still on the old reserve/activate or snapshot contract. Persona rollout is
-   gated separately: the shipped Desktop must take the immutable local legacy
-   backup before its first catalog read, expose the JSON export, preserve raw
-   mappings, and contain no client persona write/replay path. Client-side
+   Every feed publication—all `v*` tags and a manual run with `publishFeed=true`,
+   including an emergency higher-semver roll-forward—also reads the canonical
+   production Core health response at `https://gosling-agency.ru/api/v1/health`,
+   requires `desktop-lifecycle-v2`, and requires its `contractHash` to equal
+   `packages/kernel-sdk/kernel-sdk.vendor.json.contractHash`. The hash comparison
+   is the deployed wire-contract proof; it makes no claim that the vendored SDK
+   source commit is an ancestor of the deployed Core commit. This is
+   intentionally not a lifecycle-release selector: no installer can publish
+   while Core is on the old reserve/activate or snapshot contract. The persona
+   rollout is Core-first as well: an old strict feature schema rejects
+   `expectedPersonaDefinitionId`, and an old catalog cannot supply the required
+   `definitionId`; the capability/hash fence must pass before Desktop ships.
+   The shipped Desktop must also take the immutable local legacy backup before
+   its first catalog read, expose the JSON export, preserve raw mappings, and
+   contain no client persona write/replay path. Client-side
    persona CAS/editor support is no longer a release prerequisite because
    global definitions are owner-managed in Core. Until fan-profile responses
-   carry the exact persona key and version, the packaged Desktop must not adopt
-   profile prefetch as a summary cache hit or stamp its body with the current
+   carry the exact persona key and opaque `definitionId`, the packaged Desktop
+   must not adopt profile prefetch as a summary cache hit or stamp its body with the current
    catalog version. Summary push/replay stays enabled and must preserve the
    original `generatedAtMs` across retries.
 3. `git tag v<version> && git push origin v<version>`. Publication rejects a
@@ -208,6 +217,10 @@ rejects downgrades, and an older binary may also reject a database migrated by a
 newer release. Roll forward instead: build a **higher-semver** rescue release
 from the last known-good code plus the required forward-compatible migrations,
 run the complete release ritual above, and let normal auto-update install it.
+The production capability gate still applies to this emergency publication. If
+Core has lost `desktop-lifecycle-v2`, restore or roll Core forward first; do not
+bypass the gate, publish from an untagged SHA, or use a lower Desktop binary as
+an emergency escape hatch.
 In particular, never rebuild or republish 0.1.30/0.1.31 — both are dead-on-launch
 (D8).
 

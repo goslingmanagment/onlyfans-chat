@@ -186,6 +186,7 @@ export declare const healthResponseSchema: z.ZodObject<{
         ok: "ok";
     }>;
     timestamp: z.ZodString;
+    contractHash: z.ZodString;
     capabilities: z.ZodArray<z.ZodLiteral<"desktop-lifecycle-v2">>;
     checks: z.ZodObject<{
         api: z.ZodObject<{
@@ -3836,6 +3837,7 @@ export declare const aiGatewayStreamFrameSchema: z.ZodDiscriminatedUnion<[z.ZodO
         openrouter: "openrouter";
     }>;
     providerResponseId: z.ZodNullable<z.ZodString>;
+    personaDefinitionId: z.ZodOptional<z.ZodString>;
     quota: z.ZodObject<{
         accepted: z.ZodBoolean;
         remainingRequestsToday: z.ZodNullable<z.ZodNumber>;
@@ -3890,6 +3892,7 @@ export declare const aiFeatureStreamFrameSchema: z.ZodUnion<readonly [z.ZodDiscr
         openrouter: "openrouter";
     }>;
     providerResponseId: z.ZodNullable<z.ZodString>;
+    personaDefinitionId: z.ZodOptional<z.ZodString>;
     quota: z.ZodObject<{
         accepted: z.ZodBoolean;
         remainingRequestsToday: z.ZodNullable<z.ZodNumber>;
@@ -3972,6 +3975,7 @@ export declare const aiPersonaCatalogItemSchema: z.ZodObject<{
     key: z.ZodString;
     displayName: z.ZodString;
     version: z.ZodNumber;
+    definitionId: z.ZodString;
     status: z.ZodEnum<{
         active: "active";
         archived: "archived";
@@ -3982,6 +3986,7 @@ export declare const aiPersonaCatalogResponseSchema: z.ZodObject<{
         key: z.ZodString;
         displayName: z.ZodString;
         version: z.ZodNumber;
+        definitionId: z.ZodString;
         status: z.ZodEnum<{
             active: "active";
             archived: "archived";
@@ -4041,6 +4046,7 @@ export declare const aiFeatureStreamBodySchema: z.ZodObject<{
     conversationRef: z.ZodString;
     fanRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     personaKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    expectedPersonaDefinitionId: z.ZodOptional<z.ZodString>;
     model: z.ZodOptional<z.ZodString>;
     reasoningEffort: z.ZodOptional<z.ZodEnum<{
         off: "off";
@@ -9524,6 +9530,7 @@ export declare const routeSchemas: {
                     ok: "ok";
                 }>;
                 timestamp: z.ZodString;
+                contractHash: z.ZodString;
                 capabilities: z.ZodArray<z.ZodLiteral<"desktop-lifecycle-v2">>;
                 checks: z.ZodObject<{
                     api: z.ZodObject<{
@@ -9545,6 +9552,7 @@ export declare const routeSchemas: {
                     ok: "ok";
                 }>;
                 timestamp: z.ZodString;
+                contractHash: z.ZodString;
                 capabilities: z.ZodArray<z.ZodLiteral<"desktop-lifecycle-v2">>;
                 checks: z.ZodObject<{
                     api: z.ZodObject<{
@@ -17422,6 +17430,7 @@ export declare const routeSchemas: {
                     key: z.ZodString;
                     displayName: z.ZodString;
                     version: z.ZodNumber;
+                    definitionId: z.ZodString;
                     status: z.ZodEnum<{
                         active: "active";
                         archived: "archived";
@@ -17709,6 +17718,7 @@ export declare const routeSchemas: {
             conversationRef: z.ZodString;
             fanRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             personaKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            expectedPersonaDefinitionId: z.ZodOptional<z.ZodString>;
             model: z.ZodOptional<z.ZodString>;
             reasoningEffort: z.ZodOptional<z.ZodEnum<{
                 off: "off";
@@ -17763,6 +17773,11 @@ export declare const routeSchemas: {
                 statusCode: z.ZodNumber;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;

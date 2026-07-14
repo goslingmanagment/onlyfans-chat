@@ -34,6 +34,7 @@ import {
   memoryDataLayer,
   seedActivePersonaCatalog,
   startRequest,
+  testPersonaDefinitionId,
 } from './helpers';
 import type { StubFeatureGateway } from './helpers';
 import type { SettingsVM } from '../../src/preload/contract';
@@ -305,6 +306,7 @@ describe('AiCoordinator', () => {
         displayName: 'Lora',
         version: 1,
         status: state,
+        definitionId: testPersonaDefinitionId('builtin:lora'),
       }]);
     }
 
@@ -321,7 +323,7 @@ describe('AiCoordinator', () => {
     expect(gateway.calls[0]?.personaKey).toBe('p-custom');
   });
 
-  it('invalidates a fan-summary cache entry when the server persona version changes', async () => {
+  it('invalidates a fan-summary cache entry when the server persona definition changes', async () => {
     const settings = makeSettingsVM();
     const prefetchSummary = vi.fn(async () => ({
       body: 'hub body with unknown persona provenance',
@@ -331,7 +333,11 @@ describe('AiCoordinator', () => {
     const scope = personaStorageScopeForHub(settings.hubBaseUrl!);
     data.summaries.put(ACCT, CHAT, {
       body: 'cached v1',
-      personalityId: personaSummaryCacheIdentity(scope, 'builtin:lora'),
+      personalityId: personaSummaryCacheIdentity(
+        scope,
+        'builtin:lora',
+        testPersonaDefinitionId('builtin:lora'),
+      ),
       personalityUpdatedAt: 1,
       generatedAt: 123,
       spendingVerified: true,
@@ -352,6 +358,7 @@ describe('AiCoordinator', () => {
       displayName: 'Lora',
       version: 2,
       status: 'active',
+      definitionId: testPersonaDefinitionId('builtin:lora', 2),
     }]);
     coordinator.start(startRequest({ operationId: 'op-v2', feature: 'fan-summary' }));
     await flushAsync();
@@ -366,7 +373,48 @@ describe('AiCoordinator', () => {
     await flushAsync();
     expect(data.summaries.get(ACCT, CHAT)).toMatchObject({
       body: 'generated v2',
-      personalityUpdatedAt: 2,
+      personalityUpdatedAt: 0,
+    });
+  });
+
+  it('keeps in-flight work and summary cache valid across numeric version restore', async () => {
+    const settings = makeSettingsVM();
+    const scope = personaStorageScopeForHub(settings.hubBaseUrl!);
+    const definitionId = testPersonaDefinitionId('builtin:lora');
+    build(settings);
+
+    await startAndReachStream({ feature: 'fan-summary' });
+    storePersonaCatalog(data.settings, scope, [{
+      key: 'builtin:lora',
+      displayName: 'Lora restored',
+      version: 2,
+      status: 'active',
+      definitionId,
+    }]);
+    gateway.cb?.onComplete('same exact definition');
+    await flushAsync();
+
+    expect(framesOfType(frames, 'operation:error')).toHaveLength(0);
+    expect(framesOfType(frames, 'operation:complete')).toHaveLength(1);
+    expect(data.summaries.get(ACCT, CHAT)).toMatchObject({
+      body: 'same exact definition',
+      personalityUpdatedAt: 0,
+    });
+
+    storePersonaCatalog(data.settings, scope, [{
+      key: 'builtin:lora',
+      displayName: 'Lora restored again',
+      version: 1,
+      status: 'active',
+      definitionId,
+    }]);
+    coordinator.start(startRequest({ operationId: 'op-restored-cache', feature: 'fan-summary' }));
+    await flushAsync();
+
+    expect(gateway.calls).toHaveLength(1);
+    expect(framesOfType(frames, 'operation:complete').at(-1)?.result).toMatchObject({
+      rawText: 'same exact definition',
+      summaryMeta: { cached: true },
     });
   });
 
@@ -377,7 +425,11 @@ describe('AiCoordinator', () => {
     const scopeB = personaStorageScopeForHub(settingsB.hubBaseUrl!);
     data.summaries.put(ACCT, CHAT, {
       body: 'Hub A summary',
-      personalityId: personaSummaryCacheIdentity(scopeA, 'builtin:lora'),
+      personalityId: personaSummaryCacheIdentity(
+        scopeA,
+        'builtin:lora',
+        testPersonaDefinitionId('builtin:lora'),
+      ),
       personalityUpdatedAt: 1,
       generatedAt: 123,
       spendingVerified: true,
@@ -395,8 +447,12 @@ describe('AiCoordinator', () => {
     await flushAsync();
     expect(data.summaries.get(ACCT, CHAT)).toMatchObject({
       body: 'Hub B summary',
-      personalityId: personaSummaryCacheIdentity(scopeB, 'builtin:lora'),
-      personalityUpdatedAt: 1,
+      personalityId: personaSummaryCacheIdentity(
+        scopeB,
+        'builtin:lora',
+        testPersonaDefinitionId('builtin:lora'),
+      ),
+      personalityUpdatedAt: 0,
     });
   });
 
@@ -405,7 +461,11 @@ describe('AiCoordinator', () => {
     const scope = personaStorageScopeForHub(settings.hubBaseUrl!);
     data.summaries.put(ACCT, CHAT, {
       body: 'last good summary',
-      personalityId: personaSummaryCacheIdentity(scope, 'builtin:lora'),
+      personalityId: personaSummaryCacheIdentity(
+        scope,
+        'builtin:lora',
+        testPersonaDefinitionId('builtin:lora'),
+      ),
       personalityUpdatedAt: 1,
       generatedAt: 123,
       spendingVerified: true,
@@ -425,7 +485,11 @@ describe('AiCoordinator', () => {
     expect(framesOfType(frames, 'operation:error')).toHaveLength(1);
     expect(data.summaries.get(ACCT, CHAT)).toMatchObject({
       body: 'last good summary',
-      personalityId: personaSummaryCacheIdentity(scope, 'builtin:lora'),
+      personalityId: personaSummaryCacheIdentity(
+        scope,
+        'builtin:lora',
+        testPersonaDefinitionId('builtin:lora'),
+      ),
       personalityUpdatedAt: 1,
     });
   });
@@ -436,12 +500,28 @@ describe('AiCoordinator', () => {
     const pushSummary = vi.fn(async () => undefined);
     build(settings, { summaryHub: { pushSummary } });
     storePersonaCatalog(data.settings, scope, [
-      { key: 'persona-p', displayName: 'P', version: 1, status: 'active' },
-      { key: 'persona-q', displayName: 'Q', version: 1, status: 'active' },
+      {
+        key: 'persona-p',
+        displayName: 'P',
+        version: 1,
+        status: 'active',
+        definitionId: testPersonaDefinitionId('persona-p'),
+      },
+      {
+        key: 'persona-q',
+        displayName: 'Q',
+        version: 1,
+        status: 'active',
+        definitionId: testPersonaDefinitionId('persona-q'),
+      },
     ]);
     data.summaries.put(ACCT, CHAT, {
       body: 'valid Q summary',
-      personalityId: personaSummaryCacheIdentity(scope, 'persona-q'),
+      personalityId: personaSummaryCacheIdentity(
+        scope,
+        'persona-q',
+        testPersonaDefinitionId('persona-q'),
+      ),
       personalityUpdatedAt: 1,
       generatedAt: 123,
       spendingVerified: true,
@@ -466,8 +546,20 @@ describe('AiCoordinator', () => {
     const scope = personaStorageScopeForHub(settings.hubBaseUrl!);
     build(settings);
     storePersonaCatalog(data.settings, scope, [
-      { key: 'persona-p', displayName: 'P', version: 1, status: 'active' },
-      { key: 'persona-q', displayName: 'Q', version: 1, status: 'active' },
+      {
+        key: 'persona-p',
+        displayName: 'P',
+        version: 1,
+        status: 'active',
+        definitionId: testPersonaDefinitionId('persona-p'),
+      },
+      {
+        key: 'persona-q',
+        displayName: 'Q',
+        version: 1,
+        status: 'active',
+        definitionId: testPersonaDefinitionId('persona-q'),
+      },
     ]);
 
     await startAndReachStream();

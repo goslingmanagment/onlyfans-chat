@@ -275,7 +275,9 @@ state does not survive restart.
 message/tombstone rows by default; repeated thread metadata is applied
 idempotently. After each successful page application, Desktop durably stores
 the next page/state cursor, sticky snapshot cursor, account index and ordered
-grant set under a Hub-origin+bearer-scoped key. A restart resumes that next
+grant set under a Hub-origin+bearer-scoped key. The progress schema is v2 and
+also pins `cursorContract=bounded_v1` plus `messageLimit=100`, so a stored
+cursor is never replayed under different paging semantics. A restart resumes that next
 request only when scope, protocol, account set, rejected source cursor and
 `afterSeq` still match; otherwise it discards the walk and starts a new
 snapshot. For v2, the record also pins the original fresh target cursor: a
@@ -286,7 +288,13 @@ only then is page progress cleared. The first request also sends legacy
 `limit=1`. If an old or rolled-back Core strips the additive fields and omits
 `nextStateCursor`, the desktop switches to its returned thread cursor and
 persists the next one-thread legacy page rather than truncating recovery or
-clearing the stale stream cursor. An authenticated v1 gap with an explicit
+clearing the stale stream cursor. If Core returns a typed 400 (`bad_request`
+from the service or Fastify's `Bad Request`) for the exact persisted
+`stateCursor`, Desktop compare-clears only that unchanged progress record and
+performs one fresh bounded restart. A concurrent newer record is never erased;
+a 400 from the fresh walk or from a cursor minted during the current run is a
+contract failure and surfaces without another restart. An authenticated v1 gap
+with an explicit
 empty assigned-account set has no state pages, so it checkpoints Core's
 non-regressing `currentSeq`; an omitted account allowlist still fails closed.
 Core must deploy before the Desktop release. A single retained row remains
@@ -295,7 +303,7 @@ media to advertise a byte ceiling it cannot guarantee.
 
 **D17 (2026-07-13).** Core #148 makes global persona definitions owner-admin
 content. Desktop consumes only the Hub-origin-scoped metadata catalog
-`{key, displayName, version, status}` and may mutate only its local
+`{key, displayName, version, status, definitionId}` and may mutate only its local
 account-to-persona mappings. It has no create, edit, archive, definition-sync,
 CAS, migration-write, or pending-write replay path. The transitional legacy
 Core routes do not authorize Desktop to call them. Archived and unknown mapped
@@ -312,13 +320,28 @@ legacy rows remain in place after snapshot/export so downgrade and manual
 recovery do not depend on the backup path.
 
 Catalog refresh starts with Hub runtime activation and continues on a bounded
-cadence; it does not depend on opening Settings. In-flight refreshes are
-deduplicated and generation/origin-fenced so a retired Hub cannot commit into a
-replacement runtime. Missing keys and lower per-key versions cannot replace a
-newer cached catalog. Server persona `version`, rather than client timestamps,
-is the summary-cache fingerprint, so an admin definition change invalidates the
-corresponding cached fan summaries. A catalog metadata change invalidates both
-persona and account views because effective mappings may change.
+cadence; it does not depend on opening Settings. HubModule is the only catalog
+writer. Every request receives a per-runtime start generation, and only the
+latest-started response may atomically replace the complete snapshot; an older
+response that settles later cannot commit. Missing keys and lower numeric
+versions are accepted, with a loud diagnostic and dependent query invalidation,
+when they belong to that latest-started full response: Core may have been
+restored to another catalog incarnation, while per-key max merging would
+resurrect removed tombstones. `definitionId`, derived by Core from the exact
+definition, is the restore-safe catalog incarnation and prevents cache reuse
+after an observed definition change; numeric `version` remains
+display/lifecycle metadata and is never a monotonic acceptance guard. It is not
+by itself proof of which definition Core applied if an owner edit races between
+catalog GET and feature generation. Therefore every Desktop feature request
+carries `expectedPersonaDefinitionId`; Core rejects a changed definition before
+context/quota/provider work and echoes `personaDefinitionId` in the first meta
+frame. Desktop accepts no text, usage, completion or summary cache write until
+that echo equals the expected opaque id. A 409 precondition rejection or a
+missing/mismatched echo terminates only that operation and triggers a full
+catalog refresh; it never retries generation or patches/max-merges one key. A
+catalog metadata change invalidates persona, account and affected fan views,
+while main's per-operation persona fence rejects a result after a locally
+observed mapping/definition change.
 
 Core fan-profile versions do not yet carry the exact persona key and revision
 that generated their body. Desktop therefore does not invoke or adopt profile

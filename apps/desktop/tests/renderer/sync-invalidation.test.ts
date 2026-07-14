@@ -16,13 +16,42 @@ describe('syncStatusInvalidationKeysForEvent', () => {
 
 describe('dbChangedInvalidationKeysForEvent', () => {
   it('refreshes persona and account views when catalog metadata changes', () => {
-    expect(dbChangedInvalidationKeysForEvent({ scope: 'settings' })).toEqual([
+    expect(dbChangedInvalidationKeysForEvent({
+      scope: 'settings',
+      settingsKeys: ['personalities.catalog.v1.scope'],
+    })).toEqual([
       ['settings'],
       ['personalities'],
       ['accounts'],
       ['fan'],
-      ['guard-config'],
     ]);
+  });
+
+  it('limits account mapping invalidation to the affected account when supplied', () => {
+    expect(dbChangedInvalidationKeysForEvent({
+      scope: 'settings',
+      accountId: 'acct_1',
+      settingsKeys: ['personalities.accountMappings.v2.scope'],
+    })).toEqual([
+      ['settings'],
+      ['accounts'],
+      ['fan', 'acct_1'],
+    ]);
+    expect(dbChangedInvalidationKeysForEvent({
+      scope: 'settings',
+      settingsKeys: ['personalities.accountMappings.v2.scope'],
+    })).toEqual([
+      ['settings'],
+      ['accounts'],
+    ]);
+  });
+
+  it('keeps unrelated and legacy keyless settings events settings-only', () => {
+    expect(dbChangedInvalidationKeysForEvent({
+      scope: 'settings',
+      settingsKeys: ['soundEnabled'],
+    })).toEqual([['settings']]);
+    expect(dbChangedInvalidationKeysForEvent({ scope: 'settings' })).toEqual([['settings']]);
   });
 
   it.each([
@@ -65,19 +94,18 @@ describe('dbChangedInvalidationKeysForEvent', () => {
 });
 
 describe('settingsKeysInvalidateAiContext', () => {
-  it.each([
-    'hubBaseUrl',
-    'runtime.aiContext',
-    'accountPageLabels',
-    'accountMappings',
-    'personalities.catalog.v1.scope-digest',
-    'personalities.accountMappings.v2.scope-digest',
-  ])('recognizes AI identity/routing key %s', (key) => {
-    expect(settingsKeysInvalidateAiContext([key])).toBe(true);
+  it('recognizes only main\'s committed runtime identity event', () => {
+    expect(settingsKeysInvalidateAiContext(['runtime.aiContext'])).toBe(true);
   });
 
-  it('does not reset AI for unrelated or legacy keyless settings events', () => {
-    expect(settingsKeysInvalidateAiContext(['soundEnabled', 'quickMessageCount'])).toBe(false);
+  it('does not reset AI for patches, catalog, mappings, or legacy keyless events', () => {
+    expect(settingsKeysInvalidateAiContext([
+      'hubBaseUrl',
+      'accountPageLabels',
+      'accountMappings',
+      'personalities.catalog.v1.scope-digest',
+      'personalities.accountMappings.v2.scope-digest',
+    ])).toBe(false);
     expect(settingsKeysInvalidateAiContext(undefined)).toBe(false);
   });
 });

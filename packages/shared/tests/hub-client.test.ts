@@ -422,8 +422,20 @@ describe('createHubClient', () => {
   describe('AI persona catalog contract', () => {
     it('reads metadata without exposing or sending persona system text', async () => {
       const personas = [
-        { key: 'builtin:lora', displayName: 'Lora', version: 3, status: 'active' as const },
-        { key: 'custom:old', displayName: 'Old', version: 8, status: 'archived' as const },
+        {
+          key: 'builtin:lora',
+          displayName: 'Lora',
+          version: 3,
+          definitionId: 'v1:test-definition-lora',
+          status: 'active' as const,
+        },
+        {
+          key: 'custom:old',
+          displayName: 'Old',
+          version: 8,
+          definitionId: 'v1:test-definition-old',
+          status: 'archived' as const,
+        },
       ];
       const { calls, fetchImpl } = stubFetch(jsonResponse(200, { personas }));
       const { client, timeouts } = makeClient(fetchImpl);
@@ -436,9 +448,9 @@ describe('createHubClient', () => {
       expect(timeouts).toEqual([HUB_LIST_PAGES_TIMEOUT_MS]);
     });
 
-    it('rejects a catalog row without a server revision', async () => {
+    it('rejects a catalog row without exact definition identity', async () => {
       const { fetchImpl } = stubFetch(jsonResponse(200, {
-        personas: [{ key: 'custom:bad', displayName: 'Bad', status: 'active' }],
+        personas: [{ key: 'custom:bad', displayName: 'Bad', version: 1, status: 'active' }],
       }));
       const { client } = makeClient(fetchImpl);
 

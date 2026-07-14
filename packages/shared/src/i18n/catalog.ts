@@ -255,50 +255,6 @@ export const UI_MESSAGES = {
     en: 'Could not export backup: {error}',
     ru: 'Не удалось экспортировать резервную копию: {error}',
   },
-  'personalities.builtIn': { en: 'built-in', ru: 'встроенная' },
-  'personalities.new': { en: '+ New personality', ru: '+ Новая личность' },
-  'personalities.empty': {
-    en: 'Select a personality to edit, or create a new one.',
-    ru: 'Выберите личность для правки или создайте новую.',
-  },
-  'personalities.namePh': { en: 'Name', ru: 'Имя' },
-  'personalities.contentPh': {
-    en: 'Personality content — who she is, how she talks…',
-    ru: 'Описание личности — кто она и как говорит…',
-  },
-  'personalities.contentRequired': {
-    en: 'Personality content is required.',
-    ru: 'Описание личности не может быть пустым.',
-  },
-  'personalities.contentTooLong': {
-    en: 'Personality content must be at most {max} characters.',
-    ru: 'Описание личности должно быть не длиннее {max} символов.',
-  },
-  'personalities.contentCount': {
-    en: '{current} / {max} characters',
-    ru: '{current} / {max} символов',
-  },
-  'personalities.saveFailed': {
-    en: 'Could not save personality: {error}',
-    ru: 'Не удалось сохранить личность: {error}',
-  },
-  'personalities.deleteFailed': {
-    en: 'Could not delete personality: {error}',
-    ru: 'Не удалось удалить личность: {error}',
-  },
-  'personalities.needsReview': { en: 'review', ru: 'проверить' },
-  'personalities.recoveredReview': {
-    en: 'Another server revision won. Your text was saved as this recovered copy, and affected account mappings were moved to it. Review it and Save again to dismiss this notice.',
-    ru: 'На сервере победила другая редакция. Ваш текст сохранён как эта восстановленная копия, и привязки аккаунтов перенесены на неё. Проверьте и сохраните ещё раз, чтобы скрыть это сообщение.',
-  },
-  'personalities.clientRejectedReview': {
-    en: 'Core rejected this queued change. Your text is still stored locally and remote refresh remains active. Review the Hub/version problem, then retry Save or Delete.',
-    ru: 'Core отклонил это отложенное изменение. Текст остался локально, а обновление с сервера продолжает работать. Исправьте проблему Hub/версии и повторите сохранение или удаление.',
-  },
-  'personalities.quarantinedReview': {
-    en: 'This edit could not be placed on Core without overwriting another lifecycle state. Your full text remains editable here and AI mappings are disabled until you retry successfully.',
-    ru: 'Эту редакцию нельзя безопасно записать в Core, не затерев другое состояние. Полный текст остаётся доступен здесь, а привязки ИИ отключены до успешного повтора.',
-  },
   'mapping.title': { en: 'Account mapping', ru: 'Привязка аккаунтов' },
   'mapping.hint': {
     en: 'Unmapped accounts show an AI gate banner in the conversation.',

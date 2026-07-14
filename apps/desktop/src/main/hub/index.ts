@@ -39,6 +39,8 @@ import type { AiFeatureGateway } from '../ai/gateway';
 import { ensurePersonaStorageScope, type PersonaStorageScope } from '../personas/pending';
 import {
   ensureLegacyPersonaSnapshot,
+  inspectPersonaCatalogReplacement,
+  loadPersonaCatalog,
   storePersonaCatalog,
 } from '../personas/catalog';
 
@@ -107,6 +109,8 @@ interface ActiveHub {
   aiFeatureGateway: AiFeatureGateway;
   catalogRefreshTimer: ReturnType<typeof setInterval> | null;
   catalogRefreshRunning: boolean;
+  catalogRefreshRequested: boolean;
+  catalogRequestGeneration: number;
 }
 
 export function createHubModule(options: HubModuleOptions): HubModule {
@@ -156,31 +160,60 @@ export function createHubModule(options: HubModuleOptions): HubModule {
   }
 
   async function fetchPersonaCatalog(
-    client: HubClient,
-    scope: PersonaStorageScope,
+    activeHub: ActiveHub,
     expectedGeneration: number,
   ): Promise<HubAiPersonaCatalogEntry[]> {
-    ensureLegacyPersonaSnapshot(data.settings, scope.origin);
-    const catalog = await client.listAiPersonaCatalog();
+    const requestGeneration = ++activeHub.catalogRequestGeneration;
+    ensureLegacyPersonaSnapshot(data.settings, activeHub.personaScope.origin);
+    const catalog = await activeHub.client.listAiPersonaCatalog();
     if (
       disposed
       || generation !== expectedGeneration
-      || active?.client !== client
-      || active.personaScope.origin !== scope.origin
+      || active !== activeHub
     ) {
       throw new HubError('network', {
         message: 'Hub persona catalog belonged to a retired runtime',
       });
     }
-    return storePersonaCatalog(data.settings, scope, catalog);
+    if (requestGeneration !== activeHub.catalogRequestGeneration) {
+      // A newer request was started for this runtime. Never let this older
+      // response win merely because it settled last.
+      const current = loadPersonaCatalog(data.settings, activeHub.personaScope);
+      if (current === null) {
+        throw new HubError('network', {
+          message: 'Hub persona catalog response was superseded before any cache committed',
+        });
+      }
+      return current;
+    }
+    const previous = loadPersonaCatalog(data.settings, activeHub.personaScope);
+    const regression = inspectPersonaCatalogReplacement(previous, catalog);
+    if (regression !== null) {
+      // The latest-started full snapshot wins even across Core DR. This write
+      // invalidates renderer catalog/account/fan queries. definitionId prevents
+      // reuse after an observed definition change, while the feature lane's
+      // expected/applied identity fence prevents a catalog-to-generation race.
+      onWarn('[hub] persona catalog incarnation changed; accepting full replacement', {
+        hubOrigin: activeHub.personaScope.origin,
+        missingKeys: regression.missingKeys,
+        lowerVersions: regression.lowerVersions,
+      });
+    }
+    return storePersonaCatalog(data.settings, activeHub.personaScope, catalog);
   }
 
   function refreshPersonaCatalog(activeHub: ActiveHub, expectedGeneration: number): void {
-    if (activeHub.catalogRefreshRunning) return;
+    if (activeHub.catalogRefreshRunning) {
+      // A stale-generation signal must not disappear behind a cadence fetch
+      // that may have started just before the owner edit. Coalesce to exactly
+      // one follow-up full snapshot after the current request settles.
+      activeHub.catalogRefreshRequested = true;
+      return;
+    }
     activeHub.catalogRefreshRunning = true;
+    activeHub.catalogRefreshRequested = false;
     void trackPersonaOperation(fetchPersonaCatalog(
-      activeHub.client,
-      activeHub.personaScope,
+      activeHub,
       expectedGeneration,
     )).catch((error: unknown) => {
       onWarn('[hub] persona catalog refresh failed', {
@@ -188,6 +221,14 @@ export function createHubModule(options: HubModuleOptions): HubModule {
       });
     }).finally(() => {
       activeHub.catalogRefreshRunning = false;
+      if (
+        activeHub.catalogRefreshRequested
+        && active === activeHub
+        && generation === expectedGeneration
+        && !disposed
+      ) {
+        refreshPersonaCatalog(activeHub, expectedGeneration);
+      }
     });
   }
 
@@ -269,12 +310,10 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         ) {
           throw new HubError('network', { message: 'Hub personas are not configured' });
         }
-        const client = active.client;
-        const requestScope = active.personaScope;
+        const requestOwner = active;
         const requestGeneration = generation;
         return trackPersonaOperation(fetchPersonaCatalog(
-          client,
-          requestScope,
+          requestOwner,
           requestGeneration,
         ));
       },
@@ -433,9 +472,32 @@ export function createHubModule(options: HubModuleOptions): HubModule {
           client,
           resolvePageLabel: (accountId) => resolver.resolve(accountId),
           isPageLabelCurrent,
+          onPersonaDefinitionStale: (details) => {
+            const requestOwner = active;
+            if (
+              requestOwner === null
+              || requestOwner.client !== client
+              || generation !== myGeneration
+              || disposed
+            ) {
+              return;
+            }
+            onWarn('[hub] persona definition proof rejected; refreshing full catalog', {
+              hubOrigin: personaScope.origin,
+              personaKey: details.personaKey,
+              expectedDefinitionId: details.expectedDefinitionId,
+              appliedDefinitionId: details.appliedDefinitionId,
+              reason: details.reason,
+            });
+            // Full-snapshot refresh only. Never patch or max-merge one key;
+            // the latest-started response owns the atomic replacement.
+            refreshPersonaCatalog(requestOwner, myGeneration);
+          },
         }),
         catalogRefreshTimer: null,
         catalogRefreshRunning: false,
+        catalogRefreshRequested: false,
+        catalogRequestGeneration: 0,
       };
       active = nextActive;
       // Refresh metadata at runtime activation so AI cache validation does not

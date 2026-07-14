@@ -56,7 +56,8 @@ export function createChangeBus(flushIntervalMs: number = DB_CHANGE_FLUSH_MS): D
       const previous = pending.get(key);
       if (previous?.scope === 'settings' && event.scope === 'settings') {
         pending.set(key, {
-          scope: 'settings',
+          ...previous,
+          ...event,
           ...(previous.settingsKeys !== undefined && event.settingsKeys !== undefined
             ? { settingsKeys: [...new Set([...previous.settingsKeys, ...event.settingsKeys])] }
             : {}),

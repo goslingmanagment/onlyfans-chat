@@ -25,6 +25,7 @@ import {
   type SyncSnapshotRequired,
   type SyncSnapshotResponse,
 } from '@chatgoose/shared/protocol/index';
+import { z } from 'zod';
 import type { SleepFn } from '../ofapi/rate-limiter';
 
 export const HUB_SSE_PATH = '/api/v1/events/stream';
@@ -34,6 +35,8 @@ export const HUB_V2_SSE_PATH = '/api/v1/events/v2/stream';
 export const HUB_V2_SNAPSHOT_PATH = '/api/v1/events/v2/snapshot';
 export type HubSyncProtocol = 'v2' | 'v1';
 export type HubSnapshotPageMode = 'probe' | 'bounded' | 'legacy';
+export const HUB_SNAPSHOT_MESSAGE_LIMIT = 100;
+export const HUB_SNAPSHOT_CURSOR_CONTRACT = 'bounded_v1';
 
 /**
  * Durable "next request" for a replay-gap state walk. The record is written
@@ -44,9 +47,11 @@ export type HubSnapshotPageMode = 'probe' | 'bounded' | 'legacy';
  * events between the two baselines.
  */
 export interface HubSnapshotRecoveryProgress {
-  version: 1;
+  version: 2;
   scope: string;
   protocol: HubSyncProtocol;
+  cursorContract: typeof HUB_SNAPSHOT_CURSOR_CONTRACT;
+  messageLimit: number;
   afterSeq: number;
   accountIds: string[];
   accountIndex: number;
@@ -64,6 +69,21 @@ export const HUB_RECONNECT_CAP_MS = 30_000;
 /** Heartbeat is every 30 s — 45 s of total byte silence means a dead pipe. */
 export const HUB_WATCHDOG_MS = 45_000;
 const HUB_SNAPSHOT_RESTART_LIMIT = 3;
+
+const hubBadRequestResponseSchema = z.discriminatedUnion('error', [
+  // Service-level BadRequestError from Core's AppError handler.
+  z.object({
+    error: z.literal('bad_request'),
+    message: z.string().min(1),
+    statusCode: z.literal(400),
+  }).strict(),
+  // Fastify/Zod query validation fails before the route service runs.
+  z.object({
+    error: z.literal('Bad Request'),
+    message: z.string().min(1),
+    statusCode: z.literal(400),
+  }).strict(),
+]);
 
 // ─── SSE frame parser (per the WHATWG SSE spec, subset core emits) ────────
 
@@ -281,6 +301,16 @@ class HubSnapshotRestartRequiredError extends Error {
   }
 }
 
+class HubSnapshotPersistedCursorRejectedError extends Error {
+  constructor(
+    message: string,
+    readonly persistedProgress: HubSnapshotRecoveryProgress,
+  ) {
+    super(`Core rejected persisted snapshot continuation: ${message}`);
+    this.name = 'HubSnapshotPersistedCursorRejectedError';
+  }
+}
+
 function isSnapshotAuthError(error: unknown): error is HubSnapshotAuthError {
   return error instanceof HubSnapshotAuthError;
 }
@@ -365,6 +395,8 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     return left.version === right.version
       && left.scope === right.scope
       && left.protocol === right.protocol
+      && left.cursorContract === right.cursorContract
+      && left.messageLimit === right.messageLimit
       && left.afterSeq === right.afterSeq
       && sameAccountSet(left.accountIds, right.accountIds)
       && left.accountIndex === right.accountIndex
@@ -407,8 +439,10 @@ export function createHubSync(options: HubSyncOptions): HubSync {
 
   function validProgressShape(progress: HubSnapshotRecoveryProgress): boolean {
     if (
-      progress.version !== 1
+      progress.version !== 2
       || progress.scope !== options.snapshotProgressScope
+      || progress.cursorContract !== HUB_SNAPSHOT_CURSOR_CONTRACT
+      || progress.messageLimit !== HUB_SNAPSHOT_MESSAGE_LIMIT
       || !Number.isSafeInteger(progress.afterSeq)
       || progress.afterSeq < 0
       || !Number.isSafeInteger(progress.accountIndex)
@@ -709,11 +743,22 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         }
         if (pageMode !== 'legacy') {
           url.searchParams.set('pageMode', 'bounded_v1');
-          url.searchParams.set('messageLimit', '100');
+          url.searchParams.set('messageLimit', String(HUB_SNAPSHOT_MESSAGE_LIMIT));
           if (stateCursor !== null) {
             url.searchParams.set('stateCursor', stateCursor);
           }
         }
+        // Only the exact continuation loaded at recovery start gets the
+        // compatibility restart. A 400 on a fresh request, or on a cursor
+        // minted during this run, is a real contract failure and must surface.
+        const resumesPersistedStateCursor = reusableProgress !== null
+          && lastPersistedProgress === reusableProgress
+          && accountIndex === reusableProgress.accountIndex
+          && snapshotCursor === reusableProgress.snapshotCursor
+          && pageMode === reusableProgress.pageMode
+          && pageCursor === reusableProgress.pageCursor
+          && stateCursor !== null
+          && stateCursor === reusableProgress.stateCursor;
         const snapshotAbort = new AbortController();
         abort = snapshotAbort;
         let response: Awaited<ReturnType<HubSseFetch>>;
@@ -738,6 +783,15 @@ export function createHubSync(options: HubSyncOptions): HubSync {
             throw new HubSnapshotRestartRequiredError(
               restart.data.replayFloor,
               lastPersistedProgress,
+            );
+          }
+        }
+        if (response.status === 400 && response.json !== undefined) {
+          const badRequest = hubBadRequestResponseSchema.safeParse(await response.json());
+          if (badRequest.success && resumesPersistedStateCursor) {
+            throw new HubSnapshotPersistedCursorRejectedError(
+              badRequest.data.message,
+              reusableProgress,
             );
           }
         }
@@ -830,9 +884,11 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         // idempotently applied. A persistence failure leaves the stream cursor
         // stale, so repeating this page is safe and cannot skip state.
         const nextProgress: HubSnapshotRecoveryProgress = {
-          version: 1,
+          version: 2,
           scope: options.snapshotProgressScope ?? '',
           protocol,
+          cursorContract: HUB_SNAPSHOT_CURSOR_CONTRACT,
+          messageLimit: HUB_SNAPSHOT_MESSAGE_LIMIT,
           afterSeq,
           accountIds: [...accountIds],
           accountIndex: nextAccountIndex,
@@ -869,7 +925,9 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     reusableProgress: HubSnapshotRecoveryProgress | null,
   ): Promise<number> {
     let progress = reusableProgress;
-    for (let restartCount = 0; ; restartCount += 1) {
+    let floorRestartCount = 0;
+    let persistedCursorRestarted = false;
+    for (;;) {
       try {
         return await recoverStateSnapshotsOnce(
           afterSeq,
@@ -878,6 +936,23 @@ export function createHubSync(options: HubSyncOptions): HubSync {
           progress,
         );
       } catch (error) {
+        if (error instanceof HubSnapshotPersistedCursorRejectedError) {
+          if (persistedCursorRestarted) {
+            throw error;
+          }
+          if (!clearStoredSnapshotProgress(error.persistedProgress)) {
+            throw new Error(
+              'hub snapshot progress changed during persisted-cursor restart',
+              { cause: error },
+            );
+          }
+          options.onWarn?.('hub persisted snapshot cursor rejected; restarting once fresh', {
+            error: error.message,
+          });
+          persistedCursorRestarted = true;
+          progress = null;
+          continue;
+        }
         if (!(error instanceof HubSnapshotRestartRequiredError)) {
           throw error;
         }
@@ -887,7 +962,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         ) {
           throw new Error('hub snapshot progress changed during floor restart', { cause: error });
         }
-        if (restartCount >= HUB_SNAPSHOT_RESTART_LIMIT) {
+        if (floorRestartCount >= HUB_SNAPSHOT_RESTART_LIMIT) {
           throw new Error(
             `hub snapshot replay floor kept moving after ${HUB_SNAPSHOT_RESTART_LIMIT + 1} attempts`,
             { cause: error },
@@ -895,8 +970,9 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         }
         options.onWarn?.('hub snapshot floor advanced; restarting state walk', {
           replayFloor: error.replayFloor,
-          restartAttempt: restartCount + 1,
+          restartAttempt: floorRestartCount + 1,
         });
+        floorRestartCount += 1;
         progress = null;
       }
     }

@@ -58,7 +58,7 @@ describe('attachBridgeEvents', () => {
     detach();
   });
 
-  it('resets AI jobs only for committed AI-context settings rows', () => {
+  it('resets AI jobs only for main\'s committed runtime identity replacement', () => {
     const queryClient = new QueryClient();
     const resetSpy = vi.spyOn(aiStore, 'resetAiJobsForHubOriginChange');
     const detach = attachBridgeEvents(queryClient);
@@ -73,6 +73,11 @@ describe('attachBridgeEvents', () => {
         scope: 'settings',
         settingsKeys: ['personalities.catalog.v1.scope-digest'],
       });
+    }
+    expect(resetSpy).not.toHaveBeenCalled();
+
+    for (const listener of bridgeMock.listeners.get('db:changed') ?? []) {
+      listener({ scope: 'settings', settingsKeys: ['runtime.aiContext'] });
     }
     expect(resetSpy).toHaveBeenCalledTimes(1);
     detach();

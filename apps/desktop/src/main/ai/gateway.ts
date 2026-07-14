@@ -60,6 +60,9 @@ export interface AiFeatureGatewayRequest {
   mode?: string | undefined;
   draftText?: string | undefined;
   personaKey?: string | undefined;
+  /** Exact catalog definition the coordinator resolved. Core must enforce this
+   * precondition and echo the applied identity before any output is accepted. */
+  expectedPersonaDefinitionId: string;
   isRegeneration: boolean;
   /** Debug mode only (#140): request the kernel's prompt echo. */
   debugPromptEcho?: boolean;

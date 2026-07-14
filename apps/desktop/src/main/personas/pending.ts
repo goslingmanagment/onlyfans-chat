@@ -51,8 +51,10 @@ export function personaStorageScopeForHub(hubBaseUrl: string): PersonaStorageSco
 export function personaSummaryCacheIdentity(
   scope: PersonaStorageScope,
   personaKey: string,
+  definitionId: string,
 ): string {
-  return `persona-summary:v1:${scope.digest}:${personaKey.length}:${personaKey}`;
+  return `persona-summary:v2:${scope.digest}:${personaKey.length}:${personaKey}`
+    + `:${definitionId.length}:${definitionId}`;
 }
 
 export function personaCacheKey(scope: PersonaStorageScope | null): string {

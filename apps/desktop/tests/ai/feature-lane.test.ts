@@ -31,6 +31,7 @@ import {
   seedActivePersonaCatalog,
   startRequest,
   makeStubFeatureGateway,
+  TEST_PERSONA_DEFINITION_ID,
 } from './helpers';
 import type { StubFeatureGateway } from './helpers';
 import type { SettingsVM } from '../../src/preload/contract';
@@ -79,6 +80,7 @@ describe('AI feature lane (Stage 31)', () => {
       mode: 'preferSplit',
       draftText: undefined,
       personaKey: 'builtin:lora',
+      expectedPersonaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
       isRegeneration: false,
       // #140: still refs only. The echo is a DEBUG-mode ask (default off), and
       // even when asked it rides a capability header — never the request body.
@@ -320,10 +322,12 @@ describe('feature gateway adapter (Stage 31)', () => {
     isPageLabelCurrent: (accountId: string, pageLabel: string) => boolean = () => true,
   ) {
     const events: Array<{ kind: string; value?: unknown }> = [];
+    const staleReports: unknown[] = [];
     const adapter = createFeatureAiGateway({
       client: { streamAiFeature: streamAiFeature as never },
       resolvePageLabel,
       isPageLabelCurrent,
+      onPersonaDefinitionStale: (details) => staleReports.push(details),
     });
     const cancel = adapter.stream(
       {
@@ -335,6 +339,7 @@ describe('feature gateway adapter (Stage 31)', () => {
         mode: undefined,
         draftText: undefined,
         personaKey: 'builtin:lora',
+        expectedPersonaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
         isRegeneration: true,
       },
       {
@@ -343,13 +348,19 @@ describe('feature gateway adapter (Stage 31)', () => {
         onComplete: (rawText) => events.push({ kind: 'complete', value: rawText }),
       },
     );
-    return { events, cancel };
+    return { events, staleReports, cancel };
   }
 
   it('builds the kernel request from refs (page label resolved)', async () => {
     const captured: Array<{ feature: string; request: Record<string, unknown> }> = [];
     const { events } = run((args, callbacks) => {
       captured.push(args);
+      callbacks.onMeta?.({
+        requestId: '22222222-2222-4222-8222-222222222222',
+        clientRequestId: 'op-9',
+        personaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
+        quotaRemainingRequests: null,
+      });
       callbacks.onText('ok');
       return Promise.resolve('ok');
     });
@@ -364,12 +375,50 @@ describe('feature gateway adapter (Stage 31)', () => {
       conversationRef: CHAT,
       replyTone: 'casual',
       personaKey: 'builtin:lora',
+      expectedPersonaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
       isRegeneration: true,
     });
     expect(events).toEqual([
       { kind: 'text', value: 'ok' },
       { kind: 'complete', value: 'ok' },
     ]);
+  });
+
+  it('accepts no stream output without the exact applied-definition meta proof', async () => {
+    for (const appliedDefinitionId of [undefined, 'v1:different-persona-definition']) {
+      let callbacks!: HubAiGatewayStreamCallbacks;
+      let finish!: (value: string) => void;
+      const { events, staleReports } = run((_args, streamCallbacks) => {
+        callbacks = streamCallbacks;
+        return new Promise<string>((resolve) => {
+          finish = resolve;
+        });
+      });
+      await flushAsync();
+
+      if (appliedDefinitionId !== undefined) {
+        callbacks.onMeta?.({
+          requestId: '22222222-2222-4222-8222-222222222222',
+          clientRequestId: 'op-9',
+          personaDefinitionId: appliedDefinitionId,
+          quotaRemainingRequests: 9,
+        });
+      }
+      callbacks.onText('must never render');
+      finish('must never complete');
+      await flushAsync();
+
+      expect(events.filter((event) => event.kind === 'text')).toHaveLength(0);
+      expect(events.filter((event) => event.kind === 'complete')).toHaveLength(0);
+      expect((events.find((event) => event.kind === 'error')?.value as { code: string }).code)
+        .toBe('CG-FLOW-02');
+      expect(staleReports).toEqual([expect.objectContaining({
+        personaKey: 'builtin:lora',
+        expectedDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
+        appliedDefinitionId,
+        reason: 'meta-proof-missing-or-mismatched',
+      })]);
+    }
   });
 
   it('does not start a kernel stream with a page label resolved before an override change', async () => {
@@ -407,6 +456,12 @@ describe('feature gateway adapter (Stage 31)', () => {
       (_accountId, pageLabel) => pageLabel === currentPage,
     );
     await flushAsync();
+    callbacks.onMeta?.({
+      requestId: '22222222-2222-4222-8222-222222222222',
+      clientRequestId: 'op-9',
+      personaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
+      quotaRemainingRequests: null,
+    });
     callbacks.onText('valid prefix');
     currentPage = 'page-b';
     callbacks.onText('stale suffix');
@@ -496,6 +551,7 @@ describe('feature gateway adapter (Stage 31)', () => {
         mode: undefined,
         draftText: undefined,
         personaKey: 'builtin:lora',
+        expectedPersonaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
         isRegeneration: false,
       },
       {
@@ -508,6 +564,53 @@ describe('feature gateway adapter (Stage 31)', () => {
 
     const error = events.find((event) => event.kind === 'error');
     expect((error?.value as { code: string }).code).toBe('CG-FLOW-03');
+  });
+
+  it('maps a real persona precondition 409 to scoped stale and requests catalog refresh', async () => {
+    const fetchImpl = (): Promise<HubResponseLike> =>
+      Promise.resolve({
+        status: 409,
+        headers: { get: () => null },
+        body: null,
+        text: () => Promise.resolve(JSON.stringify({
+          error: 'persona_definition_changed',
+          message: 'AI persona definition changed; refresh the persona catalog and retry',
+          statusCode: 409,
+        })),
+      });
+    const client = createHubClient({ baseUrl: 'https://hub.example.com', apiKey: 'k', fetchImpl });
+    const staleReports: unknown[] = [];
+    const adapter = createFeatureAiGateway({
+      client,
+      resolvePageLabel: () => Promise.resolve('lora-of'),
+      isPageLabelCurrent: () => true,
+      onPersonaDefinitionStale: (details) => staleReports.push(details),
+    });
+    const events: Array<{ kind: string; value?: unknown }> = [];
+    adapter.stream(
+      {
+        feature: 'fast-reply',
+        clientRequestId: '55555555-5555-4555-8555-555555555555',
+        accountId: ACCT,
+        chatId: CHAT,
+        personaKey: 'builtin:lora',
+        expectedPersonaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
+        isRegeneration: false,
+      },
+      {
+        onText: (text) => events.push({ kind: 'text', value: text }),
+        onError: (error) => events.push({ kind: 'error', value: error }),
+        onComplete: (rawText) => events.push({ kind: 'complete', value: rawText }),
+      },
+    );
+    await flushAsync();
+
+    expect(events.map((event) => event.kind)).toEqual(['error']);
+    expect((events[0]?.value as { code: string }).code).toBe('CG-FLOW-02');
+    expect(staleReports).toEqual([expect.objectContaining({
+      expectedDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
+      reason: 'precondition-rejected',
+    })]);
   });
 
   it('errors when no page label maps to the account', async () => {
@@ -568,6 +671,7 @@ describe('feature gateway adapter (Stage 31)', () => {
         mode: undefined,
         draftText: undefined,
         personaKey: 'builtin:lora',
+        expectedPersonaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
         isRegeneration: false,
       },
       {
@@ -617,6 +721,7 @@ describe('feature gateway adapter (Stage 31)', () => {
         mode: undefined,
         draftText: undefined,
         personaKey: 'builtin:ghost',
+        expectedPersonaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:ghost:1`,
         isRegeneration: false,
       },
       {
@@ -667,6 +772,7 @@ describe('feature gateway adapter (Stage 31)', () => {
         mode: undefined,
         draftText: undefined,
         personaKey: 'builtin:lora',
+        expectedPersonaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
         isRegeneration: false,
       },
       {

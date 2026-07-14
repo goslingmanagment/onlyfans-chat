@@ -7,6 +7,8 @@ function aiFrame(data: unknown): string {
   return `event: ai\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
+const TEST_PERSONA_DEFINITION_ID = 'v1:test-persona-definition:lora';
+
 function streamResponse(body: string, status = 200): HubResponseLike {
   const bytes = new Uint8Array([...body].map((char) => char.charCodeAt(0)));
   let consumed = false;
@@ -153,6 +155,8 @@ describe('HubClient AI feature stream', () => {
       pageLabel: 'Lora',
       platform: 'onlyfans' as const,
       conversationRef: '4242',
+      personaKey: 'builtin:lora',
+      expectedPersonaDefinitionId: TEST_PERSONA_DEFINITION_ID,
       isRegeneration: false,
     };
   }
@@ -221,6 +225,7 @@ describe('HubClient AI feature stream', () => {
             model: 'anthropic:claude-sonnet-4-6',
             provider: 'anthropic',
             providerResponseId: null,
+            personaDefinitionId: TEST_PERSONA_DEFINITION_ID,
             quota: { accepted: true, remainingRequestsToday: 10, remainingMicroUsdToday: 1_000 },
           }) +
             aiFrame(debugFrame) +
@@ -232,9 +237,14 @@ describe('HubClient AI feature stream', () => {
     const client = createHubClient({ baseUrl: 'https://hub.example.com', apiKey: 'k', fetchImpl });
 
     const echoes: unknown[] = [];
+    const metas: unknown[] = [];
     await client.streamAiFeature(
       { feature: 'fast-reply', request: makeFeatureRequest(), debugPromptEcho: true },
-      { onText: () => {}, onDebugInput: (input) => echoes.push(input) },
+      {
+        onText: () => {},
+        onDebugInput: (input) => echoes.push(input),
+        onMeta: (meta) => metas.push(meta),
+      },
     );
 
     const headers = calls[0]!.init.headers as Record<string, string>;
@@ -246,6 +256,13 @@ describe('HubClient AI feature stream', () => {
         contextManifest: debugFrame.contextManifest,
       },
     ]);
+    expect(metas).toEqual([expect.objectContaining({
+      personaDefinitionId: TEST_PERSONA_DEFINITION_ID,
+    })]);
+    expect(JSON.parse(calls[0]!.init.body ?? '{}')).toMatchObject({
+      personaKey: 'builtin:lora',
+      expectedPersonaDefinitionId: TEST_PERSONA_DEFINITION_ID,
+    });
 
     const quiet: Array<{ url: string; init: HubRequestInit }> = [];
     const quietClient = createHubClient({

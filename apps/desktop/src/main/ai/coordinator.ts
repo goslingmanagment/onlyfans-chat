@@ -24,7 +24,6 @@ import {
   normalizeVariantReplyParts,
 } from '@chatgoose/shared/output/reply-output';
 import { parseChatReviewXml, parseHelpMeXml } from '@chatgoose/shared/output/xml';
-import { isValidSummaryCacheEntry } from '@chatgoose/shared/summary/validity';
 import type { SummaryCacheEntry } from '@chatgoose/shared/summary/validity';
 import type { FeatureType, ReplyMode, ReplyTone } from '@chatgoose/shared/types';
 import {
@@ -46,7 +45,11 @@ import {
   personaSummaryCacheIdentity,
   type PersonaStorageScope,
 } from '../personas/pending';
-import { currentPersonaSummaryIdentity } from '../personas/summary';
+import {
+  currentPersonaSummaryIdentity,
+  isPersonaDefinitionSummary,
+  PERSONA_SUMMARY_VERSION_SENTINEL,
+} from '../personas/summary';
 import { effectivePersistedHubBaseUrl, type SettingsStore } from '../settings/store';
 import type { AiDebugInput, AiFeatureGateway, CancelFn } from './gateway';
 import { createOperationProfiler, NO_OP_PROFILER } from './profiler';
@@ -202,14 +205,6 @@ const aiStartRequestSchema = z.object({
 
 const operationIdOnlySchema = z.object({ operationId: z.string().min(1) });
 
-/**
- * Where the personalities IPC module persists the saved list (db settings
- * table). The coordinator only reads; an absent row falls back to the bundled
- * set so a fresh install can run with the default Lora mapping.
- */
-export const PERSONALITIES_SETTINGS_KEY = 'personalities';
-
-
 // ─── Internal operation state ─────────────────────────────────────────────
 
 interface ParsedParams {
@@ -234,7 +229,7 @@ interface SummaryCacheSeed {
 interface OperationPersonaIdentity {
   scope: PersonaStorageScope;
   cacheIdentity: string;
-  version: number;
+  definitionId: string;
 }
 
 interface OperationState {
@@ -785,7 +780,12 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
   function resolvePersona(
     settings: SettingsVM,
     accountId: string,
-  ): { key: string; version: number; cacheIdentity: string; scope: PersonaStorageScope } {
+  ): {
+    key: string;
+    definitionId: string;
+    cacheIdentity: string;
+    scope: PersonaStorageScope;
+  } {
     const mappedId = settings.accountMappings[accountId];
     if (
       mappedId === undefined
@@ -806,8 +806,12 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
     }
     return {
       key: mappedId,
-      version: resolution.version,
-      cacheIdentity: personaSummaryCacheIdentity(scope, mappedId),
+      definitionId: resolution.definitionId,
+      cacheIdentity: personaSummaryCacheIdentity(
+        scope,
+        mappedId,
+        resolution.definitionId,
+      ),
       scope,
     };
   }
@@ -829,7 +833,6 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         && new URL(currentHubBaseUrl).origin === expected.scope.origin
         && current !== null
         && current.cacheIdentity === expected.cacheIdentity
-        && current.version === expected.version
       ) {
         return true;
       }
@@ -877,11 +880,9 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       } else {
         const entry = deps.data.summaries.get(op.accountId, op.chatId);
         if (
-          isValidSummaryCacheEntry(
+          isPersonaDefinitionSummary(
             entry,
             persona.cacheIdentity,
-            persona.version,
-            KERNEL_MODEL_ID,
           )
         ) {
           cacheStage.complete('cache hit');
@@ -897,7 +898,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
       // the legacy degraded-context guard belonged to the local loaders.
       op.summarySeed = {
         personalityId: persona.cacheIdentity,
-        personalityUpdatedAt: persona.version,
+        personalityUpdatedAt: PERSONA_SUMMARY_VERSION_SENTINEL,
         spendingVerified: true,
         subscriptionVerified: true,
       };
@@ -925,6 +926,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         mode: policy.supportsReplyMode ? op.params.mode : undefined,
         draftText: op.params.draftText,
         personaKey,
+        expectedPersonaDefinitionId: persona.definitionId,
         isRegeneration: op.params.forceRegenerate === true,
         // #140: in debug mode, ask the kernel for the prompt it assembled. It
         // answers only inside an owner-set, time-bounded window; silence is

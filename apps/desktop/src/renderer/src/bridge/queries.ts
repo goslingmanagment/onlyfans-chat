@@ -41,7 +41,6 @@ import { getBridge } from './bridge';
 import {
   beginAiHubOriginChange,
   endAiHubOriginChange,
-  resetAiJobsForHubOriginChange,
 } from '../features/ai/aiStore';
 
 export const qk = {
@@ -332,10 +331,8 @@ export function useHubDeviceTokenIssue() {
     // on either outcome so the sign-out/recovery affordance becomes visible
     // alongside the mutation error while the bounded main-process retry runs.
     onSettled: () => {
-      // Enrollment can reject after the new token is durably stored. The
-      // renderer cannot distinguish that from a pre-commit failure, so retire
-      // every result tied to the attempted principal on either outcome.
-      resetAiJobsForHubOriginChange();
+      // Main publishes runtime.aiContext only if the effective principal
+      // actually changed; that committed event owns any global AI reset.
       endAiHubOriginChange();
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
     },
@@ -354,7 +351,6 @@ export function useHubSignOutDevice() {
       beginAiHubOriginChange();
     },
     onSettled: () => {
-      resetAiJobsForHubOriginChange();
       endAiHubOriginChange();
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
     },
@@ -369,9 +365,6 @@ export function useHubAbandonDevice() {
     mutationFn: () => getBridge().invoke('cmd:hub.abandonDevice', undefined),
     onMutate: () => {
       beginAiHubOriginChange();
-    },
-    onSuccess: () => {
-      resetAiJobsForHubOriginChange();
     },
     onSettled: () => {
       endAiHubOriginChange();
@@ -624,26 +617,27 @@ export function useUpdateSettings() {
     mutationFn: (patch: SettingsPatch) => getBridge().invoke('cmd:settings.update', patch),
     onMutate: (patch) => {
       const blocksAi = 'hubBaseUrl' in patch
-        || 'hubApiKey' in patch
-        || 'accountPageLabels' in patch;
+        || 'hubApiKey' in patch;
       if (blocksAi) beginAiHubOriginChange();
       return { blocksAi };
     },
-    onSuccess: (settings) => {
+    onSuccess: (settings, patch) => {
       queryClient.setQueryData(qk.settings, settings);
       void queryClient.invalidateQueries({ queryKey: qk.syncStatus });
       void queryClient.invalidateQueries({ queryKey: qk.activity });
-      // Hub-origin changes swap the scoped persona cache + account mappings.
-      // Do not leave the previous Hub's rows rendered from React Query memory.
-      void queryClient.invalidateQueries({ queryKey: qk.personalities });
-      void queryClient.invalidateQueries({ queryKey: qk.accounts });
-      void queryClient.invalidateQueries({ queryKey: ['fan'] });
+      if ('hubBaseUrl' in patch || 'hubApiKey' in patch) {
+        // Hub replacement swaps the scoped catalog + mappings. Main's
+        // runtime.aiContext event separately resets jobs only when its exact
+        // origin/principal fingerprint actually changed.
+        void queryClient.invalidateQueries({ queryKey: qk.personalities });
+        void queryClient.invalidateQueries({ queryKey: qk.accounts });
+        void queryClient.invalidateQueries({ queryKey: ['fan'] });
+      } else if ('accountPageLabels' in patch) {
+        void queryClient.invalidateQueries({ queryKey: qk.accounts });
+      }
     },
     onSettled: (_settings, _error, _patch, mutation) => {
       if (mutation?.blocksAi === true) {
-        // Credential activation can fail after custody/settings commit. Clear
-        // old-context output even when the renderer receives a rejection.
-        resetAiJobsForHubOriginChange();
         endAiHubOriginChange();
       }
     },
@@ -661,17 +655,10 @@ export function useSetMapping() {
   return useMutation({
     mutationFn: (args: { accountId: string; personalityId: string | null }) =>
       getBridge().invoke('cmd:mappings.set', args),
-    onMutate: () => {
-      beginAiHubOriginChange();
-    },
-    onSuccess: () => {
-      resetAiJobsForHubOriginChange();
+    onSuccess: (_result, args) => {
       void queryClient.invalidateQueries({ queryKey: qk.accounts });
       void queryClient.invalidateQueries({ queryKey: qk.settings });
-      void queryClient.invalidateQueries({ queryKey: ['fan'] });
-    },
-    onSettled: () => {
-      endAiHubOriginChange();
+      void queryClient.invalidateQueries({ queryKey: ['fan', args.accountId] });
     },
   });
 }

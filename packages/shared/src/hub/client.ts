@@ -282,7 +282,12 @@ export interface HubAiGatewayStreamCallbacks {
   /** Stage 31: the gateway meta frame — requestId is the generation ref
    * (the acceptance correlation key kernel-side). quotaRemainingRequests is
    * the page's remaining daily gateway budget (null = kernel didn't say). */
-  onMeta?: (meta: { requestId: string; clientRequestId: string; quotaRemainingRequests: number | null }) => void;
+  onMeta?: (meta: {
+    requestId: string;
+    clientRequestId: string;
+    personaDefinitionId: string | undefined;
+    quotaRemainingRequests: number | null;
+  }) => void;
   onDebugInput?: (input: HubAiDebugInput) => void;
 }
 
@@ -611,7 +616,12 @@ export function createHubClient(options: HubClientOptions): HubClient {
           callbacks.onProgress?.();
           switch (frame.type) {
             case 'meta':
-              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId, quotaRemainingRequests: frame.quota.remainingRequestsToday });
+              callbacks.onMeta?.({
+                requestId: frame.requestId,
+                clientRequestId: frame.clientRequestId,
+                personaDefinitionId: frame.personaDefinitionId,
+                quotaRemainingRequests: frame.quota.remainingRequestsToday,
+              });
               return;
             case 'content_delta':
               state.rawText += frame.text;
@@ -698,7 +708,12 @@ export function createHubClient(options: HubClientOptions): HubClient {
               });
               return;
             case 'meta':
-              callbacks.onMeta?.({ requestId: frame.requestId, clientRequestId: frame.clientRequestId, quotaRemainingRequests: frame.quota.remainingRequestsToday });
+              callbacks.onMeta?.({
+                requestId: frame.requestId,
+                clientRequestId: frame.clientRequestId,
+                personaDefinitionId: frame.personaDefinitionId,
+                quotaRemainingRequests: frame.quota.remainingRequestsToday,
+              });
               return;
             case 'content_delta':
               state.rawText += frame.text;

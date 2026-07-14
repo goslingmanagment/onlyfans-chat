@@ -27,6 +27,11 @@ import type { AiStartRequest, SettingsVM } from '../../src/preload/contract';
 export const ACCT = 'acct_test';
 export const CHAT = '4242';
 export const TEST_DRIVER = 'bsqlite3-mc-node';
+export const TEST_PERSONA_DEFINITION_ID = 'v1:test-persona-definition';
+
+export function testPersonaDefinitionId(key: string, version = 1): string {
+  return `${TEST_PERSONA_DEFINITION_ID}:${key}:${String(version)}`;
+}
 
 export function memoryDataLayer(): DataLayer {
   return createDataLayer({
@@ -146,6 +151,7 @@ export function seedActivePersonaCatalog(
       displayName: key,
       version: versions[key] ?? 1,
       status: 'active' as const,
+      definitionId: testPersonaDefinitionId(key, versions[key] ?? 1),
     })),
   );
 }

@@ -43,6 +43,8 @@ export interface PersonaCatalogEntryVM {
   displayName: string;
   version: number;
   status: 'active' | 'archived';
+  /** Restore-safe opaque identity of the exact server-owned definition bytes. */
+  definitionId: string;
 }
 
 export interface PersonalitiesSnapshotVM {

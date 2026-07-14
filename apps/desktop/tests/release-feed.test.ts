@@ -18,6 +18,7 @@ const repoRoot = resolve(import.meta.dirname, '../../..');
 const cli = resolve(repoRoot, 'apps/desktop/scripts/release-feed.mjs');
 const ciGate = resolve(repoRoot, 'apps/desktop/scripts/assert-ci-success.mjs');
 const kernelGate = resolve(repoRoot, 'apps/desktop/scripts/assert-kernel-capabilities.mjs');
+const releaseSdkGate = resolve(repoRoot, 'apps/desktop/scripts/assert-release-sdk-vendor.mjs');
 const publisher = resolve(repoRoot, 'apps/desktop/scripts/publish-feed.sh');
 const publisherEnv = {
   ...process.env,
@@ -173,14 +174,20 @@ describe('Windows release feed policy', () => {
     }
 
     const env = { ...publisherEnv, CHATGOOSE_FEED_KEEP_INSTALLERS: '2' };
-    const beforeDryRun = readdirSync(feed).sort();
+    // Linux flock intentionally keeps this inode in place forever. Compare
+    // only managed feed entries: unlinking/recreating the lock path could let
+    // two publishers lock different inodes concurrently.
+    const managedEntries = (): string[] => readdirSync(feed)
+      .filter((name) => name !== '.publish.lock')
+      .sort();
+    const beforeDryRun = managedEntries();
     const dryRun = spawnSync('bash', [publisher, '--maintain', feed, '--dry-run'], {
       env,
       encoding: 'utf8',
     });
     expect(dryRun.status, dryRun.stderr).toBe(0);
     expect(dryRun.stdout).toContain('retention would remove installer=');
-    expect(readdirSync(feed).sort()).toEqual(beforeDryRun);
+    expect(managedEntries()).toEqual(beforeDryRun);
 
     const applied = spawnSync('bash', [publisher, '--maintain', feed], { env, encoding: 'utf8' });
     expect(applied.status, applied.stderr).toBe(0);
@@ -301,13 +308,29 @@ describe('Windows release feed policy', () => {
     const home = join(root, 'home');
     const runnerTemp = join(root, 'runner-temp');
     const feed = join(root, 'remote-feed');
-    for (const dir of [releaseDir, scriptsDir, mockBin, home, runnerTemp, join(feed, '.incoming')]) {
+    const kernelSdkDir = join(root, 'packages/kernel-sdk');
+    for (const dir of [
+      releaseDir,
+      scriptsDir,
+      mockBin,
+      home,
+      runnerTemp,
+      kernelSdkDir,
+      join(feed, '.incoming'),
+    ]) {
       mkdirSync(dir, { recursive: true });
     }
     fixture(releaseDir, '1.2.4', 'candidate installer');
     writeFileSync(join(scriptsDir, 'release-feed.mjs'), readFileSync(cli));
     writeFileSync(join(scriptsDir, 'assert-kernel-capabilities.mjs'), readFileSync(kernelGate));
+    writeFileSync(join(scriptsDir, 'assert-release-sdk-vendor.mjs'), readFileSync(releaseSdkGate));
     writeFileSync(join(scriptsDir, 'publish-feed.sh'), readFileSync(publisher));
+    const fixtureContractHash = 'a'.repeat(64);
+    writeFileSync(join(kernelSdkDir, 'kernel-sdk.vendor.json'), JSON.stringify({
+      contractHash: fixtureContractHash,
+      sourceCommit: 'b'.repeat(40),
+      source: 'release test fixture',
+    }));
     const mockLog = join(root, 'transport.log');
     writeExecutable(
       join(mockBin, 'ssh'),
@@ -340,7 +363,28 @@ touch "$stage/scp-succeeded"
     );
     writeExecutable(
       join(mockBin, 'curl'),
-      '#!/usr/bin/env bash\nif [[ "$*" == *"/api/v1/health"* ]]; then printf \'%s\\n\' \'{"status":"ok","capabilities":["desktop-lifecycle-v2"]}\'; exit 0; fi\nexit 1\n',
+      `#!/usr/bin/env bash
+set -eu
+if [[ "$*" != *"/api/v1/health"* ]]; then exit 1; fi
+output=""
+write_out=""
+while (( $# > 0 )); do
+  if [[ "$1" == "--output" ]]; then
+    output="$2"
+    shift 2
+    continue
+  fi
+  if [[ "$1" == "--write-out" ]]; then
+    write_out="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+body='{"status":"ok","capabilities":["desktop-lifecycle-v2"],"contractHash":"${fixtureContractHash}"}'
+if [[ -n "$output" ]]; then printf '%s\n' "$body" > "$output"; else printf '%s\n' "$body"; fi
+if [[ -n "$write_out" ]]; then printf '200'; fi
+`,
     );
     writeExecutable(join(mockBin, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
 

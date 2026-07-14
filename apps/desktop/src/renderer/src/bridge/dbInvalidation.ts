@@ -38,18 +38,36 @@ function onlineInvalidationKeys(accountId: string): InvalidationKey[] {
   return [['online', accountId]];
 }
 
-/** Settings rows whose successful replacement changes the identity or route
- * of persona-dependent AI output. Unknown/legacy settings events stay
- * fail-neutral here; direct renderer mutations fence their own transition. */
+/** Only main's committed runtime swap proves that Hub origin/principal changed.
+ * Catalog and mapping writes are fenced per operation in main and need query
+ * invalidation, never a renderer-wide AI reset. */
 export function settingsKeysInvalidateAiContext(settingsKeys: readonly string[] | undefined): boolean {
-  return settingsKeys?.some((key) =>
-    key === 'hubBaseUrl'
-    || key === 'runtime.aiContext'
-    || key === 'accountPageLabels'
-    || key === 'accountMappings'
-    || key.startsWith('personalities.catalog.')
-    || key.startsWith('personalities.accountMappings.'),
-  ) ?? false;
+  return settingsKeys?.includes('runtime.aiContext') ?? false;
+}
+
+function settingsInvalidationKeys(event: DbInvalidationEvent): InvalidationKey[] {
+  const keys = event.settingsKeys;
+  const invalidations: InvalidationKey[] = [['settings']];
+  if (keys === undefined) return invalidations;
+  const catalogChanged = keys.some((key) => key.startsWith('personalities.catalog.'));
+  const mappingChanged = keys.some((key) =>
+    key === 'accountMappings' || key.startsWith('personalities.accountMappings.'));
+  const runtimeChanged = keys.includes('runtime.aiContext') || keys.includes('hubBaseUrl');
+  if (catalogChanged || runtimeChanged) invalidations.push(['personalities']);
+  if (
+    catalogChanged
+    || mappingChanged
+    || runtimeChanged
+    || keys.includes('accountPageLabels')
+  ) {
+    invalidations.push(['accounts']);
+  }
+  if (catalogChanged || runtimeChanged) {
+    invalidations.push(['fan']);
+  } else if (mappingChanged && event.accountId !== undefined) {
+    invalidations.push(['fan', event.accountId]);
+  }
+  return invalidations;
 }
 
 export function dbChangedInvalidationKeysForEvent(
@@ -99,9 +117,7 @@ export function dbChangedInvalidationKeysForEvent(
           : []),
       ];
     case 'settings':
-      // Persona catalog metadata and local mappings are settings rows, but
-      // account VMs expose their resolved/archived state as well.
-      return [['settings'], ['personalities'], ['accounts'], ['fan'], ['guard-config']];
+      return settingsInvalidationKeys(event);
     case 'guard':
       return [
         ['guard-config'],

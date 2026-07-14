@@ -488,6 +488,9 @@ describe('createHubSync (protocol v2)', () => {
     expect(applied).toEqual(['already-applied']);
     expect(streamCursor).toBe('CUR_STALE');
     expect(progress).toMatchObject({
+      version: 2,
+      cursorContract: 'bounded_v1',
+      messageLimit: 100,
       scope,
       accountIndex: 0,
       snapshotCursor: 22,
@@ -558,6 +561,270 @@ describe('createHubSync (protocol v2)', () => {
     second.stop();
   });
 
+  it('compare-clears a typed 400 for the exact persisted state cursor and restarts once fresh', async () => {
+    const snapshotRequired = {
+      error: 'sync_snapshot_required',
+      message: 'cursor gap',
+      statusCode: 409,
+      version: 2,
+      accounts: [{ accountId: 7, requestedSeq: 900, oldestAvailableSeq: 1, currentSeq: 40 }],
+      snapshotPath: HUB_V2_SNAPSHOT_PATH,
+    };
+    const scope = 'persisted-state-cursor-400';
+    let streamCursor = 'CUR_STALE';
+    let progress: HubSnapshotRecoveryProgress | null = {
+      version: 2,
+      scope,
+      protocol: 'v2',
+      cursorContract: 'bounded_v1',
+      messageLimit: 100,
+      afterSeq: 0,
+      accountIds: [ACCT],
+      accountIndex: 0,
+      snapshotCursor: 22,
+      pageMode: 'bounded',
+      pageCursor: 0,
+      stateCursor: 'STATE_FROM_OLD_CONTRACT',
+      boundedStateAt: '2026-07-12T18:00:00.000Z',
+      sourceV2Cursor: 'CUR_STALE',
+      targetV2Cursor: 'CUR_FRESH_1',
+    };
+    const resumedStream = makeStream();
+    const warnings: string[] = [];
+    const clears: Array<HubSnapshotRecoveryProgress | null> = [];
+    const { fetchImpl, calls } = makeHarness([
+      { status: 409, stream: null, json: snapshotRequired },
+      {
+        status: 200,
+        stream: null,
+        json: { cursor: 'CUR_FRESH_2', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 40 }] },
+      },
+      {
+        status: 400,
+        stream: null,
+        json: {
+          error: 'Bad Request',
+          message: 'querystring/stateCursor must match pattern',
+          statusCode: 400,
+        },
+      },
+      {
+        status: 200,
+        stream: null,
+        json: boundedStateSnapshot(null, { snapshotCursor: 30, chatId: 'fresh-after-400' }),
+      },
+      { status: 200, stream: resumedStream },
+    ]);
+    const applied: string[] = [];
+    const sync = createHubSync({
+      protocol: 'v2',
+      baseUrl: 'https://hub.test',
+      apiKey: 'k',
+      accountIds: [ACCT],
+      fetchImpl,
+      sleep: () => Promise.resolve(),
+      onEvent: () => undefined,
+      onSnapshot: (snapshot) => {
+        applied.push(snapshot.threads[0]?.chatId ?? 'empty');
+      },
+      onV2GapRecovered: () => [ACCT],
+      onWarn: (message) => warnings.push(message),
+      getLastEventId: () => null,
+      setLastEventId: () => undefined,
+      getV2Cursor: () => streamCursor,
+      setV2Cursor: (next) => {
+        streamCursor = next;
+      },
+      snapshotProgressScope: scope,
+      getSnapshotProgress: () => progress,
+      setSnapshotProgress: (next) => {
+        progress = next;
+      },
+      clearSnapshotProgress: () => {
+        clears.push(progress);
+        progress = null;
+      },
+    });
+
+    sync.start();
+    await drainMicrotasks();
+
+    expect(calls.map((call) => call.url)).toEqual([
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
+      v2SnapshotRequest('CUR_STALE'),
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&snapshotCursor=22&pageMode=bounded_v1&messageLimit=100&stateCursor=STATE_FROM_OLD_CONTRACT`,
+      `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH_1`,
+    ]);
+    expect(clears[0]).toMatchObject({ stateCursor: 'STATE_FROM_OLD_CONTRACT' });
+    expect(warnings).toContain('hub persisted snapshot cursor rejected; restarting once fresh');
+    expect(applied).toEqual(['fresh-after-400']);
+    expect(streamCursor).toBe('CUR_FRESH_1');
+    expect(progress).toBeNull();
+    sync.stop();
+  });
+
+  it('surfaces a typed 400 from a fresh state walk without clearing or retrying it', async () => {
+    const snapshotRequired = {
+      error: 'sync_snapshot_required',
+      message: 'cursor gap',
+      statusCode: 409,
+      version: 2,
+      accounts: [{ accountId: 7, requestedSeq: 900, oldestAvailableSeq: 1, currentSeq: 40 }],
+      snapshotPath: HUB_V2_SNAPSHOT_PATH,
+    };
+    const scope = 'fresh-state-cursor-400';
+    let progress: HubSnapshotRecoveryProgress | null = null;
+    const warnings: Array<{ message: string; fields?: Record<string, unknown> }> = [];
+    const { fetchImpl, calls } = makeHarness([
+      { status: 409, stream: null, json: snapshotRequired },
+      {
+        status: 200,
+        stream: null,
+        json: { cursor: 'CUR_FRESH', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 40 }] },
+      },
+      {
+        status: 400,
+        stream: null,
+        json: { error: 'bad_request', message: 'fresh request rejected', statusCode: 400 },
+      },
+    ]);
+    const sync = createHubSync({
+      protocol: 'v2',
+      baseUrl: 'https://hub.test',
+      apiKey: 'k',
+      accountIds: [ACCT],
+      fetchImpl,
+      sleep: () => new Promise<void>(() => undefined),
+      onEvent: () => undefined,
+      onSnapshot: () => undefined,
+      onV2GapRecovered: () => [ACCT],
+      onWarn: (message, fields) => warnings.push(
+        fields === undefined ? { message } : { message, fields },
+      ),
+      getLastEventId: () => null,
+      setLastEventId: () => undefined,
+      getV2Cursor: () => 'CUR_STALE',
+      setV2Cursor: () => undefined,
+      snapshotProgressScope: scope,
+      getSnapshotProgress: () => progress,
+      setSnapshotProgress: (next) => {
+        progress = next;
+      },
+      clearSnapshotProgress: () => {
+        progress = null;
+      },
+    });
+
+    sync.start();
+    await drainMicrotasks();
+
+    expect(calls).toHaveLength(3);
+    expect(warnings).toContainEqual(expect.objectContaining({
+      message: 'hub v2 cursor recovery failed',
+      fields: expect.objectContaining({ error: 'hub snapshot request failed (400)' }),
+    }));
+    expect(progress).toBeNull();
+    sync.stop();
+  });
+
+  it('does not clear a newer progress record when a resumed 400 settles late', async () => {
+    const snapshotRequired = {
+      error: 'sync_snapshot_required',
+      message: 'cursor gap',
+      statusCode: 409,
+      version: 2,
+      accounts: [{ accountId: 7, requestedSeq: 900, oldestAvailableSeq: 1, currentSeq: 40 }],
+      snapshotPath: HUB_V2_SNAPSHOT_PATH,
+    };
+    const scope = 'persisted-state-cursor-cas';
+    let progress: HubSnapshotRecoveryProgress | null = {
+      version: 2,
+      scope,
+      protocol: 'v2',
+      cursorContract: 'bounded_v1',
+      messageLimit: 100,
+      afterSeq: 0,
+      accountIds: [ACCT],
+      accountIndex: 0,
+      snapshotCursor: 22,
+      pageMode: 'bounded',
+      pageCursor: 0,
+      stateCursor: 'STATE_OLD',
+      boundedStateAt: '2026-07-12T18:00:00.000Z',
+      sourceV2Cursor: 'CUR_STALE',
+      targetV2Cursor: 'CUR_FRESH',
+    };
+    const harness = makeHarness([
+      { status: 409, stream: null, json: snapshotRequired },
+      {
+        status: 200,
+        stream: null,
+        json: { cursor: 'CUR_UNUSED', accounts: [{ accountId: 7, accountRef: ACCT, currentSeq: 40 }] },
+      },
+      {
+        status: 400,
+        stream: null,
+        json: { error: 'bad_request', message: 'Invalid stateCursor', statusCode: 400 },
+      },
+    ]);
+    const fetchImpl: HubSseFetch = async (url, init) => {
+      const response = await harness.fetchImpl(url, init);
+      if (harness.calls.length !== 3 || response.json === undefined) return response;
+      const originalJson = response.json;
+      return {
+        ...response,
+        json: async () => {
+          progress = { ...progress!, stateCursor: 'STATE_NEWER' };
+          return originalJson();
+        },
+      };
+    };
+    const warnings: Array<{ message: string; fields?: Record<string, unknown> }> = [];
+    let clearCount = 0;
+    const sync = createHubSync({
+      protocol: 'v2',
+      baseUrl: 'https://hub.test',
+      apiKey: 'k',
+      accountIds: [ACCT],
+      fetchImpl,
+      sleep: () => new Promise<void>(() => undefined),
+      onEvent: () => undefined,
+      onSnapshot: () => undefined,
+      onV2GapRecovered: () => [ACCT],
+      onWarn: (message, fields) => warnings.push(
+        fields === undefined ? { message } : { message, fields },
+      ),
+      getLastEventId: () => null,
+      setLastEventId: () => undefined,
+      getV2Cursor: () => 'CUR_STALE',
+      setV2Cursor: () => undefined,
+      snapshotProgressScope: scope,
+      getSnapshotProgress: () => progress,
+      setSnapshotProgress: (next) => {
+        progress = next;
+      },
+      clearSnapshotProgress: () => {
+        clearCount += 1;
+        progress = null;
+      },
+    });
+
+    sync.start();
+    await drainMicrotasks();
+
+    expect(harness.calls).toHaveLength(3);
+    expect(clearCount).toBe(0);
+    expect(progress).toMatchObject({ stateCursor: 'STATE_NEWER' });
+    expect(warnings).toContainEqual(expect.objectContaining({
+      message: 'hub v2 cursor recovery failed',
+      fields: expect.objectContaining({
+        error: 'hub snapshot progress changed during persisted-cursor restart',
+      }),
+    }));
+    sync.stop();
+  });
+
   it('clears a matching stale continuation and restarts fresh when Core advances the replay floor', async () => {
     const snapshotRequired = {
       error: 'sync_snapshot_required',
@@ -570,9 +837,11 @@ describe('createHubSync (protocol v2)', () => {
     const scope = 'floor-restart-scope';
     let streamCursor = 'CUR_STALE';
     let progress: HubSnapshotRecoveryProgress | null = {
-      version: 1,
+      version: 2,
       scope,
       protocol: 'v2',
+      cursorContract: 'bounded_v1',
+      messageLimit: 100,
       afterSeq: 0,
       accountIds: [ACCT],
       accountIndex: 0,
@@ -685,9 +954,11 @@ describe('createHubSync (protocol v2)', () => {
     const scope = 'same-hub-and-bearer';
     let streamCursor = 'CUR_STALE';
     let progress: HubSnapshotRecoveryProgress | null = {
-      version: 1,
+      version: 2,
       scope,
       protocol: 'v2',
+      cursorContract: 'bounded_v1',
+      messageLimit: 100,
       afterSeq: 0,
       accountIds: [NEW_ACCT],
       accountIndex: 0,

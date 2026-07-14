@@ -2,8 +2,11 @@
 // base64url JSON `{v: 2, w: {<accountId>: <highSeq>, …}}` for legacy/subset
 // cursors, `{v: 3, w: {…}, s: "granted"}` for an exact-grant binding, or
 // v4 with `r: "snapshot"` while a completed state snapshot is authorizing one
-// bounded replay across erased ledger gaps. The recovery marker is removed
-// before the connection enters the live lane.
+// bounded replay across erased ledger gaps. These v2/v3/v4 cursors are encoded
+// Base64URL JSON, not MAC-signed; their topology and server-side epoch are
+// validated before use. The recovery marker is removed before the connection
+// enters the live lane. Do not confuse them with the bounded OFAPI stateCursor,
+// which is separately HMAC-signed by the runtime.
 // Shared by the server (modules/events) and the SDK helper so both ends agree
 // byte-for-byte; clients never construct or inspect it.
 // Isomorphic base64url (no Buffer): this file ships to the browser through
