@@ -111,6 +111,37 @@ export const UI_MESSAGES = {
   },
   'hub.baseUrl.label': { en: 'Hub base URL', ru: 'Адрес хаба' },
   'hub.baseUrl.hint': { en: "your agency's core server", ru: 'core-сервер вашего агентства' },
+  // ── D19: device-first minimal section ──
+  'hub.connected.title': { en: 'Connected as {username}', ru: 'Подключено как {username}' },
+  'hub.connected.titleAnon': { en: 'Device connected', ru: 'Устройство подключено' },
+  'hub.connected.sub': {
+    en: 'Device {label} · sync and sending go through your agency hub',
+    ru: 'Устройство {label} · синхронизация и отправка идут через hub агентства',
+  },
+  'hub.signOutDevice': { en: 'Sign out this device', ru: 'Выйти с этого устройства' },
+  'hub.notConnected.title': { en: 'Device not connected', ru: 'Устройство не подключено' },
+  'hub.notConnected.hint': {
+    en: 'Sign in with your own login — this machine gets its own token.',
+    ru: 'Войдите под своим логином — этой машине выдастся собственный токен.',
+  },
+  'hub.advanced': { en: 'Advanced', ru: 'Дополнительно' },
+  'hub.diag.token': { en: 'Device token', ru: 'Токен устройства' },
+  'hub.diag.tokenInfo': {
+    en: '…{last4} · issued {issued} · valid to {expires}, renews itself',
+    ru: '…{last4} · выдан {issued} · до {expires}, продлевается сам',
+  },
+  'hub.diag.stream': { en: 'Event stream', ru: 'Стрим событий' },
+  'hub.diag.streamHint': { en: 'polling covers if it drops', ru: 'при сбое подстраховывает опрос' },
+  'hub.diag.app': { en: 'Application', ru: 'Приложение' },
+  'hub.diag.appInfo': { en: '{version} · machine {label}', ru: '{version} · машина {label}' },
+  'hub.legacyKey.working': {
+    en: 'Running on a legacy key — sign in with the device to switch to a token.',
+    ru: 'Работает на legacy-ключе — войдите устройством, чтобы перейти на токен.',
+  },
+  'hub.legacyKey.isolated': {
+    en: 'Access is paused: the stored legacy key cannot be verified. Sign in with the device.',
+    ru: 'Доступ приостановлен: сохранённый legacy-ключ нельзя подтвердить. Войдите устройством.',
+  },
   'hub.key.label': { en: 'Chatter API key', ru: 'API-ключ чаттера' },
   'hub.key.hint': { en: 'agency_hub_core_… — set-only', ru: 'agency_hub_core_… — только запись' },
   'hub.credentialAttention': { en: 'attention', ru: 'нужно действие' },
