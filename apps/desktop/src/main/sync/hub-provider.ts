@@ -25,6 +25,7 @@ const HUB_FALLBACK_REASONS = [
   'hub-mismatched-message-fallback',
   'hub-malformed-message-fallback',
   'hub-notification-fallback',
+  'hub-notification-refresh-failed',
   'hub-ingest-error-fallback',
   'hub-replay-gap-snapshot',
   'hub-v2-gap-cursor-rebaseline',
@@ -734,11 +735,14 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         break;
       }
       case 'ppvUnlocked':
-        // Notification-shaped events are not full messages. Keep the existing
-        // reconciliation path; with auto-read off, refreshChat is list-only.
-        // The event itself is nevertheless an authoritative, monotonic domain
-        // fact. Persist it before returning so HubSync cannot checkpoint an
-        // unlock while leaving an older cached PPV locked.
+        // Notification-shaped events are ADVISORY toward the stream cursor:
+        // the unlock is applied locally through the monotonic markOpened
+        // merge, and OFAPI itself reports isOpened on any later body read, so
+        // this handler must never reject. A rejected onEvent blocks the
+        // checkpoint, and a deterministically failing frame (incident
+        // 2026-07-15: core shipped the creator id as the conversation) then
+        // replays forever — an SSE reconnect loop that burns paid reads. Only
+        // message-body carriers (messageReceived/Sent) may reject.
         recordFallback('hub-notification-fallback', event.type, {
           type: event.type,
           accountId: event.accountId,
@@ -748,36 +752,51 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         if (event.messageId !== undefined) {
           data.messages.markOpened(event.accountId, event.chatId, event.messageId);
         }
-        await polling.refreshChat(
-          event.accountId,
-          event.chatId,
-          undefined,
-          event.messageId,
-        );
-        // If the fallback materialized a previously uncached target, apply the
-        // same fact now. The SQL merge prevents this (or a later stale fetch)
-        // from ever regressing an already-opened message.
-        if (event.messageId !== undefined) {
-          data.messages.markOpened(event.accountId, event.chatId, event.messageId);
-        }
+        // Best-effort preview refresh, detached from the checkpoint. No
+        // expectedMessageId: an unlocked PPV is historical and legitimately
+        // absent from the cached tail window; demanding it locally is what
+        // wedged the stream.
+        void polling
+          .refreshChat(event.accountId, event.chatId, undefined, undefined)
+          .then(() => {
+            // If the refresh materialized a previously uncached target, apply
+            // the same fact now. The SQL merge prevents this (or a later stale
+            // fetch) from ever regressing an already-opened message.
+            if (event.messageId !== undefined) {
+              data.messages.markOpened(event.accountId, event.chatId, event.messageId);
+            }
+          })
+          .catch(() => {
+            recordFallback('hub-notification-refresh-failed', event.type, {
+              type: event.type,
+              accountId: event.accountId,
+              chatId: event.chatId,
+              messageId: event.messageId,
+            });
+          });
         emit(event);
         recordApplied(event.type);
         break;
       case 'tipReceived':
-        // Notification-shaped events are not full messages. Keep the existing
-        // reconciliation path; with auto-read off, refreshChat is list-only.
+        // Notification-shaped events are not full messages — and, like
+        // ppvUnlocked above, advisory toward the cursor: the refresh is
+        // best-effort and must not reject the checkpoint.
         recordFallback('hub-notification-fallback', event.type, {
           type: event.type,
           accountId: event.accountId,
           chatId: event.chatId,
           messageId: event.messageId,
         });
-        await polling.refreshChat(
-          event.accountId,
-          event.chatId,
-          undefined,
-          event.messageId,
-        );
+        void polling
+          .refreshChat(event.accountId, event.chatId, undefined, undefined)
+          .catch(() => {
+            recordFallback('hub-notification-refresh-failed', event.type, {
+              type: event.type,
+              accountId: event.accountId,
+              chatId: event.chatId,
+              messageId: event.messageId,
+            });
+          });
         emit(event);
         recordApplied(event.type);
         break;
@@ -844,11 +863,17 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       onLog('info', 'SSE live; polling suspended', { status });
       polling.setHubPollingSuspended(true);
     } else if (!isLive && hubLive) {
-      // Hub degraded/stopped: restore polling and run one reconciliation sweep
-      // to close the gap the stream was covering (SPEC §6.2).
+      // Hub degraded/stopped: restore the standing poll cadence and nothing
+      // more. SSE state transitions may change the SCHEDULER MODE but must
+      // never initiate paid work beyond it — the resumed loop's first tick
+      // already runs the deep sweep under its own 5-minute cap when one is
+      // due. The removed forceRefresh here (uncapped 5-page sweep × every
+      // account per flap) was the cost amplifier of incident 2026-07-15:
+      // a poisoned frame flapped the stream every ~14s all night and each
+      // flap burned a full deep sweep (~14k credits). Manual refresh remains
+      // the only deep-sweep bypass, via the explicit user IPC path.
       onLog(status === 'stopped' ? 'info' : 'warn', 'SSE not live; polling resumed', { status });
       polling.setHubPollingSuspended(false);
-      void polling.forceRefresh().catch(() => undefined);
     } else {
       onLog(
         status === 'degraded' || status === 'auth-failed' ? 'warn' : 'info',

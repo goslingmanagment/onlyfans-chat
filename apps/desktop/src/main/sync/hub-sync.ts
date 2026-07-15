@@ -69,6 +69,25 @@ export const HUB_RECONNECT_CAP_MS = 30_000;
 /** Heartbeat is every 30 s — 45 s of total byte silence means a dead pipe. */
 export const HUB_WATCHDOG_MS = 45_000;
 const HUB_SNAPSHOT_RESTART_LIMIT = 3;
+/** Poison-frame breaker (incident 2026-07-15): a frame whose handler rejects
+ * DETERMINISTICALLY would otherwise replay forever — cursor frozen, reconnect
+ * every few seconds, paid fallback work on every cycle. After this many
+ * consecutive rejections of the SAME frame the loop escalates instead of
+ * reconnecting blind. */
+export const HUB_POISON_FRAME_MAX_REJECTIONS = 3;
+/** Stand-down window when the poisoned frame's effect is NOT guaranteed by
+ * state snapshots — skipping it silently would lose state, so SSE parks and
+ * retries later (polling covers the surface meanwhile; a server-side repair
+ * or code fix can clear the poison in between). */
+export const HUB_POISON_BACKOFF_MS = 15 * 60_000;
+/** Domain types whose durable effect the v2 state walk (thread snapshots)
+ * carries in full — for these, fresh-cursor recovery both skips the poisoned
+ * frame and preserves its state, so escalation is safe and lossless. */
+const SNAPSHOT_COVERED_TYPES: ReadonlySet<string> = new Set([
+  'message.received',
+  'message.sent',
+  'message.deleted',
+]);
 
 const hubBadRequestResponseSchema = z.discriminatedUnion('error', [
   // Service-level BadRequestError from Core's AppError handler.
@@ -349,6 +368,16 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   let running = false;
   let status: HubSyncStatus = 'stopped';
   let dropped = 0;
+  /** Identity of the last frame whose onEvent rejected; `rejections` counts
+   * CONSECUTIVE rejections of that same frame across reconnect cycles (other
+   * frames applying in between — e.g. another account's replay — do not reset
+   * it; only a different rejection or this frame finally applying does). */
+  let poisonCandidate: {
+    accountId: number;
+    accountSeq: number;
+    type: string;
+    rejections: number;
+  } | null = null;
   let abort: AbortController | null = null;
   /** Consecutive failed connections since the last byte received. */
   let failures = 0;
@@ -605,7 +634,34 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     }
     const event = mapDomainFrame(domainFrame);
     if (event !== null && (allowedAccountIds === null || allowedAccountIds.has(event.accountId))) {
-      await options.onEvent(event);
+      try {
+        await options.onEvent(event);
+      } catch (error) {
+        // Feed the poison breaker: same frame rejecting again bumps the
+        // count; a different frame starts a fresh candidate.
+        if (
+          poisonCandidate !== null &&
+          poisonCandidate.accountId === domainFrame.accountId &&
+          poisonCandidate.accountSeq === domainFrame.accountSeq
+        ) {
+          poisonCandidate.rejections += 1;
+        } else {
+          poisonCandidate = {
+            accountId: domainFrame.accountId,
+            accountSeq: domainFrame.accountSeq,
+            type: domainFrame.type,
+            rejections: 1,
+          };
+        }
+        throw error;
+      }
+      if (
+        poisonCandidate !== null &&
+        poisonCandidate.accountId === domainFrame.accountId &&
+        poisonCandidate.accountSeq === domainFrame.accountSeq
+      ) {
+        poisonCandidate = null; // the frame finally applied — poison cleared
+      }
     }
     // Checkpoint AFTER handling so a crash mid-handle replays, never skips.
     // Unmapped/unknown types checkpoint too — that is the forward-compat
@@ -1154,6 +1210,51 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         // through a restore/demote cycle every 15 minutes.
         await sleep(retryFloorMs);
         continue;
+      }
+      if (
+        outcome.kind === 'error' &&
+        poisonCandidate !== null &&
+        poisonCandidate.rejections >= HUB_POISON_FRAME_MAX_REJECTIONS
+      ) {
+        // Poison breaker: the same frame rejected on every reconnect — this
+        // is deterministic, not transient; replaying blind loops forever.
+        const poisoned = { ...poisonCandidate };
+        if (SNAPSHOT_COVERED_TYPES.has(poisoned.type)) {
+          // The thread-state walk carries this type's durable effect in
+          // full: a fresh cursor + state recovery skips the frame WITHOUT
+          // losing what it carried.
+          options.onWarn?.('hub poison frame; rebaselining via v2 state recovery', poisoned);
+          setStatus('degraded');
+          try {
+            await recoverV2Cursor();
+            poisonCandidate = null;
+            failures = 0;
+            continue;
+          } catch (error) {
+            if (isSnapshotAuthError(error)) {
+              setStatus('auth-failed');
+              running = false;
+              break;
+            }
+            options.onWarn?.('hub poison-frame recovery failed', {
+              ...poisoned,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        } else {
+          // Snapshots do NOT guarantee this type's effect — refuse to skip
+          // state silently. Park SSE loudly and retry later: polling covers
+          // the surface meanwhile, and a server-side repair or a code fix can
+          // clear the poison in between.
+          options.onWarn?.('hub poison frame outside snapshot coverage; SSE standing down', {
+            ...poisoned,
+            backoffMs: HUB_POISON_BACKOFF_MS,
+          });
+          setStatus('degraded');
+          poisonCandidate.rejections = 0; // re-earn the trip after the pause
+          await sleep(HUB_POISON_BACKOFF_MS);
+          continue;
+        }
       }
       if (outcome.kind === 'snapshot-v2') {
         setStatus('degraded');

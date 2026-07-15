@@ -2128,8 +2128,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           schedule(accountId, null);
         } else {
           // Hub dropped, or the account is still hydrating: keep/restore the
-          // normal cadence. The composition root's reconciliation forceRefresh
-          // covers the immediate gap when the stream goes down.
+          // normal cadence only. The first resumed tick evaluates deepDue
+          // itself (lastDeepSweepAt is stale after a long SSE-live stretch),
+          // so gap coverage stays under the standing 5-minute deep cap —
+          // stream flapping must never scale paid reads (incident 2026-07-15).
           schedule(accountId, intervalFor(accountId));
         }
         scheduleUnreadReconcile(accountId);

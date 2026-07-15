@@ -867,6 +867,7 @@ interface FakePolling extends SyncProvider {
   suspensions: boolean[];
   forceRefreshCalls: number;
   refreshCalls: Array<{ accountId: string; chatId: string; expectedMessageId?: string }>;
+  refreshError: Error | null;
   accountRefreshCalls: string[];
   /** Retained PollingSync surface; durable v2 recovery must not use it. */
   reconcileCalls: string[];
@@ -888,6 +889,7 @@ function makeFakePolling(): FakePolling {
     suspensions: [],
     forceRefreshCalls: 0,
     refreshCalls: [],
+    refreshError: null,
     accountRefreshCalls: [],
     reconcileCalls: [],
     reconcileError: null,
@@ -910,6 +912,9 @@ function makeFakePolling(): FakePolling {
         chatId,
         ...(expectedMessageId === undefined ? {} : { expectedMessageId }),
       });
+      if (polling.refreshError !== null) {
+        return Promise.reject(polling.refreshError);
+      }
       // mirrors the real provider: refreshChat re-announces the list
       polling.emit({ type: 'chatListUpdated', accountId });
       return Promise.resolve();
@@ -1132,7 +1137,7 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(hub.stopCalls).toBe(1);
   });
 
-  it('hub live suspends polling; degraded restores it and runs ONE reconciliation sweep', async () => {
+  it('hub live suspends polling; degraded restores the scheduler and NEVER force-sweeps', async () => {
     const { provider, polling, callbacks, logs } = build();
     provider.start([ACCT]);
     await Promise.resolve();
@@ -1145,12 +1150,21 @@ describe('createHubAwareSync (provider composition)', () => {
     callbacks().onStatusChange('live'); // no re-suspension churn
     expect(polling.suspensions).toEqual([true]);
 
+    // Incident 2026-07-15: SSE transitions change the scheduler mode only.
+    // The old unconditional forceRefresh here (5-page deep sweep × every
+    // account per flap, uncapped) let a poisoned reconnect loop burn ~14k
+    // paid reads in one night. Gap coverage belongs to the resumed loop's
+    // own deepDue cap.
     callbacks().onStatusChange('degraded');
     expect(polling.suspensions).toEqual([true, false]);
-    expect(polling.forceRefreshCalls).toBe(1);
+    expect(polling.forceRefreshCalls).toBe(0);
 
-    callbacks().onStatusChange('degraded'); // still down: no extra sweeps
-    expect(polling.forceRefreshCalls).toBe(1);
+    // A flap storm must stay free of paid work no matter how many cycles.
+    for (let i = 0; i < 100; i += 1) {
+      callbacks().onStatusChange('live');
+      callbacks().onStatusChange('degraded');
+    }
+    expect(polling.forceRefreshCalls).toBe(0);
     expect(logs.map((log) => log.message)).toContain('SSE live; polling suspended');
     expect(logs.map((log) => log.message)).toContain('SSE not live; polling resumed');
     provider.stop();
@@ -1839,7 +1853,7 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
-  it('tipReceived and ppvUnlocked also refresh the chat tail before re-emitting', async () => {
+  it('tipReceived and ppvUnlocked refresh best-effort without demanding the message locally', async () => {
     const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
     await Promise.resolve();
@@ -1853,9 +1867,12 @@ describe('createHubAwareSync (provider composition)', () => {
       amountUsd: 5,
     });
     await callbacks().onEvent({ type: 'ppvUnlocked', accountId: ACCT, chatId: '5', messageId: '2' });
+    // No expectedMessageId: notification-shaped events reference historical
+    // messages that are legitimately absent from the cached window; demanding
+    // them locally is what wedged the stream (incident 2026-07-15).
     expect(polling.refreshCalls).toEqual([
-      { accountId: ACCT, chatId: '5', expectedMessageId: '1' },
-      { accountId: ACCT, chatId: '5', expectedMessageId: '2' },
+      { accountId: ACCT, chatId: '5' },
+      { accountId: ACCT, chatId: '5' },
     ]);
     expect(events.filter((e) => e.type === 'tipReceived' || e.type === 'ppvUnlocked')).toHaveLength(2);
     expect(provider.hubActivity()).toMatchObject({
@@ -1873,7 +1890,7 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
-  it('durably unlocks an older cached PPV when list-only refresh sees a newer head', async () => {
+  it('durably unlocks an older cached PPV without demanding it from the refresh', async () => {
     const { provider, polling, callbacks } = build();
     seedMessage('2', '5', {
       createdAt: '2026-06-11T10:00:00.000Z',
@@ -1889,8 +1906,9 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    // This fake refresh is intentionally list-only, matching auto-read off:
-    // the newer head proves freshness but does not reload the older PPV body.
+    // The unlock fact applies through the monotonic markOpened merge before
+    // any refresh; the refresh itself is best-effort preview upkeep and never
+    // carries an expectedMessageId (incident 2026-07-15).
     await callbacks().onEvent({
       type: 'ppvUnlocked',
       accountId: ACCT,
@@ -1901,10 +1919,24 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(polling.refreshCalls).toEqual([{
       accountId: ACCT,
       chatId: '5',
-      expectedMessageId: '2',
     }]);
     expect(data.chats.get(ACCT, '5')?.lastMessageId).toBe('3');
     expect(data.messages.get(ACCT, '5', '2')?.isOpened).toBe(true);
+
+    // A failing best-effort refresh must not reject the handler — a rejected
+    // onEvent freezes the stream cursor, and a deterministic failure then
+    // replays the same frame forever (incident 2026-07-15). The failure is
+    // still visible in telemetry.
+    polling.refreshError = new Error('refresh permanently failing');
+    await expect(callbacks().onEvent({
+      type: 'ppvUnlocked',
+      accountId: ACCT,
+      chatId: '5',
+      messageId: '2',
+    })).resolves.toBeUndefined();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(provider.hubActivity().fallbackByReasonToday['hub-notification-refresh-failed']).toBe(1);
 
     // A later stale body/list reconciliation cannot undo the unlock fact.
     seedMessage('2', '5', {

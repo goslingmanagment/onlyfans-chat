@@ -35,6 +35,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D15 | 2026-07-13 | Cross-transport state is monotonic; generated AI parts have a current-session bound |
 | D16 | 2026-07-13 | Replay-gap state snapshots page every durable row through a bounded opaque cursor |
 | D17 | 2026-07-13 | Global personas are a read-only metadata catalog; legacy client data is preserved and exportable |
+| D18 | 2026-07-15 | Notification frames never block the stream cursor; SSE transitions never initiate paid reads; deterministic poison frames trip a breaker |
 
 ## Entries
 
@@ -359,3 +360,31 @@ write journals/replay, and authoritative-list mapping pruning. D15's unrelated
 runtime-retirement, cross-transport monotonicity, command-verifier, chat-list,
 and generated-parts rules remain binding. Historical local data described by
 D15 is preservation input, not deletion authorization.
+
+**D18 (2026-07-15).** Incident ruling (the PPV poison-loop credit burn:
+~14k credits in one night, one device, 00:00–07:00 MSK). Three invariants are
+now review-blocking on the sync path. (1) Notification-shaped frames
+(`ppvUnlocked`, `tipReceived`) are ADVISORY toward the stream cursor: their
+durable local fact applies via the monotonic `markOpened` merge before any
+network work, the preview refresh is fire-and-forget without
+`expectedMessageId` (an unlocked PPV is historical and legitimately absent
+from the cached tail window; OFAPI itself reports `isOpened` on any later body
+read), and a refresh failure records `hub-notification-refresh-failed` instead
+of rejecting `onEvent`. Only message-body carriers may reject to force replay.
+(2) SSE status transitions change the polling scheduler mode only; the
+degraded-transition `forceRefresh` (uncapped 5-page deep sweep × every account
+per flap — the incident's cost amplifier) is deleted, and automatic deep
+sweeps exist solely under the poll loop's 5-minute `deepDue` cap. Manual
+refresh via the explicit user IPC path remains the only cap bypass. (3) A v2
+frame whose handler rejects on `HUB_POISON_FRAME_MAX_REJECTIONS` (3)
+consecutive cycles trips a poison breaker: snapshot-covered types
+(`message.received/sent/deleted`) rebaseline through the D10/D16 fresh-cursor
+state recovery (skips the frame without losing its state); all other types
+park SSE for `HUB_POISON_BACKOFF_MS` (15 min) with a loud warning — never a
+silent skip, polling covers the surface meanwhile. Root cause was core-side
+(canonicalizer shipped the recipient creator's id as `conversationRef` on
+`message.ppv_unlocked`; fixed in core the same day plus a temporary serve-time
+frame suppression that unwedges fielded clients); the desktop invariants stand
+regardless because they close the whole class. Remaining waves (ledger repair
+via superseding events, `message_state_facts` overlay, budget gate) are
+tracked in the incident plan, not here.

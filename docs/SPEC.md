@@ -149,6 +149,20 @@ interface SyncProvider {
 > partial state, any account 404, validation/apply failure, or grant-refresh
 > failure keeps the old cursor. An authenticated empty grant set is valid.
 
+> **CURRENT AS-BUILT CORRECTION (D18, 2026-07-15):** the bullet below saying a
+> degraded transition "runs a reconciliation `forceRefresh`" is historical.
+> SSE state transitions now change the polling scheduler mode ONLY (suspend on
+> live, resume on degraded/stopped); they never initiate paid reads beyond the
+> standing cadence — the resumed loop's first tick applies its own 5-minute
+> deep-sweep cap. Notification-shaped frames (`ppvUnlocked`, `tipReceived`)
+> are advisory toward the stream cursor: their local facts apply monotonically
+> and their preview refresh is best-effort, so a failing handler can never
+> freeze the checkpoint. A frame whose handler rejects deterministically trips
+> a poison breaker after 3 identical rejections: snapshot-covered message
+> types rebaseline through the D10/D16 recovery; anything else parks SSE for
+> 15 minutes with a loud log instead of skipping state silently. Root cause &
+> prod forensics: decisions D18 (incident 2026-07-15).
+
 - SSE stream from core (`GET /api/v1/events/stream`, bearer chatter API key; SSE per core decision #25 — no websockets there), zod-validated `SyncEvent` frames (same union — renderer code unchanged). `Last-Event-ID` resume against core's event journal; the normal server-side 15-minute stream close reconnects silently with no degraded transition. If the requested cursor has fallen behind journal retention, core returns `409 sync_snapshot_required`: HubSync enters degraded mode (polling resumes), downloads every page of chatter-scoped `GET /api/v1/events/snapshot` for locally handled accounts, applies the hot chat/message state and archive tombstones idempotently, persists the common `snapshotCursor` only after the full apply, then reconnects SSE from that cursor. A partial snapshot (`resumeAllowed=false`), malformed response, account/scope mismatch, or apply failure never advances the cursor. Presence/typing are explicitly omitted as ephemeral state.
 - For ordinary transport degradation or auth failure, the app resumes polling and runs a reconciliation `forceRefresh` (the same 5-page deep sweep as manual refresh), then pauses periodic list polling again once hub returns live. While hub is live and account hydration is complete, periodic chat-list polling is fully paused; read-state/media/spenders/user-open paths remain explicit REST paths.
 - `messages.received` / `messages.sent` frames may carry an optional normalized message body. Complete matching bodies are ingested into SQLite without `GET /messages`; id-only, mismatched, malformed, `ppvUnlocked`, and `tipReceived` notification-shaped frames keep the safe fallback path. With `autoReadChats=false`, that fallback is list-only and never performs a background message-body read.
