@@ -46,6 +46,21 @@ export function isHubConfigured(settings: HubCredentialSettings): boolean {
   );
 }
 
+/** D19: how the leftover legacy chatter key reads in the UI. With a bound
+ * device token any residue is invisible (main decommissions it); a key-only
+ * machine shows a migration nudge while the key works, or a device-sign-in
+ * CTA once the key is quarantined (never a paste-a-key CTA). */
+export type LegacyKeyState = 'working-fallback' | 'isolated' | null;
+
+export function legacyKeyState(settings: {
+  hasHubKey: boolean;
+  hubApiKeyBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
+  hubDeviceTokenBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
+}): LegacyKeyState {
+  if (!settings.hasHubKey || settings.hubDeviceTokenBindingState === 'bound') return null;
+  return settings.hubApiKeyBindingState === 'bound' ? 'working-fallback' : 'isolated';
+}
+
 export function canIssueHubDeviceToken(input: {
   username: string;
   password: string;
