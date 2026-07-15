@@ -61,9 +61,13 @@ Signed-out state: headline "Устройство не подключено", hin
 Войти. Nothing else above the fold.
 
 "Дополнительно" (collapsed by default), diagnostic rows:
-- **Токен устройства**: display prefix computed locally from the stored bearer
-  (`agency_hub_device_…XXXX` — never the pending reservation prefix), issued
-  date, expiry ("продлевается сам").
+- **Токен устройства**: "…{last4} · выдан {date} · до {date}, продлевается
+  сам". IMPORTANT correction (verified in core auth.ts, 2026-07-16): the
+  activated bearer KEEPS the `agency_hub_pending_device_` raw prefix by
+  design — a deliberate 0092 rollback guard (an older Core routes the prefix
+  as a legacy key and fails auth). There is no `agency_hub_device_…` string
+  to display for sign-in-minted tokens. The UI therefore never shows a
+  prefix at all — only the last-4 fingerprint (keyMeta convention).
 - **Стрим событий**: live/degraded/stopped badge + "при сбое подстраховывает
   опрос".
 - **Приложение**: app version · machine hostname · OS. (Support: "какая у тебя
@@ -111,12 +115,13 @@ A11y in the same pass: real `<label>` elements bound to inputs;
 - `hubApiKey` patch path in settings store stays (phase 2 removes it) — the UI
   simply never sends it.
 
-### Core (small; separate commit in ~/code/core; run core checks; sync OpenAPI snapshot ↔ SPEC §9.2)
+### Core (small; separate commit in ~/code/core; run core checks)
 
-- `authActivateDeviceToken` recomputes `key_prefix` from the presented bearer
-  so newly activated tokens display `agency_hub_device_…` in the admin list.
-  Existing rows (ids 6, 7) keep the pending prefix — core stores only digests,
-  the true prefix is unrecoverable; recorded as accepted cosmetics.
+- ~~`authActivateDeviceToken` recomputes `key_prefix`~~ DROPPED (2026-07-16):
+  the pending prefix on activated tokens is the true bearer prefix and a
+  deliberate rollback guard (see correction above). Renaming it would lie
+  about the credential or break the guard. Admin-list cosmetics can be a
+  dashboard display concern later, not a token mutation.
 - New owner-scope report endpoint (foundation for the D116(c) CI gate,
   wiring itself is phase 2): per active chatter — device token fresher than
   14 days?, active API keys count, last key use. Read-only.
@@ -128,8 +133,8 @@ A11y in the same pass: real `<label>` elements bound to inputs;
   nothing cleaned without a bound device binding; idempotent on re-boot.
 - Persisted identity: connected card renders after restart; cleared on
   sign-out/abandon.
-- Success/connected copy uses username + hostname + locally-computed final
-  prefix (never `pending`).
+- Success/connected copy uses username + machine label + token last-4; the
+  literal `pending` never reaches any UI string.
 - Key-only machine → neutral CTA line; no key input exists anywhere.
 - Existing suites stay green (`pnpm check`).
 
