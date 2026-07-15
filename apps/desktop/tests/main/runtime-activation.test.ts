@@ -77,6 +77,36 @@ describe('hubCredentialNeedsAttention', () => {
   it('does not flag an exact bound credential with no lifecycle journal', () => {
     expect(hubCredentialNeedsAttention(bound)).toBe(false);
   });
+
+  it('bound device token suppresses a quarantined legacy key (Maxim regression)', () => {
+    expect(hubCredentialNeedsAttention({
+      hasHubKey: true,
+      hubApiKeyBindingState: 'unbound',
+      hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'bound',
+      hubDeviceTokenTransition: null,
+    })).toBe(false);
+  });
+
+  it('quarantined key still raises attention without a bound device token', () => {
+    expect(hubCredentialNeedsAttention({
+      hasHubKey: true,
+      hubApiKeyBindingState: 'unbound',
+      hasHubDeviceToken: false,
+      hubDeviceTokenBindingState: 'none',
+      hubDeviceTokenTransition: null,
+    })).toBe(true);
+  });
+
+  it('device-token trouble is never suppressed', () => {
+    expect(hubCredentialNeedsAttention({
+      hasHubKey: false,
+      hubApiKeyBindingState: 'none',
+      hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'mismatch',
+      hubDeviceTokenTransition: null,
+    })).toBe(true);
+  });
 });
 
 describe('exposeUiBeforeRuntimeActivation', () => {
