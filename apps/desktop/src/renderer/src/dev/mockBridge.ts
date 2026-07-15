@@ -1446,10 +1446,13 @@ export function createMockBridge(): ChatGooseBridge {
       store.settings = { ...store.settings, ...rest };
       if (hubApiKey !== undefined) store.settings.hasHubKey = hubApiKey.trim().length > 0;
       // Mock hub: configured = instantly live (exercises the status chip).
+      // D19: a bound device token configures the hub the same as a key.
       store.sync.hub =
         store.settings.hubModeOverride === 'polling'
           ? 'off'
-          : store.settings.hubBaseUrl !== null && store.settings.hasHubKey
+          : store.settings.hubBaseUrl !== null
+              && (store.settings.hasHubKey
+                || store.settings.hubDeviceTokenBindingState === 'bound')
             ? 'live'
             : 'off';
       store.sync.hubMode =
