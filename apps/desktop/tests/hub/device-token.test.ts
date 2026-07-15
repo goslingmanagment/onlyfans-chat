@@ -17,10 +17,13 @@ import {
   resolveHubCredential,
 } from '../../src/main/hub/device-token';
 import {
+  HUB_DEVICE_IDENTITY_KEY,
   HUB_DEVICE_TOKEN_BINDING_KEY,
   HUB_DEVICE_TOKEN_ACTIVATION_KEY,
   HUB_DEVICE_TOKEN_REVOCATION_KEY,
   deviceTokenDigest,
+  readDeviceTokenActivation,
+  readHubDeviceIdentity,
 } from '../../src/main/hub/credential-journal';
 import { createRuntimeMutationQueue } from '../../src/main/runtime-activation';
 
@@ -1512,5 +1515,81 @@ describe('probeRetryKeyAfterAuthFailure', () => {
   it('does not retry when the patch carries no key or an empty key', () => {
     expect(probeRetryKeyAfterAuthFailure({ ...base, patchHubApiKey: undefined })).toBeNull();
     expect(probeRetryKeyAfterAuthFailure({ ...base, patchHubApiKey: '   ' })).toBeNull();
+  });
+});
+
+describe('device identity journal (D19)', () => {
+  it('readHubDeviceIdentity fails open on corrupt records', () => {
+    const storage = lifecycleStorage();
+    storage.settings.set(HUB_DEVICE_IDENTITY_KEY, { garbage: true });
+    expect(readHubDeviceIdentity(storage.settings)).toBeNull();
+  });
+
+  it('activation journal accepts records without username (pre-D19 builds)', () => {
+    const storage = lifecycleStorage();
+    storage.settings.set(HUB_DEVICE_TOKEN_ACTIVATION_KEY, {
+      version: 1,
+      id: '4a34cbb3-2bfc-4dcd-9a6a-9902133de1a3',
+      hubBaseUrl: 'https://hub.test',
+      tokenDigest: deviceTokenDigest(PENDING.token),
+      reservationId: PENDING.reservationId,
+      label: PENDING.label,
+      keyPrefix: PENDING.keyPrefix,
+      reservationExpiresAt: PENDING.reservationExpiresAt,
+    });
+    expect(readDeviceTokenActivation(storage.settings)?.username).toBeNull();
+  });
+
+  it('activation commit persists the device identity', async () => {
+    const storage = lifecycleStorage();
+    await issueHubDeviceToken({
+      baseUrl: 'https://hub.test/',
+      username: ' Maxim ',
+      password: 'pw',
+      label: 'Kevin',
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl: successfulLifecycleFetch(),
+    });
+    const identity = readHubDeviceIdentity(storage.settings);
+    expect(identity).toMatchObject({
+      username: 'Maxim',
+      label: PENDING.label,
+      tokenLast4: PENDING.token.slice(-4),
+      expiresAt: ACTIVATED.expiresAt,
+    });
+    expect(Date.parse(identity!.issuedAt)).not.toBeNaN();
+  });
+
+  it('revocation removes the device identity', async () => {
+    const storage = lifecycleStorage({ hubDeviceToken: PENDING.token });
+    storage.settings.set(HUB_DEVICE_IDENTITY_KEY, {
+      version: 1,
+      username: 'Maxim',
+      label: 'Kevin',
+      tokenLast4: PENDING.token.slice(-4),
+      issuedAt: '2026-07-15T21:42:15.000Z',
+      expiresAt: ACTIVATED.expiresAt,
+    });
+    await expect(beginHubDeviceTokenRevocation({
+      baseUrl: 'https://hub.test/', token: PENDING.token,
+      keychain: storage.keychain, settings: storage.settings,
+      fetchImpl: vi.fn(async () => jsonResponse(200, { revoked: true })),
+    })).resolves.toBe('revoked');
+    expect(readHubDeviceIdentity(storage.settings)).toBeNull();
+  });
+
+  it('abandon removes the device identity', async () => {
+    const storage = lifecycleStorage({ hubDeviceToken: PENDING.token });
+    storage.settings.set(HUB_DEVICE_IDENTITY_KEY, {
+      version: 1,
+      username: 'Maxim',
+      label: 'Kevin',
+      tokenLast4: PENDING.token.slice(-4),
+      issuedAt: '2026-07-15T21:42:15.000Z',
+      expiresAt: ACTIVATED.expiresAt,
+    });
+    await abandonHubDeviceTokenCustody({ keychain: storage.keychain, settings: storage.settings });
+    expect(readHubDeviceIdentity(storage.settings)).toBeNull();
   });
 });

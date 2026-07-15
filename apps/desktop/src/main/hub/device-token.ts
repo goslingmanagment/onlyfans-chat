@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { createClient, KernelApiError } from '@kernel/sdk';
 import type { Keychain } from '../secrets/keychain';
 import {
+  HUB_DEVICE_IDENTITY_KEY,
   HUB_DEVICE_TOKEN_BINDING_KEY,
   HUB_DEVICE_TOKEN_ACTIVATION_KEY,
   HUB_DEVICE_TOKEN_REVOCATION_KEY,
@@ -21,6 +22,7 @@ import {
   readDeviceTokenBinding,
   readDeviceTokenRevocation,
   type CredentialJournalQueries,
+  type HubDeviceIdentity,
   type HubDeviceTokenActivation,
   type HubDeviceTokenRevocation,
 } from './credential-journal';
@@ -217,6 +219,7 @@ export async function issueHubDeviceToken(input: IssueHubDeviceTokenInput): Prom
       keyPrefix: reserved.keyPrefix,
       reservationExpiresAt: reserved.reservationExpiresAt,
       cancelRequested: false,
+      username: input.username.trim(),
     };
     await input.keychain.setSecret('hubDeviceTokenStaged', JSON.stringify({
       version: 1,
@@ -343,7 +346,10 @@ async function completeHubDeviceTokenActivation(
         input.settings.batch([
           { kind: 'remove', key: HUB_DEVICE_TOKEN_ACTIVATION_KEY },
           ...(!activeUnreadable && (activeMatches || bindingMatchesJournal)
-            ? [{ kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY }]
+            ? [
+                { kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY },
+                { kind: 'remove' as const, key: HUB_DEVICE_IDENTITY_KEY },
+              ]
             : []),
         ]);
       } catch (removeError) {
@@ -417,6 +423,18 @@ async function completeHubDeviceTokenActivation(
         kind: 'set',
         key: HUB_DEVICE_TOKEN_BINDING_KEY,
         value: deviceTokenBinding(journal.hubBaseUrl, journal.tokenDigest),
+      },
+      {
+        kind: 'set',
+        key: HUB_DEVICE_IDENTITY_KEY,
+        value: {
+          version: 1,
+          username: journal.username ?? null,
+          label: journal.label,
+          tokenLast4: staged.token.slice(-4),
+          issuedAt: new Date().toISOString(),
+          expiresAt: activated.expiresAt,
+        } satisfies HubDeviceIdentity,
       },
       { kind: 'remove', key: HUB_DEVICE_TOKEN_ACTIVATION_KEY },
     ]);
@@ -516,6 +534,7 @@ async function completeHubDeviceTokenRevocation(
     try {
       input.settings.batch([
         { kind: 'remove', key: HUB_DEVICE_TOKEN_BINDING_KEY },
+        { kind: 'remove', key: HUB_DEVICE_IDENTITY_KEY },
         { kind: 'remove', key: HUB_DEVICE_TOKEN_REVOCATION_KEY },
       ]);
     } catch (error) {
@@ -566,6 +585,7 @@ async function completeHubDeviceTokenRevocation(
   try {
     input.settings.batch([
       { kind: 'remove', key: HUB_DEVICE_TOKEN_BINDING_KEY },
+      { kind: 'remove', key: HUB_DEVICE_IDENTITY_KEY },
       { kind: 'remove', key: HUB_DEVICE_TOKEN_REVOCATION_KEY },
     ]);
   } catch (error) {
@@ -672,6 +692,21 @@ export async function recoverHubDeviceTokenLifecycle(
                   kind: 'set',
                   key: HUB_DEVICE_TOKEN_BINDING_KEY,
                   value: deviceTokenBinding(activation.hubBaseUrl, activation.tokenDigest),
+                },
+                {
+                  kind: 'set',
+                  key: HUB_DEVICE_IDENTITY_KEY,
+                  value: {
+                    version: 1,
+                    username: activation.username ?? null,
+                    label: activation.label,
+                    tokenLast4: activeCustody.value!.slice(-4),
+                    issuedAt: new Date().toISOString(),
+                    // Server-side TTL at issue time (sliding-refreshed there);
+                    // the true expiry is unknowable in this crash-recovery
+                    // branch — display-only estimate.
+                    expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+                  } satisfies HubDeviceIdentity,
                 },
                 { kind: 'remove', key: HUB_DEVICE_TOKEN_ACTIVATION_KEY },
               ]);
@@ -847,6 +882,7 @@ export async function abandonHubDeviceTokenCustody(
   await input.keychain.deleteSecret('hubDeviceTokenRevoking');
   input.settings.batch([
     { kind: 'remove', key: HUB_DEVICE_TOKEN_BINDING_KEY },
+    { kind: 'remove', key: HUB_DEVICE_IDENTITY_KEY },
     { kind: 'remove', key: HUB_DEVICE_TOKEN_ACTIVATION_KEY },
     { kind: 'remove', key: HUB_DEVICE_TOKEN_REVOCATION_KEY },
   ]);
