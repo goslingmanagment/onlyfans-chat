@@ -578,6 +578,7 @@ describe('hub IPC wiring', () => {
       getHubConnection: () => backingStore.getHubConnection(),
       update,
       runCredentialMutation: (task) => task(),
+      decommissionQuarantinedHubKey: () => Promise.resolve(false),
     };
     register(data, {
       settingsStore,

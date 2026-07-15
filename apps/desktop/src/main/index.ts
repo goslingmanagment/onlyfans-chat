@@ -1145,7 +1145,11 @@ async function boot(): Promise<void> {
   });
   acceptanceTracker = createAcceptanceTracker();
 
-  const settingsStore = createSettingsStore({ queries: data.settings, secrets: keychain });
+  const settingsStore = createSettingsStore({
+    queries: data.settings,
+    secrets: keychain,
+    appVersion: app.getVersion(),
+  });
   // A prior process may have stopped anywhere between encrypted staging,
   // SQLite coordinate writes, and atomic key promotion. Recover that durable
   // transition before the redactor or any runtime resolves a Hub bearer.
@@ -1343,6 +1347,17 @@ async function boot(): Promise<void> {
 
   let postSignInRuntimeRetry: ReturnType<typeof createBoundedRetry> | null = null;
   let deviceCredentialRecoveryRetry: ReturnType<typeof createBoundedRetry> | null = null;
+  // D19: fire-and-forget display hygiene — with a bound device token a
+  // non-bound legacy key is dead weight; failure just defers to the next pass.
+  const decommissionQuarantinedHubKeyBestEffort = (): void => {
+    void settingsStore.decommissionQuarantinedHubKey().then((removed) => {
+      if (removed) {
+        logger?.info('hub', 'quarantined legacy chatter key decommissioned (D19)');
+      }
+    }).catch((error: unknown) => {
+      logger?.warn('hub', 'legacy key decommission deferred', errorToFields(error));
+    });
+  };
   const rebuildOfapiRuntimeFromSettingsInsideMutation = async (
     options: { cancelPendingRetry?: boolean } = {},
   ): Promise<void> => {
@@ -1354,6 +1369,7 @@ async function boot(): Promise<void> {
       if (await recoverDeviceCredentialJournals()) {
         deviceCredentialRecoveryRetry?.start();
       }
+      decommissionQuarantinedHubKeyBestEffort();
       // 4c: a settings-driven rebuild — isBoot=false keeps the outgoing engine's
       // live queued/sending rows intact (reconcileOnBoot skips its destructive
       // transitions on this path).
@@ -2152,6 +2168,7 @@ async function boot(): Promise<void> {
         if (await recoverDeviceCredentialJournals()) {
           deviceCredentialRecoveryRetry?.start();
         }
+        decommissionQuarantinedHubKeyBestEffort();
         await activateOfapiRuntimeInsideMutation(keychain, bootData, settingsStore, true);
       });
     },

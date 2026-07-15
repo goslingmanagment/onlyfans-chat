@@ -420,11 +420,19 @@ function buildStore(): MockStore {
   ];
 
   const settings: SettingsVM = {
-    hasHubKey: true,
-    hubApiKeyBindingState: 'bound',
-    hasHubDeviceToken: false,
-    hubDeviceTokenBindingState: 'none',
+    hasHubKey: false,
+    hubApiKeyBindingState: 'none',
+    hasHubDeviceToken: true,
+    hubDeviceTokenBindingState: 'bound',
     hubDeviceTokenTransition: null,
+    hubDeviceIdentity: {
+      username: 'Maxim',
+      label: 'Kevin',
+      tokenLast4: 'W7vt',
+      issuedAt: '2026-07-15T21:42:15.000Z',
+      expiresAt: '2026-10-13T21:42:15.000Z',
+    },
+    appVersion: '0.0.0-mock',
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',

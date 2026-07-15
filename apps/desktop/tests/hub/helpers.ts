@@ -54,6 +54,8 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     hasHubDeviceToken: false,
     hubDeviceTokenBindingState: 'none',
     hubDeviceTokenTransition: null,
+    hubDeviceIdentity: null,
+    appVersion: '0.0.0-test',
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
@@ -137,6 +139,7 @@ export function makeSettingsStore(vm: SettingsVM): SettingsStore {
     }),
     update: () => Promise.resolve(vm),
     runCredentialMutation: (task) => task(),
+    decommissionQuarantinedHubKey: () => Promise.resolve(false),
   };
 }
 

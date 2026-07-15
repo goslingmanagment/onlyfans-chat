@@ -64,6 +64,7 @@ function makeDynamicSettingsStore(
       };
     },
     runCredentialMutation: (task) => task(),
+    decommissionQuarantinedHubKey: () => Promise.resolve(false),
   };
 }
 

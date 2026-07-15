@@ -49,6 +49,7 @@ import {
   readDeviceTokenBinding,
   readDeviceTokenRevocation,
   readHubApiKeyBinding,
+  readHubDeviceIdentity,
   type HubCredentialBinding,
 } from '../hub/credential-journal';
 
@@ -90,6 +91,8 @@ export type PersistedSettings = Omit<
   | 'hasHubDeviceToken'
   | 'hubDeviceTokenBindingState'
   | 'hubDeviceTokenTransition'
+  | 'hubDeviceIdentity'
+  | 'appVersion'
   | 'keyMeta'
 >;
 
@@ -477,6 +480,9 @@ export interface SettingsStore {
   /** Device activation/revocation staging uses this same queue so an atomic
    * connection read cannot interleave with secret/journal promotion. */
   runCredentialMutation<Result>(task: () => Promise<Result>): Promise<Result>;
+  /** D19: deletes a NON-bound legacy chatter key once a bound device token
+   * exists (boot + post-activation). Returns true when custody was removed. */
+  decommissionQuarantinedHubKey(): Promise<boolean>;
 }
 
 export interface HubConnectionSnapshot {
@@ -498,11 +504,14 @@ export interface SettingsStoreOptions {
   secrets: SecretStoreLike;
   /** Clock seam for keyMeta.setAt (tests). */
   now?: () => number;
+  /** Shown in Hub diagnostics (SettingsVM.appVersion); app.getVersion() in prod. */
+  appVersion?: string;
 }
 
 export function createSettingsStore(options: SettingsStoreOptions): SettingsStore {
   const { queries, secrets } = options;
   const now = options.now ?? Date.now;
+  const appVersion = options.appVersion ?? '0.0.0';
 
   function hubApiKeyDigest(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -629,6 +638,19 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
     if (activation !== null && revocation !== null) {
       throw new Error('Conflicting Hub device-token lifecycle journals; refusing credentials.');
     }
+    // D19: display metadata only renders while some device custody exists — a
+    // record surviving an external secret wipe must not fake a connected card.
+    const identity = readHubDeviceIdentity(queries);
+    const hubDeviceIdentity = identity !== null
+      && (hubDeviceTokenBindingState !== 'none' || activation !== null || revocation !== null)
+      ? {
+          username: identity.username,
+          label: identity.label,
+          tokenLast4: identity.tokenLast4,
+          issuedAt: identity.issuedAt,
+          expiresAt: identity.expiresAt,
+        }
+      : null;
     return {
       hasHubKey: hubApiKeyBindingState !== 'none',
       hubApiKeyBindingState,
@@ -639,6 +661,8 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
         : revocation !== null
           ? 'revocation'
           : null,
+      hubDeviceIdentity,
+      appVersion,
       keyMeta: readKeyMeta(),
       ...persisted,
     };
@@ -1229,6 +1253,33 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
     runCredentialMutation: (task) => enqueueMutation(async () => {
       await recoverHubCredentialTransitionInsideQueue();
       return task();
+    }),
+
+    decommissionQuarantinedHubKey: () => enqueueMutation(async () => {
+      let vm: SettingsVM;
+      try {
+        if (readHubCredentialTransition() !== null) return false;
+        if (readDeviceTokenActivation(queries) !== null) return false;
+        if (readDeviceTokenRevocation(queries) !== null) return false;
+        vm = await buildVm();
+      } catch {
+        // Corrupt/conflicting journals are owned by their fail-closed recovery
+        // paths; this display-hygiene pass must never block or race them.
+        return false;
+      }
+      if (vm.hubDeviceTokenBindingState !== 'bound') return false;
+      if (vm.hubApiKeyBindingState === 'none' || vm.hubApiKeyBindingState === 'bound') {
+        return false;
+      }
+      // D19: with a provably bound device token a NON-bound legacy key is dead
+      // weight by construction — connection resolution selects bound
+      // credentials only. Deletion needs no decryption.
+      await secrets.deleteSecret('hubApiKey');
+      queries.batch([
+        { kind: 'remove', key: HUB_API_KEY_BINDING_KEY },
+        { kind: 'set', key: KEY_META_KEY, value: { hub: null } },
+      ]);
+      return true;
     }),
 
     async update(patch: unknown, updateOptions: SettingsUpdateOptions = {}): Promise<SettingsVM> {
