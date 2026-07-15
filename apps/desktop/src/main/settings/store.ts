@@ -43,6 +43,7 @@ import {
 import type { SecretName } from '../secrets/keychain';
 import {
   HUB_API_KEY_BINDING_KEY,
+  HUB_DEVICE_IDENTITY_KEY,
   HUB_DEVICE_TOKEN_BINDING_KEY,
   deviceTokenDigest,
   readDeviceTokenActivation,
@@ -915,7 +916,10 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
         ? [{ kind: 'remove' as const, key: HUB_API_KEY_BINDING_KEY }]
         : [{ kind: 'set' as const, key: HUB_API_KEY_BINDING_KEY, value: apiBinding }]),
       ...(transition.deleteDeadDeviceToken
-        ? [{ kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY }]
+        ? [
+            { kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY },
+            { kind: 'remove' as const, key: HUB_DEVICE_IDENTITY_KEY },
+          ]
         : []),
       { kind: 'remove', key: HUB_CREDENTIAL_TRANSITION_KEY },
     ]);
@@ -1012,7 +1016,10 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       queries.batch([
         { kind: 'set', key: HUB_API_KEY_BINDING_KEY, value: targetBinding },
         ...(transition.deleteDeadDeviceToken
-          ? [{ kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY }]
+          ? [
+              { kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY },
+              { kind: 'remove' as const, key: HUB_DEVICE_IDENTITY_KEY },
+            ]
           : []),
         { kind: 'remove', key: HUB_CREDENTIAL_TRANSITION_KEY },
       ]);

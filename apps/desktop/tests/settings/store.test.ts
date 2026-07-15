@@ -603,6 +603,14 @@ describe('settings store', () => {
     const baseSecrets = createFakeSecrets();
     seedActiveHubPair(queries, baseSecrets);
     baseSecrets.values.set('hubDeviceToken', 'agency_hub_device_dead');
+    queries.set(HUB_DEVICE_IDENTITY_KEY, {
+      version: 1,
+      username: 'Maxim',
+      label: 'Kevin',
+      tokenLast4: 'dead',
+      issuedAt: '2026-07-15T21:42:15.000Z',
+      expiresAt: '2026-10-13T21:42:15.000Z',
+    });
     let failCleanup = true;
     const secrets: FakeSecrets = {
       ...baseSecrets,
@@ -632,6 +640,8 @@ describe('settings store', () => {
     expect(baseSecrets.values.get('hubApiKey')).toBe(replacement);
     expect(baseSecrets.values.has('hubDeviceToken')).toBe(false);
     expect(queries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeUndefined();
+    // D19: identity never outlives device custody.
+    expect(queries.get(HUB_DEVICE_IDENTITY_KEY)).toBeUndefined();
   });
 
   it('deletes an encrypted staging orphan without promoting it when no durable intent exists', async () => {
