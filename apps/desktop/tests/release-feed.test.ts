@@ -118,6 +118,7 @@ describe('Windows release feed policy', () => {
       .not.toBe(0);
   });
 
+  // Five Git Bash publisher processes can exceed Vitest's 5 s default on Windows CI.
   it('publishes under a crash-safe lock, retries identical success, and rejects conflicts', () => {
     const root = mkdtempSync(join(tmpdir(), 'chatgoose-feed-'));
     const feed = join(root, 'feed');
@@ -159,7 +160,7 @@ describe('Windows release feed policy', () => {
     fixture(afterCrash, '1.2.5', 'after crash');
     expect(() => execFileSync('bash', [publisher, feed, afterCrash], { env: publisherEnv })).not.toThrow();
     expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.5');
-  });
+  }, 15_000);
 
   it('dry-runs and applies bounded installer retention while protecting latest.yml and every blockmap', () => {
     const root = mkdtempSync(join(tmpdir(), 'chatgoose-feed-retention-'));
