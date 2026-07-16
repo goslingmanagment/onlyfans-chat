@@ -5,6 +5,7 @@ export const HUB_DEVICE_TOKEN_ACTIVATION_KEY = 'hubDeviceTokenActivation.v1';
 export const HUB_DEVICE_TOKEN_REVOCATION_KEY = 'hubDeviceTokenRevocation.v1';
 export const HUB_DEVICE_TOKEN_BINDING_KEY = 'hubDeviceTokenBinding.v1';
 export const HUB_API_KEY_BINDING_KEY = 'hubApiKeyBinding.v1';
+export const HUB_DEVICE_IDENTITY_KEY = 'hubDeviceIdentity.v1';
 
 const journalBaseSchema = z.strictObject({
   version: z.literal(1),
@@ -21,6 +22,9 @@ export const hubDeviceTokenActivationSchema = journalBaseSchema.extend({
   // Durable sign-out intent written while activation is network-deferred.
   // Optional/default preserves journals written by the first rollout build.
   cancelRequested: z.boolean().optional().default(false),
+  // D19: who signed in, for the persisted device identity. Optional/default
+  // preserves journals written by pre-D19 builds.
+  username: z.string().min(1).max(120).nullable().optional().default(null),
 });
 
 export const hubDeviceTokenRevocationSchema = journalBaseSchema.extend({
@@ -41,10 +45,25 @@ export const hubCredentialBindingSchema = z.strictObject({
   tokenDigest: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
+/** D19: non-secret display metadata for the connected-state card. Written and
+ * removed atomically alongside the device-token binding; unlike the custody
+ * journals it is NEVER load-bearing for credentials. */
+export const hubDeviceIdentitySchema = z.strictObject({
+  version: z.literal(1),
+  username: z.string().min(1).max(120).nullable(),
+  label: z.string().min(1).max(120),
+  tokenLast4: z.string().length(4),
+  // Null when written by crash recovery: the true issue/expiry moments are
+  // unknowable there, and a display record must never invent dates.
+  issuedAt: z.string().datetime().nullable(),
+  expiresAt: z.string().datetime().nullable(),
+});
+
 export type HubDeviceTokenActivation = z.infer<typeof hubDeviceTokenActivationSchema>;
 export type HubDeviceTokenRevocation = z.infer<typeof hubDeviceTokenRevocationSchema>;
 export type StagedDeviceToken = z.infer<typeof stagedDeviceTokenSchema>;
 export type HubCredentialBinding = z.infer<typeof hubCredentialBindingSchema>;
+export type HubDeviceIdentity = z.infer<typeof hubDeviceIdentitySchema>;
 
 export interface CredentialJournalQueries {
   get(key: string): unknown;
@@ -104,6 +123,16 @@ export function readHubApiKeyBinding(
   queries: Pick<CredentialJournalQueries, 'get'>,
 ): HubCredentialBinding | null {
   return readJournal(queries, HUB_API_KEY_BINDING_KEY, hubCredentialBindingSchema);
+}
+
+export function readHubDeviceIdentity(
+  queries: Pick<CredentialJournalQueries, 'get'>,
+): HubDeviceIdentity | null {
+  try {
+    return readJournal(queries, HUB_DEVICE_IDENTITY_KEY, hubDeviceIdentitySchema);
+  } catch {
+    return null; // display metadata — never blocks credentials
+  }
 }
 
 export function parseStagedDeviceToken(

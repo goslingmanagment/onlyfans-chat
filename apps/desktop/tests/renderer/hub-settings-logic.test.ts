@@ -4,6 +4,7 @@ import {
   hasHubDeviceTokenCustody,
   hubDeviceTokenStatus,
   hubUrlChangeRequiresDeviceSignOut,
+  legacyKeyState,
   isHubConfigured,
 } from '../../src/renderer/src/features/settings/sections/hubSettingsLogic';
 
@@ -166,5 +167,44 @@ describe('hubUrlChangeRequiresDeviceSignOut', () => {
       savedHubBaseUrl: 'https://gosling-agency.ru',
       hasStoredDeviceToken: true,
     })).toBe(false);
+  });
+});
+
+describe('legacyKeyState (D19)', () => {
+  it('is null with a bound device token regardless of key state', () => {
+    expect(legacyKeyState({
+      hasHubKey: true,
+      hubApiKeyBindingState: 'unbound',
+      hubDeviceTokenBindingState: 'bound',
+    })).toBeNull();
+  });
+
+  it('working-fallback for a bound key on a key-only machine', () => {
+    expect(legacyKeyState({
+      hasHubKey: true,
+      hubApiKeyBindingState: 'bound',
+      hubDeviceTokenBindingState: 'none',
+    })).toBe('working-fallback');
+  });
+
+  it('isolated for a quarantined key with no token', () => {
+    expect(legacyKeyState({
+      hasHubKey: true,
+      hubApiKeyBindingState: 'unbound',
+      hubDeviceTokenBindingState: 'none',
+    })).toBe('isolated');
+    expect(legacyKeyState({
+      hasHubKey: true,
+      hubApiKeyBindingState: 'unreadable',
+      hubDeviceTokenBindingState: 'none',
+    })).toBe('isolated');
+  });
+
+  it('null without any key', () => {
+    expect(legacyKeyState({
+      hasHubKey: false,
+      hubApiKeyBindingState: 'none',
+      hubDeviceTokenBindingState: 'none',
+    })).toBeNull();
   });
 });

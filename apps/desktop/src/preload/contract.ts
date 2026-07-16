@@ -422,6 +422,17 @@ export interface SettingsVM {
    */
   hubDeviceTokenTransition: 'activation' | 'revocation' | null;
   /**
+   * D19: non-secret sign-in metadata for the connected-state card ("Подключено
+   * как {username} · устройство {label}"). Null while no device custody exists.
+   */
+  hubDeviceIdentity: HubDeviceIdentityVM | null;
+  /** Running app version (Hub diagnostics row); read-only in the VM. */
+  appVersion: string;
+  /** Machine hostname — a machine property, independent of any credential. */
+  machineLabel: string;
+  /** OS platform tag (process.platform) for the same diagnostics row. */
+  osPlatform: string;
+  /**
    * Kernel Stage 24 rollout-window-only fallback: 'v1' re-points the hub SSE
    * consumer at the legacy stream. Not surfaced in UI (settings-file flip per
    * the ops runbook); deleted with the v1 path after fleet confirmation.
@@ -478,6 +489,17 @@ export interface KeyMetaEntry {
 
 export interface KeyMetaVM {
   hub: KeyMetaEntry | null;
+}
+
+/** D19: who signed this machine in, for display only. Never carries the token
+ * (only its last-4 fingerprint, keyMeta convention). Dates are null when the
+ * record was rebuilt by crash recovery — the UI omits them rather than guess. */
+export interface HubDeviceIdentityVM {
+  username: string | null;
+  label: string;
+  tokenLast4: string;
+  issuedAt: string | null;
+  expiresAt: string | null;
 }
 
 /** Stage 31: vendor keys retired — the hub connection is the only probe left. */
@@ -571,6 +593,10 @@ export type SettingsPatch = Partial<
     | 'hubApiKeyBindingState'
     | 'hasHubDeviceToken'
     | 'hubDeviceTokenBindingState'
+    | 'hubDeviceIdentity'
+    | 'appVersion'
+    | 'machineLabel'
+    | 'osPlatform'
     | 'keyMeta'
   >
 > & {

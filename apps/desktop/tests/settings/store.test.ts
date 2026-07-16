@@ -11,6 +11,7 @@ import {
 } from '@main/settings/store';
 import {
   HUB_API_KEY_BINDING_KEY,
+  HUB_DEVICE_IDENTITY_KEY,
   HUB_DEVICE_TOKEN_BINDING_KEY,
   HUB_DEVICE_TOKEN_ACTIVATION_KEY,
   HUB_DEVICE_TOKEN_REVOCATION_KEY,
@@ -602,6 +603,14 @@ describe('settings store', () => {
     const baseSecrets = createFakeSecrets();
     seedActiveHubPair(queries, baseSecrets);
     baseSecrets.values.set('hubDeviceToken', 'agency_hub_device_dead');
+    queries.set(HUB_DEVICE_IDENTITY_KEY, {
+      version: 1,
+      username: 'Maxim',
+      label: 'Kevin',
+      tokenLast4: 'dead',
+      issuedAt: '2026-07-15T21:42:15.000Z',
+      expiresAt: '2026-10-13T21:42:15.000Z',
+    });
     let failCleanup = true;
     const secrets: FakeSecrets = {
       ...baseSecrets,
@@ -631,6 +640,8 @@ describe('settings store', () => {
     expect(baseSecrets.values.get('hubApiKey')).toBe(replacement);
     expect(baseSecrets.values.has('hubDeviceToken')).toBe(false);
     expect(queries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeUndefined();
+    // D19: identity never outlives device custody.
+    expect(queries.get(HUB_DEVICE_IDENTITY_KEY)).toBeUndefined();
   });
 
   it('deletes an encrypted staging orphan without promoting it when no durable intent exists', async () => {
@@ -1463,5 +1474,193 @@ describe('settings store', () => {
       deviceToken: null,
       deviceTokenTransition: 'activation',
     });
+  });
+});
+
+// ─── D19: device identity exposure + quarantined legacy-key decommission ───
+
+const D19_DEVICE_TOKEN = 'agency_hub_pending_device_tok1';
+
+function seedBoundDeviceToken(
+  queries: FakeQueries,
+  secrets: FakeSecrets,
+  hubBaseUrl = DEFAULT_AGENCY_HUB_BASE_URL,
+): void {
+  queries.set('hubBaseUrl', hubBaseUrl);
+  secrets.values.set('hubDeviceToken', D19_DEVICE_TOKEN);
+  queries.set(HUB_DEVICE_TOKEN_BINDING_KEY, {
+    version: 1,
+    hubBaseUrl,
+    tokenDigest: deviceTokenDigest(D19_DEVICE_TOKEN),
+  });
+}
+
+const D19_IDENTITY = {
+  version: 1,
+  username: 'Maxim',
+  label: 'Kevin',
+  tokenLast4: 'tok1',
+  issuedAt: '2026-07-15T21:42:15.000Z',
+  expiresAt: '2026-10-13T21:42:15.000Z',
+};
+
+describe('device identity in the settings VM (D19)', () => {
+  it('exposes identity and appVersion while device custody exists', async () => {
+    const queries = createFakeQueries();
+    const secrets = createFakeSecrets();
+    const store = createSettingsStore({ queries, secrets, appVersion: '1.2.3' });
+    seedBoundDeviceToken(queries, secrets);
+    queries.set(HUB_DEVICE_IDENTITY_KEY, D19_IDENTITY);
+    const vm = await store.get();
+    expect(vm.hubDeviceIdentity).toMatchObject({ username: 'Maxim', label: 'Kevin', tokenLast4: 'tok1' });
+    expect(vm.appVersion).toBe('1.2.3');
+  });
+
+  it('hides a stale identity once device custody is gone', async () => {
+    const { store, queries } = createStore();
+    queries.set(HUB_DEVICE_IDENTITY_KEY, D19_IDENTITY);
+    const vm = await store.get();
+    expect(vm.hubDeviceIdentity).toBeNull();
+  });
+});
+
+describe('decommissionQuarantinedHubKey (D19)', () => {
+  it('deletes an unbound key when the device token is bound', async () => {
+    const { store, queries, secrets } = createStore();
+    seedBoundDeviceToken(queries, secrets);
+    secrets.values.set('hubApiKey', 'agency_hub_core_old1');
+    queries.set('keyMeta', { hub: { last4: 'old1', setAt: 1 } });
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(true);
+    expect(secrets.values.has('hubApiKey')).toBe(false);
+    expect(queries.get(HUB_API_KEY_BINDING_KEY)).toBeUndefined();
+    expect(queries.get('keyMeta')).toEqual({ hub: null });
+    const vm = await store.get();
+    expect(vm.hasHubKey).toBe(false);
+    expect(vm.hubDeviceTokenBindingState).toBe('bound');
+  });
+
+  it('deletes a mismatched key when the device token is bound', async () => {
+    const { store, queries, secrets } = createStore();
+    seedBoundDeviceToken(queries, secrets);
+    secrets.values.set('hubApiKey', 'agency_hub_core_old1');
+    queries.set(HUB_API_KEY_BINDING_KEY, {
+      version: 1,
+      hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      tokenDigest: deviceTokenDigest('agency_hub_core_DIFFERENT'),
+    });
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(true);
+    expect(secrets.values.has('hubApiKey')).toBe(false);
+  });
+
+  it('leaves an unreadable key alone — a transient read failure is not proof of non-binding', async () => {
+    const queries = createFakeQueries();
+    const secrets = createFakeSecrets();
+    const rawGet = secrets.getSecret.bind(secrets);
+    secrets.getSecret = (name) =>
+      name === 'hubApiKey' ? Promise.reject(new Error('DPAPI failure')) : rawGet(name);
+    secrets.values.set('hubApiKey', 'ciphertext');
+    const store = createSettingsStore({ queries, secrets });
+    seedBoundDeviceToken(queries, secrets);
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(false);
+    expect(secrets.values.has('hubApiKey')).toBe(true);
+  });
+
+  it('keeps a BOUND key (working fallback until D116(c))', async () => {
+    const { store, queries, secrets } = createStore();
+    seedBoundDeviceToken(queries, secrets);
+    seedActiveHubPair(queries, secrets);
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(false);
+    expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
+    expect(queries.get(HUB_API_KEY_BINDING_KEY)).toBeDefined();
+  });
+
+  it('does nothing without a bound device token', async () => {
+    const { store, queries, secrets } = createStore();
+    queries.set('hubBaseUrl', DEFAULT_AGENCY_HUB_BASE_URL);
+    secrets.values.set('hubApiKey', 'agency_hub_core_old1');
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(false);
+    expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
+  });
+
+  it('does nothing while a VALID transition journal exists', async () => {
+    const { store, queries, secrets } = createStore();
+    seedBoundDeviceToken(queries, secrets);
+    secrets.values.set('hubApiKey', 'agency_hub_core_old1');
+    queries.set(HUB_CREDENTIAL_TRANSITION_KEY, {
+      version: 2,
+      id: '7c9e6679-7425-40de-944b-e07fc1f90ae7',
+      targetHubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
+      targetKeyMeta: { last4: 'new1', setAt: 5 },
+      keyAction: 'promote-staged',
+      deleteDeadDeviceToken: false,
+      clearHubSyncState: false,
+      nonSecretPatch: {},
+      personaMappingsKey: null,
+      sourceKeyDigest: null,
+      sourceKeyUnreadable: false,
+      targetKeyDigest: deviceTokenDigest('agency_hub_core_new1'),
+      rollbackMutations: [],
+    });
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(false);
+    expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
+    expect(queries.get(HUB_CREDENTIAL_TRANSITION_KEY)).toBeDefined();
+  });
+
+  it('fails safe on a corrupt transition journal', async () => {
+    const { store, queries, secrets } = createStore();
+    seedBoundDeviceToken(queries, secrets);
+    secrets.values.set('hubApiKey', 'agency_hub_core_old1');
+    queries.set(HUB_CREDENTIAL_TRANSITION_KEY, { corrupt: true });
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(false);
+    expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
+  });
+
+  it('is idempotent', async () => {
+    const { store, queries, secrets } = createStore();
+    seedBoundDeviceToken(queries, secrets);
+    secrets.values.set('hubApiKey', 'agency_hub_core_old1');
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(true);
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(false);
+  });
+});
+
+describe('backfillHubDeviceIdentity (D19, pre-D19 fleet)', () => {
+  it('writes a minimal identity for a bound token with no record', async () => {
+    const { store, queries, secrets } = createStore();
+    seedBoundDeviceToken(queries, secrets);
+    await expect(store.backfillHubDeviceIdentity('Kevin')).resolves.toBe(true);
+    expect(queries.get(HUB_DEVICE_IDENTITY_KEY)).toEqual({
+      version: 1,
+      username: null,
+      label: 'Kevin',
+      tokenLast4: D19_DEVICE_TOKEN.slice(-4),
+      issuedAt: null,
+      expiresAt: null,
+    });
+    const vm = await store.get();
+    expect(vm.hubDeviceIdentity).toMatchObject({ username: null, label: 'Kevin' });
+  });
+
+  it('never overwrites an existing identity', async () => {
+    const { store, queries, secrets } = createStore();
+    seedBoundDeviceToken(queries, secrets);
+    queries.set(HUB_DEVICE_IDENTITY_KEY, D19_IDENTITY);
+    await expect(store.backfillHubDeviceIdentity('other')).resolves.toBe(false);
+    expect(queries.get(HUB_DEVICE_IDENTITY_KEY)).toEqual(D19_IDENTITY);
+  });
+
+  it('does nothing without a bound device token', async () => {
+    const { store, queries } = createStore();
+    queries.set('hubBaseUrl', DEFAULT_AGENCY_HUB_BASE_URL);
+    await expect(store.backfillHubDeviceIdentity('Kevin')).resolves.toBe(false);
+    expect(queries.get(HUB_DEVICE_IDENTITY_KEY)).toBeUndefined();
+  });
+
+  it('fails safe during a credential transition', async () => {
+    const { store, queries, secrets } = createStore();
+    seedBoundDeviceToken(queries, secrets);
+    queries.set(HUB_CREDENTIAL_TRANSITION_KEY, { corrupt: true });
+    await expect(store.backfillHubDeviceIdentity('Kevin')).resolves.toBe(false);
+    expect(queries.get(HUB_DEVICE_IDENTITY_KEY)).toBeUndefined();
   });
 });

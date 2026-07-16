@@ -43,12 +43,14 @@ import {
 import type { SecretName } from '../secrets/keychain';
 import {
   HUB_API_KEY_BINDING_KEY,
+  HUB_DEVICE_IDENTITY_KEY,
   HUB_DEVICE_TOKEN_BINDING_KEY,
   deviceTokenDigest,
   readDeviceTokenActivation,
   readDeviceTokenBinding,
   readDeviceTokenRevocation,
   readHubApiKeyBinding,
+  readHubDeviceIdentity,
   type HubCredentialBinding,
 } from '../hub/credential-journal';
 
@@ -90,6 +92,10 @@ export type PersistedSettings = Omit<
   | 'hasHubDeviceToken'
   | 'hubDeviceTokenBindingState'
   | 'hubDeviceTokenTransition'
+  | 'hubDeviceIdentity'
+  | 'appVersion'
+  | 'machineLabel'
+  | 'osPlatform'
   | 'keyMeta'
 >;
 
@@ -477,6 +483,13 @@ export interface SettingsStore {
   /** Device activation/revocation staging uses this same queue so an atomic
    * connection read cannot interleave with secret/journal promotion. */
   runCredentialMutation<Result>(task: () => Promise<Result>): Promise<Result>;
+  /** D19: deletes a NON-bound legacy chatter key once a bound device token
+   * exists (boot + post-activation). Returns true when custody was removed. */
+  decommissionQuarantinedHubKey(): Promise<boolean>;
+  /** D19: tokens bound BEFORE this build have no identity record — rebuild a
+   * minimal one (null username/dates, honest UI fallbacks) so the fleet's
+   * connected card is not blank until the next re-sign-in. */
+  backfillHubDeviceIdentity(label: string): Promise<boolean>;
 }
 
 export interface HubConnectionSnapshot {
@@ -498,11 +511,20 @@ export interface SettingsStoreOptions {
   secrets: SecretStoreLike;
   /** Clock seam for keyMeta.setAt (tests). */
   now?: () => number;
+  /** Shown in Hub diagnostics (SettingsVM.appVersion); app.getVersion() in prod. */
+  appVersion?: string;
+  /** Machine hostname for the diagnostics row; hostname() in prod. */
+  machineLabel?: string;
+  /** OS platform tag for the diagnostics row; process.platform in prod. */
+  osPlatform?: string;
 }
 
 export function createSettingsStore(options: SettingsStoreOptions): SettingsStore {
   const { queries, secrets } = options;
   const now = options.now ?? Date.now;
+  const appVersion = options.appVersion ?? '0.0.0';
+  const machineLabel = options.machineLabel ?? 'device';
+  const osPlatform = options.osPlatform ?? 'unknown';
 
   function hubApiKeyDigest(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -629,6 +651,19 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
     if (activation !== null && revocation !== null) {
       throw new Error('Conflicting Hub device-token lifecycle journals; refusing credentials.');
     }
+    // D19: display metadata only renders while some device custody exists — a
+    // record surviving an external secret wipe must not fake a connected card.
+    const identity = readHubDeviceIdentity(queries);
+    const hubDeviceIdentity = identity !== null
+      && (hubDeviceTokenBindingState !== 'none' || activation !== null || revocation !== null)
+      ? {
+          username: identity.username,
+          label: identity.label,
+          tokenLast4: identity.tokenLast4,
+          issuedAt: identity.issuedAt,
+          expiresAt: identity.expiresAt,
+        }
+      : null;
     return {
       hasHubKey: hubApiKeyBindingState !== 'none',
       hubApiKeyBindingState,
@@ -639,6 +674,10 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
         : revocation !== null
           ? 'revocation'
           : null,
+      hubDeviceIdentity,
+      appVersion,
+      machineLabel,
+      osPlatform,
       keyMeta: readKeyMeta(),
       ...persisted,
     };
@@ -891,7 +930,10 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
         ? [{ kind: 'remove' as const, key: HUB_API_KEY_BINDING_KEY }]
         : [{ kind: 'set' as const, key: HUB_API_KEY_BINDING_KEY, value: apiBinding }]),
       ...(transition.deleteDeadDeviceToken
-        ? [{ kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY }]
+        ? [
+            { kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY },
+            { kind: 'remove' as const, key: HUB_DEVICE_IDENTITY_KEY },
+          ]
         : []),
       { kind: 'remove', key: HUB_CREDENTIAL_TRANSITION_KEY },
     ]);
@@ -988,7 +1030,10 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       queries.batch([
         { kind: 'set', key: HUB_API_KEY_BINDING_KEY, value: targetBinding },
         ...(transition.deleteDeadDeviceToken
-          ? [{ kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY }]
+          ? [
+              { kind: 'remove' as const, key: HUB_DEVICE_TOKEN_BINDING_KEY },
+              { kind: 'remove' as const, key: HUB_DEVICE_IDENTITY_KEY },
+            ]
           : []),
         { kind: 'remove', key: HUB_CREDENTIAL_TRANSITION_KEY },
       ]);
@@ -1229,6 +1274,66 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
     runCredentialMutation: (task) => enqueueMutation(async () => {
       await recoverHubCredentialTransitionInsideQueue();
       return task();
+    }),
+
+    decommissionQuarantinedHubKey: () => enqueueMutation(async () => {
+      let vm: SettingsVM;
+      try {
+        if (readHubCredentialTransition() !== null) return false;
+        if (readDeviceTokenActivation(queries) !== null) return false;
+        if (readDeviceTokenRevocation(queries) !== null) return false;
+        vm = await buildVm();
+      } catch {
+        // Corrupt/conflicting journals are owned by their fail-closed recovery
+        // paths; this display-hygiene pass must never block or race them.
+        return false;
+      }
+      if (vm.hubDeviceTokenBindingState !== 'bound') return false;
+      // D19: only the PROVABLY non-bound states qualify — 'unreadable' is a
+      // transient read failure (DPAPI/keychain hiccup, likeliest at boot),
+      // not proof of non-binding; destroying that custody automatically would
+      // contradict the explicit-abandonment rule the device-token machinery
+      // enforces for the same classification.
+      if (vm.hubApiKeyBindingState !== 'unbound' && vm.hubApiKeyBindingState !== 'mismatch') {
+        return false;
+      }
+      // With a bound device token a non-bound legacy key is dead weight by
+      // construction — connection resolution selects bound credentials only.
+      // keyMeta is read-modify-written so future sibling fingerprints survive.
+      await secrets.deleteSecret('hubApiKey');
+      queries.batch([
+        { kind: 'remove', key: HUB_API_KEY_BINDING_KEY },
+        { kind: 'set', key: KEY_META_KEY, value: { ...readKeyMeta(), hub: null } },
+      ]);
+      return true;
+    }),
+
+    backfillHubDeviceIdentity: (label) => enqueueMutation(async () => {
+      try {
+        if (readHubDeviceIdentity(queries) !== null) return false;
+        if (readHubCredentialTransition() !== null) return false;
+        if (readDeviceTokenActivation(queries) !== null) return false;
+        if (readDeviceTokenRevocation(queries) !== null) return false;
+        const vm = await buildVm();
+        if (vm.hubDeviceTokenBindingState !== 'bound') return false;
+        const token = await secrets.getSecret('hubDeviceToken');
+        if (token === null || token.length < 4) return false;
+        // Pre-D19 token: username and the issue/expiry moments were never
+        // recorded locally — write only what is provable (the UI renders
+        // titleAnon + the short token line for exactly this shape). label is
+        // hostname() by construction: that is what issuance always sent.
+        queries.set(HUB_DEVICE_IDENTITY_KEY, {
+          version: 1,
+          username: null,
+          label: label.trim().length > 0 ? label.trim().slice(0, 120) : 'device',
+          tokenLast4: token.slice(-4),
+          issuedAt: null,
+          expiresAt: null,
+        });
+        return true;
+      } catch {
+        return false; // display metadata only — never blocks boot
+      }
     }),
 
     async update(patch: unknown, updateOptions: SettingsUpdateOptions = {}): Promise<SettingsVM> {

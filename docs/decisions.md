@@ -36,6 +36,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D16 | 2026-07-13 | Replay-gap state snapshots page every durable row through a bounded opaque cursor |
 | D17 | 2026-07-13 | Global personas are a read-only metadata catalog; legacy client data is preserved and exportable |
 | D18 | 2026-07-15 | Notification frames never block the stream cursor; SSE transitions never initiate paid reads; deterministic poison frames trip a breaker |
+| D19 | 2026-07-16 | Hub settings are device-token-first: no key input for humans, bound token suppresses/auto-decommissions quarantined legacy keys, persisted device identity |
 
 ## Entries
 
@@ -388,3 +389,42 @@ frame suppression that unwedges fielded clients); the desktop invariants stand
 regardless because they close the whole class. Remaining waves (ledger repair
 via superseding events, `message_state_facts` overlay, budget gate) are
 tracked in the incident plan, not here.
+
+**D19 (2026-07-16).** Hub settings are device-token-first (core Decision
+#116: humans = password + device token, API keys = robots). Trigger: after
+the v0.1.41→v0.1.44 update Maxim's machine showed a permanent red
+"paste the key again" line for a legacy chatter key that (a) the runtime
+already ignored (quarantined `unbound`), (b) the server had already revoked,
+and (c) the UI could not delete — an empty key field is omitted from the
+patch and the URL-switch clearing path is blocked while a device token
+exists. Rulings: (1) The chatter-key input is REMOVED from settings; the
+runtime dual-acceptance fallback for already-stored BOUND keys survives
+until the D116(c) fleet gate, but no UI ever asks a human to paste a key —
+every credential CTA is the device sign-in. (2) Auto-decommission: with a
+provably bound device token, a PROVABLY non-bound (unbound/mismatch) legacy
+key is dead weight by construction (connection resolution selects bound
+credentials only, and key revocation lives in the dashboard, so local
+custody is not the revocation handle) — main deletes it silently at boot and
+after activation commit. Bound keys are never touched, and neither is an
+'unreadable' one: that classification is a transient read failure
+(DPAPI/keychain hiccup, likeliest at boot), not proof of non-binding — it
+stays for the explicit-abandonment/purge paths, invisible while the token
+is bound (review round 1 ruling revised in round 2). (3) A bound device
+token suppresses the legacy-key branch of `hubCredentialNeedsAttention`.
+(4) Non-secret `hubDeviceIdentity.v1` ({username, label, tokenLast4,
+issuedAt, expiresAt}) is written/removed atomically with the device-token
+binding so the connected card ("Подключено как Maxim · устройство Kevin")
+survives restart; it is display metadata and fails OPEN, never gating
+credentials. Crash recovery rebuilds it with NULL dates (the true
+issue/expiry moments are unknowable there) and the UI omits the dates
+rather than invent them. Tokens bound BEFORE this build get a boot-time
+backfill ({username: null, label: hostname(), last-4 from the stored
+bearer, null dates}) so the existing fleet's card is not blank; the full
+record arrives with the next re-sign-in. (5) Display correction: an activated sign-in bearer KEEPS the
+`agency_hub_pending_device_` prefix by 0092 design (rollback guard) — the
+UI shows only the last-4 fingerprint and the literal "pending" never
+reaches copy; renaming the prefix core-side was considered and rejected.
+Phase 2 (full key-path deletion, two-release drain-then-delete order, CI
+fleet gate, extension E9 parity, core service-account split) is outlined in
+`docs/superpowers/specs/2026-07-16-hub-settings-rework-design.md` and stays
+gated on D116(c).

@@ -13,8 +13,6 @@ export const UI_MESSAGES = {
   'common.delete': { en: 'Delete', ru: 'Удалить' },
   'common.configured': { en: 'configured', ru: 'настроен' },
   'common.notSet': { en: 'not set', ru: 'не задан' },
-  'common.replaceKey': { en: 'Replace key…', ru: 'Заменить ключ…' },
-  'common.pasteKey': { en: 'Paste key…', ru: 'Вставьте ключ…' },
   'common.savedFlash': { en: 'SAVED', ru: 'СОХРАНЕНО' },
   // I116-2 (W4.1): a rejected settings save used to fail with no visible
   // feedback at all (no onError anywhere in the save path).
@@ -105,32 +103,52 @@ export const UI_MESSAGES = {
 
   // ── Agency Hub ────────────────────────────────────────────────────────────
   'hub.title': { en: 'Agency Hub', ru: 'Agency Hub' },
-  'hub.hint': {
-    en: 'Default path for realtime events and supported OFAPI reads. OFAPI writes are Hub-only.',
-    ru: 'Основной путь для live-событий и поддержанных чтений OFAPI. Записи OFAPI идут только через Hub.',
-  },
   'hub.baseUrl.label': { en: 'Hub base URL', ru: 'Адрес хаба' },
   'hub.baseUrl.hint': { en: "your agency's core server", ru: 'core-сервер вашего агентства' },
-  'hub.key.label': { en: 'Chatter API key', ru: 'API-ключ чаттера' },
-  'hub.key.hint': { en: 'agency_hub_core_… — set-only', ru: 'agency_hub_core_… — только запись' },
+  // ── D19: device-first minimal section ──
+  'hub.connected.title': { en: 'Connected as {username}', ru: 'Подключено как {username}' },
+  'hub.connected.titleAnon': { en: 'Device connected', ru: 'Устройство подключено' },
+  'hub.connected.sub': {
+    en: 'Device {label} · sync and sending go through your agency hub',
+    ru: 'Устройство {label} · синхронизация и отправка идут через hub агентства',
+  },
+  'hub.signOutDevice': { en: 'Sign out this device', ru: 'Выйти с этого устройства' },
+  'hub.notConnected.title': { en: 'Device not connected', ru: 'Устройство не подключено' },
+  'hub.notConnected.hint': {
+    en: 'Sign in with your own login — this machine gets its own token.',
+    ru: 'Войдите под своим логином — этой машине выдастся собственный токен.',
+  },
+  'hub.advanced': { en: 'Advanced', ru: 'Дополнительно' },
+  'hub.diag.token': { en: 'Device token', ru: 'Токен устройства' },
+  'hub.diag.tokenInfo': {
+    en: '…{last4} · issued {issued} · valid to {expires}, renews itself',
+    ru: '…{last4} · выдан {issued} · до {expires}, продлевается сам',
+  },
+  // Crash-recovered identity: real dates are unknown — show none, invent none.
+  'hub.diag.tokenInfoShort': {
+    en: '…{last4} · renews itself',
+    ru: '…{last4} · продлевается сам',
+  },
+  'hub.diag.stream': { en: 'Event stream', ru: 'Стрим событий' },
+  'hub.diag.streamHint': { en: 'polling covers if it drops', ru: 'при сбое подстраховывает опрос' },
+  'hub.diag.app': { en: 'Application', ru: 'Приложение' },
+  'hub.diag.appInfo': {
+    en: '{version} · machine {label} · {os}',
+    ru: '{version} · машина {label} · {os}',
+  },
+  'hub.legacyKey.working': {
+    en: 'Running on a legacy key — sign in with the device to switch to a token.',
+    ru: 'Работает на legacy-ключе — войдите устройством, чтобы перейти на токен.',
+  },
+  'hub.legacyKey.isolated': {
+    en: 'Access is paused: the stored legacy key cannot be verified. Sign in with the device.',
+    ru: 'Доступ приостановлен: сохранённый legacy-ключ нельзя подтвердить. Войдите устройством.',
+  },
   'hub.credentialAttention': { en: 'attention', ru: 'нужно действие' },
-  'hub.key.bindingAttention': {
-    en: 'This stored key is quarantined because its Hub origin cannot be proven. Paste the key again to bind it safely.',
-    ru: 'Сохранённый ключ изолирован: его Hub нельзя подтвердить. Вставьте ключ заново, чтобы безопасно привязать его.',
-  },
-  'hub.deviceToken.label': { en: 'Device sign-in', ru: 'Вход устройства' },
-  'hub.deviceToken.hint': {
-    en: 'One-time login; issues a device token held in the keychain',
-    ru: 'Одноразовый вход; выдаёт токен устройства в связке ключей',
-  },
   'hub.deviceToken.username': { en: 'Username', ru: 'Логин' },
   'hub.deviceToken.password': { en: 'Password', ru: 'Пароль' },
   'hub.deviceToken.signIn': { en: 'Sign in', ru: 'Войти' },
   'hub.deviceToken.signingIn': { en: 'Signing in…', ru: 'Вход…' },
-  'hub.deviceToken.issued': {
-    en: 'Device token issued ({prefix}…) for {label}',
-    ru: 'Токен устройства выдан ({prefix}…) для {label}',
-  },
   'hub.deviceToken.failed': { en: 'Sign-in failed', ru: 'Не удалось войти' },
   'hub.deviceToken.signOut': { en: 'Sign out', ru: 'Выйти' },
   'hub.deviceToken.signingOut': { en: 'Signing out…', ru: 'Выход…' },
@@ -157,18 +175,6 @@ export const UI_MESSAGES = {
     en: 'This device token is quarantined because its Hub origin cannot be proven. Forget it locally, then sign in again. An administrator should revoke any legacy token on the old Hub.',
     ru: 'Токен устройства изолирован: его Hub нельзя подтвердить. Удалите его локально и войдите заново. Старый токен нужно отозвать администратору на прежнем Hub.',
   },
-  'hub.ofapiWrites.label': { en: 'OFAPI writes', ru: 'Записи OFAPI' },
-  'hub.ofapiWrites.hint': {
-    en: 'Text, typing, unsend, mark-read, media and PPV go through core commands. Direct is disabled.',
-    ru: 'Текст, typing, unsend, mark-read, медиа и PPV идут через команды core. Direct выключен.',
-  },
-  'hub.ofapiWrites.direct': { en: 'Direct', ru: 'Напрямую' },
-  'hub.ofapiWrites.hub': { en: 'Agency Hub', ru: 'Agency Hub' },
-  'hub.ofapiWrites.restart': {
-    en: 'fails closed if Hub is unavailable',
-    ru: 'fail-closed, если Hub недоступен',
-  },
-  'hub.streamStatus': { en: 'Stream status', ru: 'Статус стрима' },
   'hub.status.connecting': { en: 'connecting…', ru: 'подключение…' },
   'hub.status.live': { en: 'live', ru: 'работает' },
   'hub.status.degraded': { en: 'degraded — polling covers', ru: 'сбой — опрос подстраховывает' },
@@ -176,14 +182,12 @@ export const UI_MESSAGES = {
   // and «ключ отклонён» pointed token installs at the wrong fix.
   'hub.status.auth-failed': { en: 'auth failed', ru: 'доступ отклонён' },
   'hub.status.stopped': { en: 'stopped', ru: 'остановлен' },
-  // Credential-neutral (mirrors errors/index.ts CG-HUB-01, a08a251): a
-  // revoked/expired DEVICE TOKEN hits this same state, and "paste a key"
-  // does nothing for that install — lead with re-sign-in, key stays the
-  // fallback for chatter-key-only installs. A16 (W4.1): mention Sign out —
-  // a listed device session shadows any pasted key until it is removed.
+  // Credential-neutral (mirrors errors/index.ts CG-HUB-01, a08a251). D19: the
+  // remedy is always the device sign-in — the UI never asks a human to paste
+  // an API key (core Decision #116).
   'hub.authFailedBody': {
-    en: 'CG-HUB-01 — the hub rejected the credential. Sign in again above to issue a fresh device token (use Sign out first if a device session is still listed); if this install still uses the chatter key, paste a fresh one instead (hub Settings → Users) and save.',
-    ru: 'CG-HUB-01 — хаб отклонил учётные данные. Войдите заново выше, чтобы получить новый токен устройства (если сессия устройства ещё числится — сначала нажмите «Выйти»); если это подключение всё ещё на ключе чаттера — вставьте свежий ключ (хаб: Settings → Users) и сохраните.',
+    en: 'CG-HUB-01 — the hub rejected the credential. Sign out if a device session is still listed, then sign in again to issue a fresh device token.',
+    ru: 'CG-HUB-01 — хаб отклонил учётные данные. Если сессия устройства ещё числится — нажмите «Выйти», затем войдите заново, чтобы получить новый токен устройства.',
   },
   'hub.pageLabels.title': { en: 'Hub page labels', ru: 'Метки страниц хаба' },
   'hub.pageLabels.hint': {
@@ -191,14 +195,6 @@ export const UI_MESSAGES = {
     ru: 'Аккаунт сам подбирает страницу хаба по username. Заполняйте метку, только если автоподбор промахнулся; пусто — авто.',
   },
   'hub.pageLabels.placeholder': { en: 'auto (match by username)', ru: 'авто (по username)' },
-  'hub.footerOk': {
-    en: 'Hub connection configured — normal keyless operation is available.',
-    ru: 'Хаб настроен — доступен обычный режим без локального OFAPI-ключа.',
-  },
-  'hub.footerOff': {
-    en: 'Not connected — paste a chatter key to use the Hub path.',
-    ru: 'Не подключено — вставьте ключ чаттера, чтобы использовать Hub.',
-  },
   'hub.saveBtn': { en: 'Save hub settings', ru: 'Сохранить настройки хаба' },
   'hub.testBtn': { en: 'Test connection', ru: 'Проверить подключение' },
   'hub.testOk': {
@@ -206,8 +202,8 @@ export const UI_MESSAGES = {
     ru: 'Подключено — {username} ({role}) · страниц: {pages}',
   },
   'hub.testNeedsConfig': {
-    en: 'Set the hub base URL and chatter key first.',
-    ru: 'Сначала заполните адрес хаба и ключ чаттера.',
+    en: 'Set the hub base URL and sign in with the device first.',
+    ru: 'Сначала заполните адрес хаба и войдите устройством.',
   },
 
   // ── Models / context size ─────────────────────────────────────────────────

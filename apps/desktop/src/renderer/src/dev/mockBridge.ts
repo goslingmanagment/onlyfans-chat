@@ -420,11 +420,21 @@ function buildStore(): MockStore {
   ];
 
   const settings: SettingsVM = {
-    hasHubKey: true,
-    hubApiKeyBindingState: 'bound',
-    hasHubDeviceToken: false,
-    hubDeviceTokenBindingState: 'none',
+    hasHubKey: false,
+    hubApiKeyBindingState: 'none',
+    hasHubDeviceToken: true,
+    hubDeviceTokenBindingState: 'bound',
     hubDeviceTokenTransition: null,
+    hubDeviceIdentity: {
+      username: 'Maxim',
+      label: 'Kevin',
+      tokenLast4: 'W7vt',
+      issuedAt: '2026-07-15T21:42:15.000Z',
+      expiresAt: '2026-10-13T21:42:15.000Z',
+    },
+    appVersion: '0.0.0-mock',
+    machineLabel: 'Kevin',
+    osPlatform: 'win32',
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',
@@ -1267,28 +1277,61 @@ export function createMockBridge(): ChatGooseBridge {
         ping: { runs: 9, usd: 0.18 },
       },
     }),
-    'cmd:hub.issueDeviceToken': ({ username }) => ({
-      keyPrefix: 'agency_hub_device_mock',
-      label: `mock-${username}`,
-      expiresAt: new Date(Date.now() + 90 * 24 * 3_600_000).toISOString(),
-    }),
+    'cmd:hub.issueDeviceToken': ({ username }) => {
+      // D19: mirror main's activation commit — custody, binding, identity and
+      // the live sync status flip together so the standalone UI stays honest.
+      store.settings = {
+        ...store.settings,
+        hasHubDeviceToken: true,
+        hubDeviceTokenBindingState: 'bound',
+        hubDeviceTokenTransition: null,
+        hubDeviceIdentity: {
+          username: username.trim(),
+          label: 'mock-machine',
+          tokenLast4: 'mock',
+          issuedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 90 * 24 * 3_600_000).toISOString(),
+        },
+      };
+      store.sync.hub = 'live';
+      emit('db:changed', { scope: 'settings' });
+      return {
+        keyPrefix: 'agency_hub_pending_device_mock',
+        label: 'mock-machine',
+        expiresAt: new Date(Date.now() + 90 * 24 * 3_600_000).toISOString(),
+      };
+    },
     'cmd:hub.signOutDevice': () => {
-      store.settings = { ...store.settings, hasHubDeviceToken: false };
+      store.settings = {
+        ...store.settings,
+        hasHubDeviceToken: false,
+        hubDeviceTokenBindingState: 'none',
+        hubDeviceTokenTransition: null,
+        hubDeviceIdentity: null,
+      };
+      if (!store.settings.hasHubKey) store.sync.hub = 'off';
       emit('db:changed', { scope: 'settings' });
     },
     'cmd:hub.abandonDevice': () => {
       store.settings = {
         ...store.settings,
         hasHubDeviceToken: false,
+        hubDeviceTokenBindingState: 'none',
         hubDeviceTokenTransition: null,
+        hubDeviceIdentity: null,
       };
+      if (!store.settings.hasHubKey) store.sync.hub = 'off';
       emit('db:changed', { scope: 'settings' });
     },
     'cmd:keys.test': () => {
-      // Mock: hub probe result depends on the mock config (Stage 31: hub-only).
-      return store.settings.hubBaseUrl !== null && store.settings.hasHubKey
+      // Mock: hub probe follows the mock config (D19: token or key configures).
+      const configured = store.settings.hubBaseUrl !== null && (
+        store.settings.hasHubKey
+        || store.settings.hubDeviceTokenBindingState === 'bound'
+      );
+      return configured
         ? { ok: true, code: null, message: '', username: 'dasha', role: 'chatter', pages: 2 }
-        : { ok: false, code: 'HUB_NOT_CONFIGURED', message: 'Hub base URL or chatter key missing.' };
+        : { ok: false, code: 'HUB_NOT_CONFIGURED', message: 'Hub base URL or credential missing.' };
     },
     'query:localData.stats': () => ({
       dbBytes: 38_200_000,
@@ -1438,10 +1481,13 @@ export function createMockBridge(): ChatGooseBridge {
       store.settings = { ...store.settings, ...rest };
       if (hubApiKey !== undefined) store.settings.hasHubKey = hubApiKey.trim().length > 0;
       // Mock hub: configured = instantly live (exercises the status chip).
+      // D19: a bound device token configures the hub the same as a key.
       store.sync.hub =
         store.settings.hubModeOverride === 'polling'
           ? 'off'
-          : store.settings.hubBaseUrl !== null && store.settings.hasHubKey
+          : store.settings.hubBaseUrl !== null
+              && (store.settings.hasHubKey
+                || store.settings.hubDeviceTokenBindingState === 'bound')
             ? 'live'
             : 'off';
       store.sync.hubMode =

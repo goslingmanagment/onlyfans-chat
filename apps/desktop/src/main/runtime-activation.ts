@@ -37,9 +37,13 @@ export function hubCredentialNeedsAttention(settings: {
   hubDeviceTokenBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
   hubDeviceTokenTransition: 'activation' | 'revocation' | null;
 }): boolean {
-  return (
-    settings.hasHubKey && settings.hubApiKeyBindingState !== 'bound'
-  ) || (
+  // A bound device token is the active bearer; a leftover legacy key is dead
+  // weight the boot decommission pass removes (D19). Only surface it while no
+  // healthy device credential exists.
+  const legacyKeyAttention = settings.hasHubKey
+    && settings.hubApiKeyBindingState !== 'bound'
+    && settings.hubDeviceTokenBindingState !== 'bound';
+  return legacyKeyAttention || (
     settings.hasHubDeviceToken && settings.hubDeviceTokenBindingState !== 'bound'
   ) || settings.hubDeviceTokenTransition !== null;
 }

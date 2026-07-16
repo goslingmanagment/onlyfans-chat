@@ -25,7 +25,7 @@ export interface DiagnosticsInputs {
     /** Resolved interface language ('en' | 'ru'). */
     uiLocale: string;
   };
-  /** SettingsVM with keyMeta already stripped (no last4 fingerprints). */
+  /** SettingsVM via settingsForDiagnosticsExport (no last4 fingerprints). */
   settings: unknown;
   sync: unknown;
   hub: unknown;
@@ -55,6 +55,17 @@ export interface DiagnosticsInputs {
    * though `logs` (the ring) only holds the current session.
    */
   fileLog: string[];
+}
+
+/** Strip every last-4 fingerprint carrier before the settings VM enters the
+ * bundle (SPEC §15: the file is meant to leave the machine, so even partial
+ * key material goes). D19 added hubDeviceIdentity, which carries tokenLast4. */
+export function settingsForDiagnosticsExport<T extends {
+  keyMeta: unknown;
+  hubDeviceIdentity: unknown;
+}>(vm: T): Omit<T, 'keyMeta' | 'hubDeviceIdentity'> {
+  const { keyMeta: _keyMeta, hubDeviceIdentity: _identity, ...rest } = vm;
+  return rest;
 }
 
 /**
