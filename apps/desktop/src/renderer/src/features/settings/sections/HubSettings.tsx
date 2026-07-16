@@ -327,9 +327,11 @@ export function HubSettings({
             <div className="flex items-center gap-3 py-0.5">
               <div className="w-44 flex-none text-[13px] font-semibold">{t('hub.diag.app')}</div>
               <span className="text-[12.5px] text-ink-mid">
-                {identity
-                  ? t('hub.diag.appInfo', { version: settings.appVersion, label: identity.label })
-                  : settings.appVersion}
+                {t('hub.diag.appInfo', {
+                  version: settings.appVersion,
+                  label: settings.machineLabel,
+                  os: settings.osPlatform,
+                })}
               </span>
             </div>
             <div className="flex items-center gap-3 py-0.5">

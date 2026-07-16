@@ -1149,6 +1149,8 @@ async function boot(): Promise<void> {
     queries: data.settings,
     secrets: keychain,
     appVersion: app.getVersion(),
+    machineLabel: hostname(),
+    osPlatform: process.platform,
   });
   // A prior process may have stopped anywhere between encrypted staging,
   // SQLite coordinate writes, and atomic key promotion. Recover that durable
@@ -1348,7 +1350,8 @@ async function boot(): Promise<void> {
   let postSignInRuntimeRetry: ReturnType<typeof createBoundedRetry> | null = null;
   let deviceCredentialRecoveryRetry: ReturnType<typeof createBoundedRetry> | null = null;
   // D19: fire-and-forget display hygiene — with a bound device token a
-  // non-bound legacy key is dead weight; failure just defers to the next pass.
+  // non-bound legacy key is dead weight; failure just defers to the next
+  // pass. The identity backfill covers tokens bound BEFORE this build.
   const decommissionQuarantinedHubKeyBestEffort = (): void => {
     void settingsStore.decommissionQuarantinedHubKey().then((removed) => {
       if (removed) {
@@ -1356,6 +1359,13 @@ async function boot(): Promise<void> {
       }
     }).catch((error: unknown) => {
       logger?.warn('hub', 'legacy key decommission deferred', errorToFields(error));
+    });
+    void settingsStore.backfillHubDeviceIdentity(hostname()).then((written) => {
+      if (written) {
+        logger?.info('hub', 'device identity backfilled for a pre-D19 token');
+      }
+    }).catch((error: unknown) => {
+      logger?.warn('hub', 'device identity backfill deferred', errorToFields(error));
     });
   };
   const rebuildOfapiRuntimeFromSettingsInsideMutation = async (

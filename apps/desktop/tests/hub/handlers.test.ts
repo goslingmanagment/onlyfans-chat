@@ -579,6 +579,7 @@ describe('hub IPC wiring', () => {
       update,
       runCredentialMutation: (task) => task(),
       decommissionQuarantinedHubKey: () => Promise.resolve(false),
+      backfillHubDeviceIdentity: () => Promise.resolve(false),
     };
     register(data, {
       settingsStore,

@@ -417,7 +417,10 @@ binding so the connected card ("Подключено как Maxim · устро�
 survives restart; it is display metadata and fails OPEN, never gating
 credentials. Crash recovery rebuilds it with NULL dates (the true
 issue/expiry moments are unknowable there) and the UI omits the dates
-rather than invent them. (5) Display correction: an activated sign-in bearer KEEPS the
+rather than invent them. Tokens bound BEFORE this build get a boot-time
+backfill ({username: null, label: hostname(), last-4 from the stored
+bearer, null dates}) so the existing fleet's card is not blank; the full
+record arrives with the next re-sign-in. (5) Display correction: an activated sign-in bearer KEEPS the
 `agency_hub_pending_device_` prefix by 0092 design (rollback guard) — the
 UI shows only the last-4 fingerprint and the literal "pending" never
 reaches copy; renaming the prefix core-side was considered and rejected.

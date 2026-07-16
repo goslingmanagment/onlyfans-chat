@@ -433,6 +433,8 @@ function buildStore(): MockStore {
       expiresAt: '2026-10-13T21:42:15.000Z',
     },
     appVersion: '0.0.0-mock',
+    machineLabel: 'Kevin',
+    osPlatform: 'win32',
     hubBaseUrl: DEFAULT_AGENCY_HUB_BASE_URL,
     ofapiReadTransport: 'hub',
     ofapiWriteTransport: 'hub',

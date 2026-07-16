@@ -428,6 +428,10 @@ export interface SettingsVM {
   hubDeviceIdentity: HubDeviceIdentityVM | null;
   /** Running app version (Hub diagnostics row); read-only in the VM. */
   appVersion: string;
+  /** Machine hostname — a machine property, independent of any credential. */
+  machineLabel: string;
+  /** OS platform tag (process.platform) for the same diagnostics row. */
+  osPlatform: string;
   /**
    * Kernel Stage 24 rollout-window-only fallback: 'v1' re-points the hub SSE
    * consumer at the legacy stream. Not surfaced in UI (settings-file flip per
@@ -591,6 +595,8 @@ export type SettingsPatch = Partial<
     | 'hubDeviceTokenBindingState'
     | 'hubDeviceIdentity'
     | 'appVersion'
+    | 'machineLabel'
+    | 'osPlatform'
     | 'keyMeta'
   >
 > & {

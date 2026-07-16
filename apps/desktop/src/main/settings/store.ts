@@ -94,6 +94,8 @@ export type PersistedSettings = Omit<
   | 'hubDeviceTokenTransition'
   | 'hubDeviceIdentity'
   | 'appVersion'
+  | 'machineLabel'
+  | 'osPlatform'
   | 'keyMeta'
 >;
 
@@ -484,6 +486,10 @@ export interface SettingsStore {
   /** D19: deletes a NON-bound legacy chatter key once a bound device token
    * exists (boot + post-activation). Returns true when custody was removed. */
   decommissionQuarantinedHubKey(): Promise<boolean>;
+  /** D19: tokens bound BEFORE this build have no identity record — rebuild a
+   * minimal one (null username/dates, honest UI fallbacks) so the fleet's
+   * connected card is not blank until the next re-sign-in. */
+  backfillHubDeviceIdentity(label: string): Promise<boolean>;
 }
 
 export interface HubConnectionSnapshot {
@@ -507,12 +513,18 @@ export interface SettingsStoreOptions {
   now?: () => number;
   /** Shown in Hub diagnostics (SettingsVM.appVersion); app.getVersion() in prod. */
   appVersion?: string;
+  /** Machine hostname for the diagnostics row; hostname() in prod. */
+  machineLabel?: string;
+  /** OS platform tag for the diagnostics row; process.platform in prod. */
+  osPlatform?: string;
 }
 
 export function createSettingsStore(options: SettingsStoreOptions): SettingsStore {
   const { queries, secrets } = options;
   const now = options.now ?? Date.now;
   const appVersion = options.appVersion ?? '0.0.0';
+  const machineLabel = options.machineLabel ?? 'device';
+  const osPlatform = options.osPlatform ?? 'unknown';
 
   function hubApiKeyDigest(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -664,6 +676,8 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
           : null,
       hubDeviceIdentity,
       appVersion,
+      machineLabel,
+      osPlatform,
       keyMeta: readKeyMeta(),
       ...persisted,
     };
@@ -1292,6 +1306,34 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
         { kind: 'set', key: KEY_META_KEY, value: { ...readKeyMeta(), hub: null } },
       ]);
       return true;
+    }),
+
+    backfillHubDeviceIdentity: (label) => enqueueMutation(async () => {
+      try {
+        if (readHubDeviceIdentity(queries) !== null) return false;
+        if (readHubCredentialTransition() !== null) return false;
+        if (readDeviceTokenActivation(queries) !== null) return false;
+        if (readDeviceTokenRevocation(queries) !== null) return false;
+        const vm = await buildVm();
+        if (vm.hubDeviceTokenBindingState !== 'bound') return false;
+        const token = await secrets.getSecret('hubDeviceToken');
+        if (token === null || token.length < 4) return false;
+        // Pre-D19 token: username and the issue/expiry moments were never
+        // recorded locally — write only what is provable (the UI renders
+        // titleAnon + the short token line for exactly this shape). label is
+        // hostname() by construction: that is what issuance always sent.
+        queries.set(HUB_DEVICE_IDENTITY_KEY, {
+          version: 1,
+          username: null,
+          label: label.trim().length > 0 ? label.trim().slice(0, 120) : 'device',
+          tokenLast4: token.slice(-4),
+          issuedAt: null,
+          expiresAt: null,
+        });
+        return true;
+      } catch {
+        return false; // display metadata only — never blocks boot
+      }
     }),
 
     async update(patch: unknown, updateOptions: SettingsUpdateOptions = {}): Promise<SettingsVM> {

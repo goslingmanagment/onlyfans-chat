@@ -132,7 +132,10 @@ export const UI_MESSAGES = {
   'hub.diag.stream': { en: 'Event stream', ru: 'Стрим событий' },
   'hub.diag.streamHint': { en: 'polling covers if it drops', ru: 'при сбое подстраховывает опрос' },
   'hub.diag.app': { en: 'Application', ru: 'Приложение' },
-  'hub.diag.appInfo': { en: '{version} · machine {label}', ru: '{version} · машина {label}' },
+  'hub.diag.appInfo': {
+    en: '{version} · machine {label} · {os}',
+    ru: '{version} · машина {label} · {os}',
+  },
   'hub.legacyKey.working': {
     en: 'Running on a legacy key — sign in with the device to switch to a token.',
     ru: 'Работает на legacy-ключе — войдите устройством, чтобы перейти на токен.',
