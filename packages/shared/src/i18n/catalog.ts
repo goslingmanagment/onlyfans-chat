@@ -194,8 +194,8 @@ export const UI_MESSAGES = {
     ru: 'Подключено — {username} ({role}) · страниц: {pages}',
   },
   'hub.testNeedsConfig': {
-    en: 'Set the hub base URL and chatter key first.',
-    ru: 'Сначала заполните адрес хаба и ключ чаттера.',
+    en: 'Set the hub base URL and sign in with the device first.',
+    ru: 'Сначала заполните адрес хаба и войдите устройством.',
   },
 
   // ── Models / context size ─────────────────────────────────────────────────

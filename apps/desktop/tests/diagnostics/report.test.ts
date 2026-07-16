@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDiagnosticsReport, type DiagnosticsInputs } from '../../src/main/diagnostics/report';
+import { buildDiagnosticsReport, settingsForDiagnosticsExport, type DiagnosticsInputs } from '../../src/main/diagnostics/report';
 
 function inputs(overrides: Partial<DiagnosticsInputs> = {}): DiagnosticsInputs {
   return {
@@ -157,5 +157,25 @@ describe('buildDiagnosticsReport', () => {
 
   it('is a plain JSON-serializable object', () => {
     expect(() => JSON.stringify(buildDiagnosticsReport(inputs()))).not.toThrow();
+  });
+});
+
+describe('settingsForDiagnosticsExport (D19)', () => {
+  it('strips every last-4 fingerprint carrier from the exported VM', () => {
+    const vm = {
+      hubBaseUrl: 'https://hub.test',
+      keyMeta: { hub: { last4: 'a4f2', setAt: 1 } },
+      hubDeviceIdentity: {
+        username: 'Maxim',
+        label: 'Kevin',
+        tokenLast4: 'W7vt',
+        issuedAt: '2026-07-15T21:42:15.000Z',
+        expiresAt: '2026-10-13T21:42:15.000Z',
+      },
+    };
+    const exported = settingsForDiagnosticsExport(vm);
+    expect(exported).toEqual({ hubBaseUrl: 'https://hub.test' });
+    expect(JSON.stringify(exported)).not.toContain('W7vt');
+    expect(JSON.stringify(exported)).not.toContain('a4f2');
   });
 });

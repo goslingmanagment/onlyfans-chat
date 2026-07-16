@@ -1280,11 +1280,12 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       }
       // D19: with a provably bound device token a NON-bound legacy key is dead
       // weight by construction — connection resolution selects bound
-      // credentials only. Deletion needs no decryption.
+      // credentials only. Deletion needs no decryption. keyMeta is
+      // read-modify-written so any future sibling fingerprints survive.
       await secrets.deleteSecret('hubApiKey');
       queries.batch([
         { kind: 'remove', key: HUB_API_KEY_BINDING_KEY },
-        { kind: 'set', key: KEY_META_KEY, value: { hub: null } },
+        { kind: 'set', key: KEY_META_KEY, value: { ...readKeyMeta(), hub: null } },
       ]);
       return true;
     }),

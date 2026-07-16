@@ -30,7 +30,7 @@ import {
 } from './harvest/index';
 import { createHubClient } from '@chatgoose/shared/hub/index';
 import { createLogger, type Logger } from './diagnostics/logger';
-import { buildDiagnosticsReport } from './diagnostics/report';
+import { buildDiagnosticsReport, settingsForDiagnosticsExport } from './diagnostics/report';
 import { runKeyTest } from './diagnostics/key-tests';
 import { auditOutbox } from './send/audit';
 import { createSettingsStore, settingsPatchSchema, type SettingsStore } from './settings/store';
@@ -1999,8 +1999,9 @@ async function boot(): Promise<void> {
         const vm = await settingsStore.get();
         // SettingsVM carries no secrets by construction, but the diagnostics
         // file is MEANT to leave the machine — so even the last4 fingerprints
-        // are stripped (SPEC §15: no key material, partial included, exits main).
-        const { keyMeta: _keyMeta, ...settingsForExport } = vm;
+        // are stripped (SPEC §15: no key material, partial included, exits
+        // main). D19: hubDeviceIdentity carries tokenLast4 — same rule.
+        const settingsForExport = settingsForDiagnosticsExport(vm);
 
         // Local DB shape — counts only (no message text / PII), plus schema version.
         const countRows = (table: string): number => {

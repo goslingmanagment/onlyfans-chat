@@ -146,7 +146,7 @@ export function HubSettings({
                 {t('hub.connected.sub', { label: identity.label })}
               </div>
             )}
-            <div className="pt-2.5">
+            <div className="flex items-center gap-3 pt-2.5">
               <Button
                 variant="danger"
                 size="sm"
@@ -157,6 +157,19 @@ export function HubSettings({
                   ? t('hub.deviceToken.signingOut')
                   : t('hub.signOutDevice')}
               </Button>
+              {showAbandonDevice && (
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={busy}
+                  title={t('hub.deviceToken.abandonHint')}
+                  onClick={() => abandonDevice.mutate()}
+                >
+                  {abandonDevice.isPending
+                    ? t('hub.deviceToken.abandoning')
+                    : t('hub.deviceToken.abandon')}
+                </Button>
+              )}
             </div>
           </div>
         ) : deviceTokenStatus === 'unset' ? (

@@ -31,7 +31,7 @@ export async function runKeyTest(
       || connection.bearer === null
       || connection.bearer.length === 0
     ) {
-      return { ok: false, code: 'HUB_NOT_CONFIGURED', message: 'Hub base URL or credential missing — sign in or paste a chatter key.' };
+      return { ok: false, code: 'HUB_NOT_CONFIGURED', message: 'Hub base URL or credential missing — sign in with the device.' };
     }
     const me = await probeHubConnection(
       connection.hubBaseUrl,
