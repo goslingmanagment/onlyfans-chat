@@ -128,7 +128,7 @@ export function HubSettings({
 
   return (
     <Section title={t('hub.title')}>
-      <div className="space-y-2" aria-live="polite">
+      <div className="space-y-2">
         {deviceTokenStatus === 'configured' ? (
           <div className="py-1">
             <div className="flex items-center gap-2.5">
@@ -264,35 +264,39 @@ export function HubSettings({
           </div>
         )}
 
-        {keyState === 'working-fallback' && (
-          <p className="text-[12px] text-ink-mid">{t('hub.legacyKey.working')}</p>
-        )}
-        {keyState === 'isolated' && (
-          <p className="text-[12px] text-bad">{t('hub.legacyKey.isolated')}</p>
-        )}
-        {hub === 'auth-failed' && <p className="text-[12px] text-bad">{t('hub.authFailedBody')}</p>}
+        {/* Narrow live region: only status/error lines announce — never the
+            whole section (typing, badge polling, details toggling). */}
+        <div aria-live="polite" className="space-y-2">
+          {keyState === 'working-fallback' && (
+            <p className="text-[12px] text-ink-mid">{t('hub.legacyKey.working')}</p>
+          )}
+          {keyState === 'isolated' && (
+            <p className="text-[12px] text-bad">{t('hub.legacyKey.isolated')}</p>
+          )}
+          {hub === 'auth-failed' && <p className="text-[12px] text-bad">{t('hub.authFailedBody')}</p>}
 
-        {signOutDevice.isError && (
-          <p className="text-[11.5px] text-bad">
-            {signOutDevice.error instanceof Error
-              ? signOutDevice.error.message
-              : t('hub.deviceToken.signOutFailed')}
-          </p>
-        )}
-        {abandonDevice.isError && (
-          <p className="text-[11.5px] text-bad">
-            {abandonDevice.error instanceof Error
-              ? abandonDevice.error.message
-              : t('hub.deviceToken.abandonFailed')}
-          </p>
-        )}
-        {deviceToken.isError && (
-          <p className="text-[11.5px] text-bad">
-            {deviceToken.error instanceof Error
-              ? deviceToken.error.message
-              : t('hub.deviceToken.failed')}
-          </p>
-        )}
+          {signOutDevice.isError && (
+            <p className="text-[11.5px] text-bad">
+              {signOutDevice.error instanceof Error
+                ? signOutDevice.error.message
+                : t('hub.deviceToken.signOutFailed')}
+            </p>
+          )}
+          {abandonDevice.isError && (
+            <p className="text-[11.5px] text-bad">
+              {abandonDevice.error instanceof Error
+                ? abandonDevice.error.message
+                : t('hub.deviceToken.abandonFailed')}
+            </p>
+          )}
+          {deviceToken.isError && (
+            <p className="text-[11.5px] text-bad">
+              {deviceToken.error instanceof Error
+                ? deviceToken.error.message
+                : t('hub.deviceToken.failed')}
+            </p>
+          )}
+        </div>
 
         <details className="pt-1">
           <summary className="cursor-pointer text-[12px] font-semibold text-ink-mid">
@@ -303,11 +307,13 @@ export function HubSettings({
               <div className="flex items-center gap-3 py-0.5">
                 <div className="w-44 flex-none text-[13px] font-semibold">{t('hub.diag.token')}</div>
                 <span className="text-[12.5px] text-ink-mid">
-                  {t('hub.diag.tokenInfo', {
-                    last4: identity.tokenLast4,
-                    issued: fmtDay(identity.issuedAt, locale),
-                    expires: fmtDay(identity.expiresAt, locale),
-                  })}
+                  {identity.issuedAt !== null && identity.expiresAt !== null
+                    ? t('hub.diag.tokenInfo', {
+                        last4: identity.tokenLast4,
+                        issued: fmtDay(identity.issuedAt, locale),
+                        expires: fmtDay(identity.expiresAt, locale),
+                      })
+                    : t('hub.diag.tokenInfoShort', { last4: identity.tokenLast4 })}
                 </span>
               </div>
             )}
@@ -406,6 +412,7 @@ export function HubSettings({
             </div>
             {test.data !== undefined && (
               <p
+                aria-live="polite"
                 className={
                   test.data.ok
                     ? 'text-right text-[11.5px] text-green'

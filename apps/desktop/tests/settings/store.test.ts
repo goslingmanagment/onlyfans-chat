@@ -1552,7 +1552,7 @@ describe('decommissionQuarantinedHubKey (D19)', () => {
     expect(secrets.values.has('hubApiKey')).toBe(false);
   });
 
-  it('deletes an unreadable key file without decrypting', async () => {
+  it('leaves an unreadable key alone — a transient read failure is not proof of non-binding', async () => {
     const queries = createFakeQueries();
     const secrets = createFakeSecrets();
     const rawGet = secrets.getSecret.bind(secrets);
@@ -1561,8 +1561,8 @@ describe('decommissionQuarantinedHubKey (D19)', () => {
     secrets.values.set('hubApiKey', 'ciphertext');
     const store = createSettingsStore({ queries, secrets });
     seedBoundDeviceToken(queries, secrets);
-    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(true);
-    expect(secrets.values.has('hubApiKey')).toBe(false);
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(false);
+    expect(secrets.values.has('hubApiKey')).toBe(true);
   });
 
   it('keeps a BOUND key (working fallback until D116(c))', async () => {

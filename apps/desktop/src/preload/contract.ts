@@ -488,13 +488,14 @@ export interface KeyMetaVM {
 }
 
 /** D19: who signed this machine in, for display only. Never carries the token
- * (only its last-4 fingerprint, keyMeta convention). */
+ * (only its last-4 fingerprint, keyMeta convention). Dates are null when the
+ * record was rebuilt by crash recovery — the UI omits them rather than guess. */
 export interface HubDeviceIdentityVM {
   username: string | null;
   label: string;
   tokenLast4: string;
-  issuedAt: string;
-  expiresAt: string;
+  issuedAt: string | null;
+  expiresAt: string | null;
 }
 
 /** Stage 31: vendor keys retired — the hub connection is the only probe left. */

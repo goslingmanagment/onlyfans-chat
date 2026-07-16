@@ -1275,13 +1275,17 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
         return false;
       }
       if (vm.hubDeviceTokenBindingState !== 'bound') return false;
-      if (vm.hubApiKeyBindingState === 'none' || vm.hubApiKeyBindingState === 'bound') {
+      // D19: only the PROVABLY non-bound states qualify — 'unreadable' is a
+      // transient read failure (DPAPI/keychain hiccup, likeliest at boot),
+      // not proof of non-binding; destroying that custody automatically would
+      // contradict the explicit-abandonment rule the device-token machinery
+      // enforces for the same classification.
+      if (vm.hubApiKeyBindingState !== 'unbound' && vm.hubApiKeyBindingState !== 'mismatch') {
         return false;
       }
-      // D19: with a provably bound device token a NON-bound legacy key is dead
-      // weight by construction — connection resolution selects bound
-      // credentials only. Deletion needs no decryption. keyMeta is
-      // read-modify-written so any future sibling fingerprints survive.
+      // With a bound device token a non-bound legacy key is dead weight by
+      // construction — connection resolution selects bound credentials only.
+      // keyMeta is read-modify-written so future sibling fingerprints survive.
       await secrets.deleteSecret('hubApiKey');
       queries.batch([
         { kind: 'remove', key: HUB_API_KEY_BINDING_KEY },

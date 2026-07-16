@@ -401,17 +401,23 @@ exists. Rulings: (1) The chatter-key input is REMOVED from settings; the
 runtime dual-acceptance fallback for already-stored BOUND keys survives
 until the D116(c) fleet gate, but no UI ever asks a human to paste a key —
 every credential CTA is the device sign-in. (2) Auto-decommission: with a
-provably bound device token, a NON-bound (unbound/mismatch/unreadable)
-legacy key is dead weight by construction (connection resolution selects
-bound credentials only, and key revocation lives in the dashboard, so local
+provably bound device token, a PROVABLY non-bound (unbound/mismatch) legacy
+key is dead weight by construction (connection resolution selects bound
+credentials only, and key revocation lives in the dashboard, so local
 custody is not the revocation handle) — main deletes it silently at boot and
-after activation commit; bound keys are never touched. (3) A bound device
+after activation commit. Bound keys are never touched, and neither is an
+'unreadable' one: that classification is a transient read failure
+(DPAPI/keychain hiccup, likeliest at boot), not proof of non-binding — it
+stays for the explicit-abandonment/purge paths, invisible while the token
+is bound (review round 1 ruling revised in round 2). (3) A bound device
 token suppresses the legacy-key branch of `hubCredentialNeedsAttention`.
 (4) Non-secret `hubDeviceIdentity.v1` ({username, label, tokenLast4,
 issuedAt, expiresAt}) is written/removed atomically with the device-token
 binding so the connected card ("Подключено как Maxim · устройство Kevin")
 survives restart; it is display metadata and fails OPEN, never gating
-credentials. (5) Display correction: an activated sign-in bearer KEEPS the
+credentials. Crash recovery rebuilds it with NULL dates (the true
+issue/expiry moments are unknowable there) and the UI omits the dates
+rather than invent them. (5) Display correction: an activated sign-in bearer KEEPS the
 `agency_hub_pending_device_` prefix by 0092 design (rollback guard) — the
 UI shows only the last-4 fingerprint and the literal "pending" never
 reaches copy; renaming the prefix core-side was considered and rejected.

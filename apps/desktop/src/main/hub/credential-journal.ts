@@ -53,8 +53,10 @@ export const hubDeviceIdentitySchema = z.strictObject({
   username: z.string().min(1).max(120).nullable(),
   label: z.string().min(1).max(120),
   tokenLast4: z.string().length(4),
-  issuedAt: z.string().datetime(),
-  expiresAt: z.string().datetime(),
+  // Null when written by crash recovery: the true issue/expiry moments are
+  // unknowable there, and a display record must never invent dates.
+  issuedAt: z.string().datetime().nullable(),
+  expiresAt: z.string().datetime().nullable(),
 });
 
 export type HubDeviceTokenActivation = z.infer<typeof hubDeviceTokenActivationSchema>;

@@ -701,11 +701,10 @@ export async function recoverHubDeviceTokenLifecycle(
                     username: activation.username ?? null,
                     label: activation.label,
                     tokenLast4: activeCustody.value!.slice(-4),
-                    issuedAt: new Date().toISOString(),
-                    // Server-side TTL at issue time (sliding-refreshed there);
-                    // the true expiry is unknowable in this crash-recovery
-                    // branch — display-only estimate.
-                    expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
+                    // The true issue/expiry moments are unknowable in this
+                    // crash-recovery branch — never invent display dates.
+                    issuedAt: null,
+                    expiresAt: null,
                   } satisfies HubDeviceIdentity,
                 },
                 { kind: 'remove', key: HUB_DEVICE_TOKEN_ACTIVATION_KEY },

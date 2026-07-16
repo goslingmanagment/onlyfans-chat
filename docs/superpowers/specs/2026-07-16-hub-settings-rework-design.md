@@ -40,11 +40,13 @@ this release.
   hide. Runtime dual-acceptance for already-stored *bound* keys stays until the
   D116(c) gate.
 - **Auto-decommission** the local key when it is provably dead weight: device
-  binding `bound` AND key binding ∈ {unbound, mismatch, unreadable} → silently
-  delete `hubApiKey` secret + its binding record. No lockout is possible by
+  binding `bound` AND key binding ∈ {unbound, mismatch} → silently delete
+  `hubApiKey` secret + its binding record. No lockout is possible by
   construction: a non-bound key is never selected as bearer
   (`buildHubConnection` binds-only). Bound keys are NOT touched (working
-  fallback until phase 2).
+  fallback until phase 2). AMENDED (review round 2): `unreadable` is also
+  excluded — a transient DPAPI/keychain read failure is not proof of
+  non-binding; that custody stays for the explicit-abandonment/purge paths.
 - **Desktop + small core** in scope; layout = **minimalism (variant Б)** with
   diagnostics under a collapsible "Дополнительно".
 

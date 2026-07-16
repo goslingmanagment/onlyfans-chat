@@ -447,6 +447,16 @@ describe('issueHubDeviceToken', () => {
       'activation',
       'accepted-promoted-active',
     );
+    // D19: recovery rebuilds the display identity but never invents dates —
+    // the true issue/expiry moments are unknowable in this branch.
+    expect(readHubDeviceIdentity(storage.settings)).toEqual({
+      version: 1,
+      username: 'anton',
+      label: PENDING.label,
+      tokenLast4: PENDING.token.slice(-4),
+      issuedAt: null,
+      expiresAt: null,
+    });
   });
 
   it('revokes a staged activation but keeps a latch for unrelated active custody', async () => {
@@ -1558,7 +1568,8 @@ describe('device identity journal (D19)', () => {
       tokenLast4: PENDING.token.slice(-4),
       expiresAt: ACTIVATED.expiresAt,
     });
-    expect(Date.parse(identity!.issuedAt)).not.toBeNaN();
+    expect(identity!.issuedAt).not.toBeNull();
+    expect(Date.parse(identity!.issuedAt!)).not.toBeNaN();
   });
 
   it('revocation removes the device identity', async () => {

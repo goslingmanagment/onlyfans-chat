@@ -124,6 +124,11 @@ export const UI_MESSAGES = {
     en: '…{last4} · issued {issued} · valid to {expires}, renews itself',
     ru: '…{last4} · выдан {issued} · до {expires}, продлевается сам',
   },
+  // Crash-recovered identity: real dates are unknown — show none, invent none.
+  'hub.diag.tokenInfoShort': {
+    en: '…{last4} · renews itself',
+    ru: '…{last4} · продлевается сам',
+  },
   'hub.diag.stream': { en: 'Event stream', ru: 'Стрим событий' },
   'hub.diag.streamHint': { en: 'polling covers if it drops', ru: 'при сбое подстраховывает опрос' },
   'hub.diag.app': { en: 'Application', ru: 'Приложение' },
