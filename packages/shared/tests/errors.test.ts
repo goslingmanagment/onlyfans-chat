@@ -44,6 +44,13 @@ describe('error registry', () => {
     }
   });
 
+  it('keeps Hub authentication recovery on device sign-in, not the removed key flow', () => {
+    const definition = CG_ERROR_REGISTRY['CG-HUB-01'];
+    expect(definition.recovery).toContain('sign out');
+    expect(definition.recovery).toContain('sign in again');
+    expect(`${definition.message} ${definition.recovery}`).not.toMatch(/chatter key/i);
+  });
+
   it('includes all ported legacy codes', () => {
     const ported = [
       'CG-AUTH-01',
