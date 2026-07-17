@@ -351,6 +351,8 @@ export interface UnreadReconcileSettingsVM {
   hiddenMaxPages: number;
 }
 
+/** `unreadable` covers either encrypted-secret access failure or an
+ * unreadable/corrupt binding record; neither is proof of a mismatch. */
 export type HubCredentialBindingState =
   | 'none'
   | 'bound'

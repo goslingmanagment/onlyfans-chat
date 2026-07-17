@@ -188,9 +188,9 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
   },
   'CG-HUB-01': {
     message: 'Agency Hub authentication failed.',
-    // Credential-neutral: the bearer may be a device token (expired/revoked)
-    // or the legacy chatter key — name both paths, not just the key field.
-    recovery: 'Sign in again in Settings to issue a fresh device token, or check the chatter key, then test the connection.',
+    // D19 removed human key entry from Settings: every recovery path now ends
+    // in a fresh device sign-in, regardless of which bearer was rejected.
+    recovery: 'Open Settings. If a device session is still listed, sign out, then sign in again and test the connection.',
     settingsLink: true,
   },
   // Generic hub failure shown in every lane (generation, sync, commands) —

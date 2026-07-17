@@ -73,12 +73,10 @@ export const UI_MESSAGES = {
     ru: 'Что-то пошло не так — попробуйте ещё раз.',
   },
   'err.CG-HUB-01': {
-    en: 'The hub rejected the chatter key.',
-    // Credential-neutral recovery (mirrors errors/index.ts CG-HUB-01 a08a251):
+    en: 'The hub rejected the credentials. If the device is still connected, sign out and then sign in again.',
     // localizedErrorText short-circuits RU straight to this catalog entry, so
-    // the registry's fixed recovery text never reaches RU readers — it has to
-    // be repeated here.
-    ru: 'Хаб отклонил учётные данные — войдите заново в настройках или проверьте ключ чаттера.',
+    // the complete device-sign-in recovery has to be repeated here.
+    ru: 'Хаб отклонил данные входа. Если устройство ещё подключено — выйдите, затем войдите заново.',
   },
   'err.CG-HUB-02': {
     en: 'The hub is unreachable.',

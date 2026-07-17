@@ -632,7 +632,11 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       try {
         binding = readBinding();
       } catch {
-        return 'mismatch';
+        // A read/parse failure is not evidence that the persisted binding
+        // belongs to another credential. Keep custody fail-closed and preserve
+        // it for explicit recovery instead of letting cleanup treat it as a
+        // proven mismatch.
+        return 'unreadable';
       }
       if (binding === null) return 'unbound';
       if (

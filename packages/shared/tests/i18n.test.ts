@@ -39,6 +39,14 @@ describe('UI message catalog', () => {
     }
   });
 
+  it('keeps Hub authentication copy on device sign-in, not the removed key flow', () => {
+    const message = UI_MESSAGES['err.CG-HUB-01'];
+    expect(message.en).toMatch(/sign out.*sign in again/i);
+    expect(message.ru).toMatch(/выйдите.*войдите заново/i);
+    expect(message.en).not.toMatch(/chatter key/i);
+    expect(message.ru).not.toMatch(/ключ чаттера/i);
+  });
+
   it('covers every OFAPI purpose incl. untagged, with en equal to the shared label map', () => {
     for (const purpose of [...OFAPI_PURPOSES, UNTAGGED_PURPOSE]) {
       const key = `purpose.${purpose}` as keyof typeof UI_MESSAGES;

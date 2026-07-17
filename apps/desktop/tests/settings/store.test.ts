@@ -1565,6 +1565,34 @@ describe('decommissionQuarantinedHubKey (D19)', () => {
     expect(secrets.values.has('hubApiKey')).toBe(true);
   });
 
+  it('leaves the key alone when its binding journal cannot be read', async () => {
+    const queries = createFakeQueries();
+    const secrets = createFakeSecrets();
+    const rawGet = queries.get.bind(queries);
+    queries.get = (key) => {
+      if (key === HUB_API_KEY_BINDING_KEY) throw new Error('SQLite read failure');
+      return rawGet(key);
+    };
+    const store = createSettingsStore({ queries, secrets });
+    seedBoundDeviceToken(queries, secrets);
+    secrets.values.set('hubApiKey', 'agency_hub_core_old1');
+
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(false);
+    expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
+    await expect(store.get()).resolves.toMatchObject({ hubApiKeyBindingState: 'unreadable' });
+  });
+
+  it('leaves the key alone when its binding journal is corrupt', async () => {
+    const { store, queries, secrets } = createStore();
+    seedBoundDeviceToken(queries, secrets);
+    secrets.values.set('hubApiKey', 'agency_hub_core_old1');
+    queries.rows.set(HUB_API_KEY_BINDING_KEY, '{broken-json');
+
+    await expect(store.decommissionQuarantinedHubKey()).resolves.toBe(false);
+    expect(secrets.values.get('hubApiKey')).toBe('agency_hub_core_old1');
+    await expect(store.get()).resolves.toMatchObject({ hubApiKeyBindingState: 'unreadable' });
+  });
+
   it('keeps a BOUND key (working fallback until D116(c))', async () => {
     const { store, queries, secrets } = createStore();
     seedBoundDeviceToken(queries, secrets);
