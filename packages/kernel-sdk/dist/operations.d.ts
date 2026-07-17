@@ -71,6 +71,10 @@ export declare const kernelOperations: {
         readonly method: "DELETE";
         readonly path: "/api/v1/admin/pages/:pageLabel";
     };
+    readonly adminDeviceTokenAdoption: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/device-token-adoption";
+    };
     readonly adminGrantModel: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/users/:username/models";
@@ -111,6 +115,30 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/admin/models";
     };
+    readonly adminOfapiCaptureAttemptResolve: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/capture/attempts/:attemptId/resolve";
+    };
+    readonly adminOfapiCaptureControl: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/capture/controls";
+    };
+    readonly adminOfapiCaptureJobReplay: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/capture/jobs/:jobId/replay";
+    };
+    readonly adminOfapiCaptureJobsSeed: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/capture-jobs/seed";
+    };
+    readonly adminOfapiCaptureOperatorStatus: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/ofapi/capture/operator";
+    };
+    readonly adminOfapiCoverageRevoke: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/capture/coverage/:pageId/:chatId/revoke";
+    };
     readonly adminOfapiCreditsDaily: {
         readonly method: "GET";
         readonly path: "/api/v1/admin/ofapi/credits/daily";
@@ -131,9 +159,29 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/admin/ofapi/dm-archive/status";
     };
+    readonly adminOfapiExportCreateReconcile: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/export-quotes/:jobId/reconcile-create";
+    };
+    readonly adminOfapiExportQuoteCancel: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/export-quotes/:jobId/cancel";
+    };
+    readonly adminOfapiExportQuoteStatus: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/ofapi/export-quotes/:jobId";
+    };
+    readonly adminOfapiExportQuotesCreate: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/export-quotes";
+    };
     readonly adminOfapiSpendComparison: {
         readonly method: "GET";
         readonly path: "/api/v1/admin/ofapi/spend/comparison";
+    };
+    readonly adminOfapiWebhookReconcile: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/webhook/reconcile";
     };
     readonly adminOfapiWebhookRegister: {
         readonly method: "POST";

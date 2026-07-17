@@ -77,6 +77,31 @@ export declare const deviceTokenItemSchema: z.ZodObject<{
 export declare const deviceTokenHarvestCapabilityBodySchema: z.ZodObject<{
     machineId: z.ZodNullable<z.ZodString>;
 }, z.core.$strip>;
+export declare const deviceTokenAdoptionRowSchema: z.ZodObject<{
+    username: z.ZodString;
+    hasFreshDeviceToken: z.ZodBoolean;
+    deviceTokenLastUsedAt: z.ZodNullable<z.ZodString>;
+    deviceTokenExpiresAt: z.ZodNullable<z.ZodString>;
+    activeApiKeys: z.ZodNumber;
+    apiKeyLastUsedAt: z.ZodNullable<z.ZodString>;
+}, z.core.$strip>;
+export declare const deviceTokenAdoptionReportSchema: z.ZodObject<{
+    generatedAt: z.ZodString;
+    freshWindowDays: z.ZodNumber;
+    chatters: z.ZodArray<z.ZodObject<{
+        username: z.ZodString;
+        hasFreshDeviceToken: z.ZodBoolean;
+        deviceTokenLastUsedAt: z.ZodNullable<z.ZodString>;
+        deviceTokenExpiresAt: z.ZodNullable<z.ZodString>;
+        activeApiKeys: z.ZodNumber;
+        apiKeyLastUsedAt: z.ZodNullable<z.ZodString>;
+    }, z.core.$strip>>;
+    summary: z.ZodObject<{
+        activeChatters: z.ZodNumber;
+        onFreshTokens: z.ZodNumber;
+        withActiveApiKeys: z.ZodNumber;
+    }, z.core.$strip>;
+}, z.core.$strip>;
 export declare const accessGrantItemSchema: z.ZodObject<{
     id: z.ZodNumber;
     scopeType: z.ZodEnum<{
@@ -8782,8 +8807,53 @@ export declare const ofapiPageMappingSchema: z.ZodObject<{
     lastEventAt: z.ZodNullable<z.ZodString>;
     lastEventAgeSeconds: z.ZodNullable<z.ZodNumber>;
 }, z.core.$strip>;
+export declare const ofapiWebhookRegistrationStateSchema: z.ZodEnum<{
+    stable: "stable";
+    create_prepared: "create_prepared";
+    create_dispatching: "create_dispatching";
+    create_indeterminate: "create_indeterminate";
+    create_failed: "create_failed";
+    update_prepared: "update_prepared";
+    update_dispatching: "update_dispatching";
+    update_indeterminate: "update_indeterminate";
+}>;
+export declare const ofapiWebhookPendingRegistrationSchema: z.ZodObject<{
+    operationId: z.ZodString;
+    operation: z.ZodEnum<{
+        create: "create";
+        update: "update";
+    }>;
+    externalWebhookId: z.ZodNullable<z.ZodString>;
+    endpointUrl: z.ZodString;
+    accountScope: z.ZodLiteral<"global">;
+    events: z.ZodArray<z.ZodString>;
+    preparedAt: z.ZodString;
+}, z.core.$strip>;
 export declare const ofapiWebhookStatusResponseSchema: z.ZodObject<{
     configured: z.ZodBoolean;
+    registrationState: z.ZodNullable<z.ZodEnum<{
+        stable: "stable";
+        create_prepared: "create_prepared";
+        create_dispatching: "create_dispatching";
+        create_indeterminate: "create_indeterminate";
+        create_failed: "create_failed";
+        update_prepared: "update_prepared";
+        update_dispatching: "update_dispatching";
+        update_indeterminate: "update_indeterminate";
+    }>>;
+    registrationError: z.ZodNullable<z.ZodString>;
+    pendingRegistration: z.ZodNullable<z.ZodObject<{
+        operationId: z.ZodString;
+        operation: z.ZodEnum<{
+            create: "create";
+            update: "update";
+        }>;
+        externalWebhookId: z.ZodNullable<z.ZodString>;
+        endpointUrl: z.ZodString;
+        accountScope: z.ZodLiteral<"global">;
+        events: z.ZodArray<z.ZodString>;
+        preparedAt: z.ZodString;
+    }, z.core.$strip>>;
     endpointUrl: z.ZodNullable<z.ZodString>;
     externalWebhookId: z.ZodNullable<z.ZodString>;
     accountScope: z.ZodNullable<z.ZodString>;
@@ -8808,6 +8878,436 @@ export declare const ofapiWebhookStatusResponseSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const ofapiWebhookRegisterBodySchema: z.ZodObject<{
     endpointUrl: z.ZodString;
+}, z.core.$strip>;
+export declare const ofapiWebhookReconcileBodySchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
+    action: z.ZodLiteral<"adopt">;
+    operationId: z.ZodString;
+    externalWebhookId: z.ZodString;
+}, z.core.$strip>, z.ZodObject<{
+    action: z.ZodLiteral<"confirm_not_created">;
+    operationId: z.ZodString;
+    reason: z.ZodString;
+}, z.core.$strip>], "action">;
+export declare const ofapiCaptureSeedBodySchema: z.ZodObject<{
+    dryRun: z.ZodDefault<z.ZodBoolean>;
+    goal: z.ZodDefault<z.ZodEnum<{
+        connect_to_anchor: "connect_to_anchor";
+        history_to_exhaustion: "history_to_exhaustion";
+    }>>;
+    targets: z.ZodArray<z.ZodObject<{
+        pageId: z.ZodNumber;
+        chatId: z.ZodString;
+        anchorMessageId: z.ZodOptional<z.ZodString>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const ofapiCaptureSeedResponseSchema: z.ZodObject<{
+    dryRun: z.ZodBoolean;
+    seedId: z.ZodString;
+    limits: z.ZodObject<{
+        maxTargets: z.ZodLiteral<20>;
+        maxPagesPerJob: z.ZodLiteral<3>;
+        maxCallsPerJob: z.ZodLiteral<3>;
+        maxCreditsPerJob: z.ZodLiteral<3>;
+        maxItemsPerJob: z.ZodLiteral<300>;
+    }, z.core.$strip>;
+    created: z.ZodNumber;
+    coalesced: z.ZodNumber;
+    skipped: z.ZodNumber;
+    results: z.ZodArray<z.ZodObject<{
+        pageId: z.ZodNumber;
+        chatId: z.ZodString;
+        goal: z.ZodEnum<{
+            connect_to_anchor: "connect_to_anchor";
+            history_to_exhaustion: "history_to_exhaustion";
+        }>;
+        frozenHeadId: z.ZodString;
+        anchorMessageId: z.ZodNullable<z.ZodString>;
+        status: z.ZodEnum<{
+            created: "created";
+            coalesced: "coalesced";
+            would_create: "would_create";
+            would_coalesce: "would_coalesce";
+            already_covered: "already_covered";
+            already_captured: "already_captured";
+        }>;
+        jobId: z.ZodNullable<z.ZodString>;
+        state: z.ZodNullable<z.ZodEnum<{
+            complete: "complete";
+            blocked: "blocked";
+            ready: "ready";
+            leased: "leased";
+            awaiting_parse: "awaiting_parse";
+            retry_wait: "retry_wait";
+            cancelled: "cancelled";
+        }>>;
+        reasonCode: z.ZodNullable<z.ZodString>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const ofapiExportQuoteBodySchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
+    profile: z.ZodLiteral<"pilot_chats">;
+    chatIds: z.ZodArray<z.ZodString>;
+    dryRun: z.ZodDefault<z.ZodBoolean>;
+    pageId: z.ZodNumber;
+    startDate: z.ZodString;
+    endDate: z.ZodString;
+    maxMessages: z.ZodDefault<z.ZodNumber>;
+    quoteTtlMinutes: z.ZodDefault<z.ZodNumber>;
+}, z.core.$strict>, z.ZodObject<{
+    profile: z.ZodLiteral<"fleet_tail">;
+    dryRun: z.ZodDefault<z.ZodBoolean>;
+    pageId: z.ZodNumber;
+    startDate: z.ZodString;
+    endDate: z.ZodString;
+    maxMessages: z.ZodDefault<z.ZodNumber>;
+    quoteTtlMinutes: z.ZodDefault<z.ZodNumber>;
+}, z.core.$strict>], "profile">;
+export declare const ofapiExportQuoteCreateResponseSchema: z.ZodObject<{
+    dryRun: z.ZodBoolean;
+    status: z.ZodEnum<{
+        created: "created";
+        coalesced: "coalesced";
+        would_create: "would_create";
+        would_coalesce: "would_coalesce";
+    }>;
+    jobId: z.ZodNullable<z.ZodString>;
+    pageId: z.ZodNumber;
+    profile: z.ZodEnum<{
+        pilot_chats: "pilot_chats";
+        fleet_tail: "fleet_tail";
+    }>;
+    targetHash: z.ZodString;
+    state: z.ZodNullable<z.ZodEnum<{
+        complete: "complete";
+        blocked: "blocked";
+        ready: "ready";
+        leased: "leased";
+        awaiting_parse: "awaiting_parse";
+        retry_wait: "retry_wait";
+        cancelled: "cancelled";
+    }>>;
+    reasonCode: z.ZodNullable<z.ZodString>;
+}, z.core.$strip>;
+export declare const ofapiExportQuoteParamsSchema: z.ZodObject<{
+    jobId: z.ZodString;
+}, z.core.$strip>;
+export declare const ofapiExportQuoteCancelBodySchema: z.ZodObject<{
+    expectedState: z.ZodLiteral<"blocked">;
+    reason: z.ZodString;
+}, z.core.$strict>;
+export declare const ofapiExportQuoteStatusResponseSchema: z.ZodObject<{
+    jobId: z.ZodString;
+    pageId: z.ZodNumber;
+    profile: z.ZodEnum<{
+        pilot_chats: "pilot_chats";
+        fleet_tail: "fleet_tail";
+    }>;
+    targetHash: z.ZodString;
+    state: z.ZodEnum<{
+        complete: "complete";
+        blocked: "blocked";
+        ready: "ready";
+        leased: "leased";
+        awaiting_parse: "awaiting_parse";
+        retry_wait: "retry_wait";
+        cancelled: "cancelled";
+    }>;
+    reasonCode: z.ZodNullable<z.ZodString>;
+    reasonMessage: z.ZodNullable<z.ZodString>;
+    attemptCount: z.ZodNumber;
+    dispatchCount: z.ZodNumber;
+    spentCredits: z.ZodNumber;
+    createdAt: z.ZodString;
+    updatedAt: z.ZodString;
+    quote: z.ZodNullable<z.ZodObject<{
+        vendorExportId: z.ZodString;
+        vendorStatus: z.ZodString;
+        totalRows: z.ZodNullable<z.ZodNumber>;
+        creditCost: z.ZodNullable<z.ZodNumber>;
+        pollCount: z.ZodNumber;
+        quotedAt: z.ZodNullable<z.ZodString>;
+        expiresAt: z.ZodNullable<z.ZodString>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const ofapiCaptureOperatorStatusResponseSchema: z.ZodObject<{
+    controls: z.ZodArray<z.ZodObject<{
+        controlKey: z.ZodString;
+        paused: z.ZodBoolean;
+        reason: z.ZodNullable<z.ZodString>;
+        version: z.ZodNumber;
+        updatedAt: z.ZodString;
+    }, z.core.$strip>>;
+    jobGroups: z.ZodArray<z.ZodObject<{
+        state: z.ZodEnum<{
+            complete: "complete";
+            blocked: "blocked";
+            ready: "ready";
+            leased: "leased";
+            awaiting_parse: "awaiting_parse";
+            retry_wait: "retry_wait";
+            cancelled: "cancelled";
+        }>;
+        reasonCode: z.ZodNullable<z.ZodString>;
+        count: z.ZodNumber;
+        oldestUpdatedAt: z.ZodString;
+    }, z.core.$strip>>;
+    jobSamples: z.ZodArray<z.ZodObject<{
+        jobId: z.ZodString;
+        pageId: z.ZodNumber;
+        kind: z.ZodEnum<{
+            chat_paginate: "chat_paginate";
+            campaign_snapshot: "campaign_snapshot";
+            head_repair: "head_repair";
+            account_export: "account_export";
+            export_import: "export_import";
+        }>;
+        state: z.ZodEnum<{
+            complete: "complete";
+            blocked: "blocked";
+            ready: "ready";
+            leased: "leased";
+            awaiting_parse: "awaiting_parse";
+            retry_wait: "retry_wait";
+            cancelled: "cancelled";
+        }>;
+        reasonCode: z.ZodNullable<z.ZodString>;
+        rowVersion: z.ZodNumber;
+        updatedAt: z.ZodString;
+    }, z.core.$strip>>;
+    indeterminate: z.ZodObject<{
+        count: z.ZodNumber;
+        oldestAt: z.ZodNullable<z.ZodString>;
+        samples: z.ZodArray<z.ZodObject<{
+            attemptId: z.ZodString;
+            captureJobId: z.ZodNullable<z.ZodString>;
+            pageId: z.ZodNumber;
+            operation: z.ZodString;
+            state: z.ZodEnum<{
+                reserved: "reserved";
+                released_pre_dispatch: "released_pre_dispatch";
+                dispatching: "dispatching";
+                response_captured: "response_captured";
+                indeterminate: "indeterminate";
+            }>;
+            creditState: z.ZodEnum<{
+                reserved: "reserved";
+                indeterminate: "indeterminate";
+                settled: "settled";
+                released: "released";
+            }>;
+            reservedCredits: z.ZodNumber;
+            settledCredits: z.ZodNullable<z.ZodNumber>;
+            certaintyResolution: z.ZodNullable<z.ZodString>;
+            dispatchStartedAt: z.ZodNullable<z.ZodString>;
+            finishedAt: z.ZodNullable<z.ZodString>;
+        }, z.core.$strip>>;
+    }, z.core.$strip>;
+    storageHealth: z.ZodNullable<z.ZodObject<{
+        healthy: z.ZodBoolean;
+        breached: z.ZodBoolean;
+        checkedAt: z.ZodString;
+        usedBytes: z.ZodNullable<z.ZodNumber>;
+        freeBytes: z.ZodNullable<z.ZodNumber>;
+        totalBytes: z.ZodNullable<z.ZodNumber>;
+        errorPresent: z.ZodBoolean;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const ofapiCaptureControlBodySchema: z.ZodObject<{
+    controlKey: z.ZodString;
+    paused: z.ZodBoolean;
+    expectedVersion: z.ZodNumber;
+    reason: z.ZodString;
+    dryRun: z.ZodDefault<z.ZodBoolean>;
+}, z.core.$strict>;
+export declare const ofapiCaptureControlResponseSchema: z.ZodObject<{
+    executed: z.ZodBoolean;
+    controlKey: z.ZodString;
+    previous: z.ZodObject<{
+        paused: z.ZodBoolean;
+        reason: z.ZodNullable<z.ZodString>;
+        version: z.ZodNumber;
+    }, z.core.$strip>;
+    next: z.ZodObject<{
+        paused: z.ZodBoolean;
+        reason: z.ZodString;
+        version: z.ZodNumber;
+    }, z.core.$strip>;
+}, z.core.$strip>;
+export declare const ofapiCaptureAttemptParamsSchema: z.ZodObject<{
+    attemptId: z.ZodString;
+}, z.core.$strip>;
+export declare const ofapiCaptureAttemptResolveBodySchema: z.ZodObject<{
+    expectedState: z.ZodDefault<z.ZodLiteral<"indeterminate">>;
+    resolution: z.ZodEnum<{
+        confirmed_billed: "confirmed_billed";
+        confirmed_not_billed: "confirmed_not_billed";
+    }>;
+    actualCredits: z.ZodOptional<z.ZodNumber>;
+    reason: z.ZodString;
+    dryRun: z.ZodDefault<z.ZodBoolean>;
+}, z.core.$strict>;
+export declare const ofapiCaptureAttemptResolveResponseSchema: z.ZodObject<{
+    dryRun: z.ZodBoolean;
+    status: z.ZodEnum<{
+        resolved: "resolved";
+        would_resolve: "would_resolve";
+    }>;
+    attempt: z.ZodObject<{
+        attemptId: z.ZodString;
+        captureJobId: z.ZodNullable<z.ZodString>;
+        pageId: z.ZodNumber;
+        operation: z.ZodString;
+        state: z.ZodEnum<{
+            reserved: "reserved";
+            released_pre_dispatch: "released_pre_dispatch";
+            dispatching: "dispatching";
+            response_captured: "response_captured";
+            indeterminate: "indeterminate";
+        }>;
+        creditState: z.ZodEnum<{
+            reserved: "reserved";
+            indeterminate: "indeterminate";
+            settled: "settled";
+            released: "released";
+        }>;
+        reservedCredits: z.ZodNumber;
+        settledCredits: z.ZodNullable<z.ZodNumber>;
+        certaintyResolution: z.ZodNullable<z.ZodString>;
+        dispatchStartedAt: z.ZodNullable<z.ZodString>;
+        finishedAt: z.ZodNullable<z.ZodString>;
+    }, z.core.$strip>;
+}, z.core.$strip>;
+export declare const ofapiCaptureJobParamsSchema: z.ZodObject<{
+    jobId: z.ZodString;
+}, z.core.$strip>;
+export declare const ofapiCaptureJobReplayBodySchema: z.ZodObject<{
+    expectedState: z.ZodEnum<{
+        blocked: "blocked";
+        awaiting_parse: "awaiting_parse";
+    }>;
+    expectedReasonCode: z.ZodEnum<{
+        parser_failed: "parser_failed";
+        contract_rejected: "contract_rejected";
+        capture_envelope_invalid: "capture_envelope_invalid";
+        invalid_json: "invalid_json";
+        export_contract_rejected: "export_contract_rejected";
+    }>;
+    expectedJobRowVersion: z.ZodNumber;
+    reason: z.ZodString;
+    dryRun: z.ZodDefault<z.ZodBoolean>;
+}, z.core.$strict>;
+export declare const ofapiCaptureJobReplayResponseSchema: z.ZodObject<{
+    dryRun: z.ZodBoolean;
+    status: z.ZodEnum<{
+        would_replay: "would_replay";
+        replayed: "replayed";
+    }>;
+    jobId: z.ZodString;
+    attemptId: z.ZodString;
+    previous: z.ZodObject<{
+        state: z.ZodEnum<{
+            blocked: "blocked";
+            awaiting_parse: "awaiting_parse";
+        }>;
+        reasonCode: z.ZodNullable<z.ZodString>;
+        rowVersion: z.ZodNumber;
+    }, z.core.$strip>;
+    next: z.ZodObject<{
+        state: z.ZodLiteral<"awaiting_parse">;
+        reasonCode: z.ZodNull;
+        rowVersion: z.ZodNumber;
+        observationId: z.ZodNumber;
+        observationReceivedAt: z.ZodString;
+    }, z.core.$strip>;
+}, z.core.$strip>;
+export declare const ofapiCoverageRevokeParamsSchema: z.ZodObject<{
+    pageId: z.ZodNumber;
+    chatId: z.ZodString;
+}, z.core.$strip>;
+export declare const ofapiCoverageRevokeBodySchema: z.ZodObject<{
+    actionId: z.ZodString;
+    expectedSourceAccountSeq: z.ZodNumber;
+    reason: z.ZodString;
+    dryRun: z.ZodDefault<z.ZodBoolean>;
+}, z.core.$strict>;
+export declare const ofapiCoverageRevokeResponseSchema: z.ZodObject<{
+    dryRun: z.ZodBoolean;
+    status: z.ZodEnum<{
+        would_revoke: "would_revoke";
+        revoked: "revoked";
+        already_reconciled: "already_reconciled";
+    }>;
+    pageId: z.ZodNumber;
+    chatId: z.ZodString;
+    sourceAccountSeq: z.ZodNumber;
+    revokedAt: z.ZodNullable<z.ZodString>;
+}, z.core.$strip>;
+export declare const ofapiExportCreateReconcileBodySchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
+    action: z.ZodLiteral<"confirm_not_created">;
+    attemptId: z.ZodString;
+    expectedState: z.ZodDefault<z.ZodLiteral<"blocked">>;
+    expectedReasonCode: z.ZodDefault<z.ZodLiteral<"indeterminate">>;
+    expectedJobRowVersion: z.ZodNumber;
+    reason: z.ZodString;
+    dryRun: z.ZodDefault<z.ZodBoolean>;
+}, z.core.$strict>, z.ZodObject<{
+    action: z.ZodLiteral<"adopt_created">;
+    attemptId: z.ZodString;
+    expectedState: z.ZodDefault<z.ZodLiteral<"blocked">>;
+    expectedReasonCode: z.ZodDefault<z.ZodLiteral<"indeterminate">>;
+    expectedJobRowVersion: z.ZodNumber;
+    vendorExportId: z.ZodString;
+    actualCredits: z.ZodOptional<z.ZodNumber>;
+    reason: z.ZodString;
+    dryRun: z.ZodDefault<z.ZodBoolean>;
+}, z.core.$strict>], "action">;
+export declare const ofapiExportCreateReconcileResponseSchema: z.ZodObject<{
+    dryRun: z.ZodBoolean;
+    status: z.ZodEnum<{
+        would_reconcile: "would_reconcile";
+        reconciled: "reconciled";
+    }>;
+    action: z.ZodEnum<{
+        confirm_not_created: "confirm_not_created";
+        adopt_created: "adopt_created";
+    }>;
+    job: z.ZodObject<{
+        jobId: z.ZodString;
+        state: z.ZodEnum<{
+            complete: "complete";
+            blocked: "blocked";
+            ready: "ready";
+            leased: "leased";
+            awaiting_parse: "awaiting_parse";
+            retry_wait: "retry_wait";
+            cancelled: "cancelled";
+        }>;
+        reasonCode: z.ZodNullable<z.ZodString>;
+        rowVersion: z.ZodNumber;
+    }, z.core.$strip>;
+    attempt: z.ZodObject<{
+        attemptId: z.ZodString;
+        captureJobId: z.ZodNullable<z.ZodString>;
+        pageId: z.ZodNumber;
+        operation: z.ZodString;
+        state: z.ZodEnum<{
+            reserved: "reserved";
+            released_pre_dispatch: "released_pre_dispatch";
+            dispatching: "dispatching";
+            response_captured: "response_captured";
+            indeterminate: "indeterminate";
+        }>;
+        creditState: z.ZodEnum<{
+            reserved: "reserved";
+            indeterminate: "indeterminate";
+            settled: "settled";
+            released: "released";
+        }>;
+        reservedCredits: z.ZodNumber;
+        settledCredits: z.ZodNullable<z.ZodNumber>;
+        certaintyResolution: z.ZodNullable<z.ZodString>;
+        dispatchStartedAt: z.ZodNullable<z.ZodString>;
+        finishedAt: z.ZodNullable<z.ZodString>;
+    }, z.core.$strip>;
 }, z.core.$strip>;
 export declare const ofapiWebhookRegisterResponseSchema: z.ZodObject<{
     externalWebhookId: z.ZodNullable<z.ZodString>;
@@ -8944,13 +9444,13 @@ export declare const ofapiCreditsChatterSummaryResponseSchema: z.ZodObject<{
     limitations: z.ZodArray<z.ZodString>;
 }, z.core.$strip>;
 export declare const ofapiCommandStateSchema: z.ZodEnum<{
+    cancelled: "cancelled";
+    indeterminate: "indeterminate";
     queued: "queued";
     in_flight: "in_flight";
     confirmed: "confirmed";
     failed_retryable: "failed_retryable";
     failed_terminal: "failed_terminal";
-    indeterminate: "indeterminate";
-    cancelled: "cancelled";
 }>;
 export declare const ofapiCommandKindSchema: z.ZodEnum<{
     send_text_message_v1: "send_text_message_v1";
@@ -9020,13 +9520,13 @@ export declare const ofapiCommandResponseSchema: z.ZodObject<{
     accountId: z.ZodString;
     conversationId: z.ZodString;
     state: z.ZodEnum<{
+        cancelled: "cancelled";
+        indeterminate: "indeterminate";
         queued: "queued";
         in_flight: "in_flight";
         confirmed: "confirmed";
         failed_retryable: "failed_retryable";
         failed_terminal: "failed_terminal";
-        indeterminate: "indeterminate";
-        cancelled: "cancelled";
     }>;
     payloadHash: z.ZodString;
     retryOfCommandId: z.ZodNullable<z.ZodString>;
@@ -10322,6 +10822,29 @@ export declare const routeSchemas: {
         readonly response: {
             readonly 200: z.ZodObject<{
                 configured: z.ZodBoolean;
+                registrationState: z.ZodNullable<z.ZodEnum<{
+                    stable: "stable";
+                    create_prepared: "create_prepared";
+                    create_dispatching: "create_dispatching";
+                    create_indeterminate: "create_indeterminate";
+                    create_failed: "create_failed";
+                    update_prepared: "update_prepared";
+                    update_dispatching: "update_dispatching";
+                    update_indeterminate: "update_indeterminate";
+                }>>;
+                registrationError: z.ZodNullable<z.ZodString>;
+                pendingRegistration: z.ZodNullable<z.ZodObject<{
+                    operationId: z.ZodString;
+                    operation: z.ZodEnum<{
+                        create: "create";
+                        update: "update";
+                    }>;
+                    externalWebhookId: z.ZodNullable<z.ZodString>;
+                    endpointUrl: z.ZodString;
+                    accountScope: z.ZodLiteral<"global">;
+                    events: z.ZodArray<z.ZodString>;
+                    preparedAt: z.ZodString;
+                }, z.core.$strip>>;
                 endpointUrl: z.ZodNullable<z.ZodString>;
                 externalWebhookId: z.ZodNullable<z.ZodString>;
                 accountScope: z.ZodNullable<z.ZodString>;
@@ -10402,6 +10925,871 @@ export declare const routeSchemas: {
                 statusCode: z.ZodNumber;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminOfapiWebhookReconcile: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Resolve an indeterminate initial OFAPI webhook creation";
+        readonly description: string;
+        readonly body: z.ZodDiscriminatedUnion<[z.ZodObject<{
+            action: z.ZodLiteral<"adopt">;
+            operationId: z.ZodString;
+            externalWebhookId: z.ZodString;
+        }, z.core.$strip>, z.ZodObject<{
+            action: z.ZodLiteral<"confirm_not_created">;
+            operationId: z.ZodString;
+            reason: z.ZodString;
+        }, z.core.$strip>], "action">;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                configured: z.ZodBoolean;
+                registrationState: z.ZodNullable<z.ZodEnum<{
+                    stable: "stable";
+                    create_prepared: "create_prepared";
+                    create_dispatching: "create_dispatching";
+                    create_indeterminate: "create_indeterminate";
+                    create_failed: "create_failed";
+                    update_prepared: "update_prepared";
+                    update_dispatching: "update_dispatching";
+                    update_indeterminate: "update_indeterminate";
+                }>>;
+                registrationError: z.ZodNullable<z.ZodString>;
+                pendingRegistration: z.ZodNullable<z.ZodObject<{
+                    operationId: z.ZodString;
+                    operation: z.ZodEnum<{
+                        create: "create";
+                        update: "update";
+                    }>;
+                    externalWebhookId: z.ZodNullable<z.ZodString>;
+                    endpointUrl: z.ZodString;
+                    accountScope: z.ZodLiteral<"global">;
+                    events: z.ZodArray<z.ZodString>;
+                    preparedAt: z.ZodString;
+                }, z.core.$strip>>;
+                endpointUrl: z.ZodNullable<z.ZodString>;
+                externalWebhookId: z.ZodNullable<z.ZodString>;
+                accountScope: z.ZodNullable<z.ZodString>;
+                events: z.ZodArray<z.ZodString>;
+                signingSecretMask: z.ZodNullable<z.ZodString>;
+                updatedAt: z.ZodNullable<z.ZodString>;
+                pages: z.ZodArray<z.ZodObject<{
+                    pageId: z.ZodNumber;
+                    label: z.ZodString;
+                    username: z.ZodNullable<z.ZodString>;
+                    ofapiAccountId: z.ZodNullable<z.ZodString>;
+                    ofapiAuthStatus: z.ZodNullable<z.ZodString>;
+                    ofapiAuthChangedAt: z.ZodNullable<z.ZodString>;
+                    lastEventAt: z.ZodNullable<z.ZodString>;
+                    lastEventAgeSeconds: z.ZodNullable<z.ZodNumber>;
+                }, z.core.$strip>>;
+                credit: z.ZodObject<{
+                    lastBalance: z.ZodNullable<z.ZodNumber>;
+                    lastBalanceAt: z.ZodNullable<z.ZodString>;
+                    spentToday: z.ZodNumber;
+                }, z.core.$strip>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminOfapiCaptureJobsSeed: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Dry-run or seed a bounded explicit OFAPI chat cohort";
+        readonly description: string;
+        readonly body: z.ZodObject<{
+            dryRun: z.ZodDefault<z.ZodBoolean>;
+            goal: z.ZodDefault<z.ZodEnum<{
+                connect_to_anchor: "connect_to_anchor";
+                history_to_exhaustion: "history_to_exhaustion";
+            }>>;
+            targets: z.ZodArray<z.ZodObject<{
+                pageId: z.ZodNumber;
+                chatId: z.ZodString;
+                anchorMessageId: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                dryRun: z.ZodBoolean;
+                seedId: z.ZodString;
+                limits: z.ZodObject<{
+                    maxTargets: z.ZodLiteral<20>;
+                    maxPagesPerJob: z.ZodLiteral<3>;
+                    maxCallsPerJob: z.ZodLiteral<3>;
+                    maxCreditsPerJob: z.ZodLiteral<3>;
+                    maxItemsPerJob: z.ZodLiteral<300>;
+                }, z.core.$strip>;
+                created: z.ZodNumber;
+                coalesced: z.ZodNumber;
+                skipped: z.ZodNumber;
+                results: z.ZodArray<z.ZodObject<{
+                    pageId: z.ZodNumber;
+                    chatId: z.ZodString;
+                    goal: z.ZodEnum<{
+                        connect_to_anchor: "connect_to_anchor";
+                        history_to_exhaustion: "history_to_exhaustion";
+                    }>;
+                    frozenHeadId: z.ZodString;
+                    anchorMessageId: z.ZodNullable<z.ZodString>;
+                    status: z.ZodEnum<{
+                        created: "created";
+                        coalesced: "coalesced";
+                        would_create: "would_create";
+                        would_coalesce: "would_coalesce";
+                        already_covered: "already_covered";
+                        already_captured: "already_captured";
+                    }>;
+                    jobId: z.ZodNullable<z.ZodString>;
+                    state: z.ZodNullable<z.ZodEnum<{
+                        complete: "complete";
+                        blocked: "blocked";
+                        ready: "ready";
+                        leased: "leased";
+                        awaiting_parse: "awaiting_parse";
+                        retry_wait: "retry_wait";
+                        cancelled: "cancelled";
+                    }>>;
+                    reasonCode: z.ZodNullable<z.ZodString>;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminOfapiCaptureOperatorStatus: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Inspect bounded OFAPI capture controls and unresolved work";
+        readonly description: string;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                controls: z.ZodArray<z.ZodObject<{
+                    controlKey: z.ZodString;
+                    paused: z.ZodBoolean;
+                    reason: z.ZodNullable<z.ZodString>;
+                    version: z.ZodNumber;
+                    updatedAt: z.ZodString;
+                }, z.core.$strip>>;
+                jobGroups: z.ZodArray<z.ZodObject<{
+                    state: z.ZodEnum<{
+                        complete: "complete";
+                        blocked: "blocked";
+                        ready: "ready";
+                        leased: "leased";
+                        awaiting_parse: "awaiting_parse";
+                        retry_wait: "retry_wait";
+                        cancelled: "cancelled";
+                    }>;
+                    reasonCode: z.ZodNullable<z.ZodString>;
+                    count: z.ZodNumber;
+                    oldestUpdatedAt: z.ZodString;
+                }, z.core.$strip>>;
+                jobSamples: z.ZodArray<z.ZodObject<{
+                    jobId: z.ZodString;
+                    pageId: z.ZodNumber;
+                    kind: z.ZodEnum<{
+                        chat_paginate: "chat_paginate";
+                        campaign_snapshot: "campaign_snapshot";
+                        head_repair: "head_repair";
+                        account_export: "account_export";
+                        export_import: "export_import";
+                    }>;
+                    state: z.ZodEnum<{
+                        complete: "complete";
+                        blocked: "blocked";
+                        ready: "ready";
+                        leased: "leased";
+                        awaiting_parse: "awaiting_parse";
+                        retry_wait: "retry_wait";
+                        cancelled: "cancelled";
+                    }>;
+                    reasonCode: z.ZodNullable<z.ZodString>;
+                    rowVersion: z.ZodNumber;
+                    updatedAt: z.ZodString;
+                }, z.core.$strip>>;
+                indeterminate: z.ZodObject<{
+                    count: z.ZodNumber;
+                    oldestAt: z.ZodNullable<z.ZodString>;
+                    samples: z.ZodArray<z.ZodObject<{
+                        attemptId: z.ZodString;
+                        captureJobId: z.ZodNullable<z.ZodString>;
+                        pageId: z.ZodNumber;
+                        operation: z.ZodString;
+                        state: z.ZodEnum<{
+                            reserved: "reserved";
+                            released_pre_dispatch: "released_pre_dispatch";
+                            dispatching: "dispatching";
+                            response_captured: "response_captured";
+                            indeterminate: "indeterminate";
+                        }>;
+                        creditState: z.ZodEnum<{
+                            reserved: "reserved";
+                            indeterminate: "indeterminate";
+                            settled: "settled";
+                            released: "released";
+                        }>;
+                        reservedCredits: z.ZodNumber;
+                        settledCredits: z.ZodNullable<z.ZodNumber>;
+                        certaintyResolution: z.ZodNullable<z.ZodString>;
+                        dispatchStartedAt: z.ZodNullable<z.ZodString>;
+                        finishedAt: z.ZodNullable<z.ZodString>;
+                    }, z.core.$strip>>;
+                }, z.core.$strip>;
+                storageHealth: z.ZodNullable<z.ZodObject<{
+                    healthy: z.ZodBoolean;
+                    breached: z.ZodBoolean;
+                    checkedAt: z.ZodString;
+                    usedBytes: z.ZodNullable<z.ZodNumber>;
+                    freeBytes: z.ZodNullable<z.ZodNumber>;
+                    totalBytes: z.ZodNullable<z.ZodNumber>;
+                    errorPresent: z.ZodBoolean;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminOfapiCaptureControl: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Dry-run or CAS-update one OFAPI capture pause control";
+        readonly body: z.ZodObject<{
+            controlKey: z.ZodString;
+            paused: z.ZodBoolean;
+            expectedVersion: z.ZodNumber;
+            reason: z.ZodString;
+            dryRun: z.ZodDefault<z.ZodBoolean>;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                executed: z.ZodBoolean;
+                controlKey: z.ZodString;
+                previous: z.ZodObject<{
+                    paused: z.ZodBoolean;
+                    reason: z.ZodNullable<z.ZodString>;
+                    version: z.ZodNumber;
+                }, z.core.$strip>;
+                next: z.ZodObject<{
+                    paused: z.ZodBoolean;
+                    reason: z.ZodString;
+                    version: z.ZodNumber;
+                }, z.core.$strip>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminOfapiCaptureAttemptResolve: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Dry-run or resolve one indeterminate OFAPI request certainty";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            attemptId: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            expectedState: z.ZodDefault<z.ZodLiteral<"indeterminate">>;
+            resolution: z.ZodEnum<{
+                confirmed_billed: "confirmed_billed";
+                confirmed_not_billed: "confirmed_not_billed";
+            }>;
+            actualCredits: z.ZodOptional<z.ZodNumber>;
+            reason: z.ZodString;
+            dryRun: z.ZodDefault<z.ZodBoolean>;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                dryRun: z.ZodBoolean;
+                status: z.ZodEnum<{
+                    resolved: "resolved";
+                    would_resolve: "would_resolve";
+                }>;
+                attempt: z.ZodObject<{
+                    attemptId: z.ZodString;
+                    captureJobId: z.ZodNullable<z.ZodString>;
+                    pageId: z.ZodNumber;
+                    operation: z.ZodString;
+                    state: z.ZodEnum<{
+                        reserved: "reserved";
+                        released_pre_dispatch: "released_pre_dispatch";
+                        dispatching: "dispatching";
+                        response_captured: "response_captured";
+                        indeterminate: "indeterminate";
+                    }>;
+                    creditState: z.ZodEnum<{
+                        reserved: "reserved";
+                        indeterminate: "indeterminate";
+                        settled: "settled";
+                        released: "released";
+                    }>;
+                    reservedCredits: z.ZodNumber;
+                    settledCredits: z.ZodNullable<z.ZodNumber>;
+                    certaintyResolution: z.ZodNullable<z.ZodString>;
+                    dispatchStartedAt: z.ZodNullable<z.ZodString>;
+                    finishedAt: z.ZodNullable<z.ZodString>;
+                }, z.core.$strip>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminOfapiCaptureJobReplay: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Dry-run or locally replay one captured OFAPI response";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            jobId: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            expectedState: z.ZodEnum<{
+                blocked: "blocked";
+                awaiting_parse: "awaiting_parse";
+            }>;
+            expectedReasonCode: z.ZodEnum<{
+                parser_failed: "parser_failed";
+                contract_rejected: "contract_rejected";
+                capture_envelope_invalid: "capture_envelope_invalid";
+                invalid_json: "invalid_json";
+                export_contract_rejected: "export_contract_rejected";
+            }>;
+            expectedJobRowVersion: z.ZodNumber;
+            reason: z.ZodString;
+            dryRun: z.ZodDefault<z.ZodBoolean>;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                dryRun: z.ZodBoolean;
+                status: z.ZodEnum<{
+                    would_replay: "would_replay";
+                    replayed: "replayed";
+                }>;
+                jobId: z.ZodString;
+                attemptId: z.ZodString;
+                previous: z.ZodObject<{
+                    state: z.ZodEnum<{
+                        blocked: "blocked";
+                        awaiting_parse: "awaiting_parse";
+                    }>;
+                    reasonCode: z.ZodNullable<z.ZodString>;
+                    rowVersion: z.ZodNumber;
+                }, z.core.$strip>;
+                next: z.ZodObject<{
+                    state: z.ZodLiteral<"awaiting_parse">;
+                    reasonCode: z.ZodNull;
+                    rowVersion: z.ZodNumber;
+                    observationId: z.ZodNumber;
+                    observationReceivedAt: z.ZodString;
+                }, z.core.$strip>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminOfapiCoverageRevoke: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Dry-run or revoke one OFAPI history proof";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            pageId: z.ZodNumber;
+            chatId: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            actionId: z.ZodString;
+            expectedSourceAccountSeq: z.ZodNumber;
+            reason: z.ZodString;
+            dryRun: z.ZodDefault<z.ZodBoolean>;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                dryRun: z.ZodBoolean;
+                status: z.ZodEnum<{
+                    would_revoke: "would_revoke";
+                    revoked: "revoked";
+                    already_reconciled: "already_reconciled";
+                }>;
+                pageId: z.ZodNumber;
+                chatId: z.ZodString;
+                sourceAccountSeq: z.ZodNumber;
+                revokedAt: z.ZodNullable<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminOfapiExportCreateReconcile: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Reconcile one uncertain quote-only OFAPI export create";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            jobId: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodDiscriminatedUnion<[z.ZodObject<{
+            action: z.ZodLiteral<"confirm_not_created">;
+            attemptId: z.ZodString;
+            expectedState: z.ZodDefault<z.ZodLiteral<"blocked">>;
+            expectedReasonCode: z.ZodDefault<z.ZodLiteral<"indeterminate">>;
+            expectedJobRowVersion: z.ZodNumber;
+            reason: z.ZodString;
+            dryRun: z.ZodDefault<z.ZodBoolean>;
+        }, z.core.$strict>, z.ZodObject<{
+            action: z.ZodLiteral<"adopt_created">;
+            attemptId: z.ZodString;
+            expectedState: z.ZodDefault<z.ZodLiteral<"blocked">>;
+            expectedReasonCode: z.ZodDefault<z.ZodLiteral<"indeterminate">>;
+            expectedJobRowVersion: z.ZodNumber;
+            vendorExportId: z.ZodString;
+            actualCredits: z.ZodOptional<z.ZodNumber>;
+            reason: z.ZodString;
+            dryRun: z.ZodDefault<z.ZodBoolean>;
+        }, z.core.$strict>], "action">;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                dryRun: z.ZodBoolean;
+                status: z.ZodEnum<{
+                    would_reconcile: "would_reconcile";
+                    reconciled: "reconciled";
+                }>;
+                action: z.ZodEnum<{
+                    confirm_not_created: "confirm_not_created";
+                    adopt_created: "adopt_created";
+                }>;
+                job: z.ZodObject<{
+                    jobId: z.ZodString;
+                    state: z.ZodEnum<{
+                        complete: "complete";
+                        blocked: "blocked";
+                        ready: "ready";
+                        leased: "leased";
+                        awaiting_parse: "awaiting_parse";
+                        retry_wait: "retry_wait";
+                        cancelled: "cancelled";
+                    }>;
+                    reasonCode: z.ZodNullable<z.ZodString>;
+                    rowVersion: z.ZodNumber;
+                }, z.core.$strip>;
+                attempt: z.ZodObject<{
+                    attemptId: z.ZodString;
+                    captureJobId: z.ZodNullable<z.ZodString>;
+                    pageId: z.ZodNumber;
+                    operation: z.ZodString;
+                    state: z.ZodEnum<{
+                        reserved: "reserved";
+                        released_pre_dispatch: "released_pre_dispatch";
+                        dispatching: "dispatching";
+                        response_captured: "response_captured";
+                        indeterminate: "indeterminate";
+                    }>;
+                    creditState: z.ZodEnum<{
+                        reserved: "reserved";
+                        indeterminate: "indeterminate";
+                        settled: "settled";
+                        released: "released";
+                    }>;
+                    reservedCredits: z.ZodNumber;
+                    settledCredits: z.ZodNullable<z.ZodNumber>;
+                    certaintyResolution: z.ZodNullable<z.ZodString>;
+                    dispatchStartedAt: z.ZodNullable<z.ZodString>;
+                    finishedAt: z.ZodNullable<z.ZodString>;
+                }, z.core.$strip>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminOfapiExportQuotesCreate: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Dry-run or create a bounded OFAPI chat-export quote";
+        readonly description: string;
+        readonly body: z.ZodDiscriminatedUnion<[z.ZodObject<{
+            profile: z.ZodLiteral<"pilot_chats">;
+            chatIds: z.ZodArray<z.ZodString>;
+            dryRun: z.ZodDefault<z.ZodBoolean>;
+            pageId: z.ZodNumber;
+            startDate: z.ZodString;
+            endDate: z.ZodString;
+            maxMessages: z.ZodDefault<z.ZodNumber>;
+            quoteTtlMinutes: z.ZodDefault<z.ZodNumber>;
+        }, z.core.$strict>, z.ZodObject<{
+            profile: z.ZodLiteral<"fleet_tail">;
+            dryRun: z.ZodDefault<z.ZodBoolean>;
+            pageId: z.ZodNumber;
+            startDate: z.ZodString;
+            endDate: z.ZodString;
+            maxMessages: z.ZodDefault<z.ZodNumber>;
+            quoteTtlMinutes: z.ZodDefault<z.ZodNumber>;
+        }, z.core.$strict>], "profile">;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                dryRun: z.ZodBoolean;
+                status: z.ZodEnum<{
+                    created: "created";
+                    coalesced: "coalesced";
+                    would_create: "would_create";
+                    would_coalesce: "would_coalesce";
+                }>;
+                jobId: z.ZodNullable<z.ZodString>;
+                pageId: z.ZodNumber;
+                profile: z.ZodEnum<{
+                    pilot_chats: "pilot_chats";
+                    fleet_tail: "fleet_tail";
+                }>;
+                targetHash: z.ZodString;
+                state: z.ZodNullable<z.ZodEnum<{
+                    complete: "complete";
+                    blocked: "blocked";
+                    ready: "ready";
+                    leased: "leased";
+                    awaiting_parse: "awaiting_parse";
+                    retry_wait: "retry_wait";
+                    cancelled: "cancelled";
+                }>>;
+                reasonCode: z.ZodNullable<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminOfapiExportQuoteStatus: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Inspect a durable OFAPI export quote without signed URLs";
+        readonly params: z.ZodObject<{
+            jobId: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                jobId: z.ZodString;
+                pageId: z.ZodNumber;
+                profile: z.ZodEnum<{
+                    pilot_chats: "pilot_chats";
+                    fleet_tail: "fleet_tail";
+                }>;
+                targetHash: z.ZodString;
+                state: z.ZodEnum<{
+                    complete: "complete";
+                    blocked: "blocked";
+                    ready: "ready";
+                    leased: "leased";
+                    awaiting_parse: "awaiting_parse";
+                    retry_wait: "retry_wait";
+                    cancelled: "cancelled";
+                }>;
+                reasonCode: z.ZodNullable<z.ZodString>;
+                reasonMessage: z.ZodNullable<z.ZodString>;
+                attemptCount: z.ZodNumber;
+                dispatchCount: z.ZodNumber;
+                spentCredits: z.ZodNumber;
+                createdAt: z.ZodString;
+                updatedAt: z.ZodString;
+                quote: z.ZodNullable<z.ZodObject<{
+                    vendorExportId: z.ZodString;
+                    vendorStatus: z.ZodString;
+                    totalRows: z.ZodNullable<z.ZodNumber>;
+                    creditCost: z.ZodNullable<z.ZodNumber>;
+                    pollCount: z.ZodNumber;
+                    quotedAt: z.ZodNullable<z.ZodString>;
+                    expiresAt: z.ZodNullable<z.ZodString>;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminOfapiExportQuoteCancel: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Cancel a blocked quote-only OFAPI export intent";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            jobId: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            expectedState: z.ZodLiteral<"blocked">;
+            reason: z.ZodString;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                jobId: z.ZodString;
+                pageId: z.ZodNumber;
+                profile: z.ZodEnum<{
+                    pilot_chats: "pilot_chats";
+                    fleet_tail: "fleet_tail";
+                }>;
+                targetHash: z.ZodString;
+                state: z.ZodEnum<{
+                    complete: "complete";
+                    blocked: "blocked";
+                    ready: "ready";
+                    leased: "leased";
+                    awaiting_parse: "awaiting_parse";
+                    retry_wait: "retry_wait";
+                    cancelled: "cancelled";
+                }>;
+                reasonCode: z.ZodNullable<z.ZodString>;
+                reasonMessage: z.ZodNullable<z.ZodString>;
+                attemptCount: z.ZodNumber;
+                dispatchCount: z.ZodNumber;
+                spentCredits: z.ZodNumber;
+                createdAt: z.ZodString;
+                updatedAt: z.ZodString;
+                quote: z.ZodNullable<z.ZodObject<{
+                    vendorExportId: z.ZodString;
+                    vendorStatus: z.ZodString;
+                    totalRows: z.ZodNullable<z.ZodNumber>;
+                    creditCost: z.ZodNullable<z.ZodNumber>;
+                    pollCount: z.ZodNumber;
+                    quotedAt: z.ZodNullable<z.ZodString>;
+                    expiresAt: z.ZodNullable<z.ZodString>;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
@@ -10548,13 +11936,13 @@ export declare const routeSchemas: {
                 accountId: z.ZodString;
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
+                    cancelled: "cancelled";
+                    indeterminate: "indeterminate";
                     queued: "queued";
                     in_flight: "in_flight";
                     confirmed: "confirmed";
                     failed_retryable: "failed_retryable";
                     failed_terminal: "failed_terminal";
-                    indeterminate: "indeterminate";
-                    cancelled: "cancelled";
                 }>;
                 payloadHash: z.ZodString;
                 retryOfCommandId: z.ZodNullable<z.ZodString>;
@@ -10582,13 +11970,13 @@ export declare const routeSchemas: {
                 accountId: z.ZodString;
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
+                    cancelled: "cancelled";
+                    indeterminate: "indeterminate";
                     queued: "queued";
                     in_flight: "in_flight";
                     confirmed: "confirmed";
                     failed_retryable: "failed_retryable";
                     failed_terminal: "failed_terminal";
-                    indeterminate: "indeterminate";
-                    cancelled: "cancelled";
                 }>;
                 payloadHash: z.ZodString;
                 retryOfCommandId: z.ZodNullable<z.ZodString>;
@@ -10659,13 +12047,13 @@ export declare const routeSchemas: {
                 accountId: z.ZodString;
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
+                    cancelled: "cancelled";
+                    indeterminate: "indeterminate";
                     queued: "queued";
                     in_flight: "in_flight";
                     confirmed: "confirmed";
                     failed_retryable: "failed_retryable";
                     failed_terminal: "failed_terminal";
-                    indeterminate: "indeterminate";
-                    cancelled: "cancelled";
                 }>;
                 payloadHash: z.ZodString;
                 retryOfCommandId: z.ZodNullable<z.ZodString>;
@@ -10726,13 +12114,13 @@ export declare const routeSchemas: {
                 accountId: z.ZodString;
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
+                    cancelled: "cancelled";
+                    indeterminate: "indeterminate";
                     queued: "queued";
                     in_flight: "in_flight";
                     confirmed: "confirmed";
                     failed_retryable: "failed_retryable";
                     failed_terminal: "failed_terminal";
-                    indeterminate: "indeterminate";
-                    cancelled: "cancelled";
                 }>;
                 payloadHash: z.ZodString;
                 retryOfCommandId: z.ZodNullable<z.ZodString>;
@@ -18661,6 +20049,43 @@ export declare const routeSchemas: {
             }, z.core.$strip>;
         };
     };
+    readonly adminDeviceTokenAdoption: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Device-token adoption across active chatters (D116(c) gate report)";
+        readonly description: string;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                generatedAt: z.ZodString;
+                freshWindowDays: z.ZodNumber;
+                chatters: z.ZodArray<z.ZodObject<{
+                    username: z.ZodString;
+                    hasFreshDeviceToken: z.ZodBoolean;
+                    deviceTokenLastUsedAt: z.ZodNullable<z.ZodString>;
+                    deviceTokenExpiresAt: z.ZodNullable<z.ZodString>;
+                    activeApiKeys: z.ZodNumber;
+                    apiKeyLastUsedAt: z.ZodNullable<z.ZodString>;
+                }, z.core.$strip>>;
+                summary: z.ZodObject<{
+                    activeChatters: z.ZodNumber;
+                    onFreshTokens: z.ZodNumber;
+                    withActiveApiKeys: z.ZodNumber;
+                }, z.core.$strip>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
     readonly adminGrantModel: {
         readonly auth: {
             readonly kind: "owner-session";
@@ -20731,6 +22156,24 @@ export type NormalizedSyncMessage = z.infer<typeof normalizedSyncMessageSchema>;
 export type OfapiWebhookAckResponse = z.infer<typeof ofapiWebhookAckResponseSchema>;
 export type OfapiPageMapping = z.infer<typeof ofapiPageMappingSchema>;
 export type OfapiWebhookStatusResponse = z.infer<typeof ofapiWebhookStatusResponseSchema>;
+export type OfapiWebhookReconcileBody = z.infer<typeof ofapiWebhookReconcileBodySchema>;
+export type OfapiCaptureSeedBody = z.infer<typeof ofapiCaptureSeedBodySchema>;
+export type OfapiCaptureSeedResponse = z.infer<typeof ofapiCaptureSeedResponseSchema>;
+export type OfapiCaptureOperatorStatusResponse = z.infer<typeof ofapiCaptureOperatorStatusResponseSchema>;
+export type OfapiCaptureControlBody = z.infer<typeof ofapiCaptureControlBodySchema>;
+export type OfapiCaptureControlResponse = z.infer<typeof ofapiCaptureControlResponseSchema>;
+export type OfapiCaptureAttemptResolveBody = z.infer<typeof ofapiCaptureAttemptResolveBodySchema>;
+export type OfapiCaptureAttemptResolveResponse = z.infer<typeof ofapiCaptureAttemptResolveResponseSchema>;
+export type OfapiCaptureJobReplayBody = z.infer<typeof ofapiCaptureJobReplayBodySchema>;
+export type OfapiCaptureJobReplayResponse = z.infer<typeof ofapiCaptureJobReplayResponseSchema>;
+export type OfapiCoverageRevokeBody = z.infer<typeof ofapiCoverageRevokeBodySchema>;
+export type OfapiCoverageRevokeResponse = z.infer<typeof ofapiCoverageRevokeResponseSchema>;
+export type OfapiExportCreateReconcileBody = z.infer<typeof ofapiExportCreateReconcileBodySchema>;
+export type OfapiExportCreateReconcileResponse = z.infer<typeof ofapiExportCreateReconcileResponseSchema>;
+export type OfapiExportQuoteBody = z.infer<typeof ofapiExportQuoteBodySchema>;
+export type OfapiExportQuoteCreateResponse = z.infer<typeof ofapiExportQuoteCreateResponseSchema>;
+export type OfapiExportQuoteStatusResponse = z.infer<typeof ofapiExportQuoteStatusResponseSchema>;
+export type OfapiExportQuoteCancelBody = z.infer<typeof ofapiExportQuoteCancelBodySchema>;
 export type OfapiCreditsSummaryResponse = z.infer<typeof ofapiCreditsSummaryResponseSchema>;
 export type OfapiCreditsChatterSummaryResponse = z.infer<typeof ofapiCreditsChatterSummaryResponseSchema>;
 export type OfapiCreditsDailyResponse = z.infer<typeof ofapiCreditsDailyResponseSchema>;
