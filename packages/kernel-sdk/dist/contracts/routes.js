@@ -121,6 +121,31 @@ export const deviceTokenHarvestCapabilityBodySchema = z.object({
     // one preserved Desktop database identity.
     machineId: z.string().uuid().nullable(),
 });
+// D116(c) fleet-gate foundation (desktop D19): per active chatter, token
+// freshness and remaining active API keys. Read-only reporting surface.
+// Deliberately NO aggregate go/no-go boolean: chatter-role automation
+// accounts (probes/scripts) are indistinguishable from humans until the
+// service-account split lands, so any all-chatters flag would be
+// permanently false — the summary counts let the phase-2 CI (or the owner)
+// apply policy over the rows once accounts are classified.
+export const deviceTokenAdoptionRowSchema = z.object({
+    username: z.string(),
+    hasFreshDeviceToken: z.boolean(),
+    deviceTokenLastUsedAt: isoTimestamp.nullable(),
+    deviceTokenExpiresAt: isoTimestamp.nullable(),
+    activeApiKeys: z.number().int().nonnegative(),
+    apiKeyLastUsedAt: isoTimestamp.nullable(),
+});
+export const deviceTokenAdoptionReportSchema = z.object({
+    generatedAt: isoTimestamp,
+    freshWindowDays: z.number().int().positive(),
+    chatters: z.array(deviceTokenAdoptionRowSchema),
+    summary: z.object({
+        activeChatters: z.number().int().nonnegative(),
+        onFreshTokens: z.number().int().nonnegative(),
+        withActiveApiKeys: z.number().int().nonnegative(),
+    }),
+});
 export const accessGrantItemSchema = z.object({
     id: intId,
     scopeType: z.enum(["org", "model", "page"]),
@@ -2927,8 +2952,30 @@ export const ofapiPageMappingSchema = z.object({
     lastEventAt: isoTimestamp.nullable(),
     lastEventAgeSeconds: z.number().int().nullable(),
 });
+export const ofapiWebhookRegistrationStateSchema = z.enum([
+    "stable",
+    "create_prepared",
+    "create_dispatching",
+    "create_indeterminate",
+    "create_failed",
+    "update_prepared",
+    "update_dispatching",
+    "update_indeterminate",
+]);
+export const ofapiWebhookPendingRegistrationSchema = z.object({
+    operationId: z.string().min(1),
+    operation: z.enum(["create", "update"]),
+    externalWebhookId: z.string().nullable(),
+    endpointUrl: z.string(),
+    accountScope: z.literal("global"),
+    events: z.array(z.string()),
+    preparedAt: isoTimestamp,
+});
 export const ofapiWebhookStatusResponseSchema = z.object({
     configured: z.boolean(),
+    registrationState: ofapiWebhookRegistrationStateSchema.nullable(),
+    registrationError: z.string().nullable(),
+    pendingRegistration: ofapiWebhookPendingRegistrationSchema.nullable(),
     endpointUrl: z.string().nullable(),
     externalWebhookId: z.string().nullable(),
     accountScope: z.string().nullable(),
@@ -2946,6 +2993,361 @@ export const ofapiWebhookStatusResponseSchema = z.object({
 export const ofapiWebhookRegisterBodySchema = z.object({
     // Public URL OFAPI should deliver to, e.g. https://hub.example.com/api/v1/ofapi/webhook
     endpointUrl: z.string().url().max(2000),
+});
+export const ofapiWebhookReconcileBodySchema = z.discriminatedUnion("action", [
+    z.object({
+        action: z.literal("adopt"),
+        operationId: z.string().min(1),
+        externalWebhookId: z.string().min(1).max(500),
+    }),
+    z.object({
+        action: z.literal("confirm_not_created"),
+        operationId: z.string().min(1),
+        reason: z.string().trim().min(1).max(500),
+    }),
+]);
+export const ofapiCaptureSeedBodySchema = z.object({
+    dryRun: z.boolean().default(true),
+    goal: z.enum(["connect_to_anchor", "history_to_exhaustion"])
+        .default("connect_to_anchor"),
+    targets: z.array(z.object({
+        pageId: intId,
+        chatId: z.string().trim().min(1).max(200),
+        anchorMessageId: z.string().trim().min(1).max(200).optional(),
+    })).min(1).max(20),
+}).superRefine((value, ctx) => {
+    value.targets.forEach((target, index) => {
+        if (value.goal === "connect_to_anchor" && target.anchorMessageId === undefined) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["targets", index, "anchorMessageId"],
+                message: "connect_to_anchor requires a verified anchorMessageId",
+            });
+        }
+        if (value.goal === "history_to_exhaustion" && target.anchorMessageId !== undefined) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["targets", index, "anchorMessageId"],
+                message: "history_to_exhaustion must not declare an anchorMessageId",
+            });
+        }
+    });
+});
+export const ofapiCaptureSeedResponseSchema = z.object({
+    dryRun: z.boolean(),
+    seedId: z.string().uuid(),
+    limits: z.object({
+        maxTargets: z.literal(20),
+        maxPagesPerJob: z.literal(3),
+        maxCallsPerJob: z.literal(3),
+        maxCreditsPerJob: z.literal(3),
+        maxItemsPerJob: z.literal(300),
+    }),
+    created: z.number().int().nonnegative(),
+    coalesced: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+    results: z.array(z.object({
+        pageId: intId,
+        chatId: z.string(),
+        goal: z.enum(["connect_to_anchor", "history_to_exhaustion"]),
+        frozenHeadId: z.string(),
+        anchorMessageId: z.string().nullable(),
+        status: z.enum([
+            "would_create",
+            "would_coalesce",
+            "created",
+            "coalesced",
+            "already_covered",
+            "already_captured",
+        ]),
+        jobId: z.string().uuid().nullable(),
+        state: z.enum([
+            "ready",
+            "leased",
+            "awaiting_parse",
+            "retry_wait",
+            "blocked",
+            "complete",
+            "cancelled",
+        ]).nullable(),
+        reasonCode: z.string().nullable(),
+    })),
+});
+const ofapiExportQuoteCommonSchema = {
+    dryRun: z.boolean().default(true),
+    pageId: intId,
+    startDate: isoTimestamp,
+    endDate: isoTimestamp,
+    maxMessages: z.number().int().min(1).max(10_000_000).default(10_000_000),
+    quoteTtlMinutes: z.number().int().min(60).max(10_080).default(1_440),
+};
+export const ofapiExportQuoteBodySchema = z.discriminatedUnion("profile", [
+    z.object({
+        ...ofapiExportQuoteCommonSchema,
+        profile: z.literal("pilot_chats"),
+        chatIds: z.array(z.string().regex(/^\d+$/).max(30)).min(1).max(3),
+    }).strict(),
+    z.object({
+        ...ofapiExportQuoteCommonSchema,
+        profile: z.literal("fleet_tail"),
+    }).strict(),
+]);
+const ofapiExportQuoteJobStateSchema = z.enum([
+    "ready",
+    "leased",
+    "awaiting_parse",
+    "retry_wait",
+    "blocked",
+    "complete",
+    "cancelled",
+]);
+export const ofapiExportQuoteCreateResponseSchema = z.object({
+    dryRun: z.boolean(),
+    status: z.enum(["would_create", "would_coalesce", "created", "coalesced"]),
+    jobId: z.string().uuid().nullable(),
+    pageId: intId,
+    profile: z.enum(["pilot_chats", "fleet_tail"]),
+    targetHash: z.string().regex(/^[0-9a-f]{64}$/),
+    state: ofapiExportQuoteJobStateSchema.nullable(),
+    reasonCode: z.string().nullable(),
+});
+export const ofapiExportQuoteParamsSchema = z.object({
+    jobId: z.string().uuid(),
+});
+export const ofapiExportQuoteCancelBodySchema = z.object({
+    expectedState: z.literal("blocked"),
+    reason: z.string().trim().min(1).max(500),
+}).strict();
+export const ofapiExportQuoteStatusResponseSchema = z.object({
+    jobId: z.string().uuid(),
+    pageId: intId,
+    profile: z.enum(["pilot_chats", "fleet_tail"]),
+    targetHash: z.string().regex(/^[0-9a-f]{64}$/),
+    state: ofapiExportQuoteJobStateSchema,
+    reasonCode: z.string().nullable(),
+    reasonMessage: z.string().nullable(),
+    attemptCount: z.number().int().nonnegative(),
+    dispatchCount: z.number().int().nonnegative(),
+    spentCredits: z.number().int().nonnegative(),
+    createdAt: isoTimestamp,
+    updatedAt: isoTimestamp,
+    quote: z.object({
+        vendorExportId: z.string(),
+        vendorStatus: z.string(),
+        totalRows: z.number().int().nonnegative().nullable(),
+        creditCost: z.number().int().nonnegative().nullable(),
+        pollCount: z.number().int().nonnegative(),
+        quotedAt: isoTimestamp.nullable(),
+        expiresAt: isoTimestamp.nullable(),
+    }).nullable(),
+});
+const ofapiCaptureControlKeySchema = z.string().trim().max(200).refine((value) => value === "global"
+    || /^page:[1-9]\d*$/.test(value)
+    || /^(scope):(live|interactive|bulk)$/.test(value)
+    || /^operation:[a-z0-9_.:-]+$/.test(value), "Unsupported OFAPI capture control key");
+const ofapiCaptureOperatorAttemptSchema = z.object({
+    attemptId: z.string().uuid(),
+    captureJobId: z.string().uuid().nullable(),
+    pageId: intId,
+    operation: z.string(),
+    state: z.enum([
+        "reserved",
+        "released_pre_dispatch",
+        "dispatching",
+        "response_captured",
+        "indeterminate",
+    ]),
+    creditState: z.enum(["reserved", "settled", "released", "indeterminate"]),
+    reservedCredits: z.number().int().nonnegative(),
+    settledCredits: z.number().int().nonnegative().nullable(),
+    certaintyResolution: z.string().nullable(),
+    dispatchStartedAt: isoTimestamp.nullable(),
+    finishedAt: isoTimestamp.nullable(),
+});
+export const ofapiCaptureOperatorStatusResponseSchema = z.object({
+    controls: z.array(z.object({
+        controlKey: z.string(),
+        paused: z.boolean(),
+        reason: z.string().nullable(),
+        version: z.number().int().nonnegative(),
+        updatedAt: isoTimestamp,
+    })),
+    jobGroups: z.array(z.object({
+        state: ofapiExportQuoteJobStateSchema,
+        reasonCode: z.string().nullable(),
+        count: z.number().int().nonnegative(),
+        oldestUpdatedAt: isoTimestamp,
+    })),
+    jobSamples: z.array(z.object({
+        jobId: z.string().uuid(),
+        pageId: intId,
+        kind: z.enum([
+            "chat_paginate",
+            "campaign_snapshot",
+            "head_repair",
+            "account_export",
+            "export_import",
+        ]),
+        state: ofapiExportQuoteJobStateSchema,
+        reasonCode: z.string().nullable(),
+        rowVersion: z.number().int().nonnegative(),
+        updatedAt: isoTimestamp,
+    })),
+    indeterminate: z.object({
+        count: z.number().int().nonnegative(),
+        oldestAt: isoTimestamp.nullable(),
+        samples: z.array(ofapiCaptureOperatorAttemptSchema),
+    }),
+    storageHealth: z.object({
+        healthy: z.boolean(),
+        breached: z.boolean(),
+        checkedAt: isoTimestamp,
+        usedBytes: z.number().int().nonnegative().nullable(),
+        freeBytes: z.number().int().nonnegative().nullable(),
+        totalBytes: z.number().int().nonnegative().nullable(),
+        errorPresent: z.boolean(),
+    }).nullable(),
+});
+export const ofapiCaptureControlBodySchema = z.object({
+    controlKey: ofapiCaptureControlKeySchema,
+    paused: z.boolean(),
+    expectedVersion: z.number().int().nonnegative(),
+    reason: z.string().trim().min(1).max(500),
+    dryRun: z.boolean().default(true),
+}).strict();
+export const ofapiCaptureControlResponseSchema = z.object({
+    executed: z.boolean(),
+    controlKey: z.string(),
+    previous: z.object({
+        paused: z.boolean(),
+        reason: z.string().nullable(),
+        version: z.number().int().nonnegative(),
+    }),
+    next: z.object({
+        paused: z.boolean(),
+        reason: z.string(),
+        version: z.number().int().nonnegative(),
+    }),
+});
+export const ofapiCaptureAttemptParamsSchema = z.object({
+    attemptId: z.string().uuid(),
+});
+export const ofapiCaptureAttemptResolveBodySchema = z.object({
+    expectedState: z.literal("indeterminate").default("indeterminate"),
+    resolution: z.enum(["confirmed_billed", "confirmed_not_billed"]),
+    actualCredits: z.number().int().nonnegative().max(1_000_000).optional(),
+    reason: z.string().trim().min(1).max(500),
+    dryRun: z.boolean().default(true),
+}).strict().superRefine((value, ctx) => {
+    if (value.resolution === "confirmed_not_billed" && value.actualCredits !== undefined) {
+        ctx.addIssue({
+            code: "custom",
+            path: ["actualCredits"],
+            message: "confirmed_not_billed cannot declare actualCredits",
+        });
+    }
+});
+export const ofapiCaptureAttemptResolveResponseSchema = z.object({
+    dryRun: z.boolean(),
+    status: z.enum(["would_resolve", "resolved"]),
+    attempt: ofapiCaptureOperatorAttemptSchema,
+});
+export const ofapiCaptureJobParamsSchema = z.object({
+    jobId: z.string().uuid(),
+});
+export const ofapiCaptureJobReplayBodySchema = z.object({
+    expectedState: z.enum(["blocked", "awaiting_parse"]),
+    expectedReasonCode: z.enum([
+        "parser_failed",
+        "contract_rejected",
+        "capture_envelope_invalid",
+        "invalid_json",
+        "export_contract_rejected",
+    ]),
+    expectedJobRowVersion: z.number().int().nonnegative(),
+    reason: z.string().trim().min(1).max(500),
+    dryRun: z.boolean().default(true),
+}).strict().superRefine((value, ctx) => {
+    const expectedState = value.expectedReasonCode === "parser_failed"
+        ? "awaiting_parse"
+        : "blocked";
+    if (value.expectedState !== expectedState) {
+        ctx.addIssue({
+            code: "custom",
+            path: ["expectedState"],
+            message: `${value.expectedReasonCode} requires ${expectedState}`,
+        });
+    }
+});
+export const ofapiCaptureJobReplayResponseSchema = z.object({
+    dryRun: z.boolean(),
+    status: z.enum(["would_replay", "replayed"]),
+    jobId: z.string().uuid(),
+    attemptId: z.string().uuid(),
+    previous: z.object({
+        state: z.enum(["blocked", "awaiting_parse"]),
+        reasonCode: z.string().nullable(),
+        rowVersion: z.number().int().nonnegative(),
+    }),
+    next: z.object({
+        state: z.literal("awaiting_parse"),
+        reasonCode: z.null(),
+        rowVersion: z.number().int().nonnegative(),
+        observationId: z.number().int().positive(),
+        observationReceivedAt: isoTimestamp,
+    }),
+});
+export const ofapiCoverageRevokeParamsSchema = z.object({
+    pageId: intId,
+    chatId: z.string().trim().min(1).max(200),
+});
+export const ofapiCoverageRevokeBodySchema = z.object({
+    actionId: z.string().uuid(),
+    expectedSourceAccountSeq: z.number().int().nonnegative(),
+    reason: z.string().trim().min(1).max(500),
+    dryRun: z.boolean().default(true),
+}).strict();
+export const ofapiCoverageRevokeResponseSchema = z.object({
+    dryRun: z.boolean(),
+    status: z.enum(["would_revoke", "revoked", "already_reconciled"]),
+    pageId: intId,
+    chatId: z.string(),
+    sourceAccountSeq: z.number().int().nonnegative(),
+    revokedAt: isoTimestamp.nullable(),
+});
+export const ofapiExportCreateReconcileBodySchema = z.discriminatedUnion("action", [
+    z.object({
+        action: z.literal("confirm_not_created"),
+        attemptId: z.string().uuid(),
+        expectedState: z.literal("blocked").default("blocked"),
+        expectedReasonCode: z.literal("indeterminate").default("indeterminate"),
+        expectedJobRowVersion: z.number().int().nonnegative(),
+        reason: z.string().trim().min(1).max(500),
+        dryRun: z.boolean().default(true),
+    }).strict(),
+    z.object({
+        action: z.literal("adopt_created"),
+        attemptId: z.string().uuid(),
+        expectedState: z.literal("blocked").default("blocked"),
+        expectedReasonCode: z.literal("indeterminate").default("indeterminate"),
+        expectedJobRowVersion: z.number().int().nonnegative(),
+        vendorExportId: z.string().regex(/^data_export_[A-Za-z0-9_-]+$/).max(200),
+        actualCredits: z.number().int().nonnegative().max(1_000_000).optional(),
+        reason: z.string().trim().min(1).max(500),
+        dryRun: z.boolean().default(true),
+    }).strict(),
+]);
+export const ofapiExportCreateReconcileResponseSchema = z.object({
+    dryRun: z.boolean(),
+    status: z.enum(["would_reconcile", "reconciled"]),
+    action: z.enum(["confirm_not_created", "adopt_created"]),
+    job: z.object({
+        jobId: z.string().uuid(),
+        state: ofapiExportQuoteJobStateSchema,
+        reasonCode: z.string().nullable(),
+        rowVersion: z.number().int().nonnegative(),
+    }),
+    attempt: ofapiCaptureOperatorAttemptSchema,
 });
 export const ofapiWebhookRegisterResponseSchema = z.object({
     externalWebhookId: z.string().nullable(),
@@ -3839,6 +4241,179 @@ export const routeSchemas = {
             503: errorResponseSchema,
         },
     },
+    adminOfapiWebhookReconcile: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Resolve an indeterminate initial OFAPI webhook creation",
+        description: "Owner-only recovery after independently checking OFAPI: either "
+            + "adopt the created remote webhook id or confirm that creation did not happen.",
+        body: ofapiWebhookReconcileBodySchema,
+        response: {
+            200: ofapiWebhookStatusResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminOfapiCaptureJobsSeed: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Dry-run or seed a bounded explicit OFAPI chat cohort",
+        description: "Creates no more than 20 explicitly listed jobs. connect_to_anchor "
+            + "requires an existing verified continuous anchor; history_to_exhaustion is the "
+            + "explicit, capped bootstrap path for a first proof. The current head is frozen "
+            + "from Core; no chat discovery or automatic fanout occurs.",
+        body: ofapiCaptureSeedBodySchema,
+        response: {
+            200: ofapiCaptureSeedResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminOfapiCaptureOperatorStatus: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Inspect bounded OFAPI capture controls and unresolved work",
+        description: "Returns only operational metadata: controls, grouped active jobs, "
+            + "bounded job/attempt samples, and the latest storage-health result.",
+        response: {
+            200: ofapiCaptureOperatorStatusResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+        },
+    },
+    adminOfapiCaptureControl: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Dry-run or CAS-update one OFAPI capture pause control",
+        body: ofapiCaptureControlBodySchema,
+        response: {
+            200: ofapiCaptureControlResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminOfapiCaptureAttemptResolve: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Dry-run or resolve one indeterminate OFAPI request certainty",
+        description: "Records an independently verified billed/not-billed outcome. It never "
+            + "dispatches or retries a vendor request.",
+        params: ofapiCaptureAttemptParamsSchema,
+        body: ofapiCaptureAttemptResolveBodySchema,
+        response: {
+            200: ofapiCaptureAttemptResolveResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminOfapiCaptureJobReplay: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Dry-run or locally replay one captured OFAPI response",
+        description: "CAS-clears a parser/contract quarantine and reuses the already captured "
+            + "observation. It never dispatches another vendor request.",
+        params: ofapiCaptureJobParamsSchema,
+        body: ofapiCaptureJobReplayBodySchema,
+        response: {
+            200: ofapiCaptureJobReplayResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminOfapiCoverageRevoke: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Dry-run or revoke one OFAPI history proof",
+        description: "Appends an operator observation and projection-only revocation fact. "
+            + "It never deletes captured evidence or calls OFAPI.",
+        params: ofapiCoverageRevokeParamsSchema,
+        body: ofapiCoverageRevokeBodySchema,
+        response: {
+            200: ofapiCoverageRevokeResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminOfapiExportCreateReconcile: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Reconcile one uncertain quote-only OFAPI export create",
+        description: "After an independent vendor check, either confirms no export was created "
+            + "or adopts its explicit id. This route never calls OFAPI or repeats POST /data-exports.",
+        params: ofapiExportQuoteParamsSchema,
+        body: ofapiExportCreateReconcileBodySchema,
+        response: {
+            200: ofapiExportCreateReconcileResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminOfapiExportQuotesCreate: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Dry-run or create a bounded OFAPI chat-export quote",
+        description: "Creates one page-scoped account_export intent before any vendor request. "
+            + "The worker may create and poll a quote, but this surface cannot approve, start, "
+            + "retry, download, or import an export. auto_start is always false.",
+        body: ofapiExportQuoteBodySchema,
+        response: {
+            200: ofapiExportQuoteCreateResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminOfapiExportQuoteStatus: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Inspect a durable OFAPI export quote without signed URLs",
+        params: ofapiExportQuoteParamsSchema,
+        response: {
+            200: ofapiExportQuoteStatusResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    adminOfapiExportQuoteCancel: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Cancel a blocked quote-only OFAPI export intent",
+        description: "CAS-cancels only a fully captured quote or explicit vendor calculation "
+            + "failure. This frees the single page export slot and never calls OFAPI. Any other "
+            + "blocked outcome requires independent vendor reconciliation first.",
+        params: ofapiExportQuoteParamsSchema,
+        body: ofapiExportQuoteCancelBodySchema,
+        response: {
+            200: ofapiExportQuoteStatusResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
     ofapiCreditsChatterSummary: {
         auth: { kind: "apiKey" },
         tags: ["ofapi"],
@@ -3861,6 +4436,8 @@ export const routeSchemas = {
             + "`/api/v1/ofapi/read`. It preserves the desktop OFAPI GET paths and JSON "
             + "shapes, but accepts only the documented desktop read allowlist. `/accounts` "
             + "is synthesized from assigned core page mappings and `/whoami` is sanitized. "
+            + "The optional `x-agency-hub-read-intent: deep-history-v1` header identifies "
+            + "backward user scrollback that may be served from certified DB history. "
             + "No POST, DELETE, send, mark-read, typing, or upload operation is exposed.",
         params: ofapiReadGatewayParamsSchema,
         response: {
@@ -5186,6 +5763,19 @@ export const routeSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+        },
+    },
+    adminDeviceTokenAdoption: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Device-token adoption across active chatters (D116(c) gate report)",
+        description: "Read-only: per active chatter, whether a live device token "
+            + "was used within the freshness window, plus remaining active API keys. "
+            + "Foundation for the client key-fallback deletion gate.",
+        response: {
+            200: deviceTokenAdoptionReportSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
         },
     },
     adminGrantModel: {
