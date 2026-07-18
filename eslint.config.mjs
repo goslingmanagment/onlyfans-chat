@@ -10,6 +10,7 @@ export default tseslint.config(
       '**/out/**',
       '**/coverage/**',
       '**/.claude/worktrees/**',
+      '**/.claude/skills/**',
       'tmp/**',
       'docs/**',
       '**/*.gen.ts',
