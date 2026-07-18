@@ -14,8 +14,15 @@ const APP_DIR =
   path.resolve(import.meta.dirname, '../../../apps/desktop');
 const RUN_DIR = path.join(tmpdir(), 'chatgoose-run');
 const SHOT_DIR = process.env.SCREENSHOT_DIR ?? path.join(RUN_DIR, 'shots');
-const PROFILE = process.env.CHATGOOSE_RUN_PROFILE ?? path.join(RUN_DIR, 'profile');
 fs.mkdirSync(SHOT_DIR, { recursive: true });
+fs.mkdirSync(RUN_DIR, { recursive: true });
+// Fresh temp profile per driver process: parallel worktrees can't collide on
+// the app's single-instance lock, and nothing (e.g. a hub key someone typed
+// into Settings) survives into the next run — keyless/offline stays true by
+// construction. Reuse is explicit opt-in via CHATGOOSE_RUN_PROFILE; temp
+// profiles are removed on quit.
+const PROFILE = process.env.CHATGOOSE_RUN_PROFILE ?? fs.mkdtempSync(path.join(RUN_DIR, 'profile-'));
+const PROFILE_IS_TEMP = !process.env.CHATGOOSE_RUN_PROFILE;
 fs.mkdirSync(PROFILE, { recursive: true });
 
 const electronBin =
@@ -26,6 +33,10 @@ const electronBin =
 let app = null;
 let page = null;
 let launching = false;
+// Resolves when a window-close teardown has fully released the app's
+// single-instance lock — launch awaits it so a fast relaunch can't lose the
+// lock race against the dying process.
+let closing = Promise.resolve();
 
 // The driver always runs out/, never src — a stale build silently verifies
 // old code, so warn when any build input is newer than the oldest build
@@ -41,10 +52,12 @@ function newestMtime(dir) {
   return newest;
 }
 
-const BUILD_INPUT_DIRS = [
+const BUILD_INPUTS = [
   path.join(APP_DIR, 'src'),
   path.join(APP_DIR, '../../packages/shared/src'),
-].filter((d) => fs.existsSync(d));
+  path.join(APP_DIR, '../../packages/kernel-sdk/dist'),
+  path.join(APP_DIR, 'electron.vite.config.ts'),
+].filter((p) => fs.existsSync(p));
 const BUILD_OUTPUTS = [
   path.join(APP_DIR, 'out/main/index.js'),
   path.join(APP_DIR, 'out/preload/index.mjs'),
@@ -62,11 +75,21 @@ const COMMANDS = {
       );
     }
     const oldestOutput = Math.min(...BUILD_OUTPUTS.map((f) => fs.statSync(f).mtimeMs));
-    if (Math.max(...BUILD_INPUT_DIRS.map(newestMtime)) > oldestOutput) {
-      console.log(
-        'WARNING: STALE BUILD — desktop/shared src is newer than out/;',
-        'run: pnpm --filter @chatgoose/desktop build',
-      );
+    const newestInput = Math.max(
+      ...BUILD_INPUTS.map((p) =>
+        fs.statSync(p).isDirectory() ? newestMtime(p) : fs.statSync(p).mtimeMs,
+      ),
+    );
+    if (newestInput > oldestOutput) {
+      if (process.env.CHATGOOSE_RUN_ALLOW_STALE) {
+        console.log('WARNING: STALE BUILD — launching anyway (CHATGOOSE_RUN_ALLOW_STALE set)');
+      } else {
+        return console.log(
+          'ERROR: STALE BUILD — build inputs are newer than out/;',
+          'run: pnpm --filter @chatgoose/desktop build',
+          '(or set CHATGOOSE_RUN_ALLOW_STALE=1 to launch the old build deliberately)',
+        );
+      }
     }
     launching = true;
     // The app reads CHATGOOSE_HUB_API_KEY / CHATGOOSE_HUB_BASE_URL (and other
@@ -86,6 +109,7 @@ const COMMANDS = {
     // a half-launched candidate must not wedge the REPL in "already launched".
     let candidate = null;
     try {
+      await closing;
       candidate = await electron.launch({
         executablePath: electronBin,
         // Linux containers need --no-sandbox; harmless elsewhere.
@@ -111,14 +135,17 @@ const COMMANDS = {
       });
       // ⌘W closes the window while the app keeps running on macOS — tear the
       // whole session down so "launch" restarts cleanly instead of every
-      // command dying on a closed page.
+      // command dying on a closed page. Announce restart-readiness only after
+      // the process actually exited (single-instance lock released).
       win.on('close', () => {
         if (page === win) {
           page = null;
           const dying = app;
           app = null;
-          void dying?.close().catch(() => {});
-          console.log('window closed — app shut down; "launch" restarts it');
+          closing = Promise.resolve(dying?.close()).catch(() => {});
+          void closing.then(() =>
+            console.log('window closed — app shut down; "launch" restarts it'),
+          );
         }
       });
       console.log('launched.', app.windows().length, 'windows:');
@@ -228,9 +255,14 @@ const COMMANDS = {
   },
 
   async quit() {
-    if (app) await app.close().catch(() => {});
+    // Reset public state BEFORE closing so the close/window handlers see the
+    // teardown as ours and stay quiet.
+    const dying = app;
     app = null;
     page = null;
+    if (dying) await dying.close().catch(() => {});
+    await closing;
+    if (PROFILE_IS_TEMP) fs.rmSync(PROFILE, { recursive: true, force: true });
     console.log('quit done');
   },
 

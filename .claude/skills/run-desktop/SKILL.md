@@ -6,9 +6,9 @@ description: Build, run, and drive the ChatGoose Desktop Electron app. Use when 
 ChatGoose Desktop is the Electron app in `apps/desktop`. Agents drive it
 via the Playwright REPL at `.claude/skills/run-desktop/driver.mjs`: it
 launches the **built** app (`apps/desktop/out`) with an **isolated
-keyless profile** (`CHATGOOSE_USER_DATA_DIR` → `$TMPDIR/chatgoose-run/profile`),
-so the real dev profile, hub credentials, and encrypted DB are never
-touched. The driver also strips all `CHATGOOSE_*`/`ELECTRON_*` vars from
+keyless profile** (`CHATGOOSE_USER_DATA_DIR` → a fresh temp dir per run,
+removed on quit), so the real dev profile, hub credentials, and
+encrypted DB are never touched. The driver also strips all `CHATGOOSE_*`/`ELECTRON_*` vars from
 the child env (the app persists `CHATGOOSE_HUB_API_KEY`/`_HUB_BASE_URL`
 into the profile if present), so a stray shell export can't put the
 profile online. The app boots OFFLINE into Settings; that's expected and
@@ -40,17 +40,21 @@ Run the driver inside tmux; drive with `send-keys`, read with
 
 ```bash
 pnpm --filter @chatgoose/desktop build   # ALWAYS rebuild first — the driver runs out/, not src
-tmux new-session -d -s goose -x 200 -y 50
-tmux send-keys -t goose 'node .claude/skills/run-desktop/driver.mjs' Enter
-sleep 3; tmux send-keys -t goose 'launch' Enter
-sleep 10; tmux capture-pane -t goose -p | grep -v '^$' | tail -5   # expect "launched. 1 windows:"
-tmux send-keys -t goose 'ss landing' Enter
-sleep 2; tmux capture-pane -t goose -p | grep screenshot
+S=goose-$$                               # unique session — parallel worktrees must not share one
+tmux new-session -d -s "$S" -x 200 -y 50 -c "$PWD" 'node .claude/skills/run-desktop/driver.mjs'
+sleep 3; tmux send-keys -t "$S" 'launch' Enter
+sleep 10; tmux capture-pane -t "$S" -p | grep -v '^$' | tail -5   # expect "launched. 1 windows:"
+tmux send-keys -t "$S" 'ss landing' Enter
+sleep 2; tmux capture-pane -t "$S" -p | grep screenshot
+# ...work... then always:
+tmux send-keys -t "$S" 'quit' Enter; sleep 2; tmux kill-session -t "$S" 2>/dev/null || true
 ```
 
 Screenshots → `$TMPDIR/chatgoose-run/shots/` (override: `SCREENSHOT_DIR`).
-Profile → `$TMPDIR/chatgoose-run/profile` (override: `CHATGOOSE_RUN_PROFILE`;
-`rm -rf` it for a factory-fresh boot). App dir override: `CHATGOOSE_APP_DIR`.
+Profile → a fresh temp dir per driver run (path printed at startup;
+auto-removed on `quit`). Set `CHATGOOSE_RUN_PROFILE` to reuse one
+deliberately. App dir override: `CHATGOOSE_APP_DIR`; a stale build
+refuses to launch unless `CHATGOOSE_RUN_ALLOW_STALE=1`.
 
 **Always open the screenshot and look at it.** A keyless profile boots
 into Settings; `press Escape` closes them and shows the main three-column
@@ -113,9 +117,10 @@ pnpm check   # typecheck + lint + unit tests + build — required before any com
   lines; filter with `grep -v '^$'`.
 - **Verifying a code change? Rebuild first.** The driver launches
   `apps/desktop/out` — editing `src` changes nothing until
-  `pnpm --filter @chatgoose/desktop build`. The driver prints
-  `WARNING: STALE BUILD` when `src` is newer than `out/`, and refuses to
-  launch when `out/` is missing.
+  `pnpm --filter @chatgoose/desktop build`. Launch refuses on a missing
+  or incomplete build and on a stale one (inputs: desktop src, shared
+  src, kernel-sdk dist, vite config; `CHATGOOSE_RUN_ALLOW_STALE=1`
+  overrides deliberately).
 - **The single-instance lock is profile-scoped** (`SingletonLock` lives
   inside the userData dir, which is switched to the isolated profile
   before the lock is taken) — the driver coexists with the real running
