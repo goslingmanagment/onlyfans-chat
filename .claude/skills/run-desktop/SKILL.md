@@ -30,7 +30,7 @@ rebuild below.
 pnpm install
 pnpm --filter @chatgoose/desktop rebuild:native   # REQUIRED in a fresh worktree — see Gotchas
 pnpm --filter @chatgoose/desktop build
-npm install --prefix .claude/skills/run-desktop   # playwright-core for the driver
+npm ci --prefix .claude/skills/run-desktop        # playwright-core for the driver (pinned via lockfile)
 ```
 
 ## Run (agent path)
@@ -123,8 +123,9 @@ pnpm check   # typecheck + lint + unit tests + build — required before any com
 - **Commands are serialized and args pass verbatim**: a queued `ss` waits
   for a slow `launch` instead of racing it, and everything after the
   command word (multiple spaces included) reaches `type`/`eval` as-is.
-  If the app dies (⌘Q, crash), the driver prints `app closed` and
-  `launch` works again.
+  If the app dies (⌘Q, crash) or the window is closed (⌘W — on macOS
+  the app would otherwise keep running windowless), the driver tears the
+  session down, prints it, and `launch` works again.
 - **Keyless profile shows skeleton placeholders forever** in the chat
   list (no explicit "no accounts" empty state) and status bar says
   OFFLINE. That's the expected look, not a broken launch.

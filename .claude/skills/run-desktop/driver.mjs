@@ -28,7 +28,9 @@ let page = null;
 let launching = false;
 
 // The driver always runs out/, never src — a stale build silently verifies
-// old code, so warn when src is newer than the bundle.
+// old code, so warn when any build input is newer than the oldest build
+// output. Inputs cover packages/shared too (electron.vite aliases it in);
+// outputs cover all three bundles so a half-failed build still warns.
 function newestMtime(dir) {
   let newest = 0;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -39,19 +41,30 @@ function newestMtime(dir) {
   return newest;
 }
 
+const BUILD_INPUT_DIRS = [
+  path.join(APP_DIR, 'src'),
+  path.join(APP_DIR, '../../packages/shared/src'),
+].filter((d) => fs.existsSync(d));
+const BUILD_OUTPUTS = [
+  path.join(APP_DIR, 'out/main/index.js'),
+  path.join(APP_DIR, 'out/preload/index.mjs'),
+  path.join(APP_DIR, 'out/renderer/index.html'),
+];
+
 const COMMANDS = {
   async launch() {
     if (app) return console.log('already launched');
     if (launching) return console.log('launch already in progress');
-    const outMain = path.join(APP_DIR, 'out/main/index.js');
-    if (!fs.existsSync(outMain)) {
+    const missing = BUILD_OUTPUTS.find((f) => !fs.existsSync(f));
+    if (missing) {
       return console.log(
-        'ERROR: no build at', outMain, '— run: pnpm --filter @chatgoose/desktop build',
+        'ERROR: incomplete build —', missing, 'missing; run: pnpm --filter @chatgoose/desktop build',
       );
     }
-    if (newestMtime(path.join(APP_DIR, 'src')) > fs.statSync(outMain).mtimeMs) {
+    const oldestOutput = Math.min(...BUILD_OUTPUTS.map((f) => fs.statSync(f).mtimeMs));
+    if (Math.max(...BUILD_INPUT_DIRS.map(newestMtime)) > oldestOutput) {
       console.log(
-        'WARNING: STALE BUILD — apps/desktop/src is newer than out/;',
+        'WARNING: STALE BUILD — desktop/shared src is newer than out/;',
         'run: pnpm --filter @chatgoose/desktop build',
       );
     }
@@ -94,6 +107,18 @@ const COMMANDS = {
           app = null;
           page = null;
           console.log('app closed — "launch" restarts it');
+        }
+      });
+      // ⌘W closes the window while the app keeps running on macOS — tear the
+      // whole session down so "launch" restarts cleanly instead of every
+      // command dying on a closed page.
+      win.on('close', () => {
+        if (page === win) {
+          page = null;
+          const dying = app;
+          app = null;
+          void dying?.close().catch(() => {});
+          console.log('window closed — app shut down; "launch" restarts it');
         }
       });
       console.log('launched.', app.windows().length, 'windows:');
