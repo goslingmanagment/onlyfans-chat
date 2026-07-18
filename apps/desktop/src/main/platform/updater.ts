@@ -155,7 +155,9 @@ export function isNewerVersion(candidate: string, current: string): boolean {
   const a = candidate.split('.').map(Number);
   const b = current.split('.').map(Number);
   for (let i = 0; i < 3; i += 1) {
-    if (a[i] !== b[i]) return a[i] > b[i];
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    if (av !== bv) return av > bv;
   }
   return false;
 }
