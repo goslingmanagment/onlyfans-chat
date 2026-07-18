@@ -559,7 +559,9 @@ export interface HarvestIdentityVM {
 }
 
 /** Auto-update state for Settings → Updates (PLAN item 11; main/platform/updater.ts).
- *  `unsupported` = not a win32 packaged build (macOS / dev), so no feed exists. */
+ *  `manual` = a newer version exists but this platform can't self-install
+ *  (macOS packaged, unsigned — D20): the install action opens the download
+ *  page instead. `unsupported` = dev / other non-updating builds. */
 export type UpdatePhaseVM =
   | 'unsupported'
   | 'idle'
@@ -568,6 +570,7 @@ export type UpdatePhaseVM =
   | 'available'
   | 'downloading'
   | 'downloaded'
+  | 'manual'
   | 'error';
 
 export interface UpdateStatusVM {

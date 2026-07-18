@@ -931,6 +931,12 @@ export const UI_MESSAGES = {
     en: 'ChatGoose {version} will install when you quit the app.',
     ru: 'ChatGoose {version} установится при выходе из приложения.',
   },
+  // macOS manual-download flow (D20): no self-install, the click opens the page.
+  'notif.updateManualTitle': { en: 'Update available', ru: 'Вышло обновление' },
+  'notif.updateManualBody': {
+    en: 'ChatGoose {version} is out — click to open the download page.',
+    ru: 'Вышел ChatGoose {version} — нажмите, чтобы открыть страницу загрузки.',
+  },
 
   // ── Settings → Updates (PLAN item 11) ──────────────────────────────────────
   'update.title': { en: 'Updates', ru: 'Обновления' },
@@ -960,6 +966,12 @@ export const UI_MESSAGES = {
     en: 'Auto-update runs in the installed Windows app.',
     ru: 'Автообновление работает в установленном приложении на Windows.',
   },
+  // macOS manual-download flow (D20)
+  'update.manualAvailable': {
+    en: 'Version {version} is out — download it and reinstall (drag into Applications).',
+    ru: 'Вышла версия {version} — скачайте и переустановите (перетащите в «Программы»).',
+  },
+  'update.download': { en: 'Download', ru: 'Скачать' },
   // ════════ Stage 2: workspace surfaces (PLAN item 10) ════════
   // ── App chrome: command palette / cheatsheet / keymap / titlebar ───────────
   'common.loading': { en: 'Loading…', ru: 'Загрузка…' },

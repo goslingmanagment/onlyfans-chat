@@ -217,7 +217,10 @@ serves the whole dir; no separate config). It offers both platforms:
   feed host with `--refresh-public <feed-dir> <public-dir>`. The page never
   exposes the feed's token path — the symlink resolves server-side only.
 - **macOS**: no CI leg builds mac, and unsigned builds have no auto-update, so
-  the page IS the mac channel. After a release mac users should get, run
+  the page IS the mac channel. Installed mac builds DO notice new versions
+  (D21): the app polls the page's `version-mac.json` and shows a notification
+  plus a Download button in Settings → Updates — publishing a mac DMG is what
+  makes that fire. After a release mac users should get, run
   `apps/desktop/scripts/publish-mac.sh` from the repo root on the owner's Mac:
   it builds (`--skip-build` to reuse an existing DMG), mounts the DMG and runs
   the packaged `--smoke` gate fail-closed, uploads the versioned DMG,

@@ -4,11 +4,15 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  createManualUpdateController,
   createUpdateController,
+  isNewerVersion,
   shouldAutoUpdate,
+  shouldNotifyManualUpdate,
   startAutoUpdater,
   UPDATE_CHECK_INTERVAL_MS,
   type AppUpdaterLike,
+  type UpdateController,
 } from '@main/platform/updater';
 
 type Listeners = Record<string, (arg: never) => void>;
@@ -145,5 +149,84 @@ describe('startAutoUpdater', () => {
     expect(scheduledMs).toBe(UPDATE_CHECK_INTERVAL_MS);
     ticks[0]?.();
     expect(fake.checks()).toBe(2); // interval check
+  });
+});
+
+describe('macOS manual-download flow (D20)', () => {
+  it('gates on darwin packaged only', () => {
+    expect(shouldNotifyManualUpdate('darwin', true)).toBe(true);
+    expect(shouldNotifyManualUpdate('darwin', false)).toBe(false); // dev
+    expect(shouldNotifyManualUpdate('win32', true)).toBe(false); // real auto-update
+    expect(shouldNotifyManualUpdate('linux', true)).toBe(false);
+  });
+
+  it('compares strict stable semver and rejects anything non-parsable', () => {
+    expect(isNewerVersion('0.1.48', '0.1.47')).toBe(true);
+    expect(isNewerVersion('0.2.0', '0.1.47')).toBe(true);
+    expect(isNewerVersion('1.0.0', '0.99.99')).toBe(true);
+    expect(isNewerVersion('0.1.47', '0.1.47')).toBe(false);
+    expect(isNewerVersion('0.1.46', '0.1.47')).toBe(false); // downgrade
+    expect(isNewerVersion('0.1.48-beta.1', '0.1.47')).toBe(false); // prerelease
+    expect(isNewerVersion('garbage', '0.1.47')).toBe(false);
+    expect(isNewerVersion('0.1.48', 'garbage')).toBe(false);
+  });
+
+  function manualController(options: {
+    manifest?: unknown;
+    reject?: boolean;
+    current?: string;
+  }): { controller: UpdateController; opened: () => number; notified: () => string[] } {
+    let opened = 0;
+    const notified: string[] = [];
+    const controller = createManualUpdateController({
+      currentVersion: options.current ?? '0.1.47',
+      fetchManifest: () =>
+        options.reject === true
+          ? Promise.reject(new Error('offline'))
+          : Promise.resolve(options.manifest),
+      openDownloadPage: () => {
+        opened += 1;
+      },
+      onAvailable: (version) => {
+        notified.push(version);
+      },
+    });
+    return { controller, opened: () => opened, notified: () => notified };
+  }
+
+  it('reports manual with the newer version and notifies once per version', async () => {
+    const m = manualController({ manifest: { version: '0.1.48', size: 1 } });
+    expect(await m.controller.check()).toEqual({
+      phase: 'manual',
+      version: '0.1.48',
+      percent: null,
+      message: null,
+    });
+    await m.controller.check(); // periodic re-check of the same version
+    expect(m.notified()).toEqual(['0.1.48']); // one notification, not two
+  });
+
+  it('reports up-to-date for the same or older served version', async () => {
+    const same = manualController({ manifest: { version: '0.1.47' } });
+    expect((await same.controller.check()).phase).toBe('up-to-date');
+    const older = manualController({ manifest: { version: '0.1.40' } });
+    expect((await older.controller.check()).phase).toBe('up-to-date');
+    expect(older.notified()).toEqual([]);
+  });
+
+  it('surfaces fetch failures and malformed manifests as the error phase', async () => {
+    const offline = manualController({ reject: true });
+    expect((await offline.controller.check()).phase).toBe('error');
+    const malformed = manualController({ manifest: { nope: true } });
+    expect((await malformed.controller.check()).phase).toBe('error');
+    const badVersion = manualController({ manifest: { version: 'latest' } });
+    expect((await badVersion.controller.check()).phase).toBe('error');
+    expect(offline.notified()).toEqual([]);
+  });
+
+  it('install() opens the download page instead of installing', () => {
+    const m = manualController({ manifest: { version: '0.1.48' } });
+    m.controller.install();
+    expect(m.opened()).toBe(1);
   });
 });

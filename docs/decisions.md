@@ -38,6 +38,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D18 | 2026-07-15 | Notification frames never block the stream cursor; SSE transitions never initiate paid reads; deterministic poison frames trip a breaker |
 | D19 | 2026-07-16 | Hub settings are device-token-first: no key input for humans, bound token suppresses/auto-decommissions quarantined legacy keys, persisted device identity |
 | D20 | 2026-07-18 | Public download page on the ext site: Windows refreshed automatically by feed publication via a server-side symlink (feed token never exposed), macOS published manually via a smoke-gated script |
+| D21 | 2026-07-18 | macOS packaged builds notify about updates from the page's version-mac.json (phase `manual`, install = open the page) — no self-install while builds are unsigned |
 
 ## Entries
 
@@ -444,3 +445,15 @@ symlink + `version-mac.json`, and retains 3 DMGs. The per-platform
 `version-*.json` files are separate so each writer owns its file — no shared
 JSON parse/race, no python dependency on the feed host. Operator doc:
 `docs/RELEASE.md` §Public download page.
+
+**D21 (2026-07-18).** macOS packaged builds get a notify-only update flow:
+`createManualUpdateController` (main/platform/updater.ts) polls the download
+page's `version-mac.json` on the win cadence (launch + 4 h), zod-validates it,
+and reports phase `manual` when a strictly newer stable semver is served. The
+Settings → Updates section shows a Download button and `install()` opens the
+download page; a silent OS notification fires once per version per run and its
+click opens the page too. No self-replacement of the .app is attempted —
+electron-updater refuses unsigned builds (Squirrel.Mac), and a DIY
+self-replacing updater is the 0.1.30 DOA risk class for zero fleet (mac ≈
+owner). Failed checks surface only through the manual button (`error` phase),
+same policy as the win path. Extends D20.
