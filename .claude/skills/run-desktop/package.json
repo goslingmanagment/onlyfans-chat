@@ -1,0 +1,9 @@
+{
+  "name": "run-desktop-driver",
+  "private": true,
+  "type": "module",
+  "description": "Playwright REPL driver for ChatGoose Desktop — agent tooling, not product code",
+  "dependencies": {
+    "playwright-core": "1.61.1"
+  }
+}
