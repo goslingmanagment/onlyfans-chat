@@ -10,7 +10,7 @@ export default tseslint.config(
       '**/out/**',
       '**/coverage/**',
       '**/.claude/worktrees/**',
-      '**/.claude/skills/**',
+      '**/.claude/skills/**/node_modules/**',
       'tmp/**',
       'docs/**',
       '**/*.gen.ts',
@@ -29,6 +29,20 @@ export default tseslint.config(
         performance: 'readonly',
         URL: 'readonly',
         setTimeout: 'readonly',
+      },
+    },
+  },
+  {
+    // Agent tooling (run-desktop driver): node process + browser globals used
+    // inside page.evaluate() callbacks.
+    files: ['**/.claude/skills/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        setTimeout: 'readonly',
+        document: 'readonly',
+        window: 'readonly',
       },
     },
   },

@@ -25,10 +25,37 @@ const electronBin =
 
 let app = null;
 let page = null;
+let launching = false;
+
+// The driver always runs out/, never src — a stale build silently verifies
+// old code, so warn when src is newer than the bundle.
+function newestMtime(dir) {
+  let newest = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    const m = entry.isDirectory() ? newestMtime(p) : fs.statSync(p).mtimeMs;
+    if (m > newest) newest = m;
+  }
+  return newest;
+}
 
 const COMMANDS = {
   async launch() {
     if (app) return console.log('already launched');
+    if (launching) return console.log('launch already in progress');
+    const outMain = path.join(APP_DIR, 'out/main/index.js');
+    if (!fs.existsSync(outMain)) {
+      return console.log(
+        'ERROR: no build at', outMain, '— run: pnpm --filter @chatgoose/desktop build',
+      );
+    }
+    if (newestMtime(path.join(APP_DIR, 'src')) > fs.statSync(outMain).mtimeMs) {
+      console.log(
+        'WARNING: STALE BUILD — apps/desktop/src is newer than out/;',
+        'run: pnpm --filter @chatgoose/desktop build',
+      );
+    }
+    launching = true;
     // The app reads CHATGOOSE_HUB_API_KEY / CHATGOOSE_HUB_BASE_URL (and other
     // CHATGOOSE_*/ELECTRON_* seeds) from env and PERSISTS them into the
     // profile — a stray shell export would silently put the "keyless" profile
@@ -60,6 +87,15 @@ const COMMANDS = {
       await win.waitForSelector('#root > *', { timeout: 20_000 });
       app = candidate;
       page = win;
+      // ⌘Q / crash must not wedge the REPL in "already launched". Stay quiet
+      // when the close came from our own quit(), which resets state first.
+      candidate.on('close', () => {
+        if (app === candidate) {
+          app = null;
+          page = null;
+          console.log('app closed — "launch" restarts it');
+        }
+      });
       console.log('launched.', app.windows().length, 'windows:');
       for (const w of app.windows()) console.log(' ', w.url());
     } catch (e) {
@@ -70,6 +106,8 @@ const COMMANDS = {
         'app log:',
         path.join(PROFILE, 'logs/app.log'),
       );
+    } finally {
+      launching = false;
     }
   },
 
@@ -180,16 +218,20 @@ const COMMANDS = {
 const stdin = fs.createReadStream(null, { fd: fs.openSync('/dev/stdin', 'r') });
 const rl = readline.createInterface({ input: stdin, output: process.stdout, prompt: 'driver> ' });
 
-rl.on('line', async (line) => {
-  const [cmd, ...rest] = line.trim().split(/\s+/);
-  if (!cmd) return rl.prompt();
+async function handleLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return rl.prompt();
+  // Only the command word is tokenized; the argument is passed verbatim so
+  // multi-space text survives type/eval intact.
+  const cmd = trimmed.split(/\s+/, 1)[0];
+  const arg = trimmed.slice(cmd.length).trimStart();
   const fn = COMMANDS[cmd];
   if (!fn) {
     console.log('unknown:', cmd, '— try: help');
     return rl.prompt();
   }
   try {
-    await fn(rest.join(' '));
+    await fn(arg);
   } catch (e) {
     console.log('ERROR:', e.message);
   }
@@ -198,10 +240,19 @@ rl.on('line', async (line) => {
     process.exit(0);
   }
   rl.prompt();
+}
+
+// readline fires 'line' without awaiting async handlers — serialize commands
+// so an early `ss` queues behind a slow `launch` instead of racing it.
+let queue = Promise.resolve();
+rl.on('line', (line) => {
+  queue = queue.then(() => handleLine(line));
 });
-rl.on('close', async () => {
-  await COMMANDS.quit();
-  process.exit(0);
+rl.on('close', () => {
+  queue = queue.then(async () => {
+    await COMMANDS.quit();
+    process.exit(0);
+  });
 });
 
 console.log('chatgoose driver — "help" for commands, "launch" to start');

@@ -39,6 +39,7 @@ Run the driver inside tmux; drive with `send-keys`, read with
 `capture-pane`. Launch takes ~5–10 s.
 
 ```bash
+pnpm --filter @chatgoose/desktop build   # ALWAYS rebuild first — the driver runs out/, not src
 tmux new-session -d -s goose -x 200 -y 50
 tmux send-keys -t goose 'node .claude/skills/run-desktop/driver.mjs' Enter
 sleep 3; tmux send-keys -t goose 'launch' Enter
@@ -110,9 +111,20 @@ pnpm check   # typecheck + lint + unit tests + build — required before any com
   `capture-pane` instead (as above).
 - **`capture-pane` output looks empty** — the pane is mostly blank
   lines; filter with `grep -v '^$'`.
-- **Single-instance lock** (from `main/index.ts`, not hit in authoring):
-  if the real ChatGoose app is already running, a second instance exits
-  immediately. Quit the real app first.
+- **Verifying a code change? Rebuild first.** The driver launches
+  `apps/desktop/out` — editing `src` changes nothing until
+  `pnpm --filter @chatgoose/desktop build`. The driver prints
+  `WARNING: STALE BUILD` when `src` is newer than `out/`, and refuses to
+  launch when `out/` is missing.
+- **The single-instance lock is profile-scoped** (`SingletonLock` lives
+  inside the userData dir, which is switched to the isolated profile
+  before the lock is taken) — the driver coexists with the real running
+  ChatGoose app; no need to quit it.
+- **Commands are serialized and args pass verbatim**: a queued `ss` waits
+  for a slow `launch` instead of racing it, and everything after the
+  command word (multiple spaces included) reaches `type`/`eval` as-is.
+  If the app dies (⌘Q, crash), the driver prints `app closed` and
+  `launch` works again.
 - **Keyless profile shows skeleton placeholders forever** in the chat
   list (no explicit "no accounts" empty state) and status bar says
   OFFLINE. That's the expected look, not a broken launch.
