@@ -5,6 +5,7 @@ mode=publish
 dry_run=false
 stage_validated=false
 stage_dir=
+public_arg=
 
 if [[ "${1:-}" == --maintain ]]; then
   mode=maintain
@@ -19,11 +20,23 @@ if [[ "${1:-}" == --maintain ]]; then
     echo "usage: publish-feed.sh --maintain <feed-dir> [--dry-run]" >&2
     exit 2
   fi
+elif [[ "${1:-}" == --refresh-public ]]; then
+  # Standalone repair mode: point the public download page at whatever
+  # latest.yml currently references, without touching the feed.
+  mode=refresh_public
+  shift
+  feed_arg=${1:?feed directory required}
+  public_arg=${2:?public download directory required}
+  if (( $# != 2 )); then
+    echo "usage: publish-feed.sh --refresh-public <feed-dir> <public-dir>" >&2
+    exit 2
+  fi
 else
   feed_arg=${1:?feed directory required}
   stage_arg=${2:?stage directory required}
-  if (( $# != 2 )); then
-    echo "usage: publish-feed.sh <feed-dir> <stage-dir>" >&2
+  public_arg=${3:-}
+  if (( $# < 2 || $# > 3 )); then
+    echo "usage: publish-feed.sh <feed-dir> <stage-dir> [public-dir]" >&2
     exit 2
   fi
 fi
@@ -42,6 +55,13 @@ canonical_dir() {
   cd "$path" && pwd -P
 }
 feed_dir=$(canonical_dir "$feed_arg")
+public_dir=
+if [[ -n "$public_arg" ]]; then
+  if ! public_dir=$(canonical_dir "$public_arg"); then
+    echo "public download directory does not exist: $public_arg" >&2
+    exit 1
+  fi
+fi
 if [[ "$mode" == publish ]]; then
   stage_dir=$(canonical_dir "$stage_arg")
   case "$stage_dir" in
@@ -160,6 +180,31 @@ installer_version() {
   return 1
 }
 
+# Point the public download page (ext site /desktop/) at the installer the
+# current latest.yml references: swap the ChatGoose-Setup-latest.exe symlink
+# atomically and rewrite version-win.json. The page's mac half has its own
+# writer (publish-mac.sh) and its own file, so there is no shared JSON to
+# parse or race on. Runs after the feed is already consistent — a failure
+# here must be loud (stale page) but cannot corrupt the feed.
+refresh_public() {
+  local version artifact size link_tmp json_tmp
+  version=$(awk '/^version:/ { print $2; exit }' "$feed_dir/latest.yml" | tr -d '\r')
+  artifact=$(awk '/^path:/ { print $2; exit }' "$feed_dir/latest.yml" | tr -d '\r')
+  if [[ ! -f "$feed_dir/$artifact" ]]; then
+    echo "refresh-public: latest.yml references a missing installer: $artifact" >&2
+    return 1
+  fi
+  size=$(wc -c < "$feed_dir/$artifact" | tr -d '[:space:]')
+  rm -f "$public_dir"/.ChatGoose-Setup-latest.exe.*.tmp "$public_dir"/.version-win.json.*.tmp
+  link_tmp="$public_dir/.ChatGoose-Setup-latest.exe.$$.tmp"
+  ln -sfn "$feed_dir/$artifact" "$link_tmp"
+  mv -f "$link_tmp" "$public_dir/ChatGoose-Setup-latest.exe"
+  json_tmp="$public_dir/.version-win.json.$$.tmp"
+  printf '{"version":"%s","size":%s}\n' "$version" "$size" > "$json_tmp"
+  mv -f "$json_tmp" "$public_dir/version-win.json"
+  echo "public download refreshed dir=$public_dir version=$version"
+}
+
 # Keep the installer referenced by latest.yml plus the newest remaining stable
 # installers up to the configured total. Blockmaps are intentionally retained:
 # electron-updater can use an old client's blockmap for a differential update,
@@ -256,6 +301,11 @@ if [[ "$mode" == maintain ]]; then
   exit 0
 fi
 
+if [[ "$mode" == refresh_public ]]; then
+  refresh_public
+  exit 0
+fi
+
 manifest="$stage_dir/latest.yml"
 test -f "$manifest"
 new_version=$(awk '/^version:/ { print $2; exit }' "$manifest" | tr -d '\r')
@@ -295,6 +345,11 @@ if [[ -n "$current_version" ]]; then
       enforce_disk_floor
       rm -f "$stage_dir/$artifact" "$stage_dir/$artifact.blockmap" "$manifest"
       rmdir "$stage_dir"
+      # A retry after a lost acknowledgement must also converge the public
+      # download page, which may have missed the original run's refresh.
+      if [[ -n "$public_dir" ]]; then
+        refresh_public
+      fi
       echo "already published version=$new_version artifact=$artifact sha512=$actual_sha"
       exit 0
     fi
@@ -320,5 +375,15 @@ manifest_tmp="$feed_dir/.latest.yml.$$.tmp"
 mv "$manifest" "$manifest_tmp"
 mv "$manifest_tmp" "$feed_dir/latest.yml"
 rmdir "$stage_dir"
+
+if [[ -n "$public_dir" ]]; then
+  if ! refresh_public; then
+    # The feed itself is already consistent and clients will update; only the
+    # download page is stale. Fail the run so the staleness is noticed, and
+    # name the repair mode.
+    echo "feed published OK but the public download refresh FAILED — repair with: publish-feed.sh --refresh-public <feed-dir> <public-dir>" >&2
+    exit 1
+  fi
+fi
 
 echo "published version=$new_version artifact=$artifact sha512=$actual_sha"

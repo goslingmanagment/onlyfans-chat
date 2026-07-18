@@ -240,6 +240,10 @@ jobs:
           SSH_KEY: ${{ secrets.UPDATES_SSH_KEY }}
           FEED_DIR: /srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3
           FEED_URL: https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3
+          # Public download page (ext site /desktop/): publish-feed.sh repoints
+          # its ChatGoose-Setup-latest.exe symlink + version-win.json here after
+          # every successful publication. Owned by cgupdates.
+          PUBLIC_DL_DIR: /var/www/ext/desktop
         run: |
           stage_dir="$FEED_DIR/.incoming/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           SSH_OPTIONS=(
@@ -318,7 +322,7 @@ jobs:
           fi
           # Server-side lock + monotonic version check; assets are renamed into
           # place first and latest.yml is one final same-filesystem atomic rename.
-          if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- '$FEED_DIR' '$stage_dir'" < apps/desktop/scripts/publish-feed.sh; then
+          if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- '$FEED_DIR' '$stage_dir' '$PUBLIC_DL_DIR'" < apps/desktop/scripts/publish-feed.sh; then
             # The server may have committed the atomic rename before the SSH
             # acknowledgement was lost. Prove THIS run's bytes are live before
             # deciding the publication failed; never rebuild/retry an equal tag.
@@ -341,6 +345,23 @@ jobs:
               exit 1
             fi
             echo "::warning::SSH acknowledgement was lost, but this run's exact release is live"
+            # The remote publisher died before (or during) the public-page
+            # refresh, so converge the download page explicitly — a stale page
+            # must not survive a lost acknowledgement.
+            public_refreshed=false
+            for attempt in 1 2 3; do
+              if ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 \
+                "bash -s -- --refresh-public '$FEED_DIR' '$PUBLIC_DL_DIR'" < apps/desktop/scripts/publish-feed.sh; then
+                public_refreshed=true
+                break
+              fi
+              echo "public download refresh attempt $attempt failed; retrying"
+              sleep 10
+            done
+            if [ "$public_refreshed" != true ]; then
+              echo "::error::Release is live but the public download page could not be refreshed — run publish-feed.sh --refresh-public on the feed host"
+              exit 1
+            fi
           fi
 
       - name: Remove update-feed deploy key

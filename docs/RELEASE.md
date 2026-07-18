@@ -204,6 +204,31 @@ the unprivileged `cgupdates` user; CI uploads over scp with the
 are unsigned, so the feed host being ours is the trust anchor — rotate the
 token path (nginx dir + `publish.url`) if it ever leaks somewhere noisy.
 
+**Public download page (D20, built 2026-07-18):** first installs come from
+`https://ext.gosling-agency.ru/desktop/` — a static page in
+`/var/www/ext/desktop` on the same VPS (the ext site's nginx vhost already
+serves the whole dir; no separate config). It offers both platforms:
+
+- **Windows**: `ChatGoose-Setup-latest.exe` is a symlink into the feed's
+  current installer, plus `version-win.json` (`{"version","size"}`). Both are
+  refreshed automatically by `publish-feed.sh` on every publication (the
+  workflow passes `PUBLIC_DL_DIR` as the third argument), including the
+  lost-acknowledgement retry path. Manual repair: stream the script to the
+  feed host with `--refresh-public <feed-dir> <public-dir>`. The page never
+  exposes the feed's token path — the symlink resolves server-side only.
+- **macOS**: no CI leg builds mac, and unsigned builds have no auto-update, so
+  the page IS the mac channel. After a release mac users should get, run
+  `apps/desktop/scripts/publish-mac.sh` from the repo root on the owner's Mac:
+  it builds (`--skip-build` to reuse an existing DMG), mounts the DMG and runs
+  the packaged `--smoke` gate fail-closed, uploads the versioned DMG,
+  atomically swaps `ChatGoose-latest-mac-arm64.dmg` + `version-mac.json`,
+  keeps the newest 3 DMGs, and postchecks over HTTPS.
+
+The two `version-*.json` files are deliberately separate — each writer owns
+its file outright, so no shared JSON is ever parsed or raced on. The page
+source is `docs/download-page/index.html`; redeploy it with
+`scp docs/download-page/index.html root@45.8.230.111:/var/www/ext/desktop/index.html`.
+
 Feed retention can be inspected without deleting anything by streaming
 `publish-feed.sh --maintain <feed-dir> --dry-run` on the feed host. The locked
 script accepts `CHATGOOSE_FEED_KEEP_INSTALLERS` (default `3`, minimum `2`) and
