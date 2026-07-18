@@ -29,18 +29,48 @@ let page = null;
 const COMMANDS = {
   async launch() {
     if (app) return console.log('already launched');
-    app = await electron.launch({
-      executablePath: electronBin,
-      // Linux containers need --no-sandbox; harmless elsewhere.
-      args: [...(process.platform === 'linux' ? ['--no-sandbox'] : []), APP_DIR],
-      env: { ...process.env, CHATGOOSE_USER_DATA_DIR: PROFILE },
-      timeout: 30_000,
-    });
-    page = await app.firstWindow();
-    await page.waitForLoadState('domcontentloaded');
-    await page.waitForSelector('#root > *', { timeout: 20_000 }).catch(() => {});
-    console.log('launched.', app.windows().length, 'windows:');
-    for (const w of app.windows()) console.log(' ', w.url());
+    // The app reads CHATGOOSE_HUB_API_KEY / CHATGOOSE_HUB_BASE_URL (and other
+    // CHATGOOSE_*/ELECTRON_* seeds) from env and PERSISTS them into the
+    // profile — a stray shell export would silently put the "keyless" profile
+    // online. Strip them all; re-add only the isolation dir + harmless hooks.
+    const childEnv = Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([k]) => !k.startsWith('CHATGOOSE_') && !k.startsWith('ELECTRON_'),
+      ),
+    );
+    for (const k of ['CHATGOOSE_OPEN_VIEW', 'CHATGOOSE_CAPTURE']) {
+      if (process.env[k]) childEnv[k] = process.env[k];
+    }
+    childEnv.CHATGOOSE_USER_DATA_DIR = PROFILE;
+    // Publish to the app/page globals only after the renderer proved alive —
+    // a half-launched candidate must not wedge the REPL in "already launched".
+    let candidate = null;
+    try {
+      candidate = await electron.launch({
+        executablePath: electronBin,
+        // Linux containers need --no-sandbox; harmless elsewhere.
+        args: [...(process.platform === 'linux' ? ['--no-sandbox'] : []), APP_DIR],
+        env: childEnv,
+        timeout: 30_000,
+      });
+      const win = await candidate.firstWindow();
+      await win.waitForLoadState('domcontentloaded');
+      // The window exists before the renderer mounts; an empty #root after
+      // this wait means boot died (classic cause: rebuild:native — SKILL.md).
+      await win.waitForSelector('#root > *', { timeout: 20_000 });
+      app = candidate;
+      page = win;
+      console.log('launched.', app.windows().length, 'windows:');
+      for (const w of app.windows()) console.log(' ', w.url());
+    } catch (e) {
+      await candidate?.close().catch(() => {});
+      console.log('LAUNCH FAILED:', e.message);
+      console.log(
+        'hint: windowless hang / ERR_DLOPEN_FAILED → pnpm --filter @chatgoose/desktop rebuild:native;',
+        'app log:',
+        path.join(PROFILE, 'logs/app.log'),
+      );
+    }
   },
 
   async ss(name) {

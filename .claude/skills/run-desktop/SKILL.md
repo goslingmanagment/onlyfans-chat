@@ -8,8 +8,11 @@ via the Playwright REPL at `.claude/skills/run-desktop/driver.mjs`: it
 launches the **built** app (`apps/desktop/out`) with an **isolated
 keyless profile** (`CHATGOOSE_USER_DATA_DIR` → `$TMPDIR/chatgoose-run/profile`),
 so the real dev profile, hub credentials, and encrypted DB are never
-touched. The app boots OFFLINE into Settings; that's expected and safe —
-nothing reaches the hub or OFAPI.
+touched. The driver also strips all `CHATGOOSE_*`/`ELECTRON_*` vars from
+the child env (the app persists `CHATGOOSE_HUB_API_KEY`/`_HUB_BASE_URL`
+into the profile if present), so a stray shell export can't put the
+profile online. The app boots OFFLINE into Settings; that's expected and
+safe — nothing reaches the hub or OFAPI.
 
 All paths are relative to the repo root. Authored and verified on the
 owner's macOS (arm64) host; the Linux branch in the driver (binary path,
@@ -94,9 +97,10 @@ pnpm check   # typecheck + lint + unit tests + build — required before any com
   pnpm installs the npm-prebuilt `better-sqlite3-multiple-ciphers`
   binding (Node ABI); Electron needs its own ABI. Symptom pair:
   `--smoke` exits 1 with `ERR_DLOPEN_FAILED … NODE_MODULE_VERSION 141 …
-  requires … 145`, while a normal launch just hangs after the
-  `[boot] starting` log line with **no window** (Playwright
-  `firstWindow: Timeout 30000ms exceeded`). The canonical checkout works
+  requires … 145`, while a normal launch hangs after the
+  `[boot] starting` log line with **no window** — the driver reports it
+  as `LAUNCH FAILED: … firstWindow: Timeout 30000ms exceeded`, cleans up,
+  and `launch` can be retried after the fix. The canonical checkout works
   only because it was rebuilt long ago — every fresh tree needs
   `pnpm --filter @chatgoose/desktop rebuild:native`.
 - **Quick boot sanity check without Playwright:** `apps/desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron apps/desktop --smoke`
