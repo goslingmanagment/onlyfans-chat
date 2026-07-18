@@ -26,6 +26,8 @@ function statusLine(status: UpdateStatusVM, t: UiTranslator): string | null {
       });
     case 'downloaded':
       return t('update.ready', { version: status.version ?? '' });
+    case 'manual':
+      return t('update.manualAvailable', { version: status.version ?? '' });
     case 'error':
       return t('update.error', { message: status.message ?? '' });
     default:
@@ -62,6 +64,11 @@ export function UpdateSettings(): React.JSX.Element {
               <Button size="sm" variant="primary" onClick={() => install.mutate()}>
                 {t('update.install')}
               </Button>
+            ) : phase === 'manual' ? (
+              // macOS: no self-install (D20) — the action opens the download page.
+              <Button size="sm" variant="primary" onClick={() => install.mutate()}>
+                {t('update.download')}
+              </Button>
             ) : (
               <Button size="sm" disabled={busy} onClick={() => check.mutate()}>
                 {busy ? t('update.checking') : t('update.check')}
@@ -72,7 +79,7 @@ export function UpdateSettings(): React.JSX.Element {
                 className={
                   phase === 'error'
                     ? 'text-[12px] text-bad'
-                    : phase === 'downloaded'
+                    : phase === 'downloaded' || phase === 'manual'
                       ? 'text-[12px] font-medium text-green'
                       : 'num text-[12px] text-ink-mid'
                 }

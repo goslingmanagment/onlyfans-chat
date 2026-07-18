@@ -96,8 +96,11 @@ import { attachEventForwarding } from './ipc/events';
 import { focusExistingWindow } from './platform/single-instance';
 import { badgePng } from './platform/badge';
 import {
+  createManualUpdateController,
   createUpdateController,
+  MANUAL_DOWNLOAD_PAGE_URL,
   shouldAutoUpdate,
+  shouldNotifyManualUpdate,
   startAutoUpdater,
   type AppUpdaterLike,
   type UpdateController,
@@ -293,7 +296,42 @@ function startPackagedAutoUpdater(): void {
   // so it is dynamic-imported after the boot logger exists.
   // The controller is shared by the background loop and the Settings -> Updates
   // "Check now / Restart & install" button (via the IPC updates delegate).
-  if (!shouldAutoUpdate(process.platform, app.isPackaged) || updateController !== null) {
+  if (updateController !== null) {
+    return;
+  }
+  // macOS packaged builds can't self-install (unsigned — Squirrel.Mac refuses),
+  // so they get the notify-only controller (D20): poll the download page's
+  // version-mac.json, report phase `manual`, and `install()` opens the page.
+  if (shouldNotifyManualUpdate(process.platform, app.isPackaged)) {
+    const manualController = createManualUpdateController({
+      currentVersion: app.getVersion(),
+      fetchManifest: async () => {
+        const res = await fetch(`${MANUAL_DOWNLOAD_PAGE_URL}version-mac.json`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) {
+          throw new Error(`version-mac.json HTTP ${res.status}`);
+        }
+        return (await res.json()) as unknown;
+      },
+      openDownloadPage: () => void shell.openExternal(MANUAL_DOWNLOAD_PAGE_URL),
+      onAvailable: (version) => {
+        if (Notification.isSupported()) {
+          const n = new Notification({
+            title: uiMessage(uiLocale, 'notif.updateManualTitle'),
+            body: uiMessage(uiLocale, 'notif.updateManualBody', { version }),
+            silent: true,
+          });
+          n.on('click', () => void shell.openExternal(MANUAL_DOWNLOAD_PAGE_URL));
+          n.show();
+        }
+      },
+    });
+    updateController = manualController;
+    startAutoUpdater({ controller: manualController });
+    return;
+  }
+  if (!shouldAutoUpdate(process.platform, app.isPackaged)) {
     return;
   }
   void import('electron-updater')

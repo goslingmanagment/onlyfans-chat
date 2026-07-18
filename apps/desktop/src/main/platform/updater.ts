@@ -16,6 +16,8 @@
 // import time, so the composition root dynamic-imports it and hands the
 // instance in — tests drive a fake.
 
+import { z } from 'zod';
+
 export function shouldAutoUpdate(platform: string, isPackaged: boolean): boolean {
   return platform === 'win32' && isPackaged;
 }
@@ -41,6 +43,7 @@ export type UpdatePhase =
   | 'available'
   | 'downloading'
   | 'downloaded'
+  | 'manual'
   | 'error';
 
 export interface UpdateStatus {
@@ -129,6 +132,81 @@ export function createUpdateController(options: {
 }
 
 export const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
+
+// ── macOS manual-download flow (D20) ─────────────────────────────────────────
+// Unsigned builds can't use Squirrel.Mac, so mac packaged builds get a
+// notify-only controller: it polls the download page's version-mac.json and,
+// when a newer version exists, reports phase `manual` — the UI offers a
+// Download button and `install()` opens the page instead of installing.
+
+export const MANUAL_DOWNLOAD_PAGE_URL = 'https://ext.gosling-agency.ru/desktop/';
+
+export function shouldNotifyManualUpdate(platform: string, isPackaged: boolean): boolean {
+  return platform === 'darwin' && isPackaged;
+}
+
+const RELEASE_VERSION_RE = /^\d+\.\d+\.\d+$/;
+
+/** Strict stable-semver "candidate is newer" — anything non-parsable is not. */
+export function isNewerVersion(candidate: string, current: string): boolean {
+  if (!RELEASE_VERSION_RE.test(candidate) || !RELEASE_VERSION_RE.test(current)) {
+    return false;
+  }
+  const a = candidate.split('.').map(Number);
+  const b = current.split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) {
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    if (av !== bv) return av > bv;
+  }
+  return false;
+}
+
+const manualManifestSchema = z.object({ version: z.string().regex(RELEASE_VERSION_RE) });
+
+export function createManualUpdateController(options: {
+  currentVersion: string;
+  /** Fetches the page's version-mac.json; the raw value is zod-validated here. */
+  fetchManifest: () => Promise<unknown>;
+  /** The `install()` action: open the download page. */
+  openDownloadPage: () => void;
+  /** Fires once per distinct newer version per app run (the OS notification). */
+  onAvailable?: (version: string) => void;
+}): UpdateController {
+  const { currentVersion, fetchManifest, openDownloadPage, onAvailable } = options;
+  let state: UpdateStatus = IDLE;
+  let notifiedVersion: string | null = null;
+
+  return {
+    status: () => state,
+    check: async () => {
+      state = { phase: 'checking', version: null, percent: null, message: null };
+      try {
+        const manifest = manualManifestSchema.parse(await fetchManifest());
+        if (isNewerVersion(manifest.version, currentVersion)) {
+          state = { phase: 'manual', version: manifest.version, percent: null, message: null };
+          if (notifiedVersion !== manifest.version) {
+            notifiedVersion = manifest.version;
+            onAvailable?.(manifest.version);
+          }
+        } else {
+          state = { phase: 'up-to-date', version: null, percent: null, message: null };
+        }
+      } catch (err) {
+        // Same policy as the win path: the background loop stays silent, the
+        // manual button surfaces this `error` phase.
+        state = {
+          phase: 'error',
+          version: null,
+          percent: null,
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+      return state;
+    },
+    install: () => openDownloadPage(),
+  };
+}
 
 export interface StartAutoUpdaterOptions {
   controller: UpdateController;
