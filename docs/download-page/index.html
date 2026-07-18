@@ -107,6 +107,10 @@
     background: var(--paper-3); border: 1px solid var(--line);
     border-radius: 6px; padding: 1px 6px; white-space: nowrap;
   }
+  .steps code.cmd {
+    display: block; margin: 7px 0; padding: 8px 10px; font-size: 12px;
+    overflow-x: auto; user-select: all; -webkit-user-select: all;
+  }
   .note {
     font-size: 13.5px; color: var(--ink-soft);
     background: var(--clay-tint); border: 1px solid var(--clay-line);
@@ -157,7 +161,7 @@
       <div class="steps">
         <div class="st"><span class="n">1</span><span>Открой DMG, перетащи ChatGoose в «Программы» и <b>закрой окно установщика</b>.</span></div>
         <div class="st"><span class="n">2</span><span>Первый запуск — из папки «Программы» (Finder → Программы), <b>не из окна установщика</b>: <b>правой кнопкой</b> по ChatGoose → <kbd>Открыть</kbd> → «Открыть».</span></div>
-        <div class="st"><span class="n">3</span><span>В окошке нет кнопки «Открыть»? На новых macOS так: <kbd>Системные настройки</kbd> → <kbd>Конфиденциальность и безопасность</kbd> → внизу «"ChatGoose" был заблокирован…» → <kbd>Открыть всё равно</kbd>, подтверди паролем и запусти ещё раз. Это нужно один раз.</span></div>
+        <div class="st"><span class="n">3</span><span>Мак пишет <b>«повреждено» / damaged</b> или в окошке нет кнопки «Открыть»? Приложение целое — это защита macOS от программ без подписи. Открой Терминал (<kbd>⌘</kbd>+<kbd>Пробел</kbd> → «Terminal»), вставь строку целиком, нажми Enter и запусти ChatGoose снова:<code class="cmd">xattr -rd com.apple.quarantine /Applications/ChatGoose.app</code>Это нужно один раз.</span></div>
         <div class="st"><span class="n">4</span><span>Вставь ключ чаттера или войди устройством — данные даст админ.</span></div>
       </div>
       <div class="note"><b>На маке автообновления нет</b> — когда приложение или админ скажет про новую версию, скачай её с этой страницы и переустанови так же.</div>
