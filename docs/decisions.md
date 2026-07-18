@@ -37,6 +37,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D17 | 2026-07-13 | Global personas are a read-only metadata catalog; legacy client data is preserved and exportable |
 | D18 | 2026-07-15 | Notification frames never block the stream cursor; SSE transitions never initiate paid reads; deterministic poison frames trip a breaker |
 | D19 | 2026-07-16 | Hub settings are device-token-first: no key input for humans, bound token suppresses/auto-decommissions quarantined legacy keys, persisted device identity |
+| D20 | 2026-07-18 | Public download page on the ext site: Windows refreshed automatically by feed publication via a server-side symlink (feed token never exposed), macOS published manually via a smoke-gated script |
 
 ## Entries
 
@@ -428,3 +429,18 @@ Phase 2 (full key-path deletion, two-release drain-then-delete order, CI
 fleet gate, extension E9 parity, core service-account split) is outlined in
 `docs/superpowers/specs/2026-07-16-hub-settings-rework-design.md` and stays
 gated on D116(c).
+
+**D20 (2026-07-18).** First installs are distributed from a public download
+page at `https://ext.gosling-agency.ru/desktop/` (static files in
+`/var/www/ext/desktop` on the agency VPS, served by the existing ext vhost).
+Windows: `publish-feed.sh` refreshes a `ChatGoose-Setup-latest.exe` symlink
+into the feed plus `version-win.json` on every publication (including the
+lost-ack retry) — the page never exposes the feed's token URL, and installed
+apps auto-update afterwards, so a slightly stale page is onboarding-only
+damage. macOS: no signing → no auto-update, so the page IS the mac channel;
+`apps/desktop/scripts/publish-mac.sh` (owner-run) builds, mounts and
+`--smoke`-gates the DMG fail-closed, uploads, atomically swaps the `latest`
+symlink + `version-mac.json`, and retains 3 DMGs. The per-platform
+`version-*.json` files are separate so each writer owns its file — no shared
+JSON parse/race, no python dependency on the feed host. Operator doc:
+`docs/RELEASE.md` §Public download page.

@@ -7,6 +7,9 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -95,7 +98,7 @@ describe('Windows release feed policy', () => {
     const stageIndex = script.indexOf('scp "${SSH_OPTIONS[@]}"');
     const recheckIndex = script.indexOf('core_verified=false', stageIndex);
     const publishIndex = script.indexOf(
-      'if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- \'$FEED_DIR\' \'$stage_dir\'"',
+      'if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- \'$FEED_DIR\' \'$stage_dir\' \'$PUBLIC_DL_DIR\'"',
       recheckIndex,
     );
     expect(stageIndex).toBeGreaterThan(-1);
@@ -160,6 +163,58 @@ describe('Windows release feed policy', () => {
     fixture(afterCrash, '1.2.5', 'after crash');
     expect(() => execFileSync('bash', [publisher, feed, afterCrash], { env: publisherEnv })).not.toThrow();
     expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.5');
+  }, 15_000);
+
+  it('refreshes the public download page on publish, on lost-ack retry, and standalone', () => {
+    const root = mkdtempSync(join(tmpdir(), 'chatgoose-feed-public-'));
+    const feed = join(root, 'feed');
+    const publicDir = join(root, 'public');
+    mkdirSync(join(feed, '.incoming'), { recursive: true });
+    mkdirSync(publicDir);
+    fixture(feed, '1.2.3', 'old');
+
+    // Publish with the public dir → the page's symlink and manifest move.
+    const stage = join(feed, '.incoming', 'run-public');
+    mkdirSync(stage);
+    fixture(stage, '1.2.4', 'new bytes');
+    execFileSync('bash', [publisher, feed, stage, publicDir], { env: publisherEnv });
+    const link = join(publicDir, 'ChatGoose-Setup-latest.exe');
+    expect(readFileSync(link, 'utf8')).toBe('new bytes');
+    if (process.platform !== 'win32') {
+      // canonical_dir resolves symlinked tmp roots (macOS /var → /private/var).
+      expect(readlinkSync(link)).toBe(realpathSync(join(feed, 'ChatGoose-Setup-1.2.4.exe')));
+    }
+    expect(JSON.parse(readFileSync(join(publicDir, 'version-win.json'), 'utf8'))).toEqual({
+      version: '1.2.4',
+      size: 9,
+    });
+
+    // A lost-ack equal-version retry must converge a page the original run
+    // never managed to refresh.
+    rmSync(link);
+    rmSync(join(publicDir, 'version-win.json'));
+    const retry = join(feed, '.incoming', 'run-public-retry');
+    mkdirSync(retry);
+    fixture(retry, '1.2.4', 'new bytes');
+    execFileSync('bash', [publisher, feed, retry, publicDir], { env: publisherEnv });
+    expect(readFileSync(link, 'utf8')).toBe('new bytes');
+
+    // Standalone repair mode converges from the current manifest alone.
+    rmSync(link);
+    execFileSync('bash', [publisher, '--refresh-public', feed, publicDir], { env: publisherEnv });
+    expect(readFileSync(link, 'utf8')).toBe('new bytes');
+
+    // A missing public dir rejects the publication before any feed mutation.
+    const bad = join(feed, '.incoming', 'run-bad-public');
+    mkdirSync(bad);
+    fixture(bad, '1.2.5', 'never');
+    const rejected = spawnSync('bash', [publisher, feed, bad, join(root, 'absent')], {
+      env: publisherEnv,
+      encoding: 'utf8',
+    });
+    expect(rejected.status).not.toBe(0);
+    expect(rejected.stderr).toContain('public download directory does not exist');
+    expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.4');
   }, 15_000);
 
   it('dry-runs and applies bounded installer retention while protecting latest.yml and every blockmap', () => {

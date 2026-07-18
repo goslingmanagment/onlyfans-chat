@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ChatGoose Desktop — скачать приложение</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #f6f2ea;
+    --paper-2: #fdfbf6;
+    --paper-3: #f1ebe0;
+    --ink: #2a2016;
+    --ink-soft: #6c5d4d;
+    --ink-faint: #a3947f;
+    --clay: #c4704b;
+    --clay-deep: #a8543a;
+    --clay-tint: rgba(196, 112, 75, 0.10);
+    --clay-line: rgba(196, 112, 75, 0.22);
+    --green: #2f7d5b;
+    --line: rgba(42, 32, 22, 0.10);
+    --serif: "Fraunces", Georgia, "Times New Roman", serif;
+    --sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    --shadow: 0 1px 2px rgba(42, 32, 22, 0.04), 0 8px 28px rgba(42, 32, 22, 0.06);
+    --shadow-lg: 0 2px 6px rgba(42, 32, 22, 0.05), 0 24px 60px rgba(42, 32, 22, 0.12);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    background-color: var(--paper);
+    background-image:
+      radial-gradient(900px 520px at 82% -8%, rgba(196, 112, 75, 0.10), transparent 60%),
+      radial-gradient(800px 520px at -5% 8%, rgba(199, 154, 58, 0.08), transparent 55%);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 28px; }
+  a { color: inherit; text-decoration: none; }
+
+  nav { display: flex; align-items: center; gap: 14px; padding: 26px 0 8px; }
+  .brand { font-family: var(--serif); font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .brand .g { color: var(--clay); }
+  .nav-links { margin-left: auto; }
+  .nav-link {
+    font-size: 14px; color: var(--ink-soft); padding: 8px 14px; border-radius: 999px;
+    transition: background 0.18s, color 0.18s;
+  }
+  .nav-link:hover { color: var(--ink); background: var(--clay-tint); }
+
+  header.hero { padding: 56px 0 40px; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-size: 12.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--clay-deep); background: var(--paper-2);
+    border: 1px solid var(--clay-line); padding: 6px 14px; border-radius: 999px;
+    box-shadow: var(--shadow);
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--clay); box-shadow: 0 0 0 4px var(--clay-tint); }
+  .hero h1 {
+    font-family: var(--serif); font-weight: 600;
+    font-size: clamp(34px, 5.5vw, 54px); line-height: 1.06; letter-spacing: -0.02em;
+    margin: 20px 0 0;
+  }
+  .hero h1 em { font-style: italic; color: var(--clay); }
+  .hero .lede { font-size: 17px; color: var(--ink-soft); margin-top: 16px; max-width: 34em; }
+  .hero .lede b.v { font-family: var(--mono); font-weight: 600; color: var(--green); }
+
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 8px 0 24px; }
+  @media (max-width: 760px) { .cards { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 28px;
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .card h2 {
+    font-family: var(--serif); font-weight: 600; font-size: 24px; letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .os-ic { font-size: 22px; line-height: 1; }
+  .card .meta { font-family: var(--mono); font-size: 12.5px; color: var(--ink-faint); }
+  .btn-primary {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    font-size: 16px; font-weight: 600; color: #fff8f0; background: var(--clay);
+    padding: 14px 24px; border-radius: 14px;
+    box-shadow: 0 6px 20px rgba(196, 112, 75, 0.28);
+    transition: background 0.18s, transform 0.15s;
+  }
+  .btn-primary:hover { background: var(--clay-deep); transform: translateY(-2px); }
+  .steps { display: flex; flex-direction: column; gap: 9px; font-size: 14.5px; color: var(--ink-soft); }
+  .steps .st { display: flex; gap: 10px; }
+  .steps .n {
+    flex: none; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--clay-tint); color: var(--clay-deep);
+    font-size: 12.5px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+    margin-top: 2px;
+  }
+  .steps kbd, .steps code {
+    font-family: var(--mono); font-size: 12.5px;
+    background: var(--paper-3); border: 1px solid var(--line);
+    border-radius: 6px; padding: 1px 6px; white-space: nowrap;
+  }
+  .note {
+    font-size: 13.5px; color: var(--ink-soft);
+    background: var(--clay-tint); border: 1px solid var(--clay-line);
+    border-radius: 12px; padding: 12px 14px;
+  }
+  .note b { color: var(--clay-deep); }
+  .auto { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; color: var(--green); font-weight: 600; }
+  .auto .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+
+  footer { padding: 36px 0 44px; font-size: 13.5px; color: var(--ink-faint); border-top: 1px solid var(--line); margin-top: 32px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="/">Chat<span class="g">Goose</span></a>
+    <div class="nav-links">
+      <a class="nav-link" href="/">Расширение для Fansly</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <span class="eyebrow"><span class="dot"></span>Приложение для команды</span>
+    <h1>ChatGoose <em>Desktop</em></h1>
+    <p class="lede">
+      Рабочее место чаттера для OnlyFans: свой интерфейс чатов и встроенный
+      AI-ассистент. Актуальная версия — <b class="v" id="ver">…</b>.
+    </p>
+  </header>
+
+  <div class="cards">
+    <div class="card">
+      <h2><span class="os-ic">🪟</span>Windows</h2>
+      <div class="meta" id="win-meta">x64 · установщик · ~100 МБ</div>
+      <a class="btn-primary" href="ChatGoose-Setup-latest.exe" download>Скачать для Windows</a>
+      <div class="steps">
+        <div class="st"><span class="n">1</span><span>Запусти скачанный <code>ChatGoose-Setup.exe</code>.</span></div>
+        <div class="st"><span class="n">2</span><span>Если SmartScreen ругается: <kbd>Подробнее</kbd> → <kbd>Выполнить в любом случае</kbd>. Это нормально — сборка пока без подписи.</span></div>
+        <div class="st"><span class="n">3</span><span>Открой приложение, вставь ключ чаттера или войди устройством — данные даст админ.</span></div>
+      </div>
+      <span class="auto"><span class="dot"></span>Дальше обновляется само</span>
+    </div>
+
+    <div class="card">
+      <h2><span class="os-ic">🍎</span>macOS</h2>
+      <div class="meta" id="mac-meta">Apple Silicon (M1–M4) · DMG</div>
+      <a class="btn-primary" href="ChatGoose-latest-mac-arm64.dmg" download>Скачать для macOS</a>
+      <div class="steps">
+        <div class="st"><span class="n">1</span><span>Открой DMG и перетащи ChatGoose в «Программы».</span></div>
+        <div class="st"><span class="n">2</span><span>Первый запуск — <b>правой кнопкой</b> по значку → <kbd>Открыть</kbd> → «Открыть». Дальше запускается как обычно.</span></div>
+        <div class="st"><span class="n">3</span><span>Вставь ключ чаттера или войди устройством — данные даст админ.</span></div>
+      </div>
+      <div class="note"><b>На маке автообновления нет</b> — когда админ скажет про новую версию, скачай её с этой страницы ещё раз.</div>
+    </div>
+  </div>
+
+  <footer>
+    Сборки не подписаны сертификатами — скачивай их только с этой страницы.
+    Вопросы — админу в Telegram.
+  </footer>
+</div>
+<script>
+  // Each platform's manifest is written independently by its own publisher
+  // (publish-feed.sh → version-win.json, publish-mac.sh → version-mac.json).
+  var mb = function (n) { return Math.round(n / 1048576); };
+  fetch('version-win.json', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (v) {
+      document.getElementById('ver').textContent = v.version;
+      document.getElementById('win-meta').textContent =
+        'x64 · установщик · v' + v.version + ' · ' + mb(v.size) + ' МБ';
+    })
+    .catch(function () { document.getElementById('ver').textContent = 'на сервере'; });
+  fetch('version-mac.json', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (v) {
+      document.getElementById('mac-meta').textContent =
+        'Apple Silicon (M1–M4) · DMG · v' + v.version + ' · ' + mb(v.size) + ' МБ';
+    })
+    .catch(function () {});
+</script>
+</body>
+</html>
