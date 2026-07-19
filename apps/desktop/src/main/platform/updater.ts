@@ -1,13 +1,14 @@
 // Auto-update policy + controller (PLAN item 11 follow-up, owner request
 // 2026-06-13; manual "check now" button added same day).
 //
-// Windows packaged builds only: macOS refuses to apply updates to unsigned
-// apps (Squirrel.Mac hard requirement) and the owner runs the dev build there
-// anyway. Background by default — download silently, install on quit, NEVER a
-// surprise restart mid-shift; a failed check (offline shift, feed unreachable)
-// is silent. The feed is electron-updater's generic provider over HTTPS
-// (electron-builder.yml `publish`; ops in docs/RELEASE.md) — builds are
-// unsigned, so the feed host being ours IS the trust anchor.
+// Packaged Windows builds self-update: download silently, install on quit,
+// NEVER a surprise restart mid-shift. Packaged macOS builds are unsigned, so
+// Squirrel.Mac cannot apply an update; they poll the public manifest and open
+// its manual download page instead. A failed background check (offline shift,
+// feed unreachable) is silent. The Windows feed is electron-updater's generic
+// provider over HTTPS (electron-builder.yml `publish`; ops in
+// docs/RELEASE.md) — builds are unsigned, so the feed host being ours IS the
+// trust anchor.
 //
 // The manual Settings button drives the same controller: check → (if found)
 // download → "Restart & install". Both paths share createUpdateController.
@@ -133,7 +134,7 @@ export function createUpdateController(options: {
 
 export const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
-// ── macOS manual-download flow (D20) ─────────────────────────────────────────
+// ── macOS manual-download flow (D21) ─────────────────────────────────────────
 // Unsigned builds can't use Squirrel.Mac, so mac packaged builds get a
 // notify-only controller: it polls the download page's version-mac.json and,
 // when a newer version exists, reports phase `manual` — the UI offers a

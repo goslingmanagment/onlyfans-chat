@@ -440,8 +440,14 @@ lost-ack retry) — the page never exposes the feed's token URL, and installed
 apps auto-update afterwards, so a slightly stale page is onboarding-only
 damage. macOS: no signing → no auto-update, so the page IS the mac channel;
 `apps/desktop/scripts/publish-mac.sh` (owner-run) builds, mounts and
-`--smoke`-gates the DMG fail-closed, uploads, atomically swaps the `latest`
-symlink + `version-mac.json`, and retains 3 DMGs. The per-platform
+`--smoke`-gates the DMG fail-closed from a clean exact release tag, then hands
+the uniquely staged artifact to a locked server-side publisher. That publisher
+rejects downgrades and conflicting same-version bytes, atomically replaces each
+of the `latest` symlink and `version-mac.json`, and retains 3 DMGs without
+deleting the selected artifact; the client verifies exact metadata plus the
+full served SHA-512. JSON is authoritative and the page links its immutable
+versioned artifact directly; a later locked run repairs a lagging `latest`
+symlink after a process death. The per-platform
 `version-*.json` files are separate so each writer owns its file — no shared
 JSON parse/race, no python dependency on the feed host. Operator doc:
 `docs/RELEASE.md` §Public download page.
@@ -457,3 +463,7 @@ electron-updater refuses unsigned builds (Squirrel.Mac), and a DIY
 self-replacing updater is the 0.1.30 DOA risk class for zero fleet (mac ≈
 owner). Failed checks surface only through the manual button (`error` phase),
 same policy as the win path. Extends D20.
+
+Bootstrap caveat: deployed v0.1.47 predates this controller, so the first
+D21-enabled DMG must be distributed manually; notify-only discovery works only
+after users have installed that build.

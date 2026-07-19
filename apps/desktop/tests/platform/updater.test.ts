@@ -152,7 +152,7 @@ describe('startAutoUpdater', () => {
   });
 });
 
-describe('macOS manual-download flow (D20)', () => {
+describe('macOS manual-download flow (D21)', () => {
   it('gates on darwin packaged only', () => {
     expect(shouldNotifyManualUpdate('darwin', true)).toBe(true);
     expect(shouldNotifyManualUpdate('darwin', false)).toBe(false); // dev

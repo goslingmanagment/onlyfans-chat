@@ -13,8 +13,6 @@ const APP_DIR =
   process.env.CHATGOOSE_APP_DIR ??
   path.resolve(import.meta.dirname, '../../../apps/desktop');
 const RUN_DIR = path.join(tmpdir(), 'chatgoose-run');
-const SHOT_DIR = process.env.SCREENSHOT_DIR ?? path.join(RUN_DIR, 'shots');
-fs.mkdirSync(SHOT_DIR, { recursive: true });
 fs.mkdirSync(RUN_DIR, { recursive: true });
 // Fresh temp profile per driver process: parallel worktrees can't collide on
 // the app's single-instance lock, and nothing (e.g. a hub key someone typed
@@ -24,6 +22,14 @@ fs.mkdirSync(RUN_DIR, { recursive: true });
 const PROFILE = process.env.CHATGOOSE_RUN_PROFILE ?? fs.mkdtempSync(path.join(RUN_DIR, 'profile-'));
 const PROFILE_IS_TEMP = !process.env.CHATGOOSE_RUN_PROFILE;
 fs.mkdirSync(PROFILE, { recursive: true });
+// Keep screenshots isolated too: parallel drivers frequently reuse simple
+// names such as `landing`, and a shared directory would silently overwrite
+// another run's evidence. An explicit SCREENSHOT_DIR remains an opt-in shared
+// destination for callers that need one.
+const SHOT_DIR =
+  process.env.SCREENSHOT_DIR ??
+  path.join(RUN_DIR, 'shots', `${path.basename(PROFILE)}-${process.pid}-${Date.now()}`);
+fs.mkdirSync(SHOT_DIR, { recursive: true });
 
 const electronBin =
   process.platform === 'darwin'
@@ -43,7 +49,10 @@ let closing = Promise.resolve();
 // output. Inputs cover packages/shared too (electron.vite aliases it in);
 // outputs cover all three bundles so a half-failed build still warns.
 function newestMtime(dir) {
-  let newest = 0;
+  // A deletion changes the containing directory's mtime even though the
+  // removed file can no longer be statted. Include every traversed directory
+  // so deletions invalidate the build just like edits and additions do.
+  let newest = fs.statSync(dir).mtimeMs;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, entry.name);
     const m = entry.isDirectory() ? newestMtime(p) : fs.statSync(p).mtimeMs;
