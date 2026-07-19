@@ -560,7 +560,7 @@ export interface HarvestIdentityVM {
 
 /** Auto-update state for Settings → Updates (PLAN item 11; main/platform/updater.ts).
  *  `manual` = a newer version exists but this platform can't self-install
- *  (macOS packaged, unsigned — D20): the install action opens the download
+ *  (macOS packaged, unsigned — D21): the install action opens the download
  *  page instead. `unsupported` = dev / other non-updating builds. */
 export type UpdatePhaseVM =
   | 'unsupported'
@@ -573,7 +573,12 @@ export type UpdatePhaseVM =
   | 'manual'
   | 'error';
 
+/** Platform capability, independent of the current check/result phase. */
+export type UpdateModeVM = 'unsupported' | 'automatic' | 'manual';
+
 export interface UpdateStatusVM {
+  /** Windows installs automatically; macOS only opens the manual download. */
+  mode: UpdateModeVM;
   phase: UpdatePhaseVM;
   /** Target version (available / downloaded); null otherwise. */
   version: string | null;

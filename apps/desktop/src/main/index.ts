@@ -138,7 +138,11 @@ import {
   subscribeSettingsScope,
   validateThenReconcileOnBoot,
 } from './runtime-activation';
-import type { UnreadReconcileSettingsVM, UpdateStatusVM } from '../preload/contract';
+import type {
+  UnreadReconcileSettingsVM,
+  UpdateModeVM,
+  UpdateStatusVM,
+} from '../preload/contract';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 
@@ -178,9 +182,10 @@ let disposeRuntimeSettingsWatcher: (() => void) | null = null;
 let disposeRuntimeCreditMeter: (() => void) | null = null;
 const ofapiRuntimeMutations = createRuntimeMutationQueue();
 let cancelRuntimeRetries: (() => void) | null = null;
-/** Set once electron-updater is dynamic-imported (win32 packaged only); null
- *  everywhere else — the IPC layer then reports phase 'unsupported'. */
+/** Set once a packaged Windows/macOS updater controller is ready; null in dev
+ *  and on unsupported platforms. */
 let updateController: UpdateController | null = null;
+let updateMode: UpdateModeVM = 'unsupported';
 /** Set by initOfapi; lets cmd:settings.update trigger a hub-config recheck. */
 let recheckHubConfig: (() => Promise<void>) | null = null;
 /** I116-2 (W4.1): boot-time runtime activation failed AUTH (CG-HUB-01).
@@ -263,14 +268,20 @@ function windowBackgroundColor(): string {
   return nativeTheme.shouldUseDarkColors ? WINDOW_BG.dark : WINDOW_BG.light;
 }
 
-/** Stamp the running app version onto a controller snapshot (or report
- *  `unsupported` when there is no controller — macOS / dev). */
+/** Stamp platform capability + running version onto a controller snapshot. */
 function updateStatusVM(status: ReturnType<UpdateController['status']> | null): UpdateStatusVM {
   const currentVersion = app.getVersion();
   if (status === null) {
-    return { phase: 'unsupported', version: null, percent: null, message: null, currentVersion };
+    return {
+      mode: 'unsupported',
+      phase: 'unsupported',
+      version: null,
+      percent: null,
+      message: null,
+      currentVersion,
+    };
   }
-  return { ...status, currentVersion };
+  return { ...status, mode: updateMode, currentVersion };
 }
 
 function flushLogger(): Promise<void> {
@@ -300,7 +311,7 @@ function startPackagedAutoUpdater(): void {
     return;
   }
   // macOS packaged builds can't self-install (unsigned — Squirrel.Mac refuses),
-  // so they get the notify-only controller (D20): poll the download page's
+  // so they get the notify-only controller (D21): poll the download page's
   // version-mac.json, report phase `manual`, and `install()` opens the page.
   if (shouldNotifyManualUpdate(process.platform, app.isPackaged)) {
     const manualController = createManualUpdateController({
@@ -327,6 +338,7 @@ function startPackagedAutoUpdater(): void {
         }
       },
     });
+    updateMode = 'manual';
     updateController = manualController;
     startAutoUpdater({ controller: manualController });
     return;
@@ -358,6 +370,7 @@ function startPackagedAutoUpdater(): void {
           }
         },
       });
+      updateMode = 'automatic';
       startAutoUpdater({ controller: updateController });
     })
     .catch((error: unknown) => {
@@ -1120,8 +1133,6 @@ async function boot(): Promise<void> {
     logger?.error('process', 'unhandledRejection', errorToFields(reason));
     void flushLogger();
   });
-  startPackagedAutoUpdater();
-
   const keychain = createKeychain({
     safeStorage,
     secretsDir: join(userData, 'secrets'),
@@ -1317,6 +1328,9 @@ async function boot(): Promise<void> {
     }
   };
   await refreshUiPrefs();
+  // The launch check may synchronously produce a one-shot native notification;
+  // start only after the persisted locale is available.
+  startPackagedAutoUpdater();
   // Covers OS scheme flips while uiTheme='system' (no settings write involved).
   nativeTheme.on('updated', () => {
     if (mainWindow !== null && !mainWindow.isDestroyed()) {

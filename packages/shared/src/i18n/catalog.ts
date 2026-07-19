@@ -931,7 +931,7 @@ export const UI_MESSAGES = {
     en: 'ChatGoose {version} will install when you quit the app.',
     ru: 'ChatGoose {version} установится при выходе из приложения.',
   },
-  // macOS manual-download flow (D20): no self-install, the click opens the page.
+  // macOS manual-download flow (D21): no self-install, the click opens the page.
   'notif.updateManualTitle': { en: 'Update available', ru: 'Вышло обновление' },
   'notif.updateManualBody': {
     en: 'ChatGoose {version} is out — click to open the download page.',
@@ -943,6 +943,10 @@ export const UI_MESSAGES = {
   'update.hint': {
     en: 'The app updates itself in the background and installs when you quit; check here to update right now.',
     ru: 'Приложение обновляется само в фоне и ставит обновление при выходе; здесь можно обновиться прямо сейчас.',
+  },
+  'update.manualHint': {
+    en: 'The app checks for new versions in the background; on macOS, download and reinstall updates manually.',
+    ru: 'Приложение проверяет новые версии в фоне; на macOS обновление нужно скачать и установить вручную.',
   },
   'update.current': { en: 'Current version {version}', ru: 'Текущая версия {version}' },
   'update.check': { en: 'Check for updates', ru: 'Проверить обновления' },
@@ -966,7 +970,7 @@ export const UI_MESSAGES = {
     en: 'Auto-update runs in the installed Windows app.',
     ru: 'Автообновление работает в установленном приложении на Windows.',
   },
-  // macOS manual-download flow (D20)
+  // macOS manual-download flow (D21)
   'update.manualAvailable': {
     en: 'Version {version} is out — download it and reinstall (drag into Applications).',
     ru: 'Вышла версия {version} — скачайте и переустановите (перетащите в «Программы»).',

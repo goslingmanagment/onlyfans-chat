@@ -1084,6 +1084,7 @@ export function createMockBridge(): ChatGooseBridge {
   // status poll) → downloaded → install resets to up-to-date. Lets the owner
   // see the full flow in plain-vite dev where no electron-updater exists.
   let mockUpdate: UpdateStatusVM = {
+    mode: 'automatic',
     phase: 'idle',
     version: null,
     percent: null,
@@ -1370,6 +1371,7 @@ export function createMockBridge(): ChatGooseBridge {
     'cmd:updates.check': () => {
       // Pretend a newer build exists and start the download.
       mockUpdate = {
+        mode: 'automatic',
         phase: 'downloading',
         version: '0.0.2',
         percent: 0,
@@ -1380,6 +1382,7 @@ export function createMockBridge(): ChatGooseBridge {
     },
     'cmd:updates.install': () => {
       mockUpdate = {
+        mode: 'automatic',
         phase: 'up-to-date',
         version: null,
         percent: null,

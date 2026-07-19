@@ -28,12 +28,9 @@
 
 Owner stopped the review loop after 5 non-converging rounds (blockers
 3→2→1→3→3, each round new ones; round-5 P1 about `CHATGOOSE_RUN_PROFILE`
-contradicts round-4's own fix demand to add that opt-in). Deferred nits:
+contradicts round-4's own fix demand to add that opt-in).
 
-- **driver stale-check misses deletions**: `newestMtime` stats files and
-  recurses dirs but ignores each directory's own mtime, so deleting a src
-  file doesn't flag the build stale. Include dir mtimes in the max.
-- **parallel runs share the shots dir**: two drivers using the same `ss
-  name` overwrite each other's PNG in `$TMPDIR/chatgoose-run/shots/`.
-  Default shots into a per-run subdir (like the per-run profile) or
-  prefix files with the run id.
+Resolved 2026-07-19: the stale check now includes directory mtimes (so source
+deletions invalidate `out/`), and each driver defaults to a process-specific
+screenshot directory derived from its isolated profile. Explicit shared
+`SCREENSHOT_DIR` remains available as an opt-in.

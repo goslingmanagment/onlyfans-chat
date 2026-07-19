@@ -96,22 +96,34 @@ packaged smoke run caught as a failed `dbKey` decrypt (different binary ⇒
 Keychain/DPAPI refuses). Dev keeps the historical dir; packaged installs start
 clean.
 
-## Auto-update (Windows only; built 2026-06-13)
+## Update checks (Windows automatic, macOS manual)
 
 Installed Windows apps update themselves: `electron-updater` checks the feed at
 launch and every 4 h, downloads in the background, installs **on quit** (never
 prompts mid-shift; a quiet "installs when you quit" toast is the only signal).
-Policy lives in `src/main/platform/updater.ts`; macOS has no auto-update —
-unsigned builds can't (Squirrel.Mac requirement), and the mac side runs dev.
+Policy lives in `src/main/platform/updater.ts`.
+
+Packaged macOS builds cannot self-install because the app is unsigned
+(Squirrel.Mac requirement). They instead poll the public page's
+`version-mac.json` at launch and every 4 h. A newer stable version produces a
+native notification and a **Download** action in Settings → Updates; the user
+then reinstalls from the DMG. Development and other unsupported builds do not
+contact an update feed.
 
 **Manual control — Settings → Updates (added 2026-06-13):** a "Check for
 updates" button drives the same controller on demand (`createUpdateController`
 + the `query:updates.status` / `cmd:updates.check` / `cmd:updates.install`
-IPC). It shows live download progress and, once a build is downloaded, a
-**Restart & install** button (`quitAndInstall`). Off win32-packaged builds the
-section renders an "auto-update runs in the installed Windows app" note (phase
-`unsupported`); in plain-vite dev the mock bridge simulates the whole
-check → download → install flow so the UX is demoable without a real feed.
+IPC). On Windows it shows live download progress and, once a build is
+downloaded, a **Restart & install** button (`quitAndInstall`). On packaged
+macOS it reports a newer version as `manual` and opens the public download page.
+Unsupported builds render the unsupported note; in plain-vite dev the mock
+bridge simulates the Windows check → download → install flow so the UX is
+demoable without a real feed.
+
+> **macOS bootstrap:** deployed v0.1.47 predates the notify-only D21 client.
+> Distribute the first D21-enabled DMG out of band and have mac users install it
+> manually. Only that build and later ones can discover subsequent releases
+> through `version-mac.json`.
 
 **Release ritual:**
 
@@ -222,10 +234,18 @@ serves the whole dir; no separate config). It offers both platforms:
   plus a Download button in Settings → Updates — publishing a mac DMG is what
   makes that fire. After a release mac users should get, run
   `apps/desktop/scripts/publish-mac.sh` from the repo root on the owner's Mac:
-  it builds (`--skip-build` to reuse an existing DMG), mounts the DMG and runs
-  the packaged `--smoke` gate fail-closed, uploads the versioned DMG,
-  atomically swaps `ChatGoose-latest-mac-arm64.dmg` + `version-mac.json`,
-  keeps the newest 3 DMGs, and postchecks over HTTPS.
+  it requires a clean checkout at the exact local `v<version>` tag, builds
+  (or `--skip-build` to reuse only the byte-identical DMG plus provenance
+  record created by an earlier safe run), mounts the DMG at a unique temporary
+  mountpoint, and runs the packaged `--smoke` gate fail-closed. It
+  uploads a uniquely staged DMG and invokes a locked server-side publisher
+  that rejects downgrades and conflicting same-version bytes, atomically
+  replaces each public pointer, and retains 3 versioned DMGs without deleting
+  the selected artifact. The local script then postchecks the exact JSON and
+  the full served DMG SHA-512 over HTTPS. The symlink and JSON replacements are
+  individually atomic: JSON is authoritative and moves first, and the page
+  derives its download href from JSON's immutable versioned artifact. A later
+  run repairs a lagging symlink from that validated JSON after a process death.
 
 The two `version-*.json` files are deliberately separate — each writer owns
 its file outright, so no shared JSON is ever parsed or raced on. The page

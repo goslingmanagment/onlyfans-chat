@@ -50,7 +50,9 @@ sleep 2; tmux capture-pane -t "$S" -p | grep screenshot
 tmux send-keys -t "$S" 'quit' Enter; sleep 2; tmux kill-session -t "$S" 2>/dev/null || true
 ```
 
-Screenshots → `$TMPDIR/chatgoose-run/shots/` (override: `SCREENSHOT_DIR`).
+Screenshots → a fresh per-run subdirectory under
+`$TMPDIR/chatgoose-run/shots/` (exact path printed at startup; override:
+`SCREENSHOT_DIR`).
 Profile → a fresh temp dir per driver run (path printed at startup;
 auto-removed on `quit`). Set `CHATGOOSE_RUN_PROFILE` to reuse one
 deliberately. App dir override: `CHATGOOSE_APP_DIR`; a stale build

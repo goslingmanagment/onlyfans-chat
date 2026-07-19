@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -10,6 +10,8 @@ import {
   readlinkSync,
   realpathSync,
   rmSync,
+  symlinkSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -23,10 +25,18 @@ const ciGate = resolve(repoRoot, 'apps/desktop/scripts/assert-ci-success.mjs');
 const kernelGate = resolve(repoRoot, 'apps/desktop/scripts/assert-kernel-capabilities.mjs');
 const releaseSdkGate = resolve(repoRoot, 'apps/desktop/scripts/assert-release-sdk-vendor.mjs');
 const publisher = resolve(repoRoot, 'apps/desktop/scripts/publish-feed.sh');
+const macPublisher = resolve(repoRoot, 'apps/desktop/scripts/publish-mac.sh');
+const macRemotePublisher = resolve(repoRoot, 'apps/desktop/scripts/publish-mac-remote.sh');
+const downloadPage = resolve(repoRoot, 'docs/download-page/index.html');
 const publisherEnv = {
   ...process.env,
   CHATGOOSE_ALLOW_PORTABLE_LOCK_FALLBACK: '1',
   CHATGOOSE_FEED_MIN_FREE_KIB: '0',
+};
+const macPublisherEnv = {
+  ...process.env,
+  CHATGOOSE_ALLOW_PORTABLE_LOCK_FALLBACK: '1',
+  CHATGOOSE_SKIP_PUBLIC_CHOWN: '1',
 };
 
 function fixture(dir: string, version: string, body: string): { manifest: string; artifact: string; sha: string } {
@@ -38,6 +48,45 @@ function fixture(dir: string, version: string, body: string): { manifest: string
   const manifest = join(dir, 'latest.yml');
   writeFileSync(manifest, `version: ${version}\npath: ${artifactName}\nsha512: ${sha}\n`);
   return { manifest, artifact, sha };
+}
+
+function macStage(
+  publicDir: string,
+  version: string,
+  body: string,
+  runId: string,
+): { stageName: string; sha: string; size: number } {
+  const stageName = `.upload-ChatGoose-${version}-mac-arm64.dmg.${runId}.tmp`;
+  writeFileSync(join(publicDir, stageName), body);
+  return {
+    stageName,
+    sha: createHash('sha512').update(body).digest('base64'),
+    size: Buffer.byteLength(body),
+  };
+}
+
+function runMacRemotePublisher(
+  publicDir: string,
+  version: string,
+  body: string,
+  runId: string,
+  keep = 3,
+): SpawnSyncReturns<string> {
+  const staged = macStage(publicDir, version, body, runId);
+  return spawnSync(
+    'bash',
+    [
+      macRemotePublisher,
+      publicDir,
+      staged.stageName,
+      version,
+      staged.sha,
+      String(staged.size),
+      'cgupdates',
+      String(keep),
+    ],
+    { env: macPublisherEnv, encoding: 'utf8' },
+  );
 }
 
 function workflowRunScript(stepName: string): string {
@@ -216,6 +265,106 @@ describe('Windows release feed policy', () => {
     expect(rejected.stderr).toContain('public download directory does not exist');
     expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.4');
   }, 15_000);
+
+  it('fails loudly when the public download destination cannot be replaced', () => {
+    const root = mkdtempSync(join(tmpdir(), 'chatgoose-feed-public-failure-'));
+    const feed = join(root, 'feed');
+    const publicDir = join(root, 'public');
+    mkdirSync(join(feed, '.incoming'), { recursive: true });
+    mkdirSync(publicDir);
+    fixture(feed, '1.2.3', 'old');
+
+    // A directory at the public filename models an invalid/undeletable target.
+    // The feed switch has already committed when refresh_public runs, so the
+    // publisher must return non-zero instead of masking the page failure.
+    mkdirSync(join(publicDir, 'ChatGoose-Setup-latest.exe'));
+    const stage = join(feed, '.incoming', 'run-public-failure');
+    mkdirSync(stage);
+    fixture(stage, '1.2.4', 'new');
+    const result = spawnSync('bash', [publisher, feed, stage, publicDir], {
+      env: publisherEnv,
+      encoding: 'utf8',
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('destination path is a directory');
+    expect(result.stderr).toContain('public download refresh FAILED');
+    expect(readFileSync(join(feed, 'latest.yml'), 'utf8')).toContain('version: 1.2.4');
+    expect(existsSync(join(publicDir, 'version-win.json'))).toBe(false);
+    const source = readNormalized(publisher);
+    expect(source).toContain('ln -sfn "$feed_dir/$artifact" "$link_tmp" || return 1');
+    expect(source).toContain('mv -f "$json_tmp" "$public_dir/version-win.json" || return 1');
+  }, 15_000);
+
+  it('publishes mac releases monotonically, idempotently, and with protected retention', () => {
+    const publicDir = mkdtempSync(join(tmpdir(), 'chatgoose-mac-public-'));
+
+    const first = runMacRemotePublisher(publicDir, '1.2.3', 'mac-1.2.3', 'first');
+    expect(first.status, first.stderr).toBe(0);
+    expect(readlinkSync(join(publicDir, 'ChatGoose-latest-mac-arm64.dmg'))).toBe(
+      'ChatGoose-1.2.3-mac-arm64.dmg',
+    );
+    expect(JSON.parse(readFileSync(join(publicDir, 'version-mac.json'), 'utf8'))).toEqual({
+      version: '1.2.3',
+      size: 9,
+    });
+
+    // JSON is authoritative if the process dies between its rename and the
+    // stable-link rename. A retry must repair that lagging link before treating
+    // the byte-identical release as an idempotent success.
+    unlinkSync(join(publicDir, 'ChatGoose-latest-mac-arm64.dmg'));
+    symlinkSync('ChatGoose-0.0.1-mac-arm64.dmg', join(publicDir, 'ChatGoose-latest-mac-arm64.dmg'));
+    const retry = runMacRemotePublisher(publicDir, '1.2.3', 'mac-1.2.3', 'retry');
+    expect(retry.status, retry.stderr).toBe(0);
+    expect(retry.stdout).toContain('repaired latest mac link');
+    expect(retry.stdout).toContain('already published');
+    expect(readlinkSync(join(publicDir, 'ChatGoose-latest-mac-arm64.dmg'))).toBe(
+      'ChatGoose-1.2.3-mac-arm64.dmg',
+    );
+
+    const conflicting = runMacRemotePublisher(publicDir, '1.2.3', 'different', 'conflict');
+    expect(conflicting.status).not.toBe(0);
+    expect(conflicting.stderr).toContain('conflicting equal-version');
+    expect(readFileSync(join(publicDir, 'ChatGoose-1.2.3-mac-arm64.dmg'), 'utf8')).toBe(
+      'mac-1.2.3',
+    );
+
+    const downgrade = runMacRemotePublisher(publicDir, '1.2.2', 'mac-1.2.2', 'downgrade');
+    expect(downgrade.status).not.toBe(0);
+    expect(downgrade.stderr).toContain('refusing mac downgrade');
+
+    for (const version of ['1.2.4', '1.2.5', '1.2.6']) {
+      const result = runMacRemotePublisher(publicDir, version, `mac-${version}`, version);
+      expect(result.status, result.stderr).toBe(0);
+    }
+    expect(readlinkSync(join(publicDir, 'ChatGoose-latest-mac-arm64.dmg'))).toBe(
+      'ChatGoose-1.2.6-mac-arm64.dmg',
+    );
+    expect(
+      readdirSync(publicDir)
+        .filter((name) => /^ChatGoose-\d+\.\d+\.\d+-mac-arm64\.dmg$/.test(name))
+        .sort(),
+    ).toEqual([
+      'ChatGoose-1.2.4-mac-arm64.dmg',
+      'ChatGoose-1.2.5-mac-arm64.dmg',
+      'ChatGoose-1.2.6-mac-arm64.dmg',
+    ]);
+  }, 15_000);
+
+  it('gates local mac publication on an exact clean tag and an exact served hash', () => {
+    const source = readNormalized(macPublisher);
+    const page = readNormalized(downloadPage);
+    expect(source).toContain('git status --porcelain');
+    expect(source).toContain('refs/tags/$expected_tag^{commit}');
+    expect(source).toContain('DMG lacks matching clean-tag provenance');
+    expect(source).toContain('-mountpoint "$mount_dir"');
+    expect(source).not.toContain('volume="/Volumes/ChatGoose');
+    expect(source).toContain('publish-mac-remote.sh');
+    expect(source).toContain('--range 0-0 --output /dev/null "$PUBLIC_URL/$dmg_name"');
+    expect(source).toContain('served_sha=$(curl');
+    expect(source).toContain('if [[ "$served_sha" != "$sha512" ]]');
+    expect(page).toContain("'ChatGoose-' + v.version + '-mac-arm64.dmg'");
+  });
 
   it('dry-runs and applies bounded installer retention while protecting latest.yml and every blockmap', () => {
     const root = mkdtempSync(join(tmpdir(), 'chatgoose-feed-retention-'));

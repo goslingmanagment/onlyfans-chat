@@ -188,21 +188,29 @@ installer_version() {
 # here must be loud (stale page) but cannot corrupt the feed.
 refresh_public() {
   local version artifact size link_tmp json_tmp
-  version=$(awk '/^version:/ { print $2; exit }' "$feed_dir/latest.yml" | tr -d '\r')
-  artifact=$(awk '/^path:/ { print $2; exit }' "$feed_dir/latest.yml" | tr -d '\r')
+  # Do not rely on `set -e` here. The normal publication path calls this
+  # function from an `if ! refresh_public` condition so it can print a targeted
+  # repair message; Bash disables errexit inside functions used as conditions.
+  # Every operation therefore propagates failure explicitly.
+  version=$(awk '/^version:/ { print $2; exit }' "$feed_dir/latest.yml" | tr -d '\r') || return 1
+  artifact=$(awk '/^path:/ { print $2; exit }' "$feed_dir/latest.yml" | tr -d '\r') || return 1
   if [[ ! -f "$feed_dir/$artifact" ]]; then
     echo "refresh-public: latest.yml references a missing installer: $artifact" >&2
     return 1
   fi
-  size=$(wc -c < "$feed_dir/$artifact" | tr -d '[:space:]')
-  rm -f "$public_dir"/.ChatGoose-Setup-latest.exe.*.tmp "$public_dir"/.version-win.json.*.tmp
+  if [[ -d "$public_dir/ChatGoose-Setup-latest.exe" || -d "$public_dir/version-win.json" ]]; then
+    echo "refresh-public: destination path is a directory" >&2
+    return 1
+  fi
+  size=$(wc -c < "$feed_dir/$artifact" | tr -d '[:space:]') || return 1
+  rm -f "$public_dir"/.ChatGoose-Setup-latest.exe.*.tmp "$public_dir"/.version-win.json.*.tmp || return 1
   link_tmp="$public_dir/.ChatGoose-Setup-latest.exe.$$.tmp"
-  ln -sfn "$feed_dir/$artifact" "$link_tmp"
-  mv -f "$link_tmp" "$public_dir/ChatGoose-Setup-latest.exe"
+  ln -sfn "$feed_dir/$artifact" "$link_tmp" || return 1
+  mv -f "$link_tmp" "$public_dir/ChatGoose-Setup-latest.exe" || return 1
   json_tmp="$public_dir/.version-win.json.$$.tmp"
-  printf '{"version":"%s","size":%s}\n' "$version" "$size" > "$json_tmp"
-  mv -f "$json_tmp" "$public_dir/version-win.json"
-  echo "public download refreshed dir=$public_dir version=$version"
+  printf '{"version":"%s","size":%s}\n' "$version" "$size" > "$json_tmp" || return 1
+  mv -f "$json_tmp" "$public_dir/version-win.json" || return 1
+  echo "public download refreshed dir=$public_dir version=$version" || return 1
 }
 
 # Keep the installer referenced by latest.yml plus the newest remaining stable

@@ -149,7 +149,7 @@
       <div class="steps">
         <div class="st"><span class="n">1</span><span>Запусти скачанный <code>ChatGoose-Setup.exe</code>.</span></div>
         <div class="st"><span class="n">2</span><span>Если SmartScreen ругается: <kbd>Подробнее</kbd> → <kbd>Выполнить в любом случае</kbd>. Это нормально — сборка пока без подписи.</span></div>
-        <div class="st"><span class="n">3</span><span>Открой приложение, вставь ключ чаттера или войди устройством — данные даст админ.</span></div>
+        <div class="st"><span class="n">3</span><span>Открой приложение и войди устройством: логин и пароль даст админ.</span></div>
       </div>
       <span class="auto"><span class="dot"></span>Дальше обновляется само</span>
     </div>
@@ -157,12 +157,12 @@
     <div class="card">
       <h2><span class="os-ic">🍎</span>macOS</h2>
       <div class="meta" id="mac-meta">Apple Silicon (M1–M4) · DMG</div>
-      <a class="btn-primary" href="ChatGoose-latest-mac-arm64.dmg" download>Скачать для macOS</a>
+      <a class="btn-primary" id="mac-download" href="ChatGoose-latest-mac-arm64.dmg" download>Скачать для macOS</a>
       <div class="steps">
         <div class="st"><span class="n">1</span><span>Открой DMG, перетащи ChatGoose в «Программы» и <b>закрой окно установщика</b>.</span></div>
         <div class="st"><span class="n">2</span><span>Первый запуск — из папки «Программы» (Finder → Программы), <b>не из окна установщика</b>: <b>правой кнопкой</b> по ChatGoose → <kbd>Открыть</kbd> → «Открыть».</span></div>
         <div class="st"><span class="n">3</span><span>Мак пишет <b>«повреждено» / damaged</b> или в окошке нет кнопки «Открыть»? Приложение целое — это защита macOS от программ без подписи. Открой Терминал (<kbd>⌘</kbd>+<kbd>Пробел</kbd> → «Terminal»), вставь строку целиком, нажми Enter и запусти ChatGoose снова:<code class="cmd">xattr -rd com.apple.quarantine /Applications/ChatGoose.app</code>Это нужно один раз.</span></div>
-        <div class="st"><span class="n">4</span><span>Вставь ключ чаттера или войди устройством — данные даст админ.</span></div>
+        <div class="st"><span class="n">4</span><span>Войди устройством: логин и пароль даст админ.</span></div>
       </div>
       <div class="note"><b>На маке автообновления нет</b> — когда приложение или админ скажет про новую версию, скачай её с этой страницы и переустанови так же.</div>
     </div>
@@ -190,6 +190,13 @@
     .then(function (v) {
       document.getElementById('mac-meta').textContent =
         'Apple Silicon (M1–M4) · DMG · v' + v.version + ' · ' + mb(v.size) + ' МБ';
+      // The JSON is the mac channel authority. Point at its immutable artifact
+      // directly so even a crash between the JSON and latest-symlink renames
+      // cannot pair displayed metadata with different bytes.
+      if (/^[0-9]+\.[0-9]+\.[0-9]+$/.test(v.version)) {
+        document.getElementById('mac-download').href =
+          'ChatGoose-' + v.version + '-mac-arm64.dmg';
+      }
     })
     .catch(function () {});
 </script>

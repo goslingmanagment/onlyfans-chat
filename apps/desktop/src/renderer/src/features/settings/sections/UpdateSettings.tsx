@@ -1,8 +1,7 @@
 // Settings → Updates (PLAN item 11): manual "check now", live download
 // progress, and a Restart & install action when a build is ready. The app
-// also updates itself in the background (main/platform/updater.ts) — this is
-// the on-demand control. Off win32-packaged builds the phase is `unsupported`
-// and the section shows a one-line note instead of the button.
+// also checks in the background (main/platform/updater.ts) — Windows installs
+// automatically while unsigned macOS builds open the manual download page.
 
 import type { UpdateStatusVM } from '../../../../../preload/contract';
 import { useCheckUpdates, useInstallUpdate, useUpdateStatus } from '../../../bridge/queries';
@@ -46,9 +45,15 @@ export function UpdateSettings(): React.JSX.Element {
   const unsupported = phase === 'unsupported';
   const busy = phase === 'checking' || phase === 'available' || phase === 'downloading' || check.isPending;
   const line = data ? statusLine(data, t) : null;
+  const hint =
+    data?.mode === 'manual'
+      ? t('update.manualHint')
+      : data?.mode === 'automatic'
+        ? t('update.hint')
+        : undefined;
 
   return (
-    <Section title={t('update.title')} hint={t('update.hint')}>
+    <Section title={t('update.title')} {...(hint === undefined ? {} : { hint })}>
       <div className="space-y-3">
         {data !== undefined && (
           <p className="num text-[11.5px] text-ink-low">
@@ -65,7 +70,7 @@ export function UpdateSettings(): React.JSX.Element {
                 {t('update.install')}
               </Button>
             ) : phase === 'manual' ? (
-              // macOS: no self-install (D20) — the action opens the download page.
+              // macOS: no self-install (D21) — the action opens the download page.
               <Button size="sm" variant="primary" onClick={() => install.mutate()}>
                 {t('update.download')}
               </Button>
