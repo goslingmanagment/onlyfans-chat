@@ -296,7 +296,9 @@ describe('Windows release feed policy', () => {
     expect(source).toContain('mv -f "$json_tmp" "$public_dir/version-win.json" || return 1');
   }, 15_000);
 
-  it('publishes mac releases monotonically, idempotently, and with protected retention', () => {
+  // The remote publisher runs on Linux; Git Bash emulates `ln -s` as a regular
+  // file on Windows, so its symlink recovery contract is not testable there.
+  it.skipIf(process.platform === 'win32')('publishes mac releases monotonically, idempotently, and with protected retention', () => {
     const publicDir = mkdtempSync(join(tmpdir(), 'chatgoose-mac-public-'));
 
     const first = runMacRemotePublisher(publicDir, '1.2.3', 'mac-1.2.3', 'first');
