@@ -50,6 +50,13 @@ describe('status-bar Russian tooltips (binding mockup tiplist)', () => {
 });
 
 describe('statusBarMode (mode word matches the panel badge)', () => {
+  it('describes kernel custody without asking the chatter for an OFAPI key', () => {
+    expect(STATUS_BAR_TIPS.offline).toContain('Ключ OFAPI хранится на Hub');
+    expect(STATUS_BAR_TIPS.offline).not.toContain('ключ OFAPI в настройках');
+    expect(STATUS_BAR_TIPS.credits).toContain('«БАЛАНС —»');
+    expect(STATUS_BAR_TIPS.hubLive).toContain('Это не проверка чтения OFAPI');
+  });
+
   it('polling when sync is live and hub is not', () => {
     expect(statusBarMode('live', 'off')).toMatchObject({ word: 'POLLING', tone: 'ok' });
     expect(statusBarMode('live', 'connecting')).toMatchObject({ word: 'POLLING' });

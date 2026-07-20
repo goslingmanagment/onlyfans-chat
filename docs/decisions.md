@@ -39,6 +39,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D19 | 2026-07-16 | Hub settings are device-token-first: no key input for humans, bound token suppresses/auto-decommissions quarantined legacy keys, persisted device identity |
 | D20 | 2026-07-18 | Public download page on the ext site: Windows refreshed automatically by feed publication via a server-side symlink (feed token never exposed), macOS published manually via a smoke-gated script |
 | D21 | 2026-07-18 | macOS packaged builds notify about updates from the page's version-mac.json (phase `manual`, install = open the page) — no self-install while builds are unsigned |
+| D22 | 2026-07-21 | Only user-initiated backward history advertises pure DB-readable pages (core #158/#162) |
 
 ## Entries
 
@@ -467,3 +468,17 @@ same policy as the win path. Extends D20.
 Bootstrap caveat: deployed v0.1.47 predates this controller, so the first
 D21-enabled DMG must be distributed manually; notify-only discovery works only
 after users have installed that build.
+
+**D22 (2026-07-21; protocol agreed 2026-07-16).** Core #158/#162's first
+DB-readable surface is user-initiated backward history only. `backfillOlder`
+marks its `first_id + order=desc` request, using Core's currently verified
+exclusive cursor semantics, with
+`x-agency-hub-read-intent: deep-history-v1`; the client refuses that intent
+without a backward cursor. The initial conversation open/tail request, live tail, poll delta,
+media hydration, and all other message reads omit the header and retain their
+current vendor behavior, including the open-read mark-as-read side effect. Core
+may serve the marked page from DB only under its independent head,
+continuous-coverage, proof-policy, range, and projection-watermark gates;
+otherwise the same request takes one capture-first vendor fallback. This is a
+protocol split, not permission for `db_only`: that cutover remains blocked on
+the fleet/coverage gates in core #158.

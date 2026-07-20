@@ -869,6 +869,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         purpose: 'message-tail',
         priority: 'user',
         retry: 'none',
+        readIntent: 'deep-history-v1',
       }));
     } catch (error) {
       const fields = safeErrorOutcome(error);

@@ -129,6 +129,7 @@ interface StubClient {
     limit?: number;
     purpose?: string;
     priority?: string;
+    readIntent?: string;
   }[];
   listTransactionsCalls: { limit?: number; purpose?: string; startDate?: string }[];
   setChats(chats: OfApiChat[]): void;
@@ -233,6 +234,7 @@ function makeStubClient(): StubClient {
           limit?: number;
           purpose?: string;
           priority?: string;
+          readIntent?: string;
         }) => {
           state.listMessagesCalls.push({
             ...(params.firstId != null ? { firstId: params.firstId } : {}),
@@ -241,6 +243,7 @@ function makeStubClient(): StubClient {
             ...(params.limit != null ? { limit: params.limit } : {}),
             ...(params.purpose != null ? { purpose: params.purpose } : {}),
             ...(params.priority != null ? { priority: params.priority } : {}),
+            ...(params.readIntent != null ? { readIntent: params.readIntent } : {}),
           });
           return { messages, nextPageUrl: null };
         },
@@ -478,9 +481,9 @@ describe('PollingSync', () => {
     await sync.openConversation(ACCT, '101');
     expect(data.messages.count(ACCT, '101')).toBe(2);
 
-    stub.setMessages([makeMessage({ id: 9 }), makeMessage({ id: 10 })]);
+    stub.setMessages([makeMessage({ id: 9 })]);
     await expect(sync.loadOlderMessagesForUserOpen(ACCT, '101')).resolves.toEqual({
-      returned: 2,
+      returned: 1,
       fresh: 1,
       hasOlder: false,
     });
@@ -491,6 +494,7 @@ describe('PollingSync', () => {
       limit: 30,
       purpose: 'message-tail',
       priority: 'user',
+      readIntent: 'deep-history-v1',
     });
     expect(data.messages.count(ACCT, '101')).toBe(3);
     sync.stop();

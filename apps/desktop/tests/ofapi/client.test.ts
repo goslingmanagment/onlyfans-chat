@@ -108,6 +108,21 @@ describe('listMessages (recorded fixture)', () => {
     expect(url.searchParams.get('skip_users')).toBe('all');
     expect(url.searchParams.get('order')).toBe('desc');
     expect(url.searchParams.get('limit')).toBe('100');
+    expect(requests[0]?.headers).not.toHaveProperty('x-agency-hub-read-intent');
+  });
+
+  it('marks only explicit backward scrollback as pure deep history', async () => {
+    const fixture = loadFixture('list-messages.json');
+    const { client, requests } = makeClient([() => jsonResponse(fixture)]);
+    await client.listMessages({
+      purpose: 'message-tail',
+      accountId: ACCOUNT_ID,
+      chatId: '1000039',
+      firstId: '1000037',
+      order: 'desc',
+      readIntent: 'deep-history-v1',
+    });
+    expect(requests[0]?.headers['x-agency-hub-read-intent']).toBe('deep-history-v1');
   });
 
   it('lastId implies order=asc; explicit mismatches throw', async () => {
@@ -126,6 +141,25 @@ describe('listMessages (recorded fixture)', () => {
     ).rejects.toMatchObject({ code: 'CG-APP-01' });
     await expect(
       client.listMessages({ purpose: 'message-tail', accountId: ACCOUNT_ID, chatId: '1', lastId: '2', order: 'desc' }),
+    ).rejects.toMatchObject({ code: 'CG-APP-01' });
+    await expect(
+      client.listMessages({
+        purpose: 'message-tail',
+        accountId: ACCOUNT_ID,
+        chatId: '1',
+        readIntent: 'deep-history-v1',
+      }),
+    ).rejects.toMatchObject({ code: 'CG-APP-01' });
+    await expect(
+      client.listMessages({
+        purpose: 'message-tail',
+        accountId: ACCOUNT_ID,
+        chatId: '1',
+        firstId: '2',
+        order: 'desc',
+        skipUsers: 'none',
+        readIntent: 'deep-history-v1',
+      }),
     ).rejects.toMatchObject({ code: 'CG-APP-01' });
     expect(requests).toHaveLength(1);
   });

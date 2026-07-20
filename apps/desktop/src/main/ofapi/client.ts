@@ -88,6 +88,7 @@ export type ChatListFilter = Exclude<ListChatsQuery['filter'], undefined>;
 export type ChatListOrder = Exclude<ListChatsQuery['order'], undefined>;
 export type SkipUsers = Exclude<ListChatsQuery['skip_users'], undefined>;
 export type MessageListOrder = 'desc' | 'asc';
+export type OfApiReadIntent = 'deep-history-v1';
 export type TransactionType = 'subscribes' | 'tips' | 'post' | 'chat_messages' | 'stream';
 
 export interface OfApiClientOptions {
@@ -182,12 +183,15 @@ export interface ListMessagesParams extends PurposeTagged {
   chatId: string;
   limit?: number;
   retry?: RetryPolicy;
-  /** Scrollback into history (order=desc, boundary-inclusive). */
+  /** Scrollback into history (order=desc, currently an exclusive boundary). */
   firstId?: string;
   /** Ascending tail from a cached boundary (order=asc, boundary-inclusive — dedupe!). */
   lastId?: string;
   order?: MessageListOrder;
   skipUsers?: SkipUsers;
+  /** Hub-only contract: this GET is pure backward history, not the open/tail
+   * read whose vendor side effect marks the chat read. */
+  readIntent?: OfApiReadIntent;
 }
 
 export interface ListTransactionsParams extends PurposeTagged {
@@ -418,6 +422,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     /** Call-site purpose — drives the per-purpose credit/request tallies. */
     purpose: OfApiPurpose;
     priority?: QueuePriority;
+    readIntent?: OfApiReadIntent;
   }
 
   async function requestJson(spec: RequestSpec): Promise<unknown> {
@@ -454,6 +459,9 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       accept: 'application/json',
       ...(spec.jsonBody !== undefined ? { 'content-type': 'application/json' } : {}),
       ...versionHeaders,
+      ...(spec.readIntent !== undefined
+        ? { 'x-agency-hub-read-intent': spec.readIntent }
+        : {}),
     };
     let response: Response;
     try {
@@ -563,6 +571,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     query: Record<string, QueryValue> = {},
     priority?: QueuePriority,
     retry: RetryPolicy = 'idempotent',
+    readIntent?: OfApiReadIntent,
   ): Promise<unknown> {
     return requestJson({
       accountKey,
@@ -572,6 +581,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       retry,
       purpose,
       ...(priority !== undefined ? { priority } : {}),
+      ...(readIntent !== undefined ? { readIntent } : {}),
     });
   }
 
@@ -689,6 +699,14 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       if (params.lastId !== undefined && order !== 'asc') {
         throw usageError('listMessages: last_id reads the ascending tail and requires order=asc');
       }
+      if (
+        params.readIntent !== undefined &&
+        (params.firstId === undefined || order !== 'desc' || (params.skipUsers ?? 'all') !== 'all')
+      ) {
+        throw usageError(
+          'listMessages: deep-history-v1 requires first_id with order=desc and skip_users=all',
+        );
+      }
       const path = accountPath(
         params.accountId,
         `/chats/${encodeURIComponent(params.chatId)}/messages`,
@@ -699,7 +717,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         first_id: params.firstId,
         last_id: params.lastId,
         skip_users: params.skipUsers ?? 'all',
-      }, params.priority, params.retry);
+      }, params.priority, params.retry, params.readIntent);
       const { data, nextPageUrl } = unwrapEnvelope(payload, path);
       return { messages: parseMessageList(data, path), nextPageUrl };
     },
