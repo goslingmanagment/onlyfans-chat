@@ -159,9 +159,17 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/admin/ofapi/dm-archive/status";
     };
+    readonly adminOfapiExportArtifactCapture: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/export-quotes/:jobId/capture-artifact";
+    };
     readonly adminOfapiExportCreateReconcile: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/ofapi/export-quotes/:jobId/reconcile-create";
+    };
+    readonly adminOfapiExportPilotApprove: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/export-quotes/:jobId/approve-pilot";
     };
     readonly adminOfapiExportQuoteCancel: {
         readonly method: "POST";
@@ -306,6 +314,10 @@ export declare const kernelOperations: {
     readonly aiPersonasList: {
         readonly method: "GET";
         readonly path: "/api/v1/ai/personas";
+    };
+    readonly aiRecapStatus: {
+        readonly method: "GET";
+        readonly path: "/api/v1/ai/recap-status";
     };
     readonly aiRestrictedGenerationDetail: {
         readonly method: "GET";
@@ -634,6 +646,18 @@ export declare const kernelOperations: {
     readonly upsertFanProfile: {
         readonly method: "PUT";
         readonly path: "/api/v1/pages/:pageLabel/fans/:platformUserId/profile";
+    };
+    readonly voiceNoteAudio: {
+        readonly method: "GET";
+        readonly path: "/api/v1/pages/:pageLabel/voice-notes/:id/audio";
+    };
+    readonly voiceNoteCreate: {
+        readonly method: "POST";
+        readonly path: "/api/v1/pages/:pageLabel/voice-notes";
+    };
+    readonly voiceNoteStatus: {
+        readonly method: "GET";
+        readonly path: "/api/v1/pages/:pageLabel/voice-notes/:id";
     };
     readonly workboardV2: {
         readonly method: "GET";

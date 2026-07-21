@@ -67,6 +67,15 @@ export const transactionTypesByReportingBucket = Object.fromEntries(transactionR
     filterTransactionTypes((transactionType) => getTransactionClassification(transactionType).bucket === bucket),
 ]));
 export const transactionStates = ["pending", "posted", "unknown"];
+export const ofapiCaptureJobStates = [
+    "ready",
+    "leased",
+    "awaiting_parse",
+    "retry_wait",
+    "blocked",
+    "complete",
+    "cancelled",
+];
 export const userRoles = ["owner", "team_lead", "chatter", "content_manager"];
 export const creatableUserRoles = ["owner", "team_lead", "chatter"];
 export const fanFlagTypes = ["whale", "vip", "risky"];
@@ -81,6 +90,9 @@ export const aiUsageFeatures = [
     "hi-greeting",
     // Stage 29: internal gateway lane for the workboard closing classifier.
     "workboard-closing",
+    "coach-chat",
+    // Voice notes: the ElevenLabs TTS lane's script-generation feature.
+    "voice-script",
 ];
 export const syncHealthStates = ["healthy", "degraded", "suspicious", "failed"];
 export const httpRequestStates = ["started", "success", "retry", "failed"];
