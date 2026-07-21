@@ -25,6 +25,7 @@ export function toJson(value: unknown): string {
 // ─── Accounts ─────────────────────────────────────────────────────────────
 
 export type AccountAuthState = 'authenticated' | 'session_expired' | 'unauthenticated';
+export type AccountGrantState = 'granted' | 'revoked';
 
 export interface AccountRow {
   id: string;
@@ -33,10 +34,12 @@ export interface AccountRow {
   /** media:// URL (pre-mapped by sync). */
   avatar: string | null;
   authState: AccountAuthState;
+  /** Whether the active Hub credential still grants this OFAPI account. */
+  grantState: AccountGrantState;
   updatedAt: string;
 }
 
-export interface AccountUpsert extends Omit<AccountRow, 'updatedAt'> {
+export interface AccountUpsert extends Omit<AccountRow, 'updatedAt' | 'grantState'> {
   raw: unknown;
 }
 
@@ -46,6 +49,7 @@ const accountSqlSchema = z.object({
   display_name: z.string(),
   avatar: z.string().nullable(),
   auth_state: z.enum(['authenticated', 'session_expired', 'unauthenticated']),
+  grant_state: z.enum(['granted', 'revoked']),
   updated_at: z.string(),
 });
 
@@ -57,6 +61,7 @@ export function decodeAccountRow(value: unknown): AccountRow {
     displayName: row.display_name,
     avatar: row.avatar,
     authState: row.auth_state,
+    grantState: row.grant_state,
     updatedAt: row.updated_at,
   };
 }

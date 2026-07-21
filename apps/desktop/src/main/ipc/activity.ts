@@ -124,7 +124,7 @@ export function buildActivitySummary(deps: ActivityDeps): ActivityVM {
   const hubStatus = sync?.hubStatus?.() ?? null;
   const syncState = hubStatus === 'live' ? 'live' : syncStatus.state;
   const hubActivity = sync?.hubActivity?.() ?? null;
-  const accounts = data.accounts.list().map((account) => ({
+  const accounts = data.accounts.listGranted().map((account) => ({
     accountId: account.id,
     name: account.displayName.trim() !== '' ? account.displayName : account.username,
     lastPolledAt: syncStatus.freshness[account.id] ?? null,

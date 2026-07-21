@@ -142,7 +142,8 @@ export function accountToVM(
     avatarUrl,
     // SPEC §11: a lone session_expired is informational (OFAPI auto-recovers);
     // only a hard unauthenticated state drives the re-auth banner.
-    isAuthenticated: row.authState !== 'unauthenticated',
+    isAuthenticated:
+      row.authState === 'authenticated' || row.authState === 'session_expired',
     unreadCount: row.unreadTotal,
     personalityId: personalityMappingState === 'active' ? rawPersonalityId : null,
     rawPersonalityId,

@@ -35,7 +35,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
       expect(indexes).toContain('idx_message_guard_events_occurred');
       expect(indexes).toContain('idx_message_guard_events_hash');
-      expect(SCHEMA_VERSION).toBe(19);
+      expect(SCHEMA_VERSION).toBe(20);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       const guardCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('message_guard_events')")
@@ -71,6 +71,11 @@ describe('migration runner', () => {
       expect(names).toContain('ai_spend_log');
       expect(names).toContain('ai_acceptance_ops');
       expect(names).toContain('unsend_commands');
+      const accountCols = layer.db
+        .prepare("SELECT name FROM pragma_table_info('accounts')")
+        .all()
+        .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
+      expect(accountCols).toContain('grant_state');
       const acceptanceCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('ai_acceptance_ops')")
         .all()
@@ -123,6 +128,10 @@ describe('migration runner', () => {
 
     // v1 data that must survive the upgrade
     db.exec(
+      "INSERT INTO accounts (id, username, display_name, auth_state, raw, updated_at) " +
+        "VALUES ('acct_1', 'loravie', 'Lora Vie', 'authenticated', '{}', '2026-06-11T00:00:00.000Z')",
+    );
+    db.exec(
       "INSERT INTO chats (account_id, chat_id, fan_name, raw, updated_at) " +
         "VALUES ('acct_1', '101', 'Fan One', '{}', '2026-06-11T00:00:00.000Z')",
     );
@@ -140,6 +149,9 @@ describe('migration runner', () => {
     expect(chat).toEqual({ fan_name: 'Fan One' });
     const cacheRow: unknown = db.prepare("SELECT bytes FROM media_cache WHERE url_hash = 'h1'").get();
     expect(cacheRow).toEqual({ bytes: 10 });
+    expect(db.prepare("SELECT grant_state FROM accounts WHERE id = 'acct_1'").get()).toEqual({
+      grant_state: 'granted',
+    });
 
     // the new table is present and usable
     db.exec(

@@ -486,7 +486,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     const { scope } = resolvePersonaContext();
     const catalog = scope === null ? null : loadPersonaCatalog(data.settings, scope);
     const accountMappings = loadPersonaAccountMappings(data.settings, scope);
-    return data.accounts.list().map((row) => {
+    return data.accounts.listGranted().map((row) => {
       const rawPersonalityId = accountMappings[row.id] ?? null;
       const resolution = resolvePersonaMapping(catalog, rawPersonalityId);
       return accountToVM(

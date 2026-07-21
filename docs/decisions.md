@@ -40,6 +40,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D20 | 2026-07-18 | Public download page on the ext site: Windows refreshed automatically by feed publication via a server-side symlink (feed token never exposed), macOS published manually via a smoke-gated script |
 | D21 | 2026-07-18 | macOS packaged builds notify about updates from the page's version-mac.json (phase `manual`, install = open the page) — no self-install while builds are unsigned |
 | D22 | 2026-07-21 | Only user-initiated backward history advertises pure DB-readable pages (core #158/#162) |
+| D23 | 2026-07-22 | Account grants are distinct from vendor auth: authoritative reconciliation hides revoked identities without deleting cache |
 
 ## Entries
 
@@ -482,3 +483,23 @@ continuous-coverage, proof-policy, range, and projection-watermark gates;
 otherwise the same request takes one capture-first vendor fallback. This is a
 protocol split, not permission for `db_only`: that cutover remains blocked on
 the fleet/coverage gates in core #158.
+
+**D23 (2026-07-22).** The account list returned by the authenticated Core
+read gateway is the complete grant set for the active Desktop credential, not
+an append-only discovery feed. Incident trigger: replacing an OFAPI team
+changed both `acct_…` ids while preserving the OnlyFans usernames; v0.1.47
+upserted the two new rows but retained the two old rows as authenticated, so
+the account rail showed four tiles and continued issuing doomed 404 reads for
+the stale ids after restart. Authentication health and credential membership
+are separate facts. Schema v20 therefore adds `accounts.grant_state`
+(`granted|revoked`), defaulting existing rows to `granted` so an offline upgrade
+does not hide the last known workspace before validation. Only a successful
+full `listAccounts` response may transactionally replace that set: returned
+rows are upserted/re-granted; every absent row is marked `revoked` and
+`unauthenticated`. An error or malformed response changes nothing, and an empty
+successful response revokes all rows. Revoked account/chat/message cache,
+drafts, audit rows, and persona mappings remain local; renderer account and
+activity lists expose only granted rows. A granted account with
+`is_authenticated=false` remains visible with the existing re-auth affordance.
+Late auth events cannot reanimate a revoked row, and a live grant change moves
+or clears stale renderer selection without changing the current surface.
