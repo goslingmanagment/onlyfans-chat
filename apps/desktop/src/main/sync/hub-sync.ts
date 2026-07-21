@@ -619,6 +619,26 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       await options.onEvent(event);
       return;
     }
+    if (frame.event === 'control') {
+      // Core's live/replay boundary rides its own SSE event name (the
+      // `ephemeral` forward-compat rule): older clients skip it entirely and
+      // it never enters the domain-frame contract. Signal-only — the cursor
+      // advances through domain frames, never through control frames.
+      let json: unknown;
+      try {
+        json = JSON.parse(frame.data);
+      } catch {
+        return;
+      }
+      if (
+        typeof json === 'object'
+        && json !== null
+        && (json as { type?: unknown }).type === 'replay_completed'
+      ) {
+        options.onCaughtUp?.();
+      }
+      return; // unknown control types are forward-compat noise, not errors
+    }
     if (frame.event !== 'domain') {
       return; // unknown event names are forward-compat noise, not errors
     }
@@ -632,15 +652,6 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     const domainFrame = parseDomainEventFrame(json);
     if (domainFrame === null) {
       dropped += 1;
-      return;
-    }
-    if (domainFrame.type === 'stream.replay_completed') {
-      // Synthetic live/replay boundary (accountRef null by design) — consume
-      // before mapDomainFrame's accountRef drop; checkpoint like any frame.
-      options.onCaughtUp?.();
-      if (frame.id !== null && frame.id.length > 0) {
-        options.setV2Cursor!(frame.id);
-      }
       return;
     }
     const event = mapDomainFrame(domainFrame);

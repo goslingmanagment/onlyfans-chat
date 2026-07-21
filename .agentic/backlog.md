@@ -34,3 +34,11 @@ Resolved 2026-07-19: the stale check now includes directory mtimes (so source
 deletions invalidate `out/`), and each driver defaults to a process-specific
 screenshot directory derived from its isolated profile. Explicit shared
 `SCREENSHOT_DIR` remains available as an opt-in.
+
+- 2026-07-22 (startup-notification-flood follow-up): polling has its own
+  sleep-wake hole — after a suspend, the first poll's prevSuccessAt still
+  predates the nap, so night messages emit as live polling events and alert.
+  Pre-existing behavior, out of scope for PR #16 (the hub path re-arms via
+  the attention gate's clock-jump detector; polling does not). If chatters
+  who sleep laptops instead of quitting complain, port the same re-arm rule
+  into polling-sync's live-event gate (prevSuccessAt vs wall-clock jump).

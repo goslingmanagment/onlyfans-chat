@@ -1001,15 +1001,17 @@ describe('createHubAwareSync (provider composition)', () => {
     callbacks: () => HubFactoryCallbacks;
     events: SyncEvent[];
     logs: Array<{ level: string; message: string; fields?: Record<string, unknown> | undefined }>;
+    setNow: (ms: number) => void;
   } {
     const polling = makeFakePolling();
     const hub = makeFakeHub();
     let captured: HubFactoryCallbacks | null = null;
+    let nowMs = PROVIDER_NOW_MS;
     const logs: Array<{ level: string; message: string; fields?: Record<string, unknown> | undefined }> = [];
     const provider = createHubAwareSync({
       polling,
       data,
-      now: () => PROVIDER_NOW_MS,
+      now: () => nowMs,
       createHub: (callbacks) => {
         captured = callbacks;
         return Promise.resolve(hub);
@@ -1024,6 +1026,9 @@ describe('createHubAwareSync (provider composition)', () => {
       hub,
       events,
       logs,
+      setNow: (ms: number) => {
+        nowMs = ms;
+      },
       callbacks: () => {
         if (!captured) throw new Error('hub not created yet');
         return captured;
@@ -1497,6 +1502,117 @@ describe('createHubAwareSync (provider composition)', () => {
     await callbacks().onEvent(frame);
 
     expect(events).toEqual([frame, { ...frame, live: false }]);
+    provider.stop();
+  });
+
+  it('dedups a hub replay of a message polling already alerted', async () => {
+    const { provider, polling, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Polling passed its own backlog gate, so its emission is news — and it
+    // must claim the id in the shared alert registry.
+    polling.emit({
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'shared-9001',
+    });
+    expect(events).toEqual([{
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'shared-9001',
+    }]);
+
+    // SSE recovers and replays the same id post-marker: without the shared
+    // registry this would alert a second time.
+    callbacks().onCaughtUp();
+    const frame: SyncEvent = {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'shared-9001',
+      message: hubMessage({ id: 'shared-9001' }),
+    };
+    await callbacks().onEvent(frame);
+
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({ messageId: 'shared-9001', live: false });
+    provider.stop();
+  });
+
+  it('stamps a polling duplicate of a hub-alerted id as replay', async () => {
+    const { provider, callbacks, polling, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onCaughtUp();
+
+    const frame: SyncEvent = {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'hub-first-9001',
+      message: hubMessage({ id: 'hub-first-9001' }),
+    };
+    await callbacks().onEvent(frame);
+    expect(events).toEqual([frame]);
+
+    polling.emit({
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'hub-first-9001',
+    });
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({ messageId: 'hub-first-9001', live: false });
+    provider.stop();
+  });
+
+  it('re-arms the gate after a suspend-sized clock gap', async () => {
+    const { provider, callbacks, events, setNow } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onCaughtUp();
+
+    // Lid closed for 8 hours: the wall clock jumps, the SSE resume replays
+    // the night backlog. The session was not watching — the gate must fall
+    // back to catch-up mode instead of alerting per replayed message.
+    const wakeMs = PROVIDER_NOW_MS + 8 * 3_600_000;
+    setNow(wakeMs);
+    const overnight: SyncEvent = {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'overnight-9001',
+      message: hubMessage({
+        id: 'overnight-9001',
+        createdAt: new Date(PROVIDER_NOW_MS + 4 * 3_600_000).toISOString(),
+      }),
+    };
+    await callbacks().onEvent(overnight);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ messageId: 'overnight-9001', live: false });
+
+    // The reconnected stream finishes its replay: the next marker restores
+    // live mode and a fresh message alerts exactly once.
+    callbacks().onCaughtUp();
+    const fresh: SyncEvent = {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'morning-9001',
+      message: hubMessage({
+        id: 'morning-9001',
+        createdAt: new Date(wakeMs).toISOString(),
+      }),
+    };
+    await callbacks().onEvent(fresh);
+    expect(events).toHaveLength(2);
+    expect(events[1]).not.toHaveProperty('live');
     provider.stop();
   });
 

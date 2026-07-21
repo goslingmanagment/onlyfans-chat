@@ -40,7 +40,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D20 | 2026-07-18 | Public download page on the ext site: Windows refreshed automatically by feed publication via a server-side symlink (feed token never exposed), macOS published manually via a smoke-gated script |
 | D21 | 2026-07-18 | macOS packaged builds notify about updates from the page's version-mac.json (phase `manual`, install = open the page) — no self-install while builds are unsigned |
 | D22 | 2026-07-21 | Only user-initiated backward history advertises pure DB-readable pages (core #158/#162) |
-| D23 | 2026-07-22 | SSE replay restores state without toast, sound, or OS notifications; live alerts use a marker plus fail-quiet fallback |
+| D23 | 2026-07-22 | SSE replay restores state without toast, sound, or OS notifications; live alerts use core's control-lane marker plus a fail-quiet epoch fallback, with cross-source alert dedup and suspend re-arm |
 
 ## Entries
 
@@ -486,10 +486,20 @@ the fleet/coverage gates in core #158.
 
 **D23 (2026-07-22).** SSE replay never alerts: hub catch-up frames apply
 state but are stamped `live: false` and produce no toast/sound/OS
-notification. Live/replay boundary = core's v2 `stream.replay_completed`
-marker (session-sticky once seen); fallback for marker-less streams is a
+notification. Live/replay boundary = core's v2 replay-completion marker,
+delivered on a dedicated `event: control` SSE lane (`{"type":
+"replay_completed"}`) — NOT as a domain frame: the published DomainEventFrame
+contract requires positive accountId/accountSeq and the vendored SDK kills the
+subscription on any invalid domain frame, while unknown event names are
+skipped by every consumer (the `ephemeral` precedent). The signal is sticky
+until a suspend-sized wall-clock gap (>5 min between gate evaluations)
+re-arms the gate — a sleeping session was not watching, so the wake backlog
+replays silently like a cold start. Fallback for marker-less streams is a
 provider-start epoch minus 60 s grace over message.createdAt/occurredAt,
-fail-quiet on missing timestamps. Alerts dedup by message id (bounded 500).
-Matches the polling provider's long-standing "history is not news" baseline
-(its first sweep swallows the downtime backlog); D10 cursor semantics
-untouched — no replayed state is ever skipped.
+fail-quiet on missing timestamps (one warn per session for diagnosability).
+Alerts dedup by message id (bounded 500) across BOTH sources — polling-origin
+alerts claim ids in the same registry, so an SSE replay after a
+polling-covered outage cannot alert twice. Matches the polling provider's
+long-standing "history is not news" baseline (its first sweep swallows the
+downtime backlog); D10 cursor semantics untouched — no replayed state is ever
+skipped, and control frames never advance the cursor.

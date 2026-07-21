@@ -384,8 +384,14 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   // may toast/beep. Epoch fallback covers cores without the v2 marker.
   const NOTIFICATION_EPOCH_GRACE_MS = 60_000;
   const ALERTED_IDS_CAP = 500;
-  const notificationEpochMs = now();
+  /** A wall-clock jump beyond this between gate evaluations means the machine
+   * slept (or the process froze): the session was NOT watching, so the gate
+   * re-arms and the wake backlog replays silently, same as a cold start. */
+  const ATTENTION_REARM_GAP_MS = 5 * 60_000;
+  let notificationEpochMs = now();
   let sawReplayCompleted = false;
+  let lastAttentionCheckMs = now();
+  let suppressionWarned = false;
   const alertedIds = new Set<string>();
   const alertedOrder: string[] = [];
 
@@ -400,9 +406,22 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     }
   }
 
+  function noteAttentionClock(): void {
+    const nowMs = now();
+    if (nowMs - lastAttentionCheckMs > ATTENTION_REARM_GAP_MS) {
+      sawReplayCompleted = false;
+      notificationEpochMs = nowMs;
+      onLog('info', 'attention gate re-armed after suspend/clock gap', {
+        gapMs: nowMs - lastAttentionCheckMs,
+      });
+    }
+    lastAttentionCheckMs = nowMs;
+  }
+
   function attentionEligible(
     event: Extract<SyncEvent, { type: 'messageReceived' }>,
   ): boolean {
+    noteAttentionClock();
     const key = `${event.accountId}/${event.chatId}/${event.messageId}`;
     if (alertedIds.has(key)) {
       return false;
@@ -415,6 +434,15 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       const ms = ts === undefined ? Number.NaN : Date.parse(ts);
       eligible = Number.isFinite(ms)
         && ms >= notificationEpochMs - NOTIFICATION_EPOCH_GRACE_MS;
+      if (!eligible && !suppressionWarned) {
+        // One warn per session: a clock skewed ahead of the epoch would mute
+        // every alert until the marker deploys — make that state diagnosable.
+        suppressionWarned = true;
+        onLog('warn', 'attention gate suppressing pre-epoch frames (no marker yet)', {
+          timestamp: ts ?? null,
+          epochMs: notificationEpochMs,
+        });
+      }
     }
     if (eligible) {
       markAlerted(key);
@@ -438,8 +466,24 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     }
   }
 
-  // All polling events forward unchanged — one subscription surface.
-  polling.subscribe(emit);
+  // Polling gates its own downtime backlog (baseline sweep), so its
+  // messageReceived is news by construction — but it must still share the
+  // alert registry: after an SSE outage covered by polling, the hub replays
+  // the same ids and would otherwise alert a second time.
+  polling.subscribe((event) => {
+    if (event.type !== 'messageReceived') {
+      emit(event);
+      return;
+    }
+    noteAttentionClock();
+    const key = `${event.accountId}/${event.chatId}/${event.messageId}`;
+    if (alertedIds.has(key)) {
+      emit({ ...event, live: false });
+      return;
+    }
+    markAlerted(key);
+    emit(event);
+  });
 
   /** messages.deleted arrives without chatId — recover it from the local row. */
   function lookupChatId(accountId: string, messageId: string): string | null {

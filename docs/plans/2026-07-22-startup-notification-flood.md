@@ -1,5 +1,23 @@
 # Startup Notification Flood Fix — Implementation Plan
 
+> **Post-review amendments (2026-07-22).** The agentic reviews of core PR #21
+> and desktop PR #16 changed four things against the plan as written below:
+> (1) the marker is NOT a domain frame — the published DomainEventFrame
+> contract requires positive accountId/accountSeq and the vendored SDK kills
+> the subscription on any invalid domain frame; it is now a dedicated
+> `event: control` SSE frame `{"type":"replay_completed"}`, which old clients
+> skip by the same rule as `event: ephemeral`, and the desktop consumes it
+> signal-only (no cursor checkpoint); (2) core guards the marker write (and
+> the pre-existing snapshot-marker write) with the same
+> writableEnded/destroyed check as writeV2Frame — an unlistened
+> write-after-end is a process-fatal stream error; (3) the alert-dedup
+> registry spans BOTH event sources — polling-origin messageReceived claims
+> ids too, so an SSE replay after a polling-covered outage cannot alert
+> twice; (4) the live signal re-arms after a suspend-sized wall-clock gap
+> (>5 min between gate evaluations): a sleeping session was not watching, so
+> the wake backlog replays silently like a cold start. D23 records the
+> as-built rules.
+
 ## Why this work exists (read first)
 
 **Problem being solved.** Production bug report (desktop v0.1.47): when a

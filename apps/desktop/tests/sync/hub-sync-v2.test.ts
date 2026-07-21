@@ -97,6 +97,10 @@ function domainFrame(cursor: string, frame: Record<string, unknown>): string {
   return `id: ${cursor}\nevent: domain\ndata: ${JSON.stringify(frame)}\n\n`;
 }
 
+function controlFrame(cursor: string, data: Record<string, unknown>): string {
+  return `id: ${cursor}\nevent: control\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
 function messageFrame(cursor: string, overrides: Record<string, unknown> = {}): string {
   return domainFrame(cursor, {
     accountId: 7,
@@ -302,35 +306,43 @@ describe('createHubSync (protocol v2)', () => {
     h.sync.stop();
   });
 
-  it('intercepts and checkpoints the replay-completed marker without dropping it', async () => {
+  it('fires onCaughtUp for the control replay-completed marker without checkpoint or drop', async () => {
     const stream = makeStream();
     const h = makeV2Sync([{ status: 200, stream }]);
     h.sync.start();
     await drainMicrotasks();
 
-    stream.send(domainFrame('CUR_CAUGHT_UP', {
-      accountId: 0,
-      accountSeq: 0,
-      type: 'stream.replay_completed',
-      occurredAt: '2026-07-22T10:00:00.000Z',
-      data: null,
-      accountRef: null,
-    }));
+    stream.send(controlFrame('CUR_CAUGHT_UP', { type: 'replay_completed' }));
     await drainMicrotasks();
 
+    // Signal-only lane: no onEvent, no cursor persist, nothing dropped.
     expect(h.caughtUps()).toBe(1);
-    expect(h.log).toEqual(['caught-up', 'persist:CUR_CAUGHT_UP']);
-    expect(h.cursor()).toBe('CUR_CAUGHT_UP');
+    expect(h.log).toEqual(['caught-up']);
+    expect(h.cursor()).toBe(null);
     expect(h.sync.droppedFrameCount()).toBe(0);
 
     stream.send(messageFrame('CUR_LIVE'));
     await drainMicrotasks();
     expect(h.log).toEqual([
       'caught-up',
-      'persist:CUR_CAUGHT_UP',
       'event:messageReceived',
       'persist:CUR_LIVE',
     ]);
+    h.sync.stop();
+  });
+
+  it('ignores unknown control frame types without firing onCaughtUp', async () => {
+    const stream = makeStream();
+    const h = makeV2Sync([{ status: 200, stream }]);
+    h.sync.start();
+    await drainMicrotasks();
+
+    stream.send(controlFrame('CUR_NOISE', { type: 'future_control_signal' }));
+    await drainMicrotasks();
+
+    expect(h.caughtUps()).toBe(0);
+    expect(h.log).toEqual([]);
+    expect(h.sync.droppedFrameCount()).toBe(0);
     h.sync.stop();
   });
 
