@@ -13,7 +13,10 @@ import { useSettingsCache } from '../state/settingsCache';
 import { useSpendersStore } from '../features/spenders/spendersStore';
 import { playNotificationBlip } from '../lib/sound';
 import { uiMessage } from '@chatgoose/shared/i18n/index';
-import { messageNotificationBody } from '@chatgoose/shared/notifications/index';
+import {
+  isAlertEligible,
+  messageNotificationBody,
+} from '@chatgoose/shared/notifications/index';
 import { currentLocale } from '../lib/i18n';
 import {
   handleAiOperationEvent,
@@ -160,7 +163,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
           ui.selectedAccountId === event.accountId &&
           ui.selectedChatId === event.chatId &&
           document.hasFocus();
-        if (!isOpenChat) {
+        if (!isOpenChat && isAlertEligible(event)) {
           const settings = useSettingsCache.getState();
           if (settings.notificationsEnabled) {
             const list = queryClient.getQueryData<{ items: ChatListItemVM[] }>(

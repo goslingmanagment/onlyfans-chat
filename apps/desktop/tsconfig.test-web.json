@@ -4,6 +4,7 @@
     "src/renderer/src",
     "src/preload",
     "../../packages/shared/src",
-    "tests/renderer-ai/*.test.ts"
+    "tests/renderer-ai/*.test.ts",
+    "tests/renderer/sound.test.ts"
   ]
 }

@@ -2017,6 +2017,19 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         // tail GET (which would mark the chat read) and just nudge the list;
         // listChats-driven rows stay fresh through a debounced hub activity refresh.
         const bodyReadEnabled = autoReadEnabled();
+        // Replay fast-path: once the proof condition below already holds
+        // locally (typical for startup catch-up frames — the first head
+        // refresh advanced the cached head past the whole backlog), another
+        // paid read cannot add anything; each skipped call also skips an
+        // awaited 2 s debounce that would otherwise pace the SSE replay.
+        if (expectedMessageId !== undefined) {
+          const alreadyApplied = bodyReadEnabled
+            ? data.messages.get(accountId, chatId, expectedMessageId) !== null
+            : listHeadReachedExpectedMessage(accountId, chatId, expectedMessageId);
+          if (alreadyApplied) {
+            return;
+          }
+        }
         if (!bodyReadEnabled) {
           await refreshAccountHead(accountId);
         } else {

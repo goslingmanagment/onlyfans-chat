@@ -40,6 +40,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D20 | 2026-07-18 | Public download page on the ext site: Windows refreshed automatically by feed publication via a server-side symlink (feed token never exposed), macOS published manually via a smoke-gated script |
 | D21 | 2026-07-18 | macOS packaged builds notify about updates from the page's version-mac.json (phase `manual`, install = open the page) — no self-install while builds are unsigned |
 | D22 | 2026-07-21 | Only user-initiated backward history advertises pure DB-readable pages (core #158/#162) |
+| D23 | 2026-07-22 | SSE replay restores state without toast, sound, or OS notifications; live alerts use a marker plus fail-quiet fallback |
 
 ## Entries
 
@@ -482,3 +483,13 @@ continuous-coverage, proof-policy, range, and projection-watermark gates;
 otherwise the same request takes one capture-first vendor fallback. This is a
 protocol split, not permission for `db_only`: that cutover remains blocked on
 the fleet/coverage gates in core #158.
+
+**D23 (2026-07-22).** SSE replay never alerts: hub catch-up frames apply
+state but are stamped `live: false` and produce no toast/sound/OS
+notification. Live/replay boundary = core's v2 `stream.replay_completed`
+marker (session-sticky once seen); fallback for marker-less streams is a
+provider-start epoch minus 60 s grace over message.createdAt/occurredAt,
+fail-quiet on missing timestamps. Alerts dedup by message id (bounded 500).
+Matches the polling provider's long-standing "history is not news" baseline
+(its first sweep swallows the downtime backlog); D10 cursor semantics
+untouched — no replayed state is ever skipped.

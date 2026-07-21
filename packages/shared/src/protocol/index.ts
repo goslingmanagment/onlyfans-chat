@@ -247,6 +247,10 @@ export const messageReceivedEventSchema = z.object({
   chatId: idSchema,
   messageId: idSchema,
   message: tolerantNormalizedSyncMessageSchema,
+  /** v2 journal time of the event; catch-up/live gating input (absent on v1). */
+  occurredAt: z.string().optional(),
+  /** false = replayed catch-up: apply state, but suppress toast/sound/OS-notif. */
+  live: z.boolean().optional(),
 });
 
 export const messageSentEventSchema = z.object({
@@ -525,6 +529,7 @@ export function mapDomainFrame(frame: DomainEventFrame): SyncEvent | null {
         accountId,
         chatId,
         messageId,
+        ...(frame.type === 'message.received' ? { occurredAt: frame.occurredAt } : {}),
         ...(message !== undefined ? { message } : {}),
       };
     }

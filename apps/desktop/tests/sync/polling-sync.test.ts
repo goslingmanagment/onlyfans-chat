@@ -1458,6 +1458,38 @@ describe('PollingSync', () => {
       sync.stop();
     });
 
+    it('skips an auto-read tail fetch when the expected message is already local', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 6 })]);
+      const sync = makeSync();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      data.messages.upsertMany([{
+        accountId: ACCT,
+        chatId: '101',
+        messageId: '6',
+        createdAt: '2026-06-10T12:01:00.000Z',
+        isSentByMe: false,
+        textHtml: '<p>already cached</p>',
+        textPlain: 'already cached',
+        price: 0,
+        isOpened: null,
+        isNew: true,
+        isTip: false,
+        tipAmount: null,
+        tipText: null,
+        replyTo: null,
+        media: [],
+        deleted: false,
+        raw: {},
+      }]);
+      const callsBefore = stub.listMessagesCalls.length;
+
+      await expect(sync.refreshChat(ACCT, '101', undefined, '6')).resolves.toBeUndefined();
+
+      expect(stub.listMessagesCalls).toHaveLength(callsBefore);
+      sync.stop();
+    });
+
     it('refreshChat with an explicit purpose (refresh queue) is ONE page of limit 100', async () => {
       stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
       stub.setMessages([makeMessage({ id: 5 })]);
@@ -1668,6 +1700,39 @@ describe('PollingSync', () => {
       expect(data.threadFetchLog.get(ACCT, '101')).toBeNull();
       expect(events.some((e) => e.type === 'chatListUpdated')).toBe(true);
       expect(data.chats.get(ACCT, '101')?.unreadCount).toBe(2);
+      sync.stop();
+    });
+
+    it('skips the list debounce when the cached head already proves the replay frame', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 200 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      const listCallsBefore = stub.listChatsCalls;
+      const timersBefore = vi.getTimerCount();
+
+      await expect(sync.refreshChat(ACCT, '101', undefined, '150')).resolves.toBeUndefined();
+
+      expect(stub.listChatsCalls).toBe(listCallsBefore);
+      expect(vi.getTimerCount()).toBe(timersBefore);
+      sync.stop();
+    });
+
+    it('keeps the debounced head refresh when the cached head is behind', async () => {
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 200 })]);
+      const sync = makeSyncOff();
+      sync.start([ACCT]);
+      await vi.runOnlyPendingTimersAsync();
+      const listCallsBefore = stub.listChatsCalls;
+      stub.setChats([makeChat({ fanId: 101, lastMessageId: 250 })]);
+
+      const refresh = sync.refreshChat(ACCT, '101', undefined, '250');
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(stub.listChatsCalls).toBe(listCallsBefore);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(refresh).resolves.toBeUndefined();
+
+      expect(stub.listChatsCalls).toBe(listCallsBefore + 1);
       sync.stop();
     });
 

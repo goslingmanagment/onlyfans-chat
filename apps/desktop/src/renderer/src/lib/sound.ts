@@ -1,8 +1,20 @@
 // Tiny synthesized notification blip — no audio assets, no network.
 
-let ctx: AudioContext | null = null;
+/** Even a legitimate live burst must not machine-gun the speaker. */
+const BLIP_MIN_INTERVAL_MS = 2_000;
 
-export function playNotificationBlip(): void {
+let ctx: AudioContext | null = null;
+let lastBlipAtMs = Number.NEGATIVE_INFINITY;
+
+export function __resetBlipThrottleForTests(): void {
+  lastBlipAtMs = Number.NEGATIVE_INFINITY;
+}
+
+export function playNotificationBlip(nowMs: number = Date.now()): void {
+  if (nowMs - lastBlipAtMs < BLIP_MIN_INTERVAL_MS) {
+    return;
+  }
+  lastBlipAtMs = nowMs;
   try {
     ctx ??= new AudioContext();
     const t0 = ctx.currentTime;

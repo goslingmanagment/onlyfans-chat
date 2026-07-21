@@ -253,6 +253,8 @@ export interface HubSyncOptions {
   sleep?: SleepFn;
   /** Awaited before the frame's id is persisted (handle-then-checkpoint). */
   onEvent: (event: SyncEvent) => void | Promise<void>;
+  /** v2 replay/live boundary: core's stream.replay_completed marker. */
+  onCaughtUp?: () => void;
   /** Local OFAPI accounts this client is allowed to apply. Omit only in isolated tests. */
   accountIds?: readonly string[];
   /** Idempotently applies one validated snapshot page before its cursor is persisted. */
@@ -630,6 +632,15 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     const domainFrame = parseDomainEventFrame(json);
     if (domainFrame === null) {
       dropped += 1;
+      return;
+    }
+    if (domainFrame.type === 'stream.replay_completed') {
+      // Synthetic live/replay boundary (accountRef null by design) — consume
+      // before mapDomainFrame's accountRef drop; checkpoint like any frame.
+      options.onCaughtUp?.();
+      if (frame.id !== null && frame.id.length > 0) {
+        options.setV2Cursor!(frame.id);
+      }
       return;
     }
     const event = mapDomainFrame(domainFrame);

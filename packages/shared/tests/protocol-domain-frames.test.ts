@@ -13,7 +13,11 @@
 //   readStateChanged            ← local-only synthesis (the server never sent it)
 
 import { describe, expect, it } from 'vitest';
-import { mapDomainFrame, type DomainEventFrame } from '../src/protocol/index';
+import {
+  mapDomainFrame,
+  parseSyncEvent,
+  type DomainEventFrame,
+} from '../src/protocol/index';
 
 const ACCT = 'acct_map_test';
 
@@ -44,11 +48,13 @@ describe('mapDomainFrame', () => {
       chatId: '777',
       messageId: '9001',
       message: { id: '9001', text: 'hi' },
+      occurredAt: '2026-07-06T10:00:00.000Z',
     });
 
     const sent = mapDomainFrame(frame({ type: 'message.sent', payload: undefined }));
     expect(sent).toMatchObject({ type: 'messageSent', accountId: ACCT, chatId: '777', messageId: '9001' });
     expect(sent).not.toHaveProperty('message');
+    expect(sent).not.toHaveProperty('occurredAt');
   });
 
   it('tolerates a malformed payload (id-only event, the existing fallback path)', () => {
@@ -120,5 +126,25 @@ describe('mapDomainFrame', () => {
     expect(mapDomainFrame(frame({ type: 'message.deleted', messageRef: null }))).toBeNull();
     expect(mapDomainFrame(frame({ type: 'presence.online', fanRef: null }))).toBeNull();
     expect(mapDomainFrame(frame({ type: 'account.auth_changed', data: {} }))).toBeNull();
+  });
+});
+
+describe('parseSyncEvent messageReceived attention metadata', () => {
+  const received = {
+    type: 'messageReceived',
+    accountId: ACCT,
+    chatId: '777',
+    messageId: '9001',
+  } as const;
+
+  it('accepts an explicit replay suppression flag', () => {
+    expect(parseSyncEvent({ ...received, live: false })).toEqual({
+      ...received,
+      live: false,
+    });
+  });
+
+  it('keeps marker-less and polling-origin payloads backward compatible', () => {
+    expect(parseSyncEvent(received)).toEqual(received);
   });
 });

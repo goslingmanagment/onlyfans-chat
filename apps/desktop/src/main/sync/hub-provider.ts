@@ -64,6 +64,7 @@ type PollingLike = SyncProvider & {
 
 export interface HubFactoryCallbacks {
   onEvent: (event: SyncEvent) => Promise<void>;
+  onCaughtUp: () => void;
   onStatusChange: (status: HubSyncStatus) => void;
   onSnapshot: (snapshot: SyncSnapshotResponse) => Promise<void>;
   onSnapshotRequired: (input: {
@@ -376,6 +377,59 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     for (const listener of listeners) {
       listener(event);
     }
+  }
+
+  // Attention gate (see docs/plans/2026-07-22-startup-notification-flood.md):
+  // replay restores state; only messages arriving while this session watches
+  // may toast/beep. Epoch fallback covers cores without the v2 marker.
+  const NOTIFICATION_EPOCH_GRACE_MS = 60_000;
+  const ALERTED_IDS_CAP = 500;
+  const notificationEpochMs = now();
+  let sawReplayCompleted = false;
+  const alertedIds = new Set<string>();
+  const alertedOrder: string[] = [];
+
+  function markAlerted(key: string): void {
+    alertedIds.add(key);
+    alertedOrder.push(key);
+    if (alertedOrder.length > ALERTED_IDS_CAP) {
+      const evicted = alertedOrder.shift();
+      if (evicted !== undefined) {
+        alertedIds.delete(evicted);
+      }
+    }
+  }
+
+  function attentionEligible(
+    event: Extract<SyncEvent, { type: 'messageReceived' }>,
+  ): boolean {
+    const key = `${event.accountId}/${event.chatId}/${event.messageId}`;
+    if (alertedIds.has(key)) {
+      return false;
+    }
+    let eligible: boolean;
+    if (sawReplayCompleted) {
+      eligible = true;
+    } else {
+      const ts = event.message?.createdAt ?? event.occurredAt;
+      const ms = ts === undefined ? Number.NaN : Date.parse(ts);
+      eligible = Number.isFinite(ms)
+        && ms >= notificationEpochMs - NOTIFICATION_EPOCH_GRACE_MS;
+    }
+    if (eligible) {
+      markAlerted(key);
+    }
+    return eligible;
+  }
+
+  function emitMessageEvent(
+    event: Extract<SyncEvent, { type: 'messageReceived' | 'messageSent' }>,
+  ): void {
+    if (event.type !== 'messageReceived') {
+      emit(event);
+      return;
+    }
+    emit(attentionEligible(event) ? event : { ...event, live: false });
   }
 
   function emitStatus(): void {
@@ -691,7 +745,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
                 chatId: event.chatId,
                 messageId: event.messageId,
               });
-              emit(event);
+              emitMessageEvent(event);
               recordApplied(event.type);
               break;
             }
@@ -730,7 +784,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         // read has really applied. Let failure reject onEvent so HubSync replays
         // the frame instead of checkpointing past missing state.
         await polling.refreshChat(event.accountId, event.chatId, undefined, event.messageId);
-        emit(event);
+        emitMessageEvent(event);
         recordApplied(event.type);
         break;
       }
@@ -904,6 +958,9 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     const next = await createHub(
       {
         onEvent: handleHubEvent,
+        onCaughtUp: () => {
+          sawReplayCompleted = true;
+        },
         onStatusChange: handleHubStatus,
         onSnapshot: applyHubSnapshot,
         onSnapshotRequired: (input) => {

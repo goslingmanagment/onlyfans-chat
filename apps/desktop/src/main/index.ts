@@ -110,7 +110,10 @@ import {
   isAllowedDevRendererUrl,
   isAllowedExternalOpenUrl,
 } from './platform/navigation';
-import { messageNotificationBody } from './notifications';
+import {
+  isAlertEligible,
+  messageNotificationBody,
+} from './notifications';
 import { awaitRendererLoad } from './window-load';
 import { createRendererReadiness } from './renderer-readiness';
 import {
@@ -800,7 +803,14 @@ async function rebuildOfapiRuntime(
     // Resolved per (re)connect attempt so settings edits take effect on
     // reconfigureHub without re-running OFAPI init. Null = hub mode off.
     createHub: async (
-      { onEvent, onStatusChange, onSnapshot, onSnapshotRequired, onV2GapRecovered },
+      {
+        onEvent,
+        onCaughtUp,
+        onStatusChange,
+        onSnapshot,
+        onSnapshotRequired,
+        onV2GapRecovered,
+      },
       accountIds,
     ) => {
       const connection = await settingsStore.getHubConnection();
@@ -834,6 +844,7 @@ async function rebuildOfapiRuntime(
         clientVersion: app.getVersion(),
         accountIds,
         onEvent,
+        onCaughtUp,
         onSnapshot,
         onSnapshotRequired,
         onV2GapRecovered,
@@ -1094,6 +1105,7 @@ function reattachEventForwarding(): void {
       }
       if (
         event.type === 'messageReceived' &&
+        isAlertEligible(event) &&
         isWindowBackgrounded(mainWindow) &&
         notificationPrefs.notificationsEnabled &&
         Notification.isSupported()

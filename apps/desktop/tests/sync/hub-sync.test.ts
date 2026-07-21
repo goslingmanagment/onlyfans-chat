@@ -33,6 +33,7 @@ import type { ChatUpsert, MessageUpsert } from '../../src/main/db/index';
 const TEST_DRIVER = 'bsqlite3-mc-node';
 const ACCT = 'acct_hub_test';
 const NEW_ACCT = 'acct_hub_new';
+const PROVIDER_NOW_MS = Date.parse('2026-06-11T12:00:00.000Z');
 
 // ─── SSE frame parser ──────────────────────────────────────────────────────
 
@@ -1008,6 +1009,7 @@ describe('createHubAwareSync (provider composition)', () => {
     const provider = createHubAwareSync({
       polling,
       data,
+      now: () => PROVIDER_NOW_MS,
       createHub: (callbacks) => {
         captured = callbacks;
         return Promise.resolve(hub);
@@ -1412,6 +1414,112 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
+  it('stamps an old enriched messageReceived as replay before the marker', async () => {
+    const { provider, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const frame: SyncEvent = {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'old-9001',
+      message: hubMessage({
+        id: 'old-9001',
+        createdAt: '2026-06-11T10:00:00.000Z',
+      }),
+    };
+    await callbacks().onEvent(frame);
+
+    expect(events).toEqual([{ ...frame, live: false }]);
+    provider.stop();
+  });
+
+  it('uses occurredAt for a fresh id-only frame when the marker is unavailable', async () => {
+    const { provider, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const frame: SyncEvent = {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'fresh-thin-9001',
+      occurredAt: '2026-06-11T12:00:00.000Z',
+    };
+    await callbacks().onEvent(frame);
+
+    expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
+    expect(events[1]).not.toHaveProperty('live');
+    provider.stop();
+  });
+
+  it('treats post-marker messages as live even when their timestamps are old', async () => {
+    const { provider, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onCaughtUp();
+
+    const frame: SyncEvent = {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'post-marker-9001',
+      message: hubMessage({
+        id: 'post-marker-9001',
+        createdAt: '2026-06-11T10:00:00.000Z',
+      }),
+    };
+    await callbacks().onEvent(frame);
+
+    expect(events).toEqual([frame]);
+    expect(events[0]).not.toHaveProperty('live');
+    provider.stop();
+  });
+
+  it('suppresses a duplicate eligible message id after its first alert', async () => {
+    const { provider, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const frame: SyncEvent = {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'duplicate-9001',
+      message: hubMessage({ id: 'duplicate-9001' }),
+    };
+    await callbacks().onEvent(frame);
+    await callbacks().onEvent(frame);
+
+    expect(events).toEqual([frame, { ...frame, live: false }]);
+    provider.stop();
+  });
+
+  it('never stamps messageSent frames with attention metadata', async () => {
+    const { provider, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const frame: SyncEvent = {
+      type: 'messageSent',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'sent-9001',
+      message: hubMessage({ id: 'sent-9001', isSentByMe: true }),
+    };
+    await callbacks().onEvent(frame);
+
+    expect(events).toEqual([frame]);
+    expect(events[0]).not.toHaveProperty('live');
+    provider.stop();
+  });
+
   it('snapshot apply is idempotent, preserves local tombstones, and applies unresolved deletes', async () => {
     const { provider, polling, callbacks, events } = build();
     polling.ingestHubMessage = (accountId, chatId, message) => {
@@ -1730,7 +1838,10 @@ describe('createHubAwareSync (provider composition)', () => {
       chatId: '101',
       expectedMessageId: '9001',
     }]);
-    expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
+    expect(events).toEqual([
+      { type: 'chatListUpdated', accountId: ACCT },
+      { ...frame, live: false },
+    ]);
     expect(provider.hubActivity()).toMatchObject({
       eventsToday: 1,
       appliedEventsToday: 1,
@@ -1839,7 +1950,10 @@ describe('createHubAwareSync (provider composition)', () => {
       chatId: '101',
       expectedMessageId: '9001',
     }]);
-    expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
+    expect(events).toEqual([
+      { type: 'chatListUpdated', accountId: ACCT },
+      { ...frame, live: false },
+    ]);
     expect(provider.hubActivity()).toMatchObject({
       fallbackByTypeToday: { messageReceived: 1 },
       fallbackByReasonToday: { 'hub-id-only-fallback': 1 },

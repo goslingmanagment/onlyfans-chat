@@ -197,6 +197,7 @@ describe('createHubSync (protocol v2)', () => {
     log: string[];
     cursor: () => string | null;
     gapRecoveries: () => number;
+    caughtUps: () => number;
   }
 
   function makeV2Sync(
@@ -218,6 +219,7 @@ describe('createHubSync (protocol v2)', () => {
     const log: string[] = [];
     let cursor: string | null = options.initialCursor ?? null;
     let gapRecoveries = 0;
+    let caughtUps = 0;
     let snapshotPages = 0;
     const sync = createHubSync({
       protocol: 'v2',
@@ -232,6 +234,10 @@ describe('createHubSync (protocol v2)', () => {
           throw new Error('handler crashed');
         }
         log.push(`event:${event.type}`);
+      },
+      onCaughtUp: () => {
+        caughtUps += 1;
+        log.push('caught-up');
       },
       onSnapshot: (snapshot) => {
         snapshotPages += 1;
@@ -263,7 +269,15 @@ describe('createHubSync (protocol v2)', () => {
         log.push('clear');
       },
     });
-    return { sync, calls, statuses, log, cursor: () => cursor, gapRecoveries: () => gapRecoveries };
+    return {
+      sync,
+      calls,
+      statuses,
+      log,
+      cursor: () => cursor,
+      gapRecoveries: () => gapRecoveries,
+      caughtUps: () => caughtUps,
+    };
   }
 
   it('connects to the v2 path, resumes with the opaque cursor, and handle-then-checkpoints mapped frames', async () => {
@@ -284,6 +298,39 @@ describe('createHubSync (protocol v2)', () => {
     // replays, never skips.
     expect(h.log).toEqual(['event:messageReceived', 'persist:CUR_1']);
     expect(h.cursor()).toBe('CUR_1');
+    expect(h.caughtUps()).toBe(0);
+    h.sync.stop();
+  });
+
+  it('intercepts and checkpoints the replay-completed marker without dropping it', async () => {
+    const stream = makeStream();
+    const h = makeV2Sync([{ status: 200, stream }]);
+    h.sync.start();
+    await drainMicrotasks();
+
+    stream.send(domainFrame('CUR_CAUGHT_UP', {
+      accountId: 0,
+      accountSeq: 0,
+      type: 'stream.replay_completed',
+      occurredAt: '2026-07-22T10:00:00.000Z',
+      data: null,
+      accountRef: null,
+    }));
+    await drainMicrotasks();
+
+    expect(h.caughtUps()).toBe(1);
+    expect(h.log).toEqual(['caught-up', 'persist:CUR_CAUGHT_UP']);
+    expect(h.cursor()).toBe('CUR_CAUGHT_UP');
+    expect(h.sync.droppedFrameCount()).toBe(0);
+
+    stream.send(messageFrame('CUR_LIVE'));
+    await drainMicrotasks();
+    expect(h.log).toEqual([
+      'caught-up',
+      'persist:CUR_CAUGHT_UP',
+      'event:messageReceived',
+      'persist:CUR_LIVE',
+    ]);
     h.sync.stop();
   });
 

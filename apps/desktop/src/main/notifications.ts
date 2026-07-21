@@ -1,1 +1,4 @@
-export { messageNotificationBody } from '@chatgoose/shared/notifications/index';
+export {
+  isAlertEligible,
+  messageNotificationBody,
+} from '@chatgoose/shared/notifications/index';
