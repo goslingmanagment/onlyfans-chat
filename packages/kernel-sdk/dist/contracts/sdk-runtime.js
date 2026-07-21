@@ -3,7 +3,9 @@ import { routeSchemas } from "./routes";
  * Operations without a plain request/JSON-response shape. The webhook is
  * HMAC-authenticated server intake; the two streams are SSE (dedicated
  * helpers); the read gateway is a wildcard proxy (passthrough helper); the
- * ledger CSV returns text/csv. All remain reachable via `client.raw(...)`.
+ * ledger CSV returns text/csv; the voice-note audio route returns binary
+ * audio/mpeg (dedicated `fetchVoiceNoteAudio` helper). All remain reachable via
+ * `client.raw(...)`.
  */
 export const SDK_EXCLUDED_OPERATIONS = [
     "ofapiWebhookReceive",
@@ -12,6 +14,7 @@ export const SDK_EXCLUDED_OPERATIONS = [
     "aiGatewayStream",
     "ofapiReadGateway",
     "adminOfapiCreditsLedgerCsv",
+    "voiceNoteAudio",
 ];
 export class KernelApiError extends Error {
     category;
@@ -399,6 +402,30 @@ export async function ofapiRead(options, input) {
         query: input.query,
         headers: input.headers,
     });
+}
+/**
+ * Fetch a completed voice-note's audio bytes (`GET
+ * /api/v1/pages/:pageLabel/voice-notes/:id/audio`, Task 6). The response is
+ * binary `audio/mpeg`, so there is no JSON shape to validate — the caller gets
+ * the raw Response (200 with the bytes on success). On failure the body carries
+ * a structured `{ error, message, statusCode }`; NOTE a 410 `artifact_expired`
+ * (the audio was purged) is matched on the body `error` code, NOT a distinct
+ * SDK error category — the existing gate-code pattern.
+ */
+export async function fetchVoiceNoteAudio(options, input) {
+    const def = { method: "GET", path: "/api/v1/pages/:pageLabel/voice-notes/:id/audio" };
+    const response = await executeKernelRequest({
+        def,
+        options,
+        params: { pageLabel: input.pageLabel, id: input.id },
+    });
+    // Mirror client.raw(): the caller gets the raw Response, so nothing else fires
+    // the logout hook. An expired bearer during audio download must still notify
+    // onAuthError (operation=null) like every other 401/403.
+    if (response.status === 401 || response.status === 403) {
+        notifyAuthError(options, new KernelApiError(`${def.method} ${def.path} failed with ${response.status}`, "auth", response.status, null, null));
+    }
+    return response;
 }
 /**
  * Subscribe to the v2 domain-event stream (`GET /api/v1/events/v2/stream`,

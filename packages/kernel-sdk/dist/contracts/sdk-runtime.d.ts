@@ -10,9 +10,11 @@ export type KernelOperationKey = keyof Schemas & string;
  * Operations without a plain request/JSON-response shape. The webhook is
  * HMAC-authenticated server intake; the two streams are SSE (dedicated
  * helpers); the read gateway is a wildcard proxy (passthrough helper); the
- * ledger CSV returns text/csv. All remain reachable via `client.raw(...)`.
+ * ledger CSV returns text/csv; the voice-note audio route returns binary
+ * audio/mpeg (dedicated `fetchVoiceNoteAudio` helper). All remain reachable via
+ * `client.raw(...)`.
  */
-export declare const SDK_EXCLUDED_OPERATIONS: readonly ["ofapiWebhookReceive", "eventsStream", "eventsV2Stream", "aiGatewayStream", "ofapiReadGateway", "adminOfapiCreditsLedgerCsv"];
+export declare const SDK_EXCLUDED_OPERATIONS: readonly ["ofapiWebhookReceive", "eventsStream", "eventsV2Stream", "aiGatewayStream", "ofapiReadGateway", "adminOfapiCreditsLedgerCsv", "voiceNoteAudio"];
 export type KernelSdkExcludedKey = (typeof SDK_EXCLUDED_OPERATIONS)[number];
 export type KernelSdkMethodKey = Exclude<KernelOperationKey, KernelSdkExcludedKey>;
 type InputOf<S> = S extends z.ZodType ? z.input<S> : never;
@@ -141,6 +143,19 @@ export declare function ofapiRead(options: KernelClientOptions, input: {
     path: string;
     query?: Record<string, unknown> | undefined;
     headers?: Record<string, string> | undefined;
+}): Promise<Response>;
+/**
+ * Fetch a completed voice-note's audio bytes (`GET
+ * /api/v1/pages/:pageLabel/voice-notes/:id/audio`, Task 6). The response is
+ * binary `audio/mpeg`, so there is no JSON shape to validate — the caller gets
+ * the raw Response (200 with the bytes on success). On failure the body carries
+ * a structured `{ error, message, statusCode }`; NOTE a 410 `artifact_expired`
+ * (the audio was purged) is matched on the body `error` code, NOT a distinct
+ * SDK error category — the existing gate-code pattern.
+ */
+export declare function fetchVoiceNoteAudio(options: KernelClientOptions, input: {
+    pageLabel: string;
+    id: number;
 }): Promise<Response>;
 /**
  * Subscribe to the v2 domain-event stream (`GET /api/v1/events/v2/stream`,
