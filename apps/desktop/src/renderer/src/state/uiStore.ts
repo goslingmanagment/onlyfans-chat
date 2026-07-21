@@ -47,8 +47,8 @@ interface UiState {
 
   setView: (view: AppView) => void;
   selectAccount: (accountId: string) => void;
-  /** Boot-time default selection: never navigates (unlike selectAccount). */
-  setDefaultAccount: (accountId: string) => void;
+  /** Keep selection inside the current grant set without changing the view. */
+  reconcileAccountSelection: (accountId: string | null) => void;
   selectChat: (accountId: string, chatId: string) => void;
   setChatFilter: (filter: ChatFilter) => void;
   toggleList: () => void;
@@ -98,8 +98,12 @@ export const useUiStore = create<UiState>((set) => ({
       const accountScopedView = s.view === 'spenders' || s.view === 'online' ? s.view : 'workspace';
       return { selectedAccountId: accountId, selectedChatId: null, view: accountScopedView };
     }),
-  setDefaultAccount: (accountId) =>
-    set((s) => (s.selectedAccountId === null ? { selectedAccountId: accountId } : s)),
+  reconcileAccountSelection: (accountId) =>
+    set((s) =>
+      s.selectedAccountId === accountId
+        ? s
+        : { selectedAccountId: accountId, selectedChatId: null },
+    ),
   selectChat: (accountId, chatId) =>
     set({
       selectedAccountId: accountId,

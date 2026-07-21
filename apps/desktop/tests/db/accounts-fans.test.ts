@@ -111,6 +111,77 @@ describe('accounts queries', () => {
     expect(flushed).toEqual([{ scope: 'accounts', accountId: 'acct_1' }]);
   });
 
+  it('reconciles the authoritative grant set without deleting revoked cache', () => {
+    layer.accounts.upsert({
+      id: 'acct_old',
+      username: 'loravie',
+      displayName: 'Lora Vie',
+      avatar: null,
+      authState: 'authenticated',
+      raw: {},
+    });
+    layer.chats.upsert(sampleChat({ accountId: 'acct_old', chatId: '101', unreadCount: 4 }));
+
+    layer.accounts.reconcileGrants([{
+      id: 'acct_new',
+      username: 'loravie',
+      displayName: 'Lora Vie',
+      avatar: null,
+      authState: 'authenticated',
+      raw: {},
+    }]);
+
+    expect(layer.accounts.get('acct_old')).toMatchObject({
+      authState: 'unauthenticated',
+      grantState: 'revoked',
+    });
+    expect(layer.accounts.get('acct_new')).toMatchObject({
+      authState: 'authenticated',
+      grantState: 'granted',
+    });
+    expect(layer.accounts.listGranted().map((row) => row.id)).toEqual(['acct_new']);
+    expect(layer.chats.get('acct_old', '101')).not.toBeNull();
+  });
+
+  it('keeps a granted account visible when its vendor session needs re-authentication', () => {
+    layer.accounts.reconcileGrants([{
+      id: 'acct_current',
+      username: 'loravie',
+      displayName: 'Lora Vie',
+      avatar: null,
+      authState: 'unauthenticated',
+      raw: {},
+    }]);
+
+    expect(layer.accounts.listGranted()).toEqual([
+      expect.objectContaining({
+        id: 'acct_current',
+        authState: 'unauthenticated',
+        grantState: 'granted',
+      }),
+    ]);
+  });
+
+  it('accepts an authenticated empty grant set and ignores late auth events for revoked rows', () => {
+    layer.accounts.upsert({
+      id: 'acct_old',
+      username: 'loravie',
+      displayName: 'Lora Vie',
+      avatar: null,
+      authState: 'authenticated',
+      raw: {},
+    });
+
+    layer.accounts.reconcileGrants([]);
+    layer.accounts.setAuthState('acct_old', 'authenticated');
+
+    expect(layer.accounts.listGranted()).toEqual([]);
+    expect(layer.accounts.get('acct_old')).toMatchObject({
+      authState: 'unauthenticated',
+      grantState: 'revoked',
+    });
+  });
+
   it('returns null for unknown accounts', () => {
     expect(layer.accounts.get('acct_missing')).toBeNull();
   });

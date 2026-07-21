@@ -24,7 +24,7 @@ export function AppShell(): React.JSX.Element {
   const listCollapsed = useUiStore((s) => s.listCollapsed);
   const panelCollapsed = useUiStore((s) => s.panelCollapsed);
   const selectedAccountId = useUiStore((s) => s.selectedAccountId);
-  const setDefaultAccount = useUiStore((s) => s.setDefaultAccount);
+  const reconcileAccountSelection = useUiStore((s) => s.reconcileAccountSelection);
 
   const accounts = useAccounts();
   const settings = useSettings();
@@ -37,15 +37,23 @@ export function AppShell(): React.JSX.Element {
     void signalRendererReady();
   }, []);
 
-  // default account selection once accounts load — selection only, never a
-  // view switch (a boot into Settings must stay there)
+  // Keep selection inside the authoritative grant set. This is selection only,
+  // never a view switch (a boot into Settings must stay there).
   useEffect(() => {
-    if (selectedAccountId === null) {
-      if (accounts.data === undefined || settings.data === undefined) return;
-      const firstId = firstOrderedId(accounts.data, (account) => account.id, settings.data.accountOrder);
-      if (firstId !== null) setDefaultAccount(firstId);
+    if (accounts.data === undefined || settings.data === undefined) return;
+    if (
+      selectedAccountId !== null &&
+      accounts.data.some((account) => account.id === selectedAccountId)
+    ) {
+      return;
     }
-  }, [accounts.data, selectedAccountId, setDefaultAccount, settings.data]);
+    const firstId = firstOrderedId(
+      accounts.data,
+      (account) => account.id,
+      settings.data.accountOrder,
+    );
+    reconcileAccountSelection(firstId);
+  }, [accounts.data, reconcileAccountSelection, selectedAccountId, settings.data]);
 
   // mirror notification-relevant settings for the event layer
   useEffect(() => {

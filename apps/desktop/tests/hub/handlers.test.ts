@@ -741,6 +741,24 @@ describe('read-only persona catalog IPC', () => {
     seedAccount(data);
   });
 
+  it('hides revoked grants but keeps a granted account that needs re-authentication', async () => {
+    data.accounts.upsert({
+      id: 'acct_old',
+      username: 'loravie',
+      displayName: 'Lora Vie',
+      avatar: null,
+      authState: 'authenticated',
+      raw: {},
+    });
+    data.accounts.revokeGrant('acct_old');
+    data.accounts.setAuthState(ACCT, 'unauthenticated');
+    register(data);
+
+    await expect(invokeRaw('query:accounts.list')).resolves.toEqual([
+      expect.objectContaining({ id: ACCT, isAuthenticated: false }),
+    ]);
+  });
+
   it('commits the immutable full-text snapshot before the first catalog request', async () => {
     const legacy = [{ id: 'custom:legacy', name: 'Legacy', content: 'full private text' }];
     const mappings = { [ACCT]: 'custom:legacy' };
