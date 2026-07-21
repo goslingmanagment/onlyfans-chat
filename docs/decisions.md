@@ -492,14 +492,21 @@ delivered on a dedicated `event: control` SSE lane (`{"type":
 contract requires positive accountId/accountSeq and the vendored SDK kills the
 subscription on any invalid domain frame, while unknown event names are
 skipped by every consumer (the `ephemeral` precedent). The signal is sticky
-until a suspend-sized wall-clock gap (>5 min between gate evaluations)
-re-arms the gate — a sleeping session was not watching, so the wake backlog
-replays silently like a cold start. Fallback for marker-less streams is a
-provider-start epoch minus 60 s grace over message.createdAt/occurredAt,
-fail-quiet on missing timestamps (one warn per session for diagnosability).
-Alerts dedup by message id (bounded 500) across BOTH sources — polling-origin
-alerts claim ids in the same registry, so an SSE replay after a
-polling-covered outage cannot alert twice. Matches the polling provider's
+until the sleep detector re-arms the gate: a 30 s interval tick arriving
+>5 min late means the machine suspended (or the process froze) — the session
+was not watching, so the wake backlog replays silently like a cold start.
+Message arrival gaps are deliberately NOT a re-arm signal: a quiet chat or an
+SSE outage with the app awake keeps live mode, so outage backlog still alerts
+(review 2026-07-22 killed the interval-between-messages heuristic for exactly
+that false positive). Fallback for marker-less streams is a provider-start
+epoch minus 60 s grace over message.createdAt/occurredAt, then the local
+row's createdAt (id-only frames and polling events are durably applied
+before they emit); with no resolvable time the hub lane fails quiet (one
+warn per session for diagnosability) and the polling lane fails open (it
+only emits ids it just read back from the DB). Polling rides the SAME gate
+and alert registry (bounded 500) — its baseline sweep covers the cold-start
+backlog, the epoch covers its auto-read wake backlog, and the shared
+registry stops either source from re-alerting the other's id. Matches the polling provider's
 long-standing "history is not news" baseline (its first sweep swallows the
 downtime backlog); D10 cursor semantics untouched — no replayed state is ever
 skipped, and control frames never advance the cursor.

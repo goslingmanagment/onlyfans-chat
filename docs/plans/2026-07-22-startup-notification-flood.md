@@ -13,10 +13,13 @@
 > write-after-end is a process-fatal stream error; (3) the alert-dedup
 > registry spans BOTH event sources — polling-origin messageReceived claims
 > ids too, so an SSE replay after a polling-covered outage cannot alert
-> twice; (4) the live signal re-arms after a suspend-sized wall-clock gap
-> (>5 min between gate evaluations): a sleeping session was not watching, so
-> the wake backlog replays silently like a cold start. D23 records the
-> as-built rules.
+> twice; (4) the live signal re-arms on a real suspend
+> only — a 30 s interval tick arriving >5 min late (round two of review
+> killed the interval-between-messages heuristic: it mistook quiet SSE
+> outages for sleep and muted genuinely missed messages); and (5) polling
+> rides the same gate and registry, with the local row's createdAt as the
+> timestamp fallback, so the auto-read wake backlog is suppressed too. D23
+> records the as-built rules.
 
 ## Why this work exists (read first)
 
