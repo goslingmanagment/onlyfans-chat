@@ -142,7 +142,10 @@ demoable without a real feed.
 1. Bump `version` in `apps/desktop/package.json`, run `pnpm check`, and commit on
    `main`.
 2. Push `main` and wait for **both** release-prerequisite CI jobs to pass on that exact
-   commit: the existing Linux `pnpm check` and `pnpm check (Windows)`. Do not
+   commit: the existing Linux `pnpm check` and `pnpm check (Windows)`. Both
+   jobs run on every push to `main`, and `main` runs are never auto-cancelled
+   (only superseded PR runs are); the Windows job skips Draft-PR syncs, so a
+   PR gets its Windows run when it leaves Draft. Do not
    create the release tag while either job is pending or failing; this catches
    Windows path, line-ending, and native-toolchain regressions before a version
    is consumed. The tag/publish workflow also rejects the vendored SDK unless

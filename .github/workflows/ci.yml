@@ -14,11 +14,12 @@ on:
     branches:
       - main
 
-# A superseded head has nothing left to prove — cancel its run instead of
-# letting it burn the minutes budget.
+# A superseded PR head has nothing left to prove — cancel its run instead of
+# letting it burn the minutes budget. Main runs always complete: that run is
+# the only finished-check record its commit ever gets.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:

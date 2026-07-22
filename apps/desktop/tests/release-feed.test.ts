@@ -771,8 +771,17 @@ fi
     // Keep the existing Linux required-check identity while adding the same
     // cross-platform gate that must pass before a release tag is published.
     expect(ci).toMatch(/check:\n\s+name: pnpm check\n\s+runs-on: ubuntu-latest/);
-    expect(ci).toMatch(/windows-check:\n\s+name: pnpm check \(Windows\)\n\s+runs-on: windows-latest/);
+    expect(ci).toMatch(
+      /windows-check:\n\s+name: pnpm check \(Windows\)\n(?:\s+#[^\n]*\n)*\s+if: github\.event_name != 'pull_request' \|\| github\.event\.pull_request\.draft == false\n\s+runs-on: windows-latest/,
+    );
     expect(ci.match(/run: pnpm check/g)).toHaveLength(2);
+    // The minutes diet must never cancel a main run (windows-build.yml's
+    // exact-SHA CI assertion needs it to finish) and must keep the Windows
+    // job reachable on the merge SHA once a PR leaves Draft.
+    expect(ci).toMatch(
+      /concurrency:\n\s+group: ci-\$\{\{ github\.ref \}\}\n\s+cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/,
+    );
+    expect(ci).toMatch(/ready_for_review/);
 
     const release = readNormalized(resolve(repoRoot, 'docs/RELEASE.md'));
     expect(release).toMatch(/higher-semver/i);

@@ -42,6 +42,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D22 | 2026-07-21 | Only user-initiated backward history advertises pure DB-readable pages (core #158/#162) |
 | D23 | 2026-07-22 | Account grants are distinct from vendor auth: authoritative reconciliation hides revoked identities without deleting cache |
 | D24 | 2026-07-22 | SSE replay restores state without toast, sound, or OS notifications; live alerts use core's control-lane marker plus a fail-quiet epoch fallback, with cross-source alert dedup and suspend re-arm |
+| D25 | 2026-07-22 | CI minutes diet: superseded PR runs auto-cancel (main runs never); Windows check skips Draft syncs, runs at ready + on main |
 
 ## Entries
 
@@ -539,3 +540,13 @@ long-standing "history is not news" baseline (its first sweep swallows the
 downtime backlog); D10 cursor semantics untouched — no replayed state is ever
 skipped, and control frames never advance the cursor.
 
+**D25 (2026-07-22).** Actions-minutes diet (July overage): `ci.yml` gains a
+concurrency group that auto-cancels superseded PR runs but NEVER cancels
+`main` runs — a `main` commit's run is the only completed-check record it
+gets, and `windows-build.yml`'s exact-SHA CI assertion plus the RELEASE.md
+operator ritual depend on it finishing. The `pnpm check (Windows)` job
+(2x-billed minutes) now runs on `main` pushes and non-Draft PR events only
+(`ready_for_review` added to the triggers), so Draft syncs run the Linux
+check alone and a PR gets its Windows run on the merge SHA when it leaves
+Draft. The release flow is unchanged: both jobs still run on every `main`
+push. Pinned by release-feed.test.ts (workflow-gates test).
