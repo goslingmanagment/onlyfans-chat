@@ -1623,6 +1623,60 @@ describe('createHubAwareSync (provider composition)', () => {
     }
   });
 
+  it('suppresses the wake replay even when frames beat the first post-resume tick', async () => {
+    const { provider, callbacks, events, setNow } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onCaughtUp();
+
+    // No timer advancement at all: the SSE resume delivers its replay before
+    // the sleep interval ever fires after wake. The gate itself must notice
+    // the wall-clock gap inline.
+    setNow(PROVIDER_NOW_MS + 8 * 3_600_000);
+    await callbacks().onEvent({
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'race-9001',
+      message: hubMessage({
+        id: 'race-9001',
+        createdAt: new Date(PROVIDER_NOW_MS + 4 * 3_600_000).toISOString(),
+      }),
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ messageId: 'race-9001', live: false });
+    await provider.stop();
+  });
+
+  it('lets a timestamp-less hub frame alert after the bounded settle window', async () => {
+    const { provider, callbacks, events, setNow } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // v1 shape: id-only, no occurredAt, auto-read off wrote no row. Within
+    // the settle window it stays quiet (boot replay), past it the same shape
+    // is a live message without a body and must still alert.
+    const idOnly = (messageId: string): SyncEvent => ({
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId,
+    });
+    setNow(PROVIDER_NOW_MS + 2 * 60_000);
+    await callbacks().onEvent(idOnly('v1-early-9001'));
+    setNow(PROVIDER_NOW_MS + 6 * 60_000);
+    await callbacks().onEvent(idOnly('v1-late-9001'));
+
+    const received = events.filter((event) => event.type === 'messageReceived');
+    expect(received).toHaveLength(2);
+    expect(received[0]).toMatchObject({ messageId: 'v1-early-9001', live: false });
+    expect(received[1]).toMatchObject({ messageId: 'v1-late-9001' });
+    expect(received[1]).not.toHaveProperty('live');
+    await provider.stop();
+  });
+
   it('keeps live mode through a quiet mid-session SSE outage (awake = still news)', async () => {
     vi.useFakeTimers();
     try {

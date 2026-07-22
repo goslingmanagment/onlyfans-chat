@@ -111,8 +111,8 @@ import {
   isAllowedExternalOpenUrl,
 } from './platform/navigation';
 import {
-  isAlertEligible,
   messageNotificationBody,
+  shouldShowOsNotification,
 } from './notifications';
 import { awaitRendererLoad } from './window-load';
 import { createRendererReadiness } from './renderer-readiness';
@@ -1104,11 +1104,15 @@ function reattachEventForwarding(): void {
         }
       }
       if (
+        // The type check narrows for messageNotificationBody below; the
+        // actual decision (including it) lives in the tested helper.
         event.type === 'messageReceived' &&
-        isAlertEligible(event) &&
-        isWindowBackgrounded(mainWindow) &&
-        notificationPrefs.notificationsEnabled &&
-        Notification.isSupported()
+        shouldShowOsNotification({
+          event,
+          windowBackgrounded: isWindowBackgrounded(mainWindow),
+          notificationsEnabled: notificationPrefs.notificationsEnabled,
+          notificationsSupported: Notification.isSupported(),
+        })
       ) {
         const chat = liveData.chats.get(event.accountId, event.chatId);
         new Notification({

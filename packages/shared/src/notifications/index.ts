@@ -8,6 +8,21 @@ export function isAlertEligible(event: { live?: boolean | undefined }): boolean 
   return event.live !== false;
 }
 
+/** Main's complete OS-notification decision, extracted so the Electron
+ * composition root stays a thin caller and the gate is unit-testable. */
+export function shouldShowOsNotification(input: {
+  event: SyncEvent;
+  windowBackgrounded: boolean;
+  notificationsEnabled: boolean;
+  notificationsSupported: boolean;
+}): boolean {
+  return input.event.type === 'messageReceived'
+    && isAlertEligible(input.event)
+    && input.windowBackgrounded
+    && input.notificationsEnabled
+    && input.notificationsSupported;
+}
+
 /** Canonical incoming-message copy shared by native and renderer notices. */
 export function messageNotificationBody(
   locale: UiLocale,

@@ -492,18 +492,25 @@ delivered on a dedicated `event: control` SSE lane (`{"type":
 contract requires positive accountId/accountSeq and the vendored SDK kills the
 subscription on any invalid domain frame, while unknown event names are
 skipped by every consumer (the `ephemeral` precedent). The signal is sticky
-until the sleep detector re-arms the gate: a 30 s interval tick arriving
->5 min late means the machine suspended (or the process froze) — the session
-was not watching, so the wake backlog replays silently like a cold start.
+until the sleep detector re-arms the gate: a >5 min wall-clock gap since the
+last 30 s heartbeat tick means the machine suspended (or the process froze) —
+the session was not watching, so the wake backlog replays silently like a
+cold start. The gap check runs both in the tick and inline at every gate
+evaluation (suspended timers may not be overdue at wake, and the SSE resume
+can beat the first post-resume tick); the detector's timer lives strictly
+between provider start and stop (a never-committed candidate runtime must
+not leak it).
 Message arrival gaps are deliberately NOT a re-arm signal: a quiet chat or an
 SSE outage with the app awake keeps live mode, so outage backlog still alerts
 (review 2026-07-22 killed the interval-between-messages heuristic for exactly
 that false positive). Fallback for marker-less streams is a provider-start
 epoch minus 60 s grace over message.createdAt/occurredAt, then the local
 row's createdAt (id-only frames and polling events are durably applied
-before they emit); with no resolvable time the hub lane fails quiet (one
-warn per session for diagnosability) and the polling lane fails open (it
-only emits ids it just read back from the DB). Polling rides the SAME gate
+before they emit); with no resolvable time the polling lane fails open (it
+only emits ids it just read back from the DB) and the hub lane fails quiet
+only within a bounded 5-min settle window after the epoch (one warn per
+session for diagnosability), then fails open — a live v1 id-only message
+must not lose its alert for lacking a body. Polling rides the SAME gate
 and alert registry (bounded 500) — its baseline sweep covers the cold-start
 backlog, the epoch covers its auto-read wake backlog, and the shared
 registry stops either source from re-alerting the other's id. Matches the polling provider's

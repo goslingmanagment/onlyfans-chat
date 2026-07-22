@@ -392,13 +392,24 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
    * marker's live mode, so the outage backlog still alerts (polling parity). */
   const SLEEP_TICK_MS = 30_000;
   const ATTENTION_REARM_GAP_MS = 5 * 60_000;
+  /** Hub frames with NO resolvable timestamp (v1 id-only with auto-read off)
+   * stay quiet only within this window after the epoch — a bounded replay
+   * settle, not a session-long mute. Past it they alert: a fresh v1 id-only
+   * message must not lose its notification just because it has no body. */
+  const MISSING_TS_SETTLE_MS = 5 * 60_000;
   let notificationEpochMs = now();
   let sawReplayCompleted = false;
   let suppressionWarned = false;
   const alertedIds = new Set<string>();
   const alertedOrder: string[] = [];
   let lastSleepTickMs = now();
-  const sleepDetector = setInterval(() => {
+  let sleepDetector: ReturnType<typeof setInterval> | null = null;
+
+  /** Called from the tick AND from every gate evaluation: on some platforms
+   * suspended timers are not overdue at wake, and the SSE resume can deliver
+   * its replay before the first post-resume tick — the gate itself must see
+   * the wall-clock gap, not merely hope the interval fired first. */
+  function maybeRearmAfterSuspend(): void {
     const nowMs = now();
     if (nowMs - lastSleepTickMs > SLEEP_TICK_MS + ATTENTION_REARM_GAP_MS) {
       sawReplayCompleted = false;
@@ -409,7 +420,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       });
     }
     lastSleepTickMs = nowMs;
-  }, SLEEP_TICK_MS);
+  }
 
   function markAlerted(key: string): void {
     alertedIds.add(key);
@@ -426,6 +437,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     event: Extract<SyncEvent, { type: 'messageReceived' }>,
     source: 'hub' | 'polling',
   ): boolean {
+    maybeRearmAfterSuspend();
     const key = `${event.accountId}/${event.chatId}/${event.messageId}`;
     if (alertedIds.has(key)) {
       return false;
@@ -443,12 +455,17 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       const ms = ts === undefined ? Number.NaN : Date.parse(ts);
       if (Number.isFinite(ms)) {
         eligible = ms >= notificationEpochMs - NOTIFICATION_EPOCH_GRACE_MS;
+      } else if (source === 'polling') {
+        // Polling only emits ids it just read back from the DB, so a missing
+        // row means a synthetic caller — and its baseline sweep already
+        // swallowed the cold-start backlog. Fail open.
+        eligible = true;
       } else {
-        // No resolvable time. The replay-heavy hub lane fails quiet; polling
-        // fails open — it only emits ids it just read back from the DB, so a
-        // missing row means a synthetic caller, and its baseline sweep
-        // already swallowed the cold-start backlog.
-        eligible = source === 'polling';
+        // Hub frame with no resolvable time (v1 id-only, auto-read off —
+        // refreshChat wrote no row). Quiet only through the bounded replay
+        // settle window after the epoch; past it this is a live message that
+        // simply has no body, and it must still alert.
+        eligible = now() - notificationEpochMs > MISSING_TS_SETTLE_MS;
       }
       if (!eligible && !suppressionWarned) {
         // One warn per session: a clock skewed ahead of the epoch would mute
@@ -1072,13 +1089,24 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   return {
     start(accountIds) {
       running = true;
+      // Timer lives strictly between start and stop: a candidate runtime
+      // that never commits (activation failure) must not leak a ticking
+      // interval pinning its whole graph, and stop→start must restore
+      // suspend detection.
+      if (sleepDetector === null) {
+        lastSleepTickMs = now();
+        sleepDetector = setInterval(maybeRearmAfterSuspend, SLEEP_TICK_MS);
+      }
       handledAccountIds = [...accountIds];
       polling.start(accountIds);
       void startHub();
     },
     async stop() {
       running = false;
-      clearInterval(sleepDetector);
+      if (sleepDetector !== null) {
+        clearInterval(sleepDetector);
+        sleepDetector = null;
+      }
       stopHub();
       await polling.stop();
     },
