@@ -18,8 +18,9 @@
 > killed the interval-between-messages heuristic: it mistook quiet SSE
 > outages for sleep and muted genuinely missed messages); and (5) polling
 > rides the same gate and registry, with the local row's createdAt as the
-> timestamp fallback, so the auto-read wake backlog is suppressed too. D23
-> records the as-built rules.
+> timestamp fallback, so the auto-read wake backlog is suppressed too. D24
+> records the as-built rules (renumbered from D23: a parallel session's
+> account-grants decision took that number on main).
 
 ## Why this work exists (read first)
 

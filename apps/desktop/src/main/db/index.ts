@@ -104,6 +104,7 @@ export type { Migration } from './migrations';
 export { toSqlBool, toJson } from './rows';
 export type {
   AccountAuthState,
+  AccountGrantState,
   AccountRow,
   AccountUpsert,
   ChatRow,

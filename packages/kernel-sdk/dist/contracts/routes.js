@@ -1,4 +1,4 @@
-import { PERIOD_OPTIONS, SPENDER_PERIOD_OPTIONS, SPENDER_RETENTION_STATUSES, SPENDER_SERIES_GRANULARITIES, aiUsageFeatures, creatableUserRoles, fanFlagTypes, isValidBusinessDateString, platforms, transactionReportingBuckets, transactionStates, transactionTypes, userRoles, } from "../shared/index";
+import { PERIOD_OPTIONS, SPENDER_PERIOD_OPTIONS, SPENDER_RETENTION_STATUSES, SPENDER_SERIES_GRANULARITIES, aiUsageFeatures, creatableUserRoles, fanFlagTypes, isValidBusinessDateString, ofapiCaptureJobStates, platforms, transactionReportingBuckets, transactionStates, transactionTypes, userRoles, } from "../shared/index";
 import { z } from "zod";
 const intId = z.number().int().positive();
 const mills = z.number().int();
@@ -465,6 +465,52 @@ export const pageConversationMessagesParamsSchema = pageParamsSchema.extend({
 export const pageConversationMessagesQuerySchema = z.object({
     limit: z.coerce.number().int().min(1).default(25),
 });
+// ── Voice notes (Task 6) ──────────────────────────────────────────────────────
+// Three page-scoped routes on the chatter lane. The status/create views share
+// one projection (voiceNoteStatusSchema); the audio route returns raw bytes.
+export const voiceNoteParamsSchema = pageParamsSchema.extend({
+    // The render's numeric voice_notes.id. Coerced from the path segment; a
+    // foreign/unknown id is an indistinguishable 404 (page-scoped, service-side).
+    id: z.coerce.number().int().min(1),
+});
+// Content is bounded here only to cap the request; the substantive checks
+// (control-char refs, script length against the LIVE config max, source
+// eligibility) run service-side and answer with structured 400/409 codes.
+export const voiceNoteCreateBodySchema = z.object({
+    // MUST be a UUID: it keys the idempotent `voice_notes.client_request_id`
+    // (a `uuid` column). Validating the format here — like the sibling AI-lane
+    // routes — rejects a malformed id at the schema boundary with a 400, before
+    // any non-UUID string can reach Postgres and raise a raw 22P02 → 500.
+    clientRequestId: z.string().uuid(),
+    conversationRef: z.string().min(1).max(200),
+    sourceGenerationRef: z.string().min(1).max(200),
+    script: z.string().min(1).max(8000),
+});
+export const voiceNoteStateSchema = z.enum([
+    "queued",
+    "dispatched",
+    "completed",
+    "failed_definite",
+    "failed_after_dispatch",
+    "indeterminate",
+    "quota_denied",
+    "artifact_expired",
+]);
+// The client-facing projection (never carries audio bytes). `createdAt` is
+// REQUIRED — the takes list orders by it. `errorCode` is present only on a
+// terminal non-success state; its vocabulary is a SUPERSET of the HTTP error
+// codes (voice_failed_definite / voice_failed_after_dispatch /
+// voice_indeterminate / voice_quota_denied / artifact_expired).
+export const voiceNoteStatusSchema = z.object({
+    voiceNoteId: intId,
+    state: voiceNoteStateSchema,
+    scriptChars: z.number().int(),
+    billed: z.boolean().nullable(),
+    audioSha256: z.string().nullable(),
+    audioBytesLen: z.number().int().nullable(),
+    createdAt: isoTimestamp,
+    errorCode: z.string().optional(),
+});
 const pageMetricSchema = z.object({
     value: z.number().int().nullable(),
     available: z.boolean(),
@@ -478,6 +524,11 @@ export const assignedPageSchema = pageRefSchema.extend({
     subscriberCount: pageMetricSchema,
     lastLightSyncAt: isoTimestamp.nullable(),
     lastFollowerSyncAt: isoTimestamp.nullable(),
+    // OPTIONAL UI hint (Task 6). Present only when the voice-notes switch is live
+    // AND this page is allowlisted AND a voice profile exists — a missing field
+    // reads as disabled (old-kernel forward-compat). The flag never gates the
+    // render: `POST …/voice-notes` stays the authoritative admission.
+    capabilities: z.object({ voiceNotes: z.boolean() }).optional(),
 });
 export const modelListItemSchema = z.object({
     id: intId,
@@ -1616,6 +1667,14 @@ export const aiGatewayQuotaSchema = z.object({
     remainingRequestsToday: z.number().int().nonnegative().nullable(),
     remainingMicroUsdToday: z.number().int().nonnegative().nullable(),
 });
+const aiFeatureAttachedRecapSchema = z.object({
+    generatedAt: isoTimestamp,
+    ageMs: z.number().int().nonnegative(),
+}).strict();
+export const aiFeatureAttachedRecapsSchema = z.object({
+    full: aiFeatureAttachedRecapSchema.nullable(),
+    short: aiFeatureAttachedRecapSchema.nullable(),
+}).strict();
 export const aiGatewayStreamFrameSchema = z.discriminatedUnion("type", [
     z.object({
         type: z.literal("meta"),
@@ -1627,6 +1686,9 @@ export const aiGatewayStreamFrameSchema = z.discriminatedUnion("type", [
         provider: z.enum(["anthropic", "openrouter"]),
         providerResponseId: z.string().nullable(),
         personaDefinitionId: z.string().min(16).max(100).optional(),
+        // Feature-lane-only provenance for coach-chat. It is optional because the
+        // raw gateway and every other feature share this existing meta frame.
+        attachedRecaps: aiFeatureAttachedRecapsSchema.optional(),
         quota: aiGatewayQuotaSchema,
     }).strict(),
     z.object({
@@ -1702,6 +1764,29 @@ export const aiPersonaCatalogItemSchema = z.object({
 export const aiPersonaCatalogResponseSchema = z.object({
     personas: z.array(aiPersonaCatalogItemSchema),
 });
+// Recap-status metadata read (spec §3/§5): the freshest usable full + short
+// fan-summary recap for one conversation, metadata only — NO generation, NO AI
+// spend. Backs the extension's "recap status line".
+export const aiRecapStatusQuerySchema = z.object({
+    pageLabel: z.string().min(1).max(120),
+    conversationRef: z.string().min(1).max(255),
+    fanRef: z.string().min(1).max(255).optional(),
+    // Optional for rollout compatibility. Definition-aware clients send the
+    // opaque catalog identity so status and the eventual coach attach select the
+    // same persona-scoped recap rows.
+    personaDefinitionId: z.string().min(16).max(100).optional(),
+}).strict();
+const aiRecapSlotSchema = z.object({
+    generatedAt: z.string(),
+    ageMs: z.number().int().min(0),
+    transcriptCoverage: z.enum(["full-history", "window"]).nullable(),
+    requestedCount: z.number().int().nullable(),
+    keptCount: z.number().int().nullable(),
+}).strict();
+export const aiRecapStatusResponseSchema = z.object({
+    full: aiRecapSlotSchema.nullable(),
+    short: aiRecapSlotSchema.nullable(),
+}).strict();
 const adminAiPersonaCreateKeySchema = z.string()
     .trim()
     .min(1)
@@ -1743,6 +1828,46 @@ export const adminAiPersonaArchiveQuerySchema = z.object({
 export const aiFeatureStreamParamsSchema = z.object({
     feature: z.string().min(1).max(40),
 });
+// Coach transport ceiling (spec §3/§7, option "c"): the single source of truth
+// for a coach answer's maximum size. It bounds BOTH the replayed
+// `coachHistory[].answer` wire field below AND the live coach-chat output stream
+// (the runtime aborts a generation whose accumulated visible output crosses this
+// same number). Because the stream enforces the identical bound, any committed
+// coach answer is always schema-valid on the next turn's replay. This is a
+// TRANSPORT bound, not a prompt bound — core projects each accepted history
+// answer to a far smaller ≤10k head+tail replay before prompt assembly. Exported
+// so the schema and the runtime stream check cannot drift apart.
+export const COACH_ANSWER_MAX_CHARS = 64_000;
+// Ping recency is a bounded wire value, not an arbitrary client number. The
+// ceiling is intentionally far beyond any real platform history (~54 years)
+// while keeping the strict clientContext contract finite. The runtime imports
+// this same constant when deriving the OnlyFans value so the two paths cannot
+// drift.
+export const FAN_SILENCE_DAYS_MAX = 20_000;
+// Scoped body limit for POST /api/v1/ai/features/:feature (Blocker 4, P1-4).
+// Fastify's bodyLimit is a BYTE budget enforced BEFORE Zod, but the schema caps
+// are CHAR counts (z.string().max() counts UTF-16 code units). The limit must
+// therefore clear the largest byte count a schema-valid body can serialize to,
+// content-agnostic: this is a SIZE bound, NOT a content policy. Round-4 P2-4
+// reverted the control-char ban that briefly guarded a tighter number — it
+// regressed every live Fansly feature whose transcripts carry arbitrary fan
+// text (a stray control char 400'd the whole reply/help-me/ping request) and
+// was invisible in the generated OpenAPI anyway; the fields are plain bounded
+// strings again and the limit simply absorbs the true worst case. That
+// worst-case schema-valid coach body sums to ~1.69M UTF-16 code units --
+// coachHistory 20x(2k question + 64k answer) = 1.32M, transcript 300k, spending
+// 20k, subscription 20k, bio 5k, draft 20k, question 2k, plus the small scalar
+// fields. The TRUE per-code-unit worst case on the JSON wire is SIX bytes: a
+// lone surrogate (U+D800) or an ASCII control char is a legal JSON string value
+// that JSON.stringify escapes to a six-byte `\uXXXX` sequence, so ~1.69M x 6
+// ~= 10.1MB (a printable 3-byte-UTF-8 char like the CJK "no" is only the 3-byte
+// ceiling -> ~5.06MB, well under this). The former 4 MiB and 8 MiB limits both
+// 413'd this six-byte worst case before validation; 12 MiB (12,582,912) clears
+// ~10.1MB with headroom while genuine transport abuse still 413s. Kept in the
+// contract next to the schema so the limit and the field caps that drive it
+// cannot drift apart; asserted against the measured worst case in
+// tests/contracts-coach-body.test.ts.
+export const AI_FEATURE_STREAM_BODY_LIMIT_BYTES = 12 * 1024 * 1024;
 export const aiFeatureStreamBodySchema = z.object({
     clientRequestId: z.string().uuid(),
     pageLabel: z.string().min(1).max(120),
@@ -1758,6 +1883,15 @@ export const aiFeatureStreamBodySchema = z.object({
     messageCount: z.number().int().min(5).max(3000).optional(),
     draftText: z.string().min(1).max(20_000).optional(),
     isRegeneration: z.boolean().optional(),
+    chatterQuestion: z.string().min(1).max(2_000).optional(),
+    coachHistory: z
+        .array(z.object({
+        question: z.string().min(1).max(2_000),
+        answer: z.string().min(1).max(COACH_ANSWER_MAX_CHARS),
+    }).strict())
+        .max(20)
+        .optional(),
+    summaryMode: z.literal("short").optional(),
     // Stage 32: client-loaded context for platforms whose kernel archive is
     // pull-cadenced (Fansly: dm_conversations 30 min / dm_messages 24 h — no
     // webhook lane), where the client reads the conversation live at
@@ -1773,6 +1907,11 @@ export const aiFeatureStreamBodySchema = z.object({
         fanSubscriptionData: z.string().max(20_000).default(""),
         fanBio: z.string().max(5_000).optional(),
         pingSegment: z.enum(["segment-a", "segment-b", "active"]).optional(),
+        // Whole days since the fan's latest text message, computed from the same
+        // analysis (and clock) that selected pingSegment. Ping only; optional for
+        // compatibility with clients released before Decision #127.
+        fanSilenceDays: z.number().int().min(0).max(FAN_SILENCE_DAYS_MAX).optional(),
+        transcriptCoverage: z.enum(["full-history", "window"]).optional(),
     }).strict().optional(),
 }).strict();
 export const aiRestrictedGenerationSchema = z.object({
@@ -2451,6 +2590,7 @@ const notificationIncidentKindEnum = z.enum([
     "golden_signal_lag",
     "scheduler_silent",
     "ops_sampler_silent",
+    "ofapi_chargebacks_reconcile_failed",
 ]);
 const notificationIncidentStatusEnum = z.enum(["open", "resolved"]);
 const deliveryKindEnum = z.enum([
@@ -3061,15 +3201,7 @@ export const ofapiCaptureSeedResponseSchema = z.object({
             "already_captured",
         ]),
         jobId: z.string().uuid().nullable(),
-        state: z.enum([
-            "ready",
-            "leased",
-            "awaiting_parse",
-            "retry_wait",
-            "blocked",
-            "complete",
-            "cancelled",
-        ]).nullable(),
+        state: z.enum(ofapiCaptureJobStates).nullable(),
         reasonCode: z.string().nullable(),
     })),
 });
@@ -3092,15 +3224,7 @@ export const ofapiExportQuoteBodySchema = z.discriminatedUnion("profile", [
         profile: z.literal("fleet_tail"),
     }).strict(),
 ]);
-const ofapiExportQuoteJobStateSchema = z.enum([
-    "ready",
-    "leased",
-    "awaiting_parse",
-    "retry_wait",
-    "blocked",
-    "complete",
-    "cancelled",
-]);
+const ofapiExportQuoteJobStateSchema = z.enum(ofapiCaptureJobStates);
 export const ofapiExportQuoteCreateResponseSchema = z.object({
     dryRun: z.boolean(),
     status: z.enum(["would_create", "would_coalesce", "created", "coalesced"]),
@@ -3118,6 +3242,48 @@ export const ofapiExportQuoteCancelBodySchema = z.object({
     expectedState: z.literal("blocked"),
     reason: z.string().trim().min(1).max(500),
 }).strict();
+export const ofapiExportPilotApprovalBodySchema = z.object({
+    expectedRowVersion: z.number().int().nonnegative(),
+    approvedMaxCredits: z.number().int().min(1).max(50),
+    reason: z.string().trim().min(1).max(500),
+    dryRun: z.boolean().default(true),
+}).strict();
+export const ofapiExportPilotApprovalResponseSchema = z.object({
+    dryRun: z.boolean(),
+    jobId: z.string().uuid(),
+    previousState: z.literal("blocked"),
+    nextState: z.literal("ready"),
+    expectedRowVersion: z.number().int().nonnegative(),
+    nextRowVersion: z.number().int().nonnegative(),
+    approvedMaxCredits: z.number().int().min(1).max(50),
+    requiredMaxCredits: z.number().int().min(1).max(50),
+});
+export const ofapiExportArtifactCaptureBodySchema = z.object({
+    expectedRowVersion: z.number().int().nonnegative(),
+    expectedSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    reason: z.string().trim().min(1).max(500),
+    dryRun: z.boolean().default(true),
+}).strict();
+export const ofapiExportArtifactCaptureResponseSchema = z.object({
+    dryRun: z.boolean(),
+    status: z.enum(["would_capture", "captured"]),
+    jobId: z.string().uuid(),
+    pageId: intId,
+    expectedRowVersion: z.number().int().nonnegative(),
+    nextRowVersion: z.number().int().nonnegative(),
+    importJobId: z.string().uuid().nullable(),
+    importJobState: ofapiExportQuoteJobStateSchema.nullable(),
+    classification: z.literal("item_presence"),
+    artifact: z.object({
+        fileName: z.string(),
+        sha256: z.string().regex(/^[0-9a-f]{64}$/),
+        byteSize: z.number().int().positive(),
+        rowCount: z.number().int().nonnegative().max(1_000),
+        chatCount: z.number().int().nonnegative().max(3),
+        minCreatedAt: isoTimestamp.nullable(),
+        maxCreatedAt: isoTimestamp.nullable(),
+    }),
+});
 export const ofapiExportQuoteStatusResponseSchema = z.object({
     jobId: z.string().uuid(),
     pageId: intId,
@@ -3129,6 +3295,7 @@ export const ofapiExportQuoteStatusResponseSchema = z.object({
     attemptCount: z.number().int().nonnegative(),
     dispatchCount: z.number().int().nonnegative(),
     spentCredits: z.number().int().nonnegative(),
+    rowVersion: z.number().int().nonnegative(),
     createdAt: isoTimestamp,
     updatedAt: isoTimestamp,
     quote: z.object({
@@ -3139,6 +3306,11 @@ export const ofapiExportQuoteStatusResponseSchema = z.object({
         pollCount: z.number().int().nonnegative(),
         quotedAt: isoTimestamp.nullable(),
         expiresAt: isoTimestamp.nullable(),
+        approvedMaxCredits: z.number().int().nonnegative().nullable(),
+        approvedAt: isoTimestamp.nullable(),
+        rowsProcessed: z.number().int().nonnegative().nullable(),
+        failedDownloads: z.number().int().nonnegative().nullable(),
+        artifactPending: z.boolean(),
     }).nullable(),
 });
 const ofapiCaptureControlKeySchema = z.string().trim().max(200).refine((value) => value === "global"
@@ -3197,6 +3369,10 @@ export const ofapiCaptureOperatorStatusResponseSchema = z.object({
         count: z.number().int().nonnegative(),
         oldestAt: isoTimestamp.nullable(),
         samples: z.array(ofapiCaptureOperatorAttemptSchema),
+    }),
+    strandedInteractive: z.object({
+        count: z.number().int().nonnegative(),
+        oldestAt: isoTimestamp.nullable(),
     }),
     storageHealth: z.object({
         healthy: z.boolean(),
@@ -4396,6 +4572,42 @@ export const routeSchemas = {
             404: errorResponseSchema,
         },
     },
+    adminOfapiExportPilotApprove: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Dry-run or approve one bounded OFAPI chat-export pilot",
+        description: "CAS-approves only a 1-3 chat pilot capped at 1,000 rows and 50 credits. "
+            + "The worker performs one stateful start; an uncertain start is never retried automatically.",
+        params: ofapiExportQuoteParamsSchema,
+        body: ofapiExportPilotApprovalBodySchema,
+        response: {
+            200: ofapiExportPilotApprovalResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminOfapiExportArtifactCapture: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Verify and register one downloaded OFAPI pilot artifact",
+        description: "Reads only <jobId>.csv from the configured read-only artifact directory, "
+            + "checks checksum/schema/account/chat/row invariants, journals a pointer, and creates "
+            + "one local export_import job. It performs no OFAPI request and certifies item presence, "
+            + "not continuous history.",
+        params: ofapiExportQuoteParamsSchema,
+        body: ofapiExportArtifactCaptureBodySchema,
+        response: {
+            200: ofapiExportArtifactCaptureResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
     adminOfapiExportQuoteCancel: {
         auth: { kind: "owner-session" },
         tags: ["admin"],
@@ -4589,6 +4801,75 @@ export const routeSchemas = {
         response: {
             200: z.array(assignedPageSchema),
             401: errorResponseSchema,
+        },
+    },
+    voiceNoteCreate: {
+        auth: { kind: "apiKey", scope: "page" },
+        tags: ["voice"],
+        summary: "Admit (or idempotently replay) a voice-note render",
+        description: "Admits at most one billable ElevenLabs render per (user, clientRequestId); "
+            + "returns 202 with the queued/dispatched view immediately (the synthesis runs "
+            + "detached). A replay of an already-admitted request re-runs no admission gate. "
+            + "Structured error codes (in the body `error` field): 400 voice_script_invalid / "
+            + "voice_source_invalid; 403 voice_disabled / voice_not_allowlisted; 409 "
+            + "idempotency_mismatch (same id, different request) / voice_no_profile; 429 "
+            + "voice_quota_denied; 503 voice_provider_unavailable (live flag on but "
+            + "ELEVENLABS_API_KEY unconfigured — set it and restart). A quota-denied "
+            + "clientRequestId STAYS denied: every replay of it re-throws the same 429 "
+            + "(never a 202 view), so a retry after quota exhaustion needs a FRESH "
+            + "clientRequestId.",
+        params: pageParamsSchema,
+        body: voiceNoteCreateBodySchema,
+        response: {
+            202: voiceNoteStatusSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+            429: errorResponseSchema,
+            503: errorResponseSchema,
+        },
+    },
+    voiceNoteStatus: {
+        auth: { kind: "apiKey", scope: "page" },
+        tags: ["voice"],
+        summary: "Read a voice-note render's status",
+        description: "Page-scoped (id, page, user) lookup — a foreign or unknown voiceNoteId is an "
+            + "indistinguishable 404. 403 voice_retrieval_disabled when the retrieval incident "
+            + "switch is off.",
+        params: voiceNoteParamsSchema,
+        response: {
+            200: voiceNoteStatusSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    voiceNoteAudio: {
+        auth: { kind: "apiKey", scope: "page" },
+        tags: ["voice"],
+        summary: "Download a completed voice-note's audio bytes",
+        description: "Returns the rendered artifact as binary `audio/mpeg` (headers: content-length, "
+            + "cache-control private/no-store, x-content-type-options nosniff). The content-type "
+            + "is honest because setVoiceProfile constrains output_format to an MP3-only "
+            + "allowlist (non-MP3 ElevenLabs formats are rejected at profile-set time). The handler "
+            + "writes the body directly; server OpenAPI generation rewrites the 200 media type "
+            + "to audio/mpeg (the Zod Fastify transformer only accepts a Zod schema here). "
+            + "Not-yet-ready and never-produced are indistinguishable 404s. A purged artifact "
+            + "is 410 with body code `artifact_expired`: DELIBERATELY no new SDK error category "
+            + "— clients match the structured body code (the existing gate-code pattern), and "
+            + "410 stays category `validation` in the SDK taxonomy.",
+        params: voiceNoteParamsSchema,
+        response: {
+            // The handler sets audio/mpeg and writes the bytes directly; OpenAPI
+            // generation rewrites this success media type to audio/mpeg because the
+            // Zod Fastify transformer only accepts Zod schemas here.
+            200: z.string().describe("Binary audio/mpeg — the rendered voice-note MP3 bytes"),
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            410: errorResponseSchema,
         },
     },
     models: {
@@ -5381,6 +5662,19 @@ export const routeSchemas = {
             200: aiPersonaCatalogResponseSchema,
             401: errorResponseSchema,
             403: errorResponseSchema,
+        },
+    },
+    aiRecapStatus: {
+        auth: { kind: "apiKey" },
+        tags: ["usage"],
+        summary: "Freshest usable recap metadata (full + short slots) for one conversation",
+        querystring: aiRecapStatusQuerySchema,
+        response: {
+            200: aiRecapStatusResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
         },
     },
     aiPersonaUpsert: {

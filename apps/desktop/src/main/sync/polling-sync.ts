@@ -562,9 +562,9 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       if (sweepTimer) clearTimeout(sweepTimer);
       sweepTimer = null;
     }
-    // Preserve cached rows and related messages, but make the revoked account
-    // visibly non-live rather than deleting data through account FKs.
-    data.accounts.setAuthState(accountId, 'unauthenticated');
+    // Preserve cached rows and related messages, but remove the revoked grant
+    // from renderer-facing lists rather than deleting data through account FKs.
+    data.accounts.revokeGrant(accountId);
   }
 
   function addAccountLoop(accountId: string, pollImmediately: boolean): void {
@@ -2198,7 +2198,10 @@ export async function syncAccounts(
   toMediaUrl?: ToMediaUrl,
 ): Promise<string[]> {
   const accounts = await client.listAccounts({ purpose: 'hydration' });
-  data.accounts.upsertMany(accounts.map((account) => mapAccount(account, toMediaUrl)));
+  // The response is the complete authoritative grant set for this credential.
+  // Reconcile it even during initial boot: a prior build only upserted the new
+  // ids, leaving replaced OFAPI identities visible forever in local cache.
+  data.accounts.reconcileGrants(accounts.map((account) => mapAccount(account, toMediaUrl)));
   for (const account of accounts) {
     if (account.is_authenticated === false) {
       // surfaced via account auth state; PRD F10 banner reads from db

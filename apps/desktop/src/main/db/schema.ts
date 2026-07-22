@@ -489,6 +489,15 @@ CREATE TABLE harvest_uploaded_revisions (
 ${HARVEST_REVISION_TRIGGERS_V19}
 `;
 
+// v20 — distinguish vendor authentication health from the active Hub
+// credential's account grant. Revoked rows and all dependent cache stay local,
+// but renderer-facing account lists can hide them without hiding a currently
+// granted account that merely needs re-authentication.
+export const SCHEMA_V20 = `
+ALTER TABLE accounts ADD COLUMN grant_state TEXT NOT NULL DEFAULT 'granted'
+  CHECK (grant_state IN ('granted', 'revoked'));
+`;
+
 export const ALL_TABLES = [
   'settings',
   'accounts',

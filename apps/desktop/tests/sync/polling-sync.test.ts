@@ -999,8 +999,10 @@ describe('PollingSync', () => {
     expect(stub.listChatsCalls).toBe(listCallsBeforeRefresh);
     expect(sync.status().pollIntervalsMs).toEqual({ [NEW_ACCT]: 60_000 });
     expect(data.accounts.get(ACCT)?.authState).toBe('unauthenticated');
+    expect(data.accounts.get(ACCT)?.grantState).toBe('revoked');
     expect(data.chats.get(ACCT, '101')).not.toBeNull();
     expect(data.accounts.get(NEW_ACCT)?.authState).toBe('authenticated');
+    expect(data.accounts.get(NEW_ACCT)?.grantState).toBe('granted');
 
     await sync.pollAccount(ACCT);
     expect(stub.listChatsCalls).toBe(listCallsBeforeRefresh);
@@ -1029,11 +1031,58 @@ describe('PollingSync', () => {
     await expect(sync.refreshAccountGrants()).resolves.toEqual([]);
     expect(sync.status().pollIntervalsMs).toEqual({});
     expect(data.accounts.get(ACCT)?.authState).toBe('unauthenticated');
+    expect(data.accounts.get(ACCT)?.grantState).toBe('revoked');
     expect(data.chats.get(ACCT, '101')).not.toBeNull();
 
     await vi.advanceTimersByTimeAsync(120_000);
     await sync.forceRefresh();
     expect(stub.listChatsCalls).toBe(listCallsBeforeRefresh);
+    sync.stop();
+  });
+
+  it('boot-time grant refresh retires cached identities even when no old loop exists', async () => {
+    data.accounts.upsert({
+      id: ACCT,
+      username: 'loravie',
+      displayName: 'Lora Vie',
+      avatar: null,
+      authState: 'authenticated',
+      raw: {},
+    });
+    stub.setAccounts([{
+      ...makeAccount(NEW_ACCT),
+      onlyfans_username: 'loravie',
+      display_name: 'Lora Vie',
+    }]);
+    const sync = makeSync();
+
+    await expect(sync.refreshAccountGrants()).resolves.toEqual([NEW_ACCT]);
+
+    expect(sync.status().pollIntervalsMs).toEqual({ [NEW_ACCT]: 60_000 });
+    expect(data.accounts.listGranted().map((row) => row.id)).toEqual([NEW_ACCT]);
+    expect(data.accounts.get(ACCT)).toMatchObject({
+      authState: 'unauthenticated',
+      grantState: 'revoked',
+    });
+    sync.stop();
+  });
+
+  it('keeps the last known grant set when the authoritative refresh fails', async () => {
+    data.accounts.upsert({
+      id: ACCT,
+      username: 'loravie',
+      displayName: 'Lora Vie',
+      avatar: null,
+      authState: 'authenticated',
+      raw: {},
+    });
+    vi.spyOn(stub.client, 'listAccounts').mockRejectedValueOnce(new Error('hub unavailable'));
+    const sync = makeSync();
+
+    await expect(sync.refreshAccountGrants()).rejects.toThrow('hub unavailable');
+
+    expect(data.accounts.listGranted().map((row) => row.id)).toEqual([ACCT]);
+    expect(data.accounts.get(ACCT)?.grantState).toBe('granted');
     sync.stop();
   });
 
