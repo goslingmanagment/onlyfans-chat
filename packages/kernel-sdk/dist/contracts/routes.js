@@ -2973,6 +2973,17 @@ export const domainEventFrameSchema = z.object({
 // The v2 stream may interleave `event: ephemeral` frames (no id line — they
 // never advance the cursor): serve-time-only events that are deliberately
 // NOT ledgered (typing indicators). data = a v1 SyncEvent JSON object.
+// The v2 stream also carries an `event: control` lane: connection-scoped
+// signals that are not domain events and never enter DomainEventFrame
+// validation. Today's only member is `{"type":"replay_completed"}` — written
+// once per connection when replay (cursor resume and/or post-snapshot
+// catch-up) has fully flushed; every frame after it is live delivery. Its
+// `id` line repeats the already-delivered watermark cursor (safe to resume
+// from, unlike ephemeral's deliberate no-id). Clients that don't recognize a
+// control type MUST skip the frame (the same forward-compat rule that makes
+// unknown event names safe for SDK subscribers, which consume only
+// `event: domain`). Consumers: the desktop's notification gate treats it as
+// the replay/live attention boundary (its decisions.md D23).
 export const domainEventsSnapshotRequiredAccountSchema = z.object({
     accountId: z.number().int().positive(),
     requestedSeq: z.number().int().nonnegative(),
@@ -4352,13 +4363,19 @@ export const routeSchemas = {
             + "JSON frame, `id` = the OPAQUE resume cursor — pass it back verbatim via "
             + "`Last-Event-ID` or `cursor`). Per-account gapless ordering; all platforms. "
             + "A cursor below an account's retained floor (or ahead of its head) answers "
-            + "409 sync_snapshot_required with the per-account detail.",
+            + "409 sync_snapshot_required with the per-account detail. The stream may "
+            + "interleave `event: ephemeral` frames (serve-time-only, no id) and "
+            + "`event: control` frames (connection signals — `{\"type\":"
+            + "\"replay_completed\"}` marks the end of replay; frames after it are live "
+            + "delivery). Skip control types you don't recognize.",
         querystring: z.object({
             cursor: z.string().optional(),
         }),
         response: {
             200: z.string().describe("text/event-stream — `event: domain` frames (see domainEventFrameSchema); "
-                + "`id` is the opaque v2 cursor."),
+                + "`id` is the opaque v2 cursor. Interleaved lanes: `event: ephemeral` "
+                + "(serve-time-only) and `event: control` (`replay_completed` = end of "
+                + "replay)."),
             400: errorResponseSchema,
             401: errorResponseSchema,
             403: errorResponseSchema,
