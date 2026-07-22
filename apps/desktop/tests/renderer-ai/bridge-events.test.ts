@@ -22,7 +22,12 @@ vi.mock('../../src/renderer/src/bridge/bridge', () => ({
   getBridge: () => bridgeMock.bridge,
 }));
 
+vi.mock('../../src/renderer/src/lib/sound', () => ({
+  playNotificationBlip: vi.fn(),
+}));
+
 import { attachBridgeEvents } from '../../src/renderer/src/bridge/events';
+import { playNotificationBlip } from '../../src/renderer/src/lib/sound';
 import { qk } from '../../src/renderer/src/bridge/queries';
 import { useSettingsCache } from '../../src/renderer/src/state/settingsCache';
 import { useUiStore } from '../../src/renderer/src/state/uiStore';
@@ -35,6 +40,7 @@ describe('attachBridgeEvents', () => {
     bridgeMock.bridge.on.mockClear();
     useSettingsCache.setState({ notificationsEnabled: true, soundEnabled: false, uiLocale: 'en' });
     useUiStore.setState({ selectedAccountId: null, selectedChatId: null, toasts: [] });
+    vi.mocked(playNotificationBlip).mockClear();
     vi.stubGlobal('document', { hasFocus: () => false });
   });
 
@@ -111,6 +117,42 @@ describe('attachBridgeEvents', () => {
       title: 'Alice',
       body: 'new body\nsecond line',
     });
+    detach();
+  });
+
+  it('applies replayed live:false frames silently — no toast, no blip', () => {
+    useSettingsCache.setState({ notificationsEnabled: true, soundEnabled: true, uiLocale: 'en' });
+    const queryClient = new QueryClient();
+    const detach = attachBridgeEvents(queryClient);
+
+    const replayed = {
+      type: 'messageReceived',
+      accountId: 'acct_1',
+      chatId: 'chat_1',
+      messageId: 'm-replay',
+      live: false,
+      message: {
+        id: 'm-replay',
+        text: '<p>from the backlog</p>',
+        createdAt: '2026-07-12T02:00:00.000Z',
+        isSentByMe: false,
+        price: 0,
+      },
+    };
+    for (const listener of bridgeMock.listeners.get('sync:event') ?? []) {
+      listener(replayed);
+    }
+    expect(useUiStore.getState().toasts).toHaveLength(0);
+    expect(playNotificationBlip).not.toHaveBeenCalled();
+
+    // The identical frame WITHOUT the flag is live delivery: exactly one
+    // toast and one blip.
+    const { live: _live, ...liveFrame } = replayed;
+    for (const listener of bridgeMock.listeners.get('sync:event') ?? []) {
+      listener({ ...liveFrame, messageId: 'm-live' });
+    }
+    expect(useUiStore.getState().toasts).toHaveLength(1);
+    expect(playNotificationBlip).toHaveBeenCalledTimes(1);
     detach();
   });
 });

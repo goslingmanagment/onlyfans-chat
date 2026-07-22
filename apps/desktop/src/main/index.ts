@@ -110,7 +110,10 @@ import {
   isAllowedDevRendererUrl,
   isAllowedExternalOpenUrl,
 } from './platform/navigation';
-import { messageNotificationBody } from './notifications';
+import {
+  messageNotificationBody,
+  shouldShowOsNotification,
+} from './notifications';
 import { awaitRendererLoad } from './window-load';
 import { createRendererReadiness } from './renderer-readiness';
 import {
@@ -800,7 +803,14 @@ async function rebuildOfapiRuntime(
     // Resolved per (re)connect attempt so settings edits take effect on
     // reconfigureHub without re-running OFAPI init. Null = hub mode off.
     createHub: async (
-      { onEvent, onStatusChange, onSnapshot, onSnapshotRequired, onV2GapRecovered },
+      {
+        onEvent,
+        onCaughtUp,
+        onStatusChange,
+        onSnapshot,
+        onSnapshotRequired,
+        onV2GapRecovered,
+      },
       accountIds,
     ) => {
       const connection = await settingsStore.getHubConnection();
@@ -834,6 +844,7 @@ async function rebuildOfapiRuntime(
         clientVersion: app.getVersion(),
         accountIds,
         onEvent,
+        onCaughtUp,
         onSnapshot,
         onSnapshotRequired,
         onV2GapRecovered,
@@ -1093,10 +1104,15 @@ function reattachEventForwarding(): void {
         }
       }
       if (
+        // The type check narrows for messageNotificationBody below; the
+        // actual decision (including it) lives in the tested helper.
         event.type === 'messageReceived' &&
-        isWindowBackgrounded(mainWindow) &&
-        notificationPrefs.notificationsEnabled &&
-        Notification.isSupported()
+        shouldShowOsNotification({
+          event,
+          windowBackgrounded: isWindowBackgrounded(mainWindow),
+          notificationsEnabled: notificationPrefs.notificationsEnabled,
+          notificationsSupported: Notification.isSupported(),
+        })
       ) {
         const chat = liveData.chats.get(event.accountId, event.chatId);
         new Notification({

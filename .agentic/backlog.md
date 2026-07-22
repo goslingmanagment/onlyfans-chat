@@ -34,3 +34,20 @@ Resolved 2026-07-19: the stale check now includes directory mtimes (so source
 deletions invalidate `out/`), and each driver defaults to a process-specific
 screenshot directory derived from its isolated profile. Explicit shared
 `SCREENSHOT_DIR` remains available as an opt-in.
+
+- 2026-07-22 (startup-notification-flood, resolved in round 3): polling's
+  sleep-wake backlog now rides the provider's shared attention gate (row
+  createdAt vs re-armed epoch), so the suspend flood is closed for both
+  lanes. Residual nit only: a polling fresh-by-id message whose createdAt is
+  genuinely old (e.g. an old message surfacing late) is now suppressed
+  rather than alerted — revisit only if a chatter reports a missed alert of
+  that shape.
+
+- 2026-07-22 (PR #16, residual P2s from the final raced review, owner to
+  arbitrate): (a) a multi-hour SSE outage while the machine is awake replays
+  hours of genuinely-unalerted messages as individual toasts on reconnect
+  (deliberate "awake = still news" policy, D24) — if that ever bites, the
+  polish is aggregation ("N new messages") above some burst size, not
+  suppression; (b) the epoch fallback compares server timestamps to the
+  local clock — a clock >60 s fast mutes alerts until core's marker deploys
+  (one warn per session; marker removes the class).

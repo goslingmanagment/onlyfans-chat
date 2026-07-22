@@ -97,6 +97,10 @@ function domainFrame(cursor: string, frame: Record<string, unknown>): string {
   return `id: ${cursor}\nevent: domain\ndata: ${JSON.stringify(frame)}\n\n`;
 }
 
+function controlFrame(cursor: string, data: Record<string, unknown>): string {
+  return `id: ${cursor}\nevent: control\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
 function messageFrame(cursor: string, overrides: Record<string, unknown> = {}): string {
   return domainFrame(cursor, {
     accountId: 7,
@@ -197,6 +201,7 @@ describe('createHubSync (protocol v2)', () => {
     log: string[];
     cursor: () => string | null;
     gapRecoveries: () => number;
+    caughtUps: () => number;
   }
 
   function makeV2Sync(
@@ -218,6 +223,7 @@ describe('createHubSync (protocol v2)', () => {
     const log: string[] = [];
     let cursor: string | null = options.initialCursor ?? null;
     let gapRecoveries = 0;
+    let caughtUps = 0;
     let snapshotPages = 0;
     const sync = createHubSync({
       protocol: 'v2',
@@ -232,6 +238,10 @@ describe('createHubSync (protocol v2)', () => {
           throw new Error('handler crashed');
         }
         log.push(`event:${event.type}`);
+      },
+      onCaughtUp: () => {
+        caughtUps += 1;
+        log.push('caught-up');
       },
       onSnapshot: (snapshot) => {
         snapshotPages += 1;
@@ -263,7 +273,15 @@ describe('createHubSync (protocol v2)', () => {
         log.push('clear');
       },
     });
-    return { sync, calls, statuses, log, cursor: () => cursor, gapRecoveries: () => gapRecoveries };
+    return {
+      sync,
+      calls,
+      statuses,
+      log,
+      cursor: () => cursor,
+      gapRecoveries: () => gapRecoveries,
+      caughtUps: () => caughtUps,
+    };
   }
 
   it('connects to the v2 path, resumes with the opaque cursor, and handle-then-checkpoints mapped frames', async () => {
@@ -284,6 +302,47 @@ describe('createHubSync (protocol v2)', () => {
     // replays, never skips.
     expect(h.log).toEqual(['event:messageReceived', 'persist:CUR_1']);
     expect(h.cursor()).toBe('CUR_1');
+    expect(h.caughtUps()).toBe(0);
+    h.sync.stop();
+  });
+
+  it('fires onCaughtUp for the control replay-completed marker without checkpoint or drop', async () => {
+    const stream = makeStream();
+    const h = makeV2Sync([{ status: 200, stream }]);
+    h.sync.start();
+    await drainMicrotasks();
+
+    stream.send(controlFrame('CUR_CAUGHT_UP', { type: 'replay_completed' }));
+    await drainMicrotasks();
+
+    // Signal-only lane: no onEvent, no cursor persist, nothing dropped.
+    expect(h.caughtUps()).toBe(1);
+    expect(h.log).toEqual(['caught-up']);
+    expect(h.cursor()).toBe(null);
+    expect(h.sync.droppedFrameCount()).toBe(0);
+
+    stream.send(messageFrame('CUR_LIVE'));
+    await drainMicrotasks();
+    expect(h.log).toEqual([
+      'caught-up',
+      'event:messageReceived',
+      'persist:CUR_LIVE',
+    ]);
+    h.sync.stop();
+  });
+
+  it('ignores unknown control frame types without firing onCaughtUp', async () => {
+    const stream = makeStream();
+    const h = makeV2Sync([{ status: 200, stream }]);
+    h.sync.start();
+    await drainMicrotasks();
+
+    stream.send(controlFrame('CUR_NOISE', { type: 'future_control_signal' }));
+    await drainMicrotasks();
+
+    expect(h.caughtUps()).toBe(0);
+    expect(h.log).toEqual([]);
+    expect(h.sync.droppedFrameCount()).toBe(0);
     h.sync.stop();
   });
 

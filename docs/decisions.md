@@ -41,6 +41,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D21 | 2026-07-18 | macOS packaged builds notify about updates from the page's version-mac.json (phase `manual`, install = open the page) — no self-install while builds are unsigned |
 | D22 | 2026-07-21 | Only user-initiated backward history advertises pure DB-readable pages (core #158/#162) |
 | D23 | 2026-07-22 | Account grants are distinct from vendor auth: authoritative reconciliation hides revoked identities without deleting cache |
+| D24 | 2026-07-22 | SSE replay restores state without toast, sound, or OS notifications; live alerts use core's control-lane marker plus a fail-quiet epoch fallback, with cross-source alert dedup and suspend re-arm |
 
 ## Entries
 
@@ -503,3 +504,38 @@ activity lists expose only granted rows. A granted account with
 `is_authenticated=false` remains visible with the existing re-auth affordance.
 Late auth events cannot reanimate a revoked row, and a live grant change moves
 or clears stale renderer selection without changing the current surface.
+
+**D24 (2026-07-22).** SSE replay never alerts: hub catch-up frames apply
+state but are stamped `live: false` and produce no toast/sound/OS
+notification. Live/replay boundary = core's v2 replay-completion marker,
+delivered on a dedicated `event: control` SSE lane (`{"type":
+"replay_completed"}`) — NOT as a domain frame: the published DomainEventFrame
+contract requires positive accountId/accountSeq and the vendored SDK kills the
+subscription on any invalid domain frame, while unknown event names are
+skipped by every consumer (the `ephemeral` precedent). The signal is sticky
+until the sleep detector re-arms the gate: a >5 min wall-clock gap since the
+last 30 s heartbeat tick means the machine suspended (or the process froze) —
+the session was not watching, so the wake backlog replays silently like a
+cold start. The gap check runs both in the tick and inline at every gate
+evaluation (suspended timers may not be overdue at wake, and the SSE resume
+can beat the first post-resume tick); the detector's timer lives strictly
+between provider start and stop (a never-committed candidate runtime must
+not leak it).
+Message arrival gaps are deliberately NOT a re-arm signal: a quiet chat or an
+SSE outage with the app awake keeps live mode, so outage backlog still alerts
+(review 2026-07-22 killed the interval-between-messages heuristic for exactly
+that false positive). Fallback for marker-less streams is a provider-start
+epoch minus 60 s grace over message.createdAt/occurredAt, then the local
+row's createdAt (id-only frames and polling events are durably applied
+before they emit); with no resolvable time the polling lane fails open (it
+only emits ids it just read back from the DB) and the hub lane fails quiet
+only within a bounded 5-min settle window after the epoch (one warn per
+session for diagnosability), then fails open — a live v1 id-only message
+must not lose its alert for lacking a body. Polling rides the SAME gate
+and alert registry (bounded 500) — its baseline sweep covers the cold-start
+backlog, the epoch covers its auto-read wake backlog, and the shared
+registry stops either source from re-alerting the other's id. Matches the polling provider's
+long-standing "history is not news" baseline (its first sweep swallows the
+downtime backlog); D10 cursor semantics untouched — no replayed state is ever
+skipped, and control frames never advance the cursor.
+

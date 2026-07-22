@@ -253,6 +253,8 @@ export interface HubSyncOptions {
   sleep?: SleepFn;
   /** Awaited before the frame's id is persisted (handle-then-checkpoint). */
   onEvent: (event: SyncEvent) => void | Promise<void>;
+  /** v2 replay/live boundary: core's stream.replay_completed marker. */
+  onCaughtUp?: () => void;
   /** Local OFAPI accounts this client is allowed to apply. Omit only in isolated tests. */
   accountIds?: readonly string[];
   /** Idempotently applies one validated snapshot page before its cursor is persisted. */
@@ -616,6 +618,26 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       }
       await options.onEvent(event);
       return;
+    }
+    if (frame.event === 'control') {
+      // Core's live/replay boundary rides its own SSE event name (the
+      // `ephemeral` forward-compat rule): older clients skip it entirely and
+      // it never enters the domain-frame contract. Signal-only — the cursor
+      // advances through domain frames, never through control frames.
+      let json: unknown;
+      try {
+        json = JSON.parse(frame.data);
+      } catch {
+        return;
+      }
+      if (
+        typeof json === 'object'
+        && json !== null
+        && (json as { type?: unknown }).type === 'replay_completed'
+      ) {
+        options.onCaughtUp?.();
+      }
+      return; // unknown control types are forward-compat noise, not errors
     }
     if (frame.event !== 'domain') {
       return; // unknown event names are forward-compat noise, not errors

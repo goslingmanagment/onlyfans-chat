@@ -64,6 +64,7 @@ type PollingLike = SyncProvider & {
 
 export interface HubFactoryCallbacks {
   onEvent: (event: SyncEvent) => Promise<void>;
+  onCaughtUp: () => void;
   onStatusChange: (status: HubSyncStatus) => void;
   onSnapshot: (snapshot: SyncSnapshotResponse) => Promise<void>;
   onSnapshotRequired: (input: {
@@ -378,14 +379,142 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     }
   }
 
+  // Attention gate (see docs/plans/2026-07-22-startup-notification-flood.md):
+  // replay restores state; only messages arriving while this session watches
+  // may toast/beep. Epoch fallback covers cores without the v2 marker.
+  const NOTIFICATION_EPOCH_GRACE_MS = 60_000;
+  const ALERTED_IDS_CAP = 500;
+  /** Sleep detector: an interval tick that arrives this much later than its
+   * schedule means the machine suspended (or the process froze) — the session
+   * was NOT watching, so the gate re-arms and the wake backlog replays
+   * silently, same as a cold start. Message arrival gaps are deliberately NOT
+   * a signal: a quiet chat or an SSE outage with the app awake keeps the
+   * marker's live mode, so the outage backlog still alerts (polling parity). */
+  const SLEEP_TICK_MS = 30_000;
+  const ATTENTION_REARM_GAP_MS = 5 * 60_000;
+  /** Hub frames with NO resolvable timestamp (v1 id-only with auto-read off)
+   * stay quiet only within this window after the epoch — a bounded replay
+   * settle, not a session-long mute. Past it they alert: a fresh v1 id-only
+   * message must not lose its notification just because it has no body. */
+  const MISSING_TS_SETTLE_MS = 5 * 60_000;
+  let notificationEpochMs = now();
+  let sawReplayCompleted = false;
+  let suppressionWarned = false;
+  const alertedIds = new Set<string>();
+  const alertedOrder: string[] = [];
+  let lastSleepTickMs = now();
+  let sleepDetector: ReturnType<typeof setInterval> | null = null;
+
+  /** Called from the tick AND from every gate evaluation: on some platforms
+   * suspended timers are not overdue at wake, and the SSE resume can deliver
+   * its replay before the first post-resume tick — the gate itself must see
+   * the wall-clock gap, not merely hope the interval fired first. */
+  function maybeRearmAfterSuspend(): void {
+    const nowMs = now();
+    if (nowMs - lastSleepTickMs > SLEEP_TICK_MS + ATTENTION_REARM_GAP_MS) {
+      sawReplayCompleted = false;
+      notificationEpochMs = nowMs;
+      suppressionWarned = false;
+      onLog('info', 'attention gate re-armed after suspend', {
+        gapMs: nowMs - lastSleepTickMs,
+      });
+    }
+    lastSleepTickMs = nowMs;
+  }
+
+  function markAlerted(key: string): void {
+    alertedIds.add(key);
+    alertedOrder.push(key);
+    if (alertedOrder.length > ALERTED_IDS_CAP) {
+      const evicted = alertedOrder.shift();
+      if (evicted !== undefined) {
+        alertedIds.delete(evicted);
+      }
+    }
+  }
+
+  function attentionEligible(
+    event: Extract<SyncEvent, { type: 'messageReceived' }>,
+    source: 'hub' | 'polling',
+  ): boolean {
+    maybeRearmAfterSuspend();
+    const key = `${event.accountId}/${event.chatId}/${event.messageId}`;
+    if (alertedIds.has(key)) {
+      return false;
+    }
+    let eligible: boolean;
+    if (sawReplayCompleted && source === 'hub') {
+      // The marker is an SSE-connection signal: it vouches only for frames
+      // that arrived on that stream after its replay flushed. A slow poll
+      // finishing after the marker may still carry pre-epoch backlog rows —
+      // polling always answers to the timestamp gate below.
+      eligible = true;
+    } else {
+      // Timestamp preference: enriched body, the v2 frame's journal time,
+      // then the local row — id-only fallback frames and polling events are
+      // both durably applied before they emit, so the row is authoritative.
+      const ts = event.message?.createdAt
+        ?? event.occurredAt
+        ?? data.messages.get(event.accountId, event.chatId, event.messageId)?.createdAt;
+      const ms = ts === undefined ? Number.NaN : Date.parse(ts);
+      if (Number.isFinite(ms)) {
+        eligible = ms >= notificationEpochMs - NOTIFICATION_EPOCH_GRACE_MS;
+      } else if (source === 'polling') {
+        // Polling only emits ids it just read back from the DB, so a missing
+        // row means a synthetic caller — and its baseline sweep already
+        // swallowed the cold-start backlog. Fail open.
+        eligible = true;
+      } else {
+        // Hub frame with no resolvable time (v1 id-only, auto-read off —
+        // refreshChat wrote no row). Quiet only through the bounded replay
+        // settle window after the epoch; past it this is a live message that
+        // simply has no body, and it must still alert.
+        eligible = now() - notificationEpochMs > MISSING_TS_SETTLE_MS;
+      }
+      if (!eligible && !suppressionWarned) {
+        // One warn per session: a clock skewed ahead of the epoch would mute
+        // every alert until the marker deploys — make that state diagnosable.
+        suppressionWarned = true;
+        onLog('warn', 'attention gate suppressing pre-epoch frames (no marker yet)', {
+          timestamp: ts ?? null,
+          epochMs: notificationEpochMs,
+        });
+      }
+    }
+    if (eligible) {
+      markAlerted(key);
+    }
+    return eligible;
+  }
+
+  function emitMessageEvent(
+    event: Extract<SyncEvent, { type: 'messageReceived' | 'messageSent' }>,
+  ): void {
+    if (event.type !== 'messageReceived') {
+      emit(event);
+      return;
+    }
+    emit(attentionEligible(event, 'hub') ? event : { ...event, live: false });
+  }
+
   function emitStatus(): void {
     for (const listener of statusListeners) {
       listener();
     }
   }
 
-  // All polling events forward unchanged — one subscription surface.
-  polling.subscribe(emit);
+  // Polling shares the SAME gate and registry as the hub lane. Its baseline
+  // sweep swallows the cold-start backlog, but after a suspend its auto-read
+  // sweep re-emits the wake backlog as fresh-by-id rows — the epoch decides
+  // those, and the registry stops a hub replay from re-alerting an id that
+  // polling already alerted (and vice versa).
+  polling.subscribe((event) => {
+    if (event.type !== 'messageReceived') {
+      emit(event);
+      return;
+    }
+    emit(attentionEligible(event, 'polling') ? event : { ...event, live: false });
+  });
 
   /** messages.deleted arrives without chatId — recover it from the local row. */
   function lookupChatId(accountId: string, messageId: string): string | null {
@@ -691,7 +820,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
                 chatId: event.chatId,
                 messageId: event.messageId,
               });
-              emit(event);
+              emitMessageEvent(event);
               recordApplied(event.type);
               break;
             }
@@ -730,7 +859,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         // read has really applied. Let failure reject onEvent so HubSync replays
         // the frame instead of checkpointing past missing state.
         await polling.refreshChat(event.accountId, event.chatId, undefined, event.messageId);
-        emit(event);
+        emitMessageEvent(event);
         recordApplied(event.type);
         break;
       }
@@ -904,6 +1033,9 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     const next = await createHub(
       {
         onEvent: handleHubEvent,
+        onCaughtUp: () => {
+          sawReplayCompleted = true;
+        },
         onStatusChange: handleHubStatus,
         onSnapshot: applyHubSnapshot,
         onSnapshotRequired: (input) => {
@@ -961,12 +1093,24 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   return {
     start(accountIds) {
       running = true;
+      // Timer lives strictly between start and stop: a candidate runtime
+      // that never commits (activation failure) must not leak a ticking
+      // interval pinning its whole graph, and stop→start must restore
+      // suspend detection.
+      if (sleepDetector === null) {
+        lastSleepTickMs = now();
+        sleepDetector = setInterval(maybeRearmAfterSuspend, SLEEP_TICK_MS);
+      }
       handledAccountIds = [...accountIds];
       polling.start(accountIds);
       void startHub();
     },
     async stop() {
       running = false;
+      if (sleepDetector !== null) {
+        clearInterval(sleepDetector);
+        sleepDetector = null;
+      }
       stopHub();
       await polling.stop();
     },
