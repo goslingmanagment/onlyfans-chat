@@ -7,9 +7,18 @@ name: CI
 
 on:
   pull_request:
+    # ready_for_review added so the required Windows check gets a run on the
+    # SHA being merged once the PR leaves Draft.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches:
       - main
+
+# A superseded head has nothing left to prove — cancel its run instead of
+# letting it burn the minutes budget.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -38,6 +47,9 @@ jobs:
 
   windows-check:
     name: pnpm check (Windows)
+    # Windows minutes bill at 2x — run once per PR when it goes ready (and on
+    # main), not on every Draft sync; the Linux check covers the iteration loop.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: windows-latest
     timeout-minutes: 35
 
