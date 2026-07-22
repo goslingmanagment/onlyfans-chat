@@ -1723,7 +1723,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('suppresses the polling wake-backlog through the shared epoch gate', async () => {
     vi.useFakeTimers();
     try {
-      const { provider, polling, events, setNow } = build();
+      const { provider, polling, callbacks, events, setNow } = build();
       provider.start([ACCT]);
       await Promise.resolve();
       await Promise.resolve();
@@ -1747,6 +1747,22 @@ describe('createHubAwareSync (provider composition)', () => {
       expect(events).toHaveLength(1);
       expect(events[0]).toMatchObject({ messageId: 'night-9001', live: false });
 
+      // The reconnected stream finishes its replay and restores live mode —
+      // but the marker vouches for the HUB lane only: a slow poll emitting
+      // another night row after it must still be suppressed by the epoch.
+      callbacks().onCaughtUp();
+      seedMessage('night-9002', '101', {
+        createdAt: new Date(PROVIDER_NOW_MS + 5 * 3_600_000).toISOString(),
+      });
+      polling.emit({
+        type: 'messageReceived',
+        accountId: ACCT,
+        chatId: '101',
+        messageId: 'night-9002',
+      });
+      expect(events).toHaveLength(2);
+      expect(events[1]).toMatchObject({ messageId: 'night-9002', live: false });
+
       // A genuinely fresh message discovered by the same sweep still alerts.
       seedMessage('fresh-9001', '101', {
         createdAt: new Date(wakeMs).toISOString(),
@@ -1757,8 +1773,8 @@ describe('createHubAwareSync (provider composition)', () => {
         chatId: '101',
         messageId: 'fresh-9001',
       });
-      expect(events).toHaveLength(2);
-      expect(events[1]).not.toHaveProperty('live');
+      expect(events).toHaveLength(3);
+      expect(events[2]).not.toHaveProperty('live');
       await provider.stop();
     } finally {
       vi.useRealTimers();

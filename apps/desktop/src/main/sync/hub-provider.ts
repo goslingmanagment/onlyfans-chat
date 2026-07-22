@@ -443,7 +443,11 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       return false;
     }
     let eligible: boolean;
-    if (sawReplayCompleted) {
+    if (sawReplayCompleted && source === 'hub') {
+      // The marker is an SSE-connection signal: it vouches only for frames
+      // that arrived on that stream after its replay flushed. A slow poll
+      // finishing after the marker may still carry pre-epoch backlog rows —
+      // polling always answers to the timestamp gate below.
       eligible = true;
     } else {
       // Timestamp preference: enriched body, the v2 frame's journal time,

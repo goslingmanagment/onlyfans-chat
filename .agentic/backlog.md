@@ -42,3 +42,12 @@ screenshot directory derived from its isolated profile. Explicit shared
   genuinely old (e.g. an old message surfacing late) is now suppressed
   rather than alerted — revisit only if a chatter reports a missed alert of
   that shape.
+
+- 2026-07-22 (PR #16, residual P2s from the final raced review, owner to
+  arbitrate): (a) a multi-hour SSE outage while the machine is awake replays
+  hours of genuinely-unalerted messages as individual toasts on reconnect
+  (deliberate "awake = still news" policy, D23) — if that ever bites, the
+  polish is aggregation ("N new messages") above some burst size, not
+  suppression; (b) the epoch fallback compares server timestamps to the
+  local clock — a clock >60 s fast mutes alerts until core's marker deploys
+  (one warn per session; marker removes the class).
