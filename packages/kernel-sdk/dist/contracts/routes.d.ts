@@ -8111,6 +8111,7 @@ export declare const notificationsIncidentItemSchema: z.ZodObject<{
         scheduler_silent: "scheduler_silent";
         ops_sampler_silent: "ops_sampler_silent";
         ofapi_chargebacks_reconcile_failed: "ofapi_chargebacks_reconcile_failed";
+        ofapi_link_stats_reconcile_failed: "ofapi_link_stats_reconcile_failed";
     }>;
     pageLabel: z.ZodNullable<z.ZodString>;
     platform: z.ZodNullable<z.ZodEnum<{
@@ -8151,6 +8152,7 @@ export declare const notificationsIncidentsQuerySchema: z.ZodObject<{
         scheduler_silent: "scheduler_silent";
         ops_sampler_silent: "ops_sampler_silent";
         ofapi_chargebacks_reconcile_failed: "ofapi_chargebacks_reconcile_failed";
+        ofapi_link_stats_reconcile_failed: "ofapi_link_stats_reconcile_failed";
     }>>;
     pageLabel: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -8177,6 +8179,7 @@ export declare const notificationsIncidentsResponseSchema: z.ZodObject<{
             scheduler_silent: "scheduler_silent";
             ops_sampler_silent: "ops_sampler_silent";
             ofapi_chargebacks_reconcile_failed: "ofapi_chargebacks_reconcile_failed";
+            ofapi_link_stats_reconcile_failed: "ofapi_link_stats_reconcile_failed";
         }>;
         pageLabel: z.ZodNullable<z.ZodString>;
         platform: z.ZodNullable<z.ZodEnum<{
@@ -22373,6 +22376,7 @@ export declare const routeSchemas: {
                 scheduler_silent: "scheduler_silent";
                 ops_sampler_silent: "ops_sampler_silent";
                 ofapi_chargebacks_reconcile_failed: "ofapi_chargebacks_reconcile_failed";
+                ofapi_link_stats_reconcile_failed: "ofapi_link_stats_reconcile_failed";
             }>>;
             pageLabel: z.ZodOptional<z.ZodString>;
             limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -22400,6 +22404,7 @@ export declare const routeSchemas: {
                         scheduler_silent: "scheduler_silent";
                         ops_sampler_silent: "ops_sampler_silent";
                         ofapi_chargebacks_reconcile_failed: "ofapi_chargebacks_reconcile_failed";
+                        ofapi_link_stats_reconcile_failed: "ofapi_link_stats_reconcile_failed";
                     }>;
                     pageLabel: z.ZodNullable<z.ZodString>;
                     platform: z.ZodNullable<z.ZodEnum<{

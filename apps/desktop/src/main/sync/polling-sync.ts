@@ -12,7 +12,12 @@ import { OFAPI_INTER_PAGE_DELAY_MS, type OfApiPurpose } from '@chatgoose/shared'
 import type { NormalizedSyncMessage, SyncEvent } from '@chatgoose/shared/protocol/index';
 import type { ChatListFilter, OfApiClient } from '../ofapi/client';
 import type { ChatRow, ChatUpsert, DataLayer, FanTransactionUpsert, MessageUpsert } from '../db/index';
-import type { OfApiChat, OfApiMessage, OfApiTransaction } from '../ofapi/schemas';
+import type {
+  OfApiAccount,
+  OfApiChat,
+  OfApiMessage,
+  OfApiTransaction,
+} from '../ofapi/schemas';
 import { paginateFirstLastId, paginateMarker } from '../ofapi/pagination';
 import type { SleepFn } from '../ofapi/rate-limiter';
 import {
@@ -2191,13 +2196,12 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   };
 }
 
-/** Bootstrap: pull team accounts into the db; returns ids to poll. */
-export async function syncAccounts(
-  client: OfApiClient,
+/** Commit one already-validated grant snapshot after the prior runtime drains. */
+export function applyAccountGrantSnapshot(
+  accounts: readonly OfApiAccount[],
   data: DataLayer,
   toMediaUrl?: ToMediaUrl,
-): Promise<string[]> {
-  const accounts = await client.listAccounts({ purpose: 'hydration' });
+): string[] {
   // The response is the complete authoritative grant set for this credential.
   // Reconcile it even during initial boot: a prior build only upserted the new
   // ids, leaving replaced OFAPI identities visible forever in local cache.
@@ -2208,4 +2212,14 @@ export async function syncAccounts(
     }
   }
   return accounts.map((account) => account.id);
+}
+
+/** Same-runtime refresh: load and immediately apply the authoritative grants. */
+export async function syncAccounts(
+  client: OfApiClient,
+  data: DataLayer,
+  toMediaUrl?: ToMediaUrl,
+): Promise<string[]> {
+  const accounts = await client.listAccounts({ purpose: 'hydration' });
+  return applyAccountGrantSnapshot(accounts, data, toMediaUrl);
 }

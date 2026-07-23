@@ -558,13 +558,13 @@ export async function activateStoredCredentialWithRetry(options: {
  * (no createOfapiCommand, no state churn — the outgoing engine may still be
  * pumping those rows).
  *
- * Returns the validated account ids for the caller to start sync with.
+ * Returns the validated candidate snapshot to the caller.
  */
-export async function validateThenReconcileOnBoot(params: {
-  syncAccounts: () => Promise<readonly string[]>;
+export async function validateThenReconcileOnBoot<Snapshot>(params: {
+  syncAccounts: () => Promise<Snapshot>;
   reconcile: (isBoot: boolean) => Promise<void>;
   isBoot: boolean;
-}): Promise<readonly string[]> {
+}): Promise<Snapshot> {
   if (params.isBoot) {
     await params.reconcile(true);
     return params.syncAccounts();
@@ -572,6 +572,29 @@ export async function validateThenReconcileOnBoot(params: {
   const accountIds = await params.syncAccounts();
   await params.reconcile(false);
   return accountIds;
+}
+
+/**
+ * Runtime handoff barrier. Candidate loading and non-boot reconciliation stay
+ * ahead of the destructive handoff so a rejected candidate leaves the outgoing
+ * runtime untouched. The candidate's authoritative grant snapshot is committed
+ * only AFTER the outgoing runtime has fully drained; no late task from that
+ * runtime can overwrite the replacement's grants afterward.
+ */
+export async function prepareAndCommitRuntimeAccounts<Snapshot, Result>(params: {
+  loadSnapshot: () => Promise<Snapshot>;
+  reconcile: (isBoot: boolean) => Promise<void>;
+  deactivateOutgoing: () => Promise<void>;
+  applySnapshot: (snapshot: Snapshot) => Result;
+  isBoot: boolean;
+}): Promise<Result> {
+  const snapshot = await validateThenReconcileOnBoot({
+    syncAccounts: params.loadSnapshot,
+    reconcile: params.reconcile,
+    isBoot: params.isBoot,
+  });
+  await params.deactivateOutgoing();
+  return params.applySnapshot(snapshot);
 }
 
 /**

@@ -2591,6 +2591,7 @@ const notificationIncidentKindEnum = z.enum([
     "scheduler_silent",
     "ops_sampler_silent",
     "ofapi_chargebacks_reconcile_failed",
+    "ofapi_link_stats_reconcile_failed",
 ]);
 const notificationIncidentStatusEnum = z.enum(["open", "resolved"]);
 const deliveryKindEnum = z.enum([
@@ -4831,7 +4832,8 @@ export const routeSchemas = {
             + "voice_source_invalid; 403 voice_disabled / voice_not_allowlisted; 409 "
             + "idempotency_mismatch (same id, different request) / voice_no_profile; 429 "
             + "voice_quota_denied; 503 voice_provider_unavailable (live flag on but "
-            + "ELEVENLABS_API_KEY unconfigured — set it and restart). A quota-denied "
+            + "ELEVENLABS_API_KEY or the complete SERVICE_EGRESS_PROXY_* tuple is "
+            + "unconfigured — set both and restart). A quota-denied "
             + "clientRequestId STAYS denied: every replay of it re-throws the same 429 "
             + "(never a 202 view), so a retry after quota exhaustion needs a FRESH "
             + "clientRequestId.",

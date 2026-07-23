@@ -216,6 +216,11 @@ describe('createHubSync (protocol v2)', () => {
       failGapRecoveries?: number;
       /** Account ids returned by the authenticated read-gateway refresh. */
       refreshedAccountIds?: readonly string[];
+      /** Local account allowlist supplied at runtime construction. */
+      accountIds?: readonly string[];
+      /** Fail the first N cursor writes. */
+      failV2CursorWrites?: number;
+      sleep?: (ms: number) => Promise<void>;
     } = {},
   ): V2Harness {
     const { fetchImpl, calls } = makeHarness(responses);
@@ -225,14 +230,15 @@ describe('createHubSync (protocol v2)', () => {
     let gapRecoveries = 0;
     let caughtUps = 0;
     let snapshotPages = 0;
+    let v2CursorWrites = 0;
     const sync = createHubSync({
       protocol: 'v2',
       baseUrl: 'https://hub.test/',
       apiKey: 'agency_hub_core_k1',
       fetchImpl,
       ...(options.clientVersion !== undefined ? { clientVersion: options.clientVersion } : {}),
-      sleep: () => Promise.resolve(),
-      accountIds: [ACCT],
+      sleep: options.sleep ?? (() => Promise.resolve()),
+      accountIds: options.accountIds ?? [ACCT],
       onEvent: (event) => {
         if (options.failEvents === true) {
           throw new Error('handler crashed');
@@ -265,6 +271,10 @@ describe('createHubSync (protocol v2)', () => {
       setLastEventId: () => undefined,
       getV2Cursor: () => cursor,
       setV2Cursor: (next) => {
+        v2CursorWrites += 1;
+        if (v2CursorWrites <= (options.failV2CursorWrites ?? 0)) {
+          throw new Error('v2 cursor write failed');
+        }
         cursor = next;
         log.push(`persist:${next}`);
       },
@@ -306,7 +316,7 @@ describe('createHubSync (protocol v2)', () => {
     h.sync.stop();
   });
 
-  it('fires onCaughtUp for the control replay-completed marker without checkpoint or drop', async () => {
+  it('checkpoints the replay-completed boundary before the first live domain frame', async () => {
     const stream = makeStream();
     const h = makeV2Sync([{ status: 200, stream }]);
     h.sync.start();
@@ -315,19 +325,63 @@ describe('createHubSync (protocol v2)', () => {
     stream.send(controlFrame('CUR_CAUGHT_UP', { type: 'replay_completed' }));
     await drainMicrotasks();
 
-    // Signal-only lane: no onEvent, no cursor persist, nothing dropped.
+    // The control signal has no domain effect, but its repeated watermark is
+    // the lossless baseline for a cursor-less connection.
     expect(h.caughtUps()).toBe(1);
-    expect(h.log).toEqual(['caught-up']);
-    expect(h.cursor()).toBe(null);
+    expect(h.log).toEqual(['persist:CUR_CAUGHT_UP', 'caught-up']);
+    expect(h.cursor()).toBe('CUR_CAUGHT_UP');
     expect(h.sync.droppedFrameCount()).toBe(0);
 
     stream.send(messageFrame('CUR_LIVE'));
     await drainMicrotasks();
     expect(h.log).toEqual([
+      'persist:CUR_CAUGHT_UP',
       'caught-up',
       'event:messageReceived',
       'persist:CUR_LIVE',
     ]);
+    h.sync.stop();
+  });
+
+  it('does not announce caught-up when the replay-boundary cursor fails to persist', async () => {
+    const stream = makeStream();
+    const never = new Promise<void>(() => undefined);
+    const h = makeV2Sync([{ status: 200, stream }], {
+      failV2CursorWrites: 1,
+      sleep: () => never,
+    });
+    h.sync.start();
+    await drainMicrotasks();
+
+    stream.send(controlFrame('CUR_NOT_DURABLE', { type: 'replay_completed' }));
+    await drainMicrotasks();
+
+    expect(h.cursor()).toBeNull();
+    expect(h.caughtUps()).toBe(0);
+    expect(h.log).toEqual([]);
+    h.sync.stop();
+  });
+
+  it('terminates before replay-completed can checkpoint past a malformed durable frame', async () => {
+    const stream = makeStream();
+    const never = new Promise<void>(() => undefined);
+    const h = makeV2Sync([{ status: 200, stream }], {
+      initialCursor: 'CUR_BEFORE_BAD_FRAME',
+      sleep: () => never,
+    });
+    h.sync.start();
+    await drainMicrotasks();
+
+    stream.send(
+      'id: CUR_BAD\nevent: domain\ndata: {not-json}\n\n'
+      + controlFrame('CUR_AFTER_BAD_FRAME', { type: 'replay_completed' }),
+    );
+    await drainMicrotasks();
+
+    expect(h.cursor()).toBe('CUR_BEFORE_BAD_FRAME');
+    expect(h.caughtUps()).toBe(0);
+    expect(h.log).toEqual([]);
+    expect(h.sync.droppedFrameCount()).toBe(1);
     h.sync.stop();
   });
 
@@ -398,7 +452,7 @@ describe('createHubSync (protocol v2)', () => {
     h.sync.stop();
   });
 
-  it('checkpoints past unknown types and foreign accounts without emitting (forward-compat)', async () => {
+  it('checkpoints past unknown domain types without emitting (forward-compat)', async () => {
     const stream = makeStream();
     const h = makeV2Sync([{ status: 200, stream }]);
     h.sync.start();
@@ -412,11 +466,124 @@ describe('createHubSync (protocol v2)', () => {
       data: {},
       accountRef: ACCT,
     }));
-    stream.send(messageFrame('CUR_B', { accountRef: 'acct_someone_else' }));
     await drainMicrotasks();
 
-    // No events emitted, but the cursor advanced past both frames.
-    expect(h.log).toEqual(['persist:CUR_A', 'persist:CUR_B']);
+    // Unknown vocabulary remains forward-compatible: no event, but checkpoint.
+    expect(h.log).toEqual(['persist:CUR_A']);
+    h.sync.stop();
+  });
+
+  it('rebaselines before checkpointing a mapped frame whose accountRef replaced the local grant', async () => {
+    const initialStream = makeStream();
+    const resumedStream = makeStream();
+    const h = makeV2Sync([
+      { status: 200, stream: initialStream },
+      {
+        status: 200,
+        stream: null,
+        json: {
+          cursor: 'CUR_REPLACED',
+          accounts: [{ accountId: 7, accountRef: NEW_ACCT, currentSeq: 2 }],
+        },
+      },
+      { status: 200, stream: resumedStream },
+    ], {
+      initialCursor: 'CUR_OLD_GRANT',
+      refreshedAccountIds: [NEW_ACCT],
+    });
+    h.sync.start();
+    await drainMicrotasks();
+
+    initialStream.send(messageFrame('CUR_SCOPE_DRIFT', { accountRef: NEW_ACCT }));
+    await drainMicrotasks();
+
+    expect(h.calls.map((call) => call.url)).toEqual([
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_OLD_GRANT`,
+      v2SnapshotRequest('CUR_OLD_GRANT'),
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_OLD_GRANT`,
+    ]);
+    expect(h.log).toEqual(['gap-recovered']);
+    expect(h.cursor()).toBe('CUR_OLD_GRANT');
+    expect(h.log).not.toContain('persist:CUR_SCOPE_DRIFT');
+
+    // The exact foreign frame replays from the still-safe source cursor and
+    // goes through the ordinary handle-then-checkpoint path.
+    resumedStream.send(messageFrame('CUR_SCOPE_DRIFT', { accountRef: NEW_ACCT }));
+    await drainMicrotasks();
+    expect(h.log.slice(-2)).toEqual([
+      'event:messageReceived',
+      'persist:CUR_SCOPE_DRIFT',
+    ]);
+    h.sync.stop();
+  });
+
+  it('recognizes the same malformed frame across changing multi-account cursors', async () => {
+    const streams = [makeStream(), makeStream(), makeStream()];
+    const sleeps: number[] = [];
+    const never = new Promise<void>(() => undefined);
+    const h = makeV2Sync(streams.map((stream) => ({ status: 200, stream })), {
+      initialCursor: 'CUR_MULTI_START',
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return ms === 15 * 60_000 ? never : Promise.resolve();
+      },
+    });
+
+    h.sync.start();
+    await drainMicrotasks();
+    for (let index = 0; index < streams.length; index += 1) {
+      const attempt = index + 1;
+      streams[index]!.send(
+        domainFrame(`CUR_OTHER_${attempt}`, {
+          accountId: 8,
+          accountSeq: attempt,
+          type: 'workboard.state_changed',
+          occurredAt: '2026-07-06T10:00:00.000Z',
+          data: {},
+          accountRef: ACCT,
+        })
+        + `id: CUR_BAD_${attempt}\nevent: domain\ndata: {same-bad-payload}\n\n`,
+      );
+      await drainMicrotasks();
+    }
+
+    // The other account legitimately advances the opaque cursor each time,
+    // but it must neither change nor clear the malformed frame's identity.
+    expect(sleeps).toEqual([3_000, 3_000, 15 * 60_000]);
+    expect(h.cursor()).toBe('CUR_OTHER_3');
+    expect(h.sync.droppedFrameCount()).toBe(3);
+    h.sync.stop();
+  });
+
+  it('stands down after three failures to authenticate the same accountRef drift', async () => {
+    const streams = [makeStream(), makeStream(), makeStream()];
+    const sleeps: number[] = [];
+    const never = new Promise<void>(() => undefined);
+    const h = makeV2Sync([
+      { status: 200, stream: streams[0]! },
+      { status: 500, stream: null },
+      { status: 200, stream: streams[1]! },
+      { status: 500, stream: null },
+      { status: 200, stream: streams[2]! },
+      { status: 500, stream: null },
+    ], {
+      initialCursor: 'CUR_OLD_GRANT',
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return ms === 15 * 60_000 ? never : Promise.resolve();
+      },
+    });
+
+    h.sync.start();
+    await drainMicrotasks();
+    for (const stream of streams) {
+      stream.send(messageFrame('CUR_FOREIGN', { accountRef: NEW_ACCT }));
+      await drainMicrotasks();
+    }
+
+    expect(h.calls).toHaveLength(6);
+    expect(sleeps).toEqual([3_000, 6_000, 15 * 60_000]);
+    expect(h.cursor()).toBe('CUR_OLD_GRANT');
     h.sync.stop();
   });
 
@@ -1264,15 +1431,18 @@ describe('createHubSync (protocol v2)', () => {
     h.sync.stop();
   });
 
-  it('persists an authenticated shrink-to-zero cursor without state requests or revoked events', async () => {
+  it('persists a shrink-to-zero cursor without checkpointing a revoked-account frame', async () => {
     const stream = makeStream();
+    const recoveryPaused = new Promise<void>(() => undefined);
     const h = makeV2Sync([
       { status: 403, stream: null },
       { status: 200, stream: null, json: { cursor: 'CUR_EMPTY', accounts: [] } },
       { status: 200, stream },
+      { status: 500, stream: null },
     ], {
       initialCursor: 'CUR_REVOKED',
       refreshedAccountIds: [],
+      sleep: () => recoveryPaused,
     });
 
     h.sync.start();
@@ -1287,11 +1457,9 @@ describe('createHubSync (protocol v2)', () => {
 
     stream.send(messageFrame('CUR_REVOKED_EVENT'));
     await drainMicrotasks();
-    expect(h.log).toEqual([
-      'gap-recovered',
-      'persist:CUR_EMPTY',
-      'persist:CUR_REVOKED_EVENT',
-    ]);
+    expect(h.log).toEqual(['gap-recovered', 'persist:CUR_EMPTY']);
+    expect(h.cursor()).toBe('CUR_EMPTY');
+    expect(h.calls[3]!.url).toBe(v2SnapshotRequest('CUR_EMPTY'));
     h.sync.stop();
   });
 
