@@ -12,6 +12,7 @@
 // The shared MessagesSseParser is LLM-shaped (no id/retry fields), so frame
 // parsing is a small dedicated SSE-spec parser below, unit-tested directly.
 
+import { createHash } from 'node:crypto';
 import {
   domainSnapshotRequiredSchema,
   domainSnapshotResponseSchema,
@@ -62,6 +63,12 @@ export interface HubSnapshotRecoveryProgress {
   boundedStateAt: string | null;
   sourceV2Cursor: string | null;
   targetV2Cursor: string | null;
+}
+
+interface HubV2ScopeDrift {
+  numericAccountId: number;
+  accountSeq: number;
+  accountRef: string;
 }
 /** Server announces `retry: 3000` on connect; floor until it does. */
 export const HUB_DEFAULT_RETRY_MS = 3_000;
@@ -303,7 +310,23 @@ type ConnectionOutcome =
   | { kind: 'auth' }
   | { kind: 'stopped' }
   | { kind: 'snapshot'; requirement: SyncSnapshotRequired }
-  | { kind: 'snapshot-v2' };
+  | { kind: 'snapshot-v2' }
+  | { kind: 'scope-drift'; drift: HubV2ScopeDrift };
+
+type HubPoisonCandidate =
+  | {
+      kind: 'handler';
+      accountId: number;
+      accountSeq: number;
+      type: string;
+      rejections: number;
+    }
+  | {
+      kind: 'wire';
+      fingerprint: string;
+      cursor: string | null;
+      rejections: number;
+    };
 
 class HubSnapshotAuthError extends Error {
   constructor(path: string, status: number) {
@@ -330,6 +353,23 @@ class HubSnapshotPersistedCursorRejectedError extends Error {
     super(`Core rejected persisted snapshot continuation: ${message}`);
     this.name = 'HubSnapshotPersistedCursorRejectedError';
   }
+}
+
+class HubV2AccountScopeDriftError extends Error {
+  constructor(readonly drift: HubV2ScopeDrift) {
+    super(
+      `hub v2 accountRef ${drift.accountRef} is outside the applied local grant scope`,
+    );
+    this.name = 'HubV2AccountScopeDriftError';
+  }
+}
+
+function durableFrameFingerprint(frame: SseFrame): string {
+  return createHash('sha256')
+    .update(frame.event, 'utf8')
+    .update('\0', 'utf8')
+    .update(frame.data, 'utf8')
+    .digest('hex');
 }
 
 function isSnapshotAuthError(error: unknown): error is HubSnapshotAuthError {
@@ -366,20 +406,11 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   if (hasSnapshotProgressStore && options.snapshotProgressScope!.trim().length === 0) {
     throw new Error('createHubSync: snapshot progress scope must not be blank');
   }
-
   let running = false;
   let status: HubSyncStatus = 'stopped';
   let dropped = 0;
-  /** Identity of the last frame whose onEvent rejected; `rejections` counts
-   * CONSECUTIVE rejections of that same frame across reconnect cycles (other
-   * frames applying in between — e.g. another account's replay — do not reset
-   * it; only a different rejection or this frame finally applying does). */
-  let poisonCandidate: {
-    accountId: number;
-    accountSeq: number;
-    type: string;
-    rejections: number;
-  } | null = null;
+  /** Stable identity of a deterministic handler or wire failure. */
+  let poisonCandidate: HubPoisonCandidate | null = null;
   let abort: AbortController | null = null;
   /** Consecutive failed connections since the last byte received. */
   let failures = 0;
@@ -387,6 +418,10 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   let allowedAccountIds = options.accountIds === undefined
     ? null
     : new Set(options.accountIds);
+  let scopeRecoveryFailures: {
+    key: string;
+    attempts: number;
+  } | null = null;
 
   function orderedAccountIds(): string[] {
     if (allowedAccountIds === null) {
@@ -438,6 +473,14 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       && left.boundedStateAt === right.boundedStateAt
       && left.sourceV2Cursor === right.sourceV2Cursor
       && left.targetV2Cursor === right.targetV2Cursor;
+  }
+
+  function scopeRecoveryKey(drift: HubV2ScopeDrift): string {
+    return [
+      drift.numericAccountId,
+      drift.accountSeq,
+      drift.accountRef,
+    ].join(':');
   }
 
   function clearStoredSnapshotProgress(
@@ -597,6 +640,25 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     }
   }
 
+  function rejectMalformedV2Frame(frame: SseFrame, detail: string): never {
+    dropped += 1;
+    const fingerprint = durableFrameFingerprint(frame);
+    if (
+      poisonCandidate?.kind === 'wire'
+      && poisonCandidate.fingerprint === fingerprint
+    ) {
+      poisonCandidate.rejections += 1;
+    } else {
+      poisonCandidate = {
+        kind: 'wire',
+        fingerprint,
+        cursor: frame.id,
+        rejections: 1,
+      };
+    }
+    throw new Error(`hub v2 durable frame failed validation: ${detail}`);
+  }
+
   async function handleV2Frame(frame: SseFrame): Promise<void> {
     if (frame.event === 'ephemeral') {
       // Serve-time-only lane (typing) — apply, never checkpoint.
@@ -635,6 +697,18 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         && json !== null
         && (json as { type?: unknown }).type === 'replay_completed'
       ) {
+        // Core repeats the complete delivered watermark on this boundary.
+        // Persist it even when the connection started cursor-less: a close
+        // before the first live domain frame can then resume losslessly.
+        if (frame.id !== null && frame.id.length > 0) {
+          options.setV2Cursor!(frame.id);
+          if (poisonCandidate?.kind === 'wire') {
+            poisonCandidate = null;
+          }
+        }
+        // Only expose the live boundary after its resume point is durable.
+        // Otherwise a failed cursor write could make replayed backlog look
+        // live (and eligible for notifications) on the next connection.
         options.onCaughtUp?.();
       }
       return; // unknown control types are forward-compat noise, not errors
@@ -646,13 +720,26 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     try {
       json = JSON.parse(frame.data);
     } catch {
-      dropped += 1;
-      return;
+      rejectMalformedV2Frame(frame, 'invalid JSON');
     }
     const domainFrame = parseDomainEventFrame(json);
     if (domainFrame === null) {
-      dropped += 1;
-      return;
+      rejectMalformedV2Frame(frame, 'schema mismatch');
+    }
+    if (
+      typeof domainFrame.accountRef === 'string'
+      && allowedAccountIds !== null
+      && !allowedAccountIds.has(domainFrame.accountRef)
+    ) {
+      const drift: HubV2ScopeDrift = {
+        numericAccountId: domainFrame.accountId,
+        accountSeq: domainFrame.accountSeq,
+        accountRef: domainFrame.accountRef,
+      };
+      // Throw before mapping or checkpointing. The existing durable cursor is
+      // therefore the crash-safe recovery record: restart/reconnect replays
+      // this exact frame after the authenticated grant refresh.
+      throw new HubV2AccountScopeDriftError(drift);
     }
     const event = mapDomainFrame(domainFrame);
     if (event !== null && (allowedAccountIds === null || allowedAccountIds.has(event.accountId))) {
@@ -662,13 +749,14 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         // Feed the poison breaker: same frame rejecting again bumps the
         // count; a different frame starts a fresh candidate.
         if (
-          poisonCandidate !== null &&
+          poisonCandidate?.kind === 'handler' &&
           poisonCandidate.accountId === domainFrame.accountId &&
           poisonCandidate.accountSeq === domainFrame.accountSeq
         ) {
           poisonCandidate.rejections += 1;
         } else {
           poisonCandidate = {
+            kind: 'handler',
             accountId: domainFrame.accountId,
             accountSeq: domainFrame.accountSeq,
             type: domainFrame.type,
@@ -678,7 +766,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         throw error;
       }
       if (
-        poisonCandidate !== null &&
+        poisonCandidate?.kind === 'handler' &&
         poisonCandidate.accountId === domainFrame.accountId &&
         poisonCandidate.accountSeq === domainFrame.accountSeq
       ) {
@@ -693,13 +781,10 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     }
   }
 
-  /** v2 recovery obtains one cursor plus its atomically bound account refs,
-   * verifies that an independent read-gateway refresh still names exactly that
-   * set, then snapshots only those response-bound refs. A resumed page walk
-   * keeps the OLD fresh target stored with that walk; pairing its state cursor
-   * with a newly minted target would create an event-loss interval between the
-   * two baselines. */
-  async function recoverV2Cursor(): Promise<void> {
+  /** Authenticate the cursor-bound grant set. Scope drift keeps the old cursor
+   * and replays its foreign frame; a real gap applies state before replacing
+   * the cursor. */
+  async function recoverV2Cursor(scopeDrift?: HubV2ScopeDrift): Promise<void> {
     const sourceV2Cursor = options.getV2Cursor!();
     if (sourceV2Cursor === null) {
       throw new Error('hub v2 recovery requires the rejected source cursor');
@@ -742,6 +827,15 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       throw new Error('hub v2 snapshot recovery stopped');
     }
     const newlyMintedCursor = parsed.data.cursor;
+    if (
+      scopeDrift !== undefined
+      && !parsed.data.accounts.some((account) =>
+        account.accountId === scopeDrift.numericAccountId
+        && account.accountRef === scopeDrift.accountRef
+        && account.currentSeq >= scopeDrift.accountSeq)
+    ) {
+      throw new Error('hub v2 accountRef recovery binding changed before snapshot');
+    }
     const boundAccountIds = parsed.data.accounts.flatMap((account) =>
       account.accountRef === null ? [] : [account.accountRef]);
     if (options.onV2GapRecovered === undefined) {
@@ -757,7 +851,15 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     // Preserve Core's numeric-account order. It is part of the cursor response
     // binding and makes durable page progress stable across restarts.
     const accountIds = boundAccountIds;
-    allowedAccountIds = new Set(accountIds);
+    if (scopeDrift !== undefined) {
+      // A foreign ref observed on an already-resumable stream is a page-ref
+      // replacement, not a ledger gap. Publish the authenticated replacement
+      // allowlist but KEEP the last applied cursor: reconnecting from it
+      // replays the foreign frame through the normal handle-then-checkpoint
+      // path, preserving event kinds that state snapshots do not cover.
+      allowedAccountIds = new Set(accountIds);
+      return;
+    }
     const reusableProgress = readReusableSnapshotProgress(0, accountIds, sourceV2Cursor);
     const targetV2Cursor = reusableProgress?.targetV2Cursor ?? newlyMintedCursor;
     const cursorBinding = { sourceV2Cursor, targetV2Cursor };
@@ -772,9 +874,11 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     if (!running) {
       throw new Error('hub v2 snapshot recovery stopped');
     }
-    // Checkpoint first. A crash before cleanup leaves a harmless record whose
-    // source no longer matches getV2Cursor; the next gap refuses to reuse it.
+    // Commit the fresh target before publishing the replacement allowlist.
+    // Until this synchronous write succeeds, a replayed foreign frame must
+    // still re-enter recovery rather than bypass an incomplete state walk.
     options.setV2Cursor!(targetV2Cursor);
+    allowedAccountIds = new Set(accountIds);
     clearStoredSnapshotProgress();
   }
 
@@ -1180,7 +1284,12 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       // — but only when it actually carried bytes; an instant empty close is
       // a misbehaving endpoint and takes the backoff path.
       return receivedBytes ? { kind: 'clean-close' } : { kind: 'error' };
-    } catch {
+    } catch (error) {
+      if (error instanceof HubV2AccountScopeDriftError) {
+        return running
+          ? { kind: 'scope-drift', drift: error.drift }
+          : { kind: 'stopped' };
+      }
       return running ? { kind: 'error' } : { kind: 'stopped' };
     } finally {
       if (watchdog) {
@@ -1198,6 +1307,54 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       const outcome = await connectOnce();
       if (!running || outcome.kind === 'stopped') {
         break;
+      }
+      if (outcome.kind === 'scope-drift') {
+        setStatus('degraded');
+        options.onWarn?.('hub v2 accountRef scope changed; refreshing grants before replay', {
+          ...outcome.drift,
+        });
+        try {
+          await recoverV2Cursor(outcome.drift);
+          scopeRecoveryFailures = null;
+          failures = 0;
+          continue;
+        } catch (error) {
+          if (isSnapshotAuthError(error)) {
+            setStatus('auth-failed');
+            running = false;
+            break;
+          }
+          const key = scopeRecoveryKey(outcome.drift);
+          if (scopeRecoveryFailures?.key === key) {
+            scopeRecoveryFailures.attempts += 1;
+          } else {
+            scopeRecoveryFailures = { key, attempts: 1 };
+          }
+          const standDown =
+            scopeRecoveryFailures.attempts >= HUB_POISON_FRAME_MAX_REJECTIONS;
+          const delayMs = standDown
+            ? HUB_POISON_BACKOFF_MS
+            : Math.min(
+                HUB_RECONNECT_CAP_MS,
+                retryFloorMs * 2 ** (scopeRecoveryFailures.attempts - 1),
+              );
+          options.onWarn?.(
+            standDown
+              ? 'hub v2 accountRef recovery repeatedly failed; SSE standing down'
+              : 'hub v2 accountRef recovery failed',
+            {
+              ...outcome.drift,
+              attempts: scopeRecoveryFailures.attempts,
+              backoffMs: delayMs,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+          await sleep(delayMs);
+          if (standDown) {
+            scopeRecoveryFailures.attempts = 0;
+          }
+        }
+        continue;
       }
       if (outcome.kind === 'auth') {
         // A cursor-bearing v2 403 can be grant drift rather than dead auth.
@@ -1241,7 +1398,10 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         // Poison breaker: the same frame rejected on every reconnect — this
         // is deterministic, not transient; replaying blind loops forever.
         const poisoned = { ...poisonCandidate };
-        if (SNAPSHOT_COVERED_TYPES.has(poisoned.type)) {
+        if (
+          poisoned.kind === 'handler'
+          && SNAPSHOT_COVERED_TYPES.has(poisoned.type)
+        ) {
           // The thread-state walk carries this type's durable effect in
           // full: a fresh cursor + state recovery skips the frame WITHOUT
           // losing what it carried.

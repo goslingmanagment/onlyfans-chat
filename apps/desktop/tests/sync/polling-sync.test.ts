@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import type { NormalizedSyncMessage, SyncEvent } from '@chatgoose/shared/protocol/index';
 import { createDataLayer, type DataLayer } from '../../src/main/db/index';
-import { createPollingSync } from '../../src/main/sync/polling-sync';
+import {
+  applyAccountGrantSnapshot,
+  createPollingSync,
+} from '../../src/main/sync/polling-sync';
 import { createBudgetGuard } from '../../src/main/sync/budget-guard';
+import { prepareAndCommitRuntimeAccounts } from '../../src/main/runtime-activation';
 import type { OfApiClient } from '../../src/main/ofapi/client';
 import type {
   OfApiAccount,
@@ -1084,6 +1088,38 @@ describe('PollingSync', () => {
     expect(data.accounts.listGranted().map((row) => row.id)).toEqual([ACCT]);
     expect(data.accounts.get(ACCT)?.grantState).toBe('granted');
     sync.stop();
+  });
+
+  it('leaves replacement grants as the final DB writer after an outgoing grant refresh drains', async () => {
+    stub.setChats([]);
+    const outgoing = makeSync();
+    outgoing.start([ACCT]);
+    await drainPoll();
+
+    let releaseOldGrantRefresh:
+      | ((accounts: readonly OfApiAccount[]) => void)
+      | undefined;
+    (stub.client.listAccounts as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise<readonly OfApiAccount[]>((resolve) => {
+        releaseOldGrantRefresh = resolve;
+      }),
+    );
+    const oldRefresh = outgoing.refreshAccountGrants();
+    await vi.waitFor(() => expect(releaseOldGrantRefresh).toBeTypeOf('function'));
+
+    const deactivateOutgoing = vi.fn(() => outgoing.stop());
+    const handoff = prepareAndCommitRuntimeAccounts({
+      loadSnapshot: async () => [makeAccount(NEW_ACCT)] as const,
+      reconcile: async () => undefined,
+      deactivateOutgoing,
+      applySnapshot: (snapshot) => applyAccountGrantSnapshot(snapshot, data),
+      isBoot: false,
+    });
+
+    await vi.waitFor(() => expect(deactivateOutgoing).toHaveBeenCalledTimes(1));
+    releaseOldGrantRefresh?.([makeAccount(ACCT)]);
+    await expect(Promise.all([oldRefresh, handoff])).resolves.toEqual([[ACCT], [NEW_ACCT]]);
+    expect(data.accounts.listGranted().map((row) => row.id)).toEqual([NEW_ACCT]);
   });
 
   it('restarting the same polling provider re-arms its retained account loops', async () => {

@@ -18,6 +18,7 @@ import {
   exposeUiBeforeRuntimeActivation,
   finishPurgeCustody,
   hubCredentialNeedsAttention,
+  prepareAndCommitRuntimeAccounts,
   probeHubReadCredential,
   requireSettledDeviceCredentialCustody,
   replaceRuntimeSecurityFirst,
@@ -952,6 +953,22 @@ describe('validateThenReconcileOnBoot (4c)', () => {
     ).rejects.toThrow(/CG-HUB-01/);
     expect(reconcile).toHaveBeenCalledTimes(1);
     expect(reconcile).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('prepareAndCommitRuntimeAccounts', () => {
+  it('does not apply candidate grants when the outgoing runtime fails to drain', async () => {
+    const applySnapshot = vi.fn(() => ['acct_B']);
+
+    await expect(prepareAndCommitRuntimeAccounts({
+      loadSnapshot: async () => ['raw-account-B'] as const,
+      reconcile: async () => undefined,
+      deactivateOutgoing: () => Promise.reject(new Error('drain failed')),
+      applySnapshot,
+      isBoot: false,
+    })).rejects.toThrow(/drain failed/);
+
+    expect(applySnapshot).not.toHaveBeenCalled();
   });
 });
 

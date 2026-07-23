@@ -63,7 +63,10 @@ import { createVaultService, type VaultService } from './media/vault';
 import { createSpendersService, type SpendersService } from './spenders/service';
 import { createOnlineService, type OnlineService } from './online/service';
 import { createSpendersRefresh, type SpendersRefreshService } from './spenders/refresh';
-import { createPollingSync, syncAccounts } from './sync/polling-sync';
+import {
+  applyAccountGrantSnapshot,
+  createPollingSync,
+} from './sync/polling-sync';
 import { createBudgetGuard } from './sync/budget-guard';
 import {
   createHubSync,
@@ -132,6 +135,7 @@ import {
   exposeUiBeforeRuntimeActivation,
   finishPurgeCustody,
   hubCredentialNeedsAttention,
+  prepareAndCommitRuntimeAccounts,
   probeHubReadCredential,
   requireSettledDeviceCredentialCustody,
   runFailClosedTerminalPurge,
@@ -139,7 +143,6 @@ import {
   settleDeviceCredentialBeforePurge,
   stopRuntimeServices,
   subscribeSettingsScope,
-  validateThenReconcileOnBoot,
 } from './runtime-activation';
 import type {
   UnreadReconcileSettingsVM,
@@ -992,23 +995,15 @@ async function rebuildOfapiRuntime(
 
   let committed = false;
   try {
-    // 4c: ordering is per-path (see validateThenReconcileOnBoot), both steps
-    // always before the swap. Boot: reconcile FIRST — its destructive rewrites
-    // are local DB ops that must run even when the hub is unreachable (a stale
-    // queued row surviving an offline boot would auto-send on the next pump
-    // kick). Settings rebuild: validation FIRST — a failed candidate must never
-    // touch the live outbox the outgoing engine may still be pumping (no
-    // createOfapiCommand, no state churn — SPEC §15.5). The "reconcile before
-    // any send" guarantee (adversarial review 2026-06-11) holds on both paths:
-    // reconcile completes before the new engine becomes reachable at the swap
-    // below; reconcileOnBoot swallows network errors internally.
-    const accountIds = await validateThenReconcileOnBoot({
-      syncAccounts: () => syncAccounts(nextClient, dataLayer, toMediaUrl),
+    // Load without DB writes; commit grants only after the old runtime drains.
+    const accountIds = await prepareAndCommitRuntimeAccounts({
+      loadSnapshot: () => nextClient.listAccounts({ purpose: 'hydration' }),
       reconcile: (boot) => engine.reconcileOnBoot(boot),
+      deactivateOutgoing: deactivateOfapiRuntime,
+      applySnapshot: (snapshot) =>
+        applyAccountGrantSnapshot(snapshot, dataLayer, toMediaUrl),
       isBoot,
     });
-
-    await deactivateOfapiRuntime();
 
     const aiDestinationChanged =
       activeAcceptanceDestinationIdentity !== nextAcceptanceDestinationIdentity;
@@ -1039,6 +1034,9 @@ async function rebuildOfapiRuntime(
     disposeCandidateSettingsWatcher = null;
     disposeRuntimeCreditMeter = disposeCandidateCreditMeter;
     disposeCandidateCreditMeter = null;
+
+    // Subscribe before the batched grant invalidation flushes.
+    reattachEventForwarding();
 
     // The native window may have been hidden before this replacement existed;
     // transfer the last state before scheduling its first polling cadence.
