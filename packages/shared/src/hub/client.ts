@@ -21,7 +21,7 @@ import {
   type KernelClientOptions,
   type KernelOperationResponse,
 } from '@kernel/sdk';
-import type { CgErrorDetail } from '../errors/index';
+import type { CgErrorCode, CgErrorDetail } from '../errors/index';
 import { CgError } from '../errors/index';
 import type { LlmUsageMetrics } from '../usage-metrics';
 
@@ -117,14 +117,43 @@ function defaultTimeoutSignal(ms: number): HubAbortSignalLike | undefined {
  * 400) — the usage reporter quarantines on it and must never blind-retry
  * (SPEC §8.6). 'quota' is the kernel AI gateway's daily-cap denial (429 with
  * code "quota_denied") — it resets at midnight UTC, so retrying sooner is
- * pointless. 'auth' maps to CG-HUB-01, 'quota' to CG-HUB-03, everything else
- * to CG-HUB-02.
+ * pointless. Provider failures are classified separately from the chatter's
+ * own Hub auth and from Hub transport failures. A stream that closes without
+ * `done` is fail-closed and gets its own interrupted-generation card.
  */
-export type HubFailureReason = 'auth' | 'bad-request' | 'quota' | 'http' | 'timeout' | 'network' | 'invalid-response';
+export type HubFailureReason =
+  | 'auth'
+  | 'bad-request'
+  | 'quota'
+  | 'http'
+  | 'timeout'
+  | 'network'
+  | 'invalid-response'
+  | 'stream-truncated';
 
-function hubCodeFor(reason: HubFailureReason): 'CG-HUB-01' | 'CG-HUB-02' | 'CG-HUB-03' {
+const PROVIDER_KERNEL_CODES: Readonly<Record<string, CgErrorCode>> = {
+  provider_billing: 'CG-HUB-04',
+  provider_auth: 'CG-HUB-05',
+  provider_rate_limited: 'CG-HUB-06',
+  provider_unavailable: 'CG-HUB-07',
+  provider_proxy_unreachable: 'CG-HUB-08',
+};
+
+function providerCodeFor(kernelCode: string | undefined): CgErrorCode | null {
+  if (kernelCode === undefined) return null;
+  const exact = PROVIDER_KERNEL_CODES[kernelCode];
+  if (exact !== undefined) return exact;
+  // provider_stream_failed and future provider* codes deliberately degrade to
+  // one manager-action card. Never infer a narrower cause from frame prose.
+  return kernelCode.startsWith('provider') ? 'CG-HUB-10' : null;
+}
+
+function hubCodeFor(reason: HubFailureReason, detail: CgErrorDetail | undefined): CgErrorCode {
+  const providerCode = providerCodeFor(detail?.kernelCode);
+  if (providerCode !== null) return providerCode;
   if (reason === 'auth') return 'CG-HUB-01';
   if (reason === 'quota') return 'CG-HUB-03';
+  if (reason === 'stream-truncated') return 'CG-HUB-09';
   return 'CG-HUB-02';
 }
 
@@ -132,7 +161,7 @@ export class HubError extends CgError {
   readonly reason: HubFailureReason;
 
   constructor(reason: HubFailureReason, options: { message?: string; detail?: CgErrorDetail } = {}) {
-    super(hubCodeFor(reason), options);
+    super(hubCodeFor(reason, options.detail), options);
     this.name = 'HubError';
     this.reason = reason;
   }
@@ -203,6 +232,28 @@ function badRequestBeforeWire(message: string, issue: string): HubError {
   return new HubError('bad-request', {
     message,
     detail: { providerMessage: issue.slice(0, 400) },
+  });
+}
+
+function streamFrameError(frame: {
+  code: string;
+  message: string;
+  retryAfterMs: number | null;
+}): HubError {
+  const retryTiming =
+    frame.retryAfterMs !== null
+      ? {
+          retryAfterMs: frame.retryAfterMs,
+          retryAtMs: Date.now() + frame.retryAfterMs,
+        }
+      : {};
+  return new HubError('http', {
+    message: frame.message,
+    detail: {
+      kernelCode: frame.code,
+      providerMessage: frame.message,
+      ...retryTiming,
+    },
   });
 }
 
@@ -636,14 +687,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
             case 'error':
               // A6/A17 (W4.4): the frame's machine code belongs in kernelCode
               // (structural mapping), not smuggled through providerMessage.
-              throw new HubError('http', {
-                message: frame.message,
-                detail: {
-                  kernelCode: frame.code,
-                  providerMessage: frame.message,
-                  ...(frame.retryAfterMs !== null ? { retryAfterMs: frame.retryAfterMs } : {}),
-                },
-              });
+              throw streamFrameError(frame);
             case 'done':
               state.doneSeen = true;
               callbacks.onStopReason?.(frame.stopReason);
@@ -667,7 +711,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
         throw new Error('Operation aborted');
       }
       if (!state.doneSeen) {
-        throw new HubError('invalid-response', { message: 'hub AI stream ended without a done frame' });
+        throw new HubError('stream-truncated', { message: 'hub AI stream ended without a done frame' });
       }
       return state.rawText;
     },
@@ -728,14 +772,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
             case 'error':
               // A6/A17 (W4.4): the frame's machine code belongs in kernelCode
               // (structural mapping), not smuggled through providerMessage.
-              throw new HubError('http', {
-                message: frame.message,
-                detail: {
-                  kernelCode: frame.code,
-                  providerMessage: frame.message,
-                  ...(frame.retryAfterMs !== null ? { retryAfterMs: frame.retryAfterMs } : {}),
-                },
-              });
+              throw streamFrameError(frame);
             case 'done':
               state.doneSeen = true;
               callbacks.onStopReason?.(frame.stopReason);
@@ -756,7 +793,7 @@ export function createHubClient(options: HubClientOptions): HubClient {
         throw new Error('Operation aborted');
       }
       if (!state.doneSeen) {
-        throw new HubError('invalid-response', { message: 'hub AI feature stream ended without a done frame' });
+        throw new HubError('stream-truncated', { message: 'hub AI feature stream ended without a done frame' });
       }
       return state.rawText;
     },

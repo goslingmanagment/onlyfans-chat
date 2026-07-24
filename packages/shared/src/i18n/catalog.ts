@@ -86,9 +86,41 @@ export const UI_MESSAGES = {
     en: 'Daily AI generation limit reached — resets at midnight UTC.',
     ru: 'Дневной лимит AI-генераций исчерпан — сбросится в полночь UTC.',
   },
+  'err.CG-HUB-04': {
+    en: 'AI provider balance is exhausted — ask a manager to top it up; retrying will not help.',
+    ru: 'Баланс AI-провайдера исчерпан — попросите менеджера пополнить его; повтор запроса не поможет.',
+  },
+  'err.CG-HUB-05': {
+    en: 'The AI provider rejected the Hub credential — tell a manager; this is not your Hub sign-in.',
+    ru: 'AI-провайдер отклонил учётные данные Hub — сообщите менеджеру; это не проблема вашего входа в Hub.',
+  },
+  'err.CG-HUB-06': {
+    en: 'The AI provider is rate-limiting requests — wait until the shown time, then retry manually.',
+    ru: 'AI-провайдер ограничил запросы — дождитесь указанного времени и повторите вручную.',
+  },
+  'err.CG-HUB-07': {
+    en: 'The AI provider is temporarily unavailable — retry manually later.',
+    ru: 'AI-провайдер временно недоступен — повторите вручную позже.',
+  },
+  'err.CG-HUB-08': {
+    en: "This page's AI egress proxy is unreachable — tell a manager; retrying will not help.",
+    ru: 'Прокси-маршрут этой страницы к AI недоступен — сообщите менеджеру; повтор запроса не поможет.',
+  },
+  'err.CG-HUB-09': {
+    en: 'AI generation was interrupted before completion; no result was shown.',
+    ru: 'AI-генерация прервалась до завершения; результат не показан.',
+  },
+  'err.CG-HUB-10': {
+    en: 'The AI provider request failed — tell a manager and include the error code.',
+    ru: 'Запрос к AI-провайдеру завершился ошибкой — сообщите менеджеру и передайте код ошибки.',
+  },
   'aidock.quotaLow': {
     en: 'AI limit for this page: {n} generations left today — resets at midnight UTC.',
     ru: 'Лимит AI на эту страницу: осталось {n} генераций на сегодня — сброс в полночь UTC.',
+  },
+  'aidock.retryAfter': {
+    en: 'Retry manually after {deadline}.',
+    ru: 'Повторите вручную после {deadline}.',
   },
   'err.CG-GUARD-01': {
     en: 'Message Guard blocked this message.',

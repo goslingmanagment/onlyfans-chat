@@ -40,6 +40,13 @@ export const CG_ERROR_CODES = [
   'CG-HUB-01',
   'CG-HUB-02',
   'CG-HUB-03',
+  'CG-HUB-04',
+  'CG-HUB-05',
+  'CG-HUB-06',
+  'CG-HUB-07',
+  'CG-HUB-08',
+  'CG-HUB-09',
+  'CG-HUB-10',
   'CG-GUARD-01',
   'CG-GUARD-02',
 ] as const;
@@ -205,6 +212,36 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
     message: 'Daily AI generation limit reached.',
     recovery: 'This page used up its Agency Hub AI quota for today. It resets at midnight UTC. Ask a manager to raise the cap if this blocks work.',
   },
+  'CG-HUB-04': {
+    message: 'AI provider balance is exhausted.',
+    recovery: 'A manager must top up the AI provider balance. Retrying will not help until the balance is restored.',
+  },
+  'CG-HUB-05': {
+    message: 'AI provider authentication was rejected.',
+    recovery: 'This is an Agency Hub provider credential problem, not your Hub sign-in. Tell a manager; retrying will not help.',
+  },
+  'CG-HUB-06': {
+    message: 'The AI provider is rate-limiting requests.',
+    recovery: 'Wait before retrying manually. If a retry time is shown, wait until that time.',
+  },
+  'CG-HUB-07': {
+    message: 'The AI provider is temporarily unavailable.',
+    recovery: 'Wait and retry manually later. Tell a manager if the outage continues.',
+  },
+  'CG-HUB-08': {
+    message: "This page's AI egress proxy is unreachable.",
+    recovery: "Tell a manager to restore the page's proxy route. Retrying will not help until the route is fixed.",
+  },
+  'CG-HUB-09': {
+    message: 'AI generation was interrupted.',
+    recovery: 'The stream ended before completion, so no result was shown. Retry manually if needed.',
+  },
+  // Safe fallback for provider_stream_failed and future provider* codes. The
+  // kernel remains the classifier; the client never guesses from prose.
+  'CG-HUB-10': {
+    message: 'AI provider request failed.',
+    recovery: 'Tell a manager and include the error code. Do not keep retrying until the provider issue is checked.',
+  },
   'CG-GUARD-01': {
     message: 'Message Guard blocked this message.',
     recovery: 'Edit the highlighted text and send again.',
@@ -292,7 +329,12 @@ export class CgError extends Error {
     if (retryAfterMs !== undefined) {
       this.retryAfterMs = retryAfterMs;
     }
-    const retryAtMs = options.retryAtMs ?? options.detail?.retryAtMs;
+    // Turn a relative provider backoff into one stable deadline at the first
+    // typed error boundary. Renderer re-renders must not keep moving it.
+    const retryAtMs =
+      options.retryAtMs ??
+      options.detail?.retryAtMs ??
+      (retryAfterMs !== undefined ? Date.now() + retryAfterMs : undefined);
     if (retryAtMs !== undefined) {
       this.retryAtMs = retryAtMs;
     }
@@ -482,153 +524,4 @@ export function toDebugPayload(error: unknown): unknown {
     };
   }
   return error;
-}
-
-// ── Provider/HTTP error classification ──────────────────────────────────────
-// Ported decision order and phrase lists are production-found — do not loosen.
-// OFAPI responses are classified by the OFAPI client module (→ CG-OF-*), which
-// owns its response shapes; these helpers cover the direct LLM providers.
-
-export interface ProviderErrorInfo {
-  /** Provider error type, e.g. Anthropic `rate_limit_error`. */
-  type?: string | null;
-  /** OpenRouter error code (string or number). */
-  code?: string | number | null;
-  message?: string | null;
-}
-
-function matchesAny(message: string, phrases: readonly string[]): boolean {
-  return phrases.some((phrase) => message.includes(phrase));
-}
-
-function buildProviderDetail(
-  provider: 'anthropic' | 'openrouter',
-  status: number,
-  providerMessage: string,
-  retryAfterMs: number | undefined,
-): CgErrorDetail {
-  return {
-    provider,
-    ...(status > 0 ? { status } : {}),
-    ...(providerMessage !== '' ? { providerMessage } : {}),
-    ...(retryAfterMs !== undefined ? { retryAfterMs, retryAtMs: Date.now() + retryAfterMs } : {}),
-  };
-}
-
-// Bare 'billing' is intentionally excluded — it over-matches unrelated messages.
-const ANTHROPIC_BALANCE_PHRASES = [
-  'insufficient balance',
-  'insufficient credits',
-  'credit balance is too low',
-  'payment required',
-] as const;
-
-// Bare 'not found' is intentionally excluded — it over-matches and would
-// wrongly trigger the model-fallback retry.
-const ANTHROPIC_MODEL_PHRASES = ['model not found', 'does not exist', 'is unavailable', 'deprecated'] as const;
-
-const ANTHROPIC_CONTEXT_PHRASES = [
-  'prompt is too long',
-  'context length',
-  'maximum context length',
-  'too many tokens',
-  'request is too large',
-  'input is too long',
-] as const;
-
-export function classifyAnthropicHttpError(
-  status: number,
-  info?: ProviderErrorInfo | null,
-  retryAfterMs?: number,
-): CgError {
-  const type = info?.type?.trim().toLowerCase() ?? '';
-  const providerMessage = info?.message?.trim() ?? '';
-  const message = providerMessage.toLowerCase();
-  const detail = buildProviderDetail('anthropic', status, providerMessage, retryAfterMs);
-
-  if (status === 429 || type === 'rate_limit_error' || message.includes('rate limit')) {
-    return new CgError('CG-API-01', { detail });
-  }
-  if (
-    type === 'insufficient_balance_error' ||
-    type === 'payment_required_error' ||
-    matchesAny(message, ANTHROPIC_BALANCE_PHRASES)
-  ) {
-    return new CgError('CG-API-02', { detail });
-  }
-  if (status === 401 || status === 403) {
-    return new CgError('CG-AUTH-02', { detail });
-  }
-  if (type === 'not_found_error' || matchesAny(message, ANTHROPIC_MODEL_PHRASES)) {
-    return new CgError('CG-API-03', { detail });
-  }
-  if (status === 413 || type === 'context_window_exceeded_error' || matchesAny(message, ANTHROPIC_CONTEXT_PHRASES)) {
-    return new CgError('CG-API-04', { detail });
-  }
-  if (status === 529 || status >= 500 || type === 'overloaded_error') {
-    return new CgError('CG-API-05', { detail });
-  }
-  if (status === 400) {
-    return new CgError('CG-APP-01', { detail });
-  }
-  if (status === 0) {
-    return new CgError('CG-API-05', { detail });
-  }
-  return new CgError('CG-NET-01', { detail });
-}
-
-const OPENROUTER_BALANCE_PHRASES = ['insufficient credits', 'insufficient balance', 'payment required'] as const;
-
-const OPENROUTER_MODEL_PHRASES = [
-  'model not found',
-  'invalid model',
-  'not a valid model',
-  'does not exist',
-  'is unavailable',
-] as const;
-
-const OPENROUTER_CONTEXT_PHRASES = [
-  'context length',
-  'maximum context',
-  'too many tokens',
-  'prompt is too long',
-  'request is too large',
-] as const;
-
-export function classifyOpenRouterHttpError(
-  status: number,
-  info?: ProviderErrorInfo | null,
-  retryAfterMs?: number,
-): CgError {
-  const type = info?.type?.trim().toLowerCase() ?? '';
-  const code = info?.code != null ? String(info.code).trim().toLowerCase() : '';
-  const providerMessage = info?.message?.trim() ?? '';
-  const message = providerMessage.toLowerCase();
-  const detail = buildProviderDetail('openrouter', status, providerMessage, retryAfterMs);
-
-  if (status === 429 || code === '429' || message.includes('rate limit')) {
-    return new CgError('CG-API-01', { detail });
-  }
-  if (status === 402 || code === '402' || matchesAny(message, OPENROUTER_BALANCE_PHRASES)) {
-    return new CgError('CG-API-02', { detail });
-  }
-  if (status === 401 || status === 403 || code === '401' || code === '403') {
-    return new CgError('CG-AUTH-02', { detail });
-  }
-  if (status === 404 || type === 'not_found_error' || matchesAny(message, OPENROUTER_MODEL_PHRASES)) {
-    return new CgError('CG-API-03', { detail });
-  }
-  if (status === 413 || matchesAny(message, OPENROUTER_CONTEXT_PHRASES)) {
-    return new CgError('CG-API-04', { detail });
-  }
-  if (status === 502 || status === 503 || status >= 500) {
-    return new CgError('CG-API-05', { detail });
-  }
-  if (status === 400) {
-    return new CgError('CG-APP-01', { detail });
-  }
-  if (status === 0) {
-    return new CgError('CG-API-05', { detail });
-  }
-  return new CgError('CG-NET-01', { detail });
 }

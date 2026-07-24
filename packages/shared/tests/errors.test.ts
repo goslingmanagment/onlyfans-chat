@@ -3,8 +3,6 @@ import {
   CG_ERROR_CODES,
   CG_ERROR_REGISTRY,
   CgError,
-  classifyAnthropicHttpError,
-  classifyOpenRouterHttpError,
   createUserFacing,
   describeError,
   formatUserFacing,
@@ -36,6 +34,14 @@ describe('error registry', () => {
       'CG-OF-08',
       'CG-HUB-01',
       'CG-HUB-02',
+      'CG-HUB-03',
+      'CG-HUB-04',
+      'CG-HUB-05',
+      'CG-HUB-06',
+      'CG-HUB-07',
+      'CG-HUB-08',
+      'CG-HUB-09',
+      'CG-HUB-10',
       'CG-GUARD-01',
       'CG-GUARD-02',
     ];
@@ -49,6 +55,19 @@ describe('error registry', () => {
     expect(definition.recovery).toContain('sign out');
     expect(definition.recovery).toContain('sign in again');
     expect(`${definition.message} ${definition.recovery}`).not.toMatch(/chatter key/i);
+  });
+
+  it('gives terminal provider failures manager-action recovery instead of retry advice', () => {
+    for (const code of ['CG-HUB-04', 'CG-HUB-05', 'CG-HUB-08', 'CG-HUB-10'] as const) {
+      expect(CG_ERROR_REGISTRY[code].recovery, code).toMatch(/manager/i);
+      expect(CG_ERROR_REGISTRY[code].recovery, code).toMatch(/retrying will not help|do not keep retrying/i);
+    }
+  });
+
+  it('keeps temporary provider and interrupted-stream recovery manual and honest', () => {
+    expect(CG_ERROR_REGISTRY['CG-HUB-06'].recovery).toMatch(/retrying manually/i);
+    expect(CG_ERROR_REGISTRY['CG-HUB-07'].recovery).toMatch(/retry manually later/i);
+    expect(CG_ERROR_REGISTRY['CG-HUB-09'].recovery).toMatch(/no result was shown/i);
   });
 
   it('includes all ported legacy codes', () => {
@@ -135,6 +154,14 @@ describe('CgError', () => {
     const err = new CgError('CG-API-01', { detail: { retryAfterMs: 7000 }, retryAfterMs: 3000 });
     expect(err.retryAfterMs).toBe(3000);
   });
+
+  it('turns retryAfterMs into one absolute deadline when no deadline was supplied', () => {
+    const before = Date.now();
+    const err = new CgError('CG-HUB-06', { retryAfterMs: 7000 });
+    const after = Date.now();
+    expect(err.retryAtMs).toBeGreaterThanOrEqual(before + 7000);
+    expect(err.retryAtMs).toBeLessThanOrEqual(after + 7000);
+  });
 });
 
 // Legacy errors.test.ts: toUserError facts.
@@ -177,19 +204,23 @@ describe('toUserFacing', () => {
   });
 
   it('rewords OpenRouter-classified errors per provider', () => {
-    const result = toUserFacing(classifyOpenRouterHttpError(401, null));
+    const result = toUserFacing(new CgError('CG-AUTH-02', { detail: { provider: 'openrouter' } }));
     expect(result.code).toBe('CG-AUTH-02');
     expect(result.message).toBe('OpenRouter API key is invalid.');
     expect(result.recovery).toContain('OpenRouter');
   });
 
   it('keeps Claude wording for Anthropic-classified errors', () => {
-    const result = toUserFacing(classifyAnthropicHttpError(401, null));
+    const result = toUserFacing(new CgError('CG-AUTH-02', { detail: { provider: 'anthropic' } }));
     expect(result.message).toBe('Claude API key is invalid.');
   });
 
   it('applies provider rewording to prototype-less copies too', () => {
-    const wire = JSON.parse(JSON.stringify(toDebugPayload(classifyOpenRouterHttpError(402, null))));
+    const wire = JSON.parse(
+      JSON.stringify(
+        toDebugPayload(new CgError('CG-API-02', { detail: { provider: 'openrouter' } })),
+      ),
+    );
     const result = toUserFacing(wire);
     expect(result.code).toBe('CG-API-02');
     expect(result.message).toBe('OpenRouter balance is insufficient.');
@@ -235,156 +266,6 @@ describe('describeError', () => {
 
   it('marks the unmapped-account error with a settings link', () => {
     expect(describeError('CG-FLOW-02').settingsLink).toBe(true);
-  });
-});
-
-// Legacy anthropic-client.test.ts error-mapping facts (Bug 8).
-describe('classifyAnthropicHttpError', () => {
-  it('maps 401 to CG-AUTH-02', () => {
-    expect(classifyAnthropicHttpError(401, null).code).toBe('CG-AUTH-02');
-  });
-
-  it('maps 403 to CG-AUTH-02', () => {
-    expect(classifyAnthropicHttpError(403, null).code).toBe('CG-AUTH-02');
-  });
-
-  it('maps 429 to CG-API-01', () => {
-    expect(classifyAnthropicHttpError(429, null).code).toBe('CG-API-01');
-  });
-
-  it('maps 500 to CG-API-05', () => {
-    expect(classifyAnthropicHttpError(500, null).code).toBe('CG-API-05');
-  });
-
-  it('maps 400 with not_found_error to CG-API-03 (model unavailable)', () => {
-    const err = classifyAnthropicHttpError(400, { type: 'not_found_error', message: 'model not found' });
-    expect(err.code).toBe('CG-API-03');
-  });
-
-  it('maps 400 with a non-model error to CG-APP-01, not CG-NET-01 (legacy Bug 8)', () => {
-    const err = classifyAnthropicHttpError(400, {
-      type: 'invalid_request_error',
-      message: 'max_tokens: must be positive',
-    });
-    expect(err.code).toBe('CG-APP-01');
-  });
-
-  it('does not classify a non-model "not found" message as model unavailable', () => {
-    const err = classifyAnthropicHttpError(400, {
-      type: 'invalid_request_error',
-      message: 'requested resource was not found',
-    });
-    expect(err.code).toBe('CG-APP-01');
-  });
-
-  it('does not classify a generic "billing" message as insufficient balance', () => {
-    const err = classifyAnthropicHttpError(400, {
-      type: 'invalid_request_error',
-      message: 'update your billing address',
-    });
-    expect(err.code).toBe('CG-APP-01');
-  });
-
-  it('maps 400 with no parseable body to CG-APP-01', () => {
-    expect(classifyAnthropicHttpError(400, null).code).toBe('CG-APP-01');
-  });
-
-  it('maps an unrecognized non-ok status to CG-NET-01', () => {
-    expect(classifyAnthropicHttpError(418, null).code).toBe('CG-NET-01');
-  });
-
-  it('maps rate_limit_error type and "rate limit" message without 429 status', () => {
-    expect(classifyAnthropicHttpError(400, { type: 'rate_limit_error' }).code).toBe('CG-API-01');
-    expect(classifyAnthropicHttpError(400, { message: 'Rate limit exceeded' }).code).toBe('CG-API-01');
-  });
-
-  it('maps balance phrases and types to CG-API-02', () => {
-    expect(classifyAnthropicHttpError(400, { type: 'insufficient_balance_error' }).code).toBe('CG-API-02');
-    expect(
-      classifyAnthropicHttpError(400, { message: 'Your credit balance is too low to access the API' }).code,
-    ).toBe('CG-API-02');
-  });
-
-  it('maps 413, context types, and context phrases to CG-API-04', () => {
-    expect(classifyAnthropicHttpError(413, null).code).toBe('CG-API-04');
-    expect(classifyAnthropicHttpError(400, { type: 'context_window_exceeded_error' }).code).toBe('CG-API-04');
-    expect(classifyAnthropicHttpError(400, { message: 'prompt is too long: 250000 tokens' }).code).toBe('CG-API-04');
-  });
-
-  it('maps overloaded_error and 529 to CG-API-05', () => {
-    expect(classifyAnthropicHttpError(400, { type: 'overloaded_error' }).code).toBe('CG-API-05');
-    expect(classifyAnthropicHttpError(529, null).code).toBe('CG-API-05');
-  });
-
-  it('maps status 0 (no response) to CG-API-05', () => {
-    expect(classifyAnthropicHttpError(0, null).code).toBe('CG-API-05');
-  });
-
-  it('carries status, provider message, and retry timing in detail', () => {
-    const before = Date.now();
-    const err = classifyAnthropicHttpError(429, { message: 'Rate limited' }, 7000);
-    expect(err.detail?.status).toBe(429);
-    expect(err.detail?.providerMessage).toBe('Rate limited');
-    expect(err.retryAfterMs).toBe(7000);
-    expect(err.retryAtMs).toBeGreaterThanOrEqual(before + 7000);
-    expect(err.detail?.provider).toBe('anthropic');
-  });
-
-  it('omits status from detail when status is 0', () => {
-    expect(classifyAnthropicHttpError(0, null).detail?.status).toBeUndefined();
-  });
-});
-
-describe('classifyOpenRouterHttpError', () => {
-  it('tags detail with the openrouter provider', () => {
-    expect(classifyOpenRouterHttpError(429, null).detail?.provider).toBe('openrouter');
-  });
-
-  it('maps 429 status, "429" code, and rate-limit message to CG-API-01', () => {
-    expect(classifyOpenRouterHttpError(429, null).code).toBe('CG-API-01');
-    expect(classifyOpenRouterHttpError(400, { code: 429 }).code).toBe('CG-API-01');
-    expect(classifyOpenRouterHttpError(400, { message: 'rate limit exceeded' }).code).toBe('CG-API-01');
-  });
-
-  it('maps 402, "402" code, and balance phrases to CG-API-02', () => {
-    expect(classifyOpenRouterHttpError(402, null).code).toBe('CG-API-02');
-    expect(classifyOpenRouterHttpError(400, { code: '402' }).code).toBe('CG-API-02');
-    expect(classifyOpenRouterHttpError(400, { message: 'Insufficient credits remaining' }).code).toBe('CG-API-02');
-  });
-
-  it('maps 401/403 statuses and codes to CG-AUTH-02', () => {
-    expect(classifyOpenRouterHttpError(401, null).code).toBe('CG-AUTH-02');
-    expect(classifyOpenRouterHttpError(403, null).code).toBe('CG-AUTH-02');
-    expect(classifyOpenRouterHttpError(400, { code: '401' }).code).toBe('CG-AUTH-02');
-  });
-
-  it('maps 404 and model phrases to CG-API-03', () => {
-    expect(classifyOpenRouterHttpError(404, null).code).toBe('CG-API-03');
-    expect(classifyOpenRouterHttpError(400, { message: 'foo is not a valid model' }).code).toBe('CG-API-03');
-  });
-
-  it('does not classify a generic "billing" message as insufficient balance', () => {
-    expect(classifyOpenRouterHttpError(400, { message: 'update your billing address' }).code).toBe('CG-APP-01');
-  });
-
-  it('does not classify a non-model "not found" message as model unavailable', () => {
-    expect(classifyOpenRouterHttpError(400, { message: 'requested resource was not found' }).code).toBe('CG-APP-01');
-  });
-
-  it('maps 413 and context phrases to CG-API-04', () => {
-    expect(classifyOpenRouterHttpError(413, null).code).toBe('CG-API-04');
-    expect(classifyOpenRouterHttpError(400, { message: 'maximum context exceeded' }).code).toBe('CG-API-04');
-  });
-
-  it('maps 5xx and status 0 to CG-API-05', () => {
-    expect(classifyOpenRouterHttpError(502, null).code).toBe('CG-API-05');
-    expect(classifyOpenRouterHttpError(503, null).code).toBe('CG-API-05');
-    expect(classifyOpenRouterHttpError(0, null).code).toBe('CG-API-05');
-  });
-
-  it('maps unmatched 400 to CG-APP-01 and unrecognized statuses to CG-NET-01', () => {
-    expect(classifyOpenRouterHttpError(400, null).code).toBe('CG-APP-01');
-    expect(classifyOpenRouterHttpError(418, null).code).toBe('CG-NET-01');
   });
 });
 

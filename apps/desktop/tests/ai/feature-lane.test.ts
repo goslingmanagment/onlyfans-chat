@@ -514,6 +514,75 @@ describe('feature gateway adapter (Stage 31)', () => {
     }
   });
 
+  it('preserves exact provider mappings even when the message resembles a legacy gate', async () => {
+    const cases: Array<[string, string]> = [
+      ['provider_billing', 'CG-HUB-04'],
+      ['provider_auth', 'CG-HUB-05'],
+      ['provider_rate_limited', 'CG-HUB-06'],
+      ['provider_unavailable', 'CG-HUB-07'],
+      ['provider_proxy_unreachable', 'CG-HUB-08'],
+    ];
+    for (const [kernelCode, code] of cases) {
+      const { events } = run(() =>
+        Promise.reject(
+          new HubError('http', {
+            // Deliberately matches the old no-code gate fallback. The
+            // structural provider code must win.
+            message: 'fan-summary requires at least 30 messages',
+            detail: { kernelCode },
+          }),
+        ));
+      await flushAsync();
+      const error = events.find((event) => event.kind === 'error');
+      expect((error?.value as { code: string }).code, kernelCode).toBe(code);
+    }
+  });
+
+  it('passes unknown provider codes through the generic manager-action fallback', async () => {
+    const { events } = run(() =>
+      Promise.reject(
+        new HubError('http', {
+          message: 'Static future provider failure',
+          detail: { kernelCode: 'provider_future_failure' },
+        }),
+      ));
+    await flushAsync();
+
+    const error = events.find((event) => event.kind === 'error');
+    expect(error?.value).toMatchObject({
+      code: 'CG-HUB-10',
+      detail: { kernelCode: 'provider_future_failure' },
+    });
+  });
+
+  it('passes the provider retry duration and fixed deadline through to the card payload', async () => {
+    const retryAtMs = 1_800_000_123_000;
+    const { events } = run(() =>
+      Promise.reject(
+        new HubError('http', {
+          message: 'AI provider rate limited',
+          detail: {
+            kernelCode: 'provider_rate_limited',
+            retryAfterMs: 45_000,
+            retryAtMs,
+          },
+        }),
+      ));
+    await flushAsync();
+
+    const error = events.find((event) => event.kind === 'error')?.value;
+    expect(error).toMatchObject({
+      code: 'CG-HUB-06',
+      retryAfterMs: 45_000,
+      retryAtMs,
+    });
+    expect(toUserFacing(error)).toMatchObject({
+      code: 'CG-HUB-06',
+      retryAfterMs: 45_000,
+      retryAtMs,
+    });
+  });
+
   // C4 regression guard: the case above rejects with an already-correct
   // HubError built by hand, so it can never catch toHubError dropping the
   // gate message — it only proves mapKernelGateError's own string matching.

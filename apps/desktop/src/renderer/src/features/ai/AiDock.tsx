@@ -15,7 +15,7 @@ import { useSettingsCache } from '../../state/settingsCache';
 import { useChatSendability, useSettings } from '../../bridge/queries';
 import { cx } from '../../lib/cx';
 import { modCombo } from '../../lib/modKey';
-import { useT } from '../../lib/i18n';
+import { localeTag, useLocale, useT } from '../../lib/i18n';
 import { Kbd } from '../../design/Kbd';
 import { AiDockSlot } from '../conversation/AiDockSlot';
 import { focusComposer } from '../conversation/composerDom';
@@ -37,6 +37,7 @@ import {
   DOCK_TONES,
   copyablePartsOf,
   errorHint,
+  formatRetryDeadline,
   boundPromptBlocksForDisplay,
   extractPromptBlocks,
   formatOpCost,
@@ -492,8 +493,10 @@ function DraftBubble({
 
 function ErrorCard({ error }: { error: UserFacingErrorPayload }): React.JSX.Element {
   const t = useT();
+  const locale = useLocale();
   const setView = useUiStore((s) => s.setView);
   const hint = errorHint(error);
+  const retryDeadline = formatRetryDeadline(error, localeTag(locale));
   return (
     <div className="rounded-[12px] border border-bad/35 bg-bad/8 px-3.5 py-2.5">
       <div className="flex items-baseline gap-2">
@@ -506,6 +509,11 @@ function ErrorCard({ error }: { error: UserFacingErrorPayload }): React.JSX.Elem
         <p className="mt-0.5 text-[12px] text-ink-mid">{error.detailText}</p>
       )}
       {hint !== null && <p className="mt-1 text-[12.5px] text-ink-mid">{hint}</p>}
+      {retryDeadline !== null && (
+        <p className="mt-1 text-[12.5px] font-semibold text-ink-mid">
+          {t('aidock.retryAfter', { deadline: retryDeadline })}
+        </p>
+      )}
       {error.settingsLink === true && (
         <button
           type="button"

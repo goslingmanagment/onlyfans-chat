@@ -7,9 +7,7 @@
 // P4 scope: all seven operation features (quick fast-reply / improve-draft /
 // help-me plus deep fan-summary / chat-review and gated ping / hi-greeting).
 // 'compare' stays gated off until its orchestration lands (PLAN allows the
-// deferral). LLM auto-retry (429 Retry-After ≤ 60 s, 503 + 5 s) lives INSIDE
-// the providers (runWithLegacyRetry, pre-first-chunk only) — the coordinator
-// must not add a second retry layer on top.
+// deferral).
 
 import { z } from 'zod';
 import { STREAM_CHUNK_FLUSH_MS } from '@chatgoose/shared/constants';

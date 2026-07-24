@@ -11,6 +11,7 @@ import {
   errorHint,
   evaluateAiGate,
   extractPromptBlocks,
+  formatRetryDeadline,
   PROMPT_INSPECTOR_DISPLAY_CHAR_BUDGET,
   readKernelContext,
   readPromptEchoStatus,
@@ -253,6 +254,35 @@ describe('errorHint', () => {
 
   it('null when no hint exists', () => {
     expect(errorHint({ key: 'k', code: 'CG-APP-01', message: 'm' })).toBeNull();
+  });
+});
+
+describe('formatRetryDeadline', () => {
+  it('formats the fixed retryAtMs deadline, not a moving retryAfterMs duration', () => {
+    const formatted = formatRetryDeadline(
+      {
+        key: 'CG-HUB-06',
+        code: 'CG-HUB-06',
+        message: 'rate limited',
+        retryAfterMs: 45_000,
+        retryAtMs: Date.UTC(2026, 6, 24, 15, 30),
+      },
+      'en-US',
+      'UTC',
+    );
+    expect(formatted).toContain('Jul 24, 2026');
+    expect(formatted).toContain('03:30 PM');
+  });
+
+  it('does not invent a new deadline in the renderer from retryAfterMs alone', () => {
+    expect(
+      formatRetryDeadline({
+        key: 'CG-HUB-06',
+        code: 'CG-HUB-06',
+        message: 'rate limited',
+        retryAfterMs: 45_000,
+      }),
+    ).toBeNull();
   });
 });
 

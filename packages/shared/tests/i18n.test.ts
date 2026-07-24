@@ -47,6 +47,22 @@ describe('UI message catalog', () => {
     expect(message.ru).not.toMatch(/ключ чаттера/i);
   });
 
+  it('covers every provider/truncation Hub card in Russian', () => {
+    for (const code of [
+      'CG-HUB-04',
+      'CG-HUB-05',
+      'CG-HUB-06',
+      'CG-HUB-07',
+      'CG-HUB-08',
+      'CG-HUB-09',
+      'CG-HUB-10',
+    ] as const) {
+      const message = UI_MESSAGES[`err.${code}`];
+      expect(message.en, code).not.toBe(message.ru);
+      expect(message.ru, code).toMatch(/[А-Яа-яЁё]/);
+    }
+  });
+
   it('covers every OFAPI purpose incl. untagged, with en equal to the shared label map', () => {
     for (const purpose of [...OFAPI_PURPOSES, UNTAGGED_PURPOSE]) {
       const key = `purpose.${purpose}` as keyof typeof UI_MESSAGES;
