@@ -242,13 +242,13 @@ describe('shouldAutoInsertCompactDraft', () => {
 describe('errorHint', () => {
   it('prefers the protocol description', () => {
     expect(
-      errorHint({ key: 'k', code: 'CG-API-03', message: 'm', description: 'wait and retry' }),
-    ).toBe('wait and retry');
+      errorHint({ key: 'k', code: 'CG-HUB-07', message: 'm', description: 'wait and retry manually' }),
+    ).toBe('wait and retry manually');
   });
 
   it('falls back to a recovery field when present', () => {
-    expect(errorHint({ key: 'k', code: 'CG-AUTH-01', message: 'm', recovery: 'add a key' })).toBe(
-      'add a key',
+    expect(errorHint({ key: 'k', code: 'CG-HUB-01', message: 'm', recovery: 'sign in again' })).toBe(
+      'sign in again',
     );
   });
 
@@ -291,7 +291,7 @@ describe('evaluateAiGate', () => {
     expect(evaluateAiGate({ mapped: false, hasLlmKey: false })).toEqual({
       ok: false,
       reason: 'unmapped',
-      message: 'Map a personality in Settings',
+      message: 'Assign an active personality in Settings',
     });
   });
 
@@ -299,7 +299,7 @@ describe('evaluateAiGate', () => {
     expect(evaluateAiGate({ mapped: true, hasLlmKey: false })).toEqual({
       ok: false,
       reason: 'no-key',
-      message: 'Connect Agency Hub in Settings (sign in or add the hub key)',
+      message: 'Connect Agency Hub in Settings (sign in on this device)',
     });
   });
 

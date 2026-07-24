@@ -17,6 +17,7 @@ only as a rollback prohibition in `docs/RELEASE.md` and decision D8.**
 | Doc | What it answers |
 |---|---|
 | `docs/decisions.md` | This repo's decision log (quick-ref table + full entries) + the family law; cross-repo rulings live in core's log and are referenced by number |
+| Core `docs/error-handling.md` | Family-wide error-handling canon: structural identity, client aliases, retry wording, producer consistency, and persistence/tombstone law |
 | `docs/generated/` | Point-in-time code maps. Verify each banner's snapshot SHA before relying on claims or line numbers; supplemental, not current truth until regenerated |
 | `docs/PRD.md` | Historical product baseline with some shipped UX intent. Direct transport/provider-key clauses are superseded; current code + decisions win |
 | `docs/SPEC.md` | Historical architecture/specification. Preserve §15 safety invariants, but treat Direct OFAPI/AI, prompt, model, and transport sections as superseded unless re-verified in code |

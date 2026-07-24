@@ -43,6 +43,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D23 | 2026-07-22 | Account grants are distinct from vendor auth: authoritative reconciliation hides revoked identities without deleting cache |
 | D24 | 2026-07-22 | SSE replay restores state without toast, sound, or OS notifications; live alerts use core's control-lane marker plus a fail-quiet epoch fallback, with cross-source alert dedup and suspend re-arm |
 | D25 | 2026-07-24 | Kernel provider failures map to exact CG-HUB-04..08 cards by structural kernelCode; unknown provider* degrades to CG-HUB-10, stream truncation gets CG-HUB-09; dead direct-provider classifiers removed (family: core #182/#183, ext E57) |
+| D26 | 2026-07-24 | Registry cleanup is producer-complete; dead codes are permanently reserved, replayable codes require read-only tombstones, and all recovery copy names only real actions (family: ext E58; core error-handling canon) |
 
 ## Entries
 
@@ -558,3 +559,41 @@ fail-closed. The uncalled direct-provider classifiers
 tables are removed; local CG codes are presentation aliases — the canonical
 failure identity is the kernel wire code. No SDK re-vendor, no retry-policy,
 send, persona-proof, or provenance changes.
+
+**D26 (2026-07-24).** The desktop registry is a live contract, not a catalog
+of historical possibilities. A static source walk over production TypeScript
+under `apps/` and `packages/` (excluding tests, the dev mock, the registry and
+catalog themselves, generated sources, and the vendored SDK) requires every
+non-tombstone registry code to have at least one literal producer. It also
+requires every permanently retired code to have none. This is the desktop twin
+of extension E58 and follows the family canon in core's
+`docs/error-handling.md`.
+
+Retirement has a persistence law. Before deleting a key, inspect live
+producers and every durable or replayable carrier. If an outbox row, job
+history, diagnostics/cache record, IPC queue, or other upgraded state can
+reconstruct a stored `UserFacingError`/`CgError`, the code stays as a minimal,
+honestly worded read-only tombstone (English registry and Russian catalog where
+that surface localizes), appears in the consistency test's explicit tombstone
+allowlist, and is rejected by all live producer paths. If replay is impossible,
+the definition and live type member are removed outright. Either way, the code
+is permanently reserved and MUST NOT be reused.
+
+The D26 audit found no desktop replay tombstones: AI jobs/coordinator state and
+IPC forwarding are process-only; diagnostics replay strings rather than
+registry objects; outbox history re-renders its stored send message/code
+without registry reconstruction; summary sync state contains only delivery
+state/reason; and durable unsend lineage contains identifiers only. Therefore
+CG-AUTH-01/02, CG-API-01..05, CG-FLOW-01/06/07/08, CG-FAN-02, CG-UI-01, and
+CG-OF-07 leave the live enum/registry and enter the permanent reservation
+ledger. The old OpenRouter provider-wording and generic kernel-rate-limit
+overrides leave with their unreachable inputs. The current tombstone allowlist
+is deliberately empty.
+
+Surviving copy is action-honest: no card asks a chatter to edit provider or
+OFAPI keys in Settings; Agency Hub recovery uses device sign-in; page/account
+and credit problems name manager action; surfaced rate limits say to retry
+manually and never promise an AI retry. The local account-to-active-persona
+assignment is still a real Settings flow, so CG-FLOW-02 remains live with that
+specific recovery. No retry, send-outcome, persona-proof, provenance, sync, or
+storage behavior changes.

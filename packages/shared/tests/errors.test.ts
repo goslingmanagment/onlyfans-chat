@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CG_ERROR_CODES,
   CG_ERROR_REGISTRY,
+  RETIRED_CG_ERROR_CODES,
   CgError,
   createUserFacing,
   describeError,
@@ -22,7 +23,7 @@ describe('error registry', () => {
     }
   });
 
-  it('includes all new OFAPI and hub codes from SPEC §11', () => {
+  it('includes every live desktop OFAPI and Hub code', () => {
     const newCodes = [
       'CG-OF-01',
       'CG-OF-02',
@@ -30,7 +31,6 @@ describe('error registry', () => {
       'CG-OF-04',
       'CG-OF-05',
       'CG-OF-06',
-      'CG-OF-07',
       'CG-OF-08',
       'CG-HUB-01',
       'CG-HUB-02',
@@ -47,6 +47,17 @@ describe('error registry', () => {
     ];
     for (const code of newCodes) {
       expect(isCgErrorCode(code), code).toBe(true);
+    }
+  });
+
+  it('rejects every permanently retired code and keeps it out of the registry', () => {
+    for (const code of RETIRED_CG_ERROR_CODES) {
+      expect(isCgErrorCode(code), code).toBe(false);
+      expect(code in CG_ERROR_REGISTRY, code).toBe(false);
+      expect(
+        userFacingErrorSchema.safeParse({ code, message: 'legacy', recovery: 'legacy' }).success,
+        code,
+      ).toBe(false);
     }
   });
 
@@ -70,29 +81,36 @@ describe('error registry', () => {
     expect(CG_ERROR_REGISTRY['CG-HUB-09'].recovery).toMatch(/no result was shown/i);
   });
 
-  it('includes all ported legacy codes', () => {
+  it('keeps every surfaced rate-limit recovery manual', () => {
+    for (const code of ['CG-OF-03', 'CG-HUB-06'] as const) {
+      expect(CG_ERROR_REGISTRY[code].recovery, code).toMatch(/manually/i);
+      expect(CG_ERROR_REGISTRY[code].recovery, code).not.toMatch(/automatically|will retry|backing off/i);
+    }
+  });
+
+  it('does not advertise automatic retry anywhere in the live registry', () => {
+    for (const code of CG_ERROR_CODES) {
+      expect(CG_ERROR_REGISTRY[code].recovery, code).not.toMatch(/automatically|will retry|backing off/i);
+    }
+  });
+
+  it('names only current recovery flows', () => {
+    expect(CG_ERROR_REGISTRY['CG-FLOW-02'].recovery).toMatch(/assign this account to an active personality/i);
+    expect(CG_ERROR_REGISTRY['CG-OF-01'].recovery).toMatch(/manager.*reconnect the page/i);
+    expect(CG_ERROR_REGISTRY['CG-OF-01'].recovery).not.toMatch(/key.*settings|settings.*key/i);
+    expect(CG_ERROR_REGISTRY['CG-OF-01'].settingsLink).toBeUndefined();
+  });
+
+  it('includes all surviving ported legacy codes', () => {
     const ported = [
-      'CG-AUTH-01',
-      'CG-AUTH-02',
-      'CG-API-01',
-      'CG-API-02',
-      'CG-API-03',
-      'CG-API-04',
-      'CG-API-05',
       'CG-API-06',
       'CG-NET-01',
       'CG-NET-02',
-      'CG-FLOW-01',
       'CG-FLOW-02',
       'CG-FLOW-03',
       'CG-FLOW-04',
       'CG-FLOW-05',
-      'CG-FLOW-06',
-      'CG-FLOW-07',
-      'CG-FLOW-08',
       'CG-FLOW-09',
-      'CG-FAN-02',
-      'CG-UI-01',
       'CG-APP-01',
     ];
     for (const code of ported) {
@@ -117,9 +135,9 @@ describe('error registry', () => {
 // Legacy errors.test.ts: ChatGooseError construction facts.
 describe('CgError', () => {
   it('constructs with code and default message', () => {
-    const err = new CgError('CG-FAN-02');
-    expect(err.code).toBe('CG-FAN-02');
-    expect(err.message).toBe('OnlyFans session expired.');
+    const err = new CgError('CG-APP-01');
+    expect(err.code).toBe('CG-APP-01');
+    expect(err.message).toBe('Something went wrong.');
     expect(err.isOptional).toBe(false);
   });
 
@@ -129,7 +147,7 @@ describe('CgError', () => {
   });
 
   it('constructs with detail', () => {
-    const err = new CgError('CG-API-05', { message: 'fail', detail: { status: 500 } });
+    const err = new CgError('CG-HUB-07', { message: 'fail', detail: { status: 500 } });
     expect(err.detail?.status).toBe(500);
   });
 
@@ -145,13 +163,13 @@ describe('CgError', () => {
   });
 
   it('lifts retry fields from detail when not given explicitly', () => {
-    const err = new CgError('CG-API-01', { detail: { retryAfterMs: 7000, retryAtMs: 1750000007000 } });
+    const err = new CgError('CG-HUB-06', { detail: { retryAfterMs: 7000, retryAtMs: 1750000007000 } });
     expect(err.retryAfterMs).toBe(7000);
     expect(err.retryAtMs).toBe(1750000007000);
   });
 
   it('prefers explicit retry fields over detail', () => {
-    const err = new CgError('CG-API-01', { detail: { retryAfterMs: 7000 }, retryAfterMs: 3000 });
+    const err = new CgError('CG-HUB-06', { detail: { retryAfterMs: 7000 }, retryAfterMs: 3000 });
     expect(err.retryAfterMs).toBe(3000);
   });
 
@@ -167,10 +185,10 @@ describe('CgError', () => {
 // Legacy errors.test.ts: toUserError facts.
 describe('toUserFacing', () => {
   it('maps CgError to its user-facing message', () => {
-    const result = toUserFacing(new CgError('CG-AUTH-01'));
-    expect(result.code).toBe('CG-AUTH-01');
+    const result = toUserFacing(new CgError('CG-FLOW-02'));
+    expect(result.code).toBe('CG-FLOW-02');
     expect(result.settingsLink).toBe(true);
-    expect(result.message).toContain('API key');
+    expect(result.message).toContain('personality');
   });
 
   it('returns CG-APP-01 for a plain Error', () => {
@@ -185,16 +203,16 @@ describe('toUserFacing', () => {
   });
 
   it('carries retry fields from a CgError', () => {
-    const result = toUserFacing(new CgError('CG-API-01', { retryAfterMs: 12000, retryAtMs: 1750000012000 }));
+    const result = toUserFacing(new CgError('CG-HUB-06', { retryAfterMs: 12000, retryAtMs: 1750000012000 }));
     expect(result.retryAfterMs).toBe(12000);
     expect(result.retryAtMs).toBe(1750000012000);
   });
 
   it('rebuilds a prototype-less CgError copy (IPC structured clone) from its code', () => {
-    const wire = JSON.parse(JSON.stringify(toDebugPayload(new CgError('CG-API-01', { retryAfterMs: 9000 }))));
+    const wire = JSON.parse(JSON.stringify(toDebugPayload(new CgError('CG-HUB-06', { retryAfterMs: 9000 }))));
     const result = toUserFacing(wire);
-    expect(result.code).toBe('CG-API-01');
-    expect(result.message).toBe('Rate limit reached.');
+    expect(result.code).toBe('CG-HUB-06');
+    expect(result.message).toBe('The AI provider is rate-limiting requests.');
     expect(result.retryAfterMs).toBe(9000);
   });
 
@@ -203,58 +221,28 @@ describe('toUserFacing', () => {
     expect(toUserFacing(custom)).toEqual(custom);
   });
 
-  it('rewords OpenRouter-classified errors per provider', () => {
-    const result = toUserFacing(new CgError('CG-AUTH-02', { detail: { provider: 'openrouter' } }));
-    expect(result.code).toBe('CG-AUTH-02');
-    expect(result.message).toBe('OpenRouter API key is invalid.');
-    expect(result.recovery).toContain('OpenRouter');
+  it('preserves a live CgError custom message as detail text', () => {
+    const result = toUserFacing(new CgError('CG-HUB-02', { message: 'Upstream refused the request' }));
+    expect(result.message).toBe('Agency Hub request failed.');
+    expect(result.detailText).toBe('Upstream refused the request');
   });
 
-  it('keeps Claude wording for Anthropic-classified errors', () => {
-    const result = toUserFacing(new CgError('CG-AUTH-02', { detail: { provider: 'anthropic' } }));
-    expect(result.message).toBe('Claude API key is invalid.');
-  });
-
-  it('applies provider rewording to prototype-less copies too', () => {
+  it('preserves custom detail text on a prototype-less copy', () => {
     const wire = JSON.parse(
-      JSON.stringify(
-        toDebugPayload(new CgError('CG-API-02', { detail: { provider: 'openrouter' } })),
-      ),
+      JSON.stringify(toDebugPayload(new CgError('CG-HUB-02', { message: 'Upstream refused the request' }))),
     );
     const result = toUserFacing(wire);
-    expect(result.code).toBe('CG-API-02');
-    expect(result.message).toBe('OpenRouter balance is insufficient.');
+    expect(result.message).toBe('Agency Hub request failed.');
+    expect(result.detailText).toBe('Upstream refused the request');
   });
 
-  it.each(['rate_limit_exceeded', 'rate_limit'])(
-    'uses throttling wording for kernel 429 code %s',
-    (kernelCode) => {
-      const result = toUserFacing(
-        new CgError('CG-HUB-02', {
-          message: 'Too many requests',
-          detail: { status: 429, kernelCode },
-        }),
-      );
-      expect(result.message).toBe('Agency Hub is rate-limiting requests.');
-      expect(result.recovery).toContain('not an outage');
-      expect(result.detailText).toBe('Too many requests');
-    },
-  );
-
-  it('applies canonical kernel rate-limit wording to a prototype-less copy', () => {
-    const wire = JSON.parse(
-      JSON.stringify(
-        toDebugPayload(
-          new CgError('CG-HUB-02', {
-            message: 'Too many requests',
-            detail: { status: 429, kernelCode: 'rate_limit_exceeded' },
-          }),
-        ),
-      ),
-    );
-    const result = toUserFacing(wire);
-    expect(result.message).toBe('Agency Hub is rate-limiting requests.');
-    expect(result.recovery).toContain('not an outage');
+  it('refuses a prototype-less retired code on a live path', () => {
+    const result = toUserFacing({
+      code: 'CG-API-01',
+      message: 'Rate limit reached.',
+      recovery: 'Retry later.',
+    });
+    expect(result).toEqual(describeError('CG-APP-01'));
   });
 });
 
@@ -288,10 +276,10 @@ describe('user-facing helpers', () => {
   });
 
   it('toDebugPayload serializes a CgError with its detail and flags', () => {
-    const err = new CgError('CG-API-01', { detail: { status: 429, provider: 'anthropic' }, isOptional: true });
+    const err = new CgError('CG-HUB-06', { detail: { status: 429, provider: 'anthropic' }, isOptional: true });
     expect(toDebugPayload(err)).toEqual({
-      code: 'CG-API-01',
-      message: 'Rate limit reached.',
+      code: 'CG-HUB-06',
+      message: 'The AI provider is rate-limiting requests.',
       isOptional: true,
       detail: { status: 429, provider: 'anthropic' },
     });

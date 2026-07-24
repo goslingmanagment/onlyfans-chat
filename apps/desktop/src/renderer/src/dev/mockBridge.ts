@@ -779,16 +779,17 @@ export function createMockBridge(): ChatGooseBridge {
 
     // error case: fast-reply + spicy tone → CG-coded rate-limit error
     if (feature === 'fast-reply' && req.params.tone === 'spicy') {
+      const retryAtMs = Date.now() + 8_000;
       after(620, () => {
         emit('ai:event', {
           type: 'operation:error',
           operationId: req.operationId,
           error: {
             key: 'llm_rate_limited',
-            code: 'CG-API-03',
-            message: 'Claude rate limit hit (HTTP 429).',
-            description: 'ChatGoose will retry if the wait is short; otherwise regenerate in a few seconds.',
-            retryAfterMs: 8_000,
+            code: 'CG-HUB-06',
+            message: 'The AI provider is rate-limiting requests.',
+            description: 'Wait until the shown time, then retry manually.',
+            retryAtMs,
           },
           profiling: mockProfiling(at),
         });

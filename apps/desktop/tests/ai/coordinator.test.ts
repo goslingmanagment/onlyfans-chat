@@ -479,7 +479,7 @@ describe('AiCoordinator', () => {
       params: { forceRegenerate: true },
     });
     expect(data.summaries.get(ACCT, CHAT)?.body).toBe('last good summary');
-    gateway.cb?.onError?.(new CgError('CG-API-01'));
+    gateway.cb?.onError?.(new CgError('CG-HUB-07'));
     await flushAsync();
 
     expect(framesOfType(frames, 'operation:error')).toHaveLength(1);
@@ -645,14 +645,14 @@ describe('AiCoordinator', () => {
   it('does not retry on top of the kernel lane (single stream call)', async () => {
     build();
     await startAndReachStream();
-    gateway.cb?.onError?.(new CgError('CG-API-01', { retryAfterMs: 1000 }));
+    gateway.cb?.onError?.(new CgError('CG-HUB-06', { retryAfterMs: 1000 }));
     await flushAsync();
     await vi.advanceTimersByTimeAsync(QUICK_OPERATION_TIMEOUT_MS * 2);
 
     expect(gateway.calls).toHaveLength(1);
     const errors = framesOfType(frames, 'operation:error');
     expect(errors).toHaveLength(1);
-    expect(errors[0]?.error.code).toBe('CG-API-01');
+    expect(errors[0]?.error.code).toBe('CG-HUB-06');
     expect(errors[0]?.error.retryAfterMs).toBe(1000);
   });
 

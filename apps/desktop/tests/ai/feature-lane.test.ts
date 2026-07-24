@@ -807,9 +807,10 @@ describe('feature gateway adapter (Stage 31)', () => {
     expect(facing.detailText).toContain('Unknown persona: builtin:ghost');
   });
 
-  // A6/A17 (W4.4): a generic kernel 429 (no quota_denied code) is throttling
-  // — the card must not read like an outage.
-  it('a real generic 429 gets retry-later wording, not the outage card', async () => {
+  // D26: the generic rate_limit compatibility body has no current AI producer,
+  // so the client no longer reclassifies it into a special rate-limit card.
+  // Keep the server detail visible while falling back to the honest Hub card.
+  it('a generic legacy 429 keeps its detail without client-side reclassification', async () => {
     const fetchImpl = (): Promise<HubResponseLike> =>
       Promise.resolve({
         status: 429,
@@ -855,7 +856,8 @@ describe('feature gateway adapter (Stage 31)', () => {
     const error = events.find((event) => event.kind === 'error');
     const facing = toUserFacing(error?.value);
     expect(facing.code).toBe('CG-HUB-02');
-    expect(facing.message).toContain('rate-limiting');
-    expect(facing.recovery).toContain('not an outage');
+    expect(facing.message).toBe('Agency Hub request failed.');
+    expect(facing.detailText).toContain('Too many requests, slow down');
+    expect(facing.recovery).not.toMatch(/automatic|will retry|backing off/i);
   });
 });

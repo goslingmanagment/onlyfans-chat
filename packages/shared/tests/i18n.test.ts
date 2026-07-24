@@ -9,6 +9,7 @@ import {
   uiMessage,
 } from '../src/i18n/index';
 import { OFAPI_PURPOSES, UNTAGGED_PURPOSE, OFAPI_PURPOSE_LABELS } from '../src/activity/purposes';
+import { RETIRED_CG_ERROR_CODES, isCgErrorCode } from '../src/errors';
 
 describe('UI message catalog', () => {
   it('every key has non-empty en and ru texts', () => {
@@ -30,12 +31,29 @@ describe('UI message catalog', () => {
     expect(UI_MESSAGES['activity.totalToday'].ru).toBe('Итого за сегодня');
   });
 
+  it('keeps catalog error entries inside the live registry and omits retired codes', () => {
+    for (const key of Object.keys(UI_MESSAGES)) {
+      if (key.startsWith('err.CG-')) {
+        expect(isCgErrorCode(key.slice('err.'.length)), key).toBe(true);
+      }
+    }
+    for (const code of RETIRED_CG_ERROR_CODES) {
+      expect(Object.prototype.hasOwnProperty.call(UI_MESSAGES, `err.${code}`), code).toBe(false);
+    }
+  });
+
   // D4 / Stage 31: the repo holds no vendor AI keys — no copy may instruct
-  // the user to add one (the pre-cutover aidock.gate.noKey did exactly that).
-  it('no catalog string mentions direct AI keys post-kernel-cutover', () => {
+  // the user to add one. D19 extended that law to the removed Hub-key flow.
+  it('no catalog string directs the user to enter a removed API or Hub key', () => {
     for (const [key, entry] of Object.entries(UI_MESSAGES)) {
       expect(entry.en, `${key}.en`).not.toMatch(/direct AI key/i);
+      expect(entry.en, `${key}.en`).not.toMatch(
+        /(?:add|enter|paste|re-enter|check)(?: the| a)? (?:API|Hub|Claude|OpenRouter|OnlyFans API) key/i,
+      );
       expect(entry.ru, `${key}.ru`).not.toMatch(/прямой AI-ключ/i);
+      expect(entry.ru, `${key}.ru`).not.toMatch(
+        /(?:добав(?:ить|ьте)|введ(?:ите|ён|ённый)|встав(?:ить|ьте)|провер(?:ить|ьте)).{0,20}ключ(?:\s|[.,:;!?»]|$)/i,
+      );
     }
   });
 
@@ -60,6 +78,16 @@ describe('UI message catalog', () => {
       const message = UI_MESSAGES[`err.${code}`];
       expect(message.en, code).not.toBe(message.ru);
       expect(message.ru, code).toMatch(/[А-Яа-яЁё]/);
+    }
+  });
+
+  it('keeps surfaced rate-limit copy manual in both locales', () => {
+    for (const code of ['CG-OF-03', 'CG-HUB-06'] as const) {
+      const message = UI_MESSAGES[`err.${code}`];
+      expect(message.en, code).toMatch(/retry manually/i);
+      expect(message.en, code).not.toMatch(/automatic|backing off/i);
+      expect(message.ru, code).toMatch(/вручную/i);
+      expect(message.ru, code).not.toMatch(/автомат/i);
     }
   });
 

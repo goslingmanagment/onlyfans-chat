@@ -6,7 +6,13 @@
 
 import { z } from 'zod';
 
-export const CG_ERROR_CODES = [
+/**
+ * Permanently reserved codes retired in D26. They have no live producer and
+ * no durable UserFacingError/CgError replay path. Do not reuse them.
+ *
+ * Desktop replay tombstones: none.
+ */
+export const RETIRED_CG_ERROR_CODES = [
   'CG-AUTH-01',
   'CG-AUTH-02',
   'CG-API-01',
@@ -14,20 +20,24 @@ export const CG_ERROR_CODES = [
   'CG-API-03',
   'CG-API-04',
   'CG-API-05',
+  'CG-FLOW-01',
+  'CG-FLOW-06',
+  'CG-FLOW-07',
+  'CG-FLOW-08',
+  'CG-FAN-02',
+  'CG-UI-01',
+  'CG-OF-07',
+] as const;
+
+export const CG_ERROR_CODES = [
   'CG-API-06',
   'CG-NET-01',
   'CG-NET-02',
-  'CG-FLOW-01',
   'CG-FLOW-02',
   'CG-FLOW-03',
   'CG-FLOW-04',
   'CG-FLOW-05',
-  'CG-FLOW-06',
-  'CG-FLOW-07',
-  'CG-FLOW-08',
   'CG-FLOW-09',
-  'CG-FAN-02',
-  'CG-UI-01',
   'CG-APP-01',
   'CG-OF-01',
   'CG-OF-02',
@@ -35,7 +45,6 @@ export const CG_ERROR_CODES = [
   'CG-OF-04',
   'CG-OF-05',
   'CG-OF-06',
-  'CG-OF-07',
   'CG-OF-08',
   'CG-HUB-01',
   'CG-HUB-02',
@@ -63,37 +72,6 @@ export interface CgErrorDefinition {
 }
 
 export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
-  'CG-AUTH-01': {
-    message: 'Claude API key not configured.',
-    recovery: 'Open Settings and add a valid Claude API key.',
-    settingsLink: true,
-  },
-  'CG-AUTH-02': {
-    message: 'Claude API key is invalid.',
-    recovery: 'Check the key in Settings and try again.',
-    settingsLink: true,
-  },
-  'CG-API-01': {
-    message: 'Rate limit reached.',
-    recovery: 'ChatGoose will retry if the wait is short; otherwise run it again later.',
-  },
-  'CG-API-02': {
-    message: 'Anthropic balance is insufficient.',
-    recovery: 'Add credits or update billing before trying again.',
-  },
-  'CG-API-03': {
-    message: 'Selected Claude model is unavailable.',
-    recovery: 'Pick another model in Settings or wait until the model is available again.',
-    settingsLink: true,
-  },
-  'CG-API-04': {
-    message: 'Prompt is too large for this model.',
-    recovery: 'Reduce the context or use a shorter conversation window.',
-  },
-  'CG-API-05': {
-    message: 'Anthropic service is unavailable.',
-    recovery: 'Wait a moment and try again.',
-  },
   'CG-API-06': {
     message: 'AI reply could not be used.',
     recovery: 'The model returned an incomplete or meta response. Regenerate the reply.',
@@ -106,14 +84,9 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
     message: 'Operation timed out.',
     recovery: 'The request took too long. Try again.',
   },
-  'CG-FLOW-01': {
-    message: 'No model personalities are configured.',
-    recovery: 'Ask an administrator to configure an active personality in Agency Hub.',
-    settingsLink: true,
-  },
   'CG-FLOW-02': {
     message: 'No active model personality is assigned for this account.',
-    recovery: 'Open Settings and map this account to an active personality. Archived or missing mappings stay saved but cannot run AI.',
+    recovery: 'Open Settings and assign this account to an active personality. Archived or missing assignments stay saved but cannot run AI.',
     settingsLink: true,
   },
   'CG-FLOW-03': {
@@ -128,31 +101,9 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
     message: 'This fan is still active.',
     recovery: 'Use Reply instead of Ping for an active conversation.',
   },
-  'CG-FLOW-06': {
-    message: 'Conversation changed.',
-    recovery: 'The result was discarded because you switched chats.',
-  },
-  // Legacy "Extension reloaded." — desktop equivalent is an app reload mid-operation.
-  'CG-FLOW-07': {
-    message: 'ChatGoose reloaded.',
-    recovery: 'Run the action again.',
-  },
-  'CG-FLOW-08': {
-    message: 'Compare needs at least two model cards.',
-    recovery: 'Add draft cards or map the current personality before running Compare.',
-  },
   'CG-FLOW-09': {
     message: 'This conversation has too many messages for a greeting.',
     recovery: 'Hi works best for new conversations (10 messages or fewer). Use Reply instead.',
-  },
-  // OFAPI auto-recovers expired sessions; a lone session_expired event is informational (SPEC §11).
-  'CG-FAN-02': {
-    message: 'OnlyFans session expired.',
-    recovery: 'OnlyFans usually reconnects automatically; re-link the account in Settings if it keeps failing.',
-  },
-  'CG-UI-01': {
-    message: 'Could not insert into the message box.',
-    recovery: 'Copy the result manually instead.',
   },
   'CG-APP-01': {
     message: 'Something went wrong.',
@@ -161,20 +112,19 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
   // ── New for the desktop app (SPEC §11), not in the legacy extension registry ──
   'CG-OF-01': {
     message: 'OnlyFans API key is invalid.',
-    recovery: 'Check the OnlyFans API key in Settings and try again.',
-    settingsLink: true,
+    recovery: 'Ask a manager to reconnect the page in Agency Hub, then try again.',
   },
   'CG-OF-02': {
     message: 'OnlyFans account authentication failed.',
-    recovery: 'Re-authenticate this OnlyFans account, then try again.',
+    recovery: 'Ask a manager to reconnect this OnlyFans account, then try again.',
   },
   'CG-OF-03': {
     message: 'OnlyFans API rate limit reached.',
-    recovery: 'ChatGoose is backing off automatically. Try again in a moment.',
+    recovery: 'Wait before retrying manually. If a retry time is shown, wait until that time.',
   },
   'CG-OF-04': {
     message: 'OnlyFans API credits are exhausted.',
-    recovery: 'Top up OnlyFans API credits before trying again.',
+    recovery: 'Ask a manager to top up OnlyFans API credits before trying again.',
   },
   'CG-OF-05': {
     message: 'Message contains words OnlyFans restricts.',
@@ -184,10 +134,6 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
   'CG-OF-06': {
     message: 'Send could not be confirmed.',
     recovery: 'Check the conversation before retrying — the message may already have been delivered.',
-  },
-  'CG-OF-07': {
-    message: 'The unsend window for this message has passed.',
-    recovery: 'Messages can only be unsent within 24 hours of sending.',
   },
   'CG-OF-08': {
     message: 'Media is still processing or unavailable.',
@@ -368,8 +314,6 @@ export function describeError(code: CgErrorCode): UserFacingError {
   return createUserFacing(code);
 }
 
-type ProviderWording = Pick<UserFacingError, 'message' | 'recovery'>;
-
 /** A6/A17 (W4.4): a CgError whose own message differs from the registry
  * headline carries real information (a deterministic kernel 400 explanation,
  * a validation detail) — surface it as detailText instead of flattening it. */
@@ -381,68 +325,6 @@ function detailTextOf(code: CgErrorCode, message: string): string | undefined {
   return trimmed.slice(0, 400);
 }
 
-/** A6/A17 (W4.4, optional wording): a generic kernel 429 is throttling, not
- * an outage — CG-HUB-02's "check the connection" advice was wrong for it.
- * Core's canonical AppError/Fastify body code is `rate_limit_exceeded`; keep
- * the earlier `rate_limit` spelling as rollback compatibility. */
-function kernelRateLimitWording(
-  code: CgErrorCode,
-  detail: CgErrorDetail | undefined,
-): ProviderWording | null {
-  if (
-    code !== 'CG-HUB-02' ||
-    (detail?.kernelCode !== 'rate_limit_exceeded' && detail?.kernelCode !== 'rate_limit')
-  ) {
-    return null;
-  }
-  return {
-    message: 'Agency Hub is rate-limiting requests.',
-    recovery: 'Too many requests right now — wait a few seconds and try again. This is throttling, not an outage.',
-  };
-}
-
-// Legacy behavior: registry wording names Claude/Anthropic; OpenRouter-classified
-// errors get reworded per provider so the user fixes the right key/balance.
-function providerWordingOverrides(code: CgErrorCode, provider: string | undefined): ProviderWording | null {
-  if (provider !== 'openrouter') {
-    return null;
-  }
-  switch (code) {
-    case 'CG-AUTH-01':
-      return {
-        message: 'OpenRouter API key not configured.',
-        recovery: 'Open Settings and add a valid OpenRouter API key.',
-      };
-    case 'CG-AUTH-02':
-      return {
-        message: 'OpenRouter API key is invalid.',
-        recovery: 'Check the OpenRouter key in Settings and try again.',
-      };
-    case 'CG-API-01':
-      return {
-        message: 'OpenRouter rate limit reached.',
-        recovery: 'ChatGoose will retry if the wait is short; otherwise run it again later.',
-      };
-    case 'CG-API-02':
-      return {
-        message: 'OpenRouter balance is insufficient.',
-        recovery: 'Add credits or update billing in OpenRouter before trying again.',
-      };
-    case 'CG-API-03':
-      return {
-        message: 'Selected OpenRouter model is unavailable.',
-        recovery: 'Pick another model in Settings or wait until the model is available again.',
-      };
-    case 'CG-API-05':
-      return {
-        message: 'OpenRouter service is unavailable.',
-        recovery: 'Wait a moment and try again.',
-      };
-    default:
-      return null;
-  }
-}
-
 /**
  * Convert anything thrown into a user-facing error. Handles CgError instances,
  * structured-clone copies that lost their prototype over IPC, pre-built
@@ -450,12 +332,9 @@ function providerWordingOverrides(code: CgErrorCode, provider: string | undefine
  */
 export function toUserFacing(error: unknown): UserFacingError {
   if (error instanceof CgError) {
+    const detailText = detailTextOf(error.code, error.message);
     return createUserFacing(error.code, {
-      ...(providerWordingOverrides(error.code, error.detail?.provider) ?? {}),
-      ...(kernelRateLimitWording(error.code, error.detail) ?? {}),
-      ...(detailTextOf(error.code, error.message) !== undefined
-        ? { detailText: detailTextOf(error.code, error.message)! }
-        : {}),
+      ...(detailText !== undefined ? { detailText } : {}),
       ...(error.retryAtMs !== undefined ? { retryAtMs: error.retryAtMs } : {}),
       ...(error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
     });
@@ -464,18 +343,6 @@ export function toUserFacing(error: unknown): UserFacingError {
   if (typeof error === 'object' && error !== null) {
     const code = 'code' in error ? error.code : undefined;
     if (isCgErrorCode(code)) {
-      const detail = 'detail' in error ? error.detail : undefined;
-      const provider =
-        typeof detail === 'object' && detail !== null && 'provider' in detail && typeof detail.provider === 'string'
-          ? detail.provider
-          : undefined;
-      const kernelCode =
-        typeof detail === 'object' &&
-        detail !== null &&
-        'kernelCode' in detail &&
-        typeof detail.kernelCode === 'string'
-          ? detail.kernelCode
-          : undefined;
       const retryAtMs = 'retryAtMs' in error && typeof error.retryAtMs === 'number' ? error.retryAtMs : undefined;
       const retryAfterMs =
         'retryAfterMs' in error && typeof error.retryAfterMs === 'number' ? error.retryAfterMs : undefined;
@@ -484,12 +351,6 @@ export function toUserFacing(error: unknown): UserFacingError {
         ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
       };
 
-      const wording =
-        providerWordingOverrides(code, provider) ??
-        kernelRateLimitWording(code, kernelCode === undefined ? undefined : { kernelCode });
-      if (wording) {
-        return createUserFacing(code, { ...wording, ...retryOverrides });
-      }
       if (isUserFacingError(error)) {
         return error;
       }
