@@ -19,17 +19,21 @@ only as a rollback prohibition in `docs/RELEASE.md` and decision D8.**
 | `docs/decisions.md` | This repo's decision log (quick-ref table + full entries) + the family law; cross-repo rulings live in core's log and are referenced by number |
 | Core `docs/error-handling.md` | Family-wide error-handling canon: structural identity, client aliases, retry wording, producer consistency, and persistence/tombstone law |
 | `docs/generated/` | Point-in-time code maps. Verify each banner's snapshot SHA before relying on claims or line numbers; supplemental, not current truth until regenerated |
-| `docs/PRD.md` | Historical product baseline with some shipped UX intent. Direct transport/provider-key clauses are superseded; current code + decisions win |
-| `docs/SPEC.md` | Historical architecture/specification. Preserve §15 safety invariants, but treat Direct OFAPI/AI, prompt, model, and transport sections as superseded unless re-verified in code |
-| `docs/PLAN.md` | Historical phase/execution record, not the current work queue. Do not replay completed phases |
-| `docs/DESIGN.md` | Mixed shipped design intent and historical experiments. Performance constraints and tracked binding mockups remain useful; verify current settings/surfaces in code |
 | `docs/research/legacy-chatgoose.md` | Complete behavioral inventory of the predecessor (features, prompts, exact constants/timeouts, lessons). Normative for ported behavior |
 | `docs/research/onlyfansapi.md` | OFAPI capability map, real-time strategy, credits/pricing, gotchas, key docs URLs |
 | `docs/research/agency-hub-core.md` | Capability map of the Agency Hub "core" backend (`~/code/core`) — the live ChatMuse contract, auth model, what P6 adds there |
 | `docs/research/reactivation-guide.md` | Agency reactivation playbook — ping templates (A1–A11 / B1–B5) byte-for-byte + normative tone rules for any reactivation-message generation |
-| `docs/SESSIONS.md` | Historical build-session prompts. Do not execute completed phases. Retain and obey its fail-closed live-send/test-fan safety protocol |
 | `docs/RELEASE.md` | How to build/ship the desktop installer: a `v*` tag → auto-update reaching all users (hands off to `WINDOWS-GUIDE.html`) |
 | `docs/vendor/onlyfansapi/` | Vendored API docs: `openapi.json` (field-level source of truth — query with `jq`), `llms-full.txt` (grep, don't read whole), see its README |
+
+**Historical docs — read on demand, never as current truth:** `docs/PRD.md`,
+`docs/SPEC.md`, `docs/PLAN.md`, `docs/DESIGN.md`, `docs/SESSIONS.md` are
+point-in-time records; on any conflict, current code + `docs/decisions.md` win.
+Do not replay their phases or treat their architecture/transport sections as
+current. Their surviving normative exceptions are already pinned in this file
+(SPEC §15 invariants under Hard rules; PRD §7 + DESIGN §3/§5 design constraints
+under Conventions) plus one kept here: the fail-closed live-send/test-fan
+safety protocol in `docs/SESSIONS.md` remains binding.
 
 ## Hard rules
 
