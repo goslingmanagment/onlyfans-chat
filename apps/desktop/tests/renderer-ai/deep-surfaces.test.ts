@@ -151,12 +151,12 @@ describe('Ping / Hi pill gates (precedence: unmapped → no-key → feature gate
   it('unmapped account outranks the feature gates', () => {
     expect(evaluatePingGate(UNMAPPED_GATE, true)).toEqual({
       enabled: false,
-      reason: 'Map a personality in Settings',
+      reason: 'Assign an active personality in Settings',
       code: 'unmapped',
     });
     expect(evaluateHiGate(UNMAPPED_GATE, true)).toEqual({
       enabled: false,
-      reason: 'Map a personality in Settings',
+      reason: 'Assign an active personality in Settings',
       code: 'unmapped',
     });
   });
@@ -164,12 +164,12 @@ describe('Ping / Hi pill gates (precedence: unmapped → no-key → feature gate
   it('missing LLM key outranks the feature gates', () => {
     expect(evaluatePingGate(NO_KEY_GATE, false)).toEqual({
       enabled: false,
-      reason: 'Connect Agency Hub in Settings (sign in or add the hub key)',
+      reason: 'Connect Agency Hub in Settings (sign in on this device)',
       code: 'no-key',
     });
     expect(evaluateHiGate(NO_KEY_GATE, true)).toEqual({
       enabled: false,
-      reason: 'Connect Agency Hub in Settings (sign in or add the hub key)',
+      reason: 'Connect Agency Hub in Settings (sign in on this device)',
       code: 'no-key',
     });
   });

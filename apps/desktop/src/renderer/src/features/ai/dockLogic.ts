@@ -310,13 +310,13 @@ export type AiGate =
 
 export function evaluateAiGate(input: AiGateInput): AiGate {
   if (!input.mapped) {
-    return { ok: false, reason: 'unmapped', message: 'Map a personality in Settings' };
+    return { ok: false, reason: 'unmapped', message: 'Assign an active personality in Settings' };
   }
   if (!input.hasLlmKey) {
     return {
       ok: false,
       reason: 'no-key',
-      message: 'Connect Agency Hub in Settings (sign in or add the hub key)',
+      message: 'Connect Agency Hub in Settings (sign in on this device)',
     };
   }
   return { ok: true };

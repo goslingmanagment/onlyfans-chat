@@ -26,27 +26,23 @@ export const UI_MESSAGES = {
   'keys.testing': { en: 'Testing…', ru: 'Проверяю…' },
 
   // Russian texts for CG-* codes a key/hub test can return. EN failures show
-  // the wire message (registry wording incl. provider overrides) — these en
-  // values exist for catalog parity/documentation only.
+  // the wire message from the registry — these en values exist for catalog
+  // parity/documentation only.
   'err.CG-OF-01': {
-    en: 'OnlyFans API key is invalid.',
-    ru: 'Ключ OFAPI отклонён (401) — проверьте ключ.',
+    en: 'OnlyFans API key is invalid — ask a manager to reconnect the page in Agency Hub.',
+    ru: 'Ключ OFAPI отклонён — попросите менеджера переподключить страницу в Agency Hub.',
   },
   'err.CG-OF-02': {
-    en: 'OnlyFans account authentication failed.',
-    ru: 'Сессия аккаунта OnlyFans слетела — сам ключ OFAPI рабочий.',
+    en: 'OnlyFans account authentication failed — ask a manager to reconnect the account.',
+    ru: 'Авторизация аккаунта OnlyFans не прошла — попросите менеджера переподключить аккаунт.',
   },
   'err.CG-OF-03': {
-    en: 'OnlyFans API rate limit reached.',
-    ru: 'Лимит запросов OFAPI — попробуйте через минуту.',
+    en: 'OnlyFans API rate limit reached — wait until the shown time, then retry manually.',
+    ru: 'Лимит запросов OFAPI — дождитесь указанного времени и повторите вручную.',
   },
   'err.CG-OF-04': {
-    en: 'OnlyFans API credits are exhausted.',
-    ru: 'Кредиты OFAPI закончились — пополните баланс.',
-  },
-  'err.CG-AUTH-02': {
-    en: 'Provider rejected the API key.',
-    ru: 'Провайдер отклонил ключ (401).',
+    en: 'OnlyFans API credits are exhausted — ask a manager to top them up.',
+    ru: 'Кредиты OFAPI закончились — попросите менеджера пополнить баланс.',
   },
   'err.CG-NET-01': {
     en: 'Network request failed.',
@@ -55,18 +51,6 @@ export const UI_MESSAGES = {
   'err.CG-NET-02': {
     en: 'Request timed out.',
     ru: 'Запрос не уложился в таймаут.',
-  },
-  'err.CG-API-01': {
-    en: 'Provider rate limit hit — try again shortly.',
-    ru: 'Лимит запросов провайдера — попробуйте чуть позже.',
-  },
-  'err.CG-API-02': {
-    en: 'Provider balance is insufficient.',
-    ru: 'У провайдера закончился баланс — пополните счёт.',
-  },
-  'err.CG-API-05': {
-    en: 'Provider service is unavailable.',
-    ru: 'Сервис провайдера недоступен — попробуйте позже.',
   },
   'err.CG-APP-01': {
     en: 'Something went wrong.',
@@ -463,8 +447,8 @@ export const UI_MESSAGES = {
   // ── Local data (danger zone) ──────────────────────────────────────────────
   'danger.title': { en: 'Local data', ru: 'Локальные данные' },
   'danger.hint': {
-    en: 'Purges the encrypted local cache (chats, messages, media). The device sign-in is revoked on Hub first; the Hub key must be entered again.',
-    ru: 'Очищает зашифрованный локальный кэш (чаты, сообщения, медиа). Сначала вход устройства отзывается на Hub; ключ Hub потребуется ввести заново.',
+    en: 'Purges the encrypted local cache (chats, messages, media). The device sign-in is revoked on Hub first; sign in on this device again afterward.',
+    ru: 'Очищает зашифрованный локальный кэш (чаты, сообщения, медиа). Сначала вход устройства отзывается на Hub; после очистки войдите на этом устройстве заново.',
   },
   'danger.stats': {
     en: 'Database {db} · media cache {media} ({files})',
@@ -512,8 +496,8 @@ export const UI_MESSAGES = {
     ru: 'Удалить весь локальный кэш?',
   },
   'danger.purgeKernelWarning': {
-    en: 'The server holds no copy of local messages, transactions, or telemetry yet — purging deletes them permanently. Recent chats re-sync from OFAPI; older history does not. Any device token is remotely revoked before deletion; re-enter the Hub key or sign in this device again afterward.',
-    ru: 'На сервере ещё нет копии локальных сообщений, транзакций и телеметрии — очистка удалит их безвозвратно. Свежие чаты пересинхронизируются из OFAPI, старая история — нет. Перед удалением токен устройства будет отозван на Hub; после очистки заново введите ключ Hub или выполните вход устройства.',
+    en: 'The server holds no copy of local messages, transactions, or telemetry yet — purging deletes them permanently. Recent chats re-sync from OFAPI; older history does not. Any device token is remotely revoked before deletion; sign in on this device again afterward.',
+    ru: 'На сервере ещё нет копии локальных сообщений, транзакций и телеметрии — очистка удалит их безвозвратно. Свежие чаты пересинхронизируются из OFAPI, старая история — нет. Перед удалением токен устройства будет отозван на Hub; после очистки войдите на этом устройстве заново.',
   },
   'danger.purgeExportFirst': {
     en: 'Export diagnostics first',
@@ -1280,10 +1264,13 @@ export const UI_MESSAGES = {
   'aidock.helpTip': { en: 'Coaching + two suggested directions', ru: 'Подсказка + два предложенных направления' },
   'aidock.pingTip': { en: 'Reactivation message for a silent fan', ru: 'Сообщение для реактивации молчащего фана' },
   'aidock.hiTip': { en: '3 opener variants for a fresh conversation', ru: '3 варианта первого сообщения для нового диалога' },
-  'aidock.gate.unmapped': { en: 'Map a personality in Settings', ru: 'Свяжите личность в настройках' },
+  'aidock.gate.unmapped': {
+    en: 'Assign an active personality in Settings',
+    ru: 'Назначьте активную личность в настройках',
+  },
   'aidock.gate.noKey': {
-    en: 'Connect Agency Hub in Settings (sign in or add the hub key)',
-    ru: 'Подключите Agency Hub в настройках (войдите или добавьте ключ хаба)',
+    en: 'Connect Agency Hub in Settings (sign in on this device)',
+    ru: 'Подключите Agency Hub в настройках (войдите на этом устройстве)',
   },
   'aidock.pingBlocked': { en: 'Fan is active — use Reply', ru: 'Фан активен — используйте Reply' },
   'aidock.hiLocked': {

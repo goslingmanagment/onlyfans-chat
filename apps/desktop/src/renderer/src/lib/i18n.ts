@@ -36,9 +36,9 @@ export function localeTag(locale: UiLocale): string {
 }
 
 /**
- * Failure text for a CG-* code. EN always shows the wire message (registry
- * wording incl. provider-specific overrides); RU uses the catalog when it
- * covers the code and falls back to the wire message otherwise.
+ * Failure text for a CG-* code. EN always shows the registry-backed wire
+ * message; RU uses the catalog when it covers the code and falls back to the
+ * wire message otherwise.
  */
 export function localizedErrorText(locale: UiLocale, code: string | null, fallback: string): string {
   if (locale !== 'en' && code !== null) {
