@@ -42,6 +42,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D22 | 2026-07-21 | Only user-initiated backward history advertises pure DB-readable pages (core #158/#162) |
 | D23 | 2026-07-22 | Account grants are distinct from vendor auth: authoritative reconciliation hides revoked identities without deleting cache |
 | D24 | 2026-07-22 | SSE replay restores state without toast, sound, or OS notifications; live alerts use core's control-lane marker plus a fail-quiet epoch fallback, with cross-source alert dedup and suspend re-arm |
+| D25 | 2026-07-24 | Kernel provider failures map to exact CG-HUB-04..08 cards by structural kernelCode; unknown provider* degrades to CG-HUB-10, stream truncation gets CG-HUB-09; dead direct-provider classifiers removed (family: core #182/#183, ext E57) |
 
 ## Entries
 
@@ -539,3 +540,21 @@ long-standing "history is not news" baseline (its first sweep swallows the
 downtime backlog); D10 cursor semantics untouched — no replayed state is ever
 skipped, and control frames never advance the cursor.
 
+
+**D25 (2026-07-24).** The desktop adopts the family provider-error
+classification emitted by the Agency Hub feature lane (core Decisions
+#182/#183; extension twin E57). Known kernel codes map by exact structural
+`kernelCode` — `provider_billing`→CG-HUB-04, `provider_auth`→CG-HUB-05
+(kernel-side provider credential, distinct from the chatter's CG-HUB-01),
+`provider_rate_limited`→CG-HUB-06 (retryAfterMs becomes one absolute
+localized deadline, display-only, no automatic retry),
+`provider_unavailable`→CG-HUB-07, `provider_proxy_unreachable`→CG-HUB-08.
+`provider_stream_failed` and unknown future `provider*` codes degrade to one
+generic manager-action card (CG-HUB-10); a structural code always beats the
+compatibility message matcher. An AI stream that closes without `done`
+reports the dedicated interrupted-generation card (CG-HUB-09) and remains
+fail-closed. The uncalled direct-provider classifiers
+(`classifyAnthropicHttpError`/`classifyOpenRouterHttpError`) and their phrase
+tables are removed; local CG codes are presentation aliases — the canonical
+failure identity is the kernel wire code. No SDK re-vendor, no retry-policy,
+send, persona-proof, or provenance changes.

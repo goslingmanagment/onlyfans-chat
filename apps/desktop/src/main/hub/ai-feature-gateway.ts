@@ -48,6 +48,12 @@ function mapKernelGateError(kernelCode: string | undefined, message: string): Cg
     if (structural !== undefined) {
       return structural();
     }
+    // A specific public code is authoritative. Pre-#120 kernels stamped every
+    // product gate with only the generic `bad_request`, so that one legacy
+    // value still needs the message fallback; it must never override provider_*.
+    if (kernelCode !== 'bad_request') {
+      return null;
+    }
   }
   if (message.includes('requires at least')) {
     return new CgError('CG-FLOW-03');

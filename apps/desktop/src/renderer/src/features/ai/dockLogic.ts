@@ -242,6 +242,32 @@ export function errorHint(error: UserFacingErrorPayload): string | null {
   return typeof recovery === 'string' && recovery.length > 0 ? recovery : null;
 }
 
+/** One absolute, localised retry deadline. `retryAfterMs` is intentionally not
+ * added to Date.now() here: main fixes retryAtMs once when it receives the
+ * provider frame, so renderer re-renders cannot move the deadline. */
+export function formatRetryDeadline(
+  error: UserFacingErrorPayload,
+  locale = 'en-US',
+  timeZone?: string,
+): string | null {
+  if (typeof error.retryAtMs !== 'number' || !Number.isFinite(error.retryAtMs)) {
+    return null;
+  }
+  const deadline = new Date(error.retryAtMs);
+  if (!Number.isFinite(deadline.getTime())) {
+    return null;
+  }
+  const options: Intl.DateTimeFormatOptions = {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(timeZone !== undefined ? { timeZone } : {}),
+  };
+  return new Intl.DateTimeFormat(locale, options).format(deadline);
+}
+
 // ─── Quota pre-warn (#120) ────────────────────────────────────────────────
 
 /** Warn when the page's remaining daily gateway budget drops to this — 5% of

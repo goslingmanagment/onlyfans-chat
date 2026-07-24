@@ -142,8 +142,35 @@ describe('HubClient AI gateway stream', () => {
       fetchImpl: () => Promise.resolve(streamResponse(aiFrame({ type: 'content_delta', text: 'x' }))),
     });
     await expect(noDone.streamAiGateway({ request: makeRequest() }, { onText: () => {} })).rejects.toMatchObject({
-      code: 'CG-HUB-02',
-      reason: 'invalid-response',
+      code: 'CG-HUB-09',
+      reason: 'stream-truncated',
+    } satisfies Partial<HubError>);
+  });
+
+  it('maps provider error frames structurally on the legacy gateway stream too', async () => {
+    const client = createHubClient({
+      baseUrl: 'https://hub.example.com',
+      apiKey: 'k',
+      fetchImpl: () =>
+        Promise.resolve(
+          streamResponse(
+            aiFrame({
+              type: 'error',
+              code: 'provider_billing',
+              message: 'AI provider billing is unavailable',
+              retryAfterMs: null,
+            }),
+          ),
+        ),
+    });
+
+    await expect(client.streamAiGateway({ request: makeRequest() }, { onText: () => {} })).rejects.toMatchObject({
+      code: 'CG-HUB-04',
+      reason: 'http',
+      detail: {
+        kernelCode: 'provider_billing',
+        providerMessage: 'AI provider billing is unavailable',
+      },
     } satisfies Partial<HubError>);
   });
 });
@@ -171,6 +198,141 @@ describe('HubClient AI feature stream', () => {
       text: () => Promise.resolve(JSON.stringify(payload)),
     };
   }
+
+  it.each([
+    ['provider_billing', 'CG-HUB-04'],
+    ['provider_auth', 'CG-HUB-05'],
+    ['provider_rate_limited', 'CG-HUB-06'],
+    ['provider_unavailable', 'CG-HUB-07'],
+    ['provider_proxy_unreachable', 'CG-HUB-08'],
+  ] as const)('maps feature-stream kernel code %s exactly to %s', async (kernelCode, expectedCode) => {
+    const client = createHubClient({
+      baseUrl: 'https://hub.example.com',
+      apiKey: 'k',
+      fetchImpl: () =>
+        Promise.resolve(
+          streamResponse(
+            aiFrame({
+              type: 'error',
+              code: kernelCode,
+              message: 'Static kernel provider failure',
+              retryAfterMs: null,
+            }),
+          ),
+        ),
+    });
+
+    await expect(
+      client.streamAiFeature(
+        { feature: 'fast-reply', request: makeFeatureRequest() },
+        { onText: () => {} },
+      ),
+    ).rejects.toMatchObject({
+      code: expectedCode,
+      reason: 'http',
+      detail: {
+        kernelCode,
+        providerMessage: 'Static kernel provider failure',
+      },
+    } satisfies Partial<HubError>);
+  });
+
+  it.each(['provider_stream_failed', 'provider_future_failure'])(
+    'maps generic/future provider code %s to the manager-action fallback',
+    async (kernelCode) => {
+      const client = createHubClient({
+        baseUrl: 'https://hub.example.com',
+        apiKey: 'k',
+        fetchImpl: () =>
+          Promise.resolve(
+            streamResponse(
+              aiFrame({
+                type: 'error',
+                code: kernelCode,
+                message: 'Static kernel provider failure',
+                retryAfterMs: null,
+              }),
+            ),
+          ),
+      });
+
+      await expect(
+        client.streamAiFeature(
+          { feature: 'fast-reply', request: makeFeatureRequest() },
+          { onText: () => {} },
+        ),
+      ).rejects.toMatchObject({
+        code: 'CG-HUB-10',
+        detail: { kernelCode },
+      } satisfies Partial<HubError>);
+    },
+  );
+
+  it('turns provider retryAfterMs into one absolute retry deadline', async () => {
+    const retryAfterMs = 45_000;
+    const before = Date.now();
+    const client = createHubClient({
+      baseUrl: 'https://hub.example.com',
+      apiKey: 'k',
+      fetchImpl: () =>
+        Promise.resolve(
+          streamResponse(
+            aiFrame({
+              type: 'error',
+              code: 'provider_rate_limited',
+              message: 'AI provider rate limited',
+              retryAfterMs,
+            }),
+          ),
+        ),
+    });
+
+    let caught: unknown;
+    try {
+      await client.streamAiFeature(
+        { feature: 'fast-reply', request: makeFeatureRequest() },
+        { onText: () => {} },
+      );
+    } catch (error) {
+      caught = error;
+    }
+    const after = Date.now();
+
+    const hubError = caught as HubError;
+    expect(hubError).toMatchObject({
+      code: 'CG-HUB-06',
+      retryAfterMs,
+      detail: {
+        kernelCode: 'provider_rate_limited',
+        retryAfterMs,
+      },
+    });
+    expect(hubError.retryAtMs).toBeGreaterThanOrEqual(before + retryAfterMs);
+    expect(hubError.retryAtMs).toBeLessThanOrEqual(after + retryAfterMs);
+    expect(hubError.detail?.retryAtMs).toBe(hubError.retryAtMs);
+  });
+
+  it('uses the dedicated interrupted-generation code when the feature stream has no done frame', async () => {
+    const client = createHubClient({
+      baseUrl: 'https://hub.example.com',
+      apiKey: 'k',
+      fetchImpl: () =>
+        Promise.resolve(
+          streamResponse(aiFrame({ type: 'content_delta', text: 'discarded partial output' })),
+        ),
+    });
+
+    await expect(
+      client.streamAiFeature(
+        { feature: 'fast-reply', request: makeFeatureRequest() },
+        { onText: () => {} },
+      ),
+    ).rejects.toMatchObject({
+      code: 'CG-HUB-09',
+      reason: 'stream-truncated',
+      message: 'hub AI feature stream ended without a done frame',
+    } satisfies Partial<HubError>);
+  });
 
   // C4: core's pre-stream gate rejection carries an actionable message
   // ({error:'bad_request', message:'<gate text>'}); toHubError's 'validation'
