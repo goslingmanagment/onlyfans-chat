@@ -10,7 +10,7 @@
 |---|---|
 | Status | Updated 2026-06-21 — implementation code-complete through P5; webhook/SSE, read custody, supported command custody, keyless Hub defaults, configurable unread reconcile, and core AI gateway foundation are documented in [PLAN](PLAN.md) |
 | Product | Standalone desktop chat client for OnlyFans agency chatters, with built-in AI assistance |
-| Predecessor | ChatGoose Firefox extension for Fansly (`/Users/dmitriy/code/chatgoose`, analyzed in [research/legacy-chatgoose.md](research/legacy-chatgoose.md)) |
+| Predecessor | ChatGoose Firefox extension for Fansly (`/Users/dmitriy/code/goose/fansly-ext`, analyzed in [research/legacy-chatgoose.md](research/legacy-chatgoose.md)) |
 | Platform API | onlyfansapi.com (OFAPI) — third-party hosted OnlyFans REST gateway (analyzed in [research/onlyfansapi.md](research/onlyfansapi.md)) |
 
 ## 1. Problem & opportunity
@@ -62,7 +62,7 @@ OFAPI gives us full programmatic access to connected OnlyFans accounts (read cha
 Two components, introduced in stages (details in [PLAN.md](PLAN.md)):
 
 1. **Desktop app** (this repo, `apps/desktop`) — the chatter's workspace. Fresh/default profiles are Hub-first for supported OFAPI reads and writes: the production Hub URL is prefilled, a Hub chatter key is the normal onboarding secret, and a local OFAPI key is optional Direct rollback only (OFAPI offers no key scopes — custody rules in SPEC §5). Desktop still calls LLM providers directly until the separate desktop AI-gateway rollout is accepted.
-2. **Agency Hub ("core", `~/code/core`) integration** — the agency's existing production backend (Fastify + Postgres + worker, Docker on a VPS) takes the hub role; we do **not** build a separate relay. Core already serves the legacy ChatGoose API (it calls the product "ChatMuse"): central fan-profile storage with append-only versions, AI-usage ingestion, per-chatter revocable API keys with page scoping — the desktop integrates these from P4. Core now owns the push-first webhook/SSE path, the read-custody gateway, supported command intake/execution, and a production-enabled AI gateway foundation with owner usage reporting. Desktop Hub mode covers reads, text, typing, unsend, mark-read, and media/PPV sends without a local OFAPI key; Direct remains explicit rollback.
+2. **Agency Hub ("core", `~/code/goose/hub`) integration** — the agency's existing production backend (Fastify + Postgres + worker, Docker on a VPS) takes the hub role; we do **not** build a separate relay. Core already serves the legacy ChatGoose API (it calls the product "ChatMuse"): central fan-profile storage with append-only versions, AI-usage ingestion, per-chatter revocable API keys with page scoping — the desktop integrates these from P4. Core now owns the push-first webhook/SSE path, the read-custody gateway, supported command intake/execution, and a production-enabled AI gateway foundation with owner usage reporting. Desktop Hub mode covers reads, text, typing, unsend, mark-read, and media/PPV sends without a local OFAPI key; Direct remains explicit rollback.
 
 Rollout: internal pilot on 1 creator account + 1–2 trusted chatters in read+AI mode (sends still via OnlyMonster) → enable sending in-app → expand accounts/chatters → hub phase.
 

@@ -118,5 +118,5 @@ PR:
    breaking contract change cannot land silently.
 
 Re-vendoring is a core-side operation (`scripts/vendor-sdk.mjs
-../chatgoose_desktop_fable/packages/kernel-sdk`) committed here as its own change; the
+../of-desktop/packages/kernel-sdk`) committed here as its own change; the
 `dist` and `.vendor.json` are never edited by hand.

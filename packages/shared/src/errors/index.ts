@@ -1,5 +1,5 @@
 // CG-* error registry. Behavioral port of the legacy extension's error system
-// (~/code/chatgoose src/shared/errors.ts + provider error mapping), re-keyed by
+// (~/code/goose/fansly-ext src/shared/errors.ts + provider error mapping), re-keyed by
 // code instead of snake_case keys. Legacy CG-FAN-01/03 (Fansly tab/server) and
 // CG-HUB-01..08 (extension hub config) are not ported; OFAPI failures get the
 // new CG-OF-* family and the hub family restarts at CG-HUB-01 per SPEC §11.
