@@ -15,7 +15,7 @@ import {
 } from '../src/transcript/normalize';
 
 // Legacy provenance: each case marked `legacy:` re-expresses a case from
-// ~/code/chatgoose tests/transcript.test.ts, adapted from Fansly page/attachment
+// ~/code/goose/fansly-ext tests/transcript.test.ts, adapted from Fansly page/attachment
 // shapes to OFAPI message fields (SPEC §8.2). Fansly orderhistory-evidence cases
 // do not survive the mapping (PPV state is now direct on the message).
 

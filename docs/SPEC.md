@@ -20,7 +20,7 @@ DIRECT MODE (P1+, polling)                    HUB MODE (real-time from ~P3, AI g
 │ │         │   │ llm cli   ├─┼──────► Anthropic/     ▼         │
 │ │         │   │ sqlite    │ │  SSE   OpenRouter  ┌────────────┴──────────┐
 │ └─────────┘   └───────────┘ │               │  Agency Hub "core"          │
-└─────────────────────────────┘               │  (EXISTING: ~/code/core,    │
+└─────────────────────────────┘               │ (EXISTING: ~/code/goose/hub,│
         ▲ polling (list-delta)                │  Fastify+Postgres+worker)   │
         └─────────────────────                │  has: fan profiles, ai-usage│
    From P4 (still direct mode):               │  chatter API keys, dashboard│
@@ -49,7 +49,7 @@ The desktop app is built **hub-ready from day 1** via two seams:
 | Validation | **zod** at all trust boundaries (IPC, OFAPI responses, webhook payloads, storage migration) | Legacy lesson 1.4.1: type guards at boundaries, not `as` casts. |
 | Tests | **Vitest** (unit), **Playwright** (e2e, later) | Re-express the legacy test cases as the spec-by-example — fresh test code, same cases (research doc §12). |
 | Monorepo | **pnpm workspaces** | `apps/desktop`, `packages/shared`. No `apps/hub` — server-side hub work lands in the core repo. |
-| Hub (P6) | **Extend the existing Agency Hub "core"** (`~/code/core`: Fastify 5 + Postgres 16 + Drizzle + pg-boss + React dashboard, Docker on a VPS) | Decided 2026-06-10: no separate relay. Core already serves the ChatGoose/"ChatMuse" API (fan profiles, ai-usage, per-chatter keys); webhooks + SSE, read custody, the text/typing/unsend/mark-read/media-send command outbox/executor, and the proxy-routed AI gateway foundation now live there (§9). Fresh desktop profiles default to production Hub (`https://gosling-agency.ru`) for OFAPI reads/writes and require only the chatter key for normal operation; Direct and local OFAPI keys are an explicit rollback for reads (and AI). Writes are Hub-only — `ofapiWriteTransport` is forced to `z.literal('hub')` (commit 872c750), so there is no selectable Direct write path. Local upload-from-disk is intentionally absent from the app surface. |
+| Hub (P6) | **Extend the existing Agency Hub "core"** (`~/code/goose/hub`: Fastify 5 + Postgres 16 + Drizzle + pg-boss + React dashboard, Docker on a VPS) | Decided 2026-06-10: no separate relay. Core already serves the ChatGoose/"ChatMuse" API (fan profiles, ai-usage, per-chatter keys); webhooks + SSE, read custody, the text/typing/unsend/mark-read/media-send command outbox/executor, and the proxy-routed AI gateway foundation now live there (§9). Fresh desktop profiles default to production Hub (`https://gosling-agency.ru`) for OFAPI reads/writes and require only the chatter key for normal operation; Direct and local OFAPI keys are an explicit rollback for reads (and AI). Writes are Hub-only — `ofapiWriteTransport` is forced to `z.literal('hub')` (commit 872c750), so there is no selectable Direct write path. Local upload-from-disk is intentionally absent from the app surface. |
 
 ## 3. Repository layout (target)
 
@@ -261,7 +261,7 @@ interface AiGateway { stream(req: LlmRequest, cb: StreamCallbacks): CancelFn }
 
 ## 9. Agency Hub ("core") integration
 
-The hub is the **existing** Agency Hub project (`~/code/core` — Fastify 5 + Postgres 16/Drizzle + pg-boss worker + React dashboard, deployed via Docker behind TLS). It already implements the legacy ChatGoose ("ChatMuse") server contract. Decided 2026-06-10: all server-side hub work happens **in the core repo**; this repo only consumes its REST/SSE contract. Core's OpenAPI: `GET /api/v1/openapi.json` (owner session) or the snapshot at `core: reference/agency-hub.openapi.json`.
+The hub is the **existing** Agency Hub project (`~/code/goose/hub` — Fastify 5 + Postgres 16/Drizzle + pg-boss worker + React dashboard, deployed via Docker behind TLS). It already implements the legacy ChatGoose ("ChatMuse") server contract. Decided 2026-06-10: all server-side hub work happens **in the core repo**; this repo only consumes its REST/SSE contract. Core's OpenAPI: `GET /api/v1/openapi.json` (owner session) or the snapshot at `core: reference/agency-hub.openapi.json`.
 
 ### 9.1 Already live in core — consumed from P4 (direct mode)
 | Capability | Endpoint (core) | Auth |

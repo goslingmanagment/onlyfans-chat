@@ -10,7 +10,7 @@ ecosystem. This pass covers ONE project; the other two get their own
 passes. Your output is the reviewer's map of this territory — make it
 complete, precise, and factual.
 
-The project: /Users/dmitriy/code/chatgoose_desktop_fable — ChatGoose
+The project: /Users/dmitriy/code/goose/of-desktop — ChatGoose
 Desktop, an OnlyFans chat workspace application. It works against a
 backend hub called core (documented in its own pass) and against
 OnlyFans itself.

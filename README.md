@@ -6,7 +6,7 @@ keyboard-first application.
 
 ## Current architecture
 
-The desktop is a client of the Agency Hub kernel in `../core`:
+The desktop is a client of the Agency Hub kernel in `../hub`:
 
 - all OnlyFans/OFAPI reads go through core's read gateway;
 - text, typing, unsend, mark-read, and media writes go through core's command

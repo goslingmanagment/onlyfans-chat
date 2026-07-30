@@ -1027,37 +1027,37 @@ From the file listing, test files exist for:
 
 | File | Purpose |
 |------|---------|
-| `/Users/dmitriy/code/chatgoose/SPEC_FINAL.md` | Authoritative spec (may lag code in some areas) |
-| `/Users/dmitriy/code/chatgoose/prompts/fast-reply.md` | Fast Reply + Improve Draft template |
-| `/Users/dmitriy/code/chatgoose/prompts/help-me.md` | Help Me template |
-| `/Users/dmitriy/code/chatgoose/prompts/fan-summary.md` | Fan Summary template (Russian output) |
-| `/Users/dmitriy/code/chatgoose/prompts/chat-review.md` | Chat Review template |
-| `/Users/dmitriy/code/chatgoose/prompts/ping.md` | Ping template with segment instructions |
-| `/Users/dmitriy/code/chatgoose/prompts/improve-draft.md` | Improve Draft template |
-| `/Users/dmitriy/code/chatgoose/prompts/hi-greeting.md` | Hi Greeting template with 3-variant output |
-| `/Users/dmitriy/code/chatgoose/src/shared/constants.ts` | All numeric constants (timeouts, thresholds, counts) |
-| `/Users/dmitriy/code/chatgoose/src/shared/features.ts` | Feature policy table (surface, timeout, model, result kind) |
-| `/Users/dmitriy/code/chatgoose/src/shared/types.ts` | Complete type system including all port messages |
-| `/Users/dmitriy/code/chatgoose/src/shared/model-registry.ts` | Model catalog with pricing |
-| `/Users/dmitriy/code/chatgoose/src/shared/model-capabilities.ts` | Reasoning capability gates per model/feature |
-| `/Users/dmitriy/code/chatgoose/src/shared/personalities.ts` | Bundled Lora personality (full text) + reconcile logic |
-| `/Users/dmitriy/code/chatgoose/src/shared/prompts.ts` | Prompt builder, cache block structure, tone/split instructions, safety preambles |
-| `/Users/dmitriy/code/chatgoose/src/shared/transcript.ts` | Message normalization, PPV state labeling, ping segment analysis, transcript formatting |
-| `/Users/dmitriy/code/chatgoose/src/shared/earnings.ts` | Earnings aggregation, mills→USD, formatted block |
-| `/Users/dmitriy/code/chatgoose/src/shared/subscriptions.ts` | Subscription context formatting |
-| `/Users/dmitriy/code/chatgoose/src/shared/split.ts` | `[NEXT]` and `[VARIANT]` splitting |
-| `/Users/dmitriy/code/chatgoose/src/shared/xml.ts` | Help Me and Chat Review XML parsing |
-| `/Users/dmitriy/code/chatgoose/src/shared/reply-output.ts` | Reply sanitizer (think blocks, meta-leak, prefixes, quotes) |
-| `/Users/dmitriy/code/chatgoose/src/shared/summary-cache.ts` | Cache validity, eviction, SummaryCacheStore |
-| `/Users/dmitriy/code/chatgoose/src/shared/agency-hub.ts` | Agency Hub URL/metadata helpers, PROFILE_MAX_BYTES |
-| `/Users/dmitriy/code/chatgoose/src/shared/errors.ts` | Error registry, all error codes and messages |
-| `/Users/dmitriy/code/chatgoose/src/shared/prompt-injection.ts` | `escapeForPrompt()` with ordering guarantee |
-| `/Users/dmitriy/code/chatgoose/src/shared/compare-cards.ts` | Compare card resolution logic |
-| `/Users/dmitriy/code/chatgoose/src/background/operations.ts` | Main operation coordinator (2667 lines) |
-| `/Users/dmitriy/code/chatgoose/src/background/fansly-client.ts` | Fansly API client |
-| `/Users/dmitriy/code/chatgoose/src/background/llm-client.ts` | LLM provider router |
-| `/Users/dmitriy/code/chatgoose/src/background/llm-cost.ts` | Cost estimation and spend summary |
-| `/Users/dmitriy/code/chatgoose/src/background/agency-hub-client.ts` | Agency Hub REST client |
-| `/Users/dmitriy/code/chatgoose/src/background/agency-hub-usage-reporter.ts` | Usage event batching with retry |
-| `/Users/dmitriy/code/chatgoose/CHANGELOG.md` | Feature evolution, bugs found in production, lessons |
-| `/Users/dmitriy/code/chatgoose/TODO.md` | Active issues, planned features |
+| `/Users/dmitriy/code/goose/fansly-ext/SPEC_FINAL.md` | Authoritative spec (may lag code in some areas) |
+| `/Users/dmitriy/code/goose/fansly-ext/prompts/fast-reply.md` | Fast Reply + Improve Draft template |
+| `/Users/dmitriy/code/goose/fansly-ext/prompts/help-me.md` | Help Me template |
+| `/Users/dmitriy/code/goose/fansly-ext/prompts/fan-summary.md` | Fan Summary template (Russian output) |
+| `/Users/dmitriy/code/goose/fansly-ext/prompts/chat-review.md` | Chat Review template |
+| `/Users/dmitriy/code/goose/fansly-ext/prompts/ping.md` | Ping template with segment instructions |
+| `/Users/dmitriy/code/goose/fansly-ext/prompts/improve-draft.md` | Improve Draft template |
+| `/Users/dmitriy/code/goose/fansly-ext/prompts/hi-greeting.md` | Hi Greeting template with 3-variant output |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/constants.ts` | All numeric constants (timeouts, thresholds, counts) |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/features.ts` | Feature policy table (surface, timeout, model, result kind) |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/types.ts` | Complete type system including all port messages |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/model-registry.ts` | Model catalog with pricing |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/model-capabilities.ts` | Reasoning capability gates per model/feature |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/personalities.ts` | Bundled Lora personality (full text) + reconcile logic |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/prompts.ts` | Prompt builder, cache block structure, tone/split instructions, safety preambles |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/transcript.ts` | Message normalization, PPV state labeling, ping segment analysis, transcript formatting |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/earnings.ts` | Earnings aggregation, mills→USD, formatted block |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/subscriptions.ts` | Subscription context formatting |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/split.ts` | `[NEXT]` and `[VARIANT]` splitting |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/xml.ts` | Help Me and Chat Review XML parsing |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/reply-output.ts` | Reply sanitizer (think blocks, meta-leak, prefixes, quotes) |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/summary-cache.ts` | Cache validity, eviction, SummaryCacheStore |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/agency-hub.ts` | Agency Hub URL/metadata helpers, PROFILE_MAX_BYTES |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/errors.ts` | Error registry, all error codes and messages |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/prompt-injection.ts` | `escapeForPrompt()` with ordering guarantee |
+| `/Users/dmitriy/code/goose/fansly-ext/src/shared/compare-cards.ts` | Compare card resolution logic |
+| `/Users/dmitriy/code/goose/fansly-ext/src/background/operations.ts` | Main operation coordinator (2667 lines) |
+| `/Users/dmitriy/code/goose/fansly-ext/src/background/fansly-client.ts` | Fansly API client |
+| `/Users/dmitriy/code/goose/fansly-ext/src/background/llm-client.ts` | LLM provider router |
+| `/Users/dmitriy/code/goose/fansly-ext/src/background/llm-cost.ts` | Cost estimation and spend summary |
+| `/Users/dmitriy/code/goose/fansly-ext/src/background/agency-hub-client.ts` | Agency Hub REST client |
+| `/Users/dmitriy/code/goose/fansly-ext/src/background/agency-hub-usage-reporter.ts` | Usage event batching with retry |
+| `/Users/dmitriy/code/goose/fansly-ext/CHANGELOG.md` | Feature evolution, bugs found in production, lessons |
+| `/Users/dmitriy/code/goose/fansly-ext/TODO.md` | Active issues, planned features |
