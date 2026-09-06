@@ -60,8 +60,10 @@ ID for a person/partner/guest ID. The verified Hub send contract uses arrays for
 
 ## Rollout and spend
 
-1. Deploy the compatible Hub command composer and collection-policy/read-gateway
-   changes, then release this desktop build using the normal release procedure.
+1. Deploy the completed Hub OFAPI review stack through PR #142, then release
+   this desktop build using the normal release procedure. The release gate must
+   observe the exact SDK contract hash below on the deployed Hub; deploying only
+   the earlier S6 batch is insufficient for this final SDK snapshot.
 2. No collector is enabled by installing the desktop. To permit manual reference
    lookup, the owner allows on-demand access for **Profile and notifications**
    (`profile_notifications`, Giphy) and **Vault catalog** (`vault_catalog`, release
@@ -74,8 +76,8 @@ ID for a person/partner/guest ID. The verified Hub send contract uses arrays for
    A manual reference lookup is one bounded page; it does not auto-page.
 
 SQLite migration 21 is forward-only and preserves outbox history. SDK artifacts
-are generated from clean Hub commit `7045e3201abacb876ef687d6166c54cf9b3d3ee4`,
-contract hash `f311c920e3958267af5de55e03b0b7c18e3d014bc6f1d496fc63ad59e0c839fe`.
+are generated from clean Hub commit `41679950c9926bf4137d9002b54a52015fa42740`,
+contract hash `9b84eff9d5107f7cd916cae3fe7579e0fa0b0c85e80d736d2ff765356da3f617`.
 They are a separate vendor commit. Credentials and network calls remain in main;
 renderer inputs pass Zod and the generated Hub contract before command enqueue.
 
