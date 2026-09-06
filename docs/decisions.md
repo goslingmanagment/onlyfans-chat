@@ -45,6 +45,8 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D25 | 2026-07-24 | Kernel provider failures map to exact CG-HUB-04..08 cards by structural kernelCode; unknown provider* degrades to CG-HUB-10, stream truncation gets CG-HUB-09; dead direct-provider classifiers removed (family: core #182/#183, ext E57) |
 | D26 | 2026-07-24 | Registry cleanup is producer-complete; dead codes are permanently reserved, replayable codes require read-only tombstones, and all recovery copy names only real actions (family: ext E58; core error-handling canon) |
 
+| D27 | 2026-09-06 | OFAPI rich composer persists integer cents and exact payloads; explicit unchanged recovery and closed actions use Hub command custody (core #268) |
+
 ## Entries
 
 **D1 (2026-07-05).** Stage 4 desktop stop-loss: outbox dead-letter spool
@@ -597,3 +599,32 @@ manually and never promise an AI retry. The local account-to-active-persona
 assignment is still a real Settings flow, so CG-FLOW-02 remains live with that
 specific recovery. No retry, send-outcome, persona-proof, provenance, sync, or
 storage behavior changes.
+
+
+**D27 (2026-09-06).** The composer consumes core's `send_message_v2` and closed
+conversation commands through the generated SDK (core decision #268; source
+commit and contract hash in `packages/kernel-sdk/kernel-sdk.vendor.json`).
+Existing queued v1 rows remain v1. New renderer sends persist exact integer cents,
+reply/GIF/release references, preview IDs, screening selection and an explicit
+caption-lock choice before Hub intake. The default caption remains visible.
+Dictionary preview reads Hub's stored dictionary, treats vendor strings literally,
+and neither rewrites drafts nor claims complete coverage for a missing dictionary.
+
+A provider 422 retains the complete outbox draft and bounded explanation. An
+indeterminate v2 send cannot be confirmed by similar local message text. Only the
+user's explicit unchanged-recovery action asks Hub to reuse the original provider
+operation key; Hub owns eligibility, scope, body equality and expiry checks. There
+is no timer or automatic replay. Editing a rich failed draft requires a clear
+composer so another draft's attachments cannot be silently replaced.
+
+Closed actions persist client identity before intake, survive lost responses, and
+coalesce repeated clicks. Check status uses the retained identity; an uncertain
+action blocks changing the same setting. Local name, unread and hide state changes
+only after confirmation. Hide retains local chat history. Confirmed like/pin/mute
+states remain queryable beyond the bounded recent action history. All privileged
+calls and credentials stay in Electron main; IPC and generated contracts validate
+payloads. Forward SQLite migration 21 preserves existing rows.
+
+Current behavior, rollout and validation: `docs/ofapi-composer.md`. The earlier
+historical SPEC's blanket no-recovery wording is superseded only for explicit v2
+unchanged recovery; legacy v1 and automatic retry behavior are unchanged.

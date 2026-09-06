@@ -1,3 +1,4 @@
+import { MessageActions } from './ConversationActions';
 // Row renderers for the virtualized thread: day dividers, tip ledger rows,
 // message bubbles (asymmetric corners, PPV chips, media, reply-to, tombstones,
 // send-state mono labels per DESIGN §4, hover unsend with inline confirm).
@@ -152,6 +153,7 @@ export const MessageRow = memo(function MessageRow({
           {state !== null && (
             <span className={state.kind === 'seen' ? 'text-seen' : 'text-ink-low'}>{state.label}</span>
           )}
+          {!message.deleted&&<MessageActions accountId={accountId} chatId={message.chatId} messageId={message.id}/>}
           {unsendable &&
             (confirmUnsend ? (
               <span className="flex items-baseline gap-1.5">

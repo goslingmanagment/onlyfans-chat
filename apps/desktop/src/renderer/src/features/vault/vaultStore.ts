@@ -4,6 +4,7 @@
 // of an in-progress compose for THAT fan).
 
 import { create } from 'zustand';
+import { useComposerStore } from '../conversation/composerStore';
 import { EMPTY_SELECTION, toggleSelect, togglePreview, type VaultSelection } from './vaultLogic';
 
 interface VaultState {
@@ -47,5 +48,6 @@ export const useVaultStore = create<VaultState>((set) => ({
 
 /** Called on conversation change (ConversationPane effect). */
 export function resetVaultForConversation(): void {
+  useComposerStore.getState().reset();
   useVaultStore.getState().reset();
 }

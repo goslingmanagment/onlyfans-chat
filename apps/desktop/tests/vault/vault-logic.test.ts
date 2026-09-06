@@ -64,7 +64,7 @@ describe('selection (ordered multi-select)', () => {
   });
 });
 
-describe('parsePpvPrice (openapi: 0 or integer 3–200)', () => {
+describe('parsePpvPrice (send v2 exact cents $3–$200)', () => {
   it('treats empty / 0 / free as a free media message', () => {
     expect(parsePpvPrice('')).toEqual({ kind: 'free' });
     expect(parsePpvPrice('  ')).toEqual({ kind: 'free' });
@@ -75,11 +75,13 @@ describe('parsePpvPrice (openapi: 0 or integer 3–200)', () => {
   it('accepts whole dollars in range (with an optional $ prefix)', () => {
     expect(parsePpvPrice('25')).toEqual({ kind: 'paid', dollars: 25 });
     expect(parsePpvPrice('$25')).toEqual({ kind: 'paid', dollars: 25 });
+    expect(parsePpvPrice('6.97')).toEqual({kind:'paid',dollars:6.97});
+    expect(parsePpvPrice('0.00')).toEqual({kind:'free'});
     expect(parsePpvPrice(String(PPV_PRICE_MIN))).toEqual({ kind: 'paid', dollars: 3 });
     expect(parsePpvPrice(String(PPV_PRICE_MAX))).toEqual({ kind: 'paid', dollars: 200 });
   });
 
-  it('rejects below-min, above-max, cents, and junk — with reason descriptors', () => {
+  it('rejects below-min, above-max, excess decimal places, and junk — with reason descriptors', () => {
     // Reasons are now locale-free descriptors { key, params? } resolved to text
     // at the render site (i18n stage 2) — the $bound stays a NUMBER param.
     expect(parsePpvPrice('2')).toEqual({
@@ -90,7 +92,7 @@ describe('parsePpvPrice (openapi: 0 or integer 3–200)', () => {
       kind: 'invalid',
       reason: { key: 'vault.priceErrMax', params: { max: 200 } },
     });
-    expect(parsePpvPrice('9.99')).toEqual({
+    expect(parsePpvPrice('9.999')).toEqual({
       kind: 'invalid',
       reason: { key: 'vault.priceErrInteger' },
     });

@@ -1,3 +1,7 @@
+> Composer update, 2026-09-06: the current desktop implementation and verified
+> lookup shapes are in [OFAPI composer](../ofapi-composer.md), decision D27.
+> Older send-price and capability notes below are research snapshots.
+
 # OnlyFans API (onlyfansapi.com) — Technical Research Report
 
 > Researched 2026-06-10 against docs.onlyfansapi.com. Exact paths and field names verified against the vendored OpenAPI spec (`docs/vendor/onlyfansapi/openapi.json`) and the full docs dump (`docs/vendor/onlyfansapi/llms-full.txt`). When implementing, treat the vendored OpenAPI spec as the source of truth for request/response shapes; re-fetch per-page `.mdx` docs (section 8) for anything ambiguous.

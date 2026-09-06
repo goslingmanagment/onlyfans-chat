@@ -3,6 +3,8 @@
 // resolves must not create a second send. The renderer validates for UX; the
 // engine re-validates (price bounds, previews ⊆ mediaFiles) before enqueue.
 
+import { parsePriceCents } from '@chatgoose/shared/composer';
+import { pendingComposerRows, useComposerStore } from '../conversation/composerStore';
 import { getBridge } from '../../bridge/bridge';
 import { setDraftText, useAiStore } from '../ai/aiStore';
 import { scanTextForSend } from '../conversation/guardLogic';
@@ -21,9 +23,12 @@ export function sendPpvCompose(args: {
   if (inFlight.has(key)) return;
 
   const { selection, priceInput } = useVaultStore.getState();
+  const composer=useComposerStore.getState();
+  if(composer.error)return;
+  const priceCents=parsePriceCents(priceInput);if(priceCents===null)return;
   const price = parsePpvPrice(priceInput);
   const draft = useAiStore.getState().draftText;
-  const summary = deriveComposeSummary(selection, price, draft);
+  const summary = deriveComposeSummary(selection, price, draft, composer.options.lockedText);
   if (summary === null) return; // nothing selected or invalid price — no send
   if (scanTextForSend(draft.trim()) !== 'allow') return;
 
@@ -34,12 +39,15 @@ export function sendPpvCompose(args: {
       chatId: args.chatId,
       text: draft.trim(),
       price: summary.price,
+      priceCents, composer:composer.options,
       mediaFiles: [...selection.ids],
       previews: [...selection.previews],
     })
-    .then(() => {
+    .then((accepted) => {
+      pendingComposerRows.add(accepted.localId);
       // clear only if the chatter hasn't typed more since the accept
       if (useAiStore.getState().draftText === draft) setDraftText('');
+      useComposerStore.getState().reset();
       useVaultStore.getState().reset(); // selection consumed; panel closes
     })
     .catch(() => {

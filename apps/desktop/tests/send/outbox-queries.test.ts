@@ -39,7 +39,7 @@ describe('outbox queries', () => {
     insert(data, { localId: 'L1', sequenceId: 'seq', partIndex: 2, retryOf: 'L0' });
     const row = data.outbox.get('L1');
     expect(row).toEqual({
-      localId: 'L1',
+      composer:null,      localId: 'L1',
       accountId: ACCT,
       chatId: CHAT,
       text: 'text L1',

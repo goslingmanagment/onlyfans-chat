@@ -1,3 +1,4 @@
+import { useComposerStore } from '../conversation/composerStore';
 // Vault attach panel (PRD F7) — a dock-style surface above the composer (NOT
 // a modal: the thread stays visible, DESIGN anti-goal "no modal dialogs inside
 // the shift loop"). Album chips → search → virtualized thumb grid with ordered
@@ -149,8 +150,10 @@ export function VaultPanel({
     overscan: 4,
   });
 
+  const lockedText=useComposerStore(s=>s.options.lockedText);
+  const composerError=useComposerStore(s=>s.error);
   const price = parsePpvPrice(priceInput);
-  const summary = deriveComposeSummary(selection, price, draft);
+  const summary = deriveComposeSummary(selection, price, draft, lockedText);
   const guardVerdict = useMemo(
     () => scanDraftForDisplay(guardState, draft.trim()),
     [draft, guardState],
@@ -271,7 +274,7 @@ export function VaultPanel({
                 value={priceInput}
                 onChange={(event) => setPriceInput(event.target.value)}
                 placeholder={t('vault.pricePh')}
-                inputMode="numeric"
+                inputMode="decimal"
                 className={cx(
                   'num w-[72px] rounded-chip border bg-bg1 px-2 py-1 text-[13px] outline-none',
                   price.kind === 'invalid' ? 'border-bad text-bad' : 'border-line focus:border-clay-line',
@@ -333,7 +336,7 @@ export function VaultPanel({
               <Button
                 size="sm"
                 variant="primary"
-                disabled={!canSend || summary === null || guardBlocked}
+                disabled={!canSend || summary === null || guardBlocked || !!composerError}
                 title={
                   !canSend
                     ? t('conv.cannotSendFallback')

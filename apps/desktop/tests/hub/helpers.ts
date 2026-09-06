@@ -320,6 +320,8 @@ export function makeFakeHubClient(
     postUsageBatch: postUsageBatchMock,
     postIngestObservations: postIngestObservationsMock,
     getOfapiCreditsSummary: getOfapiCreditsSummaryMock,
+    previewBannedWords:vi.fn(async()=>({version:null,observedAt:null,complete:false,matching:'literal_case_insensitive' as const,matches:[]})),
+    readComposerReferences:vi.fn(async()=>({data:[]})),
     createOfapiCommand: vi.fn(() => Promise.resolve(commandResponse)),
     getOfapiCommand: vi.fn(() => Promise.resolve(commandResponse)),
     cancelOfapiCommand: vi.fn(() => Promise.resolve({ ...commandResponse, state: 'cancelled' })),

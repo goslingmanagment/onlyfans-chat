@@ -293,6 +293,11 @@ export function makeStubHubCommandClient(stub: StubSendClient): Pick<HubClient, 
           });
           break;
         }
+        case 'send_message_v2': {
+          const sent = await (stub.client as SendClient & {sendMessage:(params:unknown)=>Promise<OfApiSentMessage>}).sendMessage({accountId:request.accountId,chatId:request.conversationId,...request.payload,purpose:'send'});
+          result=commandFromRequest(request,'confirmed',{platformMessageId:String(sent.id),attemptFinishedAt:sent.createdAt});
+          break;
+        }
         case 'send_media_message_v1': {
           const sent = await (stub.client as SendClient & { sendMessage: (params: unknown) => Promise<OfApiSentMessage> }).sendMessage({
             accountId: request.accountId,
@@ -339,6 +344,7 @@ export function makeStubHubCommandClient(stub: StubSendClient): Pick<HubClient, 
             platformMessageId: request.payload.messageId,
           });
           break;
+        default: throw new Error('Unsupported auxiliary action in legacy send fixture');
       }
     } catch (error) {
       const code = errorCode(error);

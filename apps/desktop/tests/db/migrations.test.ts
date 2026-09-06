@@ -35,7 +35,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
       expect(indexes).toContain('idx_message_guard_events_occurred');
       expect(indexes).toContain('idx_message_guard_events_hash');
-      expect(SCHEMA_VERSION).toBe(20);
+      expect(SCHEMA_VERSION).toBe(21);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       const guardCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('message_guard_events')")

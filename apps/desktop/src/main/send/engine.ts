@@ -10,6 +10,10 @@
 // promotes them on evidence (Hub command status or messages.sent/local DB match) only.
 
 import { randomUUID } from 'node:crypto';
+import { routeSchemas } from '@kernel/sdk';
+import { createComposerActionService, type ComposerActionResult } from './composer-actions';
+import type { ComposerAction } from '@chatgoose/shared/composer';
+import { storedComposerSchema, centsToDollars, type ComposerOptions, type StoredComposer } from '@chatgoose/shared/composer';
 import { CgError } from '@chatgoose/shared';
 import { HubError, type HubClient, type HubOfapiCommand } from '@chatgoose/shared/hub/index';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
@@ -55,7 +59,7 @@ export type SendClient = Pick<OfApiClient, 'listMessages'>;
 
 export interface SendEngineOptions {
   client: SendClient;
-  hubCommandClient?: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand'>;
+  hubCommandClient?: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand'> & Partial<Pick<HubClient, 'previewBannedWords' | 'readComposerReferences'>>;
   data: DataLayer;
   messageGuard: Pick<MessageGuardRuntime, 'assertAllowed'>;
   toMediaUrl: ToMediaUrl;
@@ -70,11 +74,16 @@ export interface SendEngineOptions {
 }
 
 export interface SendEngine {
+  previewBannedWords(text: string): ReturnType<HubClient['previewBannedWords']>;
+  readComposerReferences(args: Parameters<HubClient['readComposerReferences']>[0]): ReturnType<HubClient['readComposerReferences']>;
+  performAction(accountId: string, chatId: string, action: ComposerAction): Promise<ComposerActionResult>;
+  listActions(accountId: string, chatId: string, messageId?: string): ComposerActionResult[];
   /** Persists queued rows (atomically) and kicks the chat's pump; never awaits the send. */
   sendParts(args: {
     accountId: string;
     chatId: string;
     parts: readonly string[];
+    composer?: ComposerOptions | undefined;
   }): { localIds: string[]; sequenceId: string | null };
   /**
    * PPV / media send (PRD F7): ALWAYS a single outbox row — [NEXT] sequences
@@ -89,9 +98,11 @@ export interface SendEngine {
     price: number;
     mediaFiles: readonly OutboxMediaId[];
     previews: readonly OutboxMediaId[];
+    composer?: ComposerOptions | undefined;
+    priceCents?: number | undefined;
   }): { localId: string };
   /** FAILED rows only — the old row is cancelled (superseded), a NEW row queues. */
-  retry(args: { accountId: string; localId: string; text: string }): { localId: string };
+  retry(args: { accountId: string; localId: string; text: string; reuseProviderOperation?: boolean | undefined }): { localId: string };
   /** failed|unconfirmed → cancelled (audit row kept). */
   dismiss(args: { accountId: string; localId: string }): void;
   /** Remaining queued rows → cancelled; an in-flight part finishes its own course. */
@@ -143,6 +154,7 @@ const HUB_WRITE_UNAVAILABLE_MESSAGE =
   'Agency Hub command transport is required for OnlyFans writes. Configure Hub before sending.';
 
 function toCommandMediaId(id: OutboxMediaId): string {
+  if(typeof id==='number'&&!Number.isSafeInteger(id))throw new Error('Media IDs must retain exact digits');
   return String(id);
 }
 
@@ -400,6 +412,34 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     ]);
   }
 
+  function validationExplanation(command: HubOfapiCommand): string | null {
+    if (command.verifierResult?.httpStatus !== 422) return null;
+    const raw = command.verifierResult.validationResponse;
+    if (typeof raw !== 'string') return 'The provider rejected this draft. Edit it before sending again.';
+    try {
+      const value: unknown = JSON.parse(raw);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+      const record = value as Record<string, unknown>;
+      const messages = [typeof record.message === 'string' ? record.message : null];
+      if (record.errors && typeof record.errors === 'object') {
+        for (const errors of Object.values(record.errors)) {
+          if (Array.isArray(errors)) messages.push(...errors.filter((x): x is string => typeof x === 'string'));
+        }
+      }
+      return messages.filter(Boolean).join(' ').slice(0, 2000) || 'The provider rejected this draft.';
+    } catch { return 'The provider rejected this draft. Its original content is retained.'; }
+  }
+  function validationWords(command: HubOfapiCommand): string[] {
+    if (command.verifierResult?.httpStatus !== 422) return [];
+    try {
+      const parsed: unknown = JSON.parse(String(command.verifierResult.validationResponse));
+      if (!parsed || typeof parsed !== 'object') return [];
+      const record = parsed as Record<string, unknown>;
+      const words = record.banned_words ?? record.words ?? record.textHighLight;
+      return Array.isArray(words) ? words.filter((x): x is string => typeof x === 'string').slice(0, 100) : [];
+    } catch { return []; }
+  }
+
   function settleHubCommand(row: OutboxRow, command: HubOfapiCommand): boolean {
     switch (command.state) {
       case 'confirmed':
@@ -422,7 +462,8 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
           errorMessage:
             command.state === 'cancelled'
               ? 'The server command was cancelled before delivery'
-              : `The server command ended as ${command.state}`,
+              : validationExplanation(command) ?? `The server command ended as ${command.state}`,
+          textHighlights: validationWords(command),
         });
         return false;
       case 'indeterminate':
@@ -454,7 +495,12 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         retryOfCommandId = original.coreCommandId;
       }
     }
-    const command =
+    const command = row.composer ? ({
+      clientCommandId: row.localId, kind: 'send_message_v2', accountId: row.accountId,
+      conversationId: row.chatId, retryOfCommandId,
+      payload: { ...row.composer, text: row.text,
+        mediaFiles: row.mediaFiles.map(toCommandMediaId), previews: row.previews.map(toCommandMediaId) },
+    } as const) :
       row.mediaFiles.length > 0
         ? ({
             clientCommandId: row.localId,
@@ -786,6 +832,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       .items.filter((message) => message.isSentByMe && !message.deleted);
     const claimed = data.outbox.claimedMessageIds(accountId, chatId);
     for (const row of unconfirmed) {
+      if (row.composer) continue; // Rich sends settle only through the Hub's bound response/webhook evidence.
       const match = candidates.find(
         (candidate: MessageRow) =>
           !claimed.has(candidate.messageId) && rowMatchesCandidate(row, candidate),
@@ -879,12 +926,38 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     );
   }
 
+  function validateComposer(accountId: string, chatId: string, text: string, composer: StoredComposer, mediaFiles: readonly OutboxMediaId[] = [], previews: readonly OutboxMediaId[] = []): void {
+    routeSchemas.createOfapiCommand.body.parse({
+      clientCommandId: randomUUID(), kind: 'send_message_v2', accountId, conversationId: chatId,
+      payload: { ...composer, text, mediaFiles: mediaFiles.map(toCommandMediaId), previews: previews.map(toCommandMediaId) },
+    });
+  }
+
+  const actions = createComposerActionService(data, hubCommandClient, now);
   return {
-    sendParts({ accountId, chatId, parts }) {
+    listActions: actions.list,
+    performAction(accountId, chatId, action) {
+      assertAcceptingWriteWork();
+      const task = startCredentialTask(() => actions.perform(accountId, chatId, action));
+      if (!task) return Promise.reject(new Error('Command runtime is retiring'));
+      return task;
+    },
+    previewBannedWords(text) {
+      if (!hubCommandClient?.previewBannedWords) return Promise.reject(hubWriteUnavailable());
+      return hubCommandClient.previewBannedWords(text);
+    },
+    readComposerReferences(args) {
+      if (!hubCommandClient?.readComposerReferences) return Promise.reject(hubWriteUnavailable());
+      return hubCommandClient.readComposerReferences(args);
+    },
+    sendParts({ accountId, chatId, parts, composer }) {
       assertAcceptingWriteWork();
       if (parts.length === 0) {
         throw new Error('sendParts: at least one part is required');
       }
+      const stored = composer ? storedComposerSchema.parse({ ...composer, priceCents: 0 }) : null;
+      if (stored && parts.length > 1 && (stored.giphyId || stored.replyToMessageId || stored.rfTag.length || stored.rfPartner.length || stored.rfGuest.length)) throw new Error('Send a reply, GIF or release references as a single message.');
+      if (stored) for (const text of parts) validateComposer(accountId, chatId, text, stored);
       gateCanSend(accountId, chatId);
       for (const text of parts) {
         guardText({ accountId, chatId, text, surface: 'engine:sendParts' });
@@ -893,6 +966,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       const createdAt = nowIso();
       const rows = parts.map((text, partIndex) => ({
         localId: randomUUID(),
+        composer: stored,
         accountId,
         chatId,
         text,
@@ -907,7 +981,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       return { localIds: rows.map((row) => row.localId), sequenceId };
     },
 
-    sendPpv({ accountId, chatId, text, price, mediaFiles, previews }) {
+    sendPpv({ accountId, chatId, text, price, mediaFiles, previews, composer, priceCents }) {
       assertAcceptingWriteWork();
       // ALL validation precedes the insert: an invalid PPV must never enqueue.
       if (mediaFiles.length === 0) {
@@ -916,7 +990,9 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       if (new Set(mediaFiles.map(String)).size !== mediaFiles.length) {
         throw new Error('sendPpv: mediaFiles contains duplicates');
       }
-      if (!isValidPpvPrice(price)) {
+      const stored = composer ? storedComposerSchema.parse({ ...composer, priceCents }) : null;
+      if (stored) { validateComposer(accountId, chatId, text, stored, mediaFiles, previews); price = centsToDollars(stored.priceCents); }
+      if (!stored && !isValidPpvPrice(price)) {
         throw new Error(
           `sendPpv: price must be 0 (free) or a whole-dollar amount between ${PPV_PRICE_MIN} and ${PPV_PRICE_MAX}`,
         );
@@ -949,6 +1025,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
           retryOf: null,
           createdAt: nowIso(),
           price,
+          composer: stored,
           mediaFiles,
           previews,
         },
@@ -957,18 +1034,19 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       return { localId };
     },
 
-    retry({ accountId, localId, text }) {
+    retry({ accountId, localId, text, reuseProviderOperation = false }) {
       assertAcceptingWriteWork();
       const row = data.outbox.get(localId);
       if (row === null || row.accountId !== accountId) {
         throw new Error('retry: unknown outbox row');
       }
-      if (row.state === 'unconfirmed') {
+      if (reuseProviderOperation && (!row.composer || !row.coreCommandId || text !== row.text)) throw new Error('Recovery requires an unchanged v2 draft and its accepted Hub command.');
+      if (row.state === 'unconfirmed' && !reuseProviderOperation) {
         // The verifier owns unconfirmed rows: the send may have been delivered,
         // so a retry here could double-message the fan (SPEC §15.5).
         throw new Error('retry: row is unconfirmed — verify or dismiss it first');
       }
-      if (row.state !== 'failed') {
+      if (row.state !== 'failed' && !(reuseProviderOperation && row.state === 'unconfirmed')) {
         throw new Error(`retry: only failed rows can be retried (row is '${row.state}')`);
       }
       gateCanSend(accountId, row.chatId);
@@ -994,9 +1072,10 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
         // PPV payload carries over unchanged (only the caption is editable);
         // previews ⊆ mediaFiles holds because the old row enforced it.
         price: row.price,
+        composer: row.composer ? { ...row.composer, reuseProviderOperation } : null,
         mediaFiles: row.mediaFiles,
         previews: row.previews,
-      });
+      }, reuseProviderOperation);
       if (!replaced) {
         throw new Error('retry: failed row changed before the retry could be persisted');
       }

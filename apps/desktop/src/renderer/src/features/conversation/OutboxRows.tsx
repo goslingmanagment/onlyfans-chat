@@ -3,7 +3,10 @@
 // offer Edit / Retry / Dismiss; unconfirmed rows offer Check now / Dismiss and
 // NEVER a resend (SPEC §7.5 — resend is a manual new send only after checking).
 
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useState } from 'react';
+import { useComposerStore } from './composerStore';
+import { useVaultStore } from '../vault/vaultStore';
+import { useLocale } from '../../lib/i18n';
 import type { OutboxItemVM } from '../../../../preload/contract';
 import { cx } from '../../lib/cx';
 import { formatClock } from '../../lib/time';
@@ -56,6 +59,9 @@ export const OutboxRow = memo(function OutboxRow({
   item: OutboxItemVM;
 }): React.JSX.Element | null {
   const t = useT();
+  const ru=useLocale()==='ru';
+  const [confirmRecovery,setConfirmRecovery]=useState(false);
+  const [recoveryError,setRecoveryError]=useState<string|null>(null);
   const dismiss = useCallback(() => {
     void getBridge().invoke('cmd:send.dismiss', { accountId, localId: item.localId });
   }, [accountId, item.localId]);
@@ -78,12 +84,23 @@ export const OutboxRow = memo(function OutboxRow({
   }
 
   function edit(): void {
-    // load the text back into the composer, then acknowledge the failed row
+    if (item.composer && (useAiStore.getState().draftText.trim() || useVaultStore.getState().selection.ids.length)) {
+      setRecoveryError(ru ? 'Сначала сохраните или очистите текущий черновик.' : 'Save or clear the current draft first.');
+      return;
+    }
+    // Restore a rich draft without merging its attachments into another draft.
     setDraftText(appendToDraft(useAiStore.getState().draftText, item.text));
+    if(item.composer){useComposerStore.getState().reset();useComposerStore.getState().set(item.composer);
+      useVaultStore.setState({selection:{ids:(item.mediaFiles??[]).map(String),previews:(item.previews??[]).map(String)},priceInput:(item.composer.priceCents/100).toFixed(2),open:!!item.mediaCount});}
     focusComposer();
     dismiss();
   }
 
+  function recover():void {
+    setConfirmRecovery(false);setRecoveryError(null);
+    void getBridge().invoke('cmd:send.retry',{accountId,localId:item.localId,text:item.text,reuseProviderOperation:true})
+      .catch(()=>setRecoveryError(ru?'Восстановление отклонено. Проверьте статус в Hub.':'Recovery refused. Check Hub command status.'));
+  }
   function verify(): void {
     void getBridge().invoke('cmd:send.verifyNow', { accountId, chatId: item.chatId });
   }
@@ -132,6 +149,10 @@ export const OutboxRow = memo(function OutboxRow({
             {explainer}
           </div>
         )}
+        {item.composer && (item.state==='failed'||item.state==='unconfirmed') && <div className="mt-1 text-[12px] text-warn">
+          {confirmRecovery?<><p>{ru?'Повторить неизменную операцию с исходным ключом? Hub проверит срок и область. Отправка могла уже состояться.':'Recover the unchanged operation with its original key? Hub checks scope and expiry. Delivery may already have happened.'}</p><button type="button" onClick={recover} className="underline">{ru?'Восстановить неизменную':'Recover unchanged'}</button> · <button type="button" onClick={()=>setConfirmRecovery(false)}>{ru?'Отмена':'Cancel'}</button></>:<button type="button" className="underline" onClick={()=>setConfirmRecovery(true)}>{ru?'Восстановление с исходным ключом…':'Recover with original key…'}</button>}
+          {recoveryError&&<p role="alert">{recoveryError}</p>}
+        </div>}
         {view.actions.length > 0 && (
           <div className="mt-1 flex items-center gap-3 text-[12px] font-semibold">
             {view.actions.includes('edit') && <RowAction onClick={edit}>{t('conv.rowEdit')}</RowAction>}

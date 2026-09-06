@@ -514,7 +514,22 @@ export const ALL_TABLES = [
   'ai_spend_log',
   'ai_acceptance_ops',
   'unsend_commands',
+  'composer_actions',
   'thread_fetch_log',
   'message_guard_events',
   'harvest_uploaded_revisions',
 ] as const;
+
+// Preserve the exact new send payload and every closed action's logical identity.
+export const SCHEMA_V21 = `
+ALTER TABLE outbox ADD COLUMN composer TEXT;
+ALTER TABLE chats ADD COLUMN locally_hidden INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE composer_actions (
+  client_command_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, chat_id TEXT NOT NULL,
+  action TEXT NOT NULL, action_key TEXT NOT NULL, core_command_id TEXT,
+  state TEXT NOT NULL CHECK(state IN ('pending','confirmed','failed','unconfirmed')),
+  result TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX composer_actions_pending ON composer_actions(account_id, chat_id, action_key)
+  WHERE state IN ('pending','unconfirmed');
+`;

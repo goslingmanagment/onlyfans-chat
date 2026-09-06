@@ -4,6 +4,8 @@
 // composer is disabled with the platform's reason (SPEC §7.0).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ComposerOptions } from './ComposerOptions';
+import { pendingComposerRows, useComposerStore } from './composerStore';
 import type { ChatListItemVM } from '../../../../preload/contract';
 import type { GuardCategory, GuardVerdict } from '@chatgoose/shared/message-guard/index';
 import { Button } from '../../design/Button';
@@ -50,13 +52,25 @@ export function ComposerBar({
     [guardConfig.data],
   );
   const outboxItems = outbox.data;
+  useEffect(()=>{
+    for(const row of outboxItems??[]){
+      if(!pendingComposerRows.has(row.localId)||!['sent','failed','cancelled'].includes(row.state))continue;
+      pendingComposerRows.delete(row.localId);
+      if(row.state==='failed' && row.composer && !useAiStore.getState().draftText){
+        setDraftText(row.text);useComposerStore.getState().set(row.composer);
+        if(row.mediaCount)useVaultStore.setState({selection:{ids:(row.mediaFiles??[]).map(String),previews:(row.previews??[]).map(String)},priceInput:(row.composer.priceCents/100).toFixed(2),open:true});
+      }
+    }
+  },[outboxItems]);
   const sequence = useMemo(() => activeSequence(outboxItems ?? []), [outboxItems]);
   const vaultOpen = useVaultStore((s) => s.open);
   const setVaultOpen = useVaultStore((s) => s.setOpen);
   const attachedCount = useVaultStore((s) => s.selection.ids.length);
 
   const canSend = chat.canSendMessage;
-  const blank = draft.trim().length === 0;
+  const composer=useComposerStore(s=>s.options);
+  const composerError=useComposerStore(s=>s.error);
+  const blank = draft.trim().length === 0 && !composer.giphyId;
   // With vault media attached, the draft IS the PPV caption — plain send is
   // parked so the caption can't accidentally go out as a bare text message;
   // the PPV summary strip owns the explicit confirm (PRD F7 misprice guard).
@@ -125,6 +139,7 @@ export function ComposerBar({
 
   return (
     <div className="mx-[18px] mt-[9px] mb-[14px] flex-none rounded-card border border-line-strong bg-bg1 px-[14px] pt-3 pb-[10px] shadow-soft">
+      <ComposerOptions accountId={accountId} draft={draft}/>
       <DraftTextarea
         id={COMPOSER_TEXTAREA_ID}
         value={draft}
@@ -195,7 +210,7 @@ export function ComposerBar({
         <Button
           variant="primary"
           className="shrink-0"
-          disabled={!canSend || blank || ppvComposeActive || guardBlocked}
+          disabled={!canSend || blank || ppvComposeActive || guardBlocked || !!composerError}
           title={
             !canSend
               ? cannotReason

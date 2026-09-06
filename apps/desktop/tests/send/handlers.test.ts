@@ -38,6 +38,9 @@ async function invoke(channel: string, args?: unknown): Promise<unknown> {
 
 function makeEngineStub(): SendEngine {
   return {
+    previewBannedWords:vi.fn(async()=>({version:null,observedAt:null,complete:false,matching:'literal_case_insensitive' as const,matches:[]})),
+    readComposerReferences:vi.fn(async()=>({data:[]})),
+    performAction:vi.fn(async()=>{throw new Error('unconfigured test action');}),listActions:vi.fn(()=>[]),
     sendParts: vi.fn(() => ({ localIds: ['local-1'], sequenceId: null })),
     sendPpv: vi.fn(() => ({ localId: 'local-ppv-1' })),
     retry: vi.fn(() => ({ localId: 'local-2' })),
@@ -259,7 +262,7 @@ describe('send-channel IPC handlers', () => {
         errorMessage: null,
         textHighlights: [],
         price: 0,
-        mediaCount: 0,
+        mediaCount: 0, composer:null,mediaFiles:[],previews:[],
         createdAt: '2026-06-11T12:00:00.000Z',
         updatedAt: '2026-06-11T12:00:00.000Z',
       },

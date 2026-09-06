@@ -5,6 +5,7 @@
 // which only exists after the invoke is accepted).
 
 import { uiMessage } from '@chatgoose/shared/i18n/index';
+import { pendingComposerRows, useComposerStore } from './composerStore';
 import { getBridge } from '../../bridge/bridge';
 import { currentLocale } from '../../lib/i18n';
 import { useUiStore } from '../../state/uiStore';
@@ -27,7 +28,9 @@ export function sendCurrentDraft(args: {
   const key = `${args.accountId}/${args.chatId}`;
   if (inFlight.has(key)) return;
   const draft = useAiStore.getState().draftText;
-  const parts = splitDraftParts(draft);
+  const composer=useComposerStore.getState();
+  if(composer.error)return;
+  const parts = draft.trim() ? splitDraftParts(draft) : composer.options.giphyId ? [''] : [];
   if (parts.length === 0) return;
   if (parts.length > MAX_SEND_PARTS) {
     const locale = currentLocale();
@@ -43,10 +46,11 @@ export function sendCurrentDraft(args: {
   if (scanDraftPartsForSend(draft) !== 'allow') return;
   inFlight.add(key);
   void getBridge()
-    .invoke('cmd:send.message', { accountId: args.accountId, chatId: args.chatId, parts })
-    .then(() => {
+    .invoke('cmd:send.message', { accountId: args.accountId, chatId: args.chatId, parts, composer:composer.options })
+    .then((accepted) => {
+      accepted.localIds.forEach(id=>pendingComposerRows.add(id));
       // clear only if the chatter hasn't typed more since the accept
-      if (useAiStore.getState().draftText === draft) setDraftText('');
+      if (useAiStore.getState().draftText === draft) {setDraftText('');useComposerStore.getState().reset();}
     })
     .catch(() => {
       // invoke-level rejection ⇒ no outbox row was persisted; keep the draft

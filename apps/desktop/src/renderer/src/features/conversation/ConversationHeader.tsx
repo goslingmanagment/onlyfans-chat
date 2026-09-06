@@ -1,3 +1,4 @@
+import { ConversationActions } from './ConversationActions';
 import type { ChatListItemVM, FanPanelVM } from '../../../../preload/contract';
 import { Avatar } from '../../design/Avatar';
 import { Kbd } from '../../design/Kbd';
@@ -153,6 +154,7 @@ export function ConversationHeader({
             ↻
           </span>
         </button>
+        <ConversationActions key={`${accountId}:${chat.chatId}`} accountId={accountId} chatId={chat.chatId} name={fan?.customName??chat.fanName}/>
         <AiHeaderMenu />
         <Kbd>]</Kbd>
       </div>

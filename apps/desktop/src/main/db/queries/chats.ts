@@ -81,12 +81,12 @@ const FILTER_WHERE: Record<ChatFilter, string> = {
  * missing a regression back to materializing every account's transactions. */
 export function chatListQuerySql(filter: ChatFilter): string {
   return `SELECT ${LIST_COLUMNS} ${LIST_JOINS}
-           WHERE c.account_id = @account_id ${FILTER_WHERE[filter]}
+           WHERE c.account_id = @account_id AND c.locally_hidden = 0 ${FILTER_WHERE[filter]}
            ${ORDER} LIMIT @limit OFFSET @offset`;
 }
 
 export const CHAT_SEARCH_QUERY_SQL = `SELECT ${LIST_COLUMNS} ${LIST_JOINS}
-           WHERE c.account_id = @account_id AND c.fan_name LIKE @pattern ESCAPE '\\'
+           WHERE c.account_id = @account_id AND c.locally_hidden = 0 AND c.fan_name LIKE @pattern ESCAPE '\\'
            ${ORDER} LIMIT @limit`;
 
 function spendCutoffIso(): string {

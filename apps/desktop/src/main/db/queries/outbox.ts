@@ -6,6 +6,7 @@
 // cancelled. 'sending' is persisted by the claim BEFORE any network I/O.
 
 import { z } from 'zod';
+import { storedComposerSchema, type StoredComposer } from '@chatgoose/shared/composer';
 import type { ChatGooseDb } from '../database';
 import type { DbChangeBus } from '../change-bus';
 import { toJson } from '../rows';
@@ -26,6 +27,7 @@ const OUTBOX_STATES = [
 export type OutboxMediaId = string | number;
 
 export interface OutboxRow {
+  composer?: StoredComposer | null;
   localId: string;
   accountId: string;
   chatId: string;
@@ -55,6 +57,7 @@ export interface OutboxRow {
 
 /** New rows always enter as 'queued'; only claimNextQueued moves them on. */
 export interface OutboxInsert {
+  composer?: StoredComposer | null;
   localId: string;
   accountId: string;
   chatId: string;
@@ -73,7 +76,7 @@ export interface OutboxInsert {
 const COLUMNS =
   'local_id, account_id, chat_id, text, transport, state, sequence_id, part_index, message_id, ' +
   'error_code, error_message, text_highlights, attempts, retry_of, core_command_id, price, ' +
-  'media_files, previews, created_at, updated_at';
+  'media_files, previews, composer, created_at, updated_at';
 
 const outboxSqlSchema = z.object({
   local_id: z.string(),
@@ -96,6 +99,7 @@ const outboxSqlSchema = z.object({
   price: z.number(),
   media_files: z.string(),
   previews: z.string(),
+  composer: z.string().nullable().optional(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -109,6 +113,7 @@ export function decodeOutboxRow(value: unknown): OutboxRow {
   const mediaFilesJson: unknown = JSON.parse(row.media_files);
   const previewsJson: unknown = JSON.parse(row.previews);
   return {
+    composer: row.composer ? storedComposerSchema.parse(JSON.parse(row.composer)) : null,
     localId: row.local_id,
     accountId: row.account_id,
     chatId: row.chat_id,
@@ -147,7 +152,7 @@ export interface OutboxQueries {
   insertMany(rows: readonly OutboxInsert[]): void;
   /** Atomically supersede one failed row with its queued retry. If inserting
    *  the replacement fails, the original row remains failed/retryable. */
-  replaceFailedWithRetry(originalLocalId: string, retry: OutboxInsert): boolean;
+  replaceFailedWithRetry(originalLocalId: string, retry: OutboxInsert, allowUnconfirmed?: boolean): boolean;
   get(localId: string): OutboxRow | null;
   /** Guarded transition; false (no write) when the row is missing or not in `from`. */
   transition(args: OutboxTransitionArgs): boolean;
@@ -177,11 +182,11 @@ const INSERT_SQL = `
 INSERT INTO outbox (
   local_id, account_id, chat_id, text, transport, state, sequence_id, part_index,
   message_id, error_code, error_message, text_highlights, attempts, retry_of,
-  price, media_files, previews, created_at, updated_at
+  price, media_files, previews, composer, created_at, updated_at
 ) VALUES (
   @local_id, @account_id, @chat_id, @text, @transport, 'queued', @sequence_id, @part_index,
   NULL, NULL, NULL, '[]', 0, @retry_of,
-  @price, @media_files, @previews, @created_at, @created_at
+  @price, @media_files, @previews, @composer, @created_at, @created_at
 )`;
 
 export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQueries {
@@ -209,6 +214,7 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
       price: row.price ?? 0,
       media_files: toJson(row.mediaFiles ?? []),
       previews: toJson(row.previews ?? []),
+      composer: row.composer ? toJson(storedComposerSchema.parse(row.composer)) : null,
       created_at: row.createdAt,
     });
   }
@@ -233,7 +239,7 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
       }
     },
 
-    replaceFailedWithRetry(originalLocalId, retry) {
+    replaceFailedWithRetry(originalLocalId, retry, allowUnconfirmed = false) {
       if (retry.retryOf !== originalLocalId) {
         throw new Error('Retry row must reference the failed row it supersedes');
       }
@@ -243,9 +249,10 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
             `UPDATE outbox
              SET state = 'cancelled', updated_at = @updated_at
              WHERE local_id = @local_id AND account_id = @account_id
-               AND chat_id = @chat_id AND state = 'failed'`,
+               AND chat_id = @chat_id AND (state = 'failed' OR (@allow_unconfirmed = 1 AND state = 'unconfirmed'))`,
           )
           .run({
+            allow_unconfirmed: allowUnconfirmed ? 1 : 0,
             local_id: originalLocalId,
             account_id: retry.accountId,
             chat_id: retry.chatId,

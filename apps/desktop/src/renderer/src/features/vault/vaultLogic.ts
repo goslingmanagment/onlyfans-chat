@@ -4,9 +4,10 @@
 // engine's pre-enqueue bounds — the renderer guard is UX, main is the law),
 // the mandatory PPV compose summary, and the gallery page merge.
 
+import { parsePriceCents, centsToDollars } from '@chatgoose/shared/composer';
 import type { GalleryItemVM } from '../../../../preload/contract';
 
-// openapi send-message: price is 0 or an integer between 3–200 (whole dollars).
+// Send v2 accepts exact cents: free, or $3.00–$200.00.
 export const PPV_PRICE_MIN = 3;
 export const PPV_PRICE_MAX = 200;
 
@@ -69,7 +70,7 @@ export type PpvPrice =
   | { kind: 'invalid'; reason: PriceReason };
 
 /**
- * '' / '0' / 'free' ⇒ free media message; otherwise whole dollars 3–200.
+ * '' / '0' / 'free' ⇒ free media message; otherwise exact cents within $3–$200.
  * Mirrors the engine's isValidPpvPrice — anything invalid never reaches IPC.
  */
 export function parsePpvPrice(input: string): PpvPrice {
@@ -80,8 +81,10 @@ export function parsePpvPrice(input: string): PpvPrice {
   if (!/^\d+(\.\d+)?$/.test(trimmed)) {
     return { kind: 'invalid', reason: { key: 'vault.priceErrWhole' } };
   }
-  const value = Number(trimmed);
-  if (!Number.isInteger(value)) {
+  const cents=parsePriceCents(trimmed);
+  const value=Number(trimmed);
+  if(cents===0)return {kind:'free'};
+  if (cents===null && value>=PPV_PRICE_MIN && value<=PPV_PRICE_MAX) {
     return { kind: 'invalid', reason: { key: 'vault.priceErrInteger' } };
   }
   if (value < PPV_PRICE_MIN) {
@@ -90,7 +93,7 @@ export function parsePpvPrice(input: string): PpvPrice {
   if (value > PPV_PRICE_MAX) {
     return { kind: 'invalid', reason: { key: 'vault.priceErrMax', params: { max: PPV_PRICE_MAX } } };
   }
-  return { kind: 'paid', dollars: value };
+  return cents===null ? {kind:'invalid',reason:{key:'vault.priceErrWhole'}} : cents===0 ? {kind:'free'} : {kind:'paid',dollars:centsToDollars(cents)};
 }
 
 // ─── Compose summary (mandatory misprice guard, PRD F7) ──────────────────
@@ -125,6 +128,7 @@ export function deriveComposeSummary(
   selection: VaultSelection,
   price: PpvPrice,
   draft: string,
+  lockedText = true,
 ): ComposeSummary | null {
   if (selection.ids.length === 0 || price.kind === 'invalid') {
     return null;
@@ -135,7 +139,7 @@ export function deriveComposeSummary(
     itemCount,
     previewCount: selection.previews.length,
     price: dollars,
-    caption: draft.trim() === '' ? 'none' : dollars > 0 ? 'locked' : 'visible',
+    caption: draft.trim() === '' ? 'none' : lockedText && dollars > 0 ? 'locked' : 'visible',
     confirmLabel:
       dollars > 0
         ? { key: 'vault.confirmLabelPaid', itemCount, dollars }

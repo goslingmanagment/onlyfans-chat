@@ -1,3 +1,5 @@
+import type { ComposerOptions, StoredComposer, ComposerAction } from '@chatgoose/shared/composer';
+import type { HubBannedPreview, ComposerReferenceKind } from '@chatgoose/shared/hub/index';
 // The renderer↔main contract: channel names + narrow view models (DESIGN §3.3 —
 // the renderer never sees raw OFAPI JSON). Imported by main (handlers), preload
 // (bridge), and renderer (types only). Operation/sync event payloads come from
@@ -654,7 +656,15 @@ export interface DbChangedEvent {
 
 export type OutboxStateVM = 'queued' | 'sending' | 'sent' | 'failed' | 'unconfirmed' | 'cancelled';
 
+export interface ComposerActionVM {
+  clientCommandId:string;coreCommandId:string|null;action:ComposerAction;
+  state:'pending'|'confirmed'|'failed'|'unconfirmed';error:string|null;
+}
+
 export interface OutboxItemVM {
+  composer?: StoredComposer | null;
+  mediaFiles?: (string | number)[];
+  previews?: (string | number)[];
   localId: string;
   chatId: string;
   text: string;
@@ -843,6 +853,10 @@ export interface GalleryItemVM {
 // ─── Channel map ─────────────────────────────────────────────────────────
 
 export interface InvokeChannels {
+  'query:composer.bannedPreview': {args:{text:string};result:HubBannedPreview};
+  'query:composer.references': {args:{accountId:string;kind:ComposerReferenceKind;query?:string};result:{items:{id:string;label:string;type:string|null;partnerId:string|null;guest:boolean|null}[];partial:boolean}};
+  'query:composer.actions': {args:{accountId:string;chatId:string;messageId?:string};result:ComposerActionVM[]};
+  'cmd:composer.action': {args:{accountId:string;chatId:string;action:ComposerAction};result:ComposerActionVM};
   'query:accounts.list': { args: void; result: AccountVM[] };
   'query:chats.list': {
     args: { accountId: string; filter: ChatFilter; limit?: number; offset?: number };
@@ -951,12 +965,12 @@ export interface InvokeChannels {
   };
   /** parts.length > 1 ⇒ a [NEXT] sequence (own row per part, 2–5 s delays). */
   'cmd:send.message': {
-    args: { accountId: string; chatId: string; parts: string[] };
+    args: { accountId: string; chatId: string; parts: string[]; composer?: ComposerOptions };
     result: { localIds: string[]; sequenceId: string | null };
   };
   /** Manual retry of a FAILED row (edited text allowed) — a new audit row linked via retry_of. */
   'cmd:send.retry': {
-    args: { accountId: string; localId: string; text: string };
+    args: { accountId: string; localId: string; text: string; reuseProviderOperation?: boolean };
     result: { localId: string };
   };
   /** Acknowledge a failed/unconfirmed row (state → cancelled; audit row kept). */
@@ -1083,6 +1097,8 @@ export interface InvokeChannels {
       chatId: string;
       text: string;
       price: number;
+      priceCents?: number;
+      composer?: ComposerOptions;
       mediaFiles: string[];
       previews: string[];
     };
@@ -1199,6 +1215,10 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'cmd:ai.feedback': true,
   'query:outbox.list': true,
   'cmd:send.message': true,
+  'query:composer.bannedPreview': true,
+  'query:composer.references': true,
+  'query:composer.actions': true,
+  'cmd:composer.action': true,
   'cmd:send.retry': true,
   'cmd:send.dismiss': true,
   'cmd:send.cancelSequence': true,

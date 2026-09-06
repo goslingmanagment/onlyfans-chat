@@ -1,9 +1,11 @@
+import { parseComposerReferences } from '@chatgoose/shared/composer-references';
 // IPC invoke handlers — every InvokeChannels entry in src/preload/contract.ts.
 // Args are renderer-controlled (trust boundary): zod-validate everything
 // before touching the data layer (SPEC §15.3).
 
 import { ipcMain } from 'electron';
 import { z } from 'zod';
+import { composerOptionsSchema, composerActionSchema } from '@chatgoose/shared/composer';
 import { analyzePingSegment } from '@chatgoose/shared/transcript/index';
 import { messageGuardPolicySchema } from '@chatgoose/shared/message-guard/index';
 import type { DataLayer, OutboxRow } from '../db/index';
@@ -255,14 +257,14 @@ function hasAcceptedFeedback(payload: z.infer<typeof usageFeedbackPayloadSchema>
 }
 
 // ── Send pipeline (SPEC §7) ──
-const sendTextSchema = z.string().min(1).max(20_000);
 const sendMessageSchema = z.object({
   accountId: idSchema,
   chatId: idSchema,
   // [NEXT] sequences are small by construction (legacy splitter output).
-  parts: z.array(sendTextSchema).min(1).max(10),
-});
-const sendRetrySchema = z.object({ accountId: idSchema, localId: idSchema, text: sendTextSchema });
+  parts: z.array(z.string().max(20_000)).min(1).max(10),
+  composer: composerOptionsSchema.optional(),
+}).refine(input=>input.parts.every(text=>text.length>0)||!!input.composer?.giphyId);
+const sendRetrySchema = z.object({ accountId: idSchema, localId: idSchema, text: z.string().max(20_000), reuseProviderOperation:z.boolean().optional() });
 const sendRowRefSchema = z.object({ accountId: idSchema, localId: idSchema });
 const sendSequenceSchema = z.object({ accountId: idSchema, sequenceId: idSchema });
 const messageRefSchema = z.object({ accountId: idSchema, chatId: idSchema, messageId: idSchema });
@@ -304,6 +306,8 @@ const sendPpvSchema = z.object({
   chatId: idSchema,
   text: z.string().max(20_000), // caption may be empty (media-only message)
   price: z.number().min(0).max(200),
+  priceCents:z.number().int().min(0).max(20000).optional(),
+  composer:composerOptionsSchema.optional(),
   mediaFiles: z.array(ppvMediaIdSchema).min(1).max(40),
   previews: z.array(ppvMediaIdSchema).max(40),
 });
@@ -332,6 +336,7 @@ function outboxToVM(row: OutboxRow): OutboxItemVM {
     textHighlights: row.textHighlights,
     price: row.price,
     mediaCount: row.mediaFiles.length,
+    composer: row.composer ?? null, mediaFiles:row.mediaFiles, previews:row.previews,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -1195,6 +1200,23 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return data.outbox.listForChat(args.accountId, args.chatId).map(outboxToVM);
   });
 
+  ipcMain.handle('query:composer.bannedPreview', (_event, rawArgs:unknown) => {
+    const args=z.object({text:z.string().max(10000)}).strict().parse(rawArgs);
+    return requireSend().previewBannedWords(args.text);
+  });
+  ipcMain.handle('query:composer.actions', (_event,rawArgs:unknown) => {
+    const args=convSchema.extend({messageId:idSchema.optional()}).parse(rawArgs);return requireSend().listActions(args.accountId,args.chatId,args.messageId);
+  });
+  ipcMain.handle('cmd:composer.action',(_event,rawArgs:unknown) => {
+    const args=z.object({accountId:idSchema,chatId:idSchema,action:composerActionSchema}).strict().parse(rawArgs);
+    return requireSend().performAction(args.accountId,args.chatId,args.action);
+  });
+  ipcMain.handle('query:composer.references',async (_event,rawArgs:unknown) => {
+    const args=z.object({accountId:idSchema,kind:z.enum(['giphy','release_forms','taggable_users']),query:z.string().max(200).optional()}).strict().parse(rawArgs);
+    const result=await requireSend().readComposerReferences(args);
+    return parseComposerReferences(args.kind,result);
+  });
+
   ipcMain.handle('cmd:send.message', (_event, rawArgs: unknown) => {
     const args = sendMessageSchema.parse(rawArgs);
     const result = requireSend().sendParts(args);
@@ -1214,6 +1236,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:send.retry', (_event, rawArgs: unknown) => {
     const args = sendRetrySchema.parse(rawArgs);
+    if(!args.text.length&&!data.outbox.get(args.localId)?.composer)throw new Error('Retry text is required');
     return requireSend().retry(args);
   });
 
