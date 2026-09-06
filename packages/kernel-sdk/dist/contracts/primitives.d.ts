@@ -45,8 +45,8 @@ export declare const sortDirEnum: z.ZodEnum<{
     desc: "desc";
 }>;
 export declare const fanSearchMatchKindEnum: z.ZodEnum<{
-    platformUserId: "platformUserId";
     username: "username";
+    platformUserId: "platformUserId";
     alias: "alias";
     displayName: "displayName";
 }>;

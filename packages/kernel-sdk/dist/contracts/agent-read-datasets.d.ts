@@ -102,6 +102,33 @@ export type AgentDatasetDefinition = {
  * catalog, not addressable in the query.
  */
 export declare const AGENT_DATASETS: {
+    readonly ofapi_financial_snapshots: {
+        readonly moneyBearing: true;
+        readonly verbatimText: false;
+        readonly disclosesPurchase: false;
+        readonly fields: {
+            readonly platform: "string";
+            readonly source: "string";
+            readonly operation: "string";
+            readonly metricPath: "string";
+            readonly unit: "string";
+            readonly rawValue: "string";
+            readonly valueMills: "mills";
+            readonly windowFrom: "timestamp";
+            readonly windowTo: "timestamp";
+            readonly granularity: "string";
+            readonly observedAt: "timestamp";
+            readonly coverageState: "string";
+            readonly coverageReason: "string";
+            readonly observationRef: "string";
+        };
+        readonly defaultSort: {
+            readonly field: "observedAt";
+            readonly dir: "desc";
+            readonly nullsLast: false;
+        };
+        readonly stableKey: readonly ["metricKey"];
+    };
     readonly fan_memberships: {
         readonly moneyBearing: true;
         readonly verbatimText: false;

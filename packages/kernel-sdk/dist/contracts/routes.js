@@ -1,7 +1,12 @@
+import { ofapiMediaRouteSchemas } from "./routes-ofapi-media";
+import { ofapiMarketingRouteSchemas } from "./routes-ofapi-marketing";
 import { ofapiBannedWordRouteSchemas } from "./routes-ofapi-banned-words";
 import { OFAPI_EXTENDED_COMMAND_KINDS } from "../shared/index";
 import { ofapiExtendedCommandOptions } from "./ofapi-extended-commands";
 import { ofapiVendorRouteSchemas } from "./routes-ofapi-vendor";
+import { ofapiReadCollectionsRouteSchemas } from "./routes-ofapi-read-collections";
+import { ofapiExportRouteSchemas } from "./routes-ofapi-exports";
+import { ofapiCollectionRouteSchemas } from "./routes-ofapi-collection";
 import { PERIOD_OPTIONS, SPENDER_PERIOD_OPTIONS, SPENDER_RETENTION_STATUSES, SPENDER_SERIES_GRANULARITIES, FANSLY_CLIENT_CHECK_ROUTES, aiUsageFeatures, creatableUserRoles, fanFlagTypes, ofapiCaptureJobStates, transactionReportingBuckets, userRoles, } from "../shared/index";
 import { z } from "zod";
 // Agent Read Plane operations #1-#10. Declared in their own module (one coherent
@@ -3235,6 +3240,36 @@ export const ofapiCredentialPreflightSchema = z.object({
     observedTeam: z.string().nullable(), credentialFingerprint: z.string(), checkedAt: isoTimestamp,
     reason: z.string().nullable(), rosterScope: z.literal("unknown"),
 });
+const ofapiWebhookGroupSchema = z.enum(["subscription_expiry", "account_lifecycle", "media_uploads", "data_exports", "engagement"]);
+export const ofapiWebhookEventCatalogSchema = z.object({
+    source: z.literal("onlyfansapi"), state: z.enum(["never", "captured", "invalid"]), observedAt: isoTimestamp.nullable(), observationId: z.string().nullable(),
+    events: z.array(z.object({ value: z.string(), description: z.string(), requested: z.boolean(), supported: z.boolean(), optionalGroup: z.string().nullable() })),
+});
+export const ofapiWebhookCollectionPolicySchema = z.object({
+    version: z.number().int().nonnegative(), desiredGroups: z.array(z.string()), appliedGroups: z.array(z.string()),
+    historyEnabled: z.boolean(), applyState: z.string(), errorCode: z.string().nullable(), appliedAt: isoTimestamp.nullable(),
+    groups: z.array(z.object({ id: z.string(), events: z.array(z.string()) })),
+});
+export const ofapiWebhookDeliveryScanSchema = z.object({
+    id: z.string().uuid(), webhookId: z.string(), state: z.string(), from: isoTimestamp, to: isoTimestamp,
+    nextOffset: z.number().int().nonnegative(), capturedAttempts: z.number().int().nonnegative(),
+    errorCode: z.string().nullable(), coverageScope: z.literal("credential-visible"), completedAt: isoTimestamp.nullable(),
+});
+export const ofapiWebhookDeliveryHistorySchema = z.object({
+    webhookId: z.string().nullable(), latestScan: ofapiWebhookDeliveryScanSchema.nullable(),
+    attempts: z.array(z.object({
+        attemptId: z.number().int().positive(), deliveryUuid: z.string(), eventType: z.string(),
+        attemptNumber: z.number().int().positive(), succeeded: z.boolean(), statusCode: z.number().int().nullable(),
+        errorType: z.string().nullable(), redeliveredFrom: z.string().nullable(), createdAt: isoTimestamp,
+        deliveryRecovered: z.boolean(), localEventId: z.number().int().positive().nullable(),
+        captureState: z.string().nullable(), localStatus: z.string().nullable(), projectionStatus: z.string().nullable(),
+        canonicalVersion: z.number().int().nullable(),
+        redeliveryState: z.string().nullable(), redeliveryUuid: z.string().nullable(), redeliverySucceeded: z.boolean().nullable(),
+    })),
+});
+export const ofapiWebhookRedeliveryResultSchema = z.object({
+    id: z.string().uuid(), state: z.string(), redeliveryUuid: z.string().nullable(), errorCode: z.string().nullable(), projected: z.boolean(),
+});
 export const ofapiWebhookRegisterBodySchema = z.object({
     // Public URL OFAPI should deliver to, e.g. https://hub.example.com/api/v1/ofapi/webhook
     endpointUrl: z.string().url().max(2000),
@@ -3335,7 +3370,7 @@ export const ofapiExportQuoteCreateResponseSchema = z.object({
     status: z.enum(["would_create", "would_coalesce", "created", "coalesced"]),
     jobId: z.string().uuid().nullable(),
     pageId: intId,
-    profile: z.enum(["pilot_chats", "fleet_tail"]),
+    profile: z.enum(["pilot_chats", "fleet_tail", "profile_visitors", "fans", "tracking_links", "trial_links", "smart_links"]),
     targetHash: z.string().regex(/^[0-9a-f]{64}$/),
     state: ofapiExportQuoteJobStateSchema.nullable(),
     reasonCode: z.string().nullable(),
@@ -3392,7 +3427,7 @@ export const ofapiExportArtifactCaptureResponseSchema = z.object({
 export const ofapiExportQuoteStatusResponseSchema = z.object({
     jobId: z.string().uuid(),
     pageId: intId,
-    profile: z.enum(["pilot_chats", "fleet_tail"]),
+    profile: z.enum(["pilot_chats", "fleet_tail", "profile_visitors", "fans", "tracking_links", "trial_links", "smart_links"]),
     targetHash: z.string().regex(/^[0-9a-f]{64}$/),
     state: ofapiExportQuoteJobStateSchema,
     reasonCode: z.string().nullable(),
@@ -3416,6 +3451,10 @@ export const ofapiExportQuoteStatusResponseSchema = z.object({
         rowsProcessed: z.number().int().nonnegative().nullable(),
         failedDownloads: z.number().int().nonnegative().nullable(),
         artifactPending: z.boolean(),
+        lifecycle: z.object({
+            status: z.string(), receivedAt: isoTimestamp, sourceAt: isoTimestamp.nullable(),
+            eventId: z.number().int().positive(), conflictingTerminal: z.boolean(),
+        }).nullable().optional(),
     }).nullable(),
 });
 const ofapiCaptureControlKeySchema = z.string().trim().max(200).refine((value) => value === "global"
@@ -3465,6 +3504,8 @@ export const ofapiCaptureOperatorStatusResponseSchema = z.object({
             "account_export",
             "export_import",
             "post_paginate",
+            "collection_read",
+            "media_upload",
         ]),
         state: ofapiExportQuoteJobStateSchema,
         reasonCode: z.string().nullable(),
@@ -4891,8 +4932,13 @@ export const moneyPayoutsResponseSchema = z.object({
     nextCursor: z.string().nullable(),
 });
 export const routeSchemas = {
+    ...ofapiMarketingRouteSchemas,
     ...ofapiBannedWordRouteSchemas,
     ...ofapiVendorRouteSchemas,
+    ...ofapiReadCollectionsRouteSchemas,
+    ...ofapiExportRouteSchemas,
+    ...ofapiMediaRouteSchemas,
+    ...ofapiCollectionRouteSchemas,
     ...agentRouteSchemas,
     ...agentKeyAdminRouteSchemas,
     health: {
@@ -5133,6 +5179,48 @@ export const routeSchemas = {
     adminOfapiCredentialPreflight: {
         auth: { kind: "owner-session" }, tags: ["admin"], summary: "Inspect server credential adoption proof",
         response: { 200: ofapiCredentialPreflightSchema, 401: errorResponseSchema, 403: errorResponseSchema, 503: errorResponseSchema },
+    },
+    adminOfapiWebhookEventCatalog: {
+        auth: { kind: "owner-session" }, tags: ["admin"], summary: "Read the captured vendor webhook event catalog without egress",
+        response: { 200: ofapiWebhookEventCatalogSchema, 401: errorResponseSchema, 403: errorResponseSchema },
+    },
+    adminOfapiWebhookEventCatalogRefresh: {
+        auth: { kind: "owner-session" }, tags: ["admin"], summary: "Explicitly capture the free vendor webhook event catalog",
+        body: z.object({}), response: { 200: ofapiWebhookEventCatalogSchema, 401: errorResponseSchema, 403: errorResponseSchema, 503: errorResponseSchema },
+    },
+    adminOfapiWebhookDeliveries: {
+        auth: { kind: "owner-session" }, tags: ["admin"], summary: "Read retained webhook attempts and local ingestion stages",
+        querystring: z.object({ limit: z.coerce.number().int().min(1).max(100).default(25), offset: z.coerce.number().int().nonnegative().default(0), failedOnly: z.enum(["true", "false"]).optional() }),
+        response: { 200: ofapiWebhookDeliveryHistorySchema, 401: errorResponseSchema, 403: errorResponseSchema },
+    },
+    adminOfapiWebhookDeliverySync: {
+        auth: { kind: "owner-session" }, tags: ["admin"], summary: "Capture a bounded delivery-history window, including all outcomes",
+        body: z.object({ id: z.string().uuid(), from: isoTimestamp, to: isoTimestamp, maxPages: z.number().int().min(1).max(20).default(20) }),
+        response: { 200: ofapiWebhookDeliveryScanSchema, 400: errorResponseSchema, 401: errorResponseSchema, 403: errorResponseSchema, 409: errorResponseSchema, 503: errorResponseSchema },
+    },
+    adminOfapiWebhookRedeliver: {
+        auth: { kind: "owner-session" }, tags: ["admin"], summary: "Preview or explicitly queue one billed remote webhook redelivery",
+        body: z.object({ id: z.string().uuid(), attemptId: z.number().int().positive(), dryRun: z.boolean().default(true) }),
+        response: { 200: ofapiWebhookRedeliveryResultSchema, 400: errorResponseSchema, 401: errorResponseSchema, 403: errorResponseSchema, 404: errorResponseSchema, 409: errorResponseSchema, 503: errorResponseSchema },
+    },
+    adminOfapiWebhookReplay: {
+        auth: { kind: "owner-session" }, tags: ["admin"], summary: "Replay one accepted local receipt without vendor redelivery or new SSE identity",
+        body: z.object({ eventId: z.number().int().positive(), dryRun: z.boolean().default(true) }),
+        response: { 200: z.object({ eventId: z.number().int().positive(), state: z.string() }), 400: errorResponseSchema, 401: errorResponseSchema, 403: errorResponseSchema, 404: errorResponseSchema, 409: errorResponseSchema },
+    },
+    adminOfapiWebhookCollectionPolicy: {
+        auth: { kind: "owner-session" }, tags: ["admin"], summary: "Read optional webhook desired and applied settings",
+        response: { 200: ofapiWebhookCollectionPolicySchema, 401: errorResponseSchema, 403: errorResponseSchema },
+    },
+    adminOfapiWebhookCollectionPolicySave: {
+        auth: { kind: "owner-session" }, tags: ["admin"], summary: "Save versioned optional webhook categories and free history collector policy",
+        body: z.object({ expectedVersion: z.number().int().nonnegative(), groups: z.array(ofapiWebhookGroupSchema).max(5), historyEnabled: z.boolean() }),
+        response: { 200: ofapiWebhookCollectionPolicySchema, 400: errorResponseSchema, 401: errorResponseSchema, 403: errorResponseSchema, 409: errorResponseSchema },
+    },
+    adminOfapiWebhookCollectionPolicyApply: {
+        auth: { kind: "owner-session" }, tags: ["admin"], summary: "Apply optional webhook categories and verify the remote registration",
+        body: z.object({ expectedVersion: z.number().int().nonnegative() }),
+        response: { 200: ofapiWebhookCollectionPolicySchema, 400: errorResponseSchema, 401: errorResponseSchema, 403: errorResponseSchema, 409: errorResponseSchema, 503: errorResponseSchema },
     },
     adminOfapiWebhookRegister: {
         auth: { kind: "owner-session" },

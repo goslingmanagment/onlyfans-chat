@@ -93,6 +93,7 @@ export const AGENT_CLAIM_CLASSES = {
             // about the other, which is exactly why they get separate planes.
             revenueMixDay: { required: ["revenue_mix_daily"] },
             payoutRequest: { required: ["page_payout_requests"] },
+            ofapiFinancialMetric: { required: ["ofapi_read_snapshots"] },
             payoutMethod: { required: ["page_payout_methods"] },
         },
     },

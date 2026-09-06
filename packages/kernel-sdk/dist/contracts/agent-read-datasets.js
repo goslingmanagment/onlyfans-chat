@@ -68,6 +68,11 @@ const ORDERED_FIELD_KINDS = new Set([
  * catalog, not addressable in the query.
  */
 export const AGENT_DATASETS = {
+    ofapi_financial_snapshots: {
+        moneyBearing: true, verbatimText: false, disclosesPurchase: false,
+        fields: { platform: "string", source: "string", operation: "string", metricPath: "string", unit: "string", rawValue: "string", valueMills: "mills", windowFrom: "timestamp", windowTo: "timestamp", granularity: "string", observedAt: "timestamp", coverageState: "string", coverageReason: "string", observationRef: "string" },
+        defaultSort: { field: "observedAt", dir: "desc", nullsLast: false }, stableKey: ["metricKey"],
+    },
     fan_memberships: {
         // MONEY-BEARING because of `lifetimeSpendMills`. The appendix's prose names
         // only subscriptions/transactions/fan_spend_daily as money-bearing while its
