@@ -1,6 +1,16 @@
+export * from "./primitives";
 export * from "./routes";
+export * from "./routes-agent";
+export * from "./routes-agent-keys";
 export * from "./authorization-policy";
 export * from "./domain-event-cursor";
 export * from "./sdk-runtime";
 export * from "./contract-hash";
+export * from "./agent-read-registry";
+export * from "./agent-read-capabilities";
+export * from "./agent-read-datasets";
 export { isOutputExhausted } from "../shared/index";
+export * from "./ofapi-vendor-usage";
+export * from "./routes-ofapi-vendor";
+export * from "./ofapi-extended-commands";
+export * from "./routes-ofapi-banned-words";

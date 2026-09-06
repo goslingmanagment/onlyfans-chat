@@ -1,25 +1,30 @@
-import { PERIOD_OPTIONS, SPENDER_PERIOD_OPTIONS, SPENDER_RETENTION_STATUSES, SPENDER_SERIES_GRANULARITIES, aiUsageFeatures, creatableUserRoles, fanFlagTypes, isValidBusinessDateString, ofapiCaptureJobStates, platforms, transactionReportingBuckets, transactionStates, transactionTypes, userRoles, } from "../shared/index";
+import { ofapiBannedWordRouteSchemas } from "./routes-ofapi-banned-words";
+import { OFAPI_EXTENDED_COMMAND_KINDS } from "../shared/index";
+import { ofapiExtendedCommandOptions } from "./ofapi-extended-commands";
+import { ofapiVendorRouteSchemas } from "./routes-ofapi-vendor";
+import { PERIOD_OPTIONS, SPENDER_PERIOD_OPTIONS, SPENDER_RETENTION_STATUSES, SPENDER_SERIES_GRANULARITIES, FANSLY_CLIENT_CHECK_ROUTES, aiUsageFeatures, creatableUserRoles, fanFlagTypes, ofapiCaptureJobStates, transactionReportingBuckets, userRoles, } from "../shared/index";
 import { z } from "zod";
-const intId = z.number().int().positive();
-const mills = z.number().int();
-const isoTimestamp = z.string();
-const businessDate = z.string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .refine((value) => isValidBusinessDateString(value), "Invalid business date");
+// Agent Read Plane operations #1-#10. Declared in their own module (one coherent
+// contract with its own envelope law and principal) and spread into routeSchemas
+// below, so registration, the auth-declaration gate and the OpenAPI generator
+// keep seeing ONE flat registry.
+import { agentExportPolicyEnum, agentRouteSchemas } from "./routes-agent";
+// Owner administration of the plane's KEYS. A sibling module rather than part of
+// the read plane: issuing a credential carries no evidence envelope, and folding
+// it into agentRouteSchemas would have meant loosening that module's pins.
+import { agentKeyAdminRouteSchemas } from "./routes-agent-keys";
+// House primitives shared with the sibling route modules (see primitives.ts).
+import { businessDate, errorResponseSchema, fanLookupParamsSchema, fanSearchMatchKindEnum, intId, isoTimestamp, mills, pageParamsSchema, paginationQuerySchema, platformEnum, queryBooleanSchema, sortDirEnum, transactionStateEnum, transactionTypeEnum, } from "./primitives";
 const periodEnum = z.enum(PERIOD_OPTIONS);
 const spenderPeriodEnum = z.enum(SPENDER_PERIOD_OPTIONS);
 const spenderSeriesGranularityEnum = z.enum(SPENDER_SERIES_GRANULARITIES);
 const nonCustomPeriodEnum = z.enum(["today", "7d", "30d", "all"]);
-const platformEnum = z.enum(platforms);
 const transactionReportingBucketEnum = z.enum(transactionReportingBuckets);
-const transactionTypeEnum = z.enum(transactionTypes);
-const transactionStateEnum = z.enum(transactionStates);
 const userRoleEnum = z.enum(userRoles);
 const creatableUserRoleEnum = z.enum(creatableUserRoles);
 const fanFlagEnum = z.enum(fanFlagTypes);
 const aiUsageFeatureEnum = z.enum(aiUsageFeatures);
 const spenderScopeKindEnum = z.enum(["page", "model", "agency"]);
-const sortDirEnum = z.enum(["asc", "desc"]);
 const spenderSortByEnum = z.enum([
     "grossAmountMills",
     "creatorNetAmountMills",
@@ -35,7 +40,6 @@ const spenderSortByEnum = z.enum([
     "displayName",
 ]);
 const spenderRetentionStatusEnum = z.enum(SPENDER_RETENTION_STATUSES);
-const fanSearchMatchKindEnum = z.enum(["platformUserId", "username", "alias", "displayName"]);
 const pageSpenderAutoListBucketKeyEnum = z.enum([
     "0-25",
     "25-50",
@@ -44,23 +48,6 @@ const pageSpenderAutoListBucketKeyEnum = z.enum([
     "350-600",
     "600-plus",
 ]);
-const queryBooleanSchema = z.preprocess((value) => {
-    if (typeof value === "string") {
-        const normalized = value.trim().toLowerCase();
-        if (normalized === "true") {
-            return true;
-        }
-        if (normalized === "false") {
-            return false;
-        }
-    }
-    return value;
-}, z.boolean());
-export const errorResponseSchema = z.object({
-    error: z.string(),
-    message: z.string(),
-    statusCode: z.number().int(),
-});
 export const pageRefSchema = z.object({
     id: intId,
     label: z.string(),
@@ -264,22 +251,11 @@ export const loginBodySchema = z.object({
     username: z.string().min(1).max(254),
     password: z.string().min(1).max(1024),
 });
-export const paginationQuerySchema = z.object({
-    limit: z.coerce.number().int().min(1).max(200).default(50),
-    offset: z.coerce.number().int().min(0).default(0),
-});
-export const pageParamsSchema = z.object({
-    pageLabel: z.string().min(1),
-});
 export const pageSpenderAutoListParamsSchema = pageParamsSchema.extend({
     bucketKey: pageSpenderAutoListBucketKeyEnum,
 });
 export const modelParamsSchema = z.object({
     modelSlug: z.string().min(1),
-});
-export const fanLookupParamsSchema = z.object({
-    platform: platformEnum,
-    platformUserId: z.string().min(1),
 });
 export const pageFanParamsSchema = pageParamsSchema.extend({
     platformUserId: z.string().min(1),
@@ -1374,7 +1350,7 @@ export const fanProfileVersionListResponseSchema = z.object({
 const connectionStatusEnum = z.enum([
     "active", "stale", "error", "expired", "never_synced", "unverified",
 ]);
-const syncTriggerScopeEnum = z.enum(["light", "followers", "all", "data", "messages"]);
+const syncTriggerScopeEnum = z.enum(["light", "followers", "all", "data", "messages", "posts"]);
 const transactionSortByEnum = z.enum(["occurredAt", "grossAmountMills", "netAmountMills"]);
 export const connectionItemSchema = z.object({
     id: intId,
@@ -1689,6 +1665,9 @@ export const aiGatewayStreamFrameSchema = z.discriminatedUnion("type", [
         // Feature-lane-only provenance for coach-chat. It is optional because the
         // raw gateway and every other feature share this existing meta frame.
         attachedRecaps: aiFeatureAttachedRecapsSchema.optional(),
+        // The server-substituted coach preset question follows the same optionality
+        // rule: the raw gateway and every other feature never set it.
+        presetQuestion: z.string().optional(),
         quota: aiGatewayQuotaSchema,
     }).strict(),
     z.object({
@@ -1857,7 +1836,8 @@ export const FAN_SILENCE_DAYS_MAX = 20_000;
 // worst-case schema-valid coach body sums to ~1.69M UTF-16 code units --
 // coachHistory 20x(2k question + 64k answer) = 1.32M, transcript 300k, spending
 // 20k, subscription 20k, bio 5k, draft 20k, question 2k, plus the small scalar
-// fields. The TRUE per-code-unit worst case on the JSON wire is SIX bytes: a
+// fields. The preset literal ("situation", <=11 bytes) is negligible. The TRUE
+// per-code-unit worst case on the JSON wire is SIX bytes: a
 // lone surrogate (U+D800) or an ASCII control char is a legal JSON string value
 // that JSON.stringify escapes to a six-byte `\uXXXX` sequence, so ~1.69M x 6
 // ~= 10.1MB (a printable 3-byte-UTF-8 char like the CJK "no" is only the 3-byte
@@ -1891,6 +1871,9 @@ export const aiFeatureStreamBodySchema = z.object({
     }).strict())
         .max(20)
         .optional(),
+    // Coach-chat only: substitutes the pinned canonical question when the
+    // chatterQuestion field is absent or whitespace-only.
+    preset: z.literal("situation").optional(),
     summaryMode: z.literal("short").optional(),
     // Stage 32: client-loaded context for platforms whose kernel archive is
     // pull-cadenced (Fansly: dm_conversations 30 min / dm_messages 24 h — no
@@ -2186,6 +2169,20 @@ const extendedSyncStreamEnum = z.enum([
     "followers_reconcile",
     "fan_earnings",
     "purchase_history",
+    "posts",
+    // WP-F1: the monitor serves this stream too, so the wire enum has to name
+    // it or a stats_snapshot row fails response validation.
+    "stats_snapshot",
+    // WP-F2.
+    "notifications",
+    // WP-F3.
+    "catalog",
+    // WP-F5.
+    "post_replies",
+    // WP-F7.
+    "payouts",
+    // WP-F4.
+    "media_stats",
 ]);
 export const syncMonitorStreamItemSchema = z.object({
     stream: extendedSyncStreamEnum,
@@ -2456,6 +2453,58 @@ export const adminSyncBlockResponseSchema = z.object({
     block: syncBlockKeyEnum,
     requests: z.array(adminSyncBlockRequestSchema).optional(),
 });
+export const adminFollowersReconcileResetBodySchema = z.object({
+    pageLabel: z.string().min(1),
+});
+export const adminFollowersReconcileResetResponseSchema = z.object({
+    accepted: z.literal(true),
+    action: z.literal("reset"),
+    pageLabel: z.string(),
+    stream: z.literal("followers_reconcile"),
+    requests: z.array(adminSyncBlockRequestSchema),
+});
+const followersReconcileCandidateGenerationBucketSchema = z.object({
+    lastSeenGeneration: z.number().int().nonnegative().nullable(),
+    count: z.number().int().positive(),
+});
+const adminFollowersReconcileOverrideEvidenceSchema = z.object({
+    pageLabel: z.string(),
+    stream: z.literal("followers_reconcile"),
+    blockedRequestSeq: z.number().int().nonnegative(),
+    blockedAt: isoTimestamp,
+    generation: z.number().int().positive(),
+    fullSweepStartedAt: isoTimestamp,
+    activeFollowerCount: z.number().int().nonnegative(),
+    deactivationLimit: z.number().int().positive(),
+    candidateCount: z.number().int().nonnegative(),
+    candidateSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    candidateGenerationBuckets: z.array(followersReconcileCandidateGenerationBucketSchema),
+});
+export const adminFollowersReconcileOverridePreviewBodySchema = z.object({
+    pageLabel: z.string().min(1),
+});
+export const adminFollowersReconcileOverridePreviewResponseSchema = adminFollowersReconcileOverrideEvidenceSchema.extend({
+    accepted: z.literal(true),
+    action: z.literal("preview"),
+    audiencePaused: z.boolean(),
+    audienceLeaseFree: z.boolean(),
+    overrideRequired: z.boolean(),
+    readyToApply: z.boolean(),
+});
+export const adminFollowersReconcileOverrideApplyBodySchema = z.object({
+    pageLabel: z.string().min(1),
+    blockedRequestSeq: z.number().int().nonnegative(),
+    blockedAt: isoTimestamp,
+    generation: z.number().int().positive(),
+    fullSweepStartedAt: isoTimestamp,
+    candidateSha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+export const adminFollowersReconcileOverrideApplyResponseSchema = adminFollowersReconcileOverrideEvidenceSchema.extend({
+    accepted: z.literal(true),
+    action: z.literal("apply"),
+    deactivatedCount: z.number().int().positive(),
+    audienceRemainsPaused: z.literal(true),
+});
 export const syncTriggerBodySchema = z.object({
     pageLabel: z.string().min(1),
     scope: syncTriggerScopeEnum,
@@ -2592,8 +2641,19 @@ const notificationIncidentKindEnum = z.enum([
     "ops_sampler_silent",
     "ofapi_chargebacks_reconcile_failed",
     "ofapi_link_stats_reconcile_failed",
+    "ai_provider_billing",
+    "ai_provider_failed",
+    "capture_payload_parity",
+    "ofapi_binding_conflict",
 ]);
 const notificationIncidentStatusEnum = z.enum(["open", "resolved"]);
+const notificationDeliveryOutboxStateEnum = z.enum([
+    "pending",
+    "leased",
+    "delivered",
+    "suppressed",
+    "exhausted",
+]);
 const deliveryKindEnum = z.enum([
     "test",
     "daily_report_scheduled",
@@ -2611,6 +2671,7 @@ export const notificationsSettingsResponseSchema = z.object({
     enabled: z.boolean(),
     dailyReportEnabled: z.boolean(),
     syncFailureAlertsEnabled: z.boolean(),
+    aiCriticalAlertsEnabled: z.boolean(),
     reportHourUtc: z.number().int().min(0).max(23),
     connectionStatus: notificationConnectionStatusEnum,
     lastMessageAt: isoTimestamp.nullable(),
@@ -2620,6 +2681,7 @@ export const notificationsSettingsUpdateBodySchema = z.object({
     enabled: z.boolean().optional(),
     dailyReportEnabled: z.boolean().optional(),
     syncFailureAlertsEnabled: z.boolean().optional(),
+    aiCriticalAlertsEnabled: z.boolean().optional(),
     reportHourUtc: z.number().int().min(0).max(23).optional(),
     botToken: telegramBotTokenSchema.nullable().optional(),
     chatId: telegramChatIdSchema.nullable().optional(),
@@ -2656,6 +2718,10 @@ export const notificationsIncidentItemSchema = z.object({
     errorCode: z.string().nullable(),
     errorSummary: z.string().nullable(),
     notificationCount: z.number().int(),
+    outboxState: notificationDeliveryOutboxStateEnum.nullable(),
+    outboxAttemptCount: z.number().int().nonnegative().nullable(),
+    outboxLastError: z.string().nullable(),
+    outboxSuppressionReason: z.string().nullable(),
 });
 export const notificationsIncidentsQuerySchema = z.object({
     status: notificationIncidentStatusEnum.optional(),
@@ -2691,6 +2757,11 @@ export const notificationsDeliveryAttemptItemSchema = z.object({
 export const notificationsReportHistoryResponseSchema = z.object({
     items: z.array(notificationsDeliveryAttemptItemSchema),
 });
+const credentialProxySchema = z.object({
+    url: z.string().min(1),
+    username: z.string().nullable().optional(),
+    password: z.string().nullable().optional(),
+});
 const fanslyCredentialsSchema = z.object({
     platform: z.literal("fansly"),
     session: z.object({
@@ -2698,12 +2769,12 @@ const fanslyCredentialsSchema = z.object({
         fanslyClientId: z.string().optional(),
         fanslyClientCheck: z.string().optional(),
         fanslySessionId: z.string().optional(),
+        routeChecks: z.partialRecord(z.enum(FANSLY_CLIENT_CHECK_ROUTES), z.string().min(1)).optional(),
     }),
-    proxy: z.object({
-        url: z.string().min(1),
-        username: z.string().nullable().optional(),
-        password: z.string().nullable().optional(),
-    }).nullable().optional(),
+    // Decision #124: every standalone Fansly verification/onboarding request
+    // must carry the egress route it will actually use. Missing/null may never
+    // reach the adapter's proxyless fail-closed belt as a generic runtime error.
+    proxy: credentialProxySchema,
 });
 const onlyfansCredentialsSchema = z.object({
     platform: z.literal("onlyfans"),
@@ -2712,11 +2783,6 @@ const onlyfansCredentialsSchema = z.object({
     // pasted credentials, no per-page proxy (egress is vendor-side).
     username: z.string().min(1),
 });
-const credentialProxySchema = z.object({
-    url: z.string().min(1),
-    username: z.string().nullable().optional(),
-    password: z.string().nullable().optional(),
-}).nullable().optional();
 export const verifyCredentialsBodySchema = z.discriminatedUnion("platform", [
     fanslyCredentialsSchema,
     onlyfansCredentialsSchema,
@@ -2773,7 +2839,9 @@ export const updateCredentialsBodySchema = z.discriminatedUnion("platform", [
     z.object({
         platform: z.literal("fansly"),
         session: fanslyCredentialsSchema.shape.session.optional(),
-        proxy: credentialProxySchema,
+        // Omission preserves the stored route for a session-only update. Proxy
+        // removal is a separate explicit operation and is never encoded as null.
+        proxy: credentialProxySchema.optional(),
     }),
     z.object({
         // Stage 18: OnlyFans pages hold no pasted credentials (OFAPI vendor-side)
@@ -3093,6 +3161,7 @@ export const ofapiWebhookAckResponseSchema = z.object({
     duplicate: z.boolean(),
 });
 export const ofapiPageMappingSchema = z.object({
+    bindingGeneration: z.number().int().positive(),
     pageId: intId,
     label: z.string(),
     username: z.string().nullable(),
@@ -3141,6 +3210,30 @@ export const ofapiWebhookStatusResponseSchema = z.object({
         lastBalanceAt: isoTimestamp.nullable(),
         spentToday: z.number().int(),
     }),
+});
+const ofapiEvidenceRefSchema = z.object({ id: intId, receivedAt: isoTimestamp }).strict();
+export const ofapiBindingRefreshBodySchema = z.object({
+    pageId: intId,
+    expectedAccountId: z.string().regex(/^acct_[A-Za-z0-9]+$/).nullable(),
+    expectedGeneration: z.number().int().positive(),
+    accountId: z.string().regex(/^acct_[A-Za-z0-9]+$/),
+    identityEvidence: ofapiEvidenceRefSchema.nullable().default(null),
+    historicalEvidence: z.array(ofapiEvidenceRefSchema).max(20).default([]),
+    dryRun: z.boolean().default(true),
+    previewToken: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+}).strict();
+export const ofapiBindingRefreshResponseSchema = z.object({
+    dryRun: z.boolean(), applied: z.boolean(), previewToken: z.string(),
+    pageId: intId, expectedAccountId: z.string().nullable(), expectedGeneration: z.number().int(),
+    accountId: z.string(), creatorId: z.string(), historicalAccountIds: z.array(z.string()),
+    recovery: z.array(z.object({ stream: z.string(), version: z.string(), code: z.string() })),
+    credentialFingerprint: z.string(), expectedTeam: z.string().nullable(),
+    identityEvidence: ofapiEvidenceRefSchema.nullable(), historicalEvidence: z.array(ofapiEvidenceRefSchema),
+});
+export const ofapiCredentialPreflightSchema = z.object({
+    status: z.enum(["verified", "unknown", "mismatch", "denied"]), expectedTeam: z.string().nullable(),
+    observedTeam: z.string().nullable(), credentialFingerprint: z.string(), checkedAt: isoTimestamp,
+    reason: z.string().nullable(), rosterScope: z.literal("unknown"),
 });
 export const ofapiWebhookRegisterBodySchema = z.object({
     // Public URL OFAPI should deliver to, e.g. https://hub.example.com/api/v1/ofapi/webhook
@@ -3371,9 +3464,13 @@ export const ofapiCaptureOperatorStatusResponseSchema = z.object({
             "head_repair",
             "account_export",
             "export_import",
+            "post_paginate",
         ]),
         state: ofapiExportQuoteJobStateSchema,
         reasonCode: z.string().nullable(),
+        /** Decision #246: the parked job's own words — for an exhausted retry the
+         *  governed cause is here (`... transport (body_too_large, post_dispatch)`). */
+        reasonMessage: z.string().nullable(),
         rowVersion: z.number().int().nonnegative(),
         updatedAt: isoTimestamp,
     })),
@@ -3485,6 +3582,33 @@ export const ofapiCaptureJobReplayResponseSchema = z.object({
         observationReceivedAt: isoTimestamp,
     }),
 });
+/** Decision #246: a parked capture job is CANCELLED, never resumed in place.
+ *  The row and its attempts stay (append-only history); the active slot is
+ *  freed, so the owning lane starts a fresh job with fresh allowances on its
+ *  next request. Nothing is dispatched by this action. */
+export const ofapiCaptureJobCancelBodySchema = z.object({
+    expectedState: z.enum(["blocked", "retry_wait"]),
+    expectedReasonCode: z.string().trim().min(1).max(100),
+    expectedJobRowVersion: z.number().int().nonnegative(),
+    reason: z.string().trim().min(1).max(500),
+    dryRun: z.boolean().default(true),
+}).strict();
+export const ofapiCaptureJobCancelResponseSchema = z.object({
+    dryRun: z.boolean(),
+    status: z.enum(["would_cancel", "cancelled"]),
+    jobId: z.string().uuid(),
+    pageId: z.number().int().positive(),
+    previous: z.object({
+        state: z.enum(["blocked", "retry_wait"]),
+        reasonCode: z.string().nullable(),
+        rowVersion: z.number().int().nonnegative(),
+    }),
+    next: z.object({
+        state: z.literal("cancelled"),
+        reasonCode: z.literal("owner_cancelled"),
+        rowVersion: z.number().int().nonnegative(),
+    }),
+});
 export const ofapiCoverageRevokeParamsSchema = z.object({
     pageId: intId,
     chatId: z.string().trim().min(1).max(200),
@@ -3564,7 +3688,7 @@ export const ofapiCreditLedgerSourceEnum = z.enum([
     "refill",
     "adjustment",
 ]);
-// Positive spend per ledger source over a window. Refills are negative credit
+// Net spend per ledger source, including signed corrections. Refills are negative credit
 // movement and never count as spend, so they have no key here.
 const ofapiCreditsSpendBySourceSchema = z.object({
     rest: z.number().int(),
@@ -3597,6 +3721,16 @@ export const ofapiCreditsSummaryResponseSchema = z.object({
         blocked: z.boolean(),
     }),
     forecast: z.object({
+        // New forecasts use recorded REST activity plus signed corrections and
+        // webhook accrual estimates. Inferred balance residuals remain visible
+        // separately; they are not evidence of a repeatable spending rate.
+        basis: z.literal("recorded_activity").optional(),
+        unverifiedResidual: z.object({
+            credits: z.number().int(),
+            from: isoTimestamp,
+            to: isoTimestamp,
+        }).optional(),
+        monthUnverifiedResidualCredits: z.number().int().optional(),
         avgDailySpend7d: z.number(),
         daysLeft: z.number().int().nullable(),
         runOutDate: businessDate.nullable(),
@@ -3604,7 +3738,7 @@ export const ofapiCreditsSummaryResponseSchema = z.object({
         // avgDailySpend × remaining UTC days). Credits only; the dashboard formats USD
         // from `pricing`. Optional so a dashboard bundle can roll across an API version
         // that predates them.
-        monthToDateSpend: z.number().int().min(0).optional(),
+        monthToDateSpend: z.number().int().optional(),
         monthEndProjection: z.number().int().min(0).optional(),
         // Credits to refill now to keep the runway at `targetDays` above the floor:
         // max(0, floor + avgDailySpend × targetDays − balance). Null when the balance
@@ -3665,12 +3799,18 @@ export const ofapiCreditsSummaryResponseSchema = z.object({
 const ofapiCreditsChatterWindowSchema = z.object({
     from: isoTimestamp,
     to: isoTimestamp,
+    // Compatibility estimates for installed SDKs: REST is floored at zero and
+    // the legacy total remains REST plus the estimated webhook component.
     restCredits: z.number().int().min(0),
     webhook: z.object({
         eventCount: z.number().int().min(0),
         estimatedCredits: z.number().int().min(0),
     }),
     totalEstimatedCredits: z.number().int().min(0),
+    // Exact signed net for upgraded clients. Optional for compatibility with
+    // older Hub versions; a correction can make a bounded window net-negative.
+    netRestCredits: z.number().int().optional(),
+    netTotalEstimatedCredits: z.number().int().optional(),
 });
 export const ofapiCreditsChatterSummaryResponseSchema = z.object({
     enabled: z.boolean(),
@@ -3697,6 +3837,7 @@ export const ofapiCommandStateSchema = z.enum([
     "cancelled",
 ]);
 export const ofapiCommandKindSchema = z.enum([
+    ...OFAPI_EXTENDED_COMMAND_KINDS,
     "send_text_message_v1",
     "send_media_message_v1",
     "typing_active_v1",
@@ -3750,6 +3891,7 @@ const sendMediaMessagePayloadSchema = z.strictObject({
     }
 });
 export const createOfapiCommandBodySchema = z.discriminatedUnion("kind", [
+    ...ofapiExtendedCommandOptions,
     z.strictObject({
         ...ofapiCommandBaseFields,
         kind: z.literal("send_text_message_v1"),
@@ -3957,7 +4099,12 @@ export const ofapiDmColdArchiveStatusResponseSchema = z.object({
     acl: z.literal("owner_admin_endpoint_only"),
     audit: z.literal("source_journal_metadata_on_each_row"),
     purgePolicy: z.literal("daily_retention_purge_by_retain_until"),
-    exportPolicy: z.literal("no_raw_transcript_export_endpoint_yet"),
+    // Step A of the spec 11 staging: the WIRE type widens to the enum now, in its
+    // own deploy, so the fleet can re-vendor while the SERVED value is unchanged.
+    // The value itself moves later, from `agentExportPolicyValue` config, and only
+    // after every client's vendored runtime schema has been verified to accept the
+    // new member. Collapsing the two steps breaks clients in production.
+    exportPolicy: agentExportPolicyEnum,
     mediaPolicy: z.literal("stable_metadata_only_no_signed_urls"),
 });
 // --- Declarative route authorization (kernel Stage 19) ---
@@ -3972,14 +4119,18 @@ export const ofapiDmColdArchiveStatusResponseSchema = z.object({
 //   owner-session  cookie session with the owner role (admin surface, swagger/openapi)
 //   apiKey         bearer API key or device token (desktop/extension lanes)
 //   device-token   device-token bearer only (current-device self-service)
-//   any            any authenticated principal; finer scoping stays in the service
+//   agentKey       Agent Read Plane machine key only — there is no human behind
+//                  this principal (agent-read slice 0b; no route declares it yet)
+//   any            any authenticated principal that predates the agent plane;
+//                  finer scoping stays in the service. NOT a wildcard: an agent
+//                  key is refused here exactly as it is on every kind but agentKey
 // scope:"page" = the middleware resolves params.pageLabel and requires canAccessPage
 // before any handler runs; page ids derived from query/body stay handler-checked.
 // `roles` is reserved for narrowing beyond the kind (unused today; Stage 22 adds
-// device tokens additively).
+// device tokens additively). `roles` never admits an agent: it names human roles.
 export const routeAuthPolicySchema = z
     .object({
-    kind: z.enum(["public", "hmac", "monitoring", "session", "any-session", "owner-session", "apiKey", "device-token", "pending-device-token", "any"]),
+    kind: z.enum(["public", "hmac", "monitoring", "session", "any-session", "owner-session", "apiKey", "device-token", "pending-device-token", "agentKey", "any"]),
     roles: z.array(userRoleEnum).nonempty().optional(),
     scope: z.enum(["page", "none"]).optional(),
 })
@@ -4004,9 +4155,22 @@ export function routeSecurityFromAuth(auth) {
         case "device-token":
         case "pending-device-token":
             return [{ bearerAuth: [] }];
+        // An agent key travels in the same Authorization: Bearer header as the other
+        // bearers, but it gets its OWN scheme: folding it into bearerAuth would make
+        // the published contract claim a chatter api key can call the agent plane,
+        // which is precisely what the middleware refuses.
+        case "agentKey":
+            return [{ agentKeyAuth: [] }];
         case "any":
             return [{ cookieAuth: [] }, { bearerAuth: [] }];
+        default:
+            // Exhaustiveness guard: a new auth kind without a scheme must be a COMPILE
+            // error, not an operation published with no security at all.
+            return assertNeverAuthKind(auth.kind);
     }
+}
+function assertNeverAuthKind(kind) {
+    throw new Error(`route auth kind has no OpenAPI security scheme: ${String(kind)}`);
 }
 // --- Configuration surface (Stage A: read-only) ---
 const configValueScalar = z.union([z.string(), z.number(), z.boolean()]).nullable();
@@ -4190,7 +4354,547 @@ export const opsMetricsResponseSchema = z.object({
         updatedAt: isoTimestamp.nullable(),
     }).nullable(),
 });
+// ── WP-S1: the endpoints-cover SERVING surface (Fansly only, A28-2) ──────────
+//
+// Eight owner-session, page-scoped read routes over the projections F1–F7 and F4
+// fill. THE ONE LAW THESE SCHEMAS ENCODE: **serving never authorizes capture**.
+// Nothing here triggers a fetch, nothing here is a write, and every route is a
+// pure read of what the projections already hold.
+//
+// Three shape rules that are not style:
+//   * Every labelled platform enum is served as RAW CODE + LABEL + MAPPING
+//     VERSION (A22-2). The code is the truth; the label is this build's reading
+//     of it and can be wrong (`fansly-notification-types.ts` was wrong on eight
+//     of sixteen codes once already).
+//   * A metric the platform did not serve is `null`, NEVER 0 — a read layer that
+//     coalesces turns "unserved" into "zero views", which is a different fact.
+//   * Money is integer mills and NET is never silently turned into gross. A12
+//     settled that `saleStats.total` is the creator's net share; a gross figure
+//     derived from it travels inside a `derived` envelope that names its basis.
+//
+// No provider raw JSON crosses these routes (raw drill-down stays on the
+// governed journal surface) and no delivery/CDN address appears in any response:
+// media are identified by REF only, which is an id, not an address.
+/** `[from, to)` on every windowed insights route. Both bounds are required —
+ *  the plane's original incident was a silent default window. */
+const insightsInstant = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/, "Expected an RFC 3339 timestamp with an explicit offset");
+/** Every list route is bounded. 500 is the ceiling everywhere; no route has an
+ *  unbounded mode and none takes an offset (keyset only). */
+const insightsLimitSchema = z.coerce.number().int().min(1).max(500);
+/** Opaque keyset position, minted by the previous response. It carries only a
+ *  sort position inside the SAME page's SAME query — never a scope. */
+const insightsCursorSchema = z.string().min(1).max(512);
+const insightsSubjectKindEnum = z.enum([
+    "account_profile",
+    "account_media",
+    "media_offer",
+    "post",
+]);
+const insightsPageSchema = z.object({
+    label: z.string(),
+    platform: platformEnum,
+});
+/** The `(status, acquisition_mode, proof)` vocabulary, verbatim from
+ *  `capture_coverage`. Serving it is how a chart says "partial", and the panel
+ *  that reads it is the honesty panel. */
+const insightsCoverageRowSchema = z.object({
+    plane: z.string(),
+    scopeRef: z.string(),
+    status: z.string(),
+    acquisitionMode: z.string(),
+    proof: z.string(),
+    oldestCapturedAt: isoTimestamp.nullable(),
+    newestCapturedAt: isoTimestamp.nullable(),
+    expectedCount: z.number().int().nullable(),
+    observedUniqueCount: z.number().int().nullable(),
+    reasonCode: z.string().nullable(),
+    nextProbeAt: isoTimestamp.nullable(),
+    updatedAt: isoTimestamp,
+});
+/** A figure Hub COMPUTED. A13: the platform serves no averages and no gross,
+ *  so anything of that shape is ours and says so, with the components it was
+ *  built from named in `basis`. */
+function insightsDerived(value) {
+    return z.object({
+        value,
+        derived: z.literal(true),
+        /** What the value was computed FROM, in words a reader can check. */
+        basis: z.string(),
+    });
+}
+const insightsTrafficRowSchema = z.object({
+    subjectKind: z.string(),
+    subjectRef: z.string(),
+    periodMs: z.number().int(),
+    bucketStart: isoTimestamp,
+    /** RAW, as text — the integer the platform sent. */
+    sourceCode: z.string(),
+    /** THIS BUILD'S reading of the code. `unknown:<code>` when it has none. */
+    sourceLabel: z.string(),
+    mappingVersion: z.number().int(),
+    /** `type - (type % 10)` as text for a profile row; null for a media row,
+     *  whose 0/1 codes are not a family/member structure at all. */
+    family: z.string().nullable(),
+    familyLabel: z.string().nullable(),
+    /** Member 1 is the creator widget's visit counter; every other member is the
+     *  dwell-bearing series. Null for media rows, for the same reason. */
+    measure: z.enum(["visits", "dwell"]).nullable(),
+    /** Metrics: NULL means the platform did not serve it. Never 0. */
+    views: z.number().int().nullable(),
+    previewViews: z.number().int().nullable(),
+    uniqueViewers: z.number().int().nullable(),
+    previewUniqueViewers: z.number().int().nullable(),
+    videoViews: z.number().int().nullable(),
+    previewVideoViews: z.number().int().nullable(),
+    interactionTimeMs: z.number().int().nullable(),
+    previewInteractionTimeMs: z.number().int().nullable(),
+    /** A SUM over views on the wire; divided at read time or not at all. */
+    videoPercentWatchedSum: z.string().nullable(),
+    previewVideoPercentWatchedSum: z.string().nullable(),
+    revisionCount: z.number().int(),
+    lastObservedAt: isoTimestamp,
+});
+export const statsTrafficQuerySchema = z.object({
+    from: insightsInstant,
+    to: insightsInstant,
+    periodMs: z.coerce.number().int().min(1).default(86_400_000),
+    subjectKind: insightsSubjectKindEnum.default("account_profile"),
+    subjectRef: z.string().max(64).optional(),
+    limit: insightsLimitSchema.default(500),
+    cursor: insightsCursorSchema.optional(),
+});
+export const statsTrafficResponseSchema = z.object({
+    page: insightsPageSchema,
+    window: z.object({
+        from: isoTimestamp,
+        to: isoTimestamp,
+        periodMs: z.number().int(),
+        subjectKind: z.string(),
+        subjectRef: z.string().nullable(),
+    }),
+    rows: z.array(insightsTrafficRowSchema),
+    coverage: z.array(insightsCoverageRowSchema),
+    nextCursor: z.string().nullable(),
+});
+const insightsMediaSalesSchema = z.object({
+    count: z.number().int().nullable(),
+    /** A12: `saleStats.total` is the creator's NET share. Stored verbatim. */
+    netMills: mills.nullable(),
+    pendingMills: mills.nullable(),
+    /** DERIVED from `netMills`. Fansly's cut is 20 %, so gross = net / 0.8 — a
+     *  factor that can change, which is exactly why net is what is stored and
+     *  gross is what is computed here and labelled. Never summed with net. */
+    grossMills: insightsDerived(mills).nullable(),
+});
+const insightsMediaRowSchema = z.object({
+    mediaOfferRef: z.string(),
+    mediaRef: z.string().nullable(),
+    bundleRefs: z.array(z.string()),
+    mediaType: z.number().int().nullable(),
+    mimeType: z.string().nullable(),
+    width: z.number().int().nullable(),
+    height: z.number().int().nullable(),
+    durationMs: z.number().int().nullable(),
+    priceMills: mills.nullable(),
+    likeCount: z.number().int().nullable(),
+    sales: insightsMediaSalesSchema,
+    createdAtPlatform: isoTimestamp.nullable(),
+    deletedAtPlatform: isoTimestamp.nullable(),
+    firstObservedAt: isoTimestamp,
+    lastObservedAt: isoTimestamp,
+    buckets: z.array(insightsTrafficRowSchema),
+});
+const insightsTopMediaRowSchema = z.object({
+    plane: z.string(),
+    rank: z.number().int(),
+    mediaOfferRef: z.string(),
+    bundleRef: z.string().nullable(),
+    periodMs: z.number().int(),
+    requestedStart: isoTimestamp,
+    requestedEnd: isoTimestamp,
+    views: z.number().int().nullable(),
+    previewViews: z.number().int().nullable(),
+    interactionTimeMs: z.number().int().nullable(),
+    previewInteractionTimeMs: z.number().int().nullable(),
+    observedAt: isoTimestamp,
+});
+export const statsMediaQuerySchema = z.object({
+    from: insightsInstant,
+    to: insightsInstant,
+    periodMs: z.coerce.number().int().min(1).default(86_400_000),
+    mediaOfferRef: z.string().max(64).optional(),
+    limit: insightsLimitSchema.default(50),
+    /** Total bucket rows across the whole response, not per media. */
+    bucketLimit: insightsLimitSchema.default(200),
+    cursor: insightsCursorSchema.optional(),
+});
+export const statsMediaResponseSchema = z.object({
+    page: insightsPageSchema,
+    window: z.object({
+        from: isoTimestamp,
+        to: isoTimestamp,
+        periodMs: z.number().int(),
+    }),
+    media: z.array(insightsMediaRowSchema),
+    /** `stats_top_media` for the freshest window the page holds. Window identity
+     *  is part of a row: rank 2 of one window is not rank 2 of the next. */
+    top: z.array(insightsTopMediaRowSchema),
+    /** [E5]: the per-media statistics route serves SEVEN stat keys and no video
+     *  fields at all, even for a video asset. Watch metrics are therefore not
+     *  claimable per media — stated here so a caller cannot read their absence as
+     *  zero watch time. The account-level media datapoints DO carry them, and
+     *  those rows arrive under `subjectKind: "account_media"`. */
+    watchMetrics: z.object({
+        perMediaAvailable: z.literal(false),
+        reason: z.literal("not_served_per_media_e5"),
+    }),
+    coverage: z.array(insightsCoverageRowSchema),
+    bucketsTruncated: z.boolean(),
+    nextCursor: z.string().nullable(),
+});
+export const statsTagsQuerySchema = z.object({
+    from: insightsInstant,
+    to: insightsInstant,
+    limit: insightsLimitSchema.default(100),
+    cursor: insightsCursorSchema.optional(),
+});
+export const statsTagsResponseSchema = z.object({
+    page: insightsPageSchema,
+    window: z.object({ from: isoTimestamp, to: isoTimestamp }),
+    /** Top FYP tags per captured window. `tagName` is NULL when the response's
+     *  own `tags[]` join missed — never fabricated from the id. */
+    topTags: z.array(z.object({
+        plane: z.string(),
+        rank: z.number().int(),
+        tagRef: z.string(),
+        tagName: z.string().nullable(),
+        periodMs: z.number().int(),
+        requestedStart: isoTimestamp,
+        requestedEnd: isoTimestamp,
+        views: z.number().int().nullable(),
+        previewViews: z.number().int().nullable(),
+        interactionTimeMs: z.number().int().nullable(),
+        previewInteractionTimeMs: z.number().int().nullable(),
+        observedAt: isoTimestamp,
+    })),
+    /** Platform-GLOBAL counters, sampled per page. The global value is derived at
+     *  READ time: latest `captured_at` wins, ties break on `page_id` ascending —
+     *  `account_seq` is incomparable across pages. */
+    platformTags: z.array(z.object({
+        tagRef: z.string(),
+        tagName: z.string().nullable(),
+        businessDate: businessDate,
+        viewCount: z.number().int().nullable(),
+        postCount: z.number().int().nullable(),
+        source: z.string(),
+        capturedAt: isoTimestamp,
+    })),
+    coverage: z.array(insightsCoverageRowSchema),
+    nextCursor: z.string().nullable(),
+});
+/** One lane's live operating state, read straight off `page_sync_states`. Every
+ *  field is nullable because every field is written by ONE lane's progress
+ *  block and no lane writes them all. */
+const insightsLaneProgressSchema = z.object({
+    journaled: z.number().int().nullable(),
+    callsToday: z.number().int().nullable(),
+    calledToday: z.number().int().nullable(),
+    dailyCap: z.number().int().nullable(),
+    deferred: z.string().nullable(),
+    // WP-F4's queue + honesty block.
+    mediaKnown: z.number().int().nullable(),
+    queueSize: z.number().int().nullable(),
+    dueToday: z.number().int().nullable(),
+    deferredToday: z.number().int().nullable(),
+    neverVisited: z.number().int().nullable(),
+    backfillComplete: z.number().int().nullable(),
+    backfillStopped: z.number().int().nullable(),
+    /** A16 item 3: the LIVE long-tail cycle, computed by the lane from the live
+     *  class census and the live cap. Never a documentation constant. */
+    estimatedCycleDays: z.number().nullable(),
+    requestsPerDayWanted: z.number().nullable(),
+    saturating: z.boolean().nullable(),
+    longTailCycleDays: z.number().nullable(),
+    // WP-F3's M block.
+    uniqueMediaCount: z.number().int().nullable(),
+    vaultMemberUniqueCount: z.number().int().nullable(),
+    /** Σ `item_count`. NON-UNIQUE by construction — the system albums are views
+     *  over the same media, so this double-counts. Labelled, never used as M. */
+    albumMembershipSum: z.number().int().nullable(),
+    vaultWalkStatus: z.string().nullable(),
+    // WP-F5's walk + truncation block.
+    rootsKnown: z.number().int().nullable(),
+    rootsWalked: z.number().int().nullable(),
+    rootsDirty: z.number().int().nullable(),
+    postsKnown: z.number().int().nullable(),
+    commentsSeen: z.number().int().nullable(),
+    commentsMissing: z.number().int().nullable(),
+    possiblyTruncated: z.number().int().nullable(),
+    paginationMode: z.string().nullable(),
+    phase: z.string().nullable(),
+    seedComplete: z.boolean().nullable(),
+});
+export const statsCoverageResponseSchema = z.object({
+    page: insightsPageSchema,
+    generatedAt: isoTimestamp,
+    /** Every `capture_coverage` row this page holds: the floors, in the
+     *  `(status, acquisition_mode, proof)` vocabulary. */
+    planes: z.array(insightsCoverageRowSchema),
+    /** Per lane: is its gate open, is this page on its allowlist, and what did it
+     *  last report. A lane whose flag is off holds no data for a reason, and a
+     *  panel that cannot tell that apart from "no activity" is the panel this one
+     *  replaces. */
+    streams: z.array(z.object({
+        stream: z.string(),
+        status: z.string(),
+        phase: z.string().nullable(),
+        succeededAt: isoTimestamp.nullable(),
+        failedAt: isoTimestamp.nullable(),
+        consecutiveFailures: z.number().int(),
+        blockerKind: z.string().nullable(),
+        blockerCode: z.string().nullable(),
+        /** null when this lane has no ramp flag of its own. */
+        flagEnabled: z.boolean().nullable(),
+        /** null when this lane has no page allowlist of its own. FAIL-CLOSED on
+         *  every lane this initiative shipped: empty allowlist = NO pages. */
+        allowlisted: z.boolean().nullable(),
+        progress: insightsLaneProgressSchema,
+    })),
+    /** What we actually hold, per projection: row count and the range it spans.
+     *  A zero count next to an open floor is a real answer; a zero count with no
+     *  coverage row is "never started" and reads that way. */
+    holdings: z.array(z.object({
+        projection: z.string(),
+        rowCount: z.number().int(),
+        oldestAt: isoTimestamp.nullable(),
+        newestAt: isoTimestamp.nullable(),
+    })),
+});
+export const contentMediaQuerySchema = z.object({
+    limit: insightsLimitSchema.default(100),
+    cursor: insightsCursorSchema.optional(),
+});
+export const contentMediaResponseSchema = z.object({
+    page: insightsPageSchema,
+    generatedAt: isoTimestamp,
+    /** Catalog heads. IDs ONLY — `mediaRef`/`previewRef` are platform ids, and no
+     *  delivery or CDN address exists anywhere in this response by construction. */
+    media: z.array(insightsMediaRowSchema.omit({ buckets: true })),
+    vaultAlbums: z.array(z.object({
+        vaultKind: z.string(),
+        albumRef: z.string(),
+        title: z.string().nullable(),
+        albumType: z.number().int().nullable(),
+        status: z.number().int().nullable(),
+        pos: z.number().int().nullable(),
+        /** AS SERVED, and NON-UNIQUE across albums: the system albums are views
+         *  over the same media. M is `count(distinct media_offer_ref)`. */
+        itemCount: z.number().int().nullable(),
+        missingSince: isoTimestamp.nullable(),
+        lastObservedAt: isoTimestamp,
+    })),
+    tiers: z.array(z.object({
+        tierRef: z.string(),
+        name: z.string().nullable(),
+        color: z.string().nullable(),
+        pos: z.number().int().nullable(),
+        /** `tier.price` — a BASE, never the price a subscriber pays. The price
+         *  truth is the plan rows below. */
+        basePriceMills: mills.nullable(),
+        maxSubscribers: z.number().int().nullable(),
+        missingSince: isoTimestamp.nullable(),
+        plans: z.array(z.object({
+            planRef: z.string(),
+            status: z.number().int().nullable(),
+            durationDays: z.number().int().nullable(),
+            priceMills: mills.nullable(),
+            useAmounts: z.number().int().nullable(),
+            promoCount: z.number().int(),
+            missingSince: isoTimestamp.nullable(),
+        })),
+    })),
+    walls: z.array(z.object({
+        wallRef: z.string(),
+        name: z.string().nullable(),
+        description: z.string().nullable(),
+        pos: z.number().int().nullable(),
+        mainWall: z.boolean().nullable(),
+        defaultWall: z.boolean().nullable(),
+        private: z.number().int().nullable(),
+        missingSince: isoTimestamp.nullable(),
+    })),
+    automations: z.array(z.object({
+        automationRef: z.string(),
+        /** RAW platform code (3 and 15 observed live). Never a label. */
+        triggerType: z.number().int().nullable(),
+        delaySeconds: z.number().int().nullable(),
+        cooldownSeconds: z.number().int().nullable(),
+        templateType: z.number().int().nullable(),
+        senderRef: z.string().nullable(),
+        messageText: z.string().nullable(),
+        attachmentCount: z.number().int(),
+        /** FALSE when the served template did not parse. An unparsed template and
+         *  an automation with no text must never look alike. */
+        parseOk: z.boolean(),
+        missingSince: isoTimestamp.nullable(),
+    })),
+    /** M and the numbers M is not. */
+    inventory: z.object({
+        uniqueMediaCount: z.number().int(),
+        vaultMemberUniqueCount: z.number().int(),
+        albumMembershipSum: insightsDerived(z.number().int()),
+    }),
+    coverage: z.array(insightsCoverageRowSchema),
+    nextCursor: z.string().nullable(),
+});
+export const contentCommentsQuerySchema = z.object({
+    from: insightsInstant,
+    to: insightsInstant,
+    postRef: z.string().max(64).optional(),
+    limit: insightsLimitSchema.default(200),
+    cursor: insightsCursorSchema.optional(),
+});
+export const contentCommentsResponseSchema = z.object({
+    page: insightsPageSchema,
+    window: z.object({ from: isoTimestamp, to: isoTimestamp }),
+    comments: z.array(z.object({
+        commentRef: z.string(),
+        parentPostRef: z.string(),
+        rootPostRef: z.string().nullable(),
+        authorRef: z.string(),
+        authorUsername: z.string().nullable(),
+        authorDisplayName: z.string().nullable(),
+        /** Empty-content replies ARE stored: a fan who replied with only an
+         *  attachment still replied. `''` is a reply, not a missing one. */
+        textPlain: z.string(),
+        likeCount: z.number().int().nullable(),
+        mediaLikeCount: z.number().int().nullable(),
+        /** TWO BASES, never summed (§2.3). */
+        tipTotalMills: mills.nullable(),
+        attachmentTipMills: mills.nullable(),
+        attachmentCount: z.number().int().nullable(),
+        pinned: z.boolean().nullable(),
+        occurredAt: isoTimestamp,
+        changedAt: isoTimestamp,
+        discoveredVia: z.string(),
+        /** The route has NO established pagination, so a suspiciously full page
+         *  marks its rows. The doubt belongs to the row because it outlives the
+         *  sweep that created it. */
+        possiblyTruncated: z.boolean(),
+        /** A later FULL walk stopped naming this comment. Never a delete. */
+        missingSince: isoTimestamp.nullable(),
+    })),
+    perPost: z.array(z.object({
+        postRef: z.string(),
+        commentCount: z.number().int(),
+        possiblyTruncatedCount: z.number().int(),
+        missingCount: z.number().int(),
+        oldestAt: isoTimestamp.nullable(),
+        newestAt: isoTimestamp.nullable(),
+    })),
+    /** WP-F2 ships `post_likes` EMPTY on Fansly: no like code is live-confirmed
+     *  ([E4]), so layer 2 writes nothing. Declared, not omitted — an omitted
+     *  panel is indistinguishable from a panel with nothing in it. */
+    likers: z.object({
+        state: z.literal("not_started"),
+        reason: z.literal("no_confirmed_like_code_e4"),
+        rows: z.array(z.object({
+            subjectKind: z.string(),
+            subjectRef: z.string(),
+            likerPlatformUserId: z.string(),
+            state: z.string(),
+            occurredAt: isoTimestamp,
+            discoveredVia: z.string(),
+        })),
+    }),
+    coverage: z.array(insightsCoverageRowSchema),
+    nextCursor: z.string().nullable(),
+});
+export const moneyRevenueMixQuerySchema = z.object({
+    from: businessDate,
+    to: businessDate,
+    limit: insightsLimitSchema.default(500),
+    cursor: insightsCursorSchema.optional(),
+});
+export const moneyRevenueMixResponseSchema = z.object({
+    page: insightsPageSchema,
+    window: z.object({ from: businessDate, to: businessDate }),
+    daily: z.array(z.object({
+        businessDate: businessDate,
+        /** RAW. One visible label maps to TWO live codes, legacy and current
+         *  (A22-2), and the ledger reaches back into legacy territory. */
+        typeCode: z.number().int(),
+        typeLabel: z.string(),
+        /** `legacy` / `current` / `single` — which half of a pair this code is. */
+        typeEra: z.enum(["legacy", "current", "single"]).nullable(),
+        mappingVersion: z.number().int(),
+        /** Stored separately and NEVER derived across bases. */
+        grossMills: mills.nullable(),
+        netMills: mills.nullable(),
+        lastObservedAt: isoTimestamp,
+    })),
+    months: z.array(z.object({
+        year: z.number().int(),
+        month: z.number().int(),
+        /** TRUE for the `(0, 0)` rolling-rollup row — the creator's Statements
+         *  header. It is NEVER summed with the real months, and it is flagged here
+         *  rather than filtered out so a reader sees why the totals differ. */
+        rollup: z.boolean(),
+        totalGrossMills: mills.nullable(),
+        totalNetMills: mills.nullable(),
+        topPercent: z.string().nullable(),
+        maxTopPercent: z.string().nullable(),
+        windowStart: isoTimestamp.nullable(),
+        windowEnd: isoTimestamp.nullable(),
+        lastObservedAt: isoTimestamp,
+    })),
+    coverage: z.array(insightsCoverageRowSchema),
+    nextCursor: z.string().nullable(),
+});
+export const moneyPayoutsQuerySchema = z.object({
+    limit: insightsLimitSchema.default(200),
+    cursor: insightsCursorSchema.optional(),
+});
+export const moneyPayoutsResponseSchema = z.object({
+    page: insightsPageSchema,
+    generatedAt: isoTimestamp,
+    requests: z.array(z.object({
+        payoutRef: z.string(),
+        /** MILLS with no scaling: the wire unit IS the kernel unit here. */
+        amountMills: mills.nullable(),
+        methodRef: z.string().nullable(),
+        /** RAW. 8 is the only code ever observed, and it is never treated as "the
+         *  success code" in a conditional. */
+        statusCode: z.number().int().nullable(),
+        statusLabel: z.string().nullable(),
+        statusConfidence: z.string(),
+        requestedAt: isoTimestamp.nullable(),
+        updatedAtPlatform: isoTimestamp.nullable(),
+        version: z.number().int().nullable(),
+    })),
+    /** MASKED. The full processor payload stays raw-journal-only under the
+     *  restricted class; provider 2 (Paxum) returns a plaintext email and the
+     *  ONLY sanctioned reader of that field is the WP-F7 canonicalizer, which
+     *  turns it into the mask served here. */
+    methods: z.array(z.object({
+        methodRef: z.string(),
+        providerId: z.number().int().nullable(),
+        providerLabel: z.string(),
+        type: z.number().int().nullable(),
+        flags: z.number().int().nullable(),
+        status: z.number().int().nullable(),
+        maskedLabel: z.string().nullable(),
+        metadataParseOk: z.boolean(),
+        missingSince: isoTimestamp.nullable(),
+    })),
+    coverage: z.array(insightsCoverageRowSchema),
+    nextCursor: z.string().nullable(),
+});
 export const routeSchemas = {
+    ...ofapiBannedWordRouteSchemas,
+    ...ofapiVendorRouteSchemas,
+    ...agentRouteSchemas,
+    ...agentKeyAdminRouteSchemas,
     health: {
         auth: { kind: "public" },
         tags: ["system"],
@@ -4419,13 +5123,24 @@ export const routeSchemas = {
             403: errorResponseSchema,
         },
     },
+    adminOfapiBindingRefresh: {
+        auth: { kind: "owner-session" }, tags: ["admin"],
+        summary: "Preview or apply a verified OFAPI binding replacement and narrow recovery",
+        body: ofapiBindingRefreshBodySchema,
+        response: { 200: ofapiBindingRefreshResponseSchema, 400: errorResponseSchema, 401: errorResponseSchema,
+            403: errorResponseSchema, 409: errorResponseSchema, 503: errorResponseSchema },
+    },
+    adminOfapiCredentialPreflight: {
+        auth: { kind: "owner-session" }, tags: ["admin"], summary: "Inspect server credential adoption proof",
+        response: { 200: ofapiCredentialPreflightSchema, 401: errorResponseSchema, 403: errorResponseSchema, 503: errorResponseSchema },
+    },
     adminOfapiWebhookRegister: {
         auth: { kind: "owner-session" },
         tags: ["admin"],
-        summary: "Register (or re-register) the OFAPI webhook and auto-map accounts to pages",
+        summary: "Register (or re-register) the OFAPI webhook and inventory current bindings",
         description: "Creates/updates the team webhook at onlyfansapi.com with "
             + "account_scope=global and a freshly generated signing secret, stores the "
-            + "registration, and maps OFAPI accounts to OnlyFans pages by username.",
+            + "registration, and inventories current page bindings. Replacement uses a verified preview.",
         body: ofapiWebhookRegisterBodySchema,
         response: {
             200: ofapiWebhookRegisterResponseSchema,
@@ -4520,6 +5235,24 @@ export const routeSchemas = {
         body: ofapiCaptureJobReplayBodySchema,
         response: {
             200: ofapiCaptureJobReplayResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminOfapiCaptureJobCancel: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Dry-run or cancel one parked OFAPI capture job",
+        description: "Decision #246: frees the job's active slot so the owning lane can start a fresh "
+            + "job with fresh allowances on its next request. The cancelled row and its attempts are "
+            + "kept; nothing is dispatched.",
+        params: ofapiCaptureJobParamsSchema,
+        body: ofapiCaptureJobCancelBodySchema,
+        response: {
+            200: ofapiCaptureJobCancelResponseSchema,
             400: errorResponseSchema,
             401: errorResponseSchema,
             403: errorResponseSchema,
@@ -4833,10 +5566,11 @@ export const routeSchemas = {
             + "idempotency_mismatch (same id, different request) / voice_no_profile; 429 "
             + "voice_quota_denied; 503 voice_provider_unavailable (live flag on but "
             + "ELEVENLABS_API_KEY or the complete SERVICE_EGRESS_PROXY_* tuple is "
-            + "unconfigured — set both and restart). A quota-denied "
-            + "clientRequestId STAYS denied: every replay of it re-throws the same 429 "
-            + "(never a 202 view), so a retry after quota exhaustion needs a FRESH "
-            + "clientRequestId.",
+            + "unconfigured, or an active erasure temporarily owns the page writer "
+            + "fence). Quota refusal writes no render "
+            + "row and consumes no character budget. The same clientRequestId remains "
+            + "a 429 while the budget is exhausted, but may be admitted after capacity "
+            + "is restored; a concurrent already-admitted winner is replayed.",
         params: pageParamsSchema,
         body: voiceNoteCreateBodySchema,
         response: {
@@ -5062,6 +5796,12 @@ export const routeSchemas = {
                     netMills: z.number().int().nullable(),
                     currency: z.string(),
                     observedAt: z.string(),
+                    /** First time hydration failed to find this account on the platform
+                     * (fans.deleted_detected_at); null = the fan is alive. Cleared server
+                     * side as soon as any sync sees a name again (fans.ts:116-136).
+                     * Optional so a client vendored against an older kernel still
+                     * validates the response. */
+                    deletedAt: z.string().nullable().optional(),
                 })),
             }),
             401: errorResponseSchema,
@@ -6188,6 +6928,7 @@ export const routeSchemas = {
         body: syncTriggerBodySchema,
         response: {
             202: syncTriggerResponseSchema,
+            400: errorResponseSchema,
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
@@ -6245,6 +6986,48 @@ export const routeSchemas = {
             403: errorResponseSchema,
             404: errorResponseSchema,
             503: errorResponseSchema,
+        },
+    },
+    adminFollowersReconcileReset: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Reset only the Fansly follower-reconcile stream without deleting its cursor",
+        body: adminFollowersReconcileResetBodySchema,
+        response: {
+            200: adminFollowersReconcileResetResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            503: errorResponseSchema,
+        },
+    },
+    adminFollowersReconcileOverridePreview: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Preview the exact follower rows behind a blast-radius block",
+        body: adminFollowersReconcileOverridePreviewBodySchema,
+        response: {
+            200: adminFollowersReconcileOverridePreviewResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+        },
+    },
+    adminFollowersReconcileOverrideApply: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Apply a hash-bound follower blast-radius override while audience sync is paused",
+        body: adminFollowersReconcileOverrideApplyBodySchema,
+        response: {
+            200: adminFollowersReconcileOverrideApplyResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
         },
     },
     adminSyncTriggerAll: {
@@ -6333,6 +7116,7 @@ export const routeSchemas = {
         body: createPageBodySchema,
         response: {
             200: adminCreatePageResponseSchema,
+            400: errorResponseSchema,
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
@@ -6605,6 +7389,125 @@ export const routeSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             409: errorResponseSchema,
+        },
+    },
+    // --- WP-S1: the endpoints-cover serving surface (Fansly only, A28-2) -------
+    // Every one of the eight is `owner-session` + `scope: "page"`. That pairing is
+    // deliberate and is the whole access story for now: widening any of them to a
+    // chatter or agent principal is its own PR with its own gate. It is also what
+    // gates the money routes — `owner-session` IS the money scope on the REST
+    // surface (there is no separate money capability for cookie sessions; the
+    // `read:money` capability exists on the AGENT plane, whose datasets carry the
+    // same data behind it). `tests/contracts-auth-declarations.test.ts` pins both
+    // halves so a later widening cannot happen quietly.
+    statsTraffic: {
+        auth: { kind: "owner-session", scope: "page" },
+        tags: ["insights"],
+        summary: "Profile/media traffic buckets by RAW source code for one page",
+        params: pageParamsSchema,
+        querystring: statsTrafficQuerySchema,
+        response: {
+            200: statsTrafficResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    statsMedia: {
+        auth: { kind: "owner-session", scope: "page" },
+        tags: ["insights"],
+        summary: "Per-media traffic buckets, catalog head and top-media rankings",
+        params: pageParamsSchema,
+        querystring: statsMediaQuerySchema,
+        response: {
+            200: statsMediaResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    statsTags: {
+        auth: { kind: "owner-session", scope: "page" },
+        tags: ["insights"],
+        summary: "Top FYP tags per window plus platform-global tag counters",
+        params: pageParamsSchema,
+        querystring: statsTagsQuerySchema,
+        response: {
+            200: statsTagsResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    statsCoverage: {
+        auth: { kind: "owner-session", scope: "page" },
+        tags: ["insights"],
+        summary: "Capture coverage, per-lane budget state and the live long-tail cycle",
+        params: pageParamsSchema,
+        response: {
+            200: statsCoverageResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    contentMedia: {
+        auth: { kind: "owner-session", scope: "page" },
+        tags: ["insights"],
+        summary: "Content catalog: media, vault albums, tiers/plans, walls, automations",
+        params: pageParamsSchema,
+        querystring: contentMediaQuerySchema,
+        response: {
+            200: contentMediaResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    contentComments: {
+        auth: { kind: "owner-session", scope: "page" },
+        tags: ["insights"],
+        summary: "Post comments with pagination/truncation honesty; likers declared empty",
+        params: pageParamsSchema,
+        querystring: contentCommentsQuerySchema,
+        response: {
+            200: contentCommentsResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    moneyRevenueMix: {
+        auth: { kind: "owner-session", scope: "page" },
+        tags: ["insights"],
+        summary: "Daily revenue mix by RAW type code plus month totals incl. the rollup row",
+        params: pageParamsSchema,
+        querystring: moneyRevenueMixQuerySchema,
+        response: {
+            200: moneyRevenueMixResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    moneyPayouts: {
+        auth: { kind: "owner-session", scope: "page" },
+        tags: ["insights"],
+        summary: "Payout requests and MASKED payout methods (money-gated by owner-session)",
+        params: pageParamsSchema,
+        querystring: moneyPayoutsQuerySchema,
+        response: {
+            200: moneyPayoutsResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
         },
     },
 };

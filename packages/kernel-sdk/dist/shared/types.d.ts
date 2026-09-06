@@ -1,4 +1,15 @@
 export declare const platforms: readonly ["fansly", "onlyfans"];
+/**
+ * The values `exportPolicy` may take on the wire (spec 11 staging).
+ *
+ * Declared ONCE here because three sites need it and they must not drift: the
+ * contract enum (`routes.ts`), the config descriptor's `enumValues`, and the env
+ * parser. The staging is: widen the wire type first (a code deploy the fleet
+ * re-vendors), flip the served VALUE second (a config flip). A single list is
+ * what makes "widened but not yet flipped" a checkable state rather than a hope.
+ */
+export declare const agentExportPolicyValues: readonly ["no_raw_transcript_export_endpoint_yet", "agent_read_plane_v1"];
+export type AgentExportPolicyValue = (typeof agentExportPolicyValues)[number];
 export type Platform = (typeof platforms)[number];
 export declare const transactionTypes: readonly ["subscription", "tip", "message_purchase", "post_purchase", "stream_tip", "chargeback", "refund", "payout_reversal", "other"];
 export type TransactionType = (typeof transactionTypes)[number];
@@ -62,11 +73,16 @@ export declare const fanFlagTypes: readonly ["whale", "vip", "risky"];
 export type FanFlagType = (typeof fanFlagTypes)[number];
 export declare const aiUsageFeatures: readonly ["fast-reply", "improve-draft", "help-me", "fan-summary", "chat-review", "scan", "ping", "hi-greeting", "workboard-closing", "coach-chat", "voice-script"];
 export type AiUsageFeature = (typeof aiUsageFeatures)[number];
+export declare const FANSLY_CLIENT_CHECK_ROUTES: readonly ["message", "group", "account", "earnings", "messagingGroups", "subscribers", "media"];
+export type FanslyClientCheckRoute = (typeof FANSLY_CLIENT_CHECK_ROUTES)[number];
 export interface FanslySessionBundle {
     authorization: string;
     fanslyClientId?: string;
+    /** Legacy pasted value. Retained for credential compatibility, never reused
+     * across routes by the adapter. */
     fanslyClientCheck?: string;
     fanslySessionId?: string;
+    routeChecks?: Partial<Record<FanslyClientCheckRoute, string>>;
 }
 export interface OnlyMonsterTokenBundle {
     token: string;

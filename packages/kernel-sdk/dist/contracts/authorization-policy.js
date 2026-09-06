@@ -8,7 +8,8 @@ const KIND_DESCRIPTIONS = {
     "apiKey": "bearer API key or device token",
     "device-token": "device-token bearer only",
     "pending-device-token": "short-lived pending device-token bearer, activation route only",
-    "any": "any authenticated principal",
+    "agentKey": "Agent Read Plane key only; no human principal is admitted",
+    "any": "any authenticated principal except an agent key",
 };
 export function renderAuthorizationPolicyMarkdown(rows) {
     const sorted = [...rows].sort((left, right) => left.url === right.url ? left.method.localeCompare(right.method) : left.url.localeCompare(right.url));

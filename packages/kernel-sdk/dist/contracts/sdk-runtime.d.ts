@@ -58,7 +58,7 @@ export type KernelClient = {
         headers?: Record<string, string>;
     }): Promise<Response>;
 };
-export type KernelErrorCategory = "auth" | "validation" | "not_found" | "conflict" | "rate_limit" | "server" | "network" | "contract";
+export type KernelErrorCategory = "auth" | "validation" | "not_found" | "conflict" | "rate_limit" | "server" | "http" | "network" | "contract";
 export declare class KernelApiError extends Error {
     readonly category: KernelErrorCategory;
     readonly status: number | null;

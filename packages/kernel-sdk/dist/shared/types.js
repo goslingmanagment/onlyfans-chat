@@ -1,4 +1,17 @@
 export const platforms = ["fansly", "onlyfans"];
+/**
+ * The values `exportPolicy` may take on the wire (spec 11 staging).
+ *
+ * Declared ONCE here because three sites need it and they must not drift: the
+ * contract enum (`routes.ts`), the config descriptor's `enumValues`, and the env
+ * parser. The staging is: widen the wire type first (a code deploy the fleet
+ * re-vendors), flip the served VALUE second (a config flip). A single list is
+ * what makes "widened but not yet flipped" a checkable state rather than a hope.
+ */
+export const agentExportPolicyValues = [
+    "no_raw_transcript_export_endpoint_yet",
+    "agent_read_plane_v1",
+];
 export const transactionTypes = [
     "subscription",
     "tip",
@@ -93,6 +106,15 @@ export const aiUsageFeatures = [
     "coach-chat",
     // Voice notes: the ElevenLabs TTS lane's script-generation feature.
     "voice-script",
+];
+export const FANSLY_CLIENT_CHECK_ROUTES = [
+    "message",
+    "group",
+    "account",
+    "earnings",
+    "messagingGroups",
+    "subscribers",
+    "media",
 ];
 export const syncHealthStates = ["healthy", "degraded", "suspicious", "failed"];
 export const httpRequestStates = ["started", "success", "retry", "failed"];

@@ -31,6 +31,8 @@ export class KernelApiError extends Error {
     }
 }
 function categoryForStatus(status) {
+    if (status === 400)
+        return "validation";
     if (status === 401 || status === 403)
         return "auth";
     if (status === 404)
@@ -41,7 +43,7 @@ function categoryForStatus(status) {
         return "rate_limit";
     if (status >= 500)
         return "server";
-    return "validation";
+    return "http";
 }
 function buildPath(template, params) {
     return template.replace(/:([A-Za-z0-9_]+)/g, (_match, name) => {
