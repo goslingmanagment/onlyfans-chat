@@ -532,6 +532,54 @@ describe("composer v2 durable boundaries", () => {
     ).toHaveLength(0);
     expect(data.chats.get(ACCT, CHAT)).not.toBeNull();
   });
+  it("a hidden chat stays hidden for older activity and resurfaces once a newer message arrives", async () => {
+    const hub = {
+      createOfapiCommand: vi.fn(
+        async ({ command }: { command: HubOfapiCommandCreateRequest }) =>
+          response(command, "confirmed"),
+      ),
+      getOfapiCommand: vi.fn(),
+    };
+    const hiddenAtMs = Date.parse("2026-09-06T12:00:00.000Z");
+    const service = createComposerActionService(data, hub, () => hiddenAtMs);
+    seedChat(data, { lastMessageAt: "2026-09-06T11:50:00+00:00", lastMessageId: "10" });
+    const visible = () => data.chats.list({ accountId: ACCT, filter: "all" }).items.map((c) => c.chatId);
+    const found = () => data.chats.search({ accountId: ACCT, query: "fan" }).map((c) => c.chatId);
+
+    expect((await service.perform(ACCT, CHAT, { kind: "hide_chat_v1" })).state).toBe("confirmed");
+    expect(visible()).toEqual([]);
+    expect(found()).toEqual([]);
+
+    // Sync re-delivers the same head, then an older message: still hidden.
+    seedChat(data, { lastMessageAt: "2026-09-06T11:50:00+00:00", lastMessageId: "10" });
+    seedChat(data, { lastMessageAt: "2026-09-06T11:40:00+00:00", lastMessageId: "9" });
+    expect(visible()).toEqual([]);
+    expect(data.chats.get(ACCT, CHAT)).not.toBeNull();
+
+    // A message newer than the hide moment un-hides the chat (list and search).
+    seedChat(data, { lastMessageAt: "2026-09-06T12:00:05+00:00", lastMessageId: "11", unreadCount: 1 });
+    expect(visible()).toEqual([CHAT]);
+    expect(found()).toEqual([CHAT]);
+  });
+
+  it("the hide moment is never behind the current head, so a head slightly ahead of the local clock cannot un-hide on the next sync", async () => {
+    const hub = {
+      createOfapiCommand: vi.fn(
+        async ({ command }: { command: HubOfapiCommandCreateRequest }) =>
+          response(command, "confirmed"),
+      ),
+      getOfapiCommand: vi.fn(),
+    };
+    // local clock 30 s behind the server-stamped head
+    const service = createComposerActionService(data, hub, () => Date.parse("2026-09-06T12:00:00.000Z"));
+    seedChat(data, { lastMessageAt: "2026-09-06T12:00:30+00:00", lastMessageId: "20" });
+    await service.perform(ACCT, CHAT, { kind: "hide_chat_v1" });
+    seedChat(data, { lastMessageAt: "2026-09-06T12:00:30+00:00", lastMessageId: "20" });
+    expect(data.chats.list({ accountId: ACCT, filter: "all" }).items).toHaveLength(0);
+    seedChat(data, { lastMessageAt: "2026-09-06T12:00:31+00:00", lastMessageId: "21" });
+    expect(data.chats.list({ accountId: ACCT, filter: "all" }).items).toHaveLength(1);
+  });
+
   it("retains confirmed message and chat settings after the recent history window fills", async () => {
     const hub = {
       createOfapiCommand: vi.fn(

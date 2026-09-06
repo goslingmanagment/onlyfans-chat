@@ -533,3 +533,13 @@ CREATE TABLE composer_actions (
 CREATE UNIQUE INDEX composer_actions_pending ON composer_actions(account_id, chat_id, action_key)
   WHERE state IN ('pending','unconfirmed');
 `;
+
+// v22 (review #27, fix 2) — a locally hidden chat must resurface when the
+// conversation moves on (OnlyFans itself un-hides on a new message). The hide
+// moment is recorded so the chats upsert can clear the flag exactly when the
+// head advances past it; rows hidden before this column existed are stamped
+// with their last write so any newer head un-hides them.
+export const SCHEMA_V22 = `
+ALTER TABLE chats ADD COLUMN locally_hidden_at TEXT;
+UPDATE chats SET locally_hidden_at = updated_at WHERE locally_hidden = 1 AND locally_hidden_at IS NULL;
+`;

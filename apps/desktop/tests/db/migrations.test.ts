@@ -35,7 +35,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
       expect(indexes).toContain('idx_message_guard_events_occurred');
       expect(indexes).toContain('idx_message_guard_events_hash');
-      expect(SCHEMA_VERSION).toBe(21);
+      expect(SCHEMA_VERSION).toBe(22);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       const guardCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('message_guard_events')")
@@ -88,6 +88,8 @@ describe('migration runner', () => {
         .all()
         .map((row) => (typeof row === 'object' && row !== null && 'name' in row ? row.name : null));
       expect(chatCols).toContain('last_message_id');
+      // v22: the hide moment that lets a hidden chat resurface on new activity
+      expect(chatCols).toContain('locally_hidden_at');
       const outboxCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('outbox')")
         .all()
@@ -166,6 +168,31 @@ describe('migration runner', () => {
       .prepare("SELECT last_message_id FROM chats WHERE account_id = 'acct_1' AND chat_id = '101'")
       .get();
     expect(upgraded).toEqual({ last_message_id: null });
+    db.close();
+  });
+
+  it('v21 → v22 stamps already-hidden chats with their last write so a newer head can un-hide them', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 21));
+    expect(readSchemaVersion(db)).toBe(21);
+    db.exec(
+      "INSERT INTO chats (account_id, chat_id, fan_name, raw, updated_at, locally_hidden) " +
+        "VALUES ('acct_1', '101', 'Hidden Fan', '{}', '2026-09-01T10:00:00.000Z', 1)",
+    );
+    db.exec(
+      "INSERT INTO chats (account_id, chat_id, fan_name, raw, updated_at, locally_hidden) " +
+        "VALUES ('acct_1', '102', 'Visible Fan', '{}', '2026-09-01T10:00:00.000Z', 0)",
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 21, to: SCHEMA_VERSION });
+    expect(
+      db
+        .prepare("SELECT chat_id, locally_hidden, locally_hidden_at FROM chats WHERE account_id = 'acct_1' ORDER BY chat_id")
+        .all(),
+    ).toEqual([
+      { chat_id: '101', locally_hidden: 1, locally_hidden_at: '2026-09-01T10:00:00.000Z' },
+      { chat_id: '102', locally_hidden: 0, locally_hidden_at: null },
+    ]);
     db.close();
   });
 

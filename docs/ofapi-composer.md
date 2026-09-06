@@ -44,7 +44,11 @@ client intent is saved before intake; double clicks share one command. Unknown
 outcomes keep that identity across restarts. **Check status** recovers the same
 intent, and changing the same setting stays blocked until it is resolved.
 Confirmed actions update local state; failed/unknown ones remain visible. Hiding
-removes the chat from local lists while retaining its cached messages. Like/pin/
+removes the chat from local lists while retaining its cached messages; the hide
+moment is recorded (`locally_hidden_at`, migration 22) and the chat resurfaces
+in list and search as soon as its head message advances past that moment — the
+same behaviour OnlyFans applies to a hidden chat on new activity (review #27,
+fix 2). An unchanged or older head keeps it hidden. Like/pin/
 mute state reflects this desktop's confirmed actions and is retained independently
 of the recent-history window; it is not a claim to observe every external edit.
 
@@ -86,7 +90,8 @@ ID for a person/partner/guest ID. The verified Hub send contract uses arrays for
    Hub per-key permissions, account/page grants and provider accounting apply.
    A manual reference lookup is one bounded page; it does not auto-page.
 
-SQLite migration 21 is forward-only and preserves outbox history. SDK artifacts
+SQLite migrations 21 and 22 are forward-only and preserve outbox and chat rows
+(22 stamps already-hidden chats with their last write). SDK artifacts
 are generated from clean Hub commit `41679950c9926bf4137d9002b54a52015fa42740`,
 contract hash `9b84eff9d5107f7cd916cae3fe7579e0fa0b0c85e80d736d2ff765356da3f617`.
 They are a separate vendor commit. Credentials and network calls remain in main;

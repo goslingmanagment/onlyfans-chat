@@ -122,3 +122,55 @@ describe('chat search by fan name', () => {
     expect(searchIds('zzz')).toEqual([]);
   });
 });
+
+describe('locally hidden chats (review #27 fix 2)', () => {
+  function hide(chatId: string, hiddenAt: string): void {
+    layer.db
+      .prepare(
+        'UPDATE chats SET locally_hidden = 1, locally_hidden_at = @at WHERE account_id = @a AND chat_id = @c',
+      )
+      .run({ a: 'acct_1', c: chatId, at: hiddenAt });
+  }
+  function hiddenState(chatId: string): unknown {
+    return layer.db
+      .prepare('SELECT locally_hidden, locally_hidden_at FROM chats WHERE account_id = @a AND chat_id = @c')
+      .get({ a: 'acct_1', c: chatId });
+  }
+
+  it('stays hidden while the head does not advance past the hide moment (older, equal, or null head)', () => {
+    hide('1', '2026-06-01T12:30:00.000Z');
+    expect(listIds('all')).not.toContain('1');
+    // vendor-format timestamps compare correctly against the local ISO stamp
+    layer.chats.upsert(sampleChat({ chatId: '1', fanName: 'Annabelle', lastMessageAt: '2026-06-01T12:00:00+00:00' }));
+    expect(listIds('all')).not.toContain('1');
+    layer.chats.upsert(sampleChat({ chatId: '1', fanName: 'Annabelle', lastMessageAt: '2026-06-01T12:30:00+00:00' }));
+    expect(listIds('all')).not.toContain('1');
+    layer.chats.upsert(sampleChat({ chatId: '1', fanName: 'Annabelle', lastMessageAt: null }));
+    expect(listIds('all')).not.toContain('1');
+    expect(layer.chats.search({ accountId: 'acct_1', query: 'anna' }).map((c) => c.chatId)).toEqual([]);
+    expect(hiddenState('1')).toEqual({ locally_hidden: 1, locally_hidden_at: '2026-06-01T12:30:00.000Z' });
+  });
+
+  it('un-hides once the head advances past the hide moment, and a later hide starts a new window', () => {
+    hide('1', '2026-06-01T12:30:00.000Z');
+    layer.chats.upsert(sampleChat({ chatId: '1', fanName: 'Annabelle', lastMessageAt: '2026-06-01T12:30:01+00:00' }));
+    expect(listIds('all')).toContain('1');
+    expect(layer.chats.search({ accountId: 'acct_1', query: 'anna' }).map((c) => c.chatId)).toEqual(['1']);
+    expect(hiddenState('1')).toEqual({ locally_hidden: 0, locally_hidden_at: null });
+
+    hide('1', '2026-06-01T13:00:00.000Z');
+    layer.chats.upsert(sampleChat({ chatId: '1', fanName: 'Annabelle', lastMessageAt: '2026-06-01T12:30:01+00:00' }));
+    expect(listIds('all')).not.toContain('1');
+  });
+
+  it('a chat hidden before the v22 stamp (null hide moment) resurfaces on any non-null head', () => {
+    layer.db
+      .prepare('UPDATE chats SET locally_hidden = 1, locally_hidden_at = NULL WHERE account_id = @a AND chat_id = @c')
+      .run({ a: 'acct_1', c: '4' });
+    expect(listIds('all')).not.toContain('4');
+    layer.chats.upsert(sampleChat({ chatId: '4', fanName: 'Dora', lastMessageAt: null }));
+    expect(listIds('all')).not.toContain('4');
+    layer.chats.upsert(sampleChat({ chatId: '4', fanName: 'Dora', lastMessageAt: '2026-06-01T09:00:00+00:00' }));
+    expect(listIds('all')).toContain('4');
+  });
+});

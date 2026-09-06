@@ -42,6 +42,10 @@ LEFT JOIN (
   GROUP BY account_id, fan_id
 ) tx ON tx.account_id = c.account_id AND tx.fan_id = c.chat_id`;
 
+const UNHIDE_CONDITION = `chats.locally_hidden = 1 AND excluded.last_message_at IS NOT NULL
+    AND (chats.locally_hidden_at IS NULL
+         OR julianday(excluded.last_message_at) > julianday(chats.locally_hidden_at))`;
+
 const UPSERT_SQL = `
 INSERT INTO chats (
   account_id, chat_id, fan_name, avatar, unread_count, has_unread_tips, last_message_at,
@@ -66,7 +70,13 @@ ON CONFLICT (account_id, chat_id) DO UPDATE SET
   can_send_message = excluded.can_send_message,
   can_not_send_reason = excluded.can_not_send_reason,
   raw = excluded.raw,
-  updated_at = excluded.updated_at`;
+  updated_at = excluded.updated_at,
+  -- Review #27 fix 2: a hidden chat resurfaces once its head moves past the
+  -- hide moment (OnlyFans un-hides on new activity); an unchanged or older
+  -- head keeps it hidden. julianday() compares vendor '+00:00' and local 'Z'
+  -- timestamps alike. Both CASEs read the pre-update row.
+  locally_hidden = CASE WHEN ${UNHIDE_CONDITION} THEN 0 ELSE chats.locally_hidden END,
+  locally_hidden_at = CASE WHEN ${UNHIDE_CONDITION} THEN NULL ELSE chats.locally_hidden_at END`;
 
 const ORDER = 'ORDER BY c.pinned DESC, c.last_message_at DESC';
 

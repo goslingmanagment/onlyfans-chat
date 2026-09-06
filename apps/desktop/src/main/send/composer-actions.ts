@@ -86,11 +86,17 @@ export function createComposerActionService(
         )
         .run({ a: accountId, c: chatId });
     } else if (action.kind === "hide_chat_v1") {
+      // The hide moment is at least the current head, so a head timestamp a
+      // few seconds ahead of this clock cannot un-hide the chat on the next
+      // sync; only a head that advances past it does (chats upsert, v22).
       data.db
         .prepare(
-          "UPDATE chats SET locally_hidden=1 WHERE account_id=@a AND chat_id=@c",
+          `UPDATE chats SET locally_hidden=1,
+             locally_hidden_at=CASE WHEN last_message_at IS NOT NULL
+               AND julianday(last_message_at) > julianday(@now) THEN last_message_at ELSE @now END
+           WHERE account_id=@a AND chat_id=@c`,
         )
-        .run({ a: accountId, c: chatId });
+        .run({ a: accountId, c: chatId, now: new Date(now()).toISOString() });
     }
     // Like/pin/mute are projected from the retained confirmed action rows. They
     // do not fabricate message bodies or turn failed/unknown commands into UI state.
