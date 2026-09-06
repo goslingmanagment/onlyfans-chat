@@ -24,6 +24,29 @@ export const DEFAULT_COMPOSER_OPTIONS: ComposerOptions = {
   rfGuest: [],
   blockBannedWords: null,
 };
+/**
+ * Review #27 fix 3: `send_message_v2` is required only when the chatter
+ * actually used a rich option. A plain text with default options keeps the
+ * long-exercised v1 `{ text }` command, so a Hub without the v2 kind still
+ * accepts everyday sends and the untested plain-text v2 shape is never sent.
+ * Every key of DEFAULT_COMPOSER_OPTIONS is compared (arrays by content), so a
+ * future option cannot be silently dropped from the decision. Media, previews
+ * and price live outside these options: a media/PPV send is always v2.
+ */
+export function needsComposerV2(options: ComposerOptions): boolean {
+  for (const key of Object.keys(DEFAULT_COMPOSER_OPTIONS) as (keyof ComposerOptions)[]) {
+    const value = options[key];
+    const fallback = DEFAULT_COMPOSER_OPTIONS[key];
+    if (Array.isArray(fallback)) {
+      if (!Array.isArray(value) || value.length !== fallback.length) return true;
+      if (value.some((item, index) => item !== fallback[index])) return true;
+    } else if (value !== fallback) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export const storedComposerSchema = composerOptionsSchema
   .extend({
     priceCents: z

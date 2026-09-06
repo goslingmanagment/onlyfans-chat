@@ -313,6 +313,72 @@ describe("composer v2 durable boundaries", () => {
     expect(data.outbox.claimNextQueued(ACCT, CHAT)).toBeNull();
   });
 
+  it("a plain text with default options goes out as the v1 { text } command; any rich option or a price goes out as v2", async () => {
+    const h = setup();
+    const { localIds } = engine!.sendParts({
+      accountId: ACCT,
+      chatId: CHAT,
+      parts: ["plain hello"],
+      composer: { ...DEFAULT_COMPOSER_OPTIONS },
+    });
+    await drain();
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]).toEqual({
+      clientCommandId: localIds[0],
+      kind: "send_text_message_v1",
+      accountId: ACCT,
+      conversationId: CHAT,
+      payload: { text: "plain hello" },
+      retryOfCommandId: null,
+    });
+    expect(data.outbox.get(localIds[0]!)).toMatchObject({ state: "sent", composer: null });
+
+    engine!.sendParts({
+      accountId: ACCT,
+      chatId: CHAT,
+      parts: ["screened hello"],
+      composer: { ...DEFAULT_COMPOSER_OPTIONS, blockBannedWords: "risky" },
+    });
+    await drain();
+    expect(h.calls[1]).toMatchObject({
+      kind: "send_message_v2",
+      payload: { text: "screened hello", blockBannedWords: "risky", priceCents: 0 },
+    });
+
+    engine!.sendPpv({
+      accountId: ACCT,
+      chatId: CHAT,
+      text: "priced",
+      price: 6.97,
+      priceCents: 697,
+      composer: { ...DEFAULT_COMPOSER_OPTIONS },
+      mediaFiles: ["90071992547409931234"],
+      previews: [],
+    });
+    await drain();
+    expect(h.calls[2]).toMatchObject({
+      kind: "send_message_v2",
+      payload: { text: "priced", priceCents: 697, mediaFiles: ["90071992547409931234"] },
+    });
+    expect(h.calls).toHaveLength(3);
+  });
+
+  it("a default-options text send left unconfirmed can still be settled by the local v1 verifier match", async () => {
+    const h = setup("indeterminate");
+    const { localIds } = engine!.sendParts({
+      accountId: ACCT,
+      chatId: CHAT,
+      parts: ["hello"],
+      composer: { ...DEFAULT_COMPOSER_OPTIONS },
+    });
+    await drain();
+    expect(data.outbox.get(localIds[0]!)?.state).toBe("unconfirmed");
+    seedMessage(data, { messageId: "333", textPlain: "hello", textHtml: "hello" });
+    await engine!.verifyChat(ACCT, CHAT);
+    expect(data.outbox.get(localIds[0]!)).toMatchObject({ state: "sent", messageId: "333" });
+    expect(h.calls).toHaveLength(1);
+  });
+
   it("encodes $6.97 without float rounding, rejects extra decimal digits, and keeps native IDs exact", () => {
     expect(parsePriceCents("$6.97")).toBe(697);
     expect(centsToDollars(697)).toBe(6.97);

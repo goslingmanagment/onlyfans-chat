@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { routeSchemas } from '@kernel/sdk';
 import { createComposerActionService, type ComposerActionResult } from './composer-actions';
 import type { ComposerAction } from '@chatgoose/shared/composer';
-import { storedComposerSchema, centsToDollars, type ComposerOptions, type StoredComposer } from '@chatgoose/shared/composer';
+import { needsComposerV2, storedComposerSchema, centsToDollars, type ComposerOptions, type StoredComposer } from '@chatgoose/shared/composer';
 import { CgError } from '@chatgoose/shared';
 import { HubError, type HubClient, type HubOfapiCommand } from '@chatgoose/shared/hub/index';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
@@ -1056,7 +1056,10 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       if (parts.length === 0) {
         throw new Error('sendParts: at least one part is required');
       }
-      const stored = composer ? storedComposerSchema.parse({ ...composer, priceCents: 0 }) : null;
+      // Review #27 fix 3: default options ⇒ the v1 `{ text }` command exactly
+      // as before (no v2 dependency, local-match verification stays possible);
+      // any rich option ⇒ send_message_v2.
+      const stored = composer && needsComposerV2(composer) ? storedComposerSchema.parse({ ...composer, priceCents: 0 }) : null;
       if (stored && parts.length > 1 && (stored.giphyId || stored.replyToMessageId || stored.rfTag.length || stored.rfPartner.length || stored.rfGuest.length)) throw new Error('Send a reply, GIF or release references as a single message.');
       if (stored) for (const text of parts) validateComposer(accountId, chatId, text, stored);
       gateCanSend(accountId, chatId);

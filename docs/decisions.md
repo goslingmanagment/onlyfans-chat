@@ -46,6 +46,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D26 | 2026-07-24 | Registry cleanup is producer-complete; dead codes are permanently reserved, replayable codes require read-only tombstones, and all recovery copy names only real actions (family: ext E58; core error-handling canon) |
 
 | D27 | 2026-09-06 | OFAPI rich composer persists integer cents and exact payloads; explicit unchanged recovery and closed actions use Hub command custody (core #268) |
+| D28 | 2026-09-07 | Review #27 rulings: a refused reuse-key recovery returns the original to unconfirmed (never Retry); hidden chats resurface on newer activity (migration 22); v2 only for rich options, default text stays v1 |
 
 ## Entries
 
@@ -628,3 +629,24 @@ payloads. Forward SQLite migration 21 preserves existing rows.
 Current behavior, rollout and validation: `docs/ofapi-composer.md`. The earlier
 historical SPEC's blanket no-recovery wording is superseded only for explicit v2
 unchanged recovery; legacy v1 and automatic retry behavior are unchanged.
+
+**D28 (2026-09-07).** Three review rulings on the D27 composer, each pinned by
+tests. (1) A reuse-key recovery child inherits the original's provider key, so
+a Hub refusal — dispatch-time `local_precondition`, a `409` or any definite 4xx
+on the create call, or a request still queued at boot — proves nothing about the
+original's delivery: the child is retained as a cancelled audit row and the
+original returns from cancelled to unconfirmed carrying `CG-OF-09` and the Hub
+reason. The row is a manual check (Check now / Dismiss); Edit and Retry are
+never offered, because a Retry mints a fresh key and is the one path to a
+duplicate DM. Only a vendor rejection of the replayed payload itself
+(`ofapi_response` 400/422) may settle the child as failed with Retry. This is
+the single deliberate backward step in the outbox state machine; unconfirmed
+never sends. (2) `hide_chat_v1` records the hide moment (`locally_hidden_at`,
+forward-only migration 22, existing hidden rows stamped with their last write);
+the chats upsert clears the flag once the head advances past it, mirroring
+OnlyFans, and an unchanged or older head keeps the chat hidden. (3)
+`send_message_v2` is sent only when a rich option or media/price is in use
+(`needsComposerV2`); a plain text with default options stays on the v1
+`{ text }` command, so everyday sends neither depend on a v2-capable Hub nor
+exercise an untested plain-text v2 shape, and keep local-match verification.
+Current behavior: `docs/ofapi-composer.md`.

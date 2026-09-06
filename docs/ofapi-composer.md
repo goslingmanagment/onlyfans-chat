@@ -3,7 +3,13 @@
 Implemented 2026-09-06; desktop decision D27, Hub decision 268. These are local
 implementation and test results, not a production rollout claim.
 
-The message composer sends `send_message_v2`. Prices accept exactly two decimal
+The message composer sends `send_message_v2` only when a rich option is in use
+(`needsComposerV2` in `packages/shared/src/composer.ts`: caption lock, reply,
+GIF, release references, provider screening) or when media/price is attached; a
+plain text with default options still goes out as the long-exercised v1
+`send_text_message_v1` `{ text }` command, so everyday sends do not depend on a
+Hub that already accepts v2 and keep local-match verification (review #27,
+fix 3). Prices accept exactly two decimal
 places, including $6.97, and persist integer cents; paid messages remain $3–$200.
 Caption locking is explicit and defaults to visible. Reply, GIF and the three
 release-reference arrays are optional, exact IDs. Previews remain a subset of
