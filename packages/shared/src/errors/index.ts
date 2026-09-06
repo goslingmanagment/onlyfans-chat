@@ -46,6 +46,7 @@ export const CG_ERROR_CODES = [
   'CG-OF-05',
   'CG-OF-06',
   'CG-OF-08',
+  'CG-OF-09',
   'CG-HUB-01',
   'CG-HUB-02',
   'CG-HUB-03',
@@ -138,6 +139,13 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
   'CG-OF-08': {
     message: 'Media is still processing or unavailable.',
     recovery: 'Wait for OnlyFans to finish processing the media, then try again.',
+  },
+  // Review #27 fix 1: Hub refused to reuse the original provider key for an
+  // unconfirmed send. The original may already be delivered — manual check only,
+  // never a fresh-key resend affordance.
+  'CG-OF-09': {
+    message: 'Recovery with the original key was refused.',
+    recovery: 'Delivery is still unconfirmed — check the conversation in OnlyFans before sending again.',
   },
   'CG-HUB-01': {
     message: 'Agency Hub authentication failed.',

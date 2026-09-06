@@ -94,6 +94,10 @@ export const UI_MESSAGES = {
     en: 'AI generation was interrupted before completion; no result was shown.',
     ru: 'AI-генерация прервалась до завершения; результат не показан.',
   },
+  'err.CG-OF-09': {
+    en: 'Recovery with the original key was refused — delivery is still unconfirmed; check the conversation in OnlyFans before sending again.',
+    ru: 'Восстановление с исходным ключом отклонено — доставка не подтверждена; проверьте переписку в OnlyFans перед новой отправкой.',
+  },
   'err.CG-HUB-10': {
     en: 'The AI provider request failed — tell a manager and include the error code.',
     ru: 'Запрос к AI-провайдеру завершился ошибкой — сообщите менеджеру и передайте код ошибки.',
@@ -1200,6 +1204,10 @@ export const UI_MESSAGES = {
   'conv.unconfirmedExplainer': {
     en: 'Delivery unconfirmed — it may have reached the fan',
     ru: 'Доставка не подтверждена — возможно, сообщение дошло до фана',
+  },
+  'conv.recoveryRefusedExplainer': {
+    en: 'Hub refused to reuse the original key ({reason}) — delivery still unconfirmed; check the conversation before sending again',
+    ru: 'Hub отклонил восстановление с исходным ключом ({reason}) — доставка не подтверждена; проверьте переписку перед новой отправкой',
   },
   'conv.cannotSendFallback': {
     en: 'OnlyFans does not allow messaging this fan right now',

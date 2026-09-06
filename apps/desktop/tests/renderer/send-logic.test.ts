@@ -231,6 +231,23 @@ describe('deriveOutboxRow (state → label/actions)', () => {
     expect(view?.actions).not.toContain('retry');
   });
 
+  it('unconfirmed after a refused reuse-key recovery (CG-OF-09) → manual check with the Hub reason, still no edit/retry', () => {
+    const view = deriveOutboxRow(
+      outboxItem({ state: 'unconfirmed', errorCode: 'CG-OF-09', errorMessage: 'provider_replay_unavailable' }),
+    );
+    expect(view).toEqual({
+      label: 'UNCONF',
+      tone: 'warn',
+      pulse: false,
+      restrictedWords: false,
+      explainerCode: 'recovery_refused',
+      explainerMessage: 'provider_replay_unavailable',
+      actions: ['verify', 'dismiss'],
+    });
+    expect(view?.actions).not.toContain('retry');
+    expect(view?.actions).not.toContain('edit');
+  });
+
   it('sent and cancelled rows render no bubble', () => {
     expect(deriveOutboxRow(outboxItem({ state: 'sent' }))).toBeNull();
     expect(deriveOutboxRow(outboxItem({ state: 'cancelled' }))).toBeNull();

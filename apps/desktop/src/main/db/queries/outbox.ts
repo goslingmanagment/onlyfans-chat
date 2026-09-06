@@ -4,6 +4,10 @@
 // the same row structurally impossible (SPEC §15.5). State machine:
 // queued → sending → sent | failed | unconfirmed; queued|failed|unconfirmed →
 // cancelled. 'sending' is persisted by the claim BEFORE any network I/O.
+// One deliberate backward step exists: revertRecoveryChild restores a
+// recovery ORIGINAL from 'cancelled' to 'unconfirmed' when its reuse-key child
+// was refused — 'unconfirmed' never sends (status reads only), so the step
+// cannot mint a second attempt (review #27, fix 1).
 
 import { z } from 'zod';
 import { storedComposerSchema, type StoredComposer } from '@chatgoose/shared/composer';
@@ -158,6 +162,20 @@ export interface OutboxQueries {
   transition(args: OutboxTransitionArgs): boolean;
   /** Records the Hub command id once core accepted this row's clientCommandId. */
   setCoreCommandId(localId: string, coreCommandId: string): boolean;
+  /**
+   * A reuse-key recovery child was refused without proof that the ORIGINAL
+   * send never happened: atomically park the child as 'cancelled' (audit row
+   * kept, refusal recorded) and return the original from 'cancelled' back to
+   * 'unconfirmed' carrying the same refusal. Both rows must still be in the
+   * expected states and the child must reference the original via retry_of;
+   * otherwise nothing is written and false is returned.
+   */
+  revertRecoveryChild(args: {
+    childLocalId: string;
+    originalLocalId: string;
+    errorCode: string;
+    errorMessage: string;
+  }): boolean;
   /** Most recent `limit` rows for the chat, chronological (insertion order) within the page. */
   listForChat(accountId: string, chatId: string, limit?: number): OutboxRow[];
   listByState(state: OutboxState): OutboxRow[];
@@ -188,6 +206,9 @@ INSERT INTO outbox (
   NULL, NULL, NULL, '[]', 0, @retry_of,
   @price, @media_files, @previews, @composer, @created_at, @created_at
 )`;
+
+/** Thrown inside the revert transaction so a failed guard rolls back both rows. */
+class RevertGuardFailed extends Error {}
 
 export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQueries {
   function getOne(localId: string): OutboxRow | null {
@@ -331,6 +352,60 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
       }
       publish(row.accountId, row.chatId);
       return true;
+    },
+
+    revertRecoveryChild({ childLocalId, originalLocalId, errorCode, errorMessage }) {
+      const child = getOne(childLocalId);
+      if (child === null || child.retryOf !== originalLocalId) {
+        return false;
+      }
+      const params = {
+        child_local_id: childLocalId,
+        original_local_id: originalLocalId,
+        account_id: child.accountId,
+        chat_id: child.chatId,
+        error_code: errorCode,
+        error_message: errorMessage,
+        updated_at: new Date().toISOString(),
+      };
+      let reverted = false;
+      try {
+        reverted = db.transaction(() => {
+          const childChange = db
+            .prepare(
+              `UPDATE outbox
+               SET state = 'cancelled', error_code = @error_code, error_message = @error_message,
+                   updated_at = @updated_at
+               WHERE local_id = @child_local_id AND retry_of = @original_local_id
+                 AND state IN ('queued', 'sending', 'unconfirmed')`,
+            )
+            .run(params);
+          if (childChange.changes !== 1) {
+            throw new RevertGuardFailed();
+          }
+          const originalChange = db
+            .prepare(
+              `UPDATE outbox
+               SET state = 'unconfirmed', error_code = @error_code, error_message = @error_message,
+                   updated_at = @updated_at
+               WHERE local_id = @original_local_id AND state = 'cancelled'
+                 AND account_id = @account_id AND chat_id = @chat_id`,
+            )
+            .run(params);
+          if (originalChange.changes !== 1) {
+            throw new RevertGuardFailed();
+          }
+          return true;
+        });
+      } catch (error) {
+        if (!(error instanceof RevertGuardFailed)) {
+          throw error;
+        }
+      }
+      if (reverted) {
+        publish(child.accountId, child.chatId);
+      }
+      return reverted;
     },
 
     listForChat(accountId, chatId, limit = 50) {

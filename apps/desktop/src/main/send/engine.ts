@@ -214,6 +214,56 @@ function isDefinitePreIntakeRejection(error: unknown, freshRow: OutboxRow | null
   return expectedStatus !== undefined && error.detail?.status === expectedStatus;
 }
 
+/**
+ * Review #27 fix 1: a reuse-key recovery child asks Hub to replay the ORIGINAL
+ * row's provider operation. Its outcome says nothing about whether the
+ * original was delivered unless the vendor itself rejected the (identical)
+ * payload — so a refused child must never surface as failed-with-Retry: a
+ * Retry mints a fresh key and is the one path to a duplicate DM.
+ */
+function isRecoveryChild(row: OutboxRow): boolean {
+  return row.retryOf !== null && row.composer?.reuseProviderOperation === true;
+}
+
+/** Vendor statuses that reject the payload itself; the same payload was the
+ * original's, so the original can never have been accepted either. Auth /
+ * not-found / throttling say nothing about an earlier attempt. */
+const DEFINITE_VENDOR_REJECTION_STATUSES: ReadonlySet<number> = new Set([400, 422]);
+
+function isDefiniteVendorRejection(command: HubOfapiCommand): boolean {
+  if (command.state !== 'failed_terminal' && command.state !== 'failed_retryable') {
+    return false;
+  }
+  const evidence = command.verifierResult;
+  return (
+    evidence?.source === 'ofapi_response' &&
+    typeof evidence.httpStatus === 'number' &&
+    DEFINITE_VENDOR_REJECTION_STATUSES.has(evidence.httpStatus)
+  );
+}
+
+/** A create-time HubError that carries a definite non-5xx HTTP status: the
+ * kernel answered (409 reuse refusal, 4xx precondition) rather than the
+ * transport failing after a possibly-accepted intake. */
+function isDefiniteIntakeRefusal(error: unknown): boolean {
+  return (
+    error instanceof HubError &&
+    typeof error.detail?.status === 'number' &&
+    error.detail.status < 500
+  );
+}
+
+/** The bounded refusal reason stored as the CG-OF-09 errorMessage (the
+ * registry entry carries the human explanation; the UI shows this token). */
+function describeRecoveryRefusal(command: HubOfapiCommand): string {
+  const evidence = command.verifierResult;
+  const reason =
+    typeof evidence?.reason === 'string'
+      ? evidence.reason
+      : (command.lastErrorCode ?? command.state);
+  return reason.slice(0, 200);
+}
+
 function mediaStubForConfirmedRow(row: OutboxRow, mediaId: OutboxMediaId): MessageMediaItem {
   const previewIds = new Set(row.previews.map(String));
   return {
@@ -440,6 +490,37 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     } catch { return []; }
   }
 
+  /**
+   * Refused recovery: park the child (audit kept) and return the ORIGINAL to
+   * 'unconfirmed' carrying the refusal, so the UI shows "needs manual check"
+   * with no Retry/Edit affordance. The fallback (rows moved concurrently)
+   * still never lands the child in 'failed'.
+   */
+  function revertRecovery(row: OutboxRow, message: string): void {
+    const reverted =
+      row.retryOf !== null &&
+      data.outbox.revertRecoveryChild({
+        childLocalId: row.localId,
+        originalLocalId: row.retryOf,
+        errorCode: 'CG-OF-09',
+        errorMessage: message,
+      });
+    if (reverted) {
+      return;
+    }
+    if (row.state === 'queued') {
+      data.outbox.transition({ localId: row.localId, from: ['queued'], to: 'cancelled' });
+      return;
+    }
+    data.outbox.transition({
+      localId: row.localId,
+      from: ['sending', 'unconfirmed'],
+      to: 'unconfirmed',
+      errorCode: 'CG-OF-09',
+      errorMessage: message,
+    });
+  }
+
   function settleHubCommand(row: OutboxRow, command: HubOfapiCommand): boolean {
     switch (command.state) {
       case 'confirmed':
@@ -454,6 +535,10 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       case 'failed_retryable':
       case 'failed_terminal':
       case 'cancelled':
+        if (isRecoveryChild(row) && !isDefiniteVendorRejection(command)) {
+          revertRecovery(row, describeRecoveryRefusal(command));
+          return false;
+        }
         data.outbox.transition({
           localId: row.localId,
           from: ['sending', 'unconfirmed'],
@@ -581,6 +666,22 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       // retry mints a new clientCommandId).
       const preIntakeRejected =
         !unavailable && isDefinitePreIntakeRejection(error, freshRow);
+      // Review #27 fix 1: a recovery child refused at intake (409 reuse
+      // refusal, any definite 4xx, typed pre-intake code, or no Hub transport)
+      // never parks as 'failed' — the original's delivery is still unknown.
+      // A transport failure keeps the existing path: 'unconfirmed' + the
+      // idempotent re-intake/status read, whose settle applies the same rule.
+      if (
+        isRecoveryChild(row) &&
+        !acceptedByCore &&
+        (unavailable || preIntakeRejected || isDefiniteIntakeRefusal(error))
+      ) {
+        revertRecovery(
+          row,
+          `intake refused: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200),
+        );
+        return false;
+      }
       // Auth/bad-config is terminal only while intake is still provably absent.
       // Once coreCommandId is durable, even a 401 came from STATUS polling:
       // Core owns the accepted command and only the verifier may settle it.
@@ -1121,6 +1222,12 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       if (isBoot) {
         // A restart kills pending sequences — the app never auto-sends on boot.
         for (const row of data.outbox.listByState('queued')) {
+          if (isRecoveryChild(row)) {
+            // The reuse request never reached Hub: hand the original back to
+            // manual check instead of leaving both rows cancelled.
+            revertRecovery(row, 'app restarted before the request reached Hub');
+            continue;
+          }
           data.outbox.transition({ localId: row.localId, from: ['queued'], to: 'cancelled' });
         }
         // In flight at shutdown: the outcome is unknowable — verification, not resend.

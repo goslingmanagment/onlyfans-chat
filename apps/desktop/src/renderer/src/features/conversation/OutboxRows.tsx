@@ -73,7 +73,9 @@ export const OutboxRow = memo(function OutboxRow({
     ? t('conv.restrictedWordsBanner')
     : view.explainerCode === 'unconfirmed'
       ? t('conv.unconfirmedExplainer')
-      : view.explainerMessage;
+      : view.explainerCode === 'recovery_refused'
+        ? t('conv.recoveryRefusedExplainer', { reason: view.explainerMessage ?? 'unknown' })
+        : view.explainerMessage;
 
   function retry(): void {
     void getBridge().invoke('cmd:send.retry', {

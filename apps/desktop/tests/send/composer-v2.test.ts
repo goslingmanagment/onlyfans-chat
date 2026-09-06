@@ -7,9 +7,10 @@ import {
   centsToDollars,
   releaseReferenceIds,
 } from "@chatgoose/shared/composer";
-import type {
-  HubOfapiCommand,
-  HubOfapiCommandCreateRequest,
+import {
+  HubError,
+  type HubOfapiCommand,
+  type HubOfapiCommandCreateRequest,
 } from "@chatgoose/shared/hub/index";
 import { createSendEngine, type SendEngine } from "@main/send/engine";
 import { createComposerActionService } from "@main/send/composer-actions";
@@ -91,6 +92,227 @@ describe("composer v2 durable boundaries", () => {
     });
     return { calls, createOfapiCommand, getOfapiCommand, stub };
   }
+  /** One scripted Hub answer per create call (the last step repeats); status
+   * reads return the stored command so the verifier never mints anything. */
+  function scriptedSetup(
+    script: ReadonlyArray<(request: HubOfapiCommandCreateRequest) => HubOfapiCommand | Error>,
+  ) {
+    const calls: HubOfapiCommandCreateRequest[] = [];
+    const commands = new Map<string, HubOfapiCommand>();
+    const createOfapiCommand = vi.fn(
+      async ({ command }: { command: HubOfapiCommandCreateRequest }) => {
+        calls.push(command);
+        const step = script[Math.min(calls.length, script.length) - 1]!;
+        const result = step(command);
+        if (result instanceof Error) throw result;
+        commands.set(result.commandId, result);
+        return result;
+      },
+    );
+    const getOfapiCommand = vi.fn(async ({ commandId }: { commandId: string }) => {
+      const found = commands.get(commandId);
+      if (!found) throw new Error(`unknown command ${commandId}`);
+      return found;
+    });
+    engine = createSendEngine({
+      client: makeStubClient().client,
+      hubCommandClient: { createOfapiCommand, getOfapiCommand },
+      data,
+      messageGuard: allowMessageGuard,
+      toMediaUrl,
+      getSettings: async () => ({ markAsReadOnOpen: false }),
+      sleep: async () => {},
+      hubCommandPollLimit: 1,
+    });
+    return { calls, createOfapiCommand, getOfapiCommand };
+  }
+  const richOptions = { ...DEFAULT_COMPOSER_OPTIONS, replyToMessageId: "12" };
+  async function sendIndeterminateRich(h: ReturnType<typeof scriptedSetup>) {
+    const { localIds } = engine!.sendParts({
+      accountId: ACCT,
+      chatId: CHAT,
+      parts: ["hello"],
+      composer: richOptions,
+    });
+    await drain();
+    const original = localIds[0]!;
+    expect(data.outbox.get(original)).toMatchObject({ state: "unconfirmed", errorCode: "CG-OF-06" });
+    expect(h.calls).toHaveLength(1);
+    return original;
+  }
+  /** The duplicate-DM invariant: after a refusal, verify + boot read status
+   * only, no third create, no second client id, no plain retry of the original. */
+  async function expectNoFreshKeyEver(h: ReturnType<typeof scriptedSetup>, original: string, child: string) {
+    expect(() =>
+      engine!.retry({ accountId: ACCT, localId: original, text: "hello" }),
+    ).toThrow(/unconfirmed/);
+    expect(() =>
+      engine!.retry({ accountId: ACCT, localId: child, text: "hello" }),
+    ).toThrow(/only failed rows/);
+    await engine!.verifyChat(ACCT, CHAT);
+    await engine!.reconcileOnBoot();
+    await drain();
+    expect(h.calls).toHaveLength(2);
+    expect(new Set(h.calls.map((call) => call.clientCommandId)).size).toBe(2);
+    expect(h.calls[1]).toMatchObject({
+      clientCommandId: child,
+      retryOfCommandId: data.outbox.get(original)?.coreCommandId,
+      payload: { reuseProviderOperation: true },
+    });
+    expect(data.outbox.get(original)?.state).toBe("unconfirmed");
+    expect(data.outbox.get(child)?.state).toBe("cancelled");
+  }
+
+  it("returns the original to manual check when Hub refuses the reuse at dispatch (local_precondition); never failed-with-Retry", async () => {
+    const h = scriptedSetup([
+      (request) => response(request, "indeterminate"),
+      (request) =>
+        response(request, "failed_terminal", {
+          lastErrorCode: "ofapi_provider_replay_unavailable",
+          lastErrorClass: "terminal",
+          verifierResult: {
+            source: "local_precondition",
+            reason: "provider_replay_unavailable",
+            detail: null,
+          },
+        }),
+    ]);
+    const original = await sendIndeterminateRich(h);
+    const child = engine!.retry({
+      accountId: ACCT,
+      localId: original,
+      text: "hello",
+      reuseProviderOperation: true,
+    }).localId;
+    await drain();
+    expect(data.outbox.get(child)).toMatchObject({
+      state: "cancelled",
+      retryOf: original,
+      errorCode: "CG-OF-09",
+      errorMessage: "provider_replay_unavailable",
+    });
+    expect(data.outbox.get(original)).toMatchObject({
+      state: "unconfirmed",
+      errorCode: "CG-OF-09",
+      errorMessage: "provider_replay_unavailable",
+      text: "hello",
+      composer: { replyToMessageId: "12", reuseProviderOperation: false },
+    });
+    await expectNoFreshKeyEver(h, original, child);
+  });
+
+  it("treats a 409 on the reuse create call as a refusal too: the child is never a Hub command, the original stays unconfirmed", async () => {
+    const h = scriptedSetup([
+      (request) => response(request, "indeterminate"),
+      () =>
+        new HubError("http", {
+          message: "provider operation reuse unavailable",
+          detail: { status: 409, kernelCode: "provider_operation_reuse_unavailable" },
+        }),
+    ]);
+    const original = await sendIndeterminateRich(h);
+    const child = engine!.retry({
+      accountId: ACCT,
+      localId: original,
+      text: "hello",
+      reuseProviderOperation: true,
+    }).localId;
+    await drain();
+    expect(data.outbox.get(child)).toMatchObject({
+      state: "cancelled",
+      coreCommandId: null,
+      errorCode: "CG-OF-09",
+      errorMessage: "intake refused: provider operation reuse unavailable",
+    });
+    expect(data.outbox.get(original)).toMatchObject({
+      state: "unconfirmed",
+      errorCode: "CG-OF-09",
+      errorMessage: "intake refused: provider operation reuse unavailable",
+    });
+    await expectNoFreshKeyEver(h, original, child);
+  });
+
+  it("keeps Retry only for a definite vendor rejection of the replayed payload (ofapi_response 4xx)", async () => {
+    const h = scriptedSetup([
+      (request) => response(request, "indeterminate"),
+      (request) =>
+        response(request, "failed_terminal", {
+          lastErrorCode: "ofapi_http_422",
+          verifierResult: {
+            source: "ofapi_response",
+            httpStatus: 422,
+            validationResponse: JSON.stringify({ message: "Banned word found" }),
+          },
+        }),
+    ]);
+    const original = await sendIndeterminateRich(h);
+    const child = engine!.retry({
+      accountId: ACCT,
+      localId: original,
+      text: "hello",
+      reuseProviderOperation: true,
+    }).localId;
+    await drain();
+    expect(data.outbox.get(child)).toMatchObject({
+      state: "failed",
+      errorMessage: "Banned word found",
+    });
+    expect(data.outbox.get(original)?.state).toBe("cancelled");
+    expect(h.calls).toHaveLength(2);
+  });
+
+  it("a recovery child still queued at boot hands the original back to manual check instead of cancelling both", async () => {
+    const reuse = { ...richOptions, priceCents: 0, reuseProviderOperation: true };
+    data.outbox.insertMany([
+      {
+        localId: "orig",
+        accountId: ACCT,
+        chatId: CHAT,
+        text: "hello",
+        sequenceId: null,
+        partIndex: 0,
+        retryOf: null,
+        createdAt: new Date().toISOString(),
+        composer: { ...reuse, reuseProviderOperation: false },
+      },
+    ]);
+    data.outbox.claimNextQueued(ACCT, CHAT);
+    data.outbox.setCoreCommandId("orig", "cmd-orig");
+    data.outbox.transition({ localId: "orig", from: ["sending"], to: "unconfirmed", errorCode: "CG-OF-06" });
+    expect(
+      data.outbox.replaceFailedWithRetry(
+        "orig",
+        {
+          localId: "child",
+          accountId: ACCT,
+          chatId: CHAT,
+          text: "hello",
+          sequenceId: null,
+          partIndex: 0,
+          retryOf: "orig",
+          createdAt: new Date().toISOString(),
+          composer: reuse,
+        },
+        true,
+      ),
+    ).toBe(true);
+    const h = scriptedSetup([
+      () => new Error("boot must not create commands"),
+    ]);
+    const original = response(
+      { clientCommandId: "orig", kind: "send_message_v2", accountId: ACCT, conversationId: CHAT, retryOfCommandId: null, payload: { ...reuse, reuseProviderOperation: false, text: "hello", mediaFiles: [], previews: [] } },
+      "indeterminate",
+      { commandId: "cmd-orig" },
+    );
+    h.getOfapiCommand.mockImplementation(async () => original);
+    await engine!.reconcileOnBoot();
+    await drain();
+    expect(data.outbox.get("child")).toMatchObject({ state: "cancelled", errorCode: "CG-OF-09" });
+    expect(data.outbox.get("orig")).toMatchObject({ state: "unconfirmed", errorCode: "CG-OF-09", coreCommandId: "cmd-orig" });
+    expect(h.createOfapiCommand).not.toHaveBeenCalled();
+    expect(data.outbox.claimNextQueued(ACCT, CHAT)).toBeNull();
+  });
+
   it("encodes $6.97 without float rounding, rejects extra decimal digits, and keeps native IDs exact", () => {
     expect(parsePriceCents("$6.97")).toBe(697);
     expect(centsToDollars(697)).toBe(6.97);

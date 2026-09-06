@@ -4,6 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { DataLayer, DbChangedEvent, OutboxInsert } from '@main/db/index';
+import { DEFAULT_COMPOSER_OPTIONS } from '@chatgoose/shared/composer';
 import { ACCT, CHAT, memoryDataLayer } from './helpers';
 
 function insert(data: DataLayer, overrides: Partial<OutboxInsert> & { localId: string }): void {
@@ -173,6 +174,83 @@ describe('outbox queries', () => {
       data.outbox.listByStateForChat(ACCT, CHAT, 'queued').map((row) => row.localId),
     ).toEqual(['L1', 'L2', 'L3', 'L4']);
     expect(data.outbox.chatsWithState('sending')).toEqual([{ accountId: ACCT, chatId: CHAT }]);
+  });
+
+  it('revertRecoveryChild atomically parks the child and returns the superseded original to unconfirmed', () => {
+    const reuse = { ...DEFAULT_COMPOSER_OPTIONS, priceCents: 0, reuseProviderOperation: true };
+    insert(data, { localId: 'O1', composer: { ...reuse, reuseProviderOperation: false } });
+    data.outbox.claimNextQueued(ACCT, CHAT);
+    data.outbox.setCoreCommandId('O1', 'cmd-1');
+    data.outbox.transition({ localId: 'O1', from: ['sending'], to: 'unconfirmed', errorCode: 'CG-OF-06' });
+    expect(
+      data.outbox.replaceFailedWithRetry(
+        'O1',
+        { localId: 'C1', accountId: ACCT, chatId: CHAT, text: 'text O1', sequenceId: null, partIndex: 0, retryOf: 'O1', createdAt: '2026-06-11T12:00:01.000Z', composer: reuse },
+        true,
+      ),
+    ).toBe(true);
+    data.outbox.claimNextQueued(ACCT, CHAT);
+    expect(data.outbox.get('O1')?.state).toBe('cancelled');
+    expect(data.outbox.get('C1')?.state).toBe('sending');
+
+    // Guards: the child must reference the original, and both rows must still be in place.
+    expect(
+      data.outbox.revertRecoveryChild({ childLocalId: 'C1', originalLocalId: 'O9', errorCode: 'CG-OF-09', errorMessage: 'x' }),
+    ).toBe(false);
+    expect(
+      data.outbox.revertRecoveryChild({ childLocalId: 'missing', originalLocalId: 'O1', errorCode: 'CG-OF-09', errorMessage: 'x' }),
+    ).toBe(false);
+    expect(data.outbox.get('C1')?.state).toBe('sending');
+    expect(data.outbox.get('O1')?.state).toBe('cancelled');
+
+    expect(
+      data.outbox.revertRecoveryChild({
+        childLocalId: 'C1',
+        originalLocalId: 'O1',
+        errorCode: 'CG-OF-09',
+        errorMessage: 'provider_replay_unavailable',
+      }),
+    ).toBe(true);
+    expect(data.outbox.get('C1')).toMatchObject({
+      state: 'cancelled',
+      errorCode: 'CG-OF-09',
+      errorMessage: 'provider_replay_unavailable',
+      retryOf: 'O1',
+    });
+    expect(data.outbox.get('O1')).toMatchObject({
+      state: 'unconfirmed',
+      errorCode: 'CG-OF-09',
+      errorMessage: 'provider_replay_unavailable',
+      coreCommandId: 'cmd-1',
+      text: 'text O1',
+    });
+    // Nothing became claimable: 'unconfirmed' is a status-read state, never a resend.
+    expect(data.outbox.claimNextQueued(ACCT, CHAT)).toBeNull();
+    // Idempotent: a second revert finds no cancelled original / live child.
+    expect(
+      data.outbox.revertRecoveryChild({ childLocalId: 'C1', originalLocalId: 'O1', errorCode: 'CG-OF-09', errorMessage: 'x' }),
+    ).toBe(false);
+    expect(data.outbox.get('O1')?.errorMessage).toBe('provider_replay_unavailable');
+  });
+
+  it('revertRecoveryChild rolls back the child write when the original is no longer superseded', () => {
+    const reuse = { ...DEFAULT_COMPOSER_OPTIONS, priceCents: 0, reuseProviderOperation: true };
+    insert(data, { localId: 'O2' });
+    data.outbox.claimNextQueued(ACCT, CHAT);
+    data.outbox.transition({ localId: 'O2', from: ['sending'], to: 'failed' });
+    data.outbox.replaceFailedWithRetry(
+      'O2',
+      { localId: 'C2', accountId: ACCT, chatId: CHAT, text: 'text O2', sequenceId: null, partIndex: 0, retryOf: 'O2', createdAt: '2026-06-11T12:00:01.000Z', composer: reuse },
+    );
+    data.outbox.claimNextQueued(ACCT, CHAT);
+    // Simulate the original having been moved by another path: the guard must
+    // refuse and the child must keep its state (single transaction).
+    data.outbox.transition({ localId: 'O2', from: ['cancelled'], to: 'failed' });
+    expect(
+      data.outbox.revertRecoveryChild({ childLocalId: 'C2', originalLocalId: 'O2', errorCode: 'CG-OF-09', errorMessage: 'x' }),
+    ).toBe(false);
+    expect(data.outbox.get('C2')).toMatchObject({ state: 'sending', errorCode: null });
+    expect(data.outbox.get('O2')?.state).toBe('failed');
   });
 
   it('claimedMessageIds collects confirmed ids for the cross-claim guard', () => {

@@ -27,6 +27,17 @@ explicit confirmation and an unchanged saved payload. Hub checks the original
 already have happened. No scheduler, boot reconciliation or network error
 initiates a new provider send. Similar local message text cannot confirm v2.
 
+A refused recovery is not a failure of the original (review #27, fix 1). When
+Hub declines the reuse — a dispatch-time `local_precondition` refusal such as
+`provider_replay_unavailable`, a `409` on the create call, a typed pre-intake
+code, or a request still queued at app restart — the recovery child is retained
+as a cancelled audit row and the original returns to **unconfirmed** carrying
+`CG-OF-09` and the Hub reason. The row shows "manual check" with Check now /
+Dismiss only; Edit and Retry are never offered, because a Retry mints a fresh
+key and could duplicate a message that may already have been delivered. Only a
+definite vendor rejection of the replayed payload (`ofapi_response` 400/422)
+settles the child as failed with Retry.
+
 The chat menu supplies OnlyFans custom name, unread, mute/unmute and hide; message
 buttons supply like/unlike and pin/unpin. These are closed Hub commands. The
 client intent is saved before intake; double clicks share one command. Unknown
@@ -85,7 +96,8 @@ renderer inputs pass Zod and the generated Hub contract before command enqueue.
 
 `pnpm check` covers typecheck, lint, shared and desktop tests, and production build.
 Regression cases cover exact cents, safe IDs, complete v2 payload persistence,
-422 preservation, indeterminate status, explicit unchanged recovery, GIF-only
+422 preservation, indeterminate status, explicit unchanged recovery, refused
+recovery (dispatch refusal, intake 409, boot) never yielding a fresh key, GIF-only
 messages, action coalescing/restart recovery, confirmed-only local updates,
 reference envelopes and bounded-history state retention. Renderer store tests
 cover all-field validation and recovery metadata isolation.

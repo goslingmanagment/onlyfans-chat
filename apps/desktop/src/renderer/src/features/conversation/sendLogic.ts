@@ -119,11 +119,13 @@ export interface OutboxRowView {
   restrictedWords: boolean;
   /**
    * Reason CODE for the explainer line; the component resolves it to localized
-   * copy. `'unconfirmed'` → conv.unconfirmedExplainer; null ⇒ either no
-   * explainer, or (for an uncoded FAILED) fall back to `explainerMessage`
-   * which carries the raw wire message verbatim (registry/provider wording).
+   * copy. `'unconfirmed'` → conv.unconfirmedExplainer;
+   * `'recovery_refused'` (CG-OF-09, review #27 fix 1) → conv.recoveryRefusedExplainer
+   * with `explainerMessage` as the Hub reason; null ⇒ either no explainer, or
+   * (for an uncoded FAILED) fall back to `explainerMessage` which carries the
+   * raw wire message verbatim (registry/provider wording).
    */
-  explainerCode: 'unconfirmed' | null;
+  explainerCode: 'unconfirmed' | 'recovery_refused' | null;
   /** Verbatim wire message for an uncoded FAILED row (not authored English). */
   explainerMessage: string | null;
   actions: readonly OutboxAction[];
@@ -155,16 +157,21 @@ export function deriveOutboxRow(
         actions: ['edit', 'retry', 'dismiss'],
       };
     }
-    case 'unconfirmed':
+    case 'unconfirmed': {
+      // A refused reuse-key recovery returns the ORIGINAL here: still a manual
+      // check — verify/dismiss only, never edit/retry (a fresh key could
+      // duplicate a message that may already have been delivered).
+      const recoveryRefused = item.errorCode === 'CG-OF-09';
       return {
         label: 'UNCONF',
         tone: 'warn',
         pulse: false,
         restrictedWords: false,
-        explainerCode: 'unconfirmed',
-        explainerMessage: null,
+        explainerCode: recoveryRefused ? 'recovery_refused' : 'unconfirmed',
+        explainerMessage: recoveryRefused ? item.errorMessage : null,
         actions: ['verify', 'dismiss'],
       };
+    }
     case 'sent':
     case 'cancelled':
       return null;
