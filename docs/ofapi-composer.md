@@ -118,3 +118,20 @@ options and chat menu render, $6.97 appears exactly in the send confirmation,
 caption defaults to visible, and the browser console has no errors. No live
 provider sends, paid probes, packaging, deployment or collector activation were
 performed in this batch.
+
+
+## 0.1.51 release acceptance (2026-09-07)
+
+This release includes the review fixes for declined reuse recovery (including
+verification after a lost intake response), hidden-chat resurrection after new
+activity, and legacy v1 text commands when no rich options were selected.
+Unknown transport outcomes and status failures of accepted commands remain
+unconfirmed; recovery does not invent another provider operation.
+
+The generated SDK is cut from clean Hub commit
+`2475b3046332c69fddcd8c0725ed03531c923c8c`, contract
+`59deb1b5c836b6cc4f7a6b269684aac660bd239a1d3bfcfdeda43984b620bb6f`.
+Local `pnpm check` passed with 2,198 tests and 5 existing skips. Publication
+requires this compatible Hub deployed first, successful Linux/Windows CI on
+the exact release commit, and the existing packaged smoke/feed verification.
+No provider request, paid subscription or automatic send was used for validation.
