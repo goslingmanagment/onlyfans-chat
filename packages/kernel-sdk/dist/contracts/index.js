@@ -32,3 +32,7 @@ export * from "./routes-ofapi-read-collections";
 export * from "./ofapi-smart-links";
 export * from "./routes-ofapi-exports";
 export * from "./routes-ofapi-media";
+export * from "./ofapi-actions";
+export * from "./ofapi-actions-collections";
+export * from "./ofapi-actions-publishing";
+export * from "./ofapi-actions-account";

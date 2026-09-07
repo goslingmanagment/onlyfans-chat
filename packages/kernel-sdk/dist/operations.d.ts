@@ -627,6 +627,30 @@ export declare const kernelOperations: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/notifications/test";
     };
+    readonly ofapiActionCancel: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/actions/:id/cancel";
+    };
+    readonly ofapiActionDispatch: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/actions/:id/dispatch";
+    };
+    readonly ofapiActionGet: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/ofapi/actions/:id";
+    };
+    readonly ofapiActionList: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/ofapi/actions";
+    };
+    readonly ofapiActionPrepare: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/actions";
+    };
+    readonly ofapiActionRepair: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/actions/:id/repair";
+    };
     readonly ofapiBannedWordsAdminGet: {
         readonly method: "GET";
         readonly path: "/api/v1/admin/ofapi/banned-words";

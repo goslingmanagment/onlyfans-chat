@@ -1,3 +1,4 @@
+import { ofapiActionRouteSchemas } from "./routes-ofapi-actions";
 import { z } from "zod";
 import { fanLookupParamsSchema, pageParamsSchema, paginationQuerySchema } from "./primitives";
 export declare const pageRefSchema: z.ZodObject<{
@@ -612,24 +613,24 @@ export declare const voiceNoteCreateBodySchema: z.ZodObject<{
     script: z.ZodString;
 }, z.core.$strip>;
 export declare const voiceNoteStateSchema: z.ZodEnum<{
+    indeterminate: "indeterminate";
     queued: "queued";
     completed: "completed";
     dispatched: "dispatched";
     failed_definite: "failed_definite";
     failed_after_dispatch: "failed_after_dispatch";
-    indeterminate: "indeterminate";
     quota_denied: "quota_denied";
     artifact_expired: "artifact_expired";
 }>;
 export declare const voiceNoteStatusSchema: z.ZodObject<{
     voiceNoteId: z.ZodNumber;
     state: z.ZodEnum<{
+        indeterminate: "indeterminate";
         queued: "queued";
         completed: "completed";
         dispatched: "dispatched";
         failed_definite: "failed_definite";
         failed_after_dispatch: "failed_after_dispatch";
-        indeterminate: "indeterminate";
         quota_denied: "quota_denied";
         artifact_expired: "artifact_expired";
     }>;
@@ -3052,9 +3053,9 @@ export declare const workboardV2AiRunSchema: z.ZodObject<{
     id: z.ZodNumber;
     pageLabel: z.ZodNullable<z.ZodString>;
     trigger: z.ZodEnum<{
+        manual: "manual";
         reclassify: "reclassify";
         cron: "cron";
-        manual: "manual";
     }>;
     model: z.ZodNullable<z.ZodString>;
     classified: z.ZodNumber;
@@ -3073,9 +3074,9 @@ export declare const workboardV2AiRunsResponseSchema: z.ZodObject<{
         id: z.ZodNumber;
         pageLabel: z.ZodNullable<z.ZodString>;
         trigger: z.ZodEnum<{
+            manual: "manual";
             reclassify: "reclassify";
             cron: "cron";
-            manual: "manual";
         }>;
         model: z.ZodNullable<z.ZodString>;
         classified: z.ZodNumber;
@@ -8151,8 +8152,8 @@ export declare const adminSyncBlockRequestSchema: z.ZodObject<{
 export declare const adminSyncBlockResponseSchema: z.ZodObject<{
     accepted: z.ZodLiteral<true>;
     action: z.ZodEnum<{
-        trigger: "trigger";
         pause: "pause";
+        trigger: "trigger";
         resume: "resume";
         reset: "reset";
     }>;
@@ -10220,8 +10221,8 @@ export declare const ofapiWebhookRegisterResponseSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const ofapiCreditLedgerSourceEnum: z.ZodEnum<{
     adjustment: "adjustment";
-    rest: "rest";
     external: "external";
+    rest: "rest";
     webhook_accrual: "webhook_accrual";
     refill: "refill";
 }>;
@@ -10346,10 +10347,10 @@ export declare const ofapiCreditsChatterSummaryResponseSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const ofapiCommandStateSchema: z.ZodEnum<{
     cancelled: "cancelled";
-    queued: "queued";
-    indeterminate: "indeterminate";
-    in_flight: "in_flight";
     confirmed: "confirmed";
+    indeterminate: "indeterminate";
+    queued: "queued";
+    in_flight: "in_flight";
     failed_retryable: "failed_retryable";
     failed_terminal: "failed_terminal";
 }>;
@@ -10491,10 +10492,10 @@ export declare const ofapiCommandResponseSchema: z.ZodObject<{
     conversationId: z.ZodString;
     state: z.ZodEnum<{
         cancelled: "cancelled";
-        queued: "queued";
-        indeterminate: "indeterminate";
-        in_flight: "in_flight";
         confirmed: "confirmed";
+        indeterminate: "indeterminate";
+        queued: "queued";
+        in_flight: "in_flight";
         failed_retryable: "failed_retryable";
         failed_terminal: "failed_terminal";
     }>;
@@ -10550,8 +10551,8 @@ export declare const adminOfapiCreditsLedgerQuerySchema: z.ZodObject<{
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     source: z.ZodOptional<z.ZodEnum<{
         adjustment: "adjustment";
-        rest: "rest";
         external: "external";
+        rest: "rest";
         webhook_accrual: "webhook_accrual";
         refill: "refill";
     }>>;
@@ -10563,8 +10564,8 @@ export declare const adminOfapiCreditsLedgerQuerySchema: z.ZodObject<{
 export declare const adminOfapiCreditsLedgerCsvQuerySchema: z.ZodObject<{
     source: z.ZodOptional<z.ZodEnum<{
         adjustment: "adjustment";
-        rest: "rest";
         external: "external";
+        rest: "rest";
         webhook_accrual: "webhook_accrual";
         refill: "refill";
     }>>;
@@ -10584,8 +10585,8 @@ export declare const ofapiCreditsLedgerResponseSchema: z.ZodObject<{
         occurredAt: z.ZodString;
         source: z.ZodEnum<{
             adjustment: "adjustment";
-            rest: "rest";
             external: "external";
+            rest: "rest";
             webhook_accrual: "webhook_accrual";
             refill: "refill";
         }>;
@@ -11604,7 +11605,7 @@ export declare const moneyPayoutsResponseSchema: z.ZodObject<{
     }, z.core.$strip>>;
     nextCursor: z.ZodNullable<z.ZodString>;
 }, z.core.$strip>;
-export declare const routeSchemas: {
+declare const baseRouteSchemas: {
     readonly health: {
         readonly auth: {
             readonly kind: "public";
@@ -14376,10 +14377,10 @@ export declare const routeSchemas: {
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
                     cancelled: "cancelled";
-                    queued: "queued";
-                    indeterminate: "indeterminate";
-                    in_flight: "in_flight";
                     confirmed: "confirmed";
+                    indeterminate: "indeterminate";
+                    queued: "queued";
+                    in_flight: "in_flight";
                     failed_retryable: "failed_retryable";
                     failed_terminal: "failed_terminal";
                 }>;
@@ -14420,10 +14421,10 @@ export declare const routeSchemas: {
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
                     cancelled: "cancelled";
-                    queued: "queued";
-                    indeterminate: "indeterminate";
-                    in_flight: "in_flight";
                     confirmed: "confirmed";
+                    indeterminate: "indeterminate";
+                    queued: "queued";
+                    in_flight: "in_flight";
                     failed_retryable: "failed_retryable";
                     failed_terminal: "failed_terminal";
                 }>;
@@ -14507,10 +14508,10 @@ export declare const routeSchemas: {
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
                     cancelled: "cancelled";
-                    queued: "queued";
-                    indeterminate: "indeterminate";
-                    in_flight: "in_flight";
                     confirmed: "confirmed";
+                    indeterminate: "indeterminate";
+                    queued: "queued";
+                    in_flight: "in_flight";
                     failed_retryable: "failed_retryable";
                     failed_terminal: "failed_terminal";
                 }>;
@@ -14584,10 +14585,10 @@ export declare const routeSchemas: {
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
                     cancelled: "cancelled";
-                    queued: "queued";
-                    indeterminate: "indeterminate";
-                    in_flight: "in_flight";
                     confirmed: "confirmed";
+                    indeterminate: "indeterminate";
+                    queued: "queued";
+                    in_flight: "in_flight";
                     failed_retryable: "failed_retryable";
                     failed_terminal: "failed_terminal";
                 }>;
@@ -14805,8 +14806,8 @@ export declare const routeSchemas: {
             limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
             source: z.ZodOptional<z.ZodEnum<{
                 adjustment: "adjustment";
-                rest: "rest";
                 external: "external";
+                rest: "rest";
                 webhook_accrual: "webhook_accrual";
                 refill: "refill";
             }>>;
@@ -14827,8 +14828,8 @@ export declare const routeSchemas: {
                     occurredAt: z.ZodString;
                     source: z.ZodEnum<{
                         adjustment: "adjustment";
-                        rest: "rest";
                         external: "external";
+                        rest: "rest";
                         webhook_accrual: "webhook_accrual";
                         refill: "refill";
                     }>;
@@ -14869,8 +14870,8 @@ export declare const routeSchemas: {
         readonly querystring: z.ZodObject<{
             source: z.ZodOptional<z.ZodEnum<{
                 adjustment: "adjustment";
-                rest: "rest";
                 external: "external";
+                rest: "rest";
                 webhook_accrual: "webhook_accrual";
                 refill: "refill";
             }>>;
@@ -15115,12 +15116,12 @@ export declare const routeSchemas: {
             readonly 202: z.ZodObject<{
                 voiceNoteId: z.ZodNumber;
                 state: z.ZodEnum<{
+                    indeterminate: "indeterminate";
                     queued: "queued";
                     completed: "completed";
                     dispatched: "dispatched";
                     failed_definite: "failed_definite";
                     failed_after_dispatch: "failed_after_dispatch";
-                    indeterminate: "indeterminate";
                     quota_denied: "quota_denied";
                     artifact_expired: "artifact_expired";
                 }>;
@@ -15184,12 +15185,12 @@ export declare const routeSchemas: {
             readonly 200: z.ZodObject<{
                 voiceNoteId: z.ZodNumber;
                 state: z.ZodEnum<{
+                    indeterminate: "indeterminate";
                     queued: "queued";
                     completed: "completed";
                     dispatched: "dispatched";
                     failed_definite: "failed_definite";
                     failed_after_dispatch: "failed_after_dispatch";
-                    indeterminate: "indeterminate";
                     quota_denied: "quota_denied";
                     artifact_expired: "artifact_expired";
                 }>;
@@ -18828,9 +18829,9 @@ export declare const routeSchemas: {
                     id: z.ZodNumber;
                     pageLabel: z.ZodNullable<z.ZodString>;
                     trigger: z.ZodEnum<{
+                        manual: "manual";
                         reclassify: "reclassify";
                         cron: "cron";
-                        manual: "manual";
                     }>;
                     model: z.ZodNullable<z.ZodString>;
                     classified: z.ZodNumber;
@@ -23392,8 +23393,8 @@ export declare const routeSchemas: {
             readonly 200: z.ZodObject<{
                 accepted: z.ZodLiteral<true>;
                 action: z.ZodEnum<{
-                    trigger: "trigger";
                     pause: "pause";
+                    trigger: "trigger";
                     resume: "resume";
                     reset: "reset";
                 }>;
@@ -23476,8 +23477,8 @@ export declare const routeSchemas: {
             readonly 200: z.ZodObject<{
                 accepted: z.ZodLiteral<true>;
                 action: z.ZodEnum<{
-                    trigger: "trigger";
                     pause: "pause";
+                    trigger: "trigger";
                     resume: "resume";
                     reset: "reset";
                 }>;
@@ -23555,8 +23556,8 @@ export declare const routeSchemas: {
             readonly 200: z.ZodObject<{
                 accepted: z.ZodLiteral<true>;
                 action: z.ZodEnum<{
-                    trigger: "trigger";
                     pause: "pause";
+                    trigger: "trigger";
                     resume: "resume";
                     reset: "reset";
                 }>;
@@ -23634,8 +23635,8 @@ export declare const routeSchemas: {
             readonly 200: z.ZodObject<{
                 accepted: z.ZodLiteral<true>;
                 action: z.ZodEnum<{
-                    trigger: "trigger";
                     pause: "pause";
+                    trigger: "trigger";
                     resume: "resume";
                     reset: "reset";
                 }>;
@@ -28851,8 +28852,8 @@ export declare const routeSchemas: {
                         pageLabel: z.ZodString;
                         noteRef: z.ZodString;
                         origin: z.ZodEnum<{
-                            internal: "internal";
                             external: "external";
+                            internal: "internal";
                         }>;
                         noteText: z.ZodString;
                         createdAt: z.ZodNullable<z.ZodString>;
@@ -36940,12 +36941,12 @@ export declare const routeSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
+                        dispatching: "dispatching";
+                        rejected: "rejected";
                         requested: "requested";
                         approved: "approved";
-                        dispatching: "dispatching";
                         partially_completed: "partially_completed";
                         completed: "completed";
-                        rejected: "rejected";
                     }>;
                     pageLabel: z.ZodString;
                     platform: z.ZodEnum<{
@@ -37606,12 +37607,12 @@ export declare const routeSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
+                        dispatching: "dispatching";
+                        rejected: "rejected";
                         requested: "requested";
                         approved: "approved";
-                        dispatching: "dispatching";
                         partially_completed: "partially_completed";
                         completed: "completed";
-                        rejected: "rejected";
                     }>;
                     pageLabel: z.ZodString;
                     platform: z.ZodEnum<{
@@ -38279,12 +38280,12 @@ export declare const routeSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
+                        dispatching: "dispatching";
+                        rejected: "rejected";
                         requested: "requested";
                         approved: "approved";
-                        dispatching: "dispatching";
                         partially_completed: "partially_completed";
                         completed: "completed";
-                        rejected: "rejected";
                     }>;
                     pageLabel: z.ZodString;
                     platform: z.ZodEnum<{
@@ -38368,8 +38369,8 @@ export declare const routeSchemas: {
                     }, z.core.$strict>;
                 }, z.core.$strict>;
                 disposition: z.ZodEnum<{
-                    approved: "approved";
                     rejected: "rejected";
+                    approved: "approved";
                     already_decided: "already_decided";
                 }>;
                 delivery: z.ZodObject<{
@@ -38940,12 +38941,12 @@ export declare const routeSchemas: {
             state: z.ZodOptional<z.ZodEnum<{
                 failed: "failed";
                 expired: "expired";
+                dispatching: "dispatching";
+                rejected: "rejected";
                 requested: "requested";
                 approved: "approved";
-                dispatching: "dispatching";
                 partially_completed: "partially_completed";
                 completed: "completed";
-                rejected: "rejected";
             }>>;
             limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
         }, z.core.$strict>;
@@ -38956,12 +38957,12 @@ export declare const routeSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
+                        dispatching: "dispatching";
+                        rejected: "rejected";
                         requested: "requested";
                         approved: "approved";
-                        dispatching: "dispatching";
                         partially_completed: "partially_completed";
                         completed: "completed";
-                        rejected: "rejected";
                     }>;
                     pageLabel: z.ZodString;
                     platform: z.ZodEnum<{
@@ -42505,7 +42506,8 @@ export declare const routeSchemas: {
         };
     };
 };
-export type RouteSchemas = typeof routeSchemas;
+export type RouteSchemas = typeof baseRouteSchemas & typeof ofapiActionRouteSchemas;
+export declare const routeSchemas: RouteSchemas;
 export type AuthState = z.infer<typeof authStateSchema>;
 export type AuthUser = z.infer<typeof authUserSchema>;
 export type AdminUser = z.infer<typeof adminUserSchema>;
@@ -42748,3 +42750,4 @@ export type MoneyRevenueMixResponse = z.infer<typeof moneyRevenueMixResponseSche
 export type MoneyPayoutsQuery = z.infer<typeof moneyPayoutsQuerySchema>;
 export type MoneyPayoutsResponse = z.infer<typeof moneyPayoutsResponseSchema>;
 export type OfapiWebhookDeliveryHistoryResponse = z.infer<typeof ofapiWebhookDeliveryHistorySchema>;
+export {};

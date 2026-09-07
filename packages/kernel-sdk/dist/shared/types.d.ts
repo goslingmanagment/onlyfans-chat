@@ -103,7 +103,7 @@ export declare const syncHealthStates: readonly ["healthy", "degraded", "suspici
 export type SyncHealth = (typeof syncHealthStates)[number];
 export declare const httpRequestStates: readonly ["started", "success", "retry", "failed"];
 export type HttpRequestState = (typeof httpRequestStates)[number];
-export declare const httpRequestFailureKinds: readonly ["timeout", "transport", "http", "provider"];
+export declare const httpRequestFailureKinds: readonly ["timeout", "transport", "http", "provider", "policy"];
 export type HttpRequestFailureKind = (typeof httpRequestFailureKinds)[number];
 export declare const syncTelemetryEventSeverities: readonly ["info", "warn", "error"];
 export type SyncTelemetryEventSeverity = (typeof syncTelemetryEventSeverities)[number];

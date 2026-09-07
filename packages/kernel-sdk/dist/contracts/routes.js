@@ -1,5 +1,6 @@
 import { ofapiMediaRouteSchemas } from "./routes-ofapi-media";
 import { ofapiMarketingRouteSchemas } from "./routes-ofapi-marketing";
+import { ofapiActionRouteSchemas } from "./routes-ofapi-actions";
 import { ofapiBannedWordRouteSchemas } from "./routes-ofapi-banned-words";
 import { OFAPI_EXTENDED_COMMAND_KINDS } from "../shared/index";
 import { ofapiExtendedCommandOptions } from "./ofapi-extended-commands";
@@ -4931,7 +4932,7 @@ export const moneyPayoutsResponseSchema = z.object({
     coverage: z.array(insightsCoverageRowSchema),
     nextCursor: z.string().nullable(),
 });
-export const routeSchemas = {
+const baseRouteSchemas = {
     ...ofapiMarketingRouteSchemas,
     ...ofapiBannedWordRouteSchemas,
     ...ofapiVendorRouteSchemas,
@@ -7599,3 +7600,4 @@ export const routeSchemas = {
         },
     },
 };
+export const routeSchemas = { ...baseRouteSchemas, ...ofapiActionRouteSchemas };
