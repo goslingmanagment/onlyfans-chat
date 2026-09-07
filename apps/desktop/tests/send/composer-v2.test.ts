@@ -141,8 +141,8 @@ describe("composer v2 durable boundaries", () => {
     return original;
   }
   /** The duplicate-DM invariant: after a refusal, verify + boot read status
-   * only, no third create, no second client id, no plain retry of the original. */
-  async function expectNoFreshKeyEver(h: ReturnType<typeof scriptedSetup>, original: string, child: string) {
+   * only, no additional create or client id, no plain retry of the original. */
+  async function expectNoFreshKeyEver(h: ReturnType<typeof scriptedSetup>, original: string, child: string, expectedCreates = 2) {
     expect(() =>
       engine!.retry({ accountId: ACCT, localId: original, text: "hello" }),
     ).toThrow(/unconfirmed/);
@@ -152,7 +152,7 @@ describe("composer v2 durable boundaries", () => {
     await engine!.verifyChat(ACCT, CHAT);
     await engine!.reconcileOnBoot();
     await drain();
-    expect(h.calls).toHaveLength(2);
+    expect(h.calls).toHaveLength(expectedCreates);
     expect(new Set(h.calls.map((call) => call.clientCommandId)).size).toBe(2);
     expect(h.calls[1]).toMatchObject({
       clientCommandId: child,
@@ -230,6 +230,81 @@ describe("composer v2 durable boundaries", () => {
       errorMessage: "intake refused: provider operation reuse unavailable",
     });
     await expectNoFreshKeyEver(h, original, child);
+  });
+
+  it.each(["verify", "boot"] as const)("returns the original to manual check when response-loss recovery gets a 409 during %s", async (trigger) => {
+    const h = scriptedSetup([
+      (request) => response(request, "indeterminate"),
+      () => new Error("connection lost before the intake response"),
+      () => new Error("connection still unavailable"),
+      () => new HubError("http", {
+        message: "Provider operation cannot be reused: window_expired",
+        detail: { status: 409, kernelCode: "provider_operation_reuse_unavailable" },
+      }),
+    ]);
+    const original = await sendIndeterminateRich(h);
+    const child = engine!.retry({
+      accountId: ACCT,
+      localId: original,
+      text: "hello",
+      reuseProviderOperation: true,
+    }).localId;
+    await drain();
+
+    // No reply is evidence of either acceptance or refusal. Another transport
+    // loss must retain the same child and its original provider-key lineage.
+    await engine!.verifyChat(ACCT, CHAT);
+    expect(data.outbox.get(original)?.state).toBe("cancelled");
+    expect(data.outbox.get(child)).toMatchObject({
+      state: "unconfirmed", coreCommandId: null, errorCode: "CG-OF-06",
+    });
+    expect(h.calls).toHaveLength(3);
+    expect(h.calls[2]).toEqual(h.calls[1]);
+
+    if (trigger === "boot") await engine!.reconcileOnBoot();
+    else await engine!.verifyChat(ACCT, CHAT);
+    expect(data.outbox.get(child)).toMatchObject({
+      state: "cancelled", coreCommandId: null, retryOf: original, errorCode: "CG-OF-09",
+    });
+    expect(data.outbox.get(original)).toMatchObject({
+      state: "unconfirmed", errorCode: "CG-OF-09",
+      errorMessage: "intake refused: Provider operation cannot be reused: window_expired",
+    });
+    expect(h.calls[3]).toEqual(h.calls[1]);
+    await expectNoFreshKeyEver(h, original, child, 4);
+    expect(h.getOfapiCommand).toHaveBeenCalledWith({ commandId: data.outbox.get(original)?.coreCommandId });
+  });
+
+  it("a 409 status-read failure after reuse intake keeps the accepted child for later confirmation", async () => {
+    const h = scriptedSetup([
+      (request) => response(request, "indeterminate"),
+      (request) => response(request, "queued"),
+    ]);
+    const original = await sendIndeterminateRich(h);
+    h.getOfapiCommand.mockRejectedValue(new HubError("http", {
+      message: "status temporarily unavailable",
+      detail: { status: 409 },
+    }));
+    const child = engine!.retry({
+      accountId: ACCT,
+      localId: original,
+      text: "hello",
+      reuseProviderOperation: true,
+    }).localId;
+    await drain();
+    const acceptedCommandId = data.outbox.get(child)?.coreCommandId;
+    expect(acceptedCommandId).toEqual(expect.any(String));
+    await engine!.verifyChat(ACCT, CHAT);
+    expect(data.outbox.get(child)).toMatchObject({
+      state: "unconfirmed", coreCommandId: acceptedCommandId, errorCode: "CG-OF-06",
+    });
+    expect(data.outbox.get(original)?.state).toBe("cancelled");
+    expect(h.calls).toHaveLength(2);
+
+    h.getOfapiCommand.mockResolvedValue(response(h.calls[1]!, "confirmed", { commandId: acceptedCommandId! }));
+    await engine!.verifyChat(ACCT, CHAT);
+    expect(data.outbox.get(child)?.state).toBe("sent");
+    expect(h.calls).toHaveLength(2);
   });
 
   it("keeps Retry only for a definite vendor rejection of the replayed payload (ofapi_response 4xx)", async () => {

@@ -521,6 +521,26 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
     });
   }
 
+  /** Both the initial send and response-loss verification can meet a definite
+   * reuse refusal. A durable command id means the error came from a status
+   * read instead, so the accepted child must retain its existing identity. */
+  function revertRefusedRecoveryIntake(row: OutboxRow, error: unknown): boolean {
+    const freshRow = data.outbox.get(row.localId);
+    if (
+      !isRecoveryChild(row) ||
+      freshRow === null ||
+      freshRow.coreCommandId !== null ||
+      !(isHubWriteUnavailable(error) || isDefinitePreIntakeRejection(error, freshRow) || isDefiniteIntakeRefusal(error))
+    ) {
+      return false;
+    }
+    revertRecovery(
+      row,
+      `intake refused: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200),
+    );
+    return true;
+  }
+
   function settleHubCommand(row: OutboxRow, command: HubOfapiCommand): boolean {
     switch (command.state) {
       case 'confirmed':
@@ -671,15 +691,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       // never parks as 'failed' — the original's delivery is still unknown.
       // A transport failure keeps the existing path: 'unconfirmed' + the
       // idempotent re-intake/status read, whose settle applies the same rule.
-      if (
-        isRecoveryChild(row) &&
-        !acceptedByCore &&
-        (unavailable || preIntakeRejected || isDefiniteIntakeRefusal(error))
-      ) {
-        revertRecovery(
-          row,
-          `intake refused: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200),
-        );
+      if (revertRefusedRecoveryIntake(row, error)) {
         return false;
       }
       // Auth/bad-config is terminal only while intake is still provably absent.
@@ -980,8 +992,11 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       try {
         const command = await waitForHubCommand(await ensureHubCommand(row));
         settleHubCommand(row, command);
-      } catch {
-        // Core or network still unavailable; the periodic status pass retries.
+      } catch (error) {
+        // A response-lost reuse may first receive its definitive refusal here.
+        // Unknown transport errors and failures reading accepted commands stay
+        // unconfirmed; only a refused intake returns custody to the original.
+        revertRefusedRecoveryIntake(row, error);
       }
     }
     matchUnconfirmed(accountId, chatId);
