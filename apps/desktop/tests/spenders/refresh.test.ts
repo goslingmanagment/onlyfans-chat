@@ -40,6 +40,10 @@ function makeHarness(opts: {
   failFor?: Set<string>;
   /** Fans whose tail GET succeeds but returns NO messages (genuinely empty). */
   emptyFor?: Set<string>;
+  /** Provider returned without a tail GET/source stamp. */
+  noProofFor?: Set<string>;
+  autoRead?: () => boolean;
+  onFetch?: (chatId: string) => void;
   onSleep?: (ms: number) => void;
 } = {}): Harness {
   let nowMs = new Date('2026-06-13T12:00:00.000Z').getTime();
@@ -49,10 +53,12 @@ function makeHarness(opts: {
   const sleeps: number[] = [];
   let msgSeq = 0;
   const tailFetch = async (accountId: string, chatId: string, purpose: string): Promise<void> => {
+    opts.onFetch?.(chatId);
     if (opts.failFor?.has(chatId)) {
       // A failed GET throws before fetchChatTail's stamp — no rows, no stamp.
       throw new Error('boom');
     }
+    if (opts.noProofFor?.has(chatId)) return;
     fetched.push({ chatId, purpose });
     // Mirror fixed-production fetchChatTail: a successful NON-EMPTY tail
     // upserts rows (→ db:changed) AND stamps; a successful EMPTY tail stamps
@@ -82,7 +88,7 @@ function makeHarness(opts: {
     isBudgetExhausted: opts.budgetExhausted ?? ((): boolean => false),
     // Auto-read ON so the queue/hydrate paths still exercise the tail GET; the
     // default-OFF gate is covered by its own describe block below.
-    getAutoRead: () => true,
+    getAutoRead: opts.autoRead ?? ((): boolean => true),
     now: () => nowMs,
     sleep: async (ms) => {
       sleeps.push(ms);
@@ -178,7 +184,10 @@ describe('scoped refresh queue', () => {
     expect(h.fetched.map((f) => f.chatId)).toEqual(['1', '2', '3']);
     expect(h.fetched.every((f) => f.purpose === SPENDERS_REFRESH_PURPOSE)).toBe(true);
     const done = h.frames.at(-1);
-    expect(done).toMatchObject({ state: 'done', done: 3, total: 3, scope: 'all' });
+    expect(done).toMatchObject({
+      state: 'done', done: 3, total: 3, scope: 'all',
+      fetched: 3, ttlSkipped: 0, policySkipped: 0, failed: 0,
+    });
     // progress frames count up while rows fill live
     const progress = h.frames.filter((f) => f.state === 'running').map((f) => f.done);
     expect(progress).toEqual([0, 1, 2, 3]);
@@ -192,6 +201,34 @@ describe('scoped refresh queue', () => {
     const stamps = h.service.freshness(ACCT);
     expect(Object.keys(stamps).sort()).toEqual(['100', '200', 'all']);
     expect(stamps['all']).toBe('2026-06-13T12:00:00.000Z');
+  });
+
+  it('a fully covered All run supersedes the earlier skipped child attempt', async () => {
+    let autoRead = false;
+    const h = makeHarness({ scopes: { '100': ['1'], all: ['1', '2'] }, autoRead: () => autoRead });
+    await h.service.start(ACCT, '100');
+    await until(() => h.frames.some((frame) => frame.state === 'skipped'));
+    expect(h.service.lastRuns(ACCT)['100']?.state).toBe('skipped');
+
+    autoRead = true;
+    await h.service.start(ACCT, 'all');
+    await until(() => h.frames.some((frame) => frame.state === 'done'));
+    expect(h.service.freshness(ACCT)['100']).toBe('2026-06-13T12:00:00.000Z');
+    expect(h.service.lastRuns(ACCT)['100']).toBeUndefined();
+    expect(h.service.lastRuns(ACCT)['all']?.state).toBe('done');
+  });
+
+  it('does not stamp a newly mapped shelf or All when mappings change during the run', async () => {
+    const mapped = ['100'];
+    const h = makeHarness({
+      scopes: { all: ['1', '2'] }, mapped,
+      onSleep: () => { mapped.push('200'); },
+    });
+    await h.service.start(ACCT, 'all');
+    await until(() => h.frames.some((frame) => frame.state === 'partial'));
+    expect(h.fetched.map((fetch) => fetch.chatId)).toEqual(['1', '2']);
+    expect(h.service.freshness(ACCT)).toEqual({});
+    expect(h.service.lastRuns(ACCT)['all']).toMatchObject({ state: 'partial', fetched: 2, scopeChanged: true });
   });
 
   it('a tier-scope completion stamps only that chip', async () => {
@@ -213,7 +250,97 @@ describe('scoped refresh queue', () => {
 
     // '2' is fresh (skipped, still counted), '3' is past the TTL (fetched)
     expect(h.fetched.map((f) => f.chatId)).toEqual(['1', '3']);
-    expect(h.frames.at(-1)).toMatchObject({ state: 'done', done: 3, total: 3 });
+    expect(h.frames.at(-1)).toMatchObject({ state: 'done', done: 3, total: 3, fetched: 2, ttlSkipped: 1 });
+    expect(h.service.freshness(ACCT)['all']).toBe('2026-06-13T11:56:00.000Z');
+  });
+
+  it('reusing TTL-covered tails does not make the source age younger on a later click', async () => {
+    const h = makeHarness({ scopes: { all: ['1', '2'] } });
+    data.threadFetchLog.stamp(ACCT, '1', '2026-06-13T11:58:00.000Z');
+    data.threadFetchLog.stamp(ACCT, '2', '2026-06-13T11:57:00.000Z');
+    await h.service.start(ACCT, 'all');
+    await until(() => h.frames.some((frame) => frame.state === 'done'));
+    h.advance(60_000);
+    await h.service.start(ACCT, 'all');
+    await until(() => h.frames.filter((frame) => frame.state === 'done').length === 2);
+
+    expect(h.fetched).toEqual([]);
+    expect(h.service.freshness(ACCT)['all']).toBe('2026-06-13T11:57:00.000Z');
+    expect(h.service.lastRuns(ACCT)['all']).toMatchObject({
+      state: 'done', completedAt: '2026-06-13T12:01:00.000Z', fetched: 0, ttlSkipped: 2,
+    });
+  });
+
+  it('distinguishes TTL coverage from policy skips and retains the older scope proof', async () => {
+    const h = makeHarness({ scopes: { all: ['1', '2'] }, autoRead: () => false });
+    data.threadFetchLog.stamp(ACCT, '1', '2026-06-13T11:58:00.000Z');
+    data.settings.set(`spenders.historyVerifiedAt.v2.${ACCT}`, { all: '2026-06-12T12:00:00.000Z' });
+    await h.service.start(ACCT, 'all');
+    await until(() => h.frames.some((frame) => frame.state === 'partial'));
+
+    expect(h.fetched).toEqual([]);
+    expect(h.frames.at(-1)).toMatchObject({
+      state: 'partial', done: 2, total: 2, fetched: 0, ttlSkipped: 1, policySkipped: 1, failed: 0,
+    });
+    expect(h.service.freshness(ACCT)['all']).toBe('2026-06-12T12:00:00.000Z');
+    expect(makeHarness().service.lastRuns(ACCT)['all']).toMatchObject({ state: 'partial', policySkipped: 1 });
+  });
+
+  it('a resolved provider callback without a new source stamp cannot claim a fetched history', async () => {
+    const h = makeHarness({ scopes: { all: ['1'] }, noProofFor: new Set(['1']) });
+    await h.service.start(ACCT, 'all');
+    await until(() => h.frames.some((frame) => frame.state === 'partial'));
+    expect(h.frames.at(-1)).toMatchObject({ fetched: 0, failed: 1 });
+    expect(h.service.freshness(ACCT)).toEqual({});
+  });
+
+  it('a policy change inside the provider call stays unread without a false success', async () => {
+    let enabled = true;
+    const h = makeHarness({
+      scopes: { all: ['1'] }, noProofFor: new Set(['1']),
+      autoRead: () => enabled, onFetch: () => { enabled = false; },
+    });
+    await h.service.start(ACCT, 'all');
+    await until(() => h.frames.some((frame) => frame.state === 'skipped'));
+    expect(h.frames.at(-1)).toMatchObject({ fetched: 0, policySkipped: 1, failed: 0 });
+    expect(h.service.freshness(ACCT)).toEqual({});
+  });
+
+  it('an empty scope completes without inventing a history verification timestamp', async () => {
+    const h = makeHarness({ scopes: { all: [] } });
+    await h.service.start(ACCT, 'all');
+    await until(() => h.frames.some((frame) => frame.state === 'done'));
+    expect(h.frames.at(-1)).toMatchObject({ done: 0, total: 0, fetched: 0 });
+    expect(h.service.freshness(ACCT)).toEqual({});
+  });
+
+  it('legacy completion stamps and queues are not evidence and do not resume reads', async () => {
+    data.settings.set(`spenders.refreshedAt.${ACCT}`, { all: '2026-06-13T12:00:00.000Z' });
+    data.settings.set(`spenders.refreshQueue.${ACCT}`, { scope: 'all', pending: ['2'], total: 2, done: 1 });
+    const h = makeHarness({ scopes: { all: ['1', '2'] } });
+    h.service.resume([ACCT]);
+
+    expect(h.service.status(ACCT)).toBeNull();
+    expect(h.frames).toEqual([]);
+    expect(h.fetched).toEqual([]);
+    expect(h.service.freshness(ACCT)).toEqual({});
+    expect(h.service.lastRuns(ACCT)).toEqual({});
+  });
+
+  it('resuming a mid-run checkpoint retries earlier isolated failures before declaring coverage', async () => {
+    data.settings.set(`spenders.refreshQueue.v2.${ACCT}`, {
+      scope: 'all', pending: ['3'], total: 3, done: 2,
+      fetched: 1, ttlSkipped: 0, policySkipped: 0, failedIds: ['1'],
+      oldestVerifiedAt: '2026-06-13T11:59:00.000Z',
+      mappedListIds: ['100', '200'],
+    });
+    const h = makeHarness({ scopes: { all: ['1', '2', '3'] }, failFor: new Set(['1']) });
+    h.service.resume([ACCT]);
+    await until(() => h.frames.some((frame) => frame.state === 'partial'));
+
+    expect(h.fetched.map((fetch) => fetch.chatId)).toEqual(['3']);
+    expect(h.frames.at(-1)).toMatchObject({ done: 3, total: 3, fetched: 2, failed: 1 });
+    expect(h.service.freshness(ACCT)).toEqual({});
   });
 
   it('pauses FIRST when the budget guard trips and resumes when it frees', async () => {
@@ -250,17 +377,20 @@ describe('scoped refresh queue', () => {
     expect(h.fetched.length).toBeLessThan(3);
     expect(h.service.freshness(ACCT)).toEqual({});
     expect(h.service.status(ACCT)).toBeNull();
-    expect(data.settings.get(`spenders.refreshQueue.${ACCT}`)).toBeUndefined();
+    expect(data.settings.get(`spenders.refreshQueue.v2.${ACCT}`)).toBeUndefined();
   });
 
   it('survives a restart: a new service over the same db resumes the remaining fans only', async () => {
     // First process: stop after 1 fan to leave a persisted remainder. Persist
     // granularity is 10, so simulate the crash artifact directly.
-    data.settings.set(`spenders.refreshQueue.${ACCT}`, {
+    data.settings.set(`spenders.refreshQueue.v2.${ACCT}`, {
       scope: 'all',
       pending: ['2', '3'],
       total: 3,
       done: 1,
+      fetched: 1, ttlSkipped: 0, policySkipped: 0, failedIds: [],
+      oldestVerifiedAt: '2026-06-13T11:59:00.000Z',
+      mappedListIds: ['100', '200'],
     });
     const h = makeHarness({ scopes: { all: ['1', '2', '3'] } });
     h.service.resume([ACCT]);
@@ -268,19 +398,22 @@ describe('scoped refresh queue', () => {
 
     expect(h.fetched.map((f) => f.chatId)).toEqual(['2', '3']); // '1' not re-spent
     expect(h.frames.at(-1)).toMatchObject({ done: 3, total: 3, scope: 'all' });
-    expect(h.service.freshness(ACCT)['all']).toBeDefined();
+    expect(h.service.freshness(ACCT)['all']).toBe('2026-06-13T11:59:00.000Z');
   });
 
   it('resume with an empty persisted queue just clears the artifact', async () => {
-    data.settings.set(`spenders.refreshQueue.${ACCT}`, {
+    data.settings.set(`spenders.refreshQueue.v2.${ACCT}`, {
       scope: 'all',
       pending: [],
       total: 3,
       done: 3,
+      fetched: 3, ttlSkipped: 0, policySkipped: 0, failedIds: [],
+      oldestVerifiedAt: '2026-06-13T11:59:00.000Z',
+      mappedListIds: ['100', '200'],
     });
     const h = makeHarness({ scopes: { all: [] } });
     h.service.resume([ACCT]);
-    expect(data.settings.get(`spenders.refreshQueue.${ACCT}`)).toBeUndefined();
+    expect(data.settings.get(`spenders.refreshQueue.v2.${ACCT}`)).toBeUndefined();
     expect(h.service.status(ACCT)).toBeNull();
   });
 
@@ -292,13 +425,16 @@ describe('scoped refresh queue', () => {
 
     expect(h.fetched.map((f) => f.chatId)).toEqual(['2']);
     expect(data.threadFetchLog.get(ACCT, '1')).toBeNull();
-    expect(h.frames.at(-1)).toMatchObject({ state: 'partial', done: 1, total: 2 });
+    expect(h.frames.at(-1)).toMatchObject({ state: 'partial', done: 2, total: 2, fetched: 1, failed: 1 });
     expect(h.service.freshness(ACCT)).toEqual({});
-    expect(data.settings.get(`spenders.refreshQueue.${ACCT}`)).toEqual({
+    expect(data.settings.get(`spenders.refreshQueue.v2.${ACCT}`)).toEqual({
       scope: 'all',
       pending: ['1'],
       total: 2,
       done: 1,
+      fetched: 1, ttlSkipped: 0, policySkipped: 0, failedIds: [],
+      oldestVerifiedAt: '2026-06-13T12:00:00.000Z',
+      mappedListIds: ['100', '200'],
     });
 
     // A later explicit retry rebuilds the scope: fan 2 is TTL-skipped, the
@@ -308,7 +444,7 @@ describe('scoped refresh queue', () => {
     await until(() => h.frames.some((f) => f.state === 'done'));
     expect(h.fetched.map((f) => f.chatId)).toEqual(['2', '1']);
     expect(h.service.freshness(ACCT)['all']).toBeDefined();
-    expect(data.settings.get(`spenders.refreshQueue.${ACCT}`)).toBeUndefined();
+    expect(data.settings.get(`spenders.refreshQueue.v2.${ACCT}`)).toBeUndefined();
   });
 
   it(`${REFRESH_FAILURE_PAUSE_THRESHOLD} consecutive failures pause (network down) and the same fan retries after`, async () => {
@@ -339,9 +475,10 @@ describe('scoped refresh queue', () => {
     const frames: SpendersRefreshFrame[] = [];
     const service = createSpendersRefresh({
       data,
-      refreshChat: async (_a, chatId) => {
+      refreshChat: async (accountId, chatId) => {
         fetched.push(chatId);
         await gate; // hold the first fetch so the queue stays running
+        data.threadFetchLog.stamp(accountId, chatId, new Date().toISOString());
       },
       readChatTailForUserOpen: async () => undefined,
       ensureChat: async () => true,
@@ -560,15 +697,20 @@ describe('auto-read OFF (default)', () => {
     };
   }
 
-  it('the queue drains and stamps the scope WITHOUT any tail fetch', async () => {
+  it('records a policy skip without fetching or stamping the history fresh', async () => {
     const h = makeOffHarness({ all: ['1', '2', '3'] });
     await h.service.start(ACCT, 'all');
-    await until(() => h.frames.some((f) => f.state === 'done'));
+    await until(() => h.frames.some((f) => f.state === 'skipped'));
 
     expect(h.fetched).toHaveLength(0); // no fan read on OnlyFans
     expect(data.threadFetchLog.get(ACCT, '1')).toBeNull();
-    expect(h.frames.at(-1)).toMatchObject({ state: 'done', done: 3, total: 3 });
-    expect(h.service.freshness(ACCT)['all']).toBeDefined();
+    expect(h.frames.at(-1)).toMatchObject({
+      state: 'skipped', done: 3, total: 3, fetched: 0, ttlSkipped: 0, policySkipped: 3, failed: 0,
+    });
+    expect(h.service.freshness(ACCT)).toEqual({});
+    expect(h.service.lastRuns(ACCT)['all']).toMatchObject({
+      state: 'skipped', fetched: 0, policySkipped: 3, completedAt: '2026-06-13T12:00:00.000Z',
+    });
   });
 
   it('hydrateIfStale STILL fetches when auto-read is OFF (a deliberate per-chat open)', async () => {
@@ -654,11 +796,12 @@ describe('auto-read OFF (default)', () => {
     service.subscribe((frame) => frames.push(frame));
 
     await service.start(ACCT, 'all');
-    await until(() => frames.some((frame) => frame.state === 'done'));
+    await until(() => frames.some((frame) => frame.state === 'skipped'));
 
     expect(listMessages).not.toHaveBeenCalled();
     expect(data.threadFetchLog.get(ACCT, '7')).toBeNull();
     expect(data.threadFetchLog.get(ACCT, '8')).toBeNull();
-    expect(frames.at(-1)).toMatchObject({ state: 'done', done: 2, total: 2 });
+    expect(frames.at(-1)).toMatchObject({ state: 'skipped', done: 2, total: 2, policySkipped: 2, fetched: 0 });
+    expect(service.freshness(ACCT)).toEqual({});
   });
 });

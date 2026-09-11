@@ -129,6 +129,8 @@ export interface FanPanelVM {
   username: string;
   avatarUrl: string | null;
   lastSeen: string | null; // ISO
+  /** Source fan snapshot time from main's local store; never a renderer read time. */
+  fetchedAt: string | null;
   about: string | null;
   spending: {
     total: number;
@@ -770,14 +772,34 @@ export interface SpenderStatsVM {
   newSpenders: Array<{ row: SpenderRowVM; txCount: number }>;
 }
 
-/** Spenders data freshness (PLAN item 13). Per-fan stamps stay internal —
- *  the UI renders ONE per-scope line («последний апдейт — вчера 18:40» /
- *  «апдейта ещё не было») plus the live queue progress. */
+export interface SpendersRefreshCountsVM {
+  /** Tail reads proven by a new per-fan source stamp during this run. */
+  fetched: number;
+  /** Existing source stamps still inside the shared fetch TTL. */
+  ttlSkipped: number;
+  /** Stale/unknown tails left unread because automatic reads are disabled. */
+  policySkipped: number;
+  /** Failed fans not recovered during this run. */
+  failed: number;
+}
+
+export interface SpendersRefreshRunVM extends SpendersRefreshCountsVM {
+  state: 'done' | 'partial' | 'skipped' | 'stopped';
+  /** Counters describe the original roster; the scope mapping changed during the run. */
+  scopeChanged?: boolean | undefined;
+  completedAt: string;
+  /** Processed fans, including skips/failures; not a count of fetched histories. */
+  done: number;
+  total: number;
+}
+
+/** Source-backed history freshness and the separate outcome of the latest run. */
 export interface SpendersFreshnessVM {
-  /** scope ('all' | mapped list id) → ISO stamp of the last COMPLETED refresh
-   *  of that scope (a completed «Все» run stamps every chip). */
+  /** Scope → oldest verified tail-fetch stamp of a fully covered run.
+   *  TTL reuse never advances this to the click time; legacy run stamps are excluded. */
   scopes: Record<string, string>;
-  active: {
+  lastRuns: Record<string, SpendersRefreshRunVM>;
+  active: SpendersRefreshCountsVM & {
     scope: string;
     state: 'running' | 'paused';
     done: number;
@@ -1129,11 +1151,12 @@ export interface CreditBalanceEvent {
  * via db:changed as each tail lands; this frame drives the button counter,
  * the hairline progress bar and the «последний апдейт» refetch on completion.
  */
-export interface SpendersRefreshEvent {
+export interface SpendersRefreshEvent extends SpendersRefreshCountsVM {
   type: 'spendersRefresh';
   accountId: string;
   scope: string;
-  state: 'running' | 'paused' | 'done' | 'partial' | 'stopped';
+  state: 'running' | 'paused' | 'done' | 'partial' | 'skipped' | 'stopped';
+  /** Processed fans, including skips/failures. */
   done: number;
   total: number;
 }

@@ -6,8 +6,8 @@
 // automation — the human decides; AI runs only on explicit click/hotkey
 // inside the quick-look preview.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQueries } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef } from 'react';
+import { useQueries, type UseQueryResult } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { SpenderListVM, SpenderRowVM } from '../../../../preload/contract';
 import { getBridge } from '../../bridge/bridge';
@@ -26,8 +26,7 @@ import { Kbd } from '../../design/Kbd';
 import { EmptyState } from '../../design/EmptyState';
 import { SkeletonRows } from '../../design/Skeleton';
 import { cx } from '../../lib/cx';
-import { refreshCostUsd, shelfPresentation, splitTierLabel, splitUpdateStamp } from '@chatgoose/shared';
-import type { UiTranslator } from '@chatgoose/shared/i18n/index';
+import { shelfPresentation, splitTierLabel } from '@chatgoose/shared';
 import { buildAllView, buildFlatView, UNTIERED_ID, type BoardItem, type ShelfData } from './boardModel';
 import { useSpendersStore } from './spendersStore';
 import { SpenderRowItem } from './SpenderRowItem';
@@ -35,6 +34,16 @@ import { StatsPanel } from './StatsPanel';
 import { QuickLook } from './QuickLook';
 import type { ContactSide } from './contactAge';
 import { useContactClock } from './useContactClock';
+import { EMPTY_BOARD_FILTERS, hasBoardFilters, validBoardChip } from './boardFilters';
+import { SearchFilters } from './SearchFilters';
+import { QueryFeedback } from './QueryFeedback';
+import { RefreshControls } from './RefreshControls';
+
+const CLOSED_SHELVES: Record<string, true> = {};
+type RosterResult = { rows: SpenderRowVM[]; truncated: boolean; fetchedAt: string };
+function combineRosters(queries: UseQueryResult<RosterResult>[]) {
+  return queries.map(({ data, isError, isFetching, refetch }) => ({ data, isError, isFetching, refetch }));
+}
 
 function estimateItem(item: BoardItem | undefined): number {
   if (item === undefined) return 64;
@@ -53,11 +62,15 @@ export function SpendersSurface(): React.JSX.Element {
   const settings = useSettings();
   const lists = useSpenderLists(accountId, true);
 
-  const chip = useSpendersStore((s) => s.chip);
+  const savedChip = useSpendersStore((s) => s.chip);
+  const storedAccountId = useSpendersStore((s) => s.accountId);
+  const savedFilters = useSpendersStore((s) => s.filters);
+  const enterAccount = useSpendersStore((s) => s.enterAccount);
+  const clearFilters = useSpendersStore((s) => s.clearFilters);
   const contactSort = useSpendersStore((s) => s.contactSort);
   const sortContact = useSpendersStore((s) => s.sortContact);
-  const expanded = useSpendersStore((s) => s.expanded);
-  const untieredOpen = useSpendersStore((s) => s.untieredOpen);
+  const savedExpanded = useSpendersStore((s) => s.expanded);
+  const savedUntieredOpen = useSpendersStore((s) => s.untieredOpen);
   const cursorFanId = useSpendersStore((s) => s.cursorFanId);
   const previewFanId = useSpendersStore((s) => s.previewFanId);
   const setChip = useSpendersStore((s) => s.setChip);
@@ -76,8 +89,8 @@ export function SpendersSurface(): React.JSX.Element {
   // Account switches can stay on the board surface; drop cursor/preview instead
   // of carrying a fan id from the previous page/account.
   useEffect(() => {
-    resetTransient();
-  }, [accountId, resetTransient]);
+    enterAccount(accountId);
+  }, [accountId, enterAccount]);
 
   useEffect(() => () => resetTransient(), [resetTransient]);
 
@@ -89,11 +102,22 @@ export function SpendersSurface(): React.JSX.Element {
     const byId = new Map((lists.data?.lists ?? []).map((list) => [list.id, list]));
     return mapping.map((id) => byId.get(id)).filter((list): list is SpenderListVM => list !== undefined);
   }, [lists.data, mapping]);
+  const sameAccount = storedAccountId === accountId;
+  const expanded = sameAccount ? savedExpanded : CLOSED_SHELVES;
+  const untieredOpen = sameAccount && savedUntieredOpen;
+  const chip = sameAccount && settings.data !== undefined && lists.data !== undefined
+    ? validBoardChip(savedChip, shelves.map((list) => list.id)) : 'all';
+  const filters = sameAccount ? savedFilters : EMPTY_BOARD_FILTERS;
+  const filtering = hasBoardFilters(filters);
+  useEffect(() => {
+    if (sameAccount && settings.data !== undefined && lists.data !== undefined && chip !== savedChip) setChip(chip);
+  }, [sameAccount, settings.data, lists.data, chip, savedChip, setChip]);
 
   // A shelf's roster loads when it is on screen with rows: «Все»-preview
   // shelves immediately, collapsed big tiers only after «показать» (lazy
   // roster loading — owner decision), a tier chip loads just that list.
   const rosterQueries = useQueries({
+    combine: combineRosters,
     queries: shelves.map((list, index) => {
       const wantsRows =
         chip === list.id ||
@@ -103,32 +127,33 @@ export function SpendersSurface(): React.JSX.Element {
         queryKey: accountId === null ? ['spenders-roster', 'none', list.id] : qk.spendersRoster(accountId, list.id),
         queryFn: () =>
           getBridge().invoke('query:spenders.roster', { accountId: accountId ?? '', listId: list.id }),
-        enabled: accountId !== null && wantsRows,
+        enabled: accountId !== null && sameAccount && wantsRows,
+        retry: false,
       };
     }),
   });
-  const untiered = useSpenderUntiered(accountId, chip === 'all' && untieredOpen && mapping.length > 0);
+  const untiered = useSpenderUntiered(accountId, sameAccount && chip === 'all' && untieredOpen && mapping.length > 0);
 
   const model = useMemo(() => {
     const shelfData: ShelfData[] = shelves.map((list, index) => ({
       list,
-      rows: (rosterQueries[index]?.data as { rows: SpenderRowVM[] } | undefined)?.rows,
-      truncated:
-        (rosterQueries[index]?.data as { truncated?: boolean } | undefined)?.truncated === true,
+      rows: rosterQueries[index]?.data?.rows,
+      truncated: rosterQueries[index]?.data?.truncated === true,
+      error: rosterQueries[index]?.isError === true,
+      fetching: rosterQueries[index]?.isFetching === true,
     }));
     if (chip !== 'all') {
       const index = shelves.findIndex((list) => list.id === chip);
-      return buildFlatView(index === -1 ? null : (shelfData[index] ?? null), contactSort);
+      return buildFlatView(index === -1 ? null : (shelfData[index] ?? null), contactSort, filters);
     }
     return buildAllView({
       shelves: shelfData,
       expanded,
       sort: contactSort,
-      untiered: { open: untieredOpen, rows: untiered.data?.rows, loading: untiered.isPending && untieredOpen },
+      filters,
+      untiered: { open: untieredOpen, rows: untiered.data?.rows, loading: untiered.isPending && untieredOpen, error: untiered.isError, fetching: untiered.isFetching },
     });
-    // rosterQueries is a new array each render but its data refs are stable
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shelves, chip, expanded, contactSort, untieredOpen, untiered.data, untiered.isPending, ...rosterQueries.map((q) => q.data)]);
+  }, [shelves, chip, expanded, contactSort, filters, untieredOpen, untiered.data, untiered.isPending, untiered.isError, untiered.isFetching, rosterQueries]);
 
   // publish the flat row pool for the global keymap (J/K/SPACE/O)
   useEffect(() => {
@@ -180,7 +205,7 @@ export function SpendersSurface(): React.JSX.Element {
             </span>
             {item.band !== null && <span className="num text-[9.5px] text-ink-low">{item.band}</span>}
             <span className="h-px flex-1 self-center bg-line" />
-            <span className="num text-[9.5px] text-ink-low">{item.count}</span>
+            <span className="num text-[9.5px] text-ink-low">{item.matches !== undefined ? `${item.matches} / ` : ''}{item.count}</span>
           </div>
         );
       case 'row':
@@ -217,7 +242,7 @@ export function SpendersSurface(): React.JSX.Element {
             {item.band !== null && <span className="num text-[9.5px] text-ink-low">{item.band}</span>}
             <span className="num ml-auto text-[9.5px] text-ink-low">
               {item.count !== null ? `${item.count} · ` : ''}
-              {t('sp.show')}
+              {t(filtering ? 'sp.loadToSearch' : 'sp.show')}
             </span>
           </button>
         );
@@ -227,6 +252,11 @@ export function SpendersSurface(): React.JSX.Element {
             {t('sp.loading')}
           </div>
         );
+      case 'error':
+        return <QueryFeedback label={t('sp.rosterFailed')} stale={item.stale} fetching={item.fetching} t={t} onRetry={() => {
+          if (item.listId === UNTIERED_ID) void untiered.refetch();
+          else void rosterQueries[shelves.findIndex((list) => list.id === item.listId)]?.refetch();
+        }} />;
       case 'truncated':
         return (
           <div className="num px-4 py-2 text-center text-micro tracking-[0.06em] text-warn">
@@ -238,7 +268,12 @@ export function SpendersSurface(): React.JSX.Element {
     }
   }
 
-  const empty = mapping.length === 0;
+  const initialError = settings.data === undefined && settings.isError ? 'settings' : lists.data === undefined && lists.isError ? 'lists' : null;
+  const pending = settings.data === undefined || lists.data === undefined;
+  const empty = !pending && mapping.length === 0;
+  const emptyNotice = !pending && !empty && model.fanRows.length === 0 && !model.items.some((item) =>
+    item.kind === 'loading' || item.kind === 'error' || (!filtering && (item.kind === 'collapsed' || item.kind === 'truncated')),
+  );
 
   return (
     <section className="relative flex min-h-0 min-w-0 flex-1 bg-bg0">
@@ -267,7 +302,7 @@ export function SpendersSurface(): React.JSX.Element {
         <div className="flex flex-none flex-wrap items-center gap-[5px] border-b border-line px-4 py-[11px]">
           <ChipButton selected={chip === 'all'} onClick={() => setChip('all')}>
             {t('sp.all')}
-            <span className="num ml-1 text-[10.5px] opacity-70">{allCount}</span>
+            {!pending && <span className="num ml-1 text-[10.5px] opacity-70">{allCount}</span>}
           </ChipButton>
           {shelves.map((list) => (
             <ChipButton key={list.id} selected={chip === list.id} onClick={() => setChip(list.id)}>
@@ -275,7 +310,7 @@ export function SpendersSurface(): React.JSX.Element {
               <span className="num ml-1 text-[10.5px] opacity-70">{list.usersCount}</span>
             </ChipButton>
           ))}
-          {!empty && (
+          {!pending && !empty && (
             <RefreshControls
               accountId={accountId}
               chip={chip}
@@ -289,10 +324,21 @@ export function SpendersSurface(): React.JSX.Element {
               }
               active={activeRefresh}
               stampIso={freshness.data?.scopes[chip] ?? null}
+              lastRun={freshness.data?.lastRuns[chip] ?? null}
+              failed={freshness.isError}
+              fetching={freshness.isFetching}
+              onRetry={() => { void freshness.refetch(); }}
               t={t}
             />
           )}
         </div>
+        {!pending && !empty && <SearchFilters key={accountId} t={t} />}
+        {settings.data !== undefined && settings.isError && <QueryFeedback label={t('sp.settingsFailed')} stale fetching={settings.isFetching} onRetry={() => { void settings.refetch(); }} t={t} />}
+        {lists.data !== undefined && lists.isError && <QueryFeedback label={t('sp.listsFailed')} stale fetching={lists.isFetching} onRetry={() => { void lists.refetch(); }} t={t} />}
+        {filtering && !pending && !empty && <div role="status" className="flex flex-none items-center gap-2 border-b border-line px-4 py-1.5 text-[11px] text-ink-low">
+          <span className="flex-1">{t('sp.searchScope', { matched: new Set(model.fanRows.map((row) => row.fanId)).size, loaded: new Set(model.loadedRows.map((row) => row.fanId)).size })}</span>
+          <button type="button" onClick={clearFilters} className="cursor-pointer text-ink-mid hover:underline">{t('sp.clearFilters')}</button>
+        </div>}
         {activeRefresh !== null && (
           // 2px hairline progress under the chips (binding freshness mockup §3)
           <div className="h-[2px] flex-none bg-bg3">
@@ -304,7 +350,7 @@ export function SpendersSurface(): React.JSX.Element {
             />
           </div>
         )}
-        {!empty && (
+        {!pending && !empty && (
           <div className="spender-columns spender-column-head flex-none items-center border-b border-line bg-bg1 text-[12px] text-ink-mid" role="group" aria-label={t('sp.columns')}>
             <span>{t('sp.latestMessageColumn')}</span>
             <span className="text-right">{t('sp.spend30dColumn')}</span>
@@ -330,8 +376,9 @@ export function SpendersSurface(): React.JSX.Element {
             })}
           </div>
         )}
+        {emptyNotice && <div className="flex-none px-4 py-5 text-center text-[12px] text-ink-mid">{t(filtering ? 'sp.noMatches' : 'sp.emptyRoster')}</div>}
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
-          {empty ? (
+          {initialError !== null ? <QueryFeedback label={t(initialError === 'settings' ? 'sp.settingsFailed' : 'sp.listsFailed')} fetching={initialError === 'settings' ? settings.isFetching : lists.isFetching} onRetry={() => { void (initialError === 'settings' ? settings.refetch() : lists.refetch()); }} t={t} /> : pending ? <SkeletonRows /> : empty ? (
             <EmptyState
               glyph="◫"
               title={t('sp.notConfigured')}
@@ -345,8 +392,6 @@ export function SpendersSurface(): React.JSX.Element {
                 </button>
               }
             />
-          ) : lists.isPending ? (
-            <SkeletonRows />
           ) : (
             <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
               {virtualizer.getVirtualItems().map((vi) => {
@@ -378,8 +423,8 @@ export function SpendersSurface(): React.JSX.Element {
           })}</span>}
         </div>
       </div>
-      <StatsPanel stats={stats.data} expanded={statsExpanded} loading={stats.isLoading} />
-      {accountId !== null && previewFanId !== null && (
+      <StatsPanel stats={sameAccount ? stats.data : undefined} expanded={statsExpanded} loading={stats.isFetching} error={stats.error} onRetry={() => { void stats.refetch(); }} />
+      {sameAccount && accountId !== null && previewFanId !== null && (
         <QuickLook accountId={accountId} fanId={previewFanId} row={previewRowVM} store={useSpendersStore} />
       )}
     </section>
@@ -406,113 +451,5 @@ function ChipButton({
     >
       {children}
     </button>
-  );
-}
-
-/**
- * Scoped refresh + per-scope freshness line (PLAN item 13; binding experiment
- * page mockups/experiments/spenders-freshness.html): the cost is on the button
- * BEFORE the click («ВСЕ 104 · ~104 КР» — «~» because TTL-fresh fans are
- * skipped), the age summary is ONE line per scope («последний апдейт — вчера
- * 18:40» / «апдейта ещё не было»), busy state = «⟳ Обновление 34/104 · СТОП».
- * NO per-row age marks (owner-rejected variant).
- */
-function RefreshControls({
-  accountId,
-  chip,
-  chipTitle,
-  scopeCount,
-  active,
-  stampIso,
-  t,
-}: {
-  accountId: string | null;
-  chip: string;
-  chipTitle: string;
-  scopeCount: number;
-  active: { scope: string; state: 'running' | 'paused'; done: number; total: number } | null;
-  stampIso: string | null;
-  t: UiTranslator;
-}): React.JSX.Element {
-  const busy = active !== null;
-  // 30 s tick keeps «сегодня/вчера» honest across midnight (DataAge pattern).
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-
-  function ageLine(): string {
-    if (active !== null) {
-      return active.state === 'paused'
-        ? t('sp.refreshPaused')
-        : t('sp.rowsLeft', { n: Math.max(0, active.total - active.done) });
-    }
-    if (stampIso === null) return t('sp.neverUpdated');
-    const stampMs = Date.parse(stampIso);
-    if (!Number.isFinite(stampMs)) return t('sp.neverUpdated');
-    const parts = splitUpdateStamp(stampMs, nowMs);
-    const when =
-      parts.kind === 'today'
-        ? `${t('sp.today')} ${parts.time}`
-        : parts.kind === 'yesterday'
-          ? `${t('sp.yesterdayCap')} ${parts.time}`
-          : `${parts.date} ${parts.time}`;
-    return t('sp.lastUpdate', { when });
-  }
-
-  function onClick(): void {
-    if (accountId === null) return;
-    if (busy) {
-      void getBridge().invoke('cmd:spenders.refreshStop', { accountId });
-    } else {
-      void getBridge().invoke('cmd:spenders.refreshScope', { accountId, scope: chip });
-    }
-  }
-
-  const approx = chip === 'all' ? '~' : '';
-  const usd = refreshCostUsd(scopeCount);
-
-  return (
-    <>
-      <span className="flex-1" />
-      <span className="num text-[9px] tracking-[0.05em] whitespace-nowrap text-ink-low uppercase">
-        {ageLine()}
-      </span>
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={accountId === null || (!busy && scopeCount === 0)}
-        title={
-          busy
-            ? t('sp.stop')
-            : `${t('sp.refreshTip')} · ≈ $${usd.toFixed(2)}`
-        }
-        className={cx(
-          'flex flex-none cursor-pointer items-center gap-[7px] rounded-full border px-3 py-[3px] text-[12px] font-semibold whitespace-nowrap',
-          busy
-            ? 'border-line text-ink-low'
-            : 'border-line-strong bg-bg1 text-ink-mid hover:border-ink-mid hover:text-ink',
-        )}
-      >
-        {busy ? (
-          <>
-            {t('sp.refreshing')}
-            <span className="num text-[9px] tracking-[0.04em] text-ink-low">
-              {active.done}/{active.total}
-            </span>
-            <span className="num text-[9px] tracking-[0.04em] text-ink-low">· {t('sp.stop')}</span>
-          </>
-        ) : (
-          <>
-            {t('sp.refresh')}
-            <span className="num text-[9px] tracking-[0.04em] text-ink-low uppercase">
-              {chipTitle} {scopeCount} · {approx}
-              {scopeCount} {t('sp.creditsShort')}
-            </span>
-          </>
-        )}
-      </button>
-    </>
   );
 }

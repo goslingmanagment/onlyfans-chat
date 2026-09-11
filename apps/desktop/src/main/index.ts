@@ -943,7 +943,7 @@ async function rebuildOfapiRuntime(
     readChatTailForUserOpen: (accountId, chatId, purpose) =>
       hubAwareSync.readChatTailForUserOpen(accountId, chatId, purpose),
     ensureChat: (accountId, chatId, hint) => hubAwareSync.ensureChat(accountId, chatId, hint),
-    scopeChatIds: (accountId, scope) => spendersSvc.scopeChatIds(accountId, scope),
+    scopeChatIds: (accountId, scope, mappedListIds) => spendersSvc.scopeChatIds(accountId, scope, mappedListIds),
     getMappedListIds: async (accountId) =>
       (await settingsStore.get()).spendersListMappings[accountId] ?? [],
     isBudgetExhausted: () => budgetGuard.isExhausted(),

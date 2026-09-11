@@ -68,7 +68,7 @@ export interface SpendersService {
   /** Fan ids of one refresh scope (PLAN item 13): a mapped list id = that
    *  shelf's deduped roster; 'all' = every mapped roster + «Без тира». Board
    *  order preserved (top shelves refresh first — rows fill top-down). */
-  scopeChatIds(accountId: string, scope: 'all' | string): Promise<string[]>;
+  scopeChatIds(accountId: string, scope: 'all' | string, mappedListIds?: readonly string[]): Promise<string[]>;
 }
 
 /** Sentinel for the «Без тира» pseudo-shelf (matches the renderer's UNTIERED_ID). */
@@ -323,8 +323,8 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
     ).map(({ fanSilenceDays: _drop, ...row }) => row);
   }
 
-  async function untieredMembers(accountId: string): Promise<RosterMember[]> {
-    const mapped = await getMappedListIds(accountId);
+  async function untieredMembers(accountId: string, mappedListIds?: readonly string[]): Promise<RosterMember[]> {
+    const mapped = mappedListIds ?? await getMappedListIds(accountId);
     const rosterByList = new Map<string, string[]>();
     for (const listId of mapped) {
       const roster = await loadRoster(accountId, listId);
@@ -382,8 +382,9 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
       return { rows: buildRows(accountId, members), fetchedAt: new Date(now()).toISOString() };
     },
 
-    async scopeChatIds(accountId, scope) {
-      const mapped = await getMappedListIds(accountId);
+    async scopeChatIds(accountId, scope, mappedListIds) {
+      // A refresh queue pins its mapping before any asynchronous roster reads.
+      const mapped = mappedListIds ?? await getMappedListIds(accountId);
       if (scope !== 'all' && !mapped.includes(scope)) {
         throw new Error('Spenders refresh: scope list is not mapped to a board shelf');
       }
@@ -400,7 +401,7 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
         }
       }
       if (scope === 'all') {
-        ids.push(...(await untieredMembers(accountId)).map((member) => member.fanId));
+        ids.push(...(await untieredMembers(accountId, mapped)).map((member) => member.fanId));
       }
       return ids;
     },

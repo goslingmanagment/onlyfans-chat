@@ -591,6 +591,15 @@ describe('preview and contact dates from the newest local evidence', () => {
 // ─── scopeChatIds (PLAN item 13: the refresh queue's roster) ────────────────
 
 describe('scopeChatIds', () => {
+  it('uses the refresh queue mapping snapshot even if current settings have changed', async () => {
+    seedFan('2', 50); // untiered in the pinned mapping, tiered in current settings
+    const service = makeService(stubClient({
+      lists: [], rosters: { '100': [[{ id: 1 }]], '200': [[{ id: 2 }]] }, calls,
+    }));
+    mapping = ['200'];
+    expect(await service.scopeChatIds(ACCOUNT, 'all', ['100'])).toEqual(['1', '2']);
+  });
+
   it("a tier scope returns that shelf's roster deduped against higher shelves", async () => {
     const service = makeService(
       stubClient({

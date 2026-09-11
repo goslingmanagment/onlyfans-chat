@@ -48,6 +48,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D27 | 2026-09-06 | OFAPI rich composer persists integer cents and exact payloads; explicit unchanged recovery and closed actions use Hub command custody (core #268) |
 | D28 | 2026-09-07 | Review #27 rulings: a refused reuse-key recovery returns the original to unconfirmed (never Retry); hidden chats resurface on newer activity (migration 22); v2 only for rich options, default text stays v1 |
 | D29 | 2026-09-11 | Spenders shows two contact-age columns and one author-prefixed message; the chatter chooses when to Ping (core #294) |
+| D30 | 2026-09-12 | Spenders adds local search and neutral filters; errors and refresh outcomes remain distinct from empty data and source freshness; AI insertion is consumed once per job |
 
 ## Entries
 
@@ -682,3 +683,31 @@ reference is `docs/mockups/spenders-contact-columns.html`; current behavior and
 rollout dependency are recorded in `docs/spenders.md`. Hub support must ship
 before or with the Desktop release. This decision records local implementation,
 not a deployment.
+
+**D30 (2026-09-12).** Follow-up to the owner's approved Spenders work: add a
+single search field and a compact Filters popover for the last message's author
+and available history. Search matches name, username and fan ID across loaded
+rows, including rows beyond shelf previews. Matching loaded rows are shown
+without clipping; unloaded tiers retain an explicit load action. Typing and
+filtering initiate no history or roster reads. Counts describe loaded fans,
+and the statistics panel retains its account-wide scope. Unknown message
+history is not classified as a fan-authored message from a default boolean.
+Filters never prescribe outreach timing. Account changes clear their chip,
+expansion, filters and preview before another account can load using them.
+
+Errors loading settings, lists, rosters or statistics are visible with manual
+retry. Cached results remain visible on failed refresh. A failed initial read
+cannot be presented as zero spend, an empty roster or perpetual loading.
+
+History freshness is based on per-fan source fetch stamps. An all-TTL run keeps
+the oldest verified stamp; policy skips, partial failures and stops have separate
+outcomes and do not manufacture freshness. Auto-read policy and read-state
+behavior are unchanged. Legacy completion-time stamps and queues cannot serve
+as coverage evidence in the new state format. FanPanel shows the source fan
+record's fetchedAt rather than React Query's delivery timestamp.
+
+Completed AI drafts carry an insertion receipt on their operation. Opening the
+same mini-chat again cannot reinsert an already consumed draft after sending,
+clearing or editing. Explicit insertion remains repeatable; a new generation
+has a new receipt. Account, conversation and operation identity fence insertion.
+AI does not send messages. Current behavior and validation: `docs/spenders.md`.

@@ -217,6 +217,12 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
             e.preventDefault();
             if (ui.view === 'spenders') spd.toggleStatsExpanded();
             return;
+          case 'board-search':
+            if (ui.view === 'spenders' && spd.previewFanId === null) {
+              e.preventDefault();
+              document.querySelector<HTMLInputElement>('[data-spenders-search]')?.focus();
+            }
+            return;
           default:
             return;
         }

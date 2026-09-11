@@ -37,10 +37,15 @@ export function StatsPanel({
   stats,
   expanded,
   loading,
+  error,
+  onRetry,
 }: {
   stats: SpenderStatsVM | undefined;
   expanded: boolean;
+  /** Any statistics read in flight, including a manual retry with cached data. */
   loading: boolean;
+  error: unknown;
+  onRetry: () => void;
 }): React.JSX.Element {
   const t = useT();
   const now = useContactClock();
@@ -52,8 +57,7 @@ export function StatsPanel({
 
   // Publish queue rows so a preview opened here resolves its VM (store doc).
   useEffect(() => {
-    if (stats === undefined) return;
-    setStatsRows([...stats.waiting, ...stats.newSpenders.map((entry) => entry.row)]);
+    setStatsRows(stats === undefined ? [] : [...stats.waiting, ...stats.newSpenders.map((entry) => entry.row)]);
   }, [stats, setStatsRows]);
   useEffect(() => () => setStatsRows([]), [setStatsRows]);
 
@@ -92,9 +96,14 @@ export function StatsPanel({
   const radarRows = (stats?.radar ?? []).filter((row) => row.warm > 0 || row.hot > 0);
   const maxTier = Math.max(1, ...(stats?.tiers ?? []).map((tier) => tier.revenue));
 
-  // First load: ghost the FINAL layout (labels stay, values shimmer) so nothing
-  // pops in and a real $0 account never looks like a loading panel (owner 2026-06-14).
-  if (loading) {
+  const hasError = error !== null && error !== undefined;
+
+  // An absent result is never a successful zero. Keep cached data visible during
+  // refreshes; only the first load gets the final-layout skeleton.
+  if (stats === undefined && hasError) {
+    return <StatsUnavailablePanel expanded={expanded} loading={loading} t={t} onToggle={toggle} onRetry={onRetry} />;
+  }
+  if (stats === undefined) {
     return expanded ? (
       <StatsSkeletonExpanded t={t} onToggle={toggle} />
     ) : (
@@ -116,17 +125,19 @@ export function StatsPanel({
           </button>
         </div>
 
+        {hasError && <StatsErrorNotice cached compact loading={loading} t={t} onRetry={onRetry} />}
+
         <Section cap={t('sp.stats.revenue')} meta={t('sp.stats.window30Short')}>
-          <KV k={t('sp.stats.d30')} v={formatWholeDollars(stats?.revenue30d ?? 0)} big />
+          <KV k={t('sp.stats.d30')} v={formatWholeDollars(stats.revenue30d)} big />
           <KV
             k={t('sp.stats.d7')}
-            v={formatWholeDollars(stats?.revenue7d ?? 0)}
-            delta={stats?.revenue7dPct ?? null}
+            v={formatWholeDollars(stats.revenue7d)}
+            delta={stats.revenue7dPct}
           />
-          <KV k={t('sp.stats.todayCap')} v={formatWholeDollars(stats?.revenueToday ?? 0)} />
+          <KV k={t('sp.stats.todayCap')} v={formatWholeDollars(stats.revenueToday)} />
           <KV
             k={t('sp.stats.payersAvg')}
-            v={`${stats?.payers30d ?? 0} · ${formatCents(stats?.avgCheck30d ?? 0)}`}
+            v={`${stats.payers30d} · ${formatCents(stats.avgCheck30d)}`}
             small
           />
           {bars}
@@ -221,23 +232,24 @@ export function StatsPanel({
           {t('sp.stats.collapse')} <Kbd>S</Kbd>
         </button>
       </div>
+      {hasError && <StatsErrorNotice cached loading={loading} t={t} onRetry={onRetry} />}
       <div className="grid grid-cols-2 gap-3">
         <Card wide capText={t('sp.stats.revenue')} meta={t('sp.stats.windowNote')}>
           <div className="mb-3 flex items-baseline gap-6">
-            <BigStat label={t('sp.stats.d30')} value={formatWholeDollars(stats?.revenue30d ?? 0)} />
+            <BigStat label={t('sp.stats.d30')} value={formatWholeDollars(stats.revenue30d)} />
             <BigStat
               label={t('sp.stats.d7')}
-              value={formatWholeDollars(stats?.revenue7d ?? 0)}
-              delta={stats?.revenue7dPct ?? null}
+              value={formatWholeDollars(stats.revenue7d)}
+              delta={stats.revenue7dPct}
               deltaNote={t('sp.stats.prev7')}
             />
-            <BigStat label={t('sp.stats.todayCap')} value={formatWholeDollars(stats?.revenueToday ?? 0)} />
+            <BigStat label={t('sp.stats.todayCap')} value={formatWholeDollars(stats.revenueToday)} />
             <BigStat
               label={t('sp.stats.payers')}
-              value={String(stats?.payers30d ?? 0)}
+              value={String(stats.payers30d)}
               note={t('sp.stats.fansWord')}
             />
-            <BigStat label={t('sp.stats.avgCheck')} value={formatCents(stats?.avgCheck30d ?? 0)} />
+            <BigStat label={t('sp.stats.avgCheck')} value={formatCents(stats.avgCheck30d)} />
           </div>
           {bars}
         </Card>
@@ -339,6 +351,76 @@ export function StatsPanel({
 // ─── building blocks ───────────────────────────────────────────────────────
 
 type Translator = ReturnType<typeof useT>;
+
+function StatsErrorNotice({
+  cached = false,
+  compact = false,
+  loading,
+  t,
+  onRetry,
+}: {
+  cached?: boolean;
+  compact?: boolean;
+  loading: boolean;
+  t: Translator;
+  onRetry: () => void;
+}): React.JSX.Element {
+  return (
+    <div
+      role="alert"
+      aria-busy={loading}
+      className={cx('rounded-[7px] border border-line bg-bg2 p-3 text-[11px] text-ink-mid', compact ? 'm-3.5' : 'mb-3')}
+    >
+      <p className="leading-relaxed">{t(cached ? 'sp.stats.refreshFailed' : 'sp.stats.loadFailed')}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={loading}
+        className="mt-1.5 cursor-pointer font-semibold text-clay-deep underline decoration-dotted underline-offset-2 hover:text-ink disabled:cursor-default disabled:opacity-50"
+      >
+        {t('sp.retry')}
+      </button>
+    </div>
+  );
+}
+
+function StatsUnavailablePanel({
+  expanded,
+  loading,
+  t,
+  onToggle,
+  onRetry,
+}: {
+  expanded: boolean;
+  loading: boolean;
+  t: Translator;
+  onToggle: () => void;
+  onRetry: () => void;
+}): React.JSX.Element {
+  const Panel = expanded ? 'div' : 'aside';
+  return (
+    <Panel className={expanded
+      ? 'min-h-0 min-w-0 flex-1 overflow-y-auto p-[18px]'
+      : 'flex min-h-0 w-[300px] flex-none flex-col overflow-y-auto border-l border-line bg-bg1'}>
+      <div className={expanded
+        ? 'mx-0.5 mb-3 flex items-baseline gap-2.5'
+        : 'flex flex-none items-baseline gap-2 border-b border-line px-3.5 py-3'}>
+        <h4 className={cx('font-serif font-semibold', expanded ? 'text-[15px]' : 'text-[14px]')}>
+          {t('sp.stats.title')}
+        </h4>
+        {expanded && <span className="num text-[9.5px] tracking-[0.05em] text-ink-low">{t('sp.stats.localNote')}</span>}
+        <button
+          type="button"
+          onClick={onToggle}
+          className="num ml-auto flex cursor-pointer items-center gap-1.5 text-[9px] tracking-[0.06em] text-ink-low hover:text-ink-mid"
+        >
+          {t(expanded ? 'sp.stats.collapse' : 'sp.stats.expand')} <Kbd>S</Kbd>
+        </button>
+      </div>
+      <StatsErrorNotice compact={!expanded} loading={loading} t={t} onRetry={onRetry} />
+    </Panel>
+  );
+}
 
 // ─── loading skeletons (mirror the final layout — no value pop-in) ──────────
 

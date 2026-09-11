@@ -467,6 +467,7 @@ export function useSpenderLists(accountId: string | null, enabled: boolean) {
     queryKey: accountId === null ? ['spenders-lists', 'none'] : qk.spendersLists(accountId),
     queryFn: () => getBridge().invoke('query:spenders.lists', { accountId: accountId ?? '' }),
     enabled: enabled && accountId !== null,
+    retry: false,
     staleTime: 5 * 60_000, // matches main's TTL — list metadata moves slowly
   });
 }
@@ -487,6 +488,7 @@ export function useSpenderRoster(
         listId: listId ?? '',
       }),
     enabled: enabled && accountId !== null && listId !== null,
+    retry: false,
   });
 }
 
@@ -495,6 +497,7 @@ export function useSpenderUntiered(accountId: string | null, enabled: boolean) {
     queryKey: accountId === null ? ['spenders-untiered', 'none'] : qk.spendersUntiered(accountId),
     queryFn: () => getBridge().invoke('query:spenders.untiered', { accountId: accountId ?? '' }),
     enabled: enabled && accountId !== null,
+    retry: false,
   });
 }
 
@@ -503,6 +506,7 @@ export function useSpenderStats(accountId: string | null, enabled: boolean) {
     queryKey: accountId === null ? ['spenders-stats', 'none'] : qk.spendersStats(accountId),
     queryFn: () => getBridge().invoke('query:spenders.stats', { accountId: accountId ?? '' }),
     enabled: enabled && accountId !== null,
+    retry: false,
   });
 }
 
@@ -514,6 +518,7 @@ export function useSpendersFreshness(accountId: string | null, enabled: boolean)
     queryKey: accountId === null ? ['spenders-freshness', 'none'] : qk.spendersFreshness(accountId),
     queryFn: () => getBridge().invoke('query:spenders.freshness', { accountId: accountId ?? '' }),
     enabled: enabled && accountId !== null,
+    retry: false,
   });
 }
 

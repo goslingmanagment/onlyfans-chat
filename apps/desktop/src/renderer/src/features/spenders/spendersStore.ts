@@ -3,14 +3,18 @@
 // keymap can drive J/K/SPACE/O without re-deriving the board's view model.
 
 import { create } from 'zustand';
-import type { SpenderRowVM } from '../../../../preload/contract';
+import type { SpenderRowVM, SpendersRefreshCountsVM } from '../../../../preload/contract';
 import { DEFAULT_CONTACT_SORT, type ContactSide, type ContactSort } from './contactAge';
+import { EMPTY_BOARD_FILTERS, type BoardFilters } from './boardFilters';
 
 export type SpendersChip = 'all' | string;
 
 interface SpendersState {
   /** «Все» = tier-section view; a list id = flat single-tier view. */
   chip: SpendersChip;
+  filters: BoardFilters;
+  /** List ids and filters belong to an account; never carry them to another. */
+  accountId: string | null;
   contactSort: ContactSort;
   /** Shelves expanded past their «Все»-view preview (incl. collapsed tiers). */
   expanded: Record<string, true>;
@@ -35,7 +39,7 @@ interface SpendersState {
   statsRows: SpenderRowVM[];
   /** Live scoped-refresh progress (PLAN item 13), fed by spendersRefresh
    *  frames on sync:event; null when no queue is running. */
-  refresh: {
+  refresh: SpendersRefreshCountsVM & {
     accountId: string;
     scope: string;
     state: 'running' | 'paused';
@@ -44,6 +48,9 @@ interface SpendersState {
   } | null;
 
   setChip: (chip: SpendersChip) => void;
+  setFilters: (filters: Partial<BoardFilters>) => void;
+  clearFilters: () => void;
+  enterAccount: (accountId: string | null) => void;
   sortContact: (side: ContactSide) => void;
   expandList: (listId: string) => void;
   setUntieredOpen: (open: boolean) => void;
@@ -64,6 +71,8 @@ interface SpendersState {
 export function createBoardStore() {
   return create<SpendersState>((set) => ({
     chip: 'all',
+    filters: EMPTY_BOARD_FILTERS,
+    accountId: null,
     contactSort: DEFAULT_CONTACT_SORT,
     expanded: {},
     untieredOpen: false,
@@ -76,7 +85,14 @@ export function createBoardStore() {
     statsRows: [],
     refresh: null,
 
-    setChip: (chip) => set({ chip, cursorFanId: null, previewFanId: null }),
+    setChip: (chip) => set({ chip, cursorFanId: null, previewFanId: null, previewAiBlocked: null }),
+    setFilters: (filters) => set((s) => ({ filters: { ...s.filters, ...filters } })),
+    clearFilters: () => set({ filters: EMPTY_BOARD_FILTERS }),
+    enterAccount: (accountId) => set((s) => s.accountId === accountId ? s : {
+      accountId, chip: 'all', filters: EMPTY_BOARD_FILTERS, expanded: {}, untieredOpen: false,
+      cursorFanId: null, previewFanId: null, previewAiBlocked: null,
+      visibleRows: [], loadedRows: [], statsRows: [],
+    }),
     sortContact: (side) => set((s) => ({
       contactSort: {
         side,

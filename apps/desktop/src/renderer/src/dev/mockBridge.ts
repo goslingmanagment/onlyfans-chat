@@ -19,6 +19,8 @@ import type {
   OutboxItemVM,
   SettingsVM,
   SpenderRowVM,
+  SpendersFreshnessVM,
+  SpendersRefreshRunVM,
   SyncStatusVM,
   UpdateStatusVM,
   VaultAlbumVM,
@@ -41,6 +43,7 @@ import {
   compileGuard,
   effectiveMessageGuardPolicy,
   scanText,
+  THREAD_FETCH_TTL_MS,
 } from '@chatgoose/shared';
 import { applyChatFilter, sortChatsByRecency } from '../lib/filters';
 import { fuzzyFilter } from '../lib/fuzzy';
@@ -307,6 +310,7 @@ function buildFan(accountId: string, fanId: string, name: string, lastMessageAt:
     customName: chance(0.4) ? `${name.split(' ')[0] ?? name} 🏋️` : null,
     username,
     avatarUrl: null,
+    fetchedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
     lastSeen: chance(0.3)
       ? new Date(Date.now() - Math.floor(rng() * 3) * 60_000).toISOString()
       : new Date(Date.parse(lastMessageAt) + 5 * 60_000).toISOString(),
@@ -888,7 +892,9 @@ export function createMockBridge(): ChatGooseBridge {
   const draftStore = new Map<string, string>(); // `${accountId}/${chatId}` → text
   let localSeq = 0;
   // Spenders freshness (PLAN item 13): per-scope stamps + a simulated queue.
-  const mockRefreshStamps: Record<string, string> = {};
+  const mockRefreshStamps: Record<string, Record<string, string>> = {};
+  const mockRefreshRuns: Record<string, Record<string, SpendersRefreshRunVM>> = {};
+  const mockTailStamps: Record<string, string> = {};
   const mockOnlineStamps: Record<string, string> = {};
 
   function spenderTierChats(accountId: string, listId: string): ChatListItemVM[] {
@@ -980,12 +986,18 @@ export function createMockBridge(): ChatGooseBridge {
     // fanIds that would break QuickLook — verify on live OFAPI.)
     return { rows, counts: { online: rows.length, spenders, waiting }, fetchedAt, truncated: pool.length > 20 };
   }
-  let mockRefreshActive: {
-    scope: string;
-    state: 'running' | 'paused';
-    done: number;
-    total: number;
-  } | null = null;
+  let mockRefreshActive: SpendersFreshnessVM['active'] = null;
+  let mockRefreshAccount: string | null = null;
+
+  function finishMockRefresh(accountId: string, state: SpendersRefreshRunVM['state']): void {
+    if (mockRefreshActive === null) return;
+    const { scope, state: _activeState, ...progress } = mockRefreshActive;
+    const runs = mockRefreshRuns[accountId] ??= {};
+    runs[scope] = { ...progress, state, completedAt: new Date().toISOString() };
+    mockRefreshActive = null;
+    mockRefreshAccount = null;
+    emit('sync:event', { type: 'spendersRefresh', accountId, scope, state, ...progress });
+  }
 
   function outboxChanged(accountId: string, chatId: string): void {
     emit('db:changed', { scope: 'outbox', accountId, chatId });
@@ -1802,59 +1814,67 @@ export function createMockBridge(): ChatGooseBridge {
       return { hasChat, fetched: true, messageCount: tail.length, skippedByTtl: false };
     },
     // ── Spenders freshness (PLAN item 13): simulated queue with live frames ──
-    'query:spenders.freshness': () => ({
-      scopes: { ...mockRefreshStamps },
-      active: mockRefreshActive === null ? null : { ...mockRefreshActive },
+    'query:spenders.freshness': ({ accountId }) => ({
+      scopes: { ...mockRefreshStamps[accountId] },
+      lastRuns: { ...mockRefreshRuns[accountId] },
+      active: mockRefreshActive === null || mockRefreshAccount !== accountId ? null : { ...mockRefreshActive },
     }),
     'cmd:spenders.refreshScope': ({ accountId, scope }) => {
       if (mockRefreshActive !== null) return;
-      const total = scope === 'all' ? 19 : scope === '9001' ? 3 : 4;
-      mockRefreshActive = { scope, state: 'running', done: 0, total };
+      const ids = (scope === 'all' ? store.chats.get(accountId) ?? [] : spenderTierChats(accountId, scope))
+        .map((chat) => chat.chatId);
+      mockRefreshAccount = accountId;
+      mockRefreshActive = {
+        scope, state: 'running', done: 0, total: ids.length,
+        fetched: 0, ttlSkipped: 0, policySkipped: 0, failed: 0,
+      };
+      let oldestVerifiedAt: string | null = null;
       const tick = (): void => {
-        if (mockRefreshActive === null) return; // stopped
-        mockRefreshActive.done += 1;
-        const finished = mockRefreshActive.done >= mockRefreshActive.total;
-        emit('sync:event', {
-          type: 'spendersRefresh',
-          accountId,
-          scope,
-          state: finished ? 'done' : 'running',
-          done: mockRefreshActive.done,
-          total: mockRefreshActive.total,
-        });
-        if (finished) {
-          mockRefreshStamps[scope] = new Date().toISOString();
-          if (scope === 'all') {
-            mockRefreshStamps['9001'] = mockRefreshStamps[scope];
-            mockRefreshStamps['9002'] = mockRefreshStamps[scope];
+        if (mockRefreshActive === null || mockRefreshAccount !== accountId) return;
+        const chatId = ids[mockRefreshActive.done];
+        if (chatId !== undefined) {
+          const key = `${accountId}/${chatId}`;
+          let stamp = mockTailStamps[key] ?? null;
+          if (stamp !== null && Date.now() - Date.parse(stamp) < THREAD_FETCH_TTL_MS) {
+            mockRefreshActive.ttlSkipped += 1;
+          } else if (!store.settings.autoReadChats) {
+            mockRefreshActive.policySkipped += 1;
+            stamp = null;
+          } else {
+            // Simulated read returns the same fixture history; it does not
+            // fabricate a new message/contact date just to look refreshed.
+            stamp = new Date().toISOString();
+            mockTailStamps[key] = stamp;
+            mockRefreshActive.fetched += 1;
           }
-          mockRefreshActive = null;
+          if (stamp !== null && (oldestVerifiedAt === null || stamp < oldestVerifiedAt)) oldestVerifiedAt = stamp;
+          mockRefreshActive.done += 1;
+        }
+        const finished = mockRefreshActive.done >= mockRefreshActive.total;
+        if (finished) {
+          const state = mockRefreshActive.policySkipped === 0 ? 'done'
+            : mockRefreshActive.fetched + mockRefreshActive.ttlSkipped > 0 ? 'partial' : 'skipped';
+          if (state === 'done' && oldestVerifiedAt !== null) {
+            const stamps = mockRefreshStamps[accountId] ??= {};
+            stamps[scope] = oldestVerifiedAt;
+            if (scope === 'all') {
+              for (const listId of Object.keys(MOCK_SPENDER_TIERS[accountId] ?? {})) {
+                stamps[listId] = oldestVerifiedAt;
+                delete mockRefreshRuns[accountId]?.[listId];
+              }
+            }
+          }
+          finishMockRefresh(accountId, state);
           return;
         }
+        emit('sync:event', { type: 'spendersRefresh', accountId, ...mockRefreshActive });
         setTimeout(tick, 250);
       };
-      emit('sync:event', {
-        type: 'spendersRefresh',
-        accountId,
-        scope,
-        state: 'running',
-        done: 0,
-        total,
-      });
+      emit('sync:event', { type: 'spendersRefresh', accountId, ...mockRefreshActive });
       setTimeout(tick, 250);
     },
     'cmd:spenders.refreshStop': ({ accountId }) => {
-      if (mockRefreshActive === null) return;
-      const { scope, done, total } = mockRefreshActive;
-      mockRefreshActive = null;
-      emit('sync:event', {
-        type: 'spendersRefresh',
-        accountId,
-        scope,
-        state: 'stopped',
-        done,
-        total,
-      });
+      if (mockRefreshAccount === accountId) finishMockRefresh(accountId, 'stopped');
     },
     'query:spenders.stats': ({ accountId }) => {
       const all = store.chats.get(accountId) ?? [];
@@ -1933,8 +1953,17 @@ export function createMockBridge(): ChatGooseBridge {
   return {
     platform,
     async invoke(channel, args) {
-      await sleep(30 + Math.floor(rng() * 70)); // exercise skeletons
+      const latencyMs = 30 + Math.floor(rng() * 70);
       const handler: InvokeHandlers[typeof channel] = handlers[channel];
+      // These local main handlers execute synchronously in request order.
+      // Delay only their responses: delaying execution could let a reopen read
+      // overtake the preceding clear/save and resurrect a fixture-only draft.
+      if (channel === 'query:draft.get' || channel === 'cmd:draft.set') {
+        const result = handler(args);
+        await sleep(latencyMs);
+        return result;
+      }
+      await sleep(latencyMs); // exercise skeletons for all other mock handlers
       return handler(args);
     },
     on(channel, listener) {

@@ -8,6 +8,7 @@ import { cx } from '../../lib/cx';
 import { formatWholeDollars } from '../../lib/money';
 import type { UiTranslator } from '@chatgoose/shared/i18n/index';
 import { ContactAge } from './ContactAgeValue';
+import { hasMessageEvidence } from './boardFilters';
 
 export const SpenderRowItem = memo(function SpenderRowItem({
   row,
@@ -31,7 +32,7 @@ export const SpenderRowItem = memo(function SpenderRowItem({
   const flow30d = row.spend30d === null
     ? '—'
     : (Math.round(row.spend30d) > 0 ? '+' : '') + formatWholeDollars(row.spend30d);
-  const hasMessage = row.lastMessagePreview !== '' || row.lastModelMessageAt !== null || row.lastFanMessageAt !== null;
+  const hasMessage = hasMessageEvidence(row);
   return (
     <button
       type="button"

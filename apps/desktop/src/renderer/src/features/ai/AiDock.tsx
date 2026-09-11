@@ -4,7 +4,7 @@
 // ⌘0 still inserts all parts as a [NEXT] sequence. Copy is the secondary chip
 // and the canSendMessage=false degrade (SPEC §7.0).
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type {
   ProfilingSnapshotPayload,
@@ -23,6 +23,7 @@ import { StreamingDrafts, DRAFT_BUBBLE_BASE_CLASS } from './StreamingDrafts';
 import {
   useAiStore,
   activateDockPart,
+  autoInsertCompactDraft,
   copyDockPart,
   dismissDock,
   cancelActiveOperation,
@@ -215,7 +216,6 @@ function CompactDock(): React.JSX.Element | null {
   // received as a prop (unknown chat defaults to insertable; inserting never sends).
   const sendability = useChatSendability(op?.accountId ?? null, op?.chatId ?? null);
   const pingGate = usePingGate(op?.accountId ?? null, op?.chatId ?? null, null);
-  const insertedOpRef = useRef<string | null>(null);
 
   const canSend = sendability.data?.canSendMessage ?? true;
   const parts = copyablePartsOf(view);
@@ -231,14 +231,8 @@ function CompactDock(): React.JSX.Element | null {
     op.completedWhileVisible;
 
   useEffect(() => {
-    if (!autoInsertable || op === null) return;
-    if (insertedOpRef.current === op.operationId) return;
-    insertedOpRef.current = op.operationId;
-    // Insert part 0 (the whole draft) into the composer, then focus it. canSend
-    // is true here, so this only INSERTS — it never sends (SPEC §15).
-    activateDockPart(0, { canSend: true });
-    focusComposer();
-  }, [autoInsertable, op]);
+    if (op !== null) autoInsertCompactDraft(op.operationId, { canSend });
+  }, [canSend, op]);
 
   if (op === null) return null;
 
@@ -265,7 +259,7 @@ function CompactDock(): React.JSX.Element | null {
             {errorHint(error) !== null ? ` — ${errorHint(error)}` : ''}
           </span>
         )}
-        {status === 'completed' && autoInsertable && (
+        {status === 'completed' && autoInsertable && op.draftInserted && (
           <span className="text-[11px] text-ink-low">{t('sp.inserted')}</span>
         )}
         {status === 'completed' && !autoInsertable && parts.length > 0 && (

@@ -1336,9 +1336,13 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     const args = spendersListsSchema.parse(rawArgs);
     const service = deps.spendersRefresh;
     if (!service) {
-      return { scopes: {}, active: null };
+      return { scopes: {}, lastRuns: {}, active: null };
     }
-    return { scopes: service.freshness(args.accountId), active: service.status(args.accountId) };
+    return {
+      scopes: service.freshness(args.accountId),
+      lastRuns: service.lastRuns(args.accountId),
+      active: service.status(args.accountId),
+    };
   });
 
   ipcMain.handle('cmd:spenders.refreshScope', async (_event, rawArgs: unknown) => {

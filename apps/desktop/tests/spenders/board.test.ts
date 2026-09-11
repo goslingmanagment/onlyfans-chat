@@ -4,6 +4,7 @@ import type { SpenderRowVM } from '../../src/preload/contract';
 import { buildAllView, buildFlatView, type ShelfData } from '../../src/renderer/src/features/spenders/boardModel';
 import { formatContactAge, sortRowsByContact } from '../../src/renderer/src/features/spenders/contactAge';
 import { createBoardStore, previewRow } from '../../src/renderer/src/features/spenders/spendersStore';
+import { EMPTY_BOARD_FILTERS, filterBoardRows, validBoardChip } from '../../src/renderer/src/features/spenders/boardFilters';
 
 const NOW = Date.parse('2026-09-11T12:00:00Z');
 const HOUR = 3_600_000;
@@ -51,6 +52,105 @@ describe('contact age', () => {
 
   it('does not turn a message just before midnight into a whole day', () => {
     expect(formatContactAge('2026-09-10T23:59:00Z', Date.parse('2026-09-11T00:01:00Z'), en)).toBe('2 min');
+  });
+});
+
+describe('local spender search and filters', () => {
+  const noHistory = { ...row('900', null, null), lastMessagePreview: '' };
+  const shelf = (id: string, rows: SpenderRowVM[] | undefined, count = rows?.length ?? 5): ShelfData => ({
+    list: { id, name: id, usersCount: count, custom: true }, rows, truncated: false,
+  });
+
+  it('searches name, username and numeric id without changing cached rows', () => {
+    const input = [{ ...row('11223', 1, 2), name: 'Марк', username: 'marcus_k' }, row('other', 2, 3)];
+    for (const query of [' МАРК ', 'MARCUS', '122']) {
+      expect(filterBoardRows(input, { ...EMPTY_BOARD_FILTERS, query }).map(r => r.fanId)).toEqual(['11223']);
+    }
+    expect(filterBoardRows(input, { ...EMPTY_BOARD_FILTERS, query: '   ' })).toEqual(input);
+    expect(input).toHaveLength(2);
+  });
+
+  it('does not classify an unknown history as a fan message from the default false flag', () => {
+    const input = [row('us', 1, 2), row('fan', 2, 1), noHistory];
+    expect(filterBoardRows(input, { ...EMPTY_BOARD_FILTERS, author: 'fan' }).map(r => r.fanId)).toEqual(['fan']);
+    expect(filterBoardRows(input, { ...EMPTY_BOARD_FILTERS, author: 'model' }).map(r => r.fanId)).toEqual(['us']);
+    expect(filterBoardRows(input, { ...EMPTY_BOARD_FILTERS, history: 'unknown' }).map(r => r.fanId)).toEqual(['900']);
+    expect(filterBoardRows(input, { ...EMPTY_BOARD_FILTERS, author: 'fan', history: 'unknown' })).toEqual([]);
+  });
+
+  it('accepts one-sided and textless message evidence; invalid timestamps stay unknown', () => {
+    const media = { ...row('media', null, 1), lastMessagePreview: '' };
+    const head = { ...noHistory, fanId: 'head', lastMessagePreview: '[Photo]' };
+    const invalid = { ...noHistory, fanId: 'invalid', lastFanMessageAt: 'bad' };
+    expect(filterBoardRows([media, head, invalid], { ...EMPTY_BOARD_FILTERS, history: 'known' }).map(r => r.fanId)).toEqual(['media', 'head']);
+  });
+
+  it('finds matches beyond shelf previews and in already loaded collapsed tiers', () => {
+    const rows = Array.from({ length: 8 }, (_, i) => row(`fan-${i}`, i + 1, i + 1));
+    const model = buildAllView({
+      shelves: [shelf('one', rows), shelf('two', []), shelf('large', [row('fan-hidden', 1, 1)], 500)],
+      expanded: {}, untiered: { open: false, rows: undefined, loading: false },
+      filters: { ...EMPTY_BOARD_FILTERS, query: 'fan-' },
+    });
+    expect(model.fanRows).toHaveLength(9);
+    expect(model.items.filter(i => i.kind === 'more')).toEqual([]);
+    expect(model.items.filter(i => i.kind === 'tier').map(i => i.listId)).toEqual(['one', 'large']);
+  });
+
+  it('keeps unopened unloaded tiers explicit during search, with no fake matches', () => {
+    const model = buildAllView({
+      shelves: [shelf('one', []), shelf('two', []), shelf('unloaded', undefined, 500)],
+      expanded: {}, untiered: { open: false, rows: undefined, loading: false },
+      filters: { ...EMPTY_BOARD_FILTERS, query: 'nobody' },
+    });
+    expect(model.fanRows).toEqual([]);
+    expect(model.items.filter(i => i.kind === 'collapsed').map(i => i.listId)).toEqual(['unloaded', '__untiered__']);
+    expect(model.items.some(i => i.kind === 'loading')).toBe(false);
+  });
+
+  it('keeps an open fan resolvable after filters exclude it, and J/K uses matching rows', () => {
+    const store = createBoardStore();
+    const rows = [row('a', 30, 30), row('b', 20, 10), row('c', 10, 20)];
+    const model = buildFlatView(shelf('one', rows), { side: 'model', direction: 'desc' }, { ...EMPTY_BOARD_FILTERS, author: 'model' });
+    store.getState().openPreview('b');
+    store.getState().setVisibleRows(model.fanRows, model.loadedRows);
+    expect(previewRow(store.getState())?.fanId).toBe('b');
+    store.getState().moveCursor(1);
+    expect(store.getState().previewFanId).toBe('c');
+  });
+
+  it('resets account-specific chip/filter/preview state but preserves it on reopening the same account', () => {
+    const store = createBoardStore();
+    store.getState().enterAccount('A');
+    store.getState().setChip('A-tier');
+    store.getState().setFilters({ query: 'marcus', author: 'fan' });
+    store.getState().openPreview('11223');
+    store.getState().enterAccount('A');
+    expect(store.getState().chip).toBe('A-tier');
+    expect(store.getState().filters.query).toBe('marcus');
+    store.getState().enterAccount('B');
+    expect(store.getState().chip).toBe('all');
+    expect(store.getState().filters).toEqual(EMPTY_BOARD_FILTERS);
+    expect(previewRow(store.getState())).toBeNull();
+    expect(validBoardChip('removed-tier', ['live-tier'])).toBe('all');
+    expect(validBoardChip('live-tier', ['live-tier'])).toBe('live-tier');
+  });
+
+  it('shows a failed initial roster as an error instead of permanent loading', () => {
+    const failed = { ...shelf('one', undefined), error: true };
+    expect(buildFlatView(failed).items.map(i => i.kind)).toEqual(['error']);
+    const all = buildAllView({ shelves: [failed], expanded: {}, untiered: { open: true, rows: undefined, loading: false, error: true } });
+    expect(all.items.filter(i => i.kind === 'error')).toHaveLength(2);
+    expect(all.items.some(i => i.kind === 'loading')).toBe(false);
+  });
+
+  it('preserves stale roster rows during a failed refresh and manual retry', () => {
+    const failed = { ...shelf('one', [row('cached', 1, 2)]), error: true, fetching: true };
+    const model = buildFlatView(failed);
+    expect(model.items[0]).toMatchObject({ kind: 'error', stale: true, fetching: true });
+    expect(model.fanRows.map(r => r.fanId)).toEqual(['cached']);
+    const untiered = buildAllView({ shelves: [], expanded: {}, untiered: { open: true, rows: failed.rows, loading: true, fetching: true } });
+    expect(untiered.fanRows.map(r => r.fanId)).toEqual(['cached']);
   });
 });
 

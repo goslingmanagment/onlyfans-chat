@@ -164,6 +164,7 @@ export function fanToVM(
   avatarUrl: string | null,
   summary: SummaryCacheEntry | null,
 ): FanPanelVM {
+  const fetchedAtMs = Date.parse(row.fetchedAt);
   return {
     fanId: row.fanId,
     name: row.name,
@@ -171,6 +172,7 @@ export function fanToVM(
     username: row.username,
     avatarUrl,
     lastSeen: row.lastSeen,
+    fetchedAt: Number.isFinite(fetchedAtMs) ? new Date(fetchedAtMs).toISOString() : null,
     about: row.about,
     spending: row.spending,
     subscription: row.subscription,

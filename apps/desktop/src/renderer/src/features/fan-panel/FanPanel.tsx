@@ -73,15 +73,49 @@ export function FanPanel(): React.JSX.Element {
           <EmptyState title={t('fan.noneSelectedTitle')} hint={t('fan.noneSelectedHint')} />
         ) : fan.isPending ? (
           <PanelSkeleton />
+        ) : fan.isError && fan.data == null ? (
+          <div className="p-4">
+            <FanLoadFailure message={t('fan.loadFailed')} retrying={fan.isFetching} onRetry={() => { void fan.refetch(); }} />
+          </div>
         ) : fan.data == null ? (
           <EmptyState title={t('fan.noDataTitle')} hint={t('fan.noDataHint')} />
-        ) : tab === 'info' ? (
-          <InfoTab fan={fan.data} fetchedAt={fan.dataUpdatedAt} />
         ) : (
-          <ScanTab accountId={accountId} chatId={chatId} fan={fan.data} />
+          <>
+            {fan.isError && (
+              <div className="px-4 pt-4">
+                <FanLoadFailure message={t('fan.refreshFailed')} retrying={fan.isFetching} onRetry={() => { void fan.refetch(); }} />
+              </div>
+            )}
+            {tab === 'info' ? (
+              <InfoTab fan={fan.data} />
+            ) : (
+              <ScanTab accountId={accountId} chatId={chatId} fan={fan.data} />
+            )}
+          </>
         )}
       </div>
     </aside>
+  );
+}
+
+function FanLoadFailure({ message, retrying, onRetry }: {
+  message: string;
+  retrying: boolean;
+  onRetry: () => void;
+}): React.JSX.Element {
+  const t = useT();
+  return (
+    <div role="alert" className="rounded-chip border border-line bg-bg2 px-3 py-2.5 text-[12px] text-ink-mid">
+      <div>{message}</div>
+      <button
+        type="button"
+        disabled={retrying}
+        onClick={onRetry}
+        className="mt-2 cursor-pointer font-semibold text-clay-deep hover:text-clay disabled:cursor-default disabled:opacity-45"
+      >
+        {t('sp.retry')}
+      </button>
+    </div>
   );
 }
 
@@ -122,7 +156,7 @@ function Stat({ cap, value, money = false }: { cap: string; value: string; money
   );
 }
 
-function InfoTab({ fan, fetchedAt }: { fan: FanPanelVM; fetchedAt: number }): React.JSX.Element {
+function InfoTab({ fan }: { fan: FanPanelVM }): React.JSX.Element {
   const t = useT();
   const locale = useLocale();
   const now = new Date();
@@ -203,7 +237,11 @@ function InfoTab({ fan, fetchedAt }: { fan: FanPanelVM; fetchedAt: number }): Re
       )}
 
       <div className="mt-3 text-right">
-        <DataAge at={fetchedAt} />
+        {fan.fetchedAt === null ? (
+          <span className="text-micro text-ink-low">{t('fan.sourceAgeUnknown')}</span>
+        ) : (
+          <DataAge at={fan.fetchedAt} prefix={t('fan.updatedPrefix')} suffix={t('fan.updatedSuffix')} />
+        )}
       </div>
     </div>
   );

@@ -92,9 +92,13 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     type: z.literal('spendersRefresh'),
     accountId: z.string(),
     scope: z.string(),
-    state: z.enum(['running', 'paused', 'done', 'partial', 'stopped']),
+    state: z.enum(['running', 'paused', 'done', 'partial', 'skipped', 'stopped']),
     done: z.number().int().nonnegative(),
     total: z.number().int().nonnegative(),
+    fetched: z.number().int().nonnegative(),
+    ttlSkipped: z.number().int().nonnegative(),
+    policySkipped: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
   });
 
   const offSync = bridge.on('sync:event', (payload) => {
@@ -123,10 +127,14 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
                 state: frame.state,
                 done: frame.done,
                 total: frame.total,
+                fetched: frame.fetched,
+                ttlSkipped: frame.ttlSkipped,
+                policySkipped: frame.policySkipped,
+                failed: frame.failed,
               }
             : null,
         );
-      if (frame.state === 'done' || frame.state === 'partial' || frame.state === 'stopped') {
+      if (frame.state !== 'running' && frame.state !== 'paused') {
         // Clear the cached active-queue synchronously (the invalidate flush is
         // batched 50 ms — a stale 'running' must not flicker the button back).
         queryClient.setQueryData(

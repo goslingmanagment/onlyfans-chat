@@ -48,6 +48,7 @@ export type KeyAction =
   | 'board-open-chat'
   | 'board-back'
   | 'board-stats'
+  | 'board-search'
   | AiPartAction
   | ChatJumpAction;
 
@@ -102,6 +103,7 @@ export function buildKeyBindings(platform: LabelPlatform): KeyBinding<KeyAction>
     { action: 'board-open-chat', combo: 'o', label: 'O', description: 'Spenders: open the full chat', hideFromCheatsheet: true },
     { action: 'board-back', combo: 'arrowleft', label: '←', description: 'Spenders: back to chat', hideFromCheatsheet: true },
     { action: 'board-stats', combo: 's', label: 'S', description: 'Spenders: expand/collapse stats', hideFromCheatsheet: true },
+    { action: 'board-search', combo: '/', label: '/', description: 'Spenders: focus search', hideFromCheatsheet: true },
     ...chatJumpBindings,
   ];
 }

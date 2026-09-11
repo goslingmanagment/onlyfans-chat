@@ -29,6 +29,7 @@ import {
   cycleTone,
   deriveDockView,
   resolveDockPartAction,
+  shouldAutoInsertCompactDraft,
   type ChunkBatcher,
   type DockTone,
   type DockView,
@@ -65,6 +66,8 @@ export interface AiJob extends ActiveAiOp {
   quotaRemainingRequests: number | null;
   /** True only when completion happened while this job was the visible dock job. */
   completedWhileVisible: boolean;
+  /** Operation-level insertion receipt: sending, editing or remounting never resets it. */
+  draftInserted: boolean;
   startedAt: number;
   updatedAt: number;
 }
@@ -428,6 +431,7 @@ export function startAiFeature(
     debugPrompt: null,
     quotaRemainingRequests: null,
     completedWhileVisible: false,
+    draftInserted: false,
     startedAt: now,
     updatedAt: now,
     ...(feature === 'improve-draft' ? { draftText: draft } : {}),
@@ -639,12 +643,52 @@ export function copyDockPart(partIndex: number): void {
  * be messaged (SPEC §7.0). Reports the matching cmd:ai.feedback action.
  */
 export function activateDockPart(partIndex: number, ctx: { canSend: boolean }): void {
+  applyDockPart(partIndex, ctx);
+}
+
+/** A compact-dock mount may consume a completed draft only once per job.
+ * The operation id fences an effect from an older dock/conversation. Explicit
+ * bubble/hotkey insertion remains repeatable through activateDockPart. */
+export function autoInsertCompactDraft(operationId: string, ctx: { canSend: boolean }): boolean {
+  return applyDockPart(0, ctx, operationId);
+}
+
+function applyDockPart(
+  partIndex: number,
+  ctx: { canSend: boolean },
+  autoInsertOperationId?: string,
+): boolean {
   const state = useAiStore.getState();
-  if (state.op === null || state.status !== 'completed') return;
+  if (state.op === null || state.status !== 'completed') return false;
+  const job = state.op;
+  if (autoInsertOperationId !== undefined && (
+    job.operationId !== autoInsertOperationId ||
+    job.draftInserted ||
+    !job.completedWhileVisible ||
+    !shouldAutoInsertCompactDraft({
+      feature: job.feature,
+      viewKind: state.view?.kind ?? null,
+      canSend: ctx.canSend,
+      partCount: copyablePartsOf(state.view).length,
+    })
+  )) return false;
   const action = resolveDockPartAction(copyablePartsOf(state.view), partIndex, ctx.canSend);
-  if (action === null) return;
+  if (action === null) return false;
   if (action.mode === 'insert') {
-    setDraftText(appendToDraft(state.draftText, action.payload));
+    if (
+      state.visibleConversationKey !== job.conversationKey ||
+      draftConversation?.accountId !== job.accountId ||
+      draftConversation.chatId !== job.chatId
+    ) return false;
+    // Commit the draft and its receipt together. A second effect (including a
+    // StrictMode replay) cannot append again; a manual Insert also consumes the
+    // automatic opportunity before this job is opened in a compact dock.
+    useAiStore.setState(withVisibleFields((s) => ({
+      jobsById: { ...s.jobsById, [job.operationId]: { ...job, draftInserted: true } },
+      draftText: appendToDraft(s.draftText, action.payload),
+    })));
+    draftDirty = true;
+    scheduleDraftSave();
     focusComposer();
   } else {
     void navigator.clipboard.writeText(action.payload);
@@ -656,6 +700,7 @@ export function activateDockPart(partIndex: number, ctx: { canSend: boolean }): 
     partIndex,
     feature: state.op.feature,
   });
+  return true;
 }
 
 // ─── Frame routing (called from bridge/events.ts) ─────────────────────────

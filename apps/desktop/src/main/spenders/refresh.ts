@@ -19,6 +19,12 @@ import {
 } from '@chatgoose/shared';
 import type { SleepFn } from '../ofapi/rate-limiter';
 import type { DataLayer } from '../db/index';
+import type {
+  SpendersFreshnessVM,
+  SpendersRefreshCountsVM,
+  SpendersRefreshEvent,
+  SpendersRefreshRunVM,
+} from '../../preload/contract';
 
 export const SPENDERS_REFRESH_PURPOSE: OfApiPurpose = 'spenders-refresh';
 /** Paused queue (budget exhausted / network down) rechecks at this cadence. */
@@ -30,28 +36,13 @@ export const REFRESH_FAILURE_PAUSE_THRESHOLD = 3;
  *  per-fan TTL skip makes the replayed steps free. */
 const PERSIST_EVERY = 10;
 
-export type SpendersRefreshState = 'running' | 'paused' | 'done' | 'partial' | 'stopped';
+export type SpendersRefreshState = SpendersRefreshEvent['state'];
 
 /** Additive status frame on the sync:event channel (same pattern as
  *  CreditBalanceEvent): renderers that only run frames through parseSyncEvent
  *  drop it harmlessly. */
-export interface SpendersRefreshFrame {
-  type: 'spendersRefresh';
-  accountId: string;
-  /** 'all' or a mapped OM list id — the chip the click happened on. */
-  scope: string;
-  state: SpendersRefreshState;
-  /** Fans processed so far (fetched or TTL-skipped). */
-  done: number;
-  total: number;
-}
-
-export interface SpendersRefreshStatus {
-  scope: string;
-  state: 'running' | 'paused';
-  done: number;
-  total: number;
-}
+export type SpendersRefreshFrame = SpendersRefreshEvent;
+export type SpendersRefreshStatus = NonNullable<SpendersFreshnessVM['active']>;
 
 /** Discriminated quick-look hydrate outcome (the cmd:spenders.hydrate result).
  *  The renderer needs to tell a genuinely-empty fan (show «нет истории») from a
@@ -89,8 +80,9 @@ export interface SpendersRefreshService {
   start(accountId: string, scope: string): Promise<void>;
   stop(accountId: string): void;
   status(accountId: string): SpendersRefreshStatus | null;
-  /** Per-scope «последний апдейт» stamps (scope → ISO) for the account. */
+  /** Per-scope oldest source verification from a fully covered run. */
   freshness(accountId: string): Record<string, string>;
+  lastRuns(accountId: string): Record<string, SpendersRefreshRunVM>;
   /** Resume queues persisted before a restart (composition root, after sync). */
   resume(accountIds: readonly string[]): void;
   subscribe(listener: (frame: SpendersRefreshFrame) => void): () => void;
@@ -112,7 +104,7 @@ export interface SpendersRefreshOptions {
   /** Lazy chat-list metadata resolution for deep Spenders rows. */
   ensureChat: (accountId: string, chatId: string, hint?: { username?: string | null }) => Promise<boolean>;
   /** Roster fan ids of a scope (spenders service; board order). */
-  scopeChatIds: (accountId: string, scope: string) => Promise<string[]>;
+  scopeChatIds: (accountId: string, scope: string, mappedListIds: readonly string[]) => Promise<string[]>;
   /** Owner-ordered mapped list ids — an «Все» completion stamps every chip. */
   getMappedListIds: (accountId: string) => Promise<string[]>;
   /** The queue pauses FIRST when the shift budget trips (SPEC §6.1). */
@@ -135,24 +127,48 @@ const queueStateSchema = z.object({
   pending: z.array(z.string()),
   total: z.number().int().nonnegative(),
   done: z.number().int().nonnegative(),
-});
+  fetched: z.number().int().nonnegative(),
+  ttlSkipped: z.number().int().nonnegative(),
+  policySkipped: z.number().int().nonnegative(),
+  failedIds: z.array(z.string()),
+  oldestVerifiedAt: z.string().datetime().nullable(),
+  mappedListIds: z.array(z.string()),
+}).refine((queue) =>
+  queue.done === queue.fetched + queue.ttlSkipped + queue.policySkipped + queue.failedIds.length &&
+  queue.total === queue.done + queue.pending.length &&
+  (queue.fetched + queue.ttlSkipped > 0) === (queue.oldestVerifiedAt !== null),
+);
 type PersistedQueue = z.infer<typeof queueStateSchema>;
 
-const stampsSchema = z.record(z.string(), z.string());
+const stampsSchema = z.record(z.string(), z.string().datetime());
+const lastRunsSchema = z.record(z.string(), z.object({
+  state: z.enum(['done', 'partial', 'skipped', 'stopped']),
+  scopeChanged: z.boolean().optional(),
+  completedAt: z.string().datetime(),
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  fetched: z.number().int().nonnegative(),
+  ttlSkipped: z.number().int().nonnegative(),
+  policySkipped: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+}));
 
 function queueKey(accountId: string): string {
-  return `spenders.refreshQueue.${accountId}`;
+  // Legacy done counts include policy-skipped tails. They cannot be resumed
+  // as proof of coverage (or trigger new background reads after an upgrade).
+  return `spenders.refreshQueue.v2.${accountId}`;
 }
 
 function stampsKey(accountId: string): string {
-  return `spenders.refreshedAt.${accountId}`;
+  // v1 stamped queue completion even when automatic reads were disabled.
+  return `spenders.historyVerifiedAt.v2.${accountId}`;
 }
 
-interface ActiveQueue {
-  scope: string;
-  pending: string[];
-  total: number;
-  done: number;
+function runsKey(accountId: string): string {
+  return `spenders.refreshRuns.v2.${accountId}`;
+}
+
+interface ActiveQueue extends PersistedQueue {
   state: 'running' | 'paused';
   stopRequested: boolean;
   promise: Promise<void>;
@@ -186,7 +202,16 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
   const emptyProbedStampMs = new Map<string, number>();
   let disposed = false;
 
-  function emit(accountId: string, queue: Pick<ActiveQueue, 'scope' | 'done' | 'total'>, state: SpendersRefreshState): void {
+  function counts(queue: ActiveQueue): SpendersRefreshCountsVM {
+    return {
+      fetched: queue.fetched,
+      ttlSkipped: queue.ttlSkipped,
+      policySkipped: queue.policySkipped,
+      failed: queue.failedIds.length,
+    };
+  }
+
+  function emit(accountId: string, queue: ActiveQueue, state: SpendersRefreshState): void {
     const frame: SpendersRefreshFrame = {
       type: 'spendersRefresh',
       accountId,
@@ -194,6 +219,7 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
       state,
       done: queue.done,
       total: queue.total,
+      ...counts(queue),
     };
     for (const listener of listeners) {
       listener(frame);
@@ -213,50 +239,97 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
       pending: queue.pending,
       total: queue.total,
       done: queue.done,
+      fetched: queue.fetched,
+      ttlSkipped: queue.ttlSkipped,
+      policySkipped: queue.policySkipped,
+      failedIds: queue.failedIds,
+      oldestVerifiedAt: queue.oldestVerifiedAt,
+      mappedListIds: queue.mappedListIds,
     } satisfies PersistedQueue);
   }
 
-  function writeScopeStamps(accountId: string, scope: string, mapped: readonly string[]): void {
+  function writeScopeStamps(accountId: string, scope: string, mapped: readonly string[], iso: string): void {
     const stamps = data.settings.getParsed(stampsKey(accountId), stampsSchema) ?? {};
-    const iso = new Date(now()).toISOString();
     stamps[scope] = iso;
     // A completed «Все» run refreshed every shelf's fans — each chip's line is
     // honestly this fresh too (a stopped/partial run stamps nothing).
     if (scope === 'all') {
+      const runs = data.settings.getParsed(runsKey(accountId), lastRunsSchema) ?? {};
       for (const listId of mapped) {
         stamps[listId] = iso;
+        // The successful All run supersedes a prior failed/skipped child
+        // attempt; do not leave that old outcome beside its newly verified age.
+        delete runs[listId];
       }
+      data.settings.set(runsKey(accountId), runs);
     }
     data.settings.set(stampsKey(accountId), stamps);
   }
 
+  function recordVerified(queue: ActiveQueue, stampMs: number): void {
+    const previousMs = queue.oldestVerifiedAt === null ? stampMs : Date.parse(queue.oldestVerifiedAt);
+    queue.oldestVerifiedAt = new Date(Math.min(previousMs, stampMs)).toISOString();
+  }
+
+  function recordRun(accountId: string, queue: ActiveQueue, state: SpendersRefreshRunVM['state'], scopeChanged = false): void {
+    const runs = data.settings.getParsed(runsKey(accountId), lastRunsSchema) ?? {};
+    runs[queue.scope] = {
+      state,
+      ...(scopeChanged ? { scopeChanged: true } : {}),
+      completedAt: new Date(now()).toISOString(),
+      done: queue.done,
+      total: queue.total,
+      ...counts(queue),
+    };
+    data.settings.set(runsKey(accountId), runs);
+  }
+
   async function runQueue(accountId: string, queue: ActiveQueue): Promise<void> {
     let consecutiveFailures = 0;
-    const failedIds: string[] = [];
     while (queue.pending.length > 0 && !queue.stopRequested && !disposed) {
-      if (isBudgetExhausted()) {
-        if (queue.state !== 'paused') {
-          queue.state = 'paused';
-          persist(accountId, queue);
-          emit(accountId, queue, 'paused');
-        }
-        await sleep(REFRESH_RETRY_MS);
-        continue;
-      }
-      if (queue.state === 'paused') {
-        queue.state = 'running';
-        emit(accountId, queue, 'running');
-      }
       const chatId = queue.pending[0];
       if (chatId === undefined) break;
-      // Auto-read OFF: the per-fan tail GET marks the fan read on OnlyFans, so
-      // skip it. We still drain the queue (no body reads happen) so the run
-      // completes and stamps «последний апдейт» honestly for the cached view.
-      if (getAutoRead() && !isWithinFetchTtl(stampMsOf(accountId, chatId), now(), ttlMs)) {
+      const stampMs = stampMsOf(accountId, chatId);
+      const nowMs = now();
+      if (stampMs !== null && stampMs <= nowMs && isWithinFetchTtl(stampMs, nowMs, ttlMs)) {
+        queue.ttlSkipped += 1;
+        recordVerified(queue, stampMs);
+      } else if (!getAutoRead()) {
+        // Automatic reads can mark the fan read on OnlyFans. A policy skip
+        // is an outcome of this attempt, never evidence of fresh history.
+        queue.policySkipped += 1;
+      } else {
+        // TTL reuse and policy skips cost nothing and need no budget pause.
+        if (isBudgetExhausted()) {
+          if (queue.state !== 'paused') {
+            queue.state = 'paused';
+            persist(accountId, queue);
+            emit(accountId, queue, 'paused');
+          }
+          await sleep(REFRESH_RETRY_MS);
+          continue;
+        }
+        if (queue.state === 'paused') {
+          queue.state = 'running';
+          emit(accountId, queue, 'running');
+        }
         try {
+          const startedAt = now();
           await refreshChat(accountId, chatId, SPENDERS_REFRESH_PURPOSE);
-          consecutiveFailures = 0;
-          await sleep(OFAPI_INTER_PAGE_DELAY_MS); // legacy deep-fetch pacing
+          const fetchedStamp = stampMsOf(accountId, chatId);
+          // The provider can return without a body read (for example if the
+          // setting changed while this call started). Only a source stamp
+          // written during the call proves that the tail was fetched.
+          if (fetchedStamp !== null && fetchedStamp >= startedAt && fetchedStamp <= now()) {
+            queue.fetched += 1;
+            recordVerified(queue, fetchedStamp);
+            consecutiveFailures = 0;
+            await sleep(OFAPI_INTER_PAGE_DELAY_MS);
+          } else if (!getAutoRead()) {
+            queue.policySkipped += 1;
+          } else {
+            throw new Error('Tail refresh returned without source verification');
+          }
         } catch {
           consecutiveFailures += 1;
           if (consecutiveFailures >= REFRESH_FAILURE_PAUSE_THRESHOLD) {
@@ -265,10 +338,10 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
             // failures in this burst were provisionally isolated; put them
             // back too now that the burst is classified as network-wide.
             consecutiveFailures = 0;
-            if (failedIds.length > 0) {
-              queue.pending.unshift(...failedIds);
-              queue.done = Math.max(0, queue.done - failedIds.length);
-              failedIds.length = 0;
+            if (queue.failedIds.length > 0) {
+              queue.pending.unshift(...queue.failedIds);
+              queue.done = Math.max(0, queue.done - queue.failedIds.length);
+              queue.failedIds = [];
             }
             queue.state = 'paused';
             persist(accountId, queue);
@@ -279,9 +352,10 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
           // isolated failure (deactivated fan, transient 5xx): skip the fan —
           // no per-fan stamp was written. Preserve the id as a durable partial
           // queue so this run cannot masquerade as complete/fresh.
-          failedIds.push(chatId);
+          queue.failedIds.push(chatId);
         }
       }
+      queue.state = 'running';
       queue.pending.shift();
       queue.done += 1;
       if (queue.done % PERSIST_EVERY === 0) {
@@ -293,27 +367,60 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
     queues.delete(accountId);
     if (queue.stopRequested || disposed) {
       data.settings.remove(queueKey(accountId));
+      recordRun(accountId, queue, 'stopped');
       emit(accountId, queue, 'stopped');
       return;
     }
-    if (failedIds.length > 0) {
-      queue.pending = failedIds;
-      queue.done = Math.max(0, queue.total - failedIds.length);
-      persist(accountId, queue);
+    if (queue.failedIds.length > 0) {
+      // Persist a retryable remainder without erasing this attempt's failed
+      // count in its terminal frame. Failed ids are also persisted mid-run,
+      // so a crash can never forget an earlier failure and stamp full coverage.
+      persist(accountId, {
+        ...queue,
+        pending: [...queue.failedIds],
+        done: queue.done - queue.failedIds.length,
+        failedIds: [],
+      });
+      recordRun(accountId, queue, 'partial');
       emit(accountId, queue, 'partial');
       return;
     }
-    writeScopeStamps(accountId, queue.scope, await getMappedListIds(accountId).catch(() => []));
+    if (queue.policySkipped > 0) {
+      const state = queue.fetched + queue.ttlSkipped === 0 ? 'skipped' : 'partial';
+      data.settings.remove(queueKey(accountId));
+      recordRun(accountId, queue, state);
+      emit(accountId, queue, state);
+      return;
+    }
+    const currentMapping = await getMappedListIds(accountId).catch(() => null);
+    if (currentMapping === null || JSON.stringify(currentMapping) !== JSON.stringify(queue.mappedListIds)) {
+      // The selected scope now denotes a different roster. Keep the read
+      // counts, but invalidate its aggregate proof and require a fresh run.
+      const stamps = data.settings.getParsed(stampsKey(accountId), stampsSchema) ?? {};
+      delete stamps['all'];
+      for (const listId of new Set([...queue.mappedListIds, ...(currentMapping ?? [])])) delete stamps[listId];
+      data.settings.set(stampsKey(accountId), stamps);
+      data.settings.remove(queueKey(accountId));
+      recordRun(accountId, queue, 'partial', true);
+      emit(accountId, queue, 'partial');
+      return;
+    }
+    if (queue.total > 0 && queue.oldestVerifiedAt !== null) {
+      writeScopeStamps(accountId, queue.scope, queue.mappedListIds, queue.oldestVerifiedAt);
+    }
     data.settings.remove(queueKey(accountId));
+    recordRun(accountId, queue, 'done');
     emit(accountId, queue, 'done');
   }
 
   function launch(accountId: string, persisted: PersistedQueue): void {
     const queue: ActiveQueue = {
+      ...persisted,
       scope: persisted.scope,
-      pending: [...persisted.pending],
+      pending: [...persisted.failedIds, ...persisted.pending],
       total: persisted.total,
-      done: persisted.done,
+      done: persisted.done - persisted.failedIds.length,
+      failedIds: [],
       state: 'running',
       stopRequested: false,
       promise: Promise.resolve(),
@@ -407,8 +514,13 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
         active.stopRequested = true;
         await active.promise;
       }
-      const ids = await scopeChatIds(accountId, scope);
-      launch(accountId, { scope, pending: ids, total: ids.length, done: 0 });
+      const mappedListIds = [...await getMappedListIds(accountId)];
+      const ids = [...new Set(await scopeChatIds(accountId, scope, mappedListIds))];
+      launch(accountId, {
+        scope, pending: ids, total: ids.length, done: 0,
+        fetched: 0, ttlSkipped: 0, policySkipped: 0, failedIds: [], oldestVerifiedAt: null,
+        mappedListIds,
+      });
     },
 
     stop(accountId) {
@@ -426,6 +538,7 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
         state: active.state,
         done: active.done,
         total: active.total,
+        ...counts(active),
       };
     },
 
@@ -433,11 +546,15 @@ export function createSpendersRefresh(options: SpendersRefreshOptions): Spenders
       return data.settings.getParsed(stampsKey(accountId), stampsSchema) ?? {};
     },
 
+    lastRuns(accountId) {
+      return data.settings.getParsed(runsKey(accountId), lastRunsSchema) ?? {};
+    },
+
     resume(accountIds) {
       for (const accountId of accountIds) {
         if (queues.has(accountId)) continue;
         const persisted = data.settings.getParsed(queueKey(accountId), queueStateSchema);
-        if (persisted !== undefined && persisted.pending.length > 0) {
+        if (persisted !== undefined && persisted.pending.length + persisted.failedIds.length > 0) {
           launch(accountId, persisted);
         } else if (persisted !== undefined) {
           data.settings.remove(queueKey(accountId));
