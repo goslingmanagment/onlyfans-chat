@@ -116,8 +116,40 @@ describe('online service — refresh + VM build', () => {
     expect(row?.spend30d).toBe(50);
     expect(row?.lastMessagePreview).toBe('enjoy Monaco baby');
     expect(row?.lastMessageIsSentByMe).toBe(true);
+    expect(row?.lastModelMessageAt).toBe(isoDaysAgo(34));
+    expect(row?.lastFanMessageAt).toBe(isoDaysAgo(36));
     expect(row?.lastSeen).toBe(isoMinAgo(2));
     expect(row?.hasChat).toBe(true);
+  });
+
+  it('exposes nullable ISO contact dates from the known local messages and list snapshot', async () => {
+    data.chats.upsertMany([
+      sampleChat({ chatId: '1', lastMessageAt: isoDaysAgo(1), lastMessageIsSentByMe: false }),
+      sampleChat({ chatId: '2', lastMessageAt: 'invalid-date', lastMessageIsSentByMe: true }),
+      sampleChat({ chatId: '3', lastMessageAt: isoDaysAgo(0), lastMessageId: '20', lastMessageIsSentByMe: true }),
+    ]);
+    data.messages.upsertMany([
+      sampleMessage({ chatId: '1', createdAt: isoDaysAgo(3), isSentByMe: true }),
+      sampleMessage({ chatId: '2', createdAt: 'not-a-date', isSentByMe: true }),
+      sampleMessage({ chatId: '2', messageId: 'fan', createdAt: '2026-06-12T15:00:00+03:00', isSentByMe: false }),
+      sampleMessage({ chatId: '3', messageId: '20', createdAt: isoDaysAgo(0), isSentByMe: true, deleted: true }),
+    ]);
+    const service = makeService(stubClient({
+      pages: [[1, 2, 3, 4].map((id) => activeUser({ id, totalSumm: 100 }))], calls: [],
+    }));
+    const { rows } = await service.refresh(ACCOUNT, true);
+
+    expect(rows.find((row) => row.fanId === '1')).toMatchObject({
+      lastModelMessageAt: isoDaysAgo(3), lastFanMessageAt: isoDaysAgo(1),
+    });
+    expect(rows.find((row) => row.fanId === '2')).toMatchObject({
+      lastModelMessageAt: null, lastFanMessageAt: '2026-06-12T12:00:00.000Z', modelDays: null,
+    });
+    for (const fanId of ['3', '4']) {
+      expect(rows.find((row) => row.fanId === fanId)).toMatchObject({
+        lastModelMessageAt: null, lastFanMessageAt: null, modelDays: null, fanDays: null,
+      });
+    }
   });
 
   it('spendersOnly drives the server filter[total_spent] bound (1, never 0)', async () => {

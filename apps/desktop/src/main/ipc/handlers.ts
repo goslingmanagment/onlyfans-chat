@@ -807,7 +807,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       labels: [],
     }));
     const analysis = analyzePingSegment(transcript, Date.now());
-    return { segment: analysis.segment, blocked: analysis.segment === 'active' };
+    // D29: segmentation describes the history; manual Ping has no recency gate.
+    return { segment: analysis.segment, blocked: false };
   });
 
   ipcMain.handle('cmd:conversation.open', async (_event, rawArgs: unknown) => {

@@ -47,6 +47,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 
 | D27 | 2026-09-06 | OFAPI rich composer persists integer cents and exact payloads; explicit unchanged recovery and closed actions use Hub command custody (core #268) |
 | D28 | 2026-09-07 | Review #27 rulings: a refused reuse-key recovery returns the original to unconfirmed (never Retry); hidden chats resurface on newer activity (migration 22); v2 only for rich options, default text stays v1 |
+| D29 | 2026-09-11 | Spenders shows two contact-age columns and one author-prefixed message; the chatter chooses when to Ping (core #294) |
 
 ## Entries
 
@@ -650,3 +651,34 @@ OnlyFans, and an unchanged or older head keeps the chat hidden. (3)
 `{ text }` command, so everyday sends neither depend on a v2-capable Hub nor
 exercise an untested plain-text v2 shape, and keep local-match verification.
 Current behavior: `docs/ofapi-composer.md`.
+
+**D29 (2026-09-11).** Owner-approved Spenders redesign: show how long ago each
+side wrote, who sent the latest message, and that message's preview. Use two
+aligned columns, «Мы писали» / «Фан писал», beside one message preview prefixed
+«Мы:» / «Фан:». Keep the avatar, tier emoji/count, lifetime spend beside the
+name, and separate 30-day inflow. The board describes contact history; it does
+not prescribe when to message, display urgency dots, or automate outreach.
+
+Exact nullable timestamps come from local non-deleted messages plus the latest
+known chat-list head. A newer known head supplies its own author and preview
+together. Invalid dates and deleted heads cannot become current facts; queued,
+failed or unconfirmed outbox rows do not advance a contact date. Unknown is «—»;
+known zero spend is $0. The display clock updates locally, without network reads.
+Sorting a date column compares exact timestamps inside each tier before clipping
+its preview; unknown dates stay last in either direction. Default is oldest fan
+message first. The open mini-chat is anchored by fan ID through sorting and
+refresh, including when that fan moves outside a shelf preview.
+
+Ping remains an explicit AI action with a separate human send action. Recency
+alone no longer disables it in the Desktop composer, mini-chat or keyboard
+actions. Hub Decision **#294** makes this possible on the OnlyFans feature lane
+and defines its manual-outreach wording; the real active/segment classification
+is retained. Existing authentication, personality, history-loading and send
+gates still apply. SDK operations and public contracts are unchanged.
+
+This supersedes only the Spenders row anatomy, urgency colouring, and OnlyFans
+Ping age gate in the historical DESIGN/legacy descriptions. The approved visual
+reference is `docs/mockups/spenders-contact-columns.html`; current behavior and
+rollout dependency are recorded in `docs/spenders.md`. Hub support must ship
+before or with the Desktop release. This decision records local implementation,
+not a deployment.

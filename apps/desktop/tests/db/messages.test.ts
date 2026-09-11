@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DataLayer, DbChangedEvent, MessageUpsert } from '@main/db/index';
 import { MESSAGE_RETENTION_DEFAULT } from '@main/db/queries/messages';
-import { memoryDataLayer, sampleMessage } from './helpers';
+import { SQL_IN_CHUNK } from '@main/db/queries/fans';
+import { memoryDataLayer, sampleChat, sampleMessage } from './helpers';
 
 // Re-exported type sanity: DbChangedEvent comes from the pinned preload contract.
 type Events = readonly DbChangedEvent[];
@@ -214,6 +215,90 @@ describe('messages tombstone', () => {
     layer.messages.markDeleted('acct_1', '101', ['nope']);
     layer.bus.flushNow();
     expect(flushed).toEqual([]);
+  });
+});
+
+describe('batched contact history', () => {
+  it('returns the newest row with its own author, timestamp and media, resolving numeric id ties', () => {
+    const media = [{
+      id: 'photo-1', type: 'photo' as const, thumbUrl: null, fullUrl: null,
+      isReady: true, locked: false, durationSeconds: null,
+    }];
+    layer.messages.upsertMany([
+      sampleMessage({ messageId: '2', createdAt: at(2), textPlain: 'fan text' }),
+      sampleMessage({ messageId: '10', createdAt: at(2), isSentByMe: true, textPlain: '', media }),
+      sampleMessage({ messageId: '20', createdAt: at(3), deleted: true }),
+      sampleMessage({ messageId: '30', createdAt: 'invalid-date' }),
+      sampleMessage({ accountId: 'acct_2', messageId: '40', createdAt: at(4) }),
+      sampleMessage({ chatId: '202', messageId: '50', createdAt: at(5) }),
+    ]);
+
+    const newest = layer.messages.newestPerChat('acct_1', ['101', 'missing']);
+    expect([...newest.keys()]).toEqual(['101']);
+    expect(newest.get('101')).toMatchObject({
+      messageId: '10', createdAt: at(2), isSentByMe: true, textPlain: '', media, deleted: false,
+    });
+  });
+
+  it('compares actual instants across offsets and returns valid ISO dates for each sender', () => {
+    layer.messages.upsertMany([
+      sampleMessage({ messageId: '1', createdAt: '2026-06-01T14:00:00+03:00', isSentByMe: false }),
+      sampleMessage({ messageId: '2', createdAt: '2026-06-01T12:00:00.000Z', isSentByMe: false, isTip: true, tipAmount: 5, textPlain: '' }),
+      sampleMessage({ messageId: '3', createdAt: '2026-06-01T12:30:00.000Z', isSentByMe: true }),
+      sampleMessage({ messageId: '4', createdAt: '2026-06-01T13:00:00.000Z', isSentByMe: true, deleted: true }),
+      sampleMessage({ messageId: '5', createdAt: 'invalid-date', isSentByMe: true }),
+      sampleMessage({ chatId: '202', createdAt: 'invalid-date', isSentByMe: true }),
+      sampleMessage({ accountId: 'acct_2', createdAt: at(59), isSentByMe: true }),
+    ]);
+
+    expect(layer.messages.latestBySender('acct_1', ['101', '202', 'missing'])).toEqual(new Map([
+      ['101', { lastFanAt: '2026-06-01T12:00:00.000Z', lastModelAt: '2026-06-01T12:30:00.000Z' }],
+      ['202', { lastFanAt: null, lastModelAt: null }],
+    ]));
+    expect(layer.messages.newestPerChat('acct_1', ['101', '202']).get('101')?.messageId).toBe('3');
+    expect(layer.messages.newestPerChat('acct_1', ['202'])).toEqual(new Map());
+
+    layer.messages.markDeleted('acct_1', '101', ['3']);
+    expect(layer.messages.newestPerChat('acct_1', ['101']).get('101')).toMatchObject({
+      messageId: '2', isSentByMe: false, isTip: true, tipAmount: 5,
+    });
+  });
+
+  it('only rejects a chat-list head whose exact account/chat/message has a tombstone', () => {
+    layer.chats.upsertMany([
+      sampleChat({ chatId: '101', lastMessageId: '1' }),
+      sampleChat({ chatId: '202', lastMessageId: '2' }),
+      sampleChat({ chatId: '303', lastMessageId: '3' }),
+      sampleChat({ chatId: '404', lastMessageId: '4' }),
+      sampleChat({ accountId: 'acct_2', chatId: '101', lastMessageId: '1' }),
+    ]);
+    layer.messages.upsertMany([
+      sampleMessage({ chatId: '101', messageId: '1', deleted: true }),
+      sampleMessage({ chatId: '202', messageId: '2' }),
+      sampleMessage({ chatId: '202', messageId: '3', deleted: true }),
+      sampleMessage({ accountId: 'acct_2', chatId: '404', messageId: '4', deleted: true }),
+      sampleMessage({ accountId: 'acct_2', chatId: '101', messageId: '1' }),
+    ]);
+
+    expect(layer.messages.deletedChatHeadIds('acct_1', ['101', '202', '303', '404', 'missing']))
+      .toEqual(new Set(['101']));
+    expect(layer.messages.deletedChatHeadIds('acct_2', ['101'])).toEqual(new Set());
+  });
+
+  it('keeps local query count bounded by SQL chunks for a large roster', () => {
+    const ids = Array.from({ length: SQL_IN_CHUNK + 1 }, (_, index) => String(index + 1));
+    layer.messages.upsertMany(ids.map((chatId) => sampleMessage({ chatId })));
+    const prepare = vi.spyOn(layer.db, 'prepare');
+
+    expect(layer.messages.newestPerChat('acct_1', ids).size).toBe(ids.length);
+    expect(prepare).toHaveBeenCalledTimes(2);
+    prepare.mockClear();
+    expect(layer.messages.latestBySender('acct_1', ids).size).toBe(ids.length);
+    expect(prepare).toHaveBeenCalledTimes(2);
+    prepare.mockClear();
+    expect(layer.messages.deletedChatHeadIds('acct_1', ids)).toEqual(new Set());
+    expect(prepare).toHaveBeenCalledTimes(2);
+    prepare.mockRestore();
   });
 });
 

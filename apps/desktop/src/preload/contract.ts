@@ -689,6 +689,7 @@ export interface OutboxItemVM {
 
 export interface PingGateVM {
   segment: PingSegment;
+  /** Compatibility field; false since D29 (manual Ping has no recency gate). */
   blocked: boolean;
 }
 
@@ -718,6 +719,10 @@ export interface SpenderRowVM {
   lastMessagePreview: string;
   lastMessageIsSentByMe: boolean;
   fanWaiting: boolean;
+  /** Latest known non-deleted model message, from local messages/list snapshot; ISO or null. */
+  lastModelMessageAt: string | null;
+  /** Latest known non-deleted fan message (including tips); ISO or null. */
+  lastFanMessageAt: string | null;
   /** Days since the model's last message (local DB); null = none cached. */
   modelDays: number | null;
   /** Days since the fan's last message (local DB); null = none cached. */

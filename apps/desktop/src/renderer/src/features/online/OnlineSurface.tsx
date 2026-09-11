@@ -206,6 +206,7 @@ export function OnlineSurface(): React.JSX.Element {
                     </div>
                   ) : (
                     <SpenderRowItem
+                      now={now.getTime()}
                       row={item.row}
                       active={item.row.fanId === (previewFanId ?? cursorFanId)}
                       t={t}

@@ -1,0 +1,425 @@
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<div id="chatgoose-spenders-full" aria-label="Полное окно ChatGoose с компактными столбцами Spenders">
+  <style>
+    #chatgoose-spenders-full {
+      --sf-paper:light-dark(#faf9f5,#24221f);--sf-soft:light-dark(#f1efe8,#302d29);
+      --sf-ink:light-dark(#292721,#eee9df);--sf-mid:light-dark(#696357,#bdb5a7);
+      --sf-dim:light-dark(#847c70,#a79c8b);--sf-line:light-dark(#e3dfd5,#443e36);
+      --sf-strong:light-dark(#d2ccbd,#625a4e);--sf-clay:light-dark(#b35636,#efaa88);
+      --sf-accent:light-dark(#d97757,#ce8062);--sf-accent-ink:light-dark(#fff9f3,#211a16);
+      --sf-clay-soft:light-dark(#f8e9e1,#432f27);--sf-green:light-dark(#397341,#9ac191);
+      --sf-avatar:light-dark(#e8e5da,#3a3630);--sf-chart:light-dark(#cfcbbb,#777061);
+      font-family:"Hanken Grotesk",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      color:var(--sf-ink);font-size:14px;line-height:1.4;background:transparent;width:100%;
+      -webkit-font-smoothing:antialiased;
+    }
+    #chatgoose-spenders-full * {box-sizing:border-box}
+    #chatgoose-spenders-full [hidden] {display:none!important}
+    #chatgoose-spenders-full button,#chatgoose-spenders-full input,#chatgoose-spenders-full textarea {font:inherit}
+    #chatgoose-spenders-full button {color:inherit;cursor:pointer}
+    #chatgoose-spenders-full button:disabled {opacity:.5;cursor:default}
+    #chatgoose-spenders-full .sf-window {border:1px solid var(--sf-line);border-radius:10px;overflow:clip;background:var(--sf-paper)}
+    #chatgoose-spenders-full .sf-topbar {display:flex;align-items:center;gap:22px;padding:9px 14px;border-bottom:1px solid var(--sf-line)}
+    #chatgoose-spenders-full .sf-logo {font-family:"Source Serif 4",Georgia,serif;font-size:18px;font-weight:600;white-space:nowrap}
+    #chatgoose-spenders-full .sf-logo span {color:var(--sf-accent)}
+    #chatgoose-spenders-full .sf-palette-trigger {display:flex;align-items:center;gap:9px;flex:1;max-width:375px;min-width:0;padding:6px 11px;border:1px solid var(--sf-strong);border-radius:99px;background:var(--sf-paper);color:var(--sf-dim);text-align:left;font-size:12px}
+    #chatgoose-spenders-full .sf-palette-trigger span {flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    #chatgoose-spenders-full kbd {font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:400;color:var(--sf-mid);border:1px solid var(--sf-strong);padding:1px 4px;border-radius:4px;white-space:nowrap}
+    #chatgoose-spenders-full .sf-top-account {margin-left:auto;font-size:11px;white-space:nowrap;border:1px solid var(--sf-strong);border-radius:99px;padding:3px 9px;color:var(--sf-mid);letter-spacing:.05em}
+    #chatgoose-spenders-full .sf-mode {font-size:11px;letter-spacing:.055em;color:var(--sf-dim);white-space:nowrap}
+    #chatgoose-spenders-full .sf-stage {display:grid;min-width:0}
+    #chatgoose-spenders-full .sf-workspace {grid-area:1/1;display:grid;grid-template-columns:48px minmax(0,1fr) 228px;min-width:0;min-height:650px}
+    #chatgoose-spenders-full[data-sidebar="false"] .sf-workspace {grid-template-columns:48px minmax(0,1fr)}
+    #chatgoose-spenders-full[data-sidebar="false"] .sf-stats {display:none}
+    #chatgoose-spenders-full .sf-rail {display:flex;flex-direction:column;align-items:center;gap:11px;border-right:1px solid var(--sf-line);padding:13px 5px}
+    #chatgoose-spenders-full .sf-account-icon {position:relative;display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--sf-avatar);font-size:12px;font-weight:500;color:var(--sf-mid)}
+    #chatgoose-spenders-full .sf-account-icon.sf-active {color:var(--sf-accent-ink);background:var(--sf-accent)}
+    #chatgoose-spenders-full .sf-unread {position:absolute;right:-3px;top:-5px;font-size:11px;background:var(--sf-ink);color:var(--sf-paper);border:2px solid var(--sf-paper);border-radius:99px;min-width:17px;text-align:center}
+    #chatgoose-spenders-full .sf-presence {position:absolute;right:-1px;bottom:-2px;width:7px;height:7px;border:1px solid var(--sf-paper);background:var(--sf-green);border-radius:99px}
+    #chatgoose-spenders-full .sf-rail-plus {width:32px;height:32px;display:grid;place-items:center;border:1px dashed var(--sf-strong);border-radius:10px;font-size:19px;color:var(--sf-dim)}
+    #chatgoose-spenders-full .sf-rail-space {flex:1;min-height:60px}
+    #chatgoose-spenders-full .sf-rail-status {width:9px;height:9px;background:var(--sf-green);border-radius:99px;margin-bottom:7px}
+    #chatgoose-spenders-full .sf-rail-nav {display:grid;place-items:center;width:32px;height:32px;border-radius:9px;color:var(--sf-dim)}
+    #chatgoose-spenders-full .sf-rail-nav.sf-active {color:var(--sf-clay);background:var(--sf-clay-soft);font-size:16px}
+    #chatgoose-spenders-full .sf-main {display:flex;flex-direction:column;min-width:0}
+    #chatgoose-spenders-full .sf-board-heading {display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-height:49px;padding:13px 16px;border-bottom:1px solid var(--sf-line)}
+    #chatgoose-spenders-full h3 {font-family:"Source Serif 4",Georgia,serif;font-size:18px;font-weight:600;margin:0}
+    #chatgoose-spenders-full .sf-board-account {font-size:11px;color:var(--sf-dim);letter-spacing:.06em}
+    #chatgoose-spenders-full .sf-board-heading .sf-scope {margin-left:auto;color:var(--sf-dim);font-size:11px}
+    #chatgoose-spenders-full .sf-toolbar {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--sf-line)}
+    #chatgoose-spenders-full .sf-tiers {display:flex;align-items:center;gap:3px;flex-wrap:wrap}
+    #chatgoose-spenders-full .sf-tier {border:0;background:transparent;padding:6px 10px;border-radius:99px;font-size:12px;color:var(--sf-mid);white-space:nowrap}
+    #chatgoose-spenders-full .sf-tier[aria-pressed=true] {background:var(--sf-ink);color:var(--sf-paper)}
+    #chatgoose-spenders-full .sf-count {margin-left:5px;font-size:11px;opacity:.7;font-variant-numeric:tabular-nums}
+    #chatgoose-spenders-full .sf-refresh-area {display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--sf-dim)}
+    #chatgoose-spenders-full .sf-refresh {display:inline-flex;align-items:center;gap:6px;border:1px solid var(--sf-strong);border-radius:99px;background:transparent;padding:5px 9px;color:var(--sf-mid);font-size:11px}
+    #chatgoose-spenders-full .sf-board {flex:1;min-width:0}
+    #chatgoose-spenders-full table {width:100%;border-collapse:collapse;table-layout:fixed}
+    #chatgoose-spenders-full .sf-person-col {width:54%}
+    #chatgoose-spenders-full .sf-flow-col {width:14%}
+    #chatgoose-spenders-full .sf-age-col {width:16%}
+    #chatgoose-spenders-full th {font-weight:400;text-align:left}
+    #chatgoose-spenders-full thead th {padding:0 10px;border-bottom:1px solid var(--sf-line);font-size:12px;color:var(--sf-mid)}
+    #chatgoose-spenders-full thead th:first-child {padding-left:16px}
+    #chatgoose-spenders-full .sf-sort {display:flex;align-items:center;justify-content:center;gap:4px;width:100%;background:transparent;border:0;padding:11px 0;min-height:43px;font-size:12px}
+    #chatgoose-spenders-full .sf-sort-arrow {width:9px;flex:0 0 9px;font-size:11px;color:var(--sf-dim)}
+    #chatgoose-spenders-full th[aria-sort=descending] .sf-sort,#chatgoose-spenders-full th[aria-sort=ascending] .sf-sort {color:var(--sf-ink)}
+    #chatgoose-spenders-full .sf-flow-heading {text-align:right}
+    #chatgoose-spenders-full .sf-group th {padding:10px 16px 6px;font-size:12px;color:var(--sf-mid)}
+    #chatgoose-spenders-full .sf-record td {padding:0 10px;border-bottom:1px solid var(--sf-line);vertical-align:middle}
+    #chatgoose-spenders-full .sf-record td:first-child {padding-left:16px}
+    #chatgoose-spenders-full .sf-record:hover td {background:var(--sf-soft)}
+    #chatgoose-spenders-full .sf-open {display:flex;align-items:center;gap:10px;width:100%;min-width:0;background:transparent;border:0;padding:10px 0;text-align:left}
+    #chatgoose-spenders-full .sf-avatar {display:grid;place-items:center;width:32px;height:34px;flex:0 0 32px;background:var(--sf-avatar);border-radius:9px;font-size:11px;font-weight:500;color:var(--sf-mid)}
+    #chatgoose-spenders-full .sf-person {min-width:0;flex:1}
+    #chatgoose-spenders-full .sf-name-line {display:flex;align-items:baseline;gap:3px 8px;flex-wrap:wrap;min-width:0}
+    #chatgoose-spenders-full .sf-name {font-size:14px;font-weight:500}
+    #chatgoose-spenders-full .sf-spend {font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:400;color:var(--sf-mid);white-space:nowrap}
+    #chatgoose-spenders-full .sf-last-message {display:flex;align-items:baseline;gap:5px;margin-top:3px;font-size:13px;min-width:0}
+    #chatgoose-spenders-full .sf-author {font-weight:500;flex-shrink:0}
+    #chatgoose-spenders-full .sf-snippet {display:block;min-width:0;color:var(--sf-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    #chatgoose-spenders-full[data-two-lines=true] .sf-snippet {white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+    #chatgoose-spenders-full .sf-flow {text-align:right;font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:500;white-space:nowrap;color:var(--sf-green)}
+    #chatgoose-spenders-full .sf-zero {color:var(--sf-dim);font-weight:400}
+    #chatgoose-spenders-full .sf-age {text-align:center;white-space:nowrap;font-size:16px;font-weight:500;font-variant-numeric:tabular-nums}
+    #chatgoose-spenders-full .sf-unknown {color:var(--sf-dim);font-weight:400}
+    #chatgoose-spenders-full .sf-board-foot {display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 15px;border-top:1px solid var(--sf-line);font-size:11px;color:var(--sf-dim);margin-top:auto}
+    #chatgoose-spenders-full .sf-keys {display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+    #chatgoose-spenders-full .sf-stats {border-left:1px solid var(--sf-line);min-width:0}
+    #chatgoose-spenders-full .sf-stats-heading {font-family:"Source Serif 4",Georgia,serif;font-size:15px;padding:14px;border-bottom:1px solid var(--sf-line)}
+    #chatgoose-spenders-full .sf-stat-section {padding:13px 14px;border-bottom:1px solid var(--sf-line)}
+    #chatgoose-spenders-full .sf-stat-cap {font-size:11px;letter-spacing:.045em;color:var(--sf-dim);display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:9px}
+    #chatgoose-spenders-full .sf-kv {display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-size:12px;margin-top:7px;color:var(--sf-mid)}
+    #chatgoose-spenders-full .sf-kv strong {font-family:"IBM Plex Mono",monospace;font-weight:500;color:var(--sf-ink);font-size:12px}
+    #chatgoose-spenders-full .sf-kv .sf-total {font-size:19px}
+    #chatgoose-spenders-full .sf-chart {display:flex;align-items:flex-end;gap:3px;height:37px;margin-top:14px}
+    #chatgoose-spenders-full .sf-bar {background:var(--sf-chart);flex:1;min-width:0;border-radius:2px 2px 0 0}
+    #chatgoose-spenders-full .sf-chart-labels {display:flex;justify-content:space-between;font-size:11px;color:var(--sf-dim);margin-top:4px}
+    #chatgoose-spenders-full .sf-stat-tier {border:0;background:transparent;width:100%;display:flex;justify-content:space-between;gap:8px;text-align:left;padding:5px 0;font-size:12px;color:var(--sf-mid)}
+    #chatgoose-spenders-full .sf-stat-tier strong {font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:500;color:var(--sf-ink)}
+    #chatgoose-spenders-full .sf-stat-person {display:flex;align-items:center;gap:7px;width:100%;padding:5px 0;border:0;background:transparent;text-align:left;min-width:0}
+    #chatgoose-spenders-full .sf-stat-person .sf-avatar {width:24px;height:25px;flex-basis:24px;border-radius:7px;font-size:11px}
+    #chatgoose-spenders-full .sf-stat-person-name {font-size:12px;font-weight:500}
+    #chatgoose-spenders-full .sf-stat-person-sub {font-size:11px;color:var(--sf-dim);margin-top:2px}
+    #chatgoose-spenders-full .sf-stat-person-amount {font-family:"IBM Plex Mono",monospace;font-size:11px;margin-left:auto;white-space:nowrap;color:var(--sf-green)}
+    #chatgoose-spenders-full .sf-statusbar {display:flex;align-items:center;gap:15px;flex-wrap:wrap;padding:7px 14px;border-top:1px solid var(--sf-line);font-size:11px;color:var(--sf-dim)}
+    #chatgoose-spenders-full .sf-live {color:var(--sf-green);white-space:nowrap}
+    #chatgoose-spenders-full .sf-demo {margin-left:auto;font-size:11px;color:var(--sf-mid)}
+    #chatgoose-spenders-full .sf-overlay {grid-area:1/1;z-index:3;display:flex;align-items:center;justify-content:center;padding:24px;background:color-mix(in srgb,var(--sf-ink) 21%,transparent)}
+    #chatgoose-spenders-full .sf-dialog {width:100%;max-width:650px;min-width:0;border:1px solid var(--sf-strong);border-radius:11px;background:var(--sf-paper);box-shadow:0 16px 40px color-mix(in srgb,var(--sf-ink) 16%,transparent);overflow:clip}
+    #chatgoose-spenders-full .sf-dialog-head {display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:13px 16px;border-bottom:1px solid var(--sf-line)}
+    #chatgoose-spenders-full .sf-dialog-name {font-family:"Source Serif 4",Georgia,serif;font-size:18px;font-weight:500}
+    #chatgoose-spenders-full .sf-dialog-meta {font-size:12px;color:var(--sf-dim);display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px}
+    #chatgoose-spenders-full .sf-dialog-meta .sf-green {color:var(--sf-green)}
+    #chatgoose-spenders-full .sf-close {margin-left:auto;display:grid;place-items:center;width:32px;height:32px;background:transparent;border:0;color:var(--sf-mid)}
+    #chatgoose-spenders-full .sf-contact-times {display:flex;gap:20px;flex-wrap:wrap;padding:9px 16px;font-size:12px;color:var(--sf-mid);border-bottom:1px solid var(--sf-line)}
+    #chatgoose-spenders-full .sf-contact-times strong {font-weight:500;color:var(--sf-ink)}
+    #chatgoose-spenders-full .sf-thread {padding:16px;display:flex;flex-direction:column;gap:15px;background:var(--sf-soft)}
+    #chatgoose-spenders-full .sf-message {max-width:86%;align-self:flex-start;min-width:0}
+    #chatgoose-spenders-full .sf-message.sf-from-us {align-self:flex-end}
+    #chatgoose-spenders-full .sf-message-meta {display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--sf-dim);margin-bottom:4px}
+    #chatgoose-spenders-full .sf-message-meta strong {font-size:12px;font-weight:500;color:var(--sf-mid)}
+    #chatgoose-spenders-full .sf-from-us .sf-message-meta {justify-content:flex-end}
+    #chatgoose-spenders-full .sf-bubble {border:1px solid var(--sf-line);border-radius:9px 9px 9px 3px;background:var(--sf-paper);padding:10px 12px;overflow-wrap:anywhere;font-size:14px}
+    #chatgoose-spenders-full .sf-from-us .sf-bubble {background:var(--sf-avatar);border-color:var(--sf-strong);border-radius:9px 9px 3px 9px}
+    #chatgoose-spenders-full .sf-unknown-thread {font-size:13px;color:var(--sf-mid);padding:9px 0}
+    #chatgoose-spenders-full .sf-compose {padding:13px 16px;border-top:1px solid var(--sf-line)}
+    #chatgoose-spenders-full .sf-ai-actions {display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:9px}
+    #chatgoose-spenders-full .sf-ai {display:inline-flex;align-items:center;gap:6px;border:1px solid var(--sf-strong);background:var(--sf-paper);border-radius:99px;padding:5px 10px;font-size:12px;color:var(--sf-mid)}
+    #chatgoose-spenders-full .sf-ai.sf-ping {background:var(--sf-clay-soft);border-color:color-mix(in srgb,var(--sf-clay) 25%,transparent);color:var(--sf-clay)}
+    #chatgoose-spenders-full .sf-draft {display:block;width:100%;min-height:75px;resize:vertical;padding:10px 12px;border:1px solid var(--sf-line);border-radius:8px;background:var(--sf-paper);color:var(--sf-ink);font-size:14px;line-height:1.45}
+    #chatgoose-spenders-full .sf-compose-foot {display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:9px;color:var(--sf-dim);font-size:11px}
+    #chatgoose-spenders-full .sf-send {margin-left:auto;border:1px solid var(--sf-accent);background:var(--sf-accent);color:var(--sf-accent-ink);padding:7px 14px;border-radius:7px;font-size:12px}
+    #chatgoose-spenders-full .sf-dialog-foot {display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 16px;border-top:1px solid var(--sf-line);font-size:12px}
+    #chatgoose-spenders-full .sf-text-button {border:0;background:transparent;padding:2px 0;color:var(--sf-mid);font-size:12px}
+    #chatgoose-spenders-full .sf-dialog-foot .sf-return {margin-left:auto}
+    #chatgoose-spenders-full .sf-palette {width:100%;max-width:530px;background:var(--sf-paper);border:1px solid var(--sf-strong);border-radius:10px;overflow:clip;box-shadow:0 14px 38px color-mix(in srgb,var(--sf-ink) 15%,transparent)}
+    #chatgoose-spenders-full .sf-palette-head {display:flex;align-items:center;gap:10px;padding:13px;border-bottom:1px solid var(--sf-line)}
+    #chatgoose-spenders-full .sf-palette-head input {width:100%;min-width:0;border:0;background:transparent;color:var(--sf-ink);font-size:14px;padding:4px}
+    #chatgoose-spenders-full .sf-palette-result {display:flex;align-items:center;gap:10px;width:100%;border:0;background:var(--sf-paper);padding:10px 15px;text-align:left}
+    #chatgoose-spenders-full .sf-palette-result:hover {background:var(--sf-soft)}
+    #chatgoose-spenders-full .sf-palette-result .sf-spend {margin-left:auto}
+    #chatgoose-spenders-full .sf-palette-foot {padding:10px 15px;border-top:1px solid var(--sf-line);font-size:11px;color:var(--sf-dim)}
+    #chatgoose-spenders-full .sf-announcer {position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+    @media(max-width:850px) {
+      #chatgoose-spenders-full .sf-workspace {grid-template-columns:44px minmax(0,1fr)}
+      #chatgoose-spenders-full .sf-rail {grid-row:1/3}
+      #chatgoose-spenders-full .sf-stats {grid-column:2;border-left:0;border-top:1px solid var(--sf-line);display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+      #chatgoose-spenders-full .sf-stats-heading {grid-column:1/-1;padding:10px 14px}
+      #chatgoose-spenders-full .sf-stat-section {padding:12px;border-right:1px solid var(--sf-line)}
+      #chatgoose-spenders-full .sf-stat-section:first-of-type {grid-row:span 2}
+      #chatgoose-spenders-full .sf-mode {display:none}
+      #chatgoose-spenders-full .sf-topbar {gap:15px}
+    }
+    @media(max-width:580px) {
+      #chatgoose-spenders-full .sf-workspace,#chatgoose-spenders-full[data-sidebar="false"] .sf-workspace {grid-template-columns:minmax(0,1fr)}
+      #chatgoose-spenders-full .sf-rail {grid-row:auto;flex-direction:row;border-right:0;border-bottom:1px solid var(--sf-line);padding:8px 12px;gap:10px}
+      #chatgoose-spenders-full .sf-rail-space {min-height:0;flex:1}
+      #chatgoose-spenders-full .sf-rail-status,#chatgoose-spenders-full .sf-rail-plus {display:none}
+      #chatgoose-spenders-full .sf-main {grid-column:1}
+      #chatgoose-spenders-full .sf-stats {grid-column:1;grid-template-columns:repeat(2,minmax(0,1fr))}
+      #chatgoose-spenders-full .sf-stat-section:first-of-type {grid-row:auto;grid-column:1/-1}
+      #chatgoose-spenders-full .sf-topbar {padding:10px 12px;gap:10px;flex-wrap:wrap}
+      #chatgoose-spenders-full .sf-palette-trigger {order:3;flex-basis:100%;max-width:none}
+      #chatgoose-spenders-full .sf-board-heading {padding:12px}
+      #chatgoose-spenders-full .sf-board-heading .sf-scope {margin-left:0}
+      #chatgoose-spenders-full .sf-toolbar {padding:9px 10px;gap:8px}
+      #chatgoose-spenders-full .sf-refresh-area {width:100%;justify-content:space-between}
+      #chatgoose-spenders-full thead th {padding:0 5px;font-size:11px}
+      #chatgoose-spenders-full .sf-record td {padding:0 5px}
+      #chatgoose-spenders-full thead th:first-child,#chatgoose-spenders-full .sf-record td:first-child {padding-left:10px}
+      #chatgoose-spenders-full .sf-sort {font-size:11px;gap:2px}
+      #chatgoose-spenders-full .sf-sort-arrow {width:7px;flex-basis:7px}
+      #chatgoose-spenders-full .sf-open {gap:7px}
+      #chatgoose-spenders-full .sf-avatar {width:26px;flex-basis:26px;height:29px;border-radius:7px}
+      #chatgoose-spenders-full .sf-name {font-size:13px}
+      #chatgoose-spenders-full .sf-spend,#chatgoose-spenders-full .sf-flow {font-size:11px}
+      #chatgoose-spenders-full .sf-last-message {font-size:12px}
+      #chatgoose-spenders-full .sf-age {font-size:14px}
+      #chatgoose-spenders-full .sf-group th {padding-left:10px}
+      #chatgoose-spenders-full .sf-overlay {padding:10px}
+      #chatgoose-spenders-full .sf-dialog-head {padding:12px}
+      #chatgoose-spenders-full .sf-contact-times {gap:10px;padding:8px 12px}
+      #chatgoose-spenders-full .sf-message {max-width:96%}
+      #chatgoose-spenders-full .sf-statusbar {gap:8px}
+      #chatgoose-spenders-full .sf-status-detail {display:none}
+      #chatgoose-spenders-full input,#chatgoose-spenders-full textarea {font-size:16px!important}
+    }
+    @media(pointer:coarse) {
+      #chatgoose-spenders-full .sf-sort,#chatgoose-spenders-full .sf-tier,#chatgoose-spenders-full .sf-ai,#chatgoose-spenders-full .sf-refresh,#chatgoose-spenders-full .sf-close,#chatgoose-spenders-full .sf-text-button {min-height:44px}
+      #chatgoose-spenders-full .sf-close {min-width:44px}
+    }
+  </style>
+  <div class="sf-window">
+    <div class="sf-topbar">
+      <div class="sf-logo">Chat<span>Goose</span></div>
+      <button type="button" class="sf-palette-trigger" data-open-search><i data-lucide="search" aria-hidden="true"></i><span>Перейти к чату, фану или действию…</span><kbd>⌘K</kbd></button>
+      <span class="sf-top-account">LORA VIE</span><span class="sf-mode">COMPANION MODE</span>
+    </div>
+    <div class="sf-stage">
+      <div class="sf-workspace">
+        <nav class="sf-rail" aria-label="Аккаунты и разделы">
+          <div class="sf-account-icon sf-active" aria-label="Lora Vie, текущий аккаунт">LV<span class="sf-unread">6</span><span class="sf-presence"></span></div>
+          <div class="sf-account-icon" aria-label="Lora Night">LN<span class="sf-unread">6</span><span class="sf-presence"></span></div>
+          <div class="sf-rail-plus" aria-hidden="true">+</div><div class="sf-rail-space"></div>
+          <span class="sf-rail-status" aria-label="Подключено"></span><div class="sf-rail-nav sf-active" aria-label="Spenders">$</div><div class="sf-rail-nav" aria-label="Настройки"><i data-lucide="settings-2" aria-hidden="true"></i></div>
+        </nav>
+        <main class="sf-main">
+          <div class="sf-board-heading"><h3>Spenders</h3><span class="sf-board-account">LORA VIE</span><span class="sf-scope" data-scope>Внутри тира — по давности сообщения фана ↓</span></div>
+          <div class="sf-toolbar">
+            <div class="sf-tiers" role="group" aria-label="Тиры spenders">
+              <button type="button" class="sf-tier" data-tier="all" aria-pressed="true">Все<span class="sf-count">7</span></button>
+              <button type="button" class="sf-tier" data-tier="whale" aria-pressed="false">🐳 Кит<span class="sf-count">3</span></button>
+              <button type="button" class="sf-tier" data-tier="top" aria-pressed="false">⭐ Топ<span class="sf-count">4</span></button>
+            </div>
+            <div class="sf-refresh-area"><span data-freshness>12 мин назад</span><button type="button" class="sf-refresh" data-refresh><i data-lucide="refresh-cw" aria-hidden="true"></i><span data-refresh-label>Обновить · ~7 кр.</span></button></div>
+          </div>
+          <div class="sf-board"></div>
+          <div class="sf-board-foot"><span class="sf-keys"><kbd>J</kbd><kbd>K</kbd> строки <span>·</span><kbd>Space</kbd> мини-чат</span><span data-coverage>История: 6 из 7 фанов</span></div>
+        </main>
+        <aside class="sf-stats" aria-label="Статистика аккаунта">
+          <div class="sf-stats-heading">Статистика</div>
+          <section class="sf-stat-section">
+            <div class="sf-stat-cap"><span>ВЫРУЧКА</span><span>30 Д</span></div>
+            <div class="sf-kv"><span>30 дней</span><strong class="sf-total">$2,481</strong></div>
+            <div class="sf-kv"><span>7 дней</span><strong>$790</strong></div><div class="sf-kv"><span>Сегодня</span><strong>$49</strong></div>
+            <div class="sf-kv"><span>Покупок · средний чек</span><strong>83 · $29.89</strong></div>
+            <div class="sf-chart" role="img" aria-label="Демонстрационная выручка за 30 дней"></div><div class="sf-chart-labels"><span>13 авг</span><span>Сегодня</span></div>
+          </section>
+          <section class="sf-stat-section">
+            <div class="sf-stat-cap"><span>ПО ТИРАМ</span><span>30 Д</span></div>
+            <button type="button" class="sf-stat-tier" data-stat-tier="whale"><span>🐳 Кит</span><strong>$862</strong></button>
+            <button type="button" class="sf-stat-tier" data-stat-tier="top"><span>⭐ Топ</span><strong>$1,619</strong></button>
+          </section>
+          <section class="sf-stat-section">
+            <div class="sf-stat-cap">ДАВНОСТЬ СООБЩЕНИЯ ФАНА</div>
+            <div class="sf-kv"><span>Больше 21 дня</span><strong>2</strong></div><div class="sf-kv"><span>От 7 до 21 дня</span><strong>2</strong></div><div class="sf-kv"><span>История неизвестна</span><strong>1</strong></div>
+          </section>
+          <section class="sf-stat-section">
+            <div class="sf-stat-cap">ПОСЛЕДНИМ ПИСАЛ ФАН</div>
+            <button type="button" class="sf-stat-person" data-stat-fan="jake"><span class="sf-avatar">J7</span><span><span class="sf-stat-person-name">jake_777</span><span class="sf-stat-person-sub" style="display:block">5 часов назад</span></span><span class="sf-spend" style="margin-left:auto">$5,256</span></button>
+          </section>
+          <section class="sf-stat-section">
+            <div class="sf-stat-cap">НОВЫЕ · 30 ДНЕЙ</div>
+            <button type="button" class="sf-stat-person" data-stat-fan="stefan"><span class="sf-avatar">SN</span><span class="sf-stat-person-name">Stefan</span><span class="sf-stat-person-amount">+$528</span></button>
+            <button type="button" class="sf-stat-person" data-stat-fan="eddie"><span class="sf-avatar">EE</span><span class="sf-stat-person-name">Eddie</span><span class="sf-stat-person-amount">+$567</span></button>
+          </section>
+        </aside>
+      </div>
+      <div class="sf-overlay" data-chat-overlay hidden>
+        <div class="sf-dialog" role="dialog" aria-modal="true" aria-labelledby="sf-current-fan">
+          <div class="sf-dialog-head"><span class="sf-avatar" data-fan-avatar></span><div><span class="sf-dialog-name" id="sf-current-fan"></span><div class="sf-dialog-meta"><span data-fan-spend></span><span class="sf-green" data-fan-flow></span></div></div><button type="button" class="sf-close" data-close-chat aria-label="Закрыть мини-чат"><i data-lucide="x" aria-hidden="true"></i></button></div>
+          <div class="sf-contact-times"><span>Мы писали: <strong data-model-age></strong></span><span>Фан писал: <strong data-fan-age></strong></span></div>
+          <div class="sf-thread" aria-label="Последние сообщения"></div>
+          <div class="sf-compose">
+            <div class="sf-ai-actions"><button type="button" class="sf-ai sf-ping" data-generate="ping"><i data-lucide="sparkles" aria-hidden="true"></i>Ping</button><button type="button" class="sf-ai" data-generate="reply">Reply</button><button type="button" class="sf-ai" data-generate="hi">Hi</button><button type="button" class="sf-ai" data-generate="improve">Improve</button></div>
+            <textarea class="sf-draft" rows="2" placeholder="Сообщение от имени Lora Vie…" aria-label="Черновик сообщения"></textarea>
+            <div class="sf-compose-foot"><span data-draft-status>Демонстрация · отправка отключена</span><button type="button" class="sf-send" disabled>Отправить</button></div>
+          </div>
+          <div class="sf-dialog-foot"><button type="button" class="sf-text-button" data-prev>← Предыдущий</button><button type="button" class="sf-text-button" data-next>Следующий →</button><button type="button" class="sf-text-button sf-return" data-close-chat>К списку · Esc</button></div>
+        </div>
+      </div>
+      <div class="sf-overlay" data-search-overlay hidden>
+        <div class="sf-palette" role="dialog" aria-modal="true" aria-label="Перейти к фану">
+          <div class="sf-palette-head"><i data-lucide="search" aria-hidden="true"></i><input type="search" autocomplete="off" placeholder="Имя или username…" aria-label="Поиск по демонстрационным фанам"><button type="button" class="sf-close" data-close-search aria-label="Закрыть поиск"><i data-lucide="x" aria-hidden="true"></i></button></div>
+          <div class="sf-palette-results"></div><div class="sf-palette-foot">Поиск по 7 фанам в демонстрации</div>
+        </div>
+      </div>
+    </div>
+    <div class="sf-statusbar"><span class="sf-live">● HUB LIVE</span><span class="sf-status-detail">CREDITS TODAY 1,255 · BAL 97,969</span><span>AI TODAY $0.86</span><span>SENDS 142</span><span class="sf-demo">МАКЕТ · ДЕМОДАННЫЕ</span></div>
+  </div>
+  <div class="sf-announcer" aria-live="polite"></div>
+</div>
+<script>
+(() => {
+  const root=document.getElementById('chatgoose-spenders-full');
+  if(!root)return;
+  const fans=[
+    {id:'ryan',name:'ryan_dx',initials:'RD',tier:'whale',spend:4961,flow:372,model:816,fan:864,modelText:'I want to see that view. Tell me how it goes when you get back.',fanText:'I am heading to the mountains next week. I will send you a photo from the trail.',ping:'hey Ryan, how did that trip to the mountains go? did you get the view you were hoping for?',reply:'I want to hear about that trip. What was your favorite part?'},
+    {id:'marcus',name:'Marcus K.',initials:'MK',tier:'whale',spend:2152,flow:490,model:72,fan:360,modelText:'Hope this week has been a little easier on you. How are you doing?',fanText:'This week has been so busy. I finally have a quiet evening.',ping:'hey Marcus, did you finally get a quiet evening to yourself?',reply:'A quiet evening sounds good. How are you spending it?'},
+    {id:'sam',name:'Sam',initials:'SM',tier:'whale',spend:3836,flow:0,model:216,fan:288,modelText:'That chorus has been stuck in my head all day.',fanText:'Голосовое · 0:23',ping:'Sam, that song is still in my head. what else have you been listening to?',reply:'That chorus has been stuck in my head all day.'},
+    {id:'chris',name:'Chris B.',initials:'CB',tier:'top',spend:5004,flow:524,model:480,fan:552,modelText:'Good luck with the launch. Let me know how it goes.',fanText:'The launch is next Friday. I am ready for this project to be over.',ping:'hey Chris, did that big launch go the way you wanted?',reply:'That sounds like a big week. How are you feeling about the launch?'},
+    {id:'jake',name:'jake_777',initials:'J7',tier:'top',spend:5256,flow:0,model:72,fan:5,modelText:'I was hoping to spend Sunday outside if the weather held up.',fanText:'How was your weekend? Did you end up going outside? I finally took a day off on Sunday and went for a long walk.',ping:'hey Jake, what have you been up to?',reply:'A long walk sounds lovely. Where did you end up going?'},
+    {id:'stefan',name:'Stefan',initials:'SN',tier:'top',spend:1994,flow:528,model:2,fan:3,modelText:'That sounds like a good plan. Tell me what you think of it.',fanText:'I might finally watch that film tonight.',ping:'hey Stefan, did you get a chance to watch the film?',reply:'Let me know what you think of it. I am curious which part you will like.'},
+    {id:'eddie',name:'Eddie',initials:'EE',tier:'top',spend:1332,flow:567,model:null,fan:null,ping:'hey Eddie, how has your day been?'}
+  ];
+  const state={tier:'all',sort:'fan',direction:'desc',selected:null,search:false,twoLines:false,sidebar:true};
+  const checkedFans=new Set();
+  const drafts={};
+  let returnTarget=null;
+  const el=q=>root.querySelector(q),all=q=>[...root.querySelectorAll(q)];
+  const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const cash=n=>'$'+n.toLocaleString('en-US');
+  const fanById=id=>fans.find(f=>f.id===id);
+  const shortAge=h=>h===null?'—':h<24?Math.floor(h)+' ч':Math.floor(h/24)+' д';
+  function fullAge(h){
+    if(h===null)return 'нет данных';
+    const n=h<24?Math.floor(h):Math.floor(h/24),forms=h<24?['час','часа','часов']:['день','дня','дней'];
+    const i=n%100>=11&&n%100<=14?2:n%10===1?0:n%10>=2&&n%10<=4?1:2;
+    return n+' '+forms[i]+' назад';
+  }
+  function newest(f){if(f.model===null||f.fan===null||f.model===f.fan)return null;return f.model<f.fan?'model':'fan';}
+  const scoped=()=>fans.filter(f=>state.tier==='all'||f.tier===state.tier);
+  function sorted(tier){return scoped().filter(f=>f.tier===tier).sort((a,b)=>{
+    if(a[state.sort]===null)return b[state.sort]===null?0:1;
+    if(b[state.sort]===null)return -1;
+    return state.direction==='desc'?b[state.sort]-a[state.sort]:a[state.sort]-b[state.sort];
+  });}
+  const visible=()=>['whale','top'].flatMap(sorted);
+  const icons=()=>{if(globalThis.lucide)globalThis.lucide.createIcons({attrs:{width:14,height:14}});};
+  function heading(field,label){
+    const selected=state.sort===field,order=selected?(state.direction==='desc'?'descending':'ascending'):'none';
+    return '<th scope="col" aria-sort="'+order+'"><button type="button" class="sf-sort" data-sort="'+field+'" aria-label="Сортировать: '+label+'"><span>'+label+'</span><span class="sf-sort-arrow" aria-hidden="true">'+(selected?(state.direction==='desc'?'↓':'↑'):'')+'</span></button></th>';
+  }
+  function renderBoard(){
+    let html='<table aria-label="Spenders: суммы, последние сообщения и давность"><colgroup><col class="sf-person-col"><col class="sf-flow-col"><col class="sf-age-col"><col class="sf-age-col"></colgroup><thead><tr><th scope="col">Фан · последнее сообщение</th><th scope="col" class="sf-flow-heading">За 30 д</th>'+heading('model','Мы писали')+heading('fan','Фан писал')+'</tr></thead><tbody>';
+    ['whale','top'].forEach(tier=>{
+      const rows=sorted(tier);if(!rows.length)return;
+      html+='<tr class="sf-group"><th colspan="4" scope="rowgroup">'+(tier==='whale'?'🐳 Кит':'⭐ Топ')+'<span class="sf-count">'+rows.length+'</span></th></tr>';
+      rows.forEach(f=>{
+        const latest=newest(f),snippet=latest?f[latest+'Text']:'История не загружена';
+        html+='<tr class="sf-record"><td><button type="button" class="sf-open" data-fan="'+f.id+'" aria-label="Открыть мини-чат: '+esc(f.name)+'"><span class="sf-avatar" aria-hidden="true">'+f.initials+'</span><span class="sf-person"><span class="sf-name-line"><span class="sf-name">'+esc(f.name)+'</span><span class="sf-spend" aria-label="Всего потратил '+f.spend+' долларов">'+cash(f.spend)+'</span></span><span class="sf-last-message">'+(latest?'<span class="sf-author">'+(latest==='model'?'Мы:':'Фан:')+'</span>':'')+'<span class="sf-snippet">'+esc(snippet)+'</span></span></span></button></td><td class="sf-flow '+(f.flow===0?'sf-zero':'')+'">'+(f.flow>0?'+':'')+cash(f.flow)+'</td>';
+        ['model','fan'].forEach(field=>{html+='<td class="sf-age '+(f[field]===null?'sf-unknown':'')+'" aria-label="'+(field==='model'?'Мы писали: ':'Фан писал: ')+fullAge(f[field])+'">'+shortAge(f[field])+'</td>';});
+        html+='</tr>';
+      });
+    });
+    el('.sf-board').innerHTML=html+'</tbody></table>';
+    all('[data-fan]').forEach(b=>b.onclick=()=>openFan(b.dataset.fan,b));
+    all('[data-sort]').forEach(b=>b.onclick=()=>{
+      const field=b.dataset.sort;state.direction=state.sort===field?(state.direction==='desc'?'asc':'desc'):'desc';state.sort=field;render();el('[data-sort="'+field+'"]').focus();
+      announce('Сортировка внутри тира: '+(field==='model'?'наши сообщения':'сообщения фана')+', '+(state.direction==='desc'?'сначала давние':'сначала свежие'));
+    });
+    el('[data-scope]').textContent='Внутри тира — '+(state.sort==='model'?'по давности нашего сообщения':'по давности сообщения фана')+' '+(state.direction==='desc'?'↓':'↑');
+    el('[data-coverage]').textContent='История: '+scoped().filter(f=>f.model!==null&&f.fan!==null).length+' из '+scoped().length+' фанов';
+    el('[data-refresh-label]').textContent='Обновить · ~'+scoped().length+' кр.';
+    el('[data-freshness]').textContent=scoped().every(f=>checkedFans.has(f.id))?'Проверено '+scoped().filter(f=>f.model!==null&&f.fan!==null).length+' из '+scoped().length:'12 мин назад';
+  }
+  function announce(text){el('.sf-announcer').textContent=text;}
+  function updateModalState(){
+    const blocked=state.selected!==null||state.search;
+    el('.sf-workspace').inert=blocked;el('.sf-workspace').setAttribute('aria-hidden',String(blocked));
+    el('.sf-topbar').inert=blocked;el('.sf-statusbar').inert=blocked;
+    el('[data-chat-overlay]').hidden=state.selected===null;el('[data-search-overlay]').hidden=!state.search;
+  }
+  function renderChat(){
+    updateModalState();if(!state.selected)return;
+    const f=fanById(state.selected);
+    el('[data-fan-avatar]').textContent=f.initials;el('#sf-current-fan').textContent=f.name;
+    el('[data-fan-spend]').textContent=cash(f.spend)+' всего';el('[data-fan-flow]').textContent=(f.flow>0?'+':'')+cash(f.flow)+' / 30 д';
+    el('[data-model-age]').textContent=fullAge(f.model);el('[data-fan-age]').textContent=fullAge(f.fan);
+    const order=['model','fan'].filter(field=>f[field]!==null).sort((a,b)=>f[b]-f[a]);
+    el('.sf-thread').innerHTML=order.length?order.map(field=>'<div class="sf-message '+(field==='model'?'sf-from-us':'')+'"><div class="sf-message-meta"><strong>'+(field==='model'?'Мы':esc(f.name))+'</strong><span>'+fullAge(f[field])+'</span></div><div class="sf-bubble">'+esc(f[field+'Text'])+'</div></div>').join(''):'<div class="sf-unknown-thread">История не загружена. Последние сообщения неизвестны.</div>';
+    el('.sf-draft').value=drafts[f.id]||'';el('[data-generate=improve]').disabled=!(drafts[f.id]||'').trim();el('[data-generate=reply]').disabled=!f.reply;
+    el('[data-draft-status]').textContent=drafts[f.id]?'Демонстрационный черновик · отправка отключена':'Демонстрация · отправка отключена';
+    icons();
+  }
+  function openFan(id,source){
+    returnTarget=source||document.activeElement;state.search=false;state.selected=id;renderChat();el('[data-close-chat]').focus();announce('Мини-чат: '+fanById(id).name);
+  }
+  function closeChat(){
+    const id=state.selected;state.selected=null;updateModalState();
+    const row=el('[data-fan="'+id+'"]');
+    if(row)row.focus();else if(returnTarget&&returnTarget.isConnected)returnTarget.focus();else el('[data-tier=all]').focus();
+  }
+  function moveFan(direction){
+    let rows=visible();if(!rows.some(f=>f.id===state.selected))rows=fans;
+    const index=rows.findIndex(f=>f.id===state.selected);state.selected=rows[(index+direction+rows.length)%rows.length].id;renderChat();
+  }
+  function renderSearch(){
+    const q=el('.sf-palette input').value.trim().toLowerCase().replace(/^@/,'');
+    const rows=fans.filter(f=>(f.name+' '+f.id).toLowerCase().includes(q));
+    el('.sf-palette-results').innerHTML=rows.length?rows.map(f=>'<button type="button" class="sf-palette-result" data-result="'+f.id+'"><span class="sf-avatar">'+f.initials+'</span><span>'+esc(f.name)+'</span><span class="sf-spend">'+cash(f.spend)+'</span></button>').join(''):'<div class="sf-unknown-thread" style="padding:16px">Совпадений нет</div>';
+    all('[data-result]').forEach(b=>b.onclick=()=>openFan(b.dataset.result,el('[data-open-search]')));
+  }
+  function openSearch(){state.search=true;state.selected=null;el('.sf-palette input').value='';renderSearch();updateModalState();el('.sf-palette input').focus();}
+  function closeSearch(){state.search=false;updateModalState();el('[data-open-search]').focus();}
+  function render(){
+    root.dataset.twoLines=String(state.twoLines);root.dataset.sidebar=String(state.sidebar);
+    all('[data-tier]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.tier===state.tier)));
+    renderBoard();renderChat();icons();
+  }
+  all('[data-tier]').forEach(b=>b.onclick=()=>{state.tier=b.dataset.tier;render();});
+  all('[data-stat-tier]').forEach(b=>b.onclick=()=>{state.tier=b.dataset.statTier;render();});
+  all('[data-stat-fan]').forEach(b=>b.onclick=()=>openFan(b.dataset.statFan,b));
+  all('[data-close-chat]').forEach(b=>b.onclick=closeChat);
+  el('[data-prev]').onclick=()=>moveFan(-1);el('[data-next]').onclick=()=>moveFan(1);
+  el('[data-open-search]').onclick=openSearch;el('[data-close-search]').onclick=closeSearch;el('.sf-palette input').oninput=renderSearch;
+  el('[data-chat-overlay]').onclick=e=>{if(e.target===e.currentTarget)closeChat();};el('[data-search-overlay]').onclick=e=>{if(e.target===e.currentTarget)closeSearch();};
+  el('[data-refresh]').onclick=()=>{scoped().forEach(f=>checkedFans.add(f.id));renderBoard();announce('В демонстрации обновлена отметка проверки. Данные фана без истории остаются неизвестными.');};
+  el('.sf-draft').oninput=e=>{if(state.selected){drafts[state.selected]=e.target.value;el('[data-generate=improve]').disabled=!e.target.value.trim();}};
+  all('[data-generate]').forEach(b=>b.onclick=()=>{
+    const f=fanById(state.selected);if(!f)return;
+    if(b.dataset.generate==='ping')drafts[f.id]=f.ping;
+    else if(b.dataset.generate==='reply')drafts[f.id]=f.reply||'';
+    else if(b.dataset.generate==='hi')drafts[f.id]='hey, glad you stopped by. how is your day going?';
+    else drafts[f.id]=(drafts[f.id]||'').trim();
+    renderChat();el('.sf-draft').focus();
+  });
+  root.addEventListener('keydown',e=>{
+    const editing=['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName),key=e.key.toLowerCase();
+    if((e.metaKey||e.ctrlKey)&&key==='k'&&!state.selected&&!state.search){e.preventDefault();openSearch();return;}
+    if(e.key==='Escape'){if(state.selected){e.preventDefault();closeChat();}else if(state.search){e.preventDefault();closeSearch();}return;}
+    if(state.search&&e.key==='Enter'&&e.target===el('.sf-palette input')){const first=el('[data-result]');if(first){e.preventDefault();first.click();}return;}
+    if(!editing&&!state.search&&!e.metaKey&&!e.ctrlKey&&['j','k'].includes(key)){
+      e.preventDefault();const direction=key==='j'?1:-1;
+      if(state.selected)moveFan(direction);else{const rows=all('[data-fan]'),at=rows.indexOf(document.activeElement);if(rows.length)rows[at<0?(direction>0?0:rows.length-1):(at+direction+rows.length)%rows.length].focus();}
+    }
+    if(e.key==='Tab'&&(state.selected||state.search)){
+      const surface=state.selected?el('.sf-dialog'):el('.sf-palette');
+      const controls=[...surface.querySelectorAll('button:not(:disabled),input,textarea')].filter(n=>n.getClientRects().length),first=controls[0],last=controls[controls.length-1];
+      if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+      else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+    }
+  });
+  const weights=[28,72,43,19,86,124,33,58,44,97,153,32,64,22,81,54,113,47,66,104,38,75,95];
+  const sum=weights.reduce((a,b)=>a+b,0),daily=weights.map(n=>Math.floor(n/sum*1691));daily[0]+=1691-daily.reduce((a,b)=>a+b,0);daily.push(90,130,86,155,142,138,49);
+  const max=Math.max(...daily);
+  el('.sf-chart').innerHTML=daily.map((n,i)=>'<span class="sf-bar" style="height:'+Math.max(4,n/max*100)+'%" data-tooltip="'+(i+1)+'-й день: '+cash(n)+'"></span>').join('');
+  render();
+  if(globalThis.Tweak){
+    const tweak=new Tweak({container:root,onChange:render});
+    tweak.addToggle(state,'twoLines',{label:'Две строки последнего сообщения',reference:'spenders.previewTwoLines'});
+    tweak.addToggle(state,'sidebar',{label:'Панель статистики справа',reference:'spenders.statisticsSidebar'});
+  }
+})();
+</script>

@@ -167,6 +167,8 @@ describe('roster', () => {
     expect(row?.lastMessageIsSentByMe).toBe(true);
     expect(row?.fanDays).toBe(36);
     expect(row?.modelDays).toBe(34);
+    expect(row?.lastFanMessageAt).toBe(isoDaysAgo(36));
+    expect(row?.lastModelMessageAt).toBe(isoDaysAgo(34));
     expect(row?.silence).toBe('hot');
     expect(row?.canSendMessage).toBe(true);
     expect(row?.hasChat).toBe(true);
@@ -181,6 +183,8 @@ describe('roster', () => {
     );
     const { rows } = await service.roster(ACCOUNT, '100');
     expect(rows[0]?.fanDays).toBeNull();
+    expect(rows[0]?.lastFanMessageAt).toBeNull();
+    expect(rows[0]?.lastModelMessageAt).toBeNull();
     expect(rows[0]?.silence).toBe('none');
     // No chat row: composer must be disabled (send engine rejects unknown chats).
     expect(rows[0]?.canSendMessage).toBe(false);
@@ -210,8 +214,12 @@ describe('roster', () => {
     expect(fan3?.fanDays).toBe(12);
     expect(fan3?.silence).toBe('warm');
     expect(fan3?.modelDays).toBeNull();
+    expect(fan3?.lastFanMessageAt).toBe(isoDaysAgo(12));
+    expect(fan3?.lastModelMessageAt).toBeNull();
     expect(fan4?.modelDays).toBe(5);
     expect(fan4?.fanDays).toBeNull();
+    expect(fan4?.lastModelMessageAt).toBe(isoDaysAgo(5));
+    expect(fan4?.lastFanMessageAt).toBeNull();
     expect(fan4?.silence).toBe('none');
   });
 
@@ -429,7 +437,7 @@ describe('stats (page right panel — local joins, 0 extra credits)', () => {
   });
 });
 
-describe('chat-row-less preview fallback (hydrated thread, no chat row yet)', () => {
+describe('preview and contact dates from the newest local evidence', () => {
   it('newest local message stands in for the list-payload preview', async () => {
     data.messages.upsertMany([
       sampleMessage({ chatId: '6', messageId: 'm1', isSentByMe: true, createdAt: isoDaysAgo(30) }),
@@ -450,16 +458,133 @@ describe('chat-row-less preview fallback (hydrated thread, no chat row yet)', ()
     expect(rows[0]?.hasChat).toBe(false); // composer stays disabled until the row hydrates
   });
 
-  it('a cached chat row always wins over the message fallback', async () => {
+  it('newer local text and its author replace an older chat-list snapshot together', async () => {
     data.chats.upsertMany([
-      sampleChat({ chatId: '7', lastMessagePreview: 'list payload preview', lastMessageIsSentByMe: false }),
+      sampleChat({ chatId: '7', lastMessagePreview: 'list payload preview', lastMessageIsSentByMe: false, unreadCount: 1 }),
     ]);
     data.messages.upsertMany([
       sampleMessage({ chatId: '7', messageId: 'm1', isSentByMe: true, createdAt: isoDaysAgo(1), textPlain: 'local text' }),
     ]);
     const service = makeService(stubClient({ lists: [], rosters: { '100': [[{ id: 7 }]] }, calls }));
     const { rows } = await service.roster(ACCOUNT, '100');
-    expect(rows[0]?.lastMessagePreview).toBe('list payload preview');
+    expect(rows[0]).toMatchObject({
+      lastMessagePreview: 'local text',
+      lastMessageIsSentByMe: true,
+      lastModelMessageAt: isoDaysAgo(1),
+      lastFanMessageAt: '2026-06-01T10:00:00.000Z',
+      fanWaiting: false,
+    });
+  });
+
+  it('a newer chat-list snapshot keeps its preview and updates only its sender date', async () => {
+    data.chats.upsertMany([
+      sampleChat({ chatId: '7', lastMessageAt: isoDaysAgo(1), lastMessagePreview: 'new fan text', lastMessageIsSentByMe: false }),
+    ]);
+    data.messages.upsertMany([
+      sampleMessage({ chatId: '7', messageId: '10', isSentByMe: true, createdAt: isoDaysAgo(2), textPlain: 'old model text' }),
+      sampleMessage({ chatId: '7', messageId: '9', isSentByMe: false, createdAt: isoDaysAgo(3) }),
+    ]);
+    const service = makeService(stubClient({ lists: [], rosters: { '100': [[{ id: 7 }]] }, calls }));
+    const { rows } = await service.roster(ACCOUNT, '100');
+    expect(rows[0]).toMatchObject({
+      lastMessagePreview: 'new fan text',
+      lastMessageIsSentByMe: false,
+      lastModelMessageAt: isoDaysAgo(2),
+      lastFanMessageAt: isoDaysAgo(1),
+    });
+  });
+
+  it('uses numeric message ids to choose the newer author at equal timestamps', async () => {
+    data.chats.upsertMany([
+      sampleChat({ chatId: '7', lastMessageAt: isoDaysAgo(1), lastMessageId: '2', lastMessagePreview: 'older fan text', lastMessageIsSentByMe: false }),
+    ]);
+    data.messages.upsertMany([
+      sampleMessage({ chatId: '7', messageId: '10', isSentByMe: true, createdAt: isoDaysAgo(1), textPlain: 'newer model text' }),
+    ]);
+    const service = makeService(stubClient({ lists: [], rosters: { '100': [[{ id: 7 }]] }, calls }));
+    expect((await service.roster(ACCOUNT, '100')).rows[0]).toMatchObject({
+      lastMessagePreview: 'newer model text', lastMessageIsSentByMe: true,
+    });
+  });
+
+  it.each([
+    { label: 'Media', isTip: false, media: [{ id: 'photo-1', type: 'photo' as const, thumbUrl: null, fullUrl: null, isReady: true, locked: false, durationSeconds: null }] },
+    { label: 'Tip', isTip: true, media: [] },
+  ])('keeps the $label preview when the newer local message has no text', async ({ label, isTip, media }) => {
+    data.chats.upsertMany([
+      sampleChat({ chatId: '7', lastMessageAt: isoDaysAgo(3), lastMessagePreview: 'older text', lastMessageIsSentByMe: true }),
+    ]);
+    data.messages.upsertMany([
+      sampleMessage({ chatId: '7', messageId: '10', isSentByMe: false, createdAt: isoDaysAgo(1), textPlain: '', textHtml: '', isTip, media }),
+    ]);
+    const service = makeService(stubClient({ lists: [], rosters: { '100': [[{ id: 7 }]] }, calls }));
+    expect((await service.roster(ACCOUNT, '100')).rows[0]).toMatchObject({
+      lastMessagePreview: label,
+      lastMessageIsSentByMe: false,
+      lastFanMessageAt: isoDaysAgo(1),
+    });
+  });
+
+  it('does not resurrect a tombstoned chat-list head as contact or preview', async () => {
+    data.chats.upsertMany([
+      sampleChat({ chatId: '7', lastMessageAt: isoDaysAgo(1), lastMessageId: '20', lastMessagePreview: 'unsent message', lastMessageIsSentByMe: true }),
+    ]);
+    data.messages.upsertMany([
+      sampleMessage({ chatId: '7', messageId: '10', isSentByMe: false, createdAt: isoDaysAgo(3), textPlain: 'last live fan text' }),
+      sampleMessage({ chatId: '7', messageId: '20', isSentByMe: true, createdAt: isoDaysAgo(1), deleted: true, textPlain: 'unsent message' }),
+    ]);
+    const service = makeService(stubClient({ lists: [], rosters: { '100': [[{ id: 7 }]] }, calls }));
+    expect((await service.roster(ACCOUNT, '100')).rows[0]).toMatchObject({
+      lastMessagePreview: 'last live fan text',
+      lastMessageIsSentByMe: false,
+      lastFanMessageAt: isoDaysAgo(3),
+      lastModelMessageAt: null,
+      modelDays: null,
+    });
+    data.messages.markDeleted(ACCOUNT, '7', ['10']);
+    expect((await service.roster(ACCOUNT, '100')).rows[0]).toMatchObject({
+      lastMessagePreview: '', lastFanMessageAt: null, lastModelMessageAt: null,
+    });
+  });
+
+  it('leaves invalid dates unknown and normalizes valid offset timestamps to ISO', async () => {
+    data.chats.upsertMany([
+      sampleChat({ chatId: '7', lastMessageAt: 'not-a-date', lastMessageIsSentByMe: true }),
+    ]);
+    data.messages.upsertMany([
+      sampleMessage({ chatId: '7', messageId: '20', isSentByMe: true, createdAt: 'invalid-date' }),
+      sampleMessage({ chatId: '7', messageId: '10', isSentByMe: false, createdAt: '2026-06-12T15:00:00+03:00', textPlain: 'dated fan text' }),
+    ]);
+    const service = makeService(stubClient({ lists: [], rosters: { '100': [[{ id: 7 }]] }, calls }));
+    expect((await service.roster(ACCOUNT, '100')).rows[0]).toMatchObject({
+      lastMessagePreview: 'dated fan text',
+      lastFanMessageAt: '2026-06-12T12:00:00.000Z',
+      lastModelMessageAt: null,
+      modelDays: null,
+    });
+  });
+
+  it('pending, failed and unconfirmed outbox rows do not advance actual contact dates', async () => {
+    data.messages.upsertMany([
+      sampleMessage({ chatId: '7', messageId: '10', isSentByMe: true, createdAt: isoDaysAgo(3), textPlain: 'last confirmed model text' }),
+    ]);
+    for (const state of ['queued', 'sending', 'failed', 'unconfirmed'] as const) {
+      data.outbox.insertMany([{
+        localId: state, accountId: ACCOUNT, chatId: '7', text: 'not confirmed',
+        sequenceId: null, partIndex: 0, retryOf: null, createdAt: isoDaysAgo(0),
+      }]);
+      if (state !== 'queued') data.outbox.transition({ localId: state, from: ['queued'], to: 'sending' });
+      if (state === 'failed' || state === 'unconfirmed') {
+        data.outbox.transition({ localId: state, from: ['sending'], to: state });
+      }
+    }
+    const service = makeService(stubClient({ lists: [], rosters: { '100': [[{ id: 7 }]] }, calls }));
+    expect((await service.roster(ACCOUNT, '100')).rows[0]).toMatchObject({
+      lastMessagePreview: 'last confirmed model text',
+      lastMessageIsSentByMe: true,
+      lastModelMessageAt: isoDaysAgo(3),
+      lastFanMessageAt: null,
+    });
   });
 });
 

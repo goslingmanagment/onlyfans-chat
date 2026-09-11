@@ -90,6 +90,15 @@ This section is review-blocking for renderer PRs, same weight as SPEC §15 invar
 
 ## 5. Visual reference mockup
 
+**Spenders update, 2026-09-11 — D29.** The current Spenders reference is
+[`mockups/spenders-contact-columns.html`](mockups/spenders-contact-columns.html),
+approved after the owner requested two contact columns, one latest-message
+preview, preserved spend figures and tier emojis. It supersedes the Spenders
+row anatomy and urgency colouring described in §1 and `supporters.html`.
+The chatter chooses when to write; contact ages are descriptive and manually
+sortable. The existing page shell, compact/expanded statistics and mini-chat
+remain. Current behavior and rollout: [`spenders.md`](spenders.md).
+
 The owner-**approved** mockup (sign-off 2026-06-10 after 4 iterations: light→bigger type→Claude-style→AI-surface redesign) lives at **[`mockups/workspace.html`](mockups/workspace.html)** (preview: `mockups/workspace-preview.png`) — Claude-style warm per §4, picked over a strict-console alternative. It is the **binding visual reference** for P1: zones, density, cream/terracotta palette, serif AI text, ledger-style tip rows, fan-value figures in chat rows (lifetime beside the name — figure default / chip per setting; green 30-day inflow at right), PPV purchase badges, terminal-style send states, AI dock with per-part Insert, the clickable activity status bar (mode word · credits · AI TODAY · sends · updated, per the owner-approved [`mockups/experiments/activity-panel.html`](mockups/experiments/activity-panel.html) — itself binding for the Activity panel), ≥14 px base type. Deviations require updating the mockup + this brief in the same PR. Iterate on the mockup (cheap) before iterating in React (expensive).
 
 ## 6. Process

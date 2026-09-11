@@ -5,7 +5,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   HI_LOCKED_REASON,
-  PING_BLOCKED_REASON,
   copyablePartsOf,
   deriveDockView,
   deriveHiLocked,
@@ -123,17 +122,13 @@ describe('deriveDockView · hi-greeting variants insert path', () => {
 });
 
 describe('Ping / Hi pill gates (precedence: unmapped → no-key → feature gate)', () => {
-  it('ping blocked → dimmed with the fan-active reason', () => {
-    expect(evaluatePingGate(OK_GATE, true)).toEqual({
-      enabled: false,
-      reason: PING_BLOCKED_REASON,
-      code: 'ping-blocked',
-    });
+  it('manual Ping stays enabled even with a cached legacy fan-active block', () => {
+    expect(evaluatePingGate(OK_GATE, true)).toEqual({ enabled: true });
   });
 
   it('ping allowed when the gate says not blocked or is unknown', () => {
     expect(evaluatePingGate(OK_GATE, false)).toEqual({ enabled: true });
-    // unknown = allowed; coordinator CG-FLOW-05 is authoritative
+    // Unknown recency also cannot decide for the chatter.
     expect(evaluatePingGate(OK_GATE, null)).toEqual({ enabled: true });
   });
 

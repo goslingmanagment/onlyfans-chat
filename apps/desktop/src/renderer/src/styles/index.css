@@ -233,6 +233,29 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Spenders headers and virtual rows share tracks. The narrow board also
+   occurs on wide windows when statistics are expanded. */
+.spender-board {
+  container: spender-board / inline-size;
+}
+.spender-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 84px 96px 96px;
+  column-gap: 12px;
+  padding-inline: 16px;
+}
+/* Match the list's reserved 10px scrollbar gutter even before it overflows. */
+.spender-column-head { padding-right: 26px; }
+@container spender-board (max-width: 620px) {
+  .spender-columns {
+    grid-template-columns: minmax(0, 1fr) 58px 66px 66px;
+    column-gap: 8px;
+    padding-inline: 12px;
+  }
+  .spender-column-head { padding-right: 22px; }
+  .spender-age { font-size: 14px; }
+}
+
 /* locked/loading media placeholder (mockup .ppv-media) — thumb, thread, gallery */
 @utility media-stripes {
   background-image: repeating-linear-gradient(

@@ -2,7 +2,7 @@
 // separate page — the workspace chat list is NOT shown, ESC/← returns to it.
 // The board owns the screen with a compact stats column right; S/⤢ expands
 // stats to a full grid and squeezes the roster to 400px. Row anatomy stays
-// per the binding mockup docs/mockups/supporters.html. A viewing board: NO AI
+// per D29 and docs/mockups/spenders-contact-columns.html. A viewing board: NO AI
 // automation — the human decides; AI runs only on explicit click/hotkey
 // inside the quick-look preview.
 
@@ -33,6 +33,8 @@ import { useSpendersStore } from './spendersStore';
 import { SpenderRowItem } from './SpenderRowItem';
 import { StatsPanel } from './StatsPanel';
 import { QuickLook } from './QuickLook';
+import type { ContactSide } from './contactAge';
+import { useContactClock } from './useContactClock';
 
 function estimateItem(item: BoardItem | undefined): number {
   if (item === undefined) return 64;
@@ -45,12 +47,15 @@ export function SpendersSurface(): React.JSX.Element {
   const accountId = useUiStore((s) => s.selectedAccountId);
   const setView = useUiStore((s) => s.setView);
   const t = useT();
+  const now = useContactClock();
 
   const accounts = useAccounts();
   const settings = useSettings();
   const lists = useSpenderLists(accountId, true);
 
   const chip = useSpendersStore((s) => s.chip);
+  const contactSort = useSpendersStore((s) => s.contactSort);
+  const sortContact = useSpendersStore((s) => s.sortContact);
   const expanded = useSpendersStore((s) => s.expanded);
   const untieredOpen = useSpendersStore((s) => s.untieredOpen);
   const cursorFanId = useSpendersStore((s) => s.cursorFanId);
@@ -113,21 +118,22 @@ export function SpendersSurface(): React.JSX.Element {
     }));
     if (chip !== 'all') {
       const index = shelves.findIndex((list) => list.id === chip);
-      return buildFlatView(index === -1 ? null : (shelfData[index] ?? null));
+      return buildFlatView(index === -1 ? null : (shelfData[index] ?? null), contactSort);
     }
     return buildAllView({
       shelves: shelfData,
       expanded,
+      sort: contactSort,
       untiered: { open: untieredOpen, rows: untiered.data?.rows, loading: untiered.isPending && untieredOpen },
     });
     // rosterQueries is a new array each render but its data refs are stable
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shelves, chip, expanded, untieredOpen, untiered.data, untiered.isPending, ...rosterQueries.map((q) => q.data)]);
+  }, [shelves, chip, expanded, contactSort, untieredOpen, untiered.data, untiered.isPending, ...rosterQueries.map((q) => q.data)]);
 
   // publish the flat row pool for the global keymap (J/K/SPACE/O)
   useEffect(() => {
-    setVisibleRows(model.fanRows);
-  }, [model.fanRows, setVisibleRows]);
+    setVisibleRows(model.fanRows, model.loadedRows);
+  }, [model.fanRows, model.loadedRows, setVisibleRows]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -159,7 +165,7 @@ export function SpendersSurface(): React.JSX.Element {
   // ответа» must resolve even when its shelf isn't loaded on the board.
   const previewRowVM =
     previewFanId !== null
-      ? (model.fanRows.find((row) => row.fanId === previewFanId) ??
+      ? (model.loadedRows.find((row) => row.fanId === previewFanId) ??
         statsRows.find((row) => row.fanId === previewFanId) ??
         null)
       : null;
@@ -181,6 +187,7 @@ export function SpendersSurface(): React.JSX.Element {
         return (
           <SpenderRowItem
             row={item.row}
+            now={now}
             active={item.row.fanId === (previewFanId ?? cursorFanId)}
             t={t}
             onOpen={openPreview}
@@ -237,16 +244,16 @@ export function SpendersSurface(): React.JSX.Element {
     <section className="relative flex min-h-0 min-w-0 flex-1 bg-bg0">
       <div
         className={cx(
-          'flex min-h-0 flex-col bg-bg1',
+          'spender-board flex min-h-0 flex-col bg-bg1',
           statsExpanded ? 'w-[400px] flex-none border-r border-line' : 'min-w-0 flex-1',
         )}
       >
-        <div className="flex flex-none items-baseline gap-[11px] border-b border-line px-[18px] py-[13px]">
+        <div className="flex flex-none flex-wrap items-baseline gap-x-[11px] gap-y-1 border-b border-line px-[18px] py-[13px]">
           <h3 className="font-serif text-[16.5px] font-semibold">{t('sp.title')}</h3>
           {!statsExpanded && (
-            <span className="num text-[10px] tracking-[0.05em] text-ink-low uppercase">
+            <span className="text-[11px] text-ink-low" aria-live="polite">
               {account !== null ? `${account.displayName} · ` : ''}
-              {t('sp.sortNote')}
+              {t('sp.sortNote', { side: t(contactSort.side === 'model' ? 'sp.modelWrote' : 'sp.fanWrote'), arrow: contactSort.direction === 'desc' ? '↓' : '↑' })}
             </span>
           )}
           <button
@@ -257,7 +264,7 @@ export function SpendersSurface(): React.JSX.Element {
             {t('sp.backToChat')}
           </button>
         </div>
-        <div className="flex flex-none items-center gap-[5px] overflow-x-auto border-b border-line px-4 py-[11px]">
+        <div className="flex flex-none flex-wrap items-center gap-[5px] border-b border-line px-4 py-[11px]">
           <ChipButton selected={chip === 'all'} onClick={() => setChip('all')}>
             {t('sp.all')}
             <span className="num ml-1 text-[10.5px] opacity-70">{allCount}</span>
@@ -297,7 +304,33 @@ export function SpendersSurface(): React.JSX.Element {
             />
           </div>
         )}
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        {!empty && (
+          <div className="spender-columns spender-column-head flex-none items-center border-b border-line bg-bg1 text-[12px] text-ink-mid" role="group" aria-label={t('sp.columns')}>
+            <span>{t('sp.latestMessageColumn')}</span>
+            <span className="text-right">{t('sp.spend30dColumn')}</span>
+            {(['model', 'fan'] as const).map((side: ContactSide) => {
+              const selected = contactSort.side === side;
+              const label = t(side === 'model' ? 'sp.modelWrote' : 'sp.fanWrote');
+              const nextDirection = selected && contactSort.direction === 'desc' ? 'sp.sortNewest' : 'sp.sortOldest';
+              return (
+                <button
+                  key={side}
+                  type="button"
+                  data-contact-sort={side}
+                  aria-pressed={selected}
+                  aria-label={`${label}: ${t(nextDirection)}`}
+                  title={t(nextDirection)}
+                  onClick={() => sortContact(side)}
+                  className={cx('flex min-h-[44px] cursor-pointer items-center justify-center gap-1 py-2 text-center hover:text-ink', selected && 'font-medium text-ink')}
+                >
+                  <span>{label}</span>
+                  <span className="w-2 flex-none" aria-hidden="true">{selected ? (contactSort.direction === 'desc' ? '↓' : '↑') : ''}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
           {empty ? (
             <EmptyState
               glyph="◫"
@@ -334,12 +367,15 @@ export function SpendersSurface(): React.JSX.Element {
             </div>
           )}
         </div>
-        <div className="flex flex-none items-center gap-2 border-t border-line bg-bg1 px-4 py-2 text-[11px] text-ink-low">
+        <div className="flex flex-none flex-wrap items-center gap-x-2 gap-y-1 border-t border-line bg-bg1 px-4 py-2 text-[11px] text-ink-low">
           <Kbd>J</Kbd>
           <Kbd>K</Kbd> {t('sp.footNav')} · <Kbd>SPACE</Kbd> {t('sp.footPreview')} · <Kbd>O</Kbd>{' '}
           {t('sp.footChat')}
           <span className="flex-1" />
-          {!statsExpanded && <span>{t('sp.footReadOnly')}</span>}
+          {model.fanRows.length > 0 && <span title={t('sp.contactUnknown')}>{t('sp.contactCoverage', {
+            known: model.fanRows.filter((row) => row.lastModelMessageAt !== null && row.lastFanMessageAt !== null).length,
+            total: model.fanRows.length,
+          })}</span>}
         </div>
       </div>
       <StatsPanel stats={stats.data} expanded={statsExpanded} loading={stats.isLoading} />

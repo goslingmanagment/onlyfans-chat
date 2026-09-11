@@ -96,4 +96,14 @@ describe('startAiFromGlobal message-load gate', () => {
     expect(useAiStore.getState().op).toMatchObject({ feature: 'ping', chatId: CHAT_ID });
     expect(invoke.mock.calls.some((call) => call[0] === 'ai:start')).toBe(true);
   });
+
+  it('starts manual Ping for an active fan even if an old recency flag is cached', () => {
+    const queryClient = makeQueryClient();
+    seedLoadedMessages(queryClient);
+    queryClient.setQueryData(pingGateKey(ACCOUNT_ID, CHAT_ID), { segment: 'active', blocked: true });
+    startAiFromGlobal('ping', queryClient);
+    expect(useAiStore.getState().op).toMatchObject({ feature: 'ping', chatId: CHAT_ID });
+    expect(invoke.mock.calls.some(call => call[0] === 'ai:start')).toBe(true);
+    expect(invoke.mock.calls.some(call => call[0].startsWith('cmd:send'))).toBe(false);
+  });
 });

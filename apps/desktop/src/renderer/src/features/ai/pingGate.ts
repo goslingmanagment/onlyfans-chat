@@ -1,5 +1,5 @@
-// query:ai.pingGate — main runs the legacy ping segmentation over the local DB
-// (blocked = fan texted within the ping window, CG-FLOW-05). Refetches are
+// query:ai.pingGate — main describes the local transcript's ping segment.
+// D29: recency never blocks a manual Ping. Refetches are
 // event-driven: the newest loaded message id is fed in by the pill row, so the
 // gate re-evaluates exactly when the messages cache moves (no polling,
 // DESIGN §3.3/§3.6).

@@ -110,6 +110,7 @@ export function createOnlineService(options: OnlineServiceOptions): OnlineServic
     const fans = data.fans.getMany(accountId, ids);
     const chats = data.chats.getMany(accountId, ids);
     const lastTimes = data.messages.latestBySender(accountId, ids);
+    const deletedChatHeads = data.messages.deletedChatHeadIds(accountId, ids);
     const newestTexts = data.messages.newestPerChat(
       accountId,
       members.filter((m) => !chats.has(m.fanId)).map((m) => m.fanId),
@@ -123,9 +124,13 @@ export function createOnlineService(options: OnlineServiceOptions): OnlineServic
       const fan: FanRow | undefined = fans.get(member.fanId);
       const chat: ChatRow | undefined = chats.get(member.fanId);
       const last = lastTimes.get(member.fanId);
-      let fanLastMs = last?.lastFanAt != null ? Date.parse(last.lastFanAt) : null;
-      let modelLastMs = last?.lastModelAt != null ? Date.parse(last.lastModelAt) : null;
-      const chatLastMs = chat?.lastMessageAt != null ? Date.parse(chat.lastMessageAt) : null;
+      const fanMs = last?.lastFanAt != null ? Date.parse(last.lastFanAt) : NaN;
+      const modelMs = last?.lastModelAt != null ? Date.parse(last.lastModelAt) : NaN;
+      let fanLastMs = Number.isFinite(fanMs) ? fanMs : null;
+      let modelLastMs = Number.isFinite(modelMs) ? modelMs : null;
+      const chatLastMs = chat?.lastMessageAt != null && !deletedChatHeads.has(member.fanId)
+        ? Date.parse(chat.lastMessageAt)
+        : null;
       if (chat !== undefined && chatLastMs !== null && Number.isFinite(chatLastMs)) {
         if (chat.lastMessageIsSentByMe) {
           modelLastMs = modelLastMs === null ? chatLastMs : Math.max(modelLastMs, chatLastMs);
@@ -167,6 +172,8 @@ export function createOnlineService(options: OnlineServiceOptions): OnlineServic
         lastMessageIsSentByMe:
           chat?.lastMessageIsSentByMe ?? newestTexts.get(member.fanId)?.isSentByMe ?? false,
         fanWaiting: chat !== undefined ? deriveFanWaiting(chat) : false,
+        lastModelMessageAt: modelLastMs !== null ? new Date(modelLastMs).toISOString() : null,
+        lastFanMessageAt: fanLastMs !== null ? new Date(fanLastMs).toISOString() : null,
         modelDays,
         fanDays,
         silence: fanSilenceBucket(fanDays),

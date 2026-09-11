@@ -4,12 +4,14 @@
 
 import { create } from 'zustand';
 import type { SpenderRowVM } from '../../../../preload/contract';
+import { DEFAULT_CONTACT_SORT, type ContactSide, type ContactSort } from './contactAge';
 
 export type SpendersChip = 'all' | string;
 
 interface SpendersState {
   /** «Все» = tier-section view; a list id = flat single-tier view. */
   chip: SpendersChip;
+  contactSort: ContactSort;
   /** Shelves expanded past their «Все»-view preview (incl. collapsed tiers). */
   expanded: Record<string, true>;
   untieredOpen: boolean;
@@ -22,6 +24,8 @@ interface SpendersState {
   previewAiBlocked: { fanId: string; reason: string } | null;
   /** Flat ordered fan rows currently visible (published by the surface). */
   visibleRows: SpenderRowVM[];
+  /** Loaded rows before shelf clipping, for an open preview's identity. */
+  loadedRows: SpenderRowVM[];
   /** Stats panel: false = compact 300px column (default — the board owns the
    *  screen), true = full grid with the roster squeezed left (owner v2). */
   statsExpanded: boolean;
@@ -40,6 +44,7 @@ interface SpendersState {
   } | null;
 
   setChip: (chip: SpendersChip) => void;
+  sortContact: (side: ContactSide) => void;
   expandList: (listId: string) => void;
   setUntieredOpen: (open: boolean) => void;
   setCursor: (fanId: string | null) => void;
@@ -48,7 +53,7 @@ interface SpendersState {
   closePreview: () => void;
   setPreviewAiBlocked: (fanId: string, reason: string) => void;
   clearPreviewAiBlocked: (fanId?: string) => void;
-  setVisibleRows: (rows: SpenderRowVM[]) => void;
+  setVisibleRows: (rows: SpenderRowVM[], loadedRows?: SpenderRowVM[]) => void;
   setStatsRows: (rows: SpenderRowVM[]) => void;
   setRefresh: (refresh: SpendersState['refresh']) => void;
   toggleStatsExpanded: () => void;
@@ -59,17 +64,25 @@ interface SpendersState {
 export function createBoardStore() {
   return create<SpendersState>((set) => ({
     chip: 'all',
+    contactSort: DEFAULT_CONTACT_SORT,
     expanded: {},
     untieredOpen: false,
     cursorFanId: null,
     previewFanId: null,
     previewAiBlocked: null,
     visibleRows: [],
+    loadedRows: [],
     statsExpanded: false,
     statsRows: [],
     refresh: null,
 
     setChip: (chip) => set({ chip, cursorFanId: null, previewFanId: null }),
+    sortContact: (side) => set((s) => ({
+      contactSort: {
+        side,
+        direction: s.contactSort.side === side && s.contactSort.direction === 'desc' ? 'asc' : 'desc',
+      },
+    })),
     expandList: (listId) => set((s) => ({ expanded: { ...s.expanded, [listId]: true } })),
     setUntieredOpen: (open) => set({ untieredOpen: open }),
     setCursor: (fanId) => set({ cursorFanId: fanId }),
@@ -77,6 +90,22 @@ export function createBoardStore() {
       set((s) => {
         if (s.visibleRows.length === 0) return s;
         const index = s.visibleRows.findIndex((row) => row.fanId === s.cursorFanId);
+        // A confirmed message can move the open fan outside a shelf's preview.
+        // Walk from its new position to the nearest visible fan, keeping the
+        // normal edge clamp instead of jumping to the beginning of the board.
+        if (index === -1 && s.cursorFanId !== null) {
+          const anchor = s.loadedRows.findIndex((row) => row.fanId === s.cursorFanId);
+          if (anchor !== -1) {
+            const visibleIds = new Set(s.visibleRows.map((row) => row.fanId));
+            for (let i = anchor + delta; i >= 0 && i < s.loadedRows.length; i += delta) {
+              const fanId = s.loadedRows[i]?.fanId;
+              if (fanId !== undefined && visibleIds.has(fanId)) {
+                return { cursorFanId: fanId, ...(s.previewFanId !== null ? { previewFanId: fanId } : {}) };
+              }
+            }
+            return s;
+          }
+        }
         const next =
           index === -1
             ? delta === 1
@@ -91,7 +120,11 @@ export function createBoardStore() {
         };
       }),
     openPreview: (fanId) => set({ previewFanId: fanId, cursorFanId: fanId }),
-    closePreview: () => set({ previewFanId: null, previewAiBlocked: null }),
+    closePreview: () => set((s) => ({
+      previewFanId: null,
+      previewAiBlocked: null,
+      cursorFanId: s.visibleRows.some((row) => row.fanId === s.cursorFanId) ? s.cursorFanId : null,
+    })),
     setPreviewAiBlocked: (fanId, reason) => set({ previewAiBlocked: { fanId, reason } }),
     clearPreviewAiBlocked: (fanId) =>
       set((s) =>
@@ -99,12 +132,13 @@ export function createBoardStore() {
           ? { previewAiBlocked: null }
           : s,
       ),
-    setVisibleRows: (rows) =>
+    setVisibleRows: (rows, loadedRows = rows) =>
       set((s) => {
-        // keep cursor valid as data refreshes; drop it if the fan left the view
-        // (the preview deliberately survives refreshes — it holds its own fanId)
-        const cursorOk = s.cursorFanId !== null && rows.some((r) => r.fanId === s.cursorFanId);
-        return { visibleRows: rows, ...(cursorOk ? {} : { cursorFanId: null }) };
+        const cursorOk = s.cursorFanId !== null && (
+          rows.some((row) => row.fanId === s.cursorFanId) ||
+          (s.previewFanId === s.cursorFanId && loadedRows.some((row) => row.fanId === s.cursorFanId))
+        );
+        return { visibleRows: rows, loadedRows, ...(cursorOk ? {} : { cursorFanId: null }) };
       }),
     setStatsRows: (rows) => set({ statsRows: rows }),
     setRefresh: (refresh) => set({ refresh }),
@@ -123,6 +157,7 @@ export type BoardStore = typeof useSpendersStore;
 export function previewRow(state: SpendersState): SpenderRowVM | null {
   if (state.previewFanId === null) return null;
   return (
+    state.loadedRows.find((row) => row.fanId === state.previewFanId) ??
     state.visibleRows.find((row) => row.fanId === state.previewFanId) ??
     state.statsRows.find((row) => row.fanId === state.previewFanId) ??
     null

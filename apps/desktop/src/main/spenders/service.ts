@@ -19,9 +19,10 @@ import {
 import { htmlToPlainText } from '@chatgoose/shared/transcript/index';
 import type { OfApiClient } from '../ofapi/client';
 import type { DataLayer } from '../db/index';
-import type { ChatRow, FanRow } from '../db/rows';
+import type { ChatRow, FanRow, MessageRow } from '../db/rows';
 import type { SpenderListVM, SpenderRowVM, SpenderStatsVM } from '../../preload/contract';
 import { deriveFanWaiting } from '../ipc/viewmodels';
+import { compareMessageIds } from '../sync/message-id';
 
 export const SPENDERS_TTL_MS = 5 * 60_000;
 export const LISTS_PAGE_LIMIT = 50;
@@ -77,6 +78,20 @@ export const STATS_WAITING_LIMIT = 6;
 export const STATS_NEW_LIMIT = 6;
 const STATS_DAYS = 30;
 const WEEK_DAYS = 7;
+
+function knownTimestampMs(value: string | null | undefined): number | null {
+  if (value == null) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Same plain one-line fallback as sync's chat preview (media-only/tips stay visible). */
+function messagePreview(message: MessageRow): string {
+  const text = message.textPlain.split('\n')[0]?.trim() ?? '';
+  if (text.length > 0) return text;
+  if (message.isTip) return 'Tip';
+  return message.media.length > 0 ? 'Media' : '';
+}
 
 export interface SpendersServiceOptions {
   client: OfApiClient;
@@ -204,13 +219,10 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
     const fans = data.fans.getMany(accountId, ids);
     const chats = data.chats.getMany(accountId, ids);
     const lastTimes = data.messages.latestBySender(accountId, ids);
-    // Preview fallback for chat-row-less fans: once the thread hydrates (e.g.
-    // the quick-look tail fetch) the newest local message stands in for the
-    // list-payload preview until normal hydration reaches the chat row.
-    const newestTexts = data.messages.newestPerChat(
-      accountId,
-      members.filter((member) => !chats.has(member.fanId)).map((member) => member.fanId),
-    );
+    // A thread fetch or confirmed send can be ahead of the cached chat-list
+    // snapshot. Keep preview, author and contact dates on the same newest fact.
+    const newestMessages = data.messages.newestPerChat(accountId, ids);
+    const deletedChatHeads = data.messages.deletedChatHeadIds(accountId, ids);
     const spend30d = data.fanTransactions.sumByFanSince(
       accountId,
       new Date(nowMs - SPEND_WINDOW_MS).toISOString(),
@@ -220,15 +232,17 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
       const fan: FanRow | undefined = fans.get(member.fanId);
       const chat: ChatRow | undefined = chats.get(member.fanId);
       const last = lastTimes.get(member.fanId);
+      const newestMessage = newestMessages.get(member.fanId);
+      const chatHeadDeleted = deletedChatHeads.has(member.fanId);
       // Counter sources, both LOCAL (vendor lastReplyAt is null — never used):
       // the message store when the thread was ever fetched, plus the chat
       // row's own last-message stamp from list payloads — hydration is
       // LIST-ONLY (SPEC §6.1), so for never-opened chats the list stamp is
       // the only signal and it is exact for whichever side wrote last.
-      let fanLastMs = last?.lastFanAt != null ? Date.parse(last.lastFanAt) : null;
-      let modelLastMs = last?.lastModelAt != null ? Date.parse(last.lastModelAt) : null;
-      const chatLastMs = chat?.lastMessageAt != null ? Date.parse(chat.lastMessageAt) : null;
-      if (chat !== undefined && chatLastMs !== null && Number.isFinite(chatLastMs)) {
+      let fanLastMs = knownTimestampMs(last?.lastFanAt);
+      let modelLastMs = knownTimestampMs(last?.lastModelAt);
+      const chatLastMs = chatHeadDeleted ? null : knownTimestampMs(chat?.lastMessageAt);
+      if (chat !== undefined && chatLastMs !== null) {
         if (chat.lastMessageIsSentByMe) {
           modelLastMs = modelLastMs === null ? chatLastMs : Math.max(modelLastMs, chatLastMs);
         } else {
@@ -237,6 +251,26 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
       }
       const fanDays = fanLastMs !== null ? daysSince(fanLastMs, nowMs) : null;
       const modelDays = modelLastMs !== null ? daysSince(modelLastMs, nowMs) : null;
+      const localLastMs = knownTimestampMs(newestMessage?.createdAt);
+      const useLocalPreview = newestMessage !== undefined && (
+        chat === undefined || chatHeadDeleted || (
+          localLastMs !== null && (
+            chatLastMs === null || localLastMs > chatLastMs || (
+              localLastMs === chatLastMs && chat.lastMessageId !== null &&
+              compareMessageIds(newestMessage.messageId, chat.lastMessageId) > 0
+            )
+          )
+        )
+      );
+      // A same-time snapshot with no comparable id keeps its existing preview;
+      // without newer evidence, do not replace its richer media description.
+      const lastMessagePreview = useLocalPreview
+        ? messagePreview(newestMessage)
+        : chatHeadDeleted ? '' : (chat?.lastMessagePreview ?? '');
+      const lastMessageIsSentByMe = useLocalPreview
+        ? newestMessage.isSentByMe
+        : chatHeadDeleted ? false : (chat?.lastMessageIsSentByMe ?? false);
+      const previewAtMs = useLocalPreview ? localLastMs : chatLastMs;
       const lifetime = fan?.spending?.total ?? member.totalSumm;
       const name =
         (fan?.customName !== null && fan?.customName !== undefined && fan.customName !== ''
@@ -264,11 +298,15 @@ export function createSpendersService(options: SpendersServiceOptions): Spenders
         avatarUrl,
         lifetimeSpend: lifetime ?? null,
         spend30d: spend30d.get(member.fanId) ?? null,
-        lastMessagePreview:
-          chat?.lastMessagePreview ?? newestTexts.get(member.fanId)?.textPlain ?? '',
-        lastMessageIsSentByMe:
-          chat?.lastMessageIsSentByMe ?? newestTexts.get(member.fanId)?.isSentByMe ?? false,
-        fanWaiting: chat !== undefined ? deriveFanWaiting(chat) : false,
+        lastMessagePreview,
+        lastMessageIsSentByMe,
+        fanWaiting: chat !== undefined && previewAtMs !== null ? deriveFanWaiting({
+          ...chat,
+          lastMessageAt: new Date(previewAtMs).toISOString(),
+          lastMessageIsSentByMe,
+        }) : false,
+        lastModelMessageAt: modelLastMs !== null ? new Date(modelLastMs).toISOString() : null,
+        lastFanMessageAt: fanLastMs !== null ? new Date(fanLastMs).toISOString() : null,
         modelDays,
         fanDays,
         silence: fanSilenceBucket(fanDays),

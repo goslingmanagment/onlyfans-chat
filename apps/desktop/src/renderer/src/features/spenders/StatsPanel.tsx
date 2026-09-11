@@ -15,9 +15,8 @@ import { Skeleton } from '../../design/Skeleton';
 import { cx } from '../../lib/cx';
 import { UNTIERED_ID } from './boardModel';
 import { useSpendersStore } from './spendersStore';
-import { dayCounter } from './SpenderRowItem';
-
-const SILENCE_DOT = { warm: 'bg-amber', hot: 'bg-clay-deep' } as const;
+import { formatContactAge } from './contactAge';
+import { useContactClock } from './useContactClock';
 
 /** '$11.60' — avg check keeps cents (the one stats figure where cents matter). */
 function formatCents(amount: number): string {
@@ -44,6 +43,7 @@ export function StatsPanel({
   loading: boolean;
 }): React.JSX.Element {
   const t = useT();
+  const now = useContactClock();
   const locale = useLocale();
   const toggle = useSpendersStore((s) => s.toggleStatsExpanded);
   const setChip = useSpendersStore((s) => s.setChip);
@@ -179,7 +179,7 @@ export function StatsPanel({
                   {row.lifetimeSpend !== null ? formatWholeDollars(row.lifetimeSpend) : '—'}
                 </span>
                 <span className="num text-[8.5px] tracking-[0.05em] text-ink-low">
-                  {dayCounter(t, row.fanDays)}
+                  {formatContactAge(row.lastFanMessageAt, now, t)}
                 </span>
               </FanLine>
             ))}
@@ -284,20 +284,13 @@ export function StatsPanel({
                   key={row.listId}
                   type="button"
                   onClick={() => setChip(row.listId)}
-                  className="grid w-full cursor-pointer grid-cols-[96px_1fr_1fr_70px] items-center gap-2.5 border-t border-bg2 py-1.5 text-left first:border-t-0 hover:bg-bg2"
+                  className="grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-1 border-t border-bg2 py-2 text-left first:border-t-0 hover:bg-bg2"
                 >
                   <span className="truncate text-[12px] font-semibold text-ink-mid">{row.title}</span>
-                  <span className="num flex items-center gap-1.5 text-[10px] text-ink-mid">
-                    <span className={cx('h-[7px] w-[7px] rounded-full', SILENCE_DOT.warm)} />
-                    <b className="font-semibold text-ink">{row.warm}</b> {t('sp.stats.warmWord')}
-                  </span>
-                  <span className="num flex items-center gap-1.5 text-[10px] text-ink-mid">
-                    <span className={cx('h-[7px] w-[7px] rounded-full', SILENCE_DOT.hot)} />
-                    <b className="font-semibold text-ink">{row.hot}</b> {t('sp.stats.hotWord')}
-                  </span>
                   <span className="num text-right text-[10px] text-ink-low">
                     {formatWholeDollars(row.silentLifetime)}
                   </span>
+                  <span className="col-span-2 flex flex-wrap gap-x-3"><RadarCounts warm={row.warm} hot={row.hot} /></span>
                 </button>
               ))}
             </>
@@ -314,10 +307,7 @@ export function StatsPanel({
                   {row.lifetimeSpend !== null ? formatWholeDollars(row.lifetimeSpend) : '—'}
                 </span>
                 <span className="num flex items-center gap-1.5 text-[9px] tracking-[0.05em] text-ink-low">
-                  {row.fanDays !== null && row.fanDays === 0 && (
-                    <span className="h-[7px] w-[7px] rounded-full bg-clay" />
-                  )}
-                  {dayCounter(t, row.fanDays)}
+                  {formatContactAge(row.lastFanMessageAt, now, t)}
                 </span>
               </FanLine>
             ))
@@ -586,8 +576,8 @@ function HotSummary({
   return (
     <div
       className={cx(
-        'mb-1.5 flex items-baseline gap-2 rounded-md border border-amber-line bg-amber-bg',
-        compact ? 'px-2 py-1' : 'px-2.5 py-1.5',
+        'mb-1.5 flex items-baseline gap-2',
+        compact ? 'py-1' : 'py-1.5',
       )}
     >
       <span className={cx('num font-semibold', compact ? 'text-[12px]' : 'text-[13px]')}>
@@ -629,18 +619,17 @@ function FanLine({
 }
 
 function RadarCounts({ warm, hot }: { warm: number; hot: number }): React.JSX.Element {
+  const t = useT();
   return (
     <>
       {warm > 0 && (
-        <span className="num flex items-center gap-1 text-[10px] text-ink-mid">
-          <span className={cx('h-[7px] w-[7px] rounded-full', SILENCE_DOT.warm)} />
-          <b className="font-semibold text-ink">{warm}</b>
+        <span className="num flex items-center gap-1 text-[10px] whitespace-nowrap text-ink-mid">
+          <b className="font-semibold text-ink">{warm}</b> · {t('sp.stats.warmWord')}
         </span>
       )}
       {hot > 0 && (
-        <span className="num flex items-center gap-1 text-[10px] text-ink-mid">
-          <span className={cx('h-[7px] w-[7px] rounded-full', SILENCE_DOT.hot)} />
-          <b className="font-semibold text-ink">{hot}</b>
+        <span className="num flex items-center gap-1 text-[10px] whitespace-nowrap text-ink-mid">
+          <b className="font-semibold text-ink">{hot}</b> · {t('sp.stats.hotWord')}
         </span>
       )}
     </>

@@ -22,7 +22,8 @@ import { handleConversationChange } from '../ai/aiStore';
 import { resetVaultForConversation } from '../vault/vaultStore';
 import { presenceKey, useUiStore } from '../../state/uiStore';
 import type { BoardStore } from './spendersStore';
-import { dayCounter } from './SpenderRowItem';
+import { ContactAge } from './ContactAgeValue';
+import { useContactClock } from './useContactClock';
 import { hydratePreviewFan, ensureAndOpenPreviewChat } from './previewActions';
 import {
   deriveHydrateStatus,
@@ -61,7 +62,9 @@ export function QuickLook({
   store: BoardStore;
 }): React.JSX.Element {
   const t = useT();
+  const now = useContactClock();
   const closePreview = store((s) => s.closePreview);
+  const moveCursor = store((s) => s.moveCursor);
   const setPreviewAiBlocked = store((s) => s.setPreviewAiBlocked);
   const clearPreviewAiBlocked = store((s) => s.clearPreviewAiBlocked);
   const pushToast = useUiStore((s) => s.pushToast);
@@ -221,14 +224,14 @@ export function QuickLook({
     <>
       <button
         type="button"
-        aria-label="close"
+        aria-label={t('sp.closePreview')}
         onClick={closePreview}
         className="absolute inset-0 z-30 cursor-default bg-scrim"
       />
-      <div className="absolute top-1/2 left-1/2 z-40 flex h-[92%] w-[min(1180px,95vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line-strong bg-bg1 shadow-pop">
-        <div className="flex flex-none items-center gap-2.5 border-b border-line px-4 py-3">
+      <div role="dialog" aria-modal="true" aria-labelledby="spenders-preview-title" className="absolute top-1/2 left-1/2 z-40 flex h-[92%] w-[calc(100%_-_32px)] max-w-[860px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-line-strong bg-bg1 shadow-pop">
+        <div className="flex flex-none flex-wrap items-center gap-2.5 border-b border-line px-4 py-3">
           <Avatar name={name} url={row?.avatarUrl ?? null} size={28} radius={8} />
-          <span className="font-serif text-[15.5px] font-semibold">{name}</span>
+          <span id="spenders-preview-title" className="font-serif text-[15.5px] font-semibold">{name}</span>
           {row?.lifetimeSpend != null && Math.round(row.lifetimeSpend) > 0 && (
             <span className="num text-[10.5px] text-ink-mid">
               {formatWholeDollars(row.lifetimeSpend)}
@@ -240,14 +243,7 @@ export function QuickLook({
             </span>
           )}
           <PreviewStatusChips accountId={accountId} fanId={fanId} fan={fan} />
-          {/* no staleness dot in the preview header (owner decision V-a) */}
-          <span className="num ml-auto text-[9.5px] tracking-[0.06em] text-ink-low">
-            {t('sp.model')}{' '}
-            <b className="font-semibold text-ink-mid">{dayCounter(t, row?.modelDays ?? null)}</b>
-            {' · '}
-            {t('sp.fan')}{' '}
-            <b className="font-semibold text-ink-mid">{dayCounter(t, row?.fanDays ?? null)}</b>
-          </span>
+          <span className="flex-1" />
           <button
             type="button"
             onClick={handleRefresh}
@@ -261,6 +257,11 @@ export function QuickLook({
               ↻
             </span>
           </button>
+          <button type="button" onClick={closePreview} aria-label={t('sp.closePreview')} title={t('sp.closePreview')} className="flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-full text-[20px] text-ink-mid hover:bg-bg2">×</button>
+        </div>
+        <div className="flex flex-none flex-wrap gap-x-6 gap-y-1 border-b border-line px-4 py-2 text-[12px] text-ink-mid">
+          <span>{t('sp.modelWrote')}: <span className="font-medium text-ink"><ContactAge at={row?.lastModelMessageAt ?? null} now={now} label={t('sp.modelWrote')} t={t} /></span></span>
+          <span>{t('sp.fanWrote')}: <span className="font-medium text-ink"><ContactAge at={row?.lastFanMessageAt ?? null} now={now} label={t('sp.fanWrote')} t={t} /></span></span>
         </div>
         <ConversationView
           accountId={accountId}
@@ -281,7 +282,9 @@ export function QuickLook({
           }
         />
         <div className="flex flex-none items-center gap-2 border-t border-line bg-bg1 px-4 py-[9px]">
-          <span className="num text-[9.5px] tracking-[0.06em] text-ink-low">{t('sp.previewHint')}</span>
+          <button type="button" onClick={() => moveCursor(-1)} className="cursor-pointer text-[12px] text-ink-mid hover:text-ink">← {t('sp.previousFan')}</button>
+          <button type="button" onClick={() => moveCursor(1)} className="cursor-pointer text-[12px] text-ink-mid hover:text-ink">{t('sp.nextFan')} →</button>
+          <span className="num text-[9.5px] text-ink-low">J/K · Esc</span>
           <span
             className={
               'num text-[9.5px] tracking-[0.06em] ' + (hydrateError ? 'text-warn' : 'text-ink-low')

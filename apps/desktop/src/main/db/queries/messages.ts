@@ -79,15 +79,17 @@ export interface MessagesQueries {
   get(accountId: string, chatId: string, messageId: string): MessageRow | null;
   oldest(accountId: string, chatId: string): MessageRow | null;
   page(args: { accountId: string; chatId: string; beforeId?: string; limit?: number }): MessagePage;
-  /** Batched per-chat MAX(created_at) split by is_sent_by_me; deleted excluded.
-   *  Chats with no local history are absent from the map. */
+  /** Batched per-chat newest valid ISO timestamp split by is_sent_by_me;
+   *  deleted/invalid dates excluded. Chats with no local history are absent. */
   latestBySender(accountId: string, chatIds: readonly string[]): Map<string, LastBySender>;
-  /** Batched newest non-deleted message text per chat — the Spenders board
-   *  preview fallback for fans whose chat ROW hasn't hydrated yet. */
+  /** Batched newest dated, non-deleted message per chat, with its own author
+   *  and media/tip fields so a preview never joins facts from different rows. */
   newestPerChat(
     accountId: string,
     chatIds: readonly string[],
-  ): Map<string, { textPlain: string; isSentByMe: boolean }>;
+  ): Map<string, MessageRow>;
+  /** Chat-list heads whose exact message has a durable local tombstone. */
+  deletedChatHeadIds(accountId: string, chatIds: readonly string[]): Set<string>;
   /** Tombstone: keeps the rows, flags them deleted (SPEC §6.3). */
   markDeleted(accountId: string, chatId: string, messageIds: readonly string[]): void;
   /** Records the durable, monotonic fact that a cached PPV message was unlocked. */
@@ -253,8 +255,8 @@ export function createMessagesQueries(db: ChatGooseDb, bus: DbChangeBus): Messag
         const rows: unknown[] = db
           .prepare(
             `SELECT chat_id,
-               MAX(CASE WHEN is_sent_by_me = 0 THEN created_at END) AS last_fan_at,
-               MAX(CASE WHEN is_sent_by_me = 1 THEN created_at END) AS last_model_at
+               MAX(CASE WHEN is_sent_by_me = 0 THEN strftime('%Y-%m-%dT%H:%M:%fZ', created_at) END) AS last_fan_at,
+               MAX(CASE WHEN is_sent_by_me = 1 THEN strftime('%Y-%m-%dT%H:%M:%fZ', created_at) END) AS last_model_at
              FROM messages
              WHERE account_id = @account_id AND deleted = 0 AND chat_id IN (${placeholders})
              GROUP BY chat_id`,
@@ -269,34 +271,59 @@ export function createMessagesQueries(db: ChatGooseDb, bus: DbChangeBus): Messag
     },
 
     newestPerChat(accountId, chatIds) {
-      const out = new Map<string, { textPlain: string; isSentByMe: boolean }>();
-      const rowSchema = z.object({
-        chat_id: z.string(),
-        text_plain: z.string(),
-        is_sent_by_me: z.number(),
-      });
+      const out = new Map<string, MessageRow>();
       for (const chunk of chunked(chatIds)) {
         const placeholders = chunk.map((_, i) => `@id${i}`).join(', ');
         const params: Record<string, string> = { account_id: accountId };
         chunk.forEach((id, i) => {
           params[`id${i}`] = id;
         });
-        // SQLite bare-column semantics: with MAX(created_at) the other selected
-        // columns come from the max row (single aggregate, documented behavior).
+        // Rank row identities before loading their bodies/media. Timestamp
+        // ties use the same numeric-id ordering as message paging; a bare
+        // MAX row would be arbitrary on ties.
         const rows: unknown[] = db
           .prepare(
-            `SELECT chat_id, text_plain, is_sent_by_me, MAX(created_at) AS created_at
-             FROM messages
-             WHERE account_id = @account_id AND deleted = 0 AND chat_id IN (${placeholders})
-             GROUP BY chat_id`,
+            `SELECT ${COLUMNS} FROM messages WHERE rowid IN (
+               SELECT message_rowid FROM (
+                 SELECT rowid AS message_rowid, ROW_NUMBER() OVER (
+                   PARTITION BY chat_id
+                   ORDER BY julianday(created_at) DESC, CAST(message_id AS INTEGER) DESC, message_id DESC
+                 ) AS message_rank
+                 FROM messages
+                 WHERE account_id = @account_id AND deleted = 0
+                   AND julianday(created_at) IS NOT NULL AND chat_id IN (${placeholders})
+               ) WHERE message_rank = 1
+             )`,
           )
           .all(params);
         for (const raw of rows) {
-          const row = rowSchema.parse(raw);
-          out.set(row.chat_id, {
-            textPlain: row.text_plain,
-            isSentByMe: row.is_sent_by_me === 1,
-          });
+          const row = decodeMessageRow(raw);
+          out.set(row.chatId, row);
+        }
+      }
+      return out;
+    },
+
+    deletedChatHeadIds(accountId, chatIds) {
+      const out = new Set<string>();
+      const rowSchema = z.object({ chat_id: z.string() });
+      for (const chunk of chunked(chatIds)) {
+        const placeholders = chunk.map((_, i) => `@id${i}`).join(', ');
+        const params: Record<string, string> = { account_id: accountId };
+        chunk.forEach((id, i) => {
+          params[`id${i}`] = id;
+        });
+        const rows: unknown[] = db
+          .prepare(
+            `SELECT c.chat_id FROM chats c
+             JOIN messages m ON m.account_id = c.account_id AND m.chat_id = c.chat_id
+               AND m.message_id = c.last_message_id
+             WHERE c.account_id = @account_id AND m.deleted = 1
+               AND c.chat_id IN (${placeholders})`,
+          )
+          .all(params);
+        for (const raw of rows) {
+          out.add(rowSchema.parse(raw).chat_id);
         }
       }
       return out;

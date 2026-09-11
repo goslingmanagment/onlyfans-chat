@@ -352,12 +352,10 @@ function evaluateDeepPillGate(
   return { enabled: true };
 }
 
-/** `blocked === true` = query:ai.pingGate said the fan texted within the ping window. */
-export function evaluatePingGate(base: AiGate | null, blocked: boolean | null): PillGate {
-  return evaluateDeepPillGate(
-    base,
-    blocked === true ? { reason: PING_BLOCKED_REASON, code: 'ping-blocked' } : null,
-  );
+/** D29: the chatter decides when to Ping. A cached legacy recency flag does
+ * not block the button, palette or preview; account/auth gates still apply. */
+export function evaluatePingGate(base: AiGate | null, _legacyBlocked: boolean | null): PillGate {
+  return evaluateDeepPillGate(base, null);
 }
 
 /** `locked === true` = conversation already exceeds the hi-greeting message cap. */

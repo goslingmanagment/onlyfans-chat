@@ -7,6 +7,7 @@ function row(fanId: string, lifetimeSpend: number | null, lastSeen: string | nul
     fanId, name: fanId, username: null, avatarUrl: null, lifetimeSpend, spend30d: null,
     lastMessagePreview: '', lastMessageIsSentByMe: false, fanWaiting: false,
     modelDays: null, fanDays: null, silence: 'none', canSendMessage: true,
+    lastModelMessageAt: null, lastFanMessageAt: null,
     canNotSendReason: null, hasChat: true, lastSeen,
   };
 }

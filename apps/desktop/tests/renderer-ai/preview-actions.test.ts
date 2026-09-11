@@ -125,4 +125,15 @@ describe('startAiFromPreview hydrate gate', () => {
     expect(useAiStore.getState().op).toMatchObject({ feature: 'ping', chatId: FAN_ID });
     expect(invoke.mock.calls.some((call) => call[0] === 'ai:start')).toBe(true);
   });
+
+  it('allows the chatter to Ping a recent fan in the mini-chat without sending', () => {
+    const queryClient = makeQueryClient();
+    seedLoadedMessages(queryClient);
+    openPreview(false);
+    queryClient.setQueryData(pingGateKey(ACCOUNT_ID, FAN_ID), { segment: 'active', blocked: true });
+    startAiFromPreview('ping', queryClient);
+    expect(useAiStore.getState().op).toMatchObject({ feature: 'ping', chatId: FAN_ID });
+    expect(invoke.mock.calls.some(call => call[0] === 'ai:start')).toBe(true);
+    expect(invoke.mock.calls.some(call => call[0].startsWith('cmd:send'))).toBe(false);
+  });
 });

@@ -25,6 +25,7 @@ import type {
   VaultItemVM,
 } from '../../../preload/contract';
 import type { Personality, ReplyTone } from '@chatgoose/shared/types';
+import { daysSince, fanSilenceBucket } from '@chatgoose/shared/spenders';
 import type {
   LlmSpendSummaryPayload,
   OperationPhase,
@@ -105,6 +106,38 @@ const FAN_NAMES = [
   'Nate', 'Stefan', 'ryan_dx', 'Hugo', 'Wes M.', 'Felix', 'arman_77', 'Leo K.',
   'Dustin', 'Gary P.', 'noah_vt', 'Iggy', 'Mateo', 'Brad S.', 'kev_in', 'Tony Q.', 'Walt',
 ] as const;
+
+// Keep the approved Spenders examples recognizable across fixture changes.
+const SPENDER_SAMPLE_SPEND: Record<string, readonly [number, number | null]> = {
+  ryan_dx: [4961, 372], 'Marcus K.': [2152, 490], Sam: [3836, null],
+  jake_777: [5256, null], Eddie: [1332, 567], Daniel: [4200, null], 'Chris B.': [5004, 524],
+};
+
+// Stable membership survives chat-recency updates and keeps Daniel's empty
+// history on a visible shelf. IDs correspond to FAN_NAMES/buildStore below.
+const MOCK_SPENDER_TIERS: Record<string, Record<string, readonly string[]>> = {
+  acct_lora: {
+    '9001': ['90018', '90001', '90006'], // ryan_dx, Marcus K., Sam
+    '9002': ['90003', '90011', '90002', '90009'], // jake_777, Eddie, Daniel, Chris B.
+  },
+  acct_lexi: {
+    '9001': ['90019', '90020', '90021'],
+    '9002': ['90022', '90023', '90024', '90025'],
+  },
+};
+
+const MOCK_CONTACT_DAYS: Record<string, { model: number; fan: number }> = {
+  '90018': { model: 34, fan: 36 },
+  '90001': { model: 3, fan: 15 },
+  '90006': { model: 9, fan: 12 },
+  '90003': { model: 3, fan: 1 / 24 },
+};
+
+function mockMessagePreview(message: MessageVM): string {
+  if (message.isTip) return `[Tip $${message.tipAmount ?? 0}] ${message.tipText ?? ''}`.trim();
+  if (message.price > 0) return `[PPV $${message.price}] ${message.text}`;
+  return message.text.split('\n')[0]?.trim() || (message.media.length > 0 ? 'Media' : '');
+}
 
 const FAN_LINES = [
   'long day… gym after work nearly finished me. how was yours?',
@@ -314,6 +347,7 @@ function buildFan(accountId: string, fanId: string, name: string, lastMessageAt:
 }
 
 function buildStore(): MockStore {
+  const seededAt = Date.now();
   const accounts: AccountVM[] = [
     {
       id: 'acct_lora',
@@ -362,8 +396,23 @@ function buildStore(): MockStore {
       const msgCount = i === 0 ? 220 : 18 + Math.floor(rng() * 45);
       const endMs = Date.now() - Math.floor(rng() * (i === 0 ? 1 : 36)) * 3_600_000;
       const msgs = noHistory ? [] : buildMessages(fanId, msgCount, endMs);
+      const contactDays = MOCK_CONTACT_DAYS[fanId];
+      if (contactDays !== undefined) {
+        // Shift each sender's existing timeline as a whole, so the thread,
+        // preview and both contact columns show the same seeded facts.
+        for (const isSentByMe of [false, true]) {
+          const senderMessages = msgs.filter((message) => message.isSentByMe === isSentByMe);
+          const latest = Math.max(...senderMessages.filter((message) => !message.deleted).map((message) => Date.parse(message.createdAt)));
+          if (!Number.isFinite(latest)) continue;
+          const target = seededAt - (isSentByMe ? contactDays.model : contactDays.fan) * 86_400_000;
+          for (const message of senderMessages) {
+            message.createdAt = new Date(Date.parse(message.createdAt) + target - latest).toISOString();
+          }
+        }
+        msgs.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || Number(a.id) - Number(b.id));
+      }
       messages.set(`${account.id}/${fanId}`, msgs);
-      const last = msgs[msgs.length - 1];
+      const last = msgs.findLast((message) => !message.deleted);
       const unread = last !== undefined && !last.isSentByMe && chance(0.5) ? 1 + Math.floor(rng() * 4) : 0;
       const lastIsTip = last?.isTip === true;
       const item: ChatListItemVM = {
@@ -373,15 +422,7 @@ function buildStore(): MockStore {
         avatarUrl: null,
         lastMessageAt: last?.createdAt ?? null,
         lastMessageId: last?.id ?? (noHistory ? String(fanSeq * 10_000) : null),
-        lastMessagePreview: last === undefined
-          ? ''
-          : last.isTip
-            ? `[Tip $${last.tipAmount ?? 0}] ${last.tipText ?? ''}`.trim()
-            : last.deleted
-              ? 'message deleted'
-              : last.price > 0
-                ? `[PPV $${last.price}] ${last.text}`
-                : last.text,
+        lastMessagePreview: last === undefined ? '' : mockMessagePreview(last),
         lastMessageIsSentByMe: last?.isSentByMe ?? false,
         unreadCount: unread,
         hasUnreadTips: lastIsTip || chance(0.1),
@@ -391,8 +432,8 @@ function buildStore(): MockStore {
         canNotSendReason: i !== 3 ? null : 'You cannot message this user — they unsubscribed.',
         // fan-value spread (DESIGN §1): whales, mid, small, and the silent $0 case
         // (the noHistory fan keeps real spend so it surfaces in the Spenders shelf)
-        lifetimeSpend: noHistory ? 4200 : chance(0.2) ? null : Math.floor(rng() * 6000),
-        spend30d: chance(0.4) ? null : Math.floor(rng() * 600),
+        lifetimeSpend: SPENDER_SAMPLE_SPEND[name]?.[0] ?? (noHistory ? 4200 : chance(0.2) ? null : Math.floor(rng() * 6000)),
+        spend30d: SPENDER_SAMPLE_SPEND[name] !== undefined ? SPENDER_SAMPLE_SPEND[name][1] : chance(0.4) ? null : Math.floor(rng() * 600),
       };
       list.push(item);
       fans.set(`${account.id}/${fanId}`, buildFan(account.id, fanId, name, item.lastMessageAt ?? new Date().toISOString()));
@@ -849,6 +890,71 @@ export function createMockBridge(): ChatGooseBridge {
   // Spenders freshness (PLAN item 13): per-scope stamps + a simulated queue.
   const mockRefreshStamps: Record<string, string> = {};
   const mockOnlineStamps: Record<string, string> = {};
+
+  function spenderTierChats(accountId: string, listId: string): ChatListItemVM[] {
+    const chats = store.chats.get(accountId) ?? [];
+    return (MOCK_SPENDER_TIERS[accountId]?.[listId] ?? []).flatMap((id) => {
+      const chat = chats.find((candidate) => candidate.chatId === id);
+      return chat === undefined ? [] : [chat];
+    });
+  }
+
+  /** Shared facts for every surface; no separate invented age arrays. */
+  function spenderRow(accountId: string, chat: ChatListItemVM): SpenderRowVM {
+    const knownMs = (value: string | null): number | null => {
+      const ms = value === null ? NaN : Date.parse(value);
+      return Number.isFinite(ms) ? ms : null;
+    };
+    const messages = store.messages.get(`${accountId}/${chat.chatId}`) ?? [];
+    let modelMs: number | null = null;
+    let fanMs: number | null = null;
+    let latest: MessageVM | undefined;
+    let latestMs: number | null = null;
+    for (const message of messages) {
+      const ms = knownMs(message.createdAt);
+      if (message.deleted || ms === null) continue;
+      if (message.isSentByMe) modelMs = Math.max(modelMs ?? ms, ms);
+      else fanMs = Math.max(fanMs ?? ms, ms);
+      if (latestMs === null || ms > latestMs || (ms === latestMs && Number(message.id) > Number(latest?.id ?? 0))) {
+        latest = message;
+        latestMs = ms;
+      }
+    }
+    const deletedHead = messages.some((message) => message.id === chat.lastMessageId && message.deleted);
+    const chatMs = deletedHead ? null : knownMs(chat.lastMessageAt);
+    if (chatMs !== null) {
+      if (chat.lastMessageIsSentByMe) modelMs = Math.max(modelMs ?? chatMs, chatMs);
+      else fanMs = Math.max(fanMs ?? chatMs, chatMs);
+    }
+    const useLocal = latest !== undefined && latestMs !== null && (
+      chatMs === null || latestMs > chatMs ||
+      (latestMs === chatMs && Number(latest.id) > Number(chat.lastMessageId ?? 0))
+    );
+    const lastMessageIsSentByMe = useLocal && latest !== undefined ? latest.isSentByMe : deletedHead ? false : chat.lastMessageIsSentByMe;
+    const nowMs = Date.now();
+    const modelDays = modelMs === null ? null : daysSince(modelMs, nowMs);
+    const fanDays = fanMs === null ? null : daysSince(fanMs, nowMs);
+    return {
+      fanId: chat.chatId,
+      name: chat.fanName,
+      username: null,
+      avatarUrl: chat.avatarUrl,
+      lifetimeSpend: chat.lifetimeSpend,
+      spend30d: chat.spend30d,
+      lastMessagePreview: useLocal && latest !== undefined ? mockMessagePreview(latest) : deletedHead ? '' : chat.lastMessagePreview,
+      lastMessageIsSentByMe,
+      fanWaiting: (useLocal ? latestMs : chatMs) !== null && !lastMessageIsSentByMe && chat.unreadCount > 0,
+      lastModelMessageAt: modelMs === null ? null : new Date(modelMs).toISOString(),
+      lastFanMessageAt: fanMs === null ? null : new Date(fanMs).toISOString(),
+      modelDays,
+      fanDays,
+      silence: fanSilenceBucket(fanDays),
+      canSendMessage: chat.canSendMessage,
+      canNotSendReason: chat.canNotSendReason,
+      hasChat: true,
+    };
+  }
+
   function buildOnlineSnapshot(accountId: string, spendersOnly: boolean, fetchedAt: string | null) {
     // Mirror the real service: no stamp ⇒ no in-memory snapshot ⇒ empty (CTA).
     if (fetchedAt === null) {
@@ -859,21 +965,7 @@ export function createMockBridge(): ChatGooseBridge {
     // QuickLook always finds a backing chat). Take every other chat; ≤20 = one page.
     const pool = all.filter((_, i) => i % 2 === 0);
     let rows = pool.slice(0, 20).map((c, i) => ({
-      fanId: c.chatId,
-      name: c.fanName,
-      username: null,
-      avatarUrl: c.avatarUrl,
-      lifetimeSpend: c.lifetimeSpend,
-      spend30d: c.spend30d,
-      lastMessagePreview: c.lastMessagePreview,
-      lastMessageIsSentByMe: c.lastMessageIsSentByMe,
-      fanWaiting: c.fanWaiting,
-      modelDays: null,
-      fanDays: null,
-      silence: 'none' as const,
-      canSendMessage: c.canSendMessage,
-      canNotSendReason: c.canNotSendReason,
-      hasChat: true,
+      ...spenderRow(accountId, c),
       lastSeen: new Date(Date.now() - (1 + i) * 60_000).toISOString(),
     }));
     if (spendersOnly) rows = rows.filter((r) => (r.lifetimeSpend ?? 0) > 0);
@@ -1391,7 +1483,7 @@ export function createMockBridge(): ChatGooseBridge {
         currentVersion: '0.0.2',
       };
     },
-    'query:ai.pingGate': () => ({ segment: 'active', blocked: true }),
+    'query:ai.pingGate': () => ({ segment: 'active', blocked: false }),
     'cmd:conversation.open': ({ accountId, chatId }) => {
       const localCount = store.messages.get(`${accountId}/${chatId}`)?.length ?? 0;
       return {
@@ -1671,46 +1763,15 @@ export function createMockBridge(): ChatGooseBridge {
       fetchedAt: new Date().toISOString(),
     }),
     'query:spenders.roster': ({ accountId, listId }) => {
-      const all = store.chats.get(accountId) ?? [];
-      const slice = listId === '9001' ? all.slice(0, 3) : all.slice(3, 7);
-      const rows = slice.map((c, i) => ({
-        fanId: c.chatId,
-        name: c.fanName,
-        username: null,
-        avatarUrl: c.avatarUrl,
-        lifetimeSpend: c.lifetimeSpend,
-        spend30d: c.spend30d,
-        lastMessagePreview: c.lastMessagePreview,
-        lastMessageIsSentByMe: c.lastMessageIsSentByMe,
-        fanWaiting: c.fanWaiting,
-        modelDays: [34, 3, 10, 0, 21, 9, 2][i] ?? null,
-        fanDays: [36, 15, 9, 0, 21, 15, 41][i] ?? null,
-        silence: ([36, 15, 9, 0, 21, 15, 41][i] ?? 0) >= 22 ? ('hot' as const) : ([36, 15, 9, 0, 21, 15, 41][i] ?? 0) >= 8 ? ('warm' as const) : ('none' as const),
-        canSendMessage: c.canSendMessage,
-        canNotSendReason: c.canNotSendReason,
-        hasChat: true,
-      }));
+      const rows = spenderTierChats(accountId, listId).map((chat) => spenderRow(accountId, chat));
       return { rows, truncated: false, fetchedAt: new Date().toISOString() };
     },
     'query:spenders.untiered': ({ accountId }) => {
       const all = store.chats.get(accountId) ?? [];
-      const rows = all.slice(7, 9).map((c) => ({
-        fanId: c.chatId,
-        name: c.fanName,
-        username: null,
-        avatarUrl: c.avatarUrl,
-        lifetimeSpend: c.lifetimeSpend,
-        spend30d: c.spend30d,
-        lastMessagePreview: c.lastMessagePreview,
-        lastMessageIsSentByMe: c.lastMessageIsSentByMe,
-        fanWaiting: c.fanWaiting,
-        modelDays: 5,
-        fanDays: 12,
-        silence: 'warm' as const,
-        canSendMessage: c.canSendMessage,
-        canNotSendReason: c.canNotSendReason,
-        hasChat: true,
-      }));
+      const tiered = new Set(Object.values(MOCK_SPENDER_TIERS[accountId] ?? {}).flat());
+      const rows = all.filter((chat) => !tiered.has(chat.chatId))
+        .sort((a, b) => Number(a.chatId) - Number(b.chatId)).slice(0, 2)
+        .map((chat) => spenderRow(accountId, chat));
       return { rows, fetchedAt: new Date().toISOString() };
     },
     'cmd:spenders.hydrate': ({ accountId, chatId }) => {
@@ -1732,9 +1793,7 @@ export function createMockBridge(): ChatGooseBridge {
       if (row !== undefined && last !== undefined) {
         row.lastMessageAt = last.createdAt;
         row.lastMessageId = last.id;
-        row.lastMessagePreview = last.isTip
-          ? `[Tip $${last.tipAmount ?? 0}] ${last.tipText ?? ''}`.trim()
-          : last.text;
+        row.lastMessagePreview = mockMessagePreview(last);
         row.lastMessageIsSentByMe = last.isSentByMe;
         store.chats.set(accountId, sortChatsByRecency(chats));
       }
@@ -1799,6 +1858,7 @@ export function createMockBridge(): ChatGooseBridge {
     },
     'query:spenders.stats': ({ accountId }) => {
       const all = store.chats.get(accountId) ?? [];
+      const rows = all.map((chat) => spenderRow(accountId, chat));
       const today = new Date();
       const dayString = (back: number): string => {
         const d = new Date(today.getTime() - back * 24 * 60 * 60_000);
@@ -1806,25 +1866,18 @@ export function createMockBridge(): ChatGooseBridge {
       };
       const amounts = [18, 32, 0, 45, 22, 60, 14, 8, 38, 0, 26, 100, 42, 12, 30, 55, 0, 20, 34, 16, 48, 28, 64, 36, 10, 52, 24, 70, 40, 49];
       const days = amounts.map((amount, i) => ({ day: dayString(29 - i), amount }));
-      const rowOf = (c: (typeof all)[number], fanDays: number | null): SpenderRowVM => ({
-        fanId: c.chatId,
-        name: c.fanName,
-        username: null,
-        avatarUrl: c.avatarUrl,
-        lifetimeSpend: c.lifetimeSpend,
-        spend30d: c.spend30d,
-        lastMessagePreview: c.lastMessagePreview,
-        lastMessageIsSentByMe: c.lastMessageIsSentByMe,
-        fanWaiting: c.fanWaiting,
-        modelDays: 1,
-        fanDays,
-        silence: fanDays !== null && fanDays >= 22 ? 'hot' : fanDays !== null && fanDays >= 8 ? 'warm' : 'none',
-        canSendMessage: c.canSendMessage,
-        canNotSendReason: c.canNotSendReason,
-        hasChat: true,
+      const waiting = rows.filter((row) => row.fanWaiting).slice(0, 4);
+      const newSpenders = rows.slice(5, 7).map((row, i) => ({ row, txCount: 3 - i }));
+      const radar = [{ listId: '9001', title: '🐳 Кит' }, { listId: '9002', title: '⭐ Топ' }].map((tier) => {
+        const tierRows = spenderTierChats(accountId, tier.listId).map((chat) => spenderRow(accountId, chat));
+        return {
+          ...tier,
+          warm: tierRows.filter((row) => row.silence === 'warm').length,
+          hot: tierRows.filter((row) => row.silence === 'hot').length,
+          silentLifetime: tierRows.filter((row) => row.silence !== 'none')
+            .reduce((sum, row) => sum + (row.lifetimeSpend ?? 0), 0),
+        };
       });
-      const waiting = all.filter((c) => c.fanWaiting).slice(0, 4).map((c, i) => rowOf(c, i === 0 ? 0 : i));
-      const newSpenders = all.slice(5, 7).map((c, i) => ({ row: rowOf(c, 2), txCount: 3 - i }));
       return {
         days,
         revenue30d: amounts.reduce((a, b) => a + b, 0),
@@ -1839,12 +1892,9 @@ export function createMockBridge(): ChatGooseBridge {
           { listId: '9002', title: '⭐ Топ', revenue: 342, payers: 4 },
           { listId: '__untiered__', title: '', revenue: 74, payers: 5 },
         ],
-        radar: [
-          { listId: '9001', title: '🐳 Кит', warm: 1, hot: 1, silentLifetime: 2756 },
-          { listId: '9002', title: '⭐ Топ', warm: 2, hot: 1, silentLifetime: 890 },
-        ],
-        hotCount: 2,
-        hotLifetime: 3646,
+        radar,
+        hotCount: rows.filter((row) => row.silence === 'hot').length,
+        hotLifetime: rows.filter((row) => row.silence === 'hot').reduce((sum, row) => sum + (row.lifetimeSpend ?? 0), 0),
         waiting,
         newSpenders,
       };
