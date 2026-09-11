@@ -339,6 +339,7 @@ export declare const pageConversationProfileParamsSchema: z.ZodObject<{
     pageLabel: z.ZodString;
     conversationId: z.ZodString;
 }, z.core.$strip>;
+export declare const revenueInstantSchema: z.ZodISODateTime;
 export declare const revenueQuerySchema: z.ZodUnion<readonly [z.ZodObject<{
     period: z.ZodEnum<{
         today: "today";
@@ -346,10 +347,12 @@ export declare const revenueQuerySchema: z.ZodUnion<readonly [z.ZodObject<{
         "30d": "30d";
         all: "all";
     }>;
+    windowAt: z.ZodOptional<z.ZodISODateTime>;
     from: z.ZodOptional<z.ZodString>;
     to: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>, z.ZodObject<{
     period: z.ZodLiteral<"custom">;
+    windowAt: z.ZodOptional<z.ZodISODateTime>;
     from: z.ZodString;
     to: z.ZodString;
 }, z.core.$strip>]>;
@@ -716,6 +719,29 @@ export declare const revenueComparisonSchema: z.ZodObject<{
     totalNetMills: z.ZodNumber;
     deltaNetMills: z.ZodNumber;
     deltaPct: z.ZodNullable<z.ZodNumber>;
+    sources: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        canonicalType: z.ZodEnum<{
+            subscription: "subscription";
+            tip: "tip";
+            message_purchase: "message_purchase";
+            post_purchase: "post_purchase";
+            stream_tip: "stream_tip";
+            chargeback: "chargeback";
+            refund: "refund";
+            payout_reversal: "payout_reversal";
+            other: "other";
+        }>;
+        bucket: z.ZodEnum<{
+            revenue: "revenue";
+            adjustment: "adjustment";
+            unclassified: "unclassified";
+            excluded: "excluded";
+        }>;
+        currentNetMills: z.ZodNumber;
+        previousNetMills: z.ZodNumber;
+        deltaNetMills: z.ZodNumber;
+        deltaPct: z.ZodNullable<z.ZodNumber>;
+    }, z.core.$strip>>>;
 }, z.core.$strip>;
 export declare const revenueWindowSchema: z.ZodObject<{
     revenueMills: z.ZodNumber;
@@ -730,6 +756,7 @@ export declare const revenueWindowSchema: z.ZodObject<{
         all: "all";
         custom: "custom";
     }>;
+    windowAt: z.ZodOptional<z.ZodString>;
     from: z.ZodNullable<z.ZodString>;
     to: z.ZodNullable<z.ZodString>;
     currency: z.ZodLiteral<"USD">;
@@ -760,6 +787,29 @@ export declare const revenueWindowSchema: z.ZodObject<{
         totalNetMills: z.ZodNumber;
         deltaNetMills: z.ZodNumber;
         deltaPct: z.ZodNullable<z.ZodNumber>;
+        sources: z.ZodOptional<z.ZodArray<z.ZodObject<{
+            canonicalType: z.ZodEnum<{
+                subscription: "subscription";
+                tip: "tip";
+                message_purchase: "message_purchase";
+                post_purchase: "post_purchase";
+                stream_tip: "stream_tip";
+                chargeback: "chargeback";
+                refund: "refund";
+                payout_reversal: "payout_reversal";
+                other: "other";
+            }>;
+            bucket: z.ZodEnum<{
+                revenue: "revenue";
+                adjustment: "adjustment";
+                unclassified: "unclassified";
+                excluded: "excluded";
+            }>;
+            currentNetMills: z.ZodNumber;
+            previousNetMills: z.ZodNumber;
+            deltaNetMills: z.ZodNumber;
+            deltaPct: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strip>>>;
     }, z.core.$strip>>;
     platformWindows: z.ZodArray<z.ZodObject<{
         platform: z.ZodEnum<{
@@ -779,6 +829,13 @@ export declare const pageRevenueItemSchema: z.ZodObject<{
     modelName: z.ZodString;
     netEarningsMills: z.ZodNumber;
     totalNetMills: z.ZodNumber;
+    previousNetEarningsMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    deltaNetMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    deltaPct: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    platform: z.ZodOptional<z.ZodEnum<{
+        fansly: "fansly";
+        onlyfans: "onlyfans";
+    }>>;
     status: z.ZodOptional<z.ZodEnum<{
         active: "active";
         deleted: "deleted";
@@ -791,6 +848,9 @@ export declare const modelRevenueItemSchema: z.ZodObject<{
     pageCount: z.ZodNumber;
     netEarningsMills: z.ZodNumber;
     totalNetMills: z.ZodNumber;
+    previousNetEarningsMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    deltaNetMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    deltaPct: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
     status: z.ZodOptional<z.ZodEnum<{
         active: "active";
         retired: "retired";
@@ -809,6 +869,7 @@ export declare const overviewRevenueResponseSchema: z.ZodObject<{
         all: "all";
         custom: "custom";
     }>;
+    windowAt: z.ZodOptional<z.ZodString>;
     from: z.ZodNullable<z.ZodString>;
     to: z.ZodNullable<z.ZodString>;
     currency: z.ZodLiteral<"USD">;
@@ -839,6 +900,29 @@ export declare const overviewRevenueResponseSchema: z.ZodObject<{
         totalNetMills: z.ZodNumber;
         deltaNetMills: z.ZodNumber;
         deltaPct: z.ZodNullable<z.ZodNumber>;
+        sources: z.ZodOptional<z.ZodArray<z.ZodObject<{
+            canonicalType: z.ZodEnum<{
+                subscription: "subscription";
+                tip: "tip";
+                message_purchase: "message_purchase";
+                post_purchase: "post_purchase";
+                stream_tip: "stream_tip";
+                chargeback: "chargeback";
+                refund: "refund";
+                payout_reversal: "payout_reversal";
+                other: "other";
+            }>;
+            bucket: z.ZodEnum<{
+                revenue: "revenue";
+                adjustment: "adjustment";
+                unclassified: "unclassified";
+                excluded: "excluded";
+            }>;
+            currentNetMills: z.ZodNumber;
+            previousNetMills: z.ZodNumber;
+            deltaNetMills: z.ZodNumber;
+            deltaPct: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strip>>>;
     }, z.core.$strip>>;
     platformWindows: z.ZodArray<z.ZodObject<{
         platform: z.ZodEnum<{
@@ -857,6 +941,9 @@ export declare const overviewRevenueResponseSchema: z.ZodObject<{
         pageCount: z.ZodNumber;
         netEarningsMills: z.ZodNumber;
         totalNetMills: z.ZodNumber;
+        previousNetEarningsMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        deltaNetMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        deltaPct: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
         status: z.ZodOptional<z.ZodEnum<{
             active: "active";
             retired: "retired";
@@ -869,6 +956,13 @@ export declare const overviewRevenueResponseSchema: z.ZodObject<{
         modelName: z.ZodString;
         netEarningsMills: z.ZodNumber;
         totalNetMills: z.ZodNumber;
+        previousNetEarningsMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        deltaNetMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        deltaPct: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        platform: z.ZodOptional<z.ZodEnum<{
+            fansly: "fansly";
+            onlyfans: "onlyfans";
+        }>>;
         status: z.ZodOptional<z.ZodEnum<{
             active: "active";
             deleted: "deleted";
@@ -895,6 +989,7 @@ export declare const modelRevenueResponseSchema: z.ZodObject<{
         all: "all";
         custom: "custom";
     }>;
+    windowAt: z.ZodOptional<z.ZodString>;
     from: z.ZodNullable<z.ZodString>;
     to: z.ZodNullable<z.ZodString>;
     currency: z.ZodLiteral<"USD">;
@@ -925,6 +1020,29 @@ export declare const modelRevenueResponseSchema: z.ZodObject<{
         totalNetMills: z.ZodNumber;
         deltaNetMills: z.ZodNumber;
         deltaPct: z.ZodNullable<z.ZodNumber>;
+        sources: z.ZodOptional<z.ZodArray<z.ZodObject<{
+            canonicalType: z.ZodEnum<{
+                subscription: "subscription";
+                tip: "tip";
+                message_purchase: "message_purchase";
+                post_purchase: "post_purchase";
+                stream_tip: "stream_tip";
+                chargeback: "chargeback";
+                refund: "refund";
+                payout_reversal: "payout_reversal";
+                other: "other";
+            }>;
+            bucket: z.ZodEnum<{
+                revenue: "revenue";
+                adjustment: "adjustment";
+                unclassified: "unclassified";
+                excluded: "excluded";
+            }>;
+            currentNetMills: z.ZodNumber;
+            previousNetMills: z.ZodNumber;
+            deltaNetMills: z.ZodNumber;
+            deltaPct: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strip>>>;
     }, z.core.$strip>>;
     platformWindows: z.ZodArray<z.ZodObject<{
         platform: z.ZodEnum<{
@@ -949,6 +1067,13 @@ export declare const modelRevenueResponseSchema: z.ZodObject<{
         modelName: z.ZodString;
         netEarningsMills: z.ZodNumber;
         totalNetMills: z.ZodNumber;
+        previousNetEarningsMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        deltaNetMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        deltaPct: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        platform: z.ZodOptional<z.ZodEnum<{
+            fansly: "fansly";
+            onlyfans: "onlyfans";
+        }>>;
         status: z.ZodOptional<z.ZodEnum<{
             active: "active";
             deleted: "deleted";
@@ -968,6 +1093,7 @@ export declare const pageRevenueResponseSchema: z.ZodObject<{
         all: "all";
         custom: "custom";
     }>;
+    windowAt: z.ZodOptional<z.ZodString>;
     from: z.ZodNullable<z.ZodString>;
     to: z.ZodNullable<z.ZodString>;
     currency: z.ZodLiteral<"USD">;
@@ -998,6 +1124,29 @@ export declare const pageRevenueResponseSchema: z.ZodObject<{
         totalNetMills: z.ZodNumber;
         deltaNetMills: z.ZodNumber;
         deltaPct: z.ZodNullable<z.ZodNumber>;
+        sources: z.ZodOptional<z.ZodArray<z.ZodObject<{
+            canonicalType: z.ZodEnum<{
+                subscription: "subscription";
+                tip: "tip";
+                message_purchase: "message_purchase";
+                post_purchase: "post_purchase";
+                stream_tip: "stream_tip";
+                chargeback: "chargeback";
+                refund: "refund";
+                payout_reversal: "payout_reversal";
+                other: "other";
+            }>;
+            bucket: z.ZodEnum<{
+                revenue: "revenue";
+                adjustment: "adjustment";
+                unclassified: "unclassified";
+                excluded: "excluded";
+            }>;
+            currentNetMills: z.ZodNumber;
+            previousNetMills: z.ZodNumber;
+            deltaNetMills: z.ZodNumber;
+            deltaPct: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strip>>>;
     }, z.core.$strip>>;
     platformWindows: z.ZodArray<z.ZodObject<{
         platform: z.ZodEnum<{
@@ -3362,6 +3511,7 @@ export declare const overviewResponseSchema: z.ZodObject<{
     }, z.core.$strip>;
 }, z.core.$strip>;
 export declare const revenueDailyQuerySchema: z.ZodObject<{
+    windowAt: z.ZodOptional<z.ZodISODateTime>;
     period: z.ZodDefault<z.ZodEnum<{
         today: "today";
         "7d": "7d";
@@ -3420,6 +3570,7 @@ export declare const revenueByModelQuerySchema: z.ZodObject<{
         all: "all";
         custom: "custom";
     }>>;
+    windowAt: z.ZodOptional<z.ZodISODateTime>;
     from: z.ZodOptional<z.ZodString>;
     to: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
@@ -3513,6 +3664,9 @@ export declare const crossPageTransactionListQuerySchema: z.ZodObject<{
         asc: "asc";
         desc: "desc";
     }>>;
+    from: z.ZodOptional<z.ZodISODateTime>;
+    to: z.ZodOptional<z.ZodISODateTime>;
+    reportableOnly: z.ZodDefault<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodBoolean>>;
 }, z.core.$strip>;
 export declare const crossPageTransactionListResponseSchema: z.ZodObject<{
     items: z.ZodArray<z.ZodObject<{
@@ -3553,6 +3707,33 @@ export declare const crossPageTransactionListResponseSchema: z.ZodObject<{
     limit: z.ZodNumber;
     offset: z.ZodNumber;
     total: z.ZodNumber;
+    summary: z.ZodOptional<z.ZodObject<{
+        netAmountMills: z.ZodNumber;
+        currency: z.ZodLiteral<"USD">;
+        readAt: z.ZodString;
+    }, z.core.$strip>>;
+    scope: z.ZodOptional<z.ZodObject<{
+        pageLabel: z.ZodNullable<z.ZodString>;
+        from: z.ZodNullable<z.ZodString>;
+        to: z.ZodNullable<z.ZodString>;
+        type: z.ZodNullable<z.ZodEnum<{
+            subscription: "subscription";
+            tip: "tip";
+            message_purchase: "message_purchase";
+            post_purchase: "post_purchase";
+            stream_tip: "stream_tip";
+            chargeback: "chargeback";
+            refund: "refund";
+            payout_reversal: "payout_reversal";
+            other: "other";
+        }>>;
+        state: z.ZodNullable<z.ZodEnum<{
+            pending: "pending";
+            posted: "posted";
+            unknown: "unknown";
+        }>>;
+        reportableOnly: z.ZodBoolean;
+    }, z.core.$strip>>;
 }, z.core.$strip>;
 export declare const fanTransactionItemSchema: z.ZodObject<{
     transactionId: z.ZodString;
@@ -4236,6 +4417,7 @@ export declare const aiFeatureStreamBodySchema: z.ZodObject<{
         fanSpendingData: z.ZodDefault<z.ZodString>;
         fanSubscriptionData: z.ZodDefault<z.ZodString>;
         fanBio: z.ZodOptional<z.ZodString>;
+        fanCustomName: z.ZodOptional<z.ZodString>;
         pingSegment: z.ZodOptional<z.ZodEnum<{
             active: "active";
             "segment-a": "segment-a";
@@ -4766,10 +4948,10 @@ export declare const syncMonitorStreamItemSchema: z.ZodObject<{
     status: z.ZodEnum<{
         pending: "pending";
         blocked: "blocked";
+        paused: "paused";
         retrying: "retrying";
         idle: "idle";
         running: "running";
-        paused: "paused";
     }>;
     stalled: z.ZodBoolean;
     pending: z.ZodBoolean;
@@ -4928,10 +5110,10 @@ export declare const syncMonitorPageItemSchema: z.ZodObject<{
         status: z.ZodEnum<{
             pending: "pending";
             blocked: "blocked";
+            paused: "paused";
             retrying: "retrying";
             idle: "idle";
             running: "running";
-            paused: "paused";
         }>;
         stalled: z.ZodBoolean;
         pending: z.ZodBoolean;
@@ -5297,10 +5479,10 @@ export declare const syncStatusResponseSchema: z.ZodObject<{
             status: z.ZodEnum<{
                 pending: "pending";
                 blocked: "blocked";
+                paused: "paused";
                 retrying: "retrying";
                 idle: "idle";
                 running: "running";
-                paused: "paused";
             }>;
             stalled: z.ZodBoolean;
             pending: z.ZodBoolean;
@@ -5620,9 +5802,9 @@ export declare const syncBlockSubstreamSchema: z.ZodObject<{
     state: z.ZodEnum<{
         failed: "failed";
         scheduled: "scheduled";
+        paused: "paused";
         syncing: "syncing";
         retrying: "retrying";
-        paused: "paused";
         not_started: "not_started";
         backfilling: "backfilling";
         up_to_date: "up_to_date";
@@ -5658,9 +5840,9 @@ export declare const syncBlockStatusSchema: z.ZodObject<{
     state: z.ZodEnum<{
         failed: "failed";
         scheduled: "scheduled";
+        paused: "paused";
         syncing: "syncing";
         retrying: "retrying";
-        paused: "paused";
         not_started: "not_started";
         backfilling: "backfilling";
         up_to_date: "up_to_date";
@@ -5754,9 +5936,9 @@ export declare const syncBlockStatusSchema: z.ZodObject<{
         state: z.ZodEnum<{
             failed: "failed";
             scheduled: "scheduled";
+            paused: "paused";
             syncing: "syncing";
             retrying: "retrying";
-            paused: "paused";
             not_started: "not_started";
             backfilling: "backfilling";
             up_to_date: "up_to_date";
@@ -5841,9 +6023,9 @@ export declare const syncBlocksPageSchema: z.ZodObject<{
             state: z.ZodEnum<{
                 failed: "failed";
                 scheduled: "scheduled";
+                paused: "paused";
                 syncing: "syncing";
                 retrying: "retrying";
-                paused: "paused";
                 not_started: "not_started";
                 backfilling: "backfilling";
                 up_to_date: "up_to_date";
@@ -5937,9 +6119,9 @@ export declare const syncBlocksPageSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -5976,9 +6158,9 @@ export declare const syncBlocksPageSchema: z.ZodObject<{
             state: z.ZodEnum<{
                 failed: "failed";
                 scheduled: "scheduled";
+                paused: "paused";
                 syncing: "syncing";
                 retrying: "retrying";
-                paused: "paused";
                 not_started: "not_started";
                 backfilling: "backfilling";
                 up_to_date: "up_to_date";
@@ -6072,9 +6254,9 @@ export declare const syncBlocksPageSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -6111,9 +6293,9 @@ export declare const syncBlocksPageSchema: z.ZodObject<{
             state: z.ZodEnum<{
                 failed: "failed";
                 scheduled: "scheduled";
+                paused: "paused";
                 syncing: "syncing";
                 retrying: "retrying";
-                paused: "paused";
                 not_started: "not_started";
                 backfilling: "backfilling";
                 up_to_date: "up_to_date";
@@ -6207,9 +6389,9 @@ export declare const syncBlocksPageSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -6246,9 +6428,9 @@ export declare const syncBlocksPageSchema: z.ZodObject<{
             state: z.ZodEnum<{
                 failed: "failed";
                 scheduled: "scheduled";
+                paused: "paused";
                 syncing: "syncing";
                 retrying: "retrying";
-                paused: "paused";
                 not_started: "not_started";
                 backfilling: "backfilling";
                 up_to_date: "up_to_date";
@@ -6342,9 +6524,9 @@ export declare const syncBlocksPageSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -6381,9 +6563,9 @@ export declare const syncBlocksPageSchema: z.ZodObject<{
             state: z.ZodEnum<{
                 failed: "failed";
                 scheduled: "scheduled";
+                paused: "paused";
                 syncing: "syncing";
                 retrying: "retrying";
-                paused: "paused";
                 not_started: "not_started";
                 backfilling: "backfilling";
                 up_to_date: "up_to_date";
@@ -6477,9 +6659,9 @@ export declare const syncBlocksPageSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -6568,9 +6750,9 @@ export declare const syncOverviewResponseSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -6664,9 +6846,9 @@ export declare const syncOverviewResponseSchema: z.ZodObject<{
                     state: z.ZodEnum<{
                         failed: "failed";
                         scheduled: "scheduled";
+                        paused: "paused";
                         syncing: "syncing";
                         retrying: "retrying";
-                        paused: "paused";
                         not_started: "not_started";
                         backfilling: "backfilling";
                         up_to_date: "up_to_date";
@@ -6703,9 +6885,9 @@ export declare const syncOverviewResponseSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -6799,9 +6981,9 @@ export declare const syncOverviewResponseSchema: z.ZodObject<{
                     state: z.ZodEnum<{
                         failed: "failed";
                         scheduled: "scheduled";
+                        paused: "paused";
                         syncing: "syncing";
                         retrying: "retrying";
-                        paused: "paused";
                         not_started: "not_started";
                         backfilling: "backfilling";
                         up_to_date: "up_to_date";
@@ -6838,9 +7020,9 @@ export declare const syncOverviewResponseSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -6934,9 +7116,9 @@ export declare const syncOverviewResponseSchema: z.ZodObject<{
                     state: z.ZodEnum<{
                         failed: "failed";
                         scheduled: "scheduled";
+                        paused: "paused";
                         syncing: "syncing";
                         retrying: "retrying";
-                        paused: "paused";
                         not_started: "not_started";
                         backfilling: "backfilling";
                         up_to_date: "up_to_date";
@@ -6973,9 +7155,9 @@ export declare const syncOverviewResponseSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -7069,9 +7251,9 @@ export declare const syncOverviewResponseSchema: z.ZodObject<{
                     state: z.ZodEnum<{
                         failed: "failed";
                         scheduled: "scheduled";
+                        paused: "paused";
                         syncing: "syncing";
                         retrying: "retrying";
-                        paused: "paused";
                         not_started: "not_started";
                         backfilling: "backfilling";
                         up_to_date: "up_to_date";
@@ -7108,9 +7290,9 @@ export declare const syncOverviewResponseSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -7204,9 +7386,9 @@ export declare const syncOverviewResponseSchema: z.ZodObject<{
                     state: z.ZodEnum<{
                         failed: "failed";
                         scheduled: "scheduled";
+                        paused: "paused";
                         syncing: "syncing";
                         retrying: "retrying";
-                        paused: "paused";
                         not_started: "not_started";
                         backfilling: "backfilling";
                         up_to_date: "up_to_date";
@@ -7281,9 +7463,9 @@ export declare const pageSyncBlocksResponseSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -7377,9 +7559,9 @@ export declare const pageSyncBlocksResponseSchema: z.ZodObject<{
                     state: z.ZodEnum<{
                         failed: "failed";
                         scheduled: "scheduled";
+                        paused: "paused";
                         syncing: "syncing";
                         retrying: "retrying";
-                        paused: "paused";
                         not_started: "not_started";
                         backfilling: "backfilling";
                         up_to_date: "up_to_date";
@@ -7416,9 +7598,9 @@ export declare const pageSyncBlocksResponseSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -7512,9 +7694,9 @@ export declare const pageSyncBlocksResponseSchema: z.ZodObject<{
                     state: z.ZodEnum<{
                         failed: "failed";
                         scheduled: "scheduled";
+                        paused: "paused";
                         syncing: "syncing";
                         retrying: "retrying";
-                        paused: "paused";
                         not_started: "not_started";
                         backfilling: "backfilling";
                         up_to_date: "up_to_date";
@@ -7551,9 +7733,9 @@ export declare const pageSyncBlocksResponseSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -7647,9 +7829,9 @@ export declare const pageSyncBlocksResponseSchema: z.ZodObject<{
                     state: z.ZodEnum<{
                         failed: "failed";
                         scheduled: "scheduled";
+                        paused: "paused";
                         syncing: "syncing";
                         retrying: "retrying";
-                        paused: "paused";
                         not_started: "not_started";
                         backfilling: "backfilling";
                         up_to_date: "up_to_date";
@@ -7686,9 +7868,9 @@ export declare const pageSyncBlocksResponseSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -7782,9 +7964,9 @@ export declare const pageSyncBlocksResponseSchema: z.ZodObject<{
                     state: z.ZodEnum<{
                         failed: "failed";
                         scheduled: "scheduled";
+                        paused: "paused";
                         syncing: "syncing";
                         retrying: "retrying";
-                        paused: "paused";
                         not_started: "not_started";
                         backfilling: "backfilling";
                         up_to_date: "up_to_date";
@@ -7821,9 +8003,9 @@ export declare const pageSyncBlocksResponseSchema: z.ZodObject<{
                 state: z.ZodEnum<{
                     failed: "failed";
                     scheduled: "scheduled";
+                    paused: "paused";
                     syncing: "syncing";
                     retrying: "retrying";
-                    paused: "paused";
                     not_started: "not_started";
                     backfilling: "backfilling";
                     up_to_date: "up_to_date";
@@ -7917,9 +8099,9 @@ export declare const pageSyncBlocksResponseSchema: z.ZodObject<{
                     state: z.ZodEnum<{
                         failed: "failed";
                         scheduled: "scheduled";
+                        paused: "paused";
                         syncing: "syncing";
                         retrying: "retrying";
-                        paused: "paused";
                         not_started: "not_started";
                         backfilling: "backfilling";
                         up_to_date: "up_to_date";
@@ -7991,9 +8173,9 @@ export declare const pageMessagesBlockResponseSchema: z.ZodObject<{
         state: z.ZodEnum<{
             failed: "failed";
             scheduled: "scheduled";
+            paused: "paused";
             syncing: "syncing";
             retrying: "retrying";
-            paused: "paused";
             not_started: "not_started";
             backfilling: "backfilling";
             up_to_date: "up_to_date";
@@ -8087,9 +8269,9 @@ export declare const pageMessagesBlockResponseSchema: z.ZodObject<{
             state: z.ZodEnum<{
                 failed: "failed";
                 scheduled: "scheduled";
+                paused: "paused";
                 syncing: "syncing";
                 retrying: "retrying";
-                paused: "paused";
                 not_started: "not_started";
                 backfilling: "backfilling";
                 up_to_date: "up_to_date";
@@ -15292,10 +15474,12 @@ declare const baseRouteSchemas: {
                 "30d": "30d";
                 all: "all";
             }>;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodOptional<z.ZodString>;
             to: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>, z.ZodObject<{
             period: z.ZodLiteral<"custom">;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodString;
             to: z.ZodString;
         }, z.core.$strip>]>;
@@ -15313,6 +15497,7 @@ declare const baseRouteSchemas: {
                     all: "all";
                     custom: "custom";
                 }>;
+                windowAt: z.ZodOptional<z.ZodString>;
                 from: z.ZodNullable<z.ZodString>;
                 to: z.ZodNullable<z.ZodString>;
                 currency: z.ZodLiteral<"USD">;
@@ -15343,6 +15528,29 @@ declare const baseRouteSchemas: {
                     totalNetMills: z.ZodNumber;
                     deltaNetMills: z.ZodNumber;
                     deltaPct: z.ZodNullable<z.ZodNumber>;
+                    sources: z.ZodOptional<z.ZodArray<z.ZodObject<{
+                        canonicalType: z.ZodEnum<{
+                            subscription: "subscription";
+                            tip: "tip";
+                            message_purchase: "message_purchase";
+                            post_purchase: "post_purchase";
+                            stream_tip: "stream_tip";
+                            chargeback: "chargeback";
+                            refund: "refund";
+                            payout_reversal: "payout_reversal";
+                            other: "other";
+                        }>;
+                        bucket: z.ZodEnum<{
+                            revenue: "revenue";
+                            adjustment: "adjustment";
+                            unclassified: "unclassified";
+                            excluded: "excluded";
+                        }>;
+                        currentNetMills: z.ZodNumber;
+                        previousNetMills: z.ZodNumber;
+                        deltaNetMills: z.ZodNumber;
+                        deltaPct: z.ZodNullable<z.ZodNumber>;
+                    }, z.core.$strip>>>;
                 }, z.core.$strip>>;
                 platformWindows: z.ZodArray<z.ZodObject<{
                     platform: z.ZodEnum<{
@@ -15361,6 +15569,9 @@ declare const baseRouteSchemas: {
                     pageCount: z.ZodNumber;
                     netEarningsMills: z.ZodNumber;
                     totalNetMills: z.ZodNumber;
+                    previousNetEarningsMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+                    deltaNetMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+                    deltaPct: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
                     status: z.ZodOptional<z.ZodEnum<{
                         active: "active";
                         retired: "retired";
@@ -15373,6 +15584,13 @@ declare const baseRouteSchemas: {
                     modelName: z.ZodString;
                     netEarningsMills: z.ZodNumber;
                     totalNetMills: z.ZodNumber;
+                    previousNetEarningsMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+                    deltaNetMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+                    deltaPct: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+                    platform: z.ZodOptional<z.ZodEnum<{
+                        fansly: "fansly";
+                        onlyfans: "onlyfans";
+                    }>>;
                     status: z.ZodOptional<z.ZodEnum<{
                         active: "active";
                         deleted: "deleted";
@@ -15404,10 +15622,12 @@ declare const baseRouteSchemas: {
                 "30d": "30d";
                 all: "all";
             }>;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodOptional<z.ZodString>;
             to: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>, z.ZodObject<{
             period: z.ZodLiteral<"custom">;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodString;
             to: z.ZodString;
         }, z.core.$strip>]>;
@@ -15447,10 +15667,12 @@ declare const baseRouteSchemas: {
                 "30d": "30d";
                 all: "all";
             }>;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodOptional<z.ZodString>;
             to: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>, z.ZodObject<{
             period: z.ZodLiteral<"custom">;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodString;
             to: z.ZodString;
         }, z.core.$strip>]>;
@@ -15468,6 +15690,7 @@ declare const baseRouteSchemas: {
                     all: "all";
                     custom: "custom";
                 }>;
+                windowAt: z.ZodOptional<z.ZodString>;
                 from: z.ZodNullable<z.ZodString>;
                 to: z.ZodNullable<z.ZodString>;
                 currency: z.ZodLiteral<"USD">;
@@ -15498,6 +15721,29 @@ declare const baseRouteSchemas: {
                     totalNetMills: z.ZodNumber;
                     deltaNetMills: z.ZodNumber;
                     deltaPct: z.ZodNullable<z.ZodNumber>;
+                    sources: z.ZodOptional<z.ZodArray<z.ZodObject<{
+                        canonicalType: z.ZodEnum<{
+                            subscription: "subscription";
+                            tip: "tip";
+                            message_purchase: "message_purchase";
+                            post_purchase: "post_purchase";
+                            stream_tip: "stream_tip";
+                            chargeback: "chargeback";
+                            refund: "refund";
+                            payout_reversal: "payout_reversal";
+                            other: "other";
+                        }>;
+                        bucket: z.ZodEnum<{
+                            revenue: "revenue";
+                            adjustment: "adjustment";
+                            unclassified: "unclassified";
+                            excluded: "excluded";
+                        }>;
+                        currentNetMills: z.ZodNumber;
+                        previousNetMills: z.ZodNumber;
+                        deltaNetMills: z.ZodNumber;
+                        deltaPct: z.ZodNullable<z.ZodNumber>;
+                    }, z.core.$strip>>>;
                 }, z.core.$strip>>;
                 platformWindows: z.ZodArray<z.ZodObject<{
                     platform: z.ZodEnum<{
@@ -15522,6 +15768,13 @@ declare const baseRouteSchemas: {
                     modelName: z.ZodString;
                     netEarningsMills: z.ZodNumber;
                     totalNetMills: z.ZodNumber;
+                    previousNetEarningsMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+                    deltaNetMills: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+                    deltaPct: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+                    platform: z.ZodOptional<z.ZodEnum<{
+                        fansly: "fansly";
+                        onlyfans: "onlyfans";
+                    }>>;
                     status: z.ZodOptional<z.ZodEnum<{
                         active: "active";
                         deleted: "deleted";
@@ -15562,10 +15815,12 @@ declare const baseRouteSchemas: {
                 "30d": "30d";
                 all: "all";
             }>;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodOptional<z.ZodString>;
             to: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>, z.ZodObject<{
             period: z.ZodLiteral<"custom">;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodString;
             to: z.ZodString;
         }, z.core.$strip>]>;
@@ -15583,6 +15838,7 @@ declare const baseRouteSchemas: {
                     all: "all";
                     custom: "custom";
                 }>;
+                windowAt: z.ZodOptional<z.ZodString>;
                 from: z.ZodNullable<z.ZodString>;
                 to: z.ZodNullable<z.ZodString>;
                 currency: z.ZodLiteral<"USD">;
@@ -15613,6 +15869,29 @@ declare const baseRouteSchemas: {
                     totalNetMills: z.ZodNumber;
                     deltaNetMills: z.ZodNumber;
                     deltaPct: z.ZodNullable<z.ZodNumber>;
+                    sources: z.ZodOptional<z.ZodArray<z.ZodObject<{
+                        canonicalType: z.ZodEnum<{
+                            subscription: "subscription";
+                            tip: "tip";
+                            message_purchase: "message_purchase";
+                            post_purchase: "post_purchase";
+                            stream_tip: "stream_tip";
+                            chargeback: "chargeback";
+                            refund: "refund";
+                            payout_reversal: "payout_reversal";
+                            other: "other";
+                        }>;
+                        bucket: z.ZodEnum<{
+                            revenue: "revenue";
+                            adjustment: "adjustment";
+                            unclassified: "unclassified";
+                            excluded: "excluded";
+                        }>;
+                        currentNetMills: z.ZodNumber;
+                        previousNetMills: z.ZodNumber;
+                        deltaNetMills: z.ZodNumber;
+                        deltaPct: z.ZodNullable<z.ZodNumber>;
+                    }, z.core.$strip>>>;
                 }, z.core.$strip>>;
                 platformWindows: z.ZodArray<z.ZodObject<{
                     platform: z.ZodEnum<{
@@ -15876,10 +16155,12 @@ declare const baseRouteSchemas: {
                 "30d": "30d";
                 all: "all";
             }>;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodOptional<z.ZodString>;
             to: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>, z.ZodObject<{
             period: z.ZodLiteral<"custom">;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodString;
             to: z.ZodString;
         }, z.core.$strip>]>;
@@ -16052,10 +16333,12 @@ declare const baseRouteSchemas: {
                 "30d": "30d";
                 all: "all";
             }>;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodOptional<z.ZodString>;
             to: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>, z.ZodObject<{
             period: z.ZodLiteral<"custom">;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodString;
             to: z.ZodString;
         }, z.core.$strip>]>;
@@ -19116,10 +19399,10 @@ declare const baseRouteSchemas: {
                         status: z.ZodEnum<{
                             pending: "pending";
                             blocked: "blocked";
+                            paused: "paused";
                             retrying: "retrying";
                             idle: "idle";
                             running: "running";
-                            paused: "paused";
                         }>;
                         stalled: z.ZodBoolean;
                         pending: z.ZodBoolean;
@@ -19431,9 +19714,9 @@ declare const baseRouteSchemas: {
                             state: z.ZodEnum<{
                                 failed: "failed";
                                 scheduled: "scheduled";
+                                paused: "paused";
                                 syncing: "syncing";
                                 retrying: "retrying";
-                                paused: "paused";
                                 not_started: "not_started";
                                 backfilling: "backfilling";
                                 up_to_date: "up_to_date";
@@ -19527,9 +19810,9 @@ declare const baseRouteSchemas: {
                                 state: z.ZodEnum<{
                                     failed: "failed";
                                     scheduled: "scheduled";
+                                    paused: "paused";
                                     syncing: "syncing";
                                     retrying: "retrying";
-                                    paused: "paused";
                                     not_started: "not_started";
                                     backfilling: "backfilling";
                                     up_to_date: "up_to_date";
@@ -19566,9 +19849,9 @@ declare const baseRouteSchemas: {
                             state: z.ZodEnum<{
                                 failed: "failed";
                                 scheduled: "scheduled";
+                                paused: "paused";
                                 syncing: "syncing";
                                 retrying: "retrying";
-                                paused: "paused";
                                 not_started: "not_started";
                                 backfilling: "backfilling";
                                 up_to_date: "up_to_date";
@@ -19662,9 +19945,9 @@ declare const baseRouteSchemas: {
                                 state: z.ZodEnum<{
                                     failed: "failed";
                                     scheduled: "scheduled";
+                                    paused: "paused";
                                     syncing: "syncing";
                                     retrying: "retrying";
-                                    paused: "paused";
                                     not_started: "not_started";
                                     backfilling: "backfilling";
                                     up_to_date: "up_to_date";
@@ -19701,9 +19984,9 @@ declare const baseRouteSchemas: {
                             state: z.ZodEnum<{
                                 failed: "failed";
                                 scheduled: "scheduled";
+                                paused: "paused";
                                 syncing: "syncing";
                                 retrying: "retrying";
-                                paused: "paused";
                                 not_started: "not_started";
                                 backfilling: "backfilling";
                                 up_to_date: "up_to_date";
@@ -19797,9 +20080,9 @@ declare const baseRouteSchemas: {
                                 state: z.ZodEnum<{
                                     failed: "failed";
                                     scheduled: "scheduled";
+                                    paused: "paused";
                                     syncing: "syncing";
                                     retrying: "retrying";
-                                    paused: "paused";
                                     not_started: "not_started";
                                     backfilling: "backfilling";
                                     up_to_date: "up_to_date";
@@ -19836,9 +20119,9 @@ declare const baseRouteSchemas: {
                             state: z.ZodEnum<{
                                 failed: "failed";
                                 scheduled: "scheduled";
+                                paused: "paused";
                                 syncing: "syncing";
                                 retrying: "retrying";
-                                paused: "paused";
                                 not_started: "not_started";
                                 backfilling: "backfilling";
                                 up_to_date: "up_to_date";
@@ -19932,9 +20215,9 @@ declare const baseRouteSchemas: {
                                 state: z.ZodEnum<{
                                     failed: "failed";
                                     scheduled: "scheduled";
+                                    paused: "paused";
                                     syncing: "syncing";
                                     retrying: "retrying";
-                                    paused: "paused";
                                     not_started: "not_started";
                                     backfilling: "backfilling";
                                     up_to_date: "up_to_date";
@@ -19971,9 +20254,9 @@ declare const baseRouteSchemas: {
                             state: z.ZodEnum<{
                                 failed: "failed";
                                 scheduled: "scheduled";
+                                paused: "paused";
                                 syncing: "syncing";
                                 retrying: "retrying";
-                                paused: "paused";
                                 not_started: "not_started";
                                 backfilling: "backfilling";
                                 up_to_date: "up_to_date";
@@ -20067,9 +20350,9 @@ declare const baseRouteSchemas: {
                                 state: z.ZodEnum<{
                                     failed: "failed";
                                     scheduled: "scheduled";
+                                    paused: "paused";
                                     syncing: "syncing";
                                     retrying: "retrying";
-                                    paused: "paused";
                                     not_started: "not_started";
                                     backfilling: "backfilling";
                                     up_to_date: "up_to_date";
@@ -20164,9 +20447,9 @@ declare const baseRouteSchemas: {
                             state: z.ZodEnum<{
                                 failed: "failed";
                                 scheduled: "scheduled";
+                                paused: "paused";
                                 syncing: "syncing";
                                 retrying: "retrying";
-                                paused: "paused";
                                 not_started: "not_started";
                                 backfilling: "backfilling";
                                 up_to_date: "up_to_date";
@@ -20260,9 +20543,9 @@ declare const baseRouteSchemas: {
                                 state: z.ZodEnum<{
                                     failed: "failed";
                                     scheduled: "scheduled";
+                                    paused: "paused";
                                     syncing: "syncing";
                                     retrying: "retrying";
-                                    paused: "paused";
                                     not_started: "not_started";
                                     backfilling: "backfilling";
                                     up_to_date: "up_to_date";
@@ -20299,9 +20582,9 @@ declare const baseRouteSchemas: {
                             state: z.ZodEnum<{
                                 failed: "failed";
                                 scheduled: "scheduled";
+                                paused: "paused";
                                 syncing: "syncing";
                                 retrying: "retrying";
-                                paused: "paused";
                                 not_started: "not_started";
                                 backfilling: "backfilling";
                                 up_to_date: "up_to_date";
@@ -20395,9 +20678,9 @@ declare const baseRouteSchemas: {
                                 state: z.ZodEnum<{
                                     failed: "failed";
                                     scheduled: "scheduled";
+                                    paused: "paused";
                                     syncing: "syncing";
                                     retrying: "retrying";
-                                    paused: "paused";
                                     not_started: "not_started";
                                     backfilling: "backfilling";
                                     up_to_date: "up_to_date";
@@ -20434,9 +20717,9 @@ declare const baseRouteSchemas: {
                             state: z.ZodEnum<{
                                 failed: "failed";
                                 scheduled: "scheduled";
+                                paused: "paused";
                                 syncing: "syncing";
                                 retrying: "retrying";
-                                paused: "paused";
                                 not_started: "not_started";
                                 backfilling: "backfilling";
                                 up_to_date: "up_to_date";
@@ -20530,9 +20813,9 @@ declare const baseRouteSchemas: {
                                 state: z.ZodEnum<{
                                     failed: "failed";
                                     scheduled: "scheduled";
+                                    paused: "paused";
                                     syncing: "syncing";
                                     retrying: "retrying";
-                                    paused: "paused";
                                     not_started: "not_started";
                                     backfilling: "backfilling";
                                     up_to_date: "up_to_date";
@@ -20569,9 +20852,9 @@ declare const baseRouteSchemas: {
                             state: z.ZodEnum<{
                                 failed: "failed";
                                 scheduled: "scheduled";
+                                paused: "paused";
                                 syncing: "syncing";
                                 retrying: "retrying";
-                                paused: "paused";
                                 not_started: "not_started";
                                 backfilling: "backfilling";
                                 up_to_date: "up_to_date";
@@ -20665,9 +20948,9 @@ declare const baseRouteSchemas: {
                                 state: z.ZodEnum<{
                                     failed: "failed";
                                     scheduled: "scheduled";
+                                    paused: "paused";
                                     syncing: "syncing";
                                     retrying: "retrying";
-                                    paused: "paused";
                                     not_started: "not_started";
                                     backfilling: "backfilling";
                                     up_to_date: "up_to_date";
@@ -20704,9 +20987,9 @@ declare const baseRouteSchemas: {
                             state: z.ZodEnum<{
                                 failed: "failed";
                                 scheduled: "scheduled";
+                                paused: "paused";
                                 syncing: "syncing";
                                 retrying: "retrying";
-                                paused: "paused";
                                 not_started: "not_started";
                                 backfilling: "backfilling";
                                 up_to_date: "up_to_date";
@@ -20800,9 +21083,9 @@ declare const baseRouteSchemas: {
                                 state: z.ZodEnum<{
                                     failed: "failed";
                                     scheduled: "scheduled";
+                                    paused: "paused";
                                     syncing: "syncing";
                                     retrying: "retrying";
-                                    paused: "paused";
                                     not_started: "not_started";
                                     backfilling: "backfilling";
                                     up_to_date: "up_to_date";
@@ -20902,9 +21185,9 @@ declare const baseRouteSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         scheduled: "scheduled";
+                        paused: "paused";
                         syncing: "syncing";
                         retrying: "retrying";
-                        paused: "paused";
                         not_started: "not_started";
                         backfilling: "backfilling";
                         up_to_date: "up_to_date";
@@ -20998,9 +21281,9 @@ declare const baseRouteSchemas: {
                         state: z.ZodEnum<{
                             failed: "failed";
                             scheduled: "scheduled";
+                            paused: "paused";
                             syncing: "syncing";
                             retrying: "retrying";
-                            paused: "paused";
                             not_started: "not_started";
                             backfilling: "backfilling";
                             up_to_date: "up_to_date";
@@ -21051,6 +21334,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["dashboard"];
         readonly summary: "Get agency-wide revenue daily series";
         readonly querystring: z.ZodObject<{
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             period: z.ZodDefault<z.ZodEnum<{
                 today: "today";
                 "7d": "7d";
@@ -21107,6 +21391,7 @@ declare const baseRouteSchemas: {
                 all: "all";
                 custom: "custom";
             }>>;
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             from: z.ZodOptional<z.ZodString>;
             to: z.ZodOptional<z.ZodString>;
         }, z.core.$strip>;
@@ -21148,6 +21433,7 @@ declare const baseRouteSchemas: {
             pageLabel: z.ZodString;
         }, z.core.$strip>;
         readonly querystring: z.ZodObject<{
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             period: z.ZodDefault<z.ZodEnum<{
                 today: "today";
                 "7d": "7d";
@@ -21205,6 +21491,7 @@ declare const baseRouteSchemas: {
             modelSlug: z.ZodString;
         }, z.core.$strip>;
         readonly querystring: z.ZodObject<{
+            windowAt: z.ZodOptional<z.ZodISODateTime>;
             period: z.ZodDefault<z.ZodEnum<{
                 today: "today";
                 "7d": "7d";
@@ -21287,6 +21574,9 @@ declare const baseRouteSchemas: {
                 asc: "asc";
                 desc: "desc";
             }>>;
+            from: z.ZodOptional<z.ZodISODateTime>;
+            to: z.ZodOptional<z.ZodISODateTime>;
+            reportableOnly: z.ZodDefault<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodBoolean>>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -21328,6 +21618,33 @@ declare const baseRouteSchemas: {
                 limit: z.ZodNumber;
                 offset: z.ZodNumber;
                 total: z.ZodNumber;
+                summary: z.ZodOptional<z.ZodObject<{
+                    netAmountMills: z.ZodNumber;
+                    currency: z.ZodLiteral<"USD">;
+                    readAt: z.ZodString;
+                }, z.core.$strip>>;
+                scope: z.ZodOptional<z.ZodObject<{
+                    pageLabel: z.ZodNullable<z.ZodString>;
+                    from: z.ZodNullable<z.ZodString>;
+                    to: z.ZodNullable<z.ZodString>;
+                    type: z.ZodNullable<z.ZodEnum<{
+                        subscription: "subscription";
+                        tip: "tip";
+                        message_purchase: "message_purchase";
+                        post_purchase: "post_purchase";
+                        stream_tip: "stream_tip";
+                        chargeback: "chargeback";
+                        refund: "refund";
+                        payout_reversal: "payout_reversal";
+                        other: "other";
+                    }>>;
+                    state: z.ZodNullable<z.ZodEnum<{
+                        pending: "pending";
+                        posted: "posted";
+                        unknown: "unknown";
+                    }>>;
+                    reportableOnly: z.ZodBoolean;
+                }, z.core.$strip>>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
@@ -22048,6 +22365,7 @@ declare const baseRouteSchemas: {
                 fanSpendingData: z.ZodDefault<z.ZodString>;
                 fanSubscriptionData: z.ZodDefault<z.ZodString>;
                 fanBio: z.ZodOptional<z.ZodString>;
+                fanCustomName: z.ZodOptional<z.ZodString>;
                 pingSegment: z.ZodOptional<z.ZodEnum<{
                     active: "active";
                     "segment-a": "segment-a";
@@ -39735,6 +40053,7 @@ declare const baseRouteSchemas: {
                     usedBytes: z.ZodNumber;
                     createdAt: z.ZodString;
                     reason: z.ZodNullable<z.ZodString>;
+                    canFinishIncomplete: z.ZodBoolean;
                 }, z.core.$strip>>;
                 audit: z.ZodArray<z.ZodObject<{
                     revision: z.ZodNumber;
@@ -39998,6 +40317,49 @@ declare const baseRouteSchemas: {
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
                 state: z.ZodLiteral<"queued">;
+                revision: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly ofapiCollectionJobFinishIncomplete: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["ops"];
+        readonly summary: "Finish a paused scheduled read without changing its retained facts, charges or next schedule";
+        readonly params: z.ZodObject<{
+            id: z.ZodUUID;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            pageId: z.ZodNumber;
+            expectedRevision: z.ZodNumber;
+            expectedState: z.ZodLiteral<"paused">;
+            reason: z.ZodString;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 200: z.ZodObject<{
+                id: z.ZodString;
+                state: z.ZodLiteral<"failed">;
                 revision: z.ZodNumber;
             }, z.core.$strip>;
         };

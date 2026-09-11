@@ -679,6 +679,10 @@ export declare const kernelOperations: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/ofapi/collection/jobs";
     };
+    readonly ofapiCollectionJobFinishIncomplete: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/ofapi/collection/jobs/:id/finish-incomplete";
+    };
     readonly ofapiCollectionJobResume: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/ofapi/collection/jobs/:id/resume";

@@ -170,6 +170,7 @@ export const kernelOperations = {
     ofapiCollectionApply: { method: "POST", path: "/api/v1/admin/ofapi/collection/apply" },
     ofapiCollectionGet: { method: "GET", path: "/api/v1/admin/ofapi/collection" },
     ofapiCollectionJobCreate: { method: "POST", path: "/api/v1/admin/ofapi/collection/jobs" },
+    ofapiCollectionJobFinishIncomplete: { method: "POST", path: "/api/v1/admin/ofapi/collection/jobs/:id/finish-incomplete" },
     ofapiCollectionJobResume: { method: "POST", path: "/api/v1/admin/ofapi/collection/jobs/:id/resume" },
     ofapiCollectionPreview: { method: "POST", path: "/api/v1/admin/ofapi/collection/preview" },
     ofapiContentEventsGet: { method: "GET", path: "/api/v1/admin/ofapi/content/events" },

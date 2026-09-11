@@ -205,6 +205,7 @@ export declare const ofapiCollectionSnapshotSchema: z.ZodObject<{
         usedBytes: z.ZodNumber;
         createdAt: z.ZodString;
         reason: z.ZodNullable<z.ZodString>;
+        canFinishIncomplete: z.ZodBoolean;
     }, z.core.$strip>>;
     audit: z.ZodArray<z.ZodObject<{
         revision: z.ZodNumber;
@@ -394,6 +395,7 @@ export declare const ofapiCollectionRouteSchemas: {
                     usedBytes: z.ZodNumber;
                     createdAt: z.ZodString;
                     reason: z.ZodNullable<z.ZodString>;
+                    canFinishIncomplete: z.ZodBoolean;
                 }, z.core.$strip>>;
                 audit: z.ZodArray<z.ZodObject<{
                     revision: z.ZodNumber;
@@ -657,6 +659,49 @@ export declare const ofapiCollectionRouteSchemas: {
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
                 state: z.ZodLiteral<"queued">;
+                revision: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
+    readonly ofapiCollectionJobFinishIncomplete: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["ops"];
+        readonly summary: "Finish a paused scheduled read without changing its retained facts, charges or next schedule";
+        readonly params: z.ZodObject<{
+            id: z.ZodUUID;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            pageId: z.ZodNumber;
+            expectedRevision: z.ZodNumber;
+            expectedState: z.ZodLiteral<"paused">;
+            reason: z.ZodString;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 200: z.ZodObject<{
+                id: z.ZodString;
+                state: z.ZodLiteral<"failed">;
                 revision: z.ZodNumber;
             }, z.core.$strip>;
         };

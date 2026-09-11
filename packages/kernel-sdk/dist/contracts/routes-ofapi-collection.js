@@ -31,7 +31,7 @@ export const ofapiCollectionSnapshotSchema = z.object({
     catalog: z.array(z.object({ id: ofapiCollectionCategorySchema, label: z.string(), modes: z.array(z.enum(["off", "on_demand", "scheduled"])), baseline: z.boolean(), consumers: z.array(z.string()), supportsOneOff: z.boolean(), priceUnit: z.enum(["calls_and_bytes", "physical_calls"]), prerequisites: z.array(z.string()), scope: z.literal("page"), legacyOperations: z.array(z.string()) })),
     pages: z.array(z.object({ id: z.number(), label: z.string(), accountId: z.string().nullable() })),
     policies: z.array(policySchema),
-    jobs: z.array(z.object({ id: z.string(), pageId: z.number(), category: ofapiCollectionCategorySchema, state: z.string(), maxCredits: z.number(), maxCalls: z.number(), maxBytes: z.number(), usedCredits: z.number(), usedCalls: z.number(), usedBytes: z.number(), createdAt: z.string(), reason: z.string().nullable() })),
+    jobs: z.array(z.object({ id: z.string(), pageId: z.number(), category: ofapiCollectionCategorySchema, state: z.string(), maxCredits: z.number(), maxCalls: z.number(), maxBytes: z.number(), usedCredits: z.number(), usedCalls: z.number(), usedBytes: z.number(), createdAt: z.string(), reason: z.string().nullable(), canFinishIncomplete: z.boolean() })),
     audit: z.array(z.object({ revision: z.number(), actorUserId: z.number(), createdAt: z.string(), changes: z.unknown() })),
     limitDescription: z.string(),
 });
@@ -47,4 +47,5 @@ export const ofapiCollectionRouteSchemas = {
     ofapiCollectionApply: { auth: { kind: "owner-session" }, tags: ["ops"], summary: "Apply versioned OFAPI collection policy", body: ofapiCollectionChangeSchema, response: { 200: z.object({ revision: z.number(), state: z.literal("applied") }), ...errors } },
     ofapiCollectionJobCreate: { auth: { kind: "owner-session" }, tags: ["ops"], summary: "Approve one bounded OFAPI collection job", body: ofapiCollectionJobSchema, response: { 200: z.object({ id: z.string(), state: z.literal("queued") }), ...errors } },
     ofapiCollectionJobResume: { auth: { kind: "owner-session" }, tags: ["ops"], summary: "Resume a bounded collection job from its retained checkpoint", params: z.object({ id: z.uuid() }), body: z.object({ expectedRevision: z.number().int().nonnegative() }).strict(), response: { 200: z.object({ id: z.string(), state: z.literal("queued"), revision: z.number() }), ...errors } },
+    ofapiCollectionJobFinishIncomplete: { auth: { kind: "owner-session" }, tags: ["ops"], summary: "Finish a paused scheduled read without changing its retained facts, charges or next schedule", params: z.object({ id: z.uuid() }), body: z.object({ pageId: z.number().int().positive(), expectedRevision: z.number().int().nonnegative(), expectedState: z.literal("paused"), reason: z.string().trim().min(1).max(500) }).strict(), response: { 200: z.object({ id: z.string(), state: z.literal("failed"), revision: z.number() }), ...errors } },
 };

@@ -4,6 +4,11 @@ export const OFAPI_COLLECTION_CATEGORIES = [
     "tracking_links", "smart_links", "vault_catalog", "vault_files", "balances",
     "profile_notifications", "content_history",
 ];
+/** Closed periodic GET executors; uploads, exports and baseline sync use other lifecycles. */
+export const OFAPI_SCHEDULED_READ_COLLECTION_CATEGORIES = [
+    "posts_comments", "visitors", "tracking_links", "smart_links", "vault_catalog",
+    "balances", "profile_notifications", "content_history",
+];
 export const OFAPI_COLLECTION_CAP_REASONS = ["daily_limit", "interval_limit"];
 export function ofapiCollectionRefusalDisposition(reason) {
     if (OFAPI_COLLECTION_CAP_REASONS.some(cap => cap === reason))

@@ -672,7 +672,7 @@ refresh, including when that fan moves outside a shelf preview.
 
 Ping remains an explicit AI action with a separate human send action. Recency
 alone no longer disables it in the Desktop composer, mini-chat or keyboard
-actions. Hub Decision **#294** makes this possible on the OnlyFans feature lane
+actions. Hub Decision **#295** makes this possible on the OnlyFans feature lane
 and defines its manual-outreach wording; the real active/segment classification
 is retained. Existing authentication, personality, history-loading and send
 gates still apply. SDK operations and public contracts are unchanged.
@@ -711,3 +711,13 @@ same mini-chat again cannot reinsert an already consumed draft after sending,
 clearing or editing. Explicit insertion remains repeatable; a new generation
 has a new receipt. Account, conversation and operation identity fence insertion.
 AI does not send messages. Current behavior and validation: `docs/spenders.md`.
+
+**D31 (2026-09-12).** Release 0.1.52 includes D29–D30 after the owner authorized
+deployment. Hub manual Ping is Decision 295 on the production-preserving release
+branch; Decision 294 belongs to Fansly C1 diagnostics. The SDK is generated
+from clean Hub revision `9597d931511185a5c571ea2d56dcf8302aa5bb72`, preserving
+its current production contract hash. This compatibility refresh adds no new
+Desktop operation. Publish Hub first, then the Windows installer and macOS DMG
+through the existing cross-platform CI, packaged smoke, and served-artifact
+verification gates. The final local full check passes 2,286 tests with five
+existing skips and eight existing lint warnings.

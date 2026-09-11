@@ -126,13 +126,13 @@ Current screenshots: [board](mockups/spenders-search-final-board.png),
 [initial error](mockups/spenders-search-initial-errors.png),
 [cached data after error](mockups/spenders-search-cached-error.png).
 
-The companion Hub change is Decision **#294**, implemented separately on
-`codex/onlyfans-manual-ping` (commit `b2259f6b`). It accepts manually requested OnlyFans Ping for an
+The companion Hub change is Decision **#295**, implemented separately on
+`release/onlyfans-manual-ping-20260912` (commit `9597d9315111`), preserving the
+production baseline `2c6b42b71aaf` (original implementation `b2259f6b`). It accepts manually requested OnlyFans Ping for an
 active conversation and keeps the observed segment in context. Fansly's gate
 and assembled prompt remain unchanged. Hub has its own full check plus provider
 stub integration coverage.
 
 Deploy Hub support before or with Desktop. A new Desktop against an older Hub
 can still receive `gate_ping_active`; do not describe the feature as released
-until both sides are deployed. This change does not authorize deployment or
-live fan messaging.
+until both sides are deployed. The owner authorized the 0.1.52 release on 2026-09-12; live fan messaging remains a separate manual action.
