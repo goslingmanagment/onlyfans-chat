@@ -4,7 +4,7 @@
 // composer is disabled with the platform's reason (SPEC §7.0).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ComposerOptions } from './ComposerOptions';
+import { ComposerContext } from './ComposerContext';
 import { pendingComposerRows, useComposerStore } from './composerStore';
 import type { ChatListItemVM } from '../../../../preload/contract';
 import type { GuardCategory, GuardVerdict } from '@chatgoose/shared/message-guard/index';
@@ -69,7 +69,6 @@ export function ComposerBar({
 
   const canSend = chat.canSendMessage;
   const composer=useComposerStore(s=>s.options);
-  const composerError=useComposerStore(s=>s.error);
   const blank = draft.trim().length === 0 && !composer.giphyId;
   // With vault media attached, the draft IS the PPV caption — plain send is
   // parked so the caption can't accidentally go out as a bare text message;
@@ -139,7 +138,7 @@ export function ComposerBar({
 
   return (
     <div className="mx-[18px] mt-[9px] mb-[14px] flex-none rounded-card border border-line-strong bg-bg1 px-[14px] pt-3 pb-[10px] shadow-soft">
-      <ComposerOptions accountId={accountId} draft={draft}/>
+      <ComposerContext />
       <DraftTextarea
         id={COMPOSER_TEXTAREA_ID}
         value={draft}
@@ -210,7 +209,7 @@ export function ComposerBar({
         <Button
           variant="primary"
           className="shrink-0"
-          disabled={!canSend || blank || ppvComposeActive || guardBlocked || !!composerError}
+          disabled={!canSend || blank || ppvComposeActive || guardBlocked}
           title={
             !canSend
               ? cannotReason

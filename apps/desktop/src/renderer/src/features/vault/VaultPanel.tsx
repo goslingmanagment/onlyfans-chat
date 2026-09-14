@@ -151,7 +151,6 @@ export function VaultPanel({
   });
 
   const lockedText=useComposerStore(s=>s.options.lockedText);
-  const composerError=useComposerStore(s=>s.error);
   const price = parsePpvPrice(priceInput);
   const summary = deriveComposeSummary(selection, price, draft, lockedText);
   const guardVerdict = useMemo(
@@ -336,7 +335,7 @@ export function VaultPanel({
               <Button
                 size="sm"
                 variant="primary"
-                disabled={!canSend || summary === null || guardBlocked || !!composerError}
+                disabled={!canSend || summary === null || guardBlocked}
                 title={
                   !canSend
                     ? t('conv.cannotSendFallback')

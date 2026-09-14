@@ -59,7 +59,7 @@ export type SendClient = Pick<OfApiClient, 'listMessages'>;
 
 export interface SendEngineOptions {
   client: SendClient;
-  hubCommandClient?: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand'> & Partial<Pick<HubClient, 'previewBannedWords' | 'readComposerReferences'>>;
+  hubCommandClient?: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand'>;
   data: DataLayer;
   messageGuard: Pick<MessageGuardRuntime, 'assertAllowed'>;
   toMediaUrl: ToMediaUrl;
@@ -74,8 +74,6 @@ export interface SendEngineOptions {
 }
 
 export interface SendEngine {
-  previewBannedWords(text: string): ReturnType<HubClient['previewBannedWords']>;
-  readComposerReferences(args: Parameters<HubClient['readComposerReferences']>[0]): ReturnType<HubClient['readComposerReferences']>;
   performAction(accountId: string, chatId: string, action: ComposerAction): Promise<ComposerActionResult>;
   listActions(accountId: string, chatId: string, messageId?: string): ComposerActionResult[];
   /** Persists queued rows (atomically) and kicks the chat's pump; never awaits the send. */
@@ -1060,14 +1058,6 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       const task = startCredentialTask(() => actions.perform(accountId, chatId, action));
       if (!task) return Promise.reject(new Error('Command runtime is retiring'));
       return task;
-    },
-    previewBannedWords(text) {
-      if (!hubCommandClient?.previewBannedWords) return Promise.reject(hubWriteUnavailable());
-      return hubCommandClient.previewBannedWords(text);
-    },
-    readComposerReferences(args) {
-      if (!hubCommandClient?.readComposerReferences) return Promise.reject(hubWriteUnavailable());
-      return hubCommandClient.readComposerReferences(args);
     },
     sendParts({ accountId, chatId, parts, composer, outreachPurpose }) {
       assertAcceptingWriteWork();

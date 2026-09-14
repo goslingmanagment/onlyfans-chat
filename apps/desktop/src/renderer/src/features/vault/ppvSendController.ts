@@ -24,7 +24,6 @@ export function sendPpvCompose(args: {
 
   const { selection, priceInput } = useVaultStore.getState();
   const composer=useComposerStore.getState();
-  if(composer.error)return;
   const priceCents=parsePriceCents(priceInput);if(priceCents===null)return;
   const price = parsePpvPrice(priceInput);
   const draft = useAiStore.getState().draftText;

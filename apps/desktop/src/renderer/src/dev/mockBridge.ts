@@ -1646,8 +1646,6 @@ export function createMockBridge(): ChatGooseBridge {
     'cmd:ai.feedback': (feedback) => {
       console.debug('[mockBridge] ai.feedback', feedback);
     },
-    'query:composer.bannedPreview':()=>({version:'demo',observedAt:new Date().toISOString(),complete:true,matching:'literal_case_insensitive',matches:[]}),
-    'query:composer.references':()=>({items:[{id:'123456',label:'Demo reference',type:null,partnerId:null,guest:null}],partial:true}),
     'query:composer.actions':()=>[],
     'cmd:composer.action':({action})=>({clientCommandId:'demo-action',coreCommandId:'demo-command',action,state:'confirmed',error:null}),
     'query:outbox.list': ({ accountId, chatId }) =>

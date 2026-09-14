@@ -1,6 +1,5 @@
 import type { FollowersChannels } from './followers-contract';
 import type { ComposerOptions, StoredComposer, ComposerAction } from '@chatgoose/shared/composer';
-import type { HubBannedPreview, ComposerReferenceKind } from '@chatgoose/shared/hub/index';
 // The renderer↔main contract: channel names + narrow view models (DESIGN §3.3 —
 // the renderer never sees raw OFAPI JSON). Imported by main (handlers), preload
 // (bridge), and renderer (types only). Operation/sync event payloads come from
@@ -882,8 +881,6 @@ export interface GalleryItemVM {
 // ─── Channel map ─────────────────────────────────────────────────────────
 
 export interface InvokeChannels extends FollowersChannels {
-  'query:composer.bannedPreview': {args:{text:string};result:HubBannedPreview};
-  'query:composer.references': {args:{accountId:string;kind:ComposerReferenceKind;query?:string};result:{items:{id:string;label:string;type:string|null;partnerId:string|null;guest:boolean|null}[];partial:boolean}};
   'query:composer.actions': {args:{accountId:string;chatId:string;messageId?:string};result:ComposerActionVM[]};
   'cmd:composer.action': {args:{accountId:string;chatId:string;action:ComposerAction};result:ComposerActionVM};
   'query:accounts.list': { args: void; result: AccountVM[] };
@@ -1246,8 +1243,6 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'cmd:ai.feedback': true,
   'query:outbox.list': true,
   'cmd:send.message': true,
-  'query:composer.bannedPreview': true,
-  'query:composer.references': true,
   'query:composer.actions': true,
   'cmd:composer.action': true,
   'cmd:send.retry': true,

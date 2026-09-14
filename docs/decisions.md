@@ -52,6 +52,8 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 
 | D32 | 2026-09-15 | New followers uses explicit paced Hub reads, conservative origin evidence and atomic OF command outreach custody (core #339) |
 
+| D33 | 2026-09-15 | Remove the unsolicited API options panel and optional chat controls from Desktop; keep stored payload recovery and the original reply/like/name requirements |
+
 ## Entries
 
 **D1 (2026-07-05).** Stage 4 desktop stop-loss: outbox dead-letter spool
@@ -761,3 +763,31 @@ unfinished checkpoint. Export never includes credentials, headers, prompts or
 message bodies. Normal transcript/draft storage follows the existing local
 cache policy. This change prepares code only: no deployment or release. Hub
 must ship first and the normal release contract-hash gate must pass.
+
+
+**D33 (2026-09-15).** Owner rejected the unsolicited Desktop functionality
+shown in the Message options panel and requested its removal in the next release.
+API coverage is not approval to expose that API as a product workflow. This
+supersedes D27's user-facing expansion and the operator instructions in
+`docs/ofapi-composer.md`; D27/D28's durable send and recovery contracts remain.
+
+For 0.1.54 remove the entire options panel: caption-lock creation, provider
+screening selection, GIF/release-form/taggable-user lookup, manual creator,
+partner and guest IDs, and automatic banned-word preview. Remove both Desktop
+lookup/preview IPC channels and their Hub client plumbing, not just the markup.
+The same scope audit removes new pin/unpin, mark-unread, mute/unmute and hide
+controls plus the completed-command journal. These were expansion candidates in
+Hub's coverage plan, not original Desktop requirements. Reply-to, like/unlike and
+custom-name editing have explicit original requirements in PRD F4/F5 and remain.
+
+No migration removes saved outbox payloads, action identities, hidden-chat state,
+provider metadata or the generated Hub SDK. Older failed drafts retain every
+option exactly; a compact selection summary appears only for those restored
+options and lets the user explicitly clear them. Fresh drafts expose no options
+workbench. Previously unresolved actions retain status checking without exposing
+internal command names or a history of successful commands. Ordinary send and
+PPV defaults, decimal pricing, guards and duplicate-send protections remain.
+
+The source version is prepared as 0.1.54. Publication still uses the normal
+release checks/tag/feed ritual; this decision is not a claim that an installer
+has shipped.

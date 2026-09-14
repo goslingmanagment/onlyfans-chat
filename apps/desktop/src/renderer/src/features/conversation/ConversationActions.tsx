@@ -6,6 +6,18 @@ import { useLocale } from "../../lib/i18n";
 import { useComposerStore } from "./composerStore";
 import { focusComposer } from "./composerDom";
 
+const actionLabels: Record<ComposerAction["kind"], [string, string]> = {
+  set_fan_custom_name_v1: ["Изменение имени", "Name change"],
+  like_message_v1: ["Лайк", "Like"],
+  unlike_message_v1: ["Снятие лайка", "Unlike"],
+  pin_message_v1: ["Закрепление сообщения", "Pin message"],
+  unpin_message_v1: ["Открепление сообщения", "Unpin message"],
+  mark_chat_unread_v1: ["Отметка непрочитанным", "Mark unread"],
+  mute_chat_v1: ["Выключение уведомлений", "Mute"],
+  unmute_chat_v1: ["Включение уведомлений", "Unmute"],
+  hide_chat_v1: ["Скрытие чата", "Hide chat"],
+};
+
 function useActions(accountId: string, chatId: string, messageId?: string) {
   const client = useQueryClient();
   const query = useQuery({
@@ -69,12 +81,6 @@ export function MessageActions({
         row.action.kind === "like_message_v1" ||
         row.action.kind === "unlike_message_v1",
     )?.action.kind === "like_message_v1";
-  const pinned =
-    confirmed.find(
-      (row) =>
-        row.action.kind === "pin_message_v1" ||
-        row.action.kind === "unpin_message_v1",
-    )?.action.kind === "pin_message_v1";
   return (
     <span className="flex flex-wrap gap-2 text-[11px] text-ink-low">
       <button
@@ -100,19 +106,6 @@ export function MessageActions({
       >
         {liked ? (ru ? "Убрать лайк" : "Unlike") : ru ? "Лайк" : "Like"}
       </button>
-      <button
-        type="button"
-        disabled={state.busy}
-        className={pinned ? "text-clay-deep" : ""}
-        onClick={() =>
-          void state.perform({
-            kind: pinned ? "unpin_message_v1" : "pin_message_v1",
-            messageId,
-          })
-        }
-      >
-        {pinned ? (ru ? "Открепить" : "Unpin") : ru ? "Закрепить" : "Pin"}
-      </button>
       {state.error && (
         <span role="alert" className="text-warn">
           {state.error}
@@ -134,21 +127,12 @@ export function ConversationActions({
   const state = useActions(accountId, chatId);
   const [open, setOpen] = useState(false);
   const [customName, setCustomName] = useState(name);
-  const [confirmHide, setConfirmHide] = useState(false);
-  const muted =
-    state.rows.find(
-      (row) =>
-        row.state === "confirmed" &&
-        (row.action.kind === "mute_chat_v1" ||
-          row.action.kind === "unmute_chat_v1"),
-    )?.action.kind === "mute_chat_v1";
   return (
     <div
       className="relative text-[12px]"
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           setOpen(false);
-          setConfirmHide(false);
         }
       }}
     >
@@ -190,87 +174,33 @@ export function ConversationActions({
               {ru ? "Сохранить имя" : "Save name"}
             </button>
           </form>
-          <div className="flex flex-wrap gap-3 text-clay-deep">
-            <button
-              type="button"
-              disabled={state.busy}
-              onClick={() =>
-                void state.perform({ kind: "mark_chat_unread_v1" })
-              }
-            >
-              {ru ? "Отметить непрочитанным" : "Mark unread"}
-            </button>
-            <button
-              type="button"
-              disabled={state.busy}
-              onClick={() =>
-                void state.perform({
-                  kind: muted ? "unmute_chat_v1" : "mute_chat_v1",
-                })
-              }
-            >
-              {muted
-                ? ru
-                  ? "Включить уведомления"
-                  : "Unmute"
-                : ru
-                  ? "Выключить уведомления"
-                  : "Mute"}
-            </button>
-          </div>
-          {confirmHide ? (
-            <div>
-              {ru ? "Скрыть чат в OnlyFans?" : "Hide this chat in OnlyFans?"}{" "}
-              <button
-                type="button"
-                disabled={state.busy}
-                className="text-clay-deep underline"
-                onClick={() => {
-                  setConfirmHide(false);
-                  void state.perform({ kind: "hide_chat_v1" });
-                }}
-              >
-                {ru ? "Скрыть" : "Hide"}
-              </button>{" "}
-              ·{" "}
-              <button type="button" onClick={() => setConfirmHide(false)}>
-                {ru ? "Отмена" : "Cancel"}
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="text-ink-mid underline"
-              onClick={() => setConfirmHide(true)}
-            >
-              {ru ? "Скрыть чат…" : "Hide chat…"}
-            </button>
-          )}
           {state.error && (
             <p role="alert" className="text-warn">
               {state.error}
             </p>
           )}
-          <div className="max-h-40 space-y-1 overflow-auto border-t border-line pt-2 text-ink-low">
-            {state.rows.slice(0, 8).map((row) => (
-              <div key={row.clientCommandId}>
-                <span>
-                  {row.action.kind.replace(/_v1$/, "").replaceAll("_", " ")} ·{" "}
-                  {row.state}
-                </span>
-                {row.state === "unconfirmed" && (
-                  <button
-                    type="button"
-                    disabled={state.busy}
-                    className="ml-2 text-clay-deep underline"
-                    onClick={() => void state.perform(row.action)}
-                  >
-                    {ru ? "Проверить статус" : "Check status"}
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
+          {state.rows.some((row) => row.state === "unconfirmed") && (
+            <div className="space-y-1 border-t border-line pt-2 text-ink-low">
+              {state.rows
+                .filter((row) => row.state === "unconfirmed")
+                .map((row) => (
+                  <div key={row.clientCommandId}>
+                    <span>
+                      {actionLabels[row.action.kind][ru ? 0 : 1]}:{" "}
+                      {ru ? "не подтверждено" : "not confirmed"}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={state.busy}
+                      className="ml-2 text-clay-deep underline"
+                      onClick={() => void state.perform(row.action)}
+                    >
+                      {ru ? "Проверить статус" : "Check status"}
+                    </button>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       )}
     </div>

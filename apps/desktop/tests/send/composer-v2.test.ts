@@ -1,4 +1,3 @@
-import { parseComposerReferences } from "@chatgoose/shared/composer-references";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
@@ -766,30 +765,5 @@ describe("composer v2 durable boundaries", () => {
     ).rejects.toThrow(/saved action/);
     expect(hub.createOfapiCommand).toHaveBeenCalledTimes(1);
   });
-  it("rejects malformed reference envelopes and preserves unknown or empty continuing coverage", () => {
-    expect(() =>
-      parseComposerReferences("release_forms", { data: {} }),
-    ).toThrow();
-    expect(() =>
-      parseComposerReferences("giphy", { data: { items: [] } }),
-    ).toThrow();
-    expect(parseComposerReferences("giphy", { data: [] }).partial).toBe(true);
-    expect(
-      parseComposerReferences("release_forms", {
-        data: { items: [] },
-        _pagination: { next_page: "?offset=20" },
-      }),
-    ).toEqual({ items: [], partial: true });
-    expect(
-      parseComposerReferences("release_forms", {
-        data: { items: [] },
-        _pagination: { next_page: null },
-      }).partial,
-    ).toBe(false);
-    expect(() =>
-      parseComposerReferences("taggable_users", {
-        data: { items: [{ id: Number.MAX_SAFE_INTEGER + 1 }] },
-      }),
-    ).toThrow();
-  });
+
 });

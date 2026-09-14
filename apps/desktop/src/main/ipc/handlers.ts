@@ -1,6 +1,5 @@
 import { registerFollowersIpc } from '../followers/ipc';
 import type { FollowersService } from '../followers/service';
-import { parseComposerReferences } from '@chatgoose/shared/composer-references';
 // IPC invoke handlers — every InvokeChannels entry in src/preload/contract.ts.
 // Args are renderer-controlled (trust boundary): zod-validate everything
 // before touching the data layer (SPEC §15.3).
@@ -1205,21 +1204,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return data.outbox.listForChat(args.accountId, args.chatId).map(outboxToVM);
   });
 
-  ipcMain.handle('query:composer.bannedPreview', (_event, rawArgs:unknown) => {
-    const args=z.object({text:z.string().max(10000)}).strict().parse(rawArgs);
-    return requireSend().previewBannedWords(args.text);
-  });
   ipcMain.handle('query:composer.actions', (_event,rawArgs:unknown) => {
     const args=convSchema.extend({messageId:idSchema.optional()}).parse(rawArgs);return requireSend().listActions(args.accountId,args.chatId,args.messageId);
   });
   ipcMain.handle('cmd:composer.action',(_event,rawArgs:unknown) => {
     const args=z.object({accountId:idSchema,chatId:idSchema,action:composerActionSchema}).strict().parse(rawArgs);
     return requireSend().performAction(args.accountId,args.chatId,args.action);
-  });
-  ipcMain.handle('query:composer.references',async (_event,rawArgs:unknown) => {
-    const args=z.object({accountId:idSchema,kind:z.enum(['giphy','release_forms','taggable_users']),query:z.string().max(200).optional()}).strict().parse(rawArgs);
-    const result=await requireSend().readComposerReferences(args);
-    return parseComposerReferences(args.kind,result);
   });
 
   ipcMain.handle('cmd:send.message', (_event, rawArgs: unknown) => {
