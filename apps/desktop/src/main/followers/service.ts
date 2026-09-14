@@ -19,8 +19,12 @@ import type {
 } from "../../preload/followers-contract";
 import { assessHistory, historyRevision, messageKind, plain } from "./evidence";
 import { createFollowerPacer } from "./pacing";
+import { LatestFansPageError } from "../ofapi/latest-fans";
 
 export const FOLLOWER_MAX_FANS = 5_000;
+const FOLLOWER_PAGE_SIZE = 20;
+const FOLLOWER_MAX_PAGES = FOLLOWER_MAX_FANS / FOLLOWER_PAGE_SIZE;
+const DAY_MS = 86_400_000;
 export const FOLLOWER_MAX_HISTORY = 1_000;
 export const FOLLOWER_TRACE_RUNS = 8;
 export const FOLLOWER_TRACE_EVENTS = 100_000;
@@ -67,6 +71,9 @@ interface Run {
   error: string | null;
   entries: Map<string, Entry>;
   offset: number;
+  pages: number;
+  examined: number;
+  seenFans: Set<number>;
   listed: boolean;
   requests: number;
   truncated: boolean;
@@ -78,7 +85,7 @@ interface Run {
 export interface FollowersOptions {
   client: Pick<
     OfApiClient,
-    "listFansAll" | "listMessages" | "getWelcomeMessage" | "getUsersByIds"
+    "listFansLatest" | "listMessages" | "getWelcomeMessage" | "getUsersByIds"
   >;
   data: DataLayer;
   toMediaUrl: ToMediaUrl;
@@ -466,34 +473,82 @@ export function createFollowersService(options: FollowersOptions) {
         current(run);
         run.stage = "Загружаем новых подписчиков";
         const page = await read(run, null, "fans", () =>
-          client.listFansAll({
+          client.listFansLatest({
             accountId: run.accountId,
             purpose: "followers",
-            limit: 20,
+            limit: FOLLOWER_PAGE_SIZE,
             offset: run.offset,
+            type: "new",
+            // Provider date-zone/inclusivity is unspecified. Calendar-day
+            // padding covers either boundary; addFan enforces exact [from,to].
+            startDate: new Date(run.from - DAY_MS).toISOString().slice(0, 10),
+            endDate: new Date(run.to + 2 * DAY_MS).toISOString().slice(0, 10),
             retry: "none",
-            strict: true,
             signal: run.controller.signal,
           }),
         );
         current(run);
-        if (page.hasMore && page.fans.length === 0)
-          throw new Error("Пустая промежуточная страница фанов");
-        for (const fan of page.fans) addFan(run, fan);
-        run.offset += page.fans.length;
-        // Newest-first is OFAPI's documented ordering. Only a whole dated
-        // page below the lower boundary can terminate enumeration early.
-        const older =
+        run.pages += 1;
+        run.examined += page.fans.length;
+        const dates = page.fans
+          .map((fan) => Date.parse(fan.subscribedOnData?.subscribeAt ?? ""))
+          .filter(Number.isFinite);
+        trace(run, "fans.page", null, {
+          source: "fans/latest",
+          type: "new",
+          page: run.pages,
+          offset: run.offset,
+          count: page.fans.length,
+          hasMore: page.hasMore,
+          nextOffset: page.nextOffset,
+          oldest: dates.length
+            ? new Date(Math.min(...dates)).toISOString()
+            : null,
+          newest: dates.length
+            ? new Date(Math.max(...dates)).toISOString()
+            : null,
+        });
+        if (
+          page.hasMore !== (page.nextOffset !== null) ||
+          (page.nextOffset !== null &&
+            (!Number.isSafeInteger(page.nextOffset) ||
+              page.nextOffset <= run.offset))
+        ) {
+          trace(run, "fans.stop", null, { reason: "invalid-pagination" });
+          throw new Error("Некорректное продолжение списка фанов");
+        }
+        let unique = 0;
+        const acceptedBefore = run.entries.size;
+        for (const fan of page.fans) {
+          if (!run.seenFans.has(fan.id)) unique += 1;
+          run.seenFans.add(fan.id);
+          addFan(run, fan);
+        }
+        if (
           page.fans.length > 0 &&
-          page.fans.every(
-            (fan) =>
-              Date.parse(fan.subscribedOnData?.subscribeAt ?? "") < run.from,
-          );
-        run.listed = !page.hasMore || older;
-        if (!run.listed && run.offset >= FOLLOWER_MAX_FANS) {
+          unique === 0 &&
+          run.entries.size === acceptedBefore
+        ) {
+          trace(run, "fans.stop", null, { reason: "repeated-page" });
+          throw new Error("Повторяющаяся страница фанов");
+        }
+        // Exhaustion is explicit, never inferred from dates, sorting or count.
+        run.listed = !page.hasMore;
+        if (page.nextOffset !== null) run.offset = page.nextOffset;
+        if (
+          !run.listed &&
+          (run.pages >= FOLLOWER_MAX_PAGES || run.examined >= FOLLOWER_MAX_FANS)
+        ) {
           run.listed = true;
           run.truncated = true;
         }
+        if (run.listed)
+          trace(run, "fans.stop", null, {
+            reason: run.truncated ? "scan-limit" : "source-exhausted",
+            pages: run.pages,
+            examined: run.examined,
+            accepted: run.entries.size,
+          });
         notify(run.accountId);
       }
       run.stage = "Проверяем переписку";
@@ -512,13 +567,18 @@ export function createFollowersService(options: FollowersOptions) {
         truncated: run.truncated,
       });
     } catch (error) {
+      const failedStage = run.stage;
       run.state = run.controller.signal.aborted ? "paused" : "error";
       run.stage = run.state === "paused" ? "Пауза" : "Проверка остановлена";
       run.error =
         run.state === "error"
           ? `Не удалось продолжить проверку${error instanceof CgError ? ` (${error.code})` : ""}. Уже проверенные фаны сохранены.`
           : null;
-      trace(run, `run.${run.state}`);
+      trace(run, `run.${run.state}`, null, {
+        stage: failedStage,
+        code: error instanceof CgError ? error.code : null,
+        reason: error instanceof LatestFansPageError ? error.diagnostic : null,
+      });
     } finally {
       run.worker = null;
       if (!disposed) {
@@ -622,16 +682,14 @@ export function createFollowersService(options: FollowersOptions) {
       return {
         row: { ...entry.row },
         about: plain(entry.user.about),
-        messages: [...entry.messages]
-          .reverse()
-          .map((m) => ({
-            id: String(m.id),
-            at: m.createdAt,
-            fromMe: m.isSentByMe,
-            text: plain(m.text),
-            mediaCount: m.mediaCount ?? m.media?.length ?? 0,
-            kind: messageKind(m, run.welcome),
-          })),
+        messages: [...entry.messages].reverse().map((m) => ({
+          id: String(m.id),
+          at: m.createdAt,
+          fromMe: m.isSentByMe,
+          text: plain(m.text),
+          mediaCount: m.mediaCount ?? m.media?.length ?? 0,
+          kind: messageKind(m, run.welcome),
+        })),
         hasOlder:
           !entry.complete && entry.messages.length < FOLLOWER_MAX_HISTORY,
         draft: entry.draft,
@@ -677,6 +735,9 @@ export function createFollowersService(options: FollowersOptions) {
         error: null,
         entries: new Map(),
         offset: 0,
+        pages: 0,
+        examined: 0,
+        seenFans: new Set(),
         listed: false,
         requests: 0,
         truncated: false,
@@ -686,7 +747,13 @@ export function createFollowersService(options: FollowersOptions) {
         journal,
       };
       runs.set(accountId, run);
-      trace(run, "run.start", null, { hours });
+      trace(run, "run.start", null, {
+        hours,
+        from: new Date(run.from).toISOString(),
+        to: new Date(run.to).toISOString(),
+        source: "fans/latest",
+        type: "new",
+      });
       run.worker = work(run);
       notify(accountId);
     },
@@ -932,6 +999,9 @@ export function createFollowersService(options: FollowersOptions) {
           .filter(
             ([key, value]) =>
               [
+                "start_date",
+                "end_date",
+                "type",
                 "offset",
                 "limit",
                 "order",

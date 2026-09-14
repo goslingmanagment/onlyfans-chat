@@ -49,9 +49,10 @@ function fixture() {
   } as unknown as DataLayer;
   let clock = now;
   const client = {
-    listFansAll: vi.fn(async () => ({
+    listFansLatest: vi.fn(async () => ({
       fans: [fan(1), fan(2), fan(3)],
       hasMore: false,
+      nextOffset: null,
     })),
     listMessages: vi.fn(async (_args: { chatId: string }) => ({
       messages: [],

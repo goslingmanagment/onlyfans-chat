@@ -1,6 +1,7 @@
 # New followers (OnlyFans desktop)
 
-Included in the 0.1.53 release. Desktop decision D32; backend Hub decision 339.
+Introduced in 0.1.53 (D32 / Hub 339). The D34 / Hub 342 enumeration correction
+described below is included in the 0.1.54 release candidate.
 Release order: deploy that Hub support first, validate the served contract hash
 against the vendored SDK, then run the packaged Windows/macOS release gates.
 The public update feeds determine whether publication has completed.
@@ -18,9 +19,19 @@ Progress counts processed rows. Ready means a complete history without known
 personal contact or uncertain outgoing origin; incoming history is a separate
 reply queue, personal outgoing history is already-contacted. Missing dates,
 malformed rows, non-progressing pagination and the 1000-message cap cannot make
-a fan ready. Enumeration stops after a fully dated old page (documented
-newest-first order), list exhaustion, or 5000 examined records. The cap is shown.
-Provider offset pagination is not a transactionally frozen roster.
+a fan ready. Enumeration uses `/fans/latest?type=new`, with the provider's
+`data.users` response. The calendar query covers UTC dates from one day before
+`from` through two days after `to`; exact inclusive `[from,to]` filtering remains
+local because the provider does not specify its date-zone/inclusivity semantics.
+Enumeration follows validated `_pagination.next_page` offsets and explicit
+`hasMore`. Neither old dates nor short pages prove exhaustion. Foreign,
+non-advancing, selection-changing, contradictory or incomplete responses fail
+closed. Repeated pages without new identities or accepted entries stop the scan.
+Empty advancing pages are allowed, bounded by 250 pages / 5000 examined rows;
+limits are visible as an incomplete list. Provider offset pagination is not a
+transactionally frozen roster. `type=new` excludes renewals, but classification
+of a returning subscriber and the precise meaning of `subscribeAt` still need
+live-account verification. See D34 and Hub decision 342.
 
 OnlyFans does not provide sufficiently strong message-origin evidence in the
 vendored contract to tell a single-recipient scheduled message from a mass
@@ -55,7 +66,11 @@ limiter still admits each request; its queue wait is outside the HTTP deadline.
 
 Enable the application's existing Debug mode before starting a run. The journal
 contains wall-clock ISO milliseconds, elapsed milliseconds, request queue/start/
-response events with safe page parameters, cooldowns and per-fan outcomes. It
+response events with safe page parameters, cooldowns and per-fan outcomes.
+Page events include source, offset, row count, `hasMore`, next offset and observed
+date extrema. Stop events identify exhaustion, scan limit or invalid/repeated
+pagination; terminal failures include the stage/code and locally authored
+validation reason, never raw provider text. It
 retains eight runs, up to 100000 events and 20M characters each; dropped events
 are disclosed. Pause, terminal/action and clean shutdown checkpoints persist it
 in encrypted SQLite. A crash before a checkpoint can lose unfinished events.
@@ -83,3 +98,12 @@ checked RU, draft/generation fixture flows and debug export. Backend checks:
 3828 unit tests and 146 PostgreSQL integrations; a second agent independently
 ran the affected backend contract/custody tests. Neither these fixtures nor the
 keyless boot establish live-account provider correctness or a packaged release.
+
+
+D34 correction validation (2026-09-15): full `pnpm check` passed with 563 shared
+and 1814 desktop tests (five existing skips). An independent agent re-ran the
+latest parser/service cases and reviewed both repositories. Core passed its full
+check with 3845 unit tests plus the focused 102-test gate (49 PostgreSQL cases).
+No live-account validation was possible: the local app is not signed in. The
+[incident report](followers-incident-2026-09-15.md) separates observed log facts,
+code defects and the remaining live test. This correction ships with 0.1.54; publication still requires the normal release gates.

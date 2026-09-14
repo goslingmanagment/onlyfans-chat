@@ -11,6 +11,7 @@
 // /api/whoami a bare object (verified live 2026-06-10).
 
 import { z } from 'zod';
+import { parseLatestFansPage } from './latest-fans';
 import { OFAPI_REQUEST_TIMEOUT_MS, type OfApiPurpose } from '@chatgoose/shared';
 import type { operations } from './ofapi.gen';
 import { createCreditMeter } from './credit-meter';
@@ -220,6 +221,16 @@ export interface ListFansParams extends PurposeTagged {
   minTotalSpent?: number;
 }
 
+export interface ListLatestFansParams extends PurposeTagged {
+  accountId: string;
+  startDate: string;
+  endDate: string;
+  type: 'new' | 'renew' | 'total';
+  /** Upstream max 50 (fresh primary docs, 2026-09-15). */
+  limit: number;
+  offset: number;
+}
+
 // ── User lists (Spenders board, PLAN item 12) — READ-ONLY ──────────────
 // OnlyMonster owns these lists; the client deliberately exposes no method
 // that writes to them (no add/remove/clear/create/delete).
@@ -342,6 +353,7 @@ export interface OfApiClient {
     nextPageUrl: string | null;
   }>;
   listFansAll(params: ListFansParams): Promise<{ fans: OfApiUser[]; hasMore: boolean }>;
+  listFansLatest(params: ListLatestFansParams): Promise<{ fans: OfApiUser[]; hasMore: boolean; nextOffset: number | null }>;
   listFansActive(params: ListFansParams): Promise<{ fans: OfApiUser[]; hasMore: boolean }>;
   // ── User lists (OnlyMonster tiers) — strictly read-only, GETs only ──
   listUserLists(params: ListUserListsParams): Promise<{ lists: OfApiUserList[]; hasMore: boolean }>;
@@ -815,6 +827,21 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
 
     async listFansAll(params): Promise<{ fans: OfApiUser[]; hasMore: boolean }> {
       return listFans('/fans/all', params);
+    },
+
+    async listFansLatest(params) {
+      if (!Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > 50 ||
+          !Number.isSafeInteger(params.offset) || params.offset < 0 ||
+          !Number.isFinite(Date.parse(params.startDate)) || !Number.isFinite(Date.parse(params.endDate)) ||
+          Date.parse(params.startDate) >= Date.parse(params.endDate)) {
+        throw usageError('listFansLatest: invalid limit, offset or date window');
+      }
+      const path = accountPath(params.accountId, '/fans/latest');
+      const query = { limit: params.limit, offset: params.offset, type: params.type,
+        start_date: params.startDate, end_date: params.endDate };
+      const payload = await getJson(params.accountId, params.purpose, path, query,
+        params.priority, params.retry, undefined, params.signal);
+      return parseLatestFansPage(payload, path, query);
     },
 
     async listFansActive(params): Promise<{ fans: OfApiUser[]; hasMore: boolean }> {
