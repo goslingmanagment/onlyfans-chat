@@ -1,9 +1,9 @@
 # New followers (OnlyFans desktop)
 
-Prepared implementation, not a released build. Desktop decision D32; backend
-Hub decision 338 in `feat/of-new-followers`. The release must deploy that Hub
-support first, validate the served contract hash against the vendored SDK, then
-run the existing packaged Windows/macOS release gates. No version bump here.
+Included in the 0.1.53 release. Desktop decision D32; backend Hub decision 339.
+Release order: deploy that Hub support first, validate the served contract hash
+against the vendored SDK, then run the packaged Windows/macOS release gates.
+The public update feeds determine whether publication has completed.
 
 ## Operator flow
 

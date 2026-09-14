@@ -50,7 +50,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D29 | 2026-09-11 | Spenders shows two contact-age columns and one author-prefixed message; the chatter chooses when to Ping (core #294) |
 | D30 | 2026-09-12 | Spenders adds local search and neutral filters; errors and refresh outcomes remain distinct from empty data and source freshness; AI insertion is consumed once per job |
 
-| D32 | 2026-09-15 | New followers uses explicit paced Hub reads, conservative origin evidence and atomic OF command outreach custody (core #338) |
+| D32 | 2026-09-15 | New followers uses explicit paced Hub reads, conservative origin evidence and atomic OF command outreach custody (core #339) |
 
 ## Entries
 
@@ -750,7 +750,7 @@ fences local outbox changes, then enqueues one standard v1 text command.
 SQLite v23 persists outreachPurpose independently of composer options. Generic
 inbox Retry cannot bypass fresh follower checks. Indeterminate sends are never
 automatically repeated or confirmed by loose local text matching. Core Decision
-338 adds atomic per-page/fan command custody across feature users; it does not
+339 adds atomic per-page/fan command custody across feature users; it does not
 lock native or ordinary chats while a command is waiting for delivery.
 
 Debug mode retains eight run journals (100000 events / 20M characters per run),
