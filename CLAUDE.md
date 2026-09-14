@@ -37,6 +37,12 @@ safety protocol in `docs/SESSIONS.md` remains binding.
 
 ## Hard rules
 
+- **Product scope:** API support or an endpoint inventory does not authorize new
+  Desktop controls. Add user-facing capabilities only when the owner explicitly
+  requests that product scope. Do not expose raw provider IDs, screening modes,
+  reference browsers or command journals just because the SDK supports them
+  (owner correction 2026-09-15, D33).
+
 - **Verify OFAPI shapes against `docs/vendor/onlyfansapi/openapi.json` or fresh `.mdx` pages — never from memory.** Per-page docs: append `.mdx` to any `docs.onlyfansapi.com` URL.
 - **Before implementing any OFAPI subsystem, read its primary docs** — grep `docs/vendor/onlyfansapi/llms-full.txt` and/or fetch the curated `.mdx` URLs listed in `docs/research/onlyfansapi.md` §8. The research summary is for planning; it is not sufficient detail for implementation.
 - **Do NOT look at `~/code/chatgoose_desktop`** — abandoned incorrect implementation, explicitly excluded by the owner.

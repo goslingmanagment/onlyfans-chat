@@ -29,7 +29,6 @@ export function sendCurrentDraft(args: {
   if (inFlight.has(key)) return;
   const draft = useAiStore.getState().draftText;
   const composer=useComposerStore.getState();
-  if(composer.error)return;
   const parts = draft.trim() ? splitDraftParts(draft) : composer.options.giphyId ? [''] : [];
   if (parts.length === 0) return;
   if (parts.length > MAX_SEND_PARTS) {

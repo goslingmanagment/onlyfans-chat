@@ -85,7 +85,7 @@ export interface HubModule {
   /** Coordinator onAcceptanceEvent target ('shown'). */
   onAcceptanceEvent: (event: AcceptanceEventInput) => void;
   /** Stable delegator for C6b text-command intake/status recovery. */
-  commandClient: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand' | 'cancelOfapiCommand' | 'previewBannedWords' | 'readComposerReferences'>;
+  commandClient: Pick<HubClient, 'createOfapiCommand' | 'getOfapiCommand' | 'cancelOfapiCommand'>;
   /** DRAIN-ONLY (Stage 31): nothing calls this post-cutover — the coordinator
    * stopped writing usage_events. Pre-cutover rows have no destination actor
    * and stay quarantined; this compatibility seam accepts only events created
@@ -338,14 +338,6 @@ export function createHubModule(options: HubModuleOptions): HubModule {
     },
 
     commandClient: {
-      previewBannedWords(text) {
-        if (!active) return Promise.reject(new HubError('bad-request', {message:'Hub is not configured'}));
-        return active.client.previewBannedWords(text);
-      },
-      readComposerReferences(args) {
-        if (!active) return Promise.reject(new HubError('bad-request', {message:'Hub is not configured'}));
-        return active.client.readComposerReferences(args);
-      },
       createOfapiCommand(args) {
         if (active === null) {
           return Promise.reject(

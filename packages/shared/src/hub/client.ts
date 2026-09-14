@@ -14,7 +14,6 @@ import {
   KernelApiError,
   createClient,
   routeSchemas,
-  ofapiRead as sdkOfapiRead,
   streamAiFeature as sdkStreamAiFeature,
   streamAiGateway as sdkStreamAiGateway,
   type AiGatewayStreamFrame,
@@ -266,8 +265,6 @@ export type HubProfileVersion = KernelOperationResponse<'upsertFanProfile'>;
 export type HubUsageBatchResult = KernelOperationResponse<'aiUsageBatch'>;
 export type HubOfapiCreditsSummary = KernelOperationResponse<'ofapiCreditsChatterSummary'>;
 export type HubOfapiCommand = KernelOperationResponse<'getOfapiCommand'>;
-export type HubBannedPreview = KernelOperationResponse<'ofapiBannedWordsPreview'>;
-export type ComposerReferenceKind = 'giphy' | 'release_forms' | 'taggable_users';
 export type HubOfapiCommandCreateRequest = z.input<(typeof routeSchemas)['createOfapiCommand']['body']>;
 export type HubIngestBatchResult = KernelOperationResponse<'ingestObservations'>;
 export type HubAiGatewayStreamRequest = z.input<(typeof routeSchemas)['aiGatewayStream']['body']>;
@@ -400,8 +397,6 @@ export interface HubClient {
     timeoutMs?: number;
   }): Promise<HubIngestBatchResult>;
   getOfapiCreditsSummary(options?: { timeoutMs?: number }): Promise<HubOfapiCreditsSummary>;
-  previewBannedWords(text: string): Promise<HubBannedPreview>;
-  readComposerReferences(args: {accountId:string;kind:ComposerReferenceKind;query?:string | undefined}): Promise<unknown>;
   createOfapiCommand(args: {
     command: HubOfapiCommandCreateRequest;
     timeoutMs?: number;
@@ -624,21 +619,6 @@ export function createHubClient(options: HubClientOptions): HubClient {
 
     async getOfapiCreditsSummary(summaryOptions) {
       return delegate(() => clientFor(summaryOptions?.timeoutMs ?? HUB_OFAPI_CREDITS_TIMEOUT_MS).ofapiCreditsChatterSummary());
-    },
-
-    async previewBannedWords(text) {
-      return delegate(() => clientFor(HUB_PROFILE_GET_TIMEOUT_MS).ofapiBannedWordsPreview({ body: { text } }));
-    },
-    async readComposerReferences(args) {
-      const accountId = z.string().regex(/^acct_[A-Za-z0-9]+$/).parse(args.accountId);
-      const kind = z.enum(['giphy', 'release_forms', 'taggable_users']).parse(args.kind);
-      const query = z.string().max(200).parse(args.query ?? '');
-      const path = kind === 'giphy' ? (query ? 'giphy/search' : 'giphy/trending') : kind === 'release_forms' ? 'release-forms' : 'release-forms/taggable-users';
-      return delegate(async () => {
-        const response = await sdkOfapiRead(sdkOptions(30000), { path: `${accountId}/${path}`, query: kind === 'giphy' ? {limit:'20', ...(query ? {q:query} : {})} : {limit:'20', ...(query ? {name:query} : {})} });
-        if (!response.ok) throw new KernelApiError('Composer reference read failed', 'http', response.status, null, null);
-        return response.json() as Promise<unknown>;
-      });
     },
 
     async createOfapiCommand({ command, timeoutMs }) {

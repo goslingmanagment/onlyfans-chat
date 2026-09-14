@@ -1,5 +1,46 @@
 # OFAPI composer and conversation actions
 
+## Current Desktop scope — 0.1.54 (D33)
+
+The **Message options** panel has been removed at the owner's request, along
+with provider-screening controls, caption-lock selection, manual release IDs,
+GIF/reference lookup and the background dictionary preview. The two associated
+Desktop IPC channels and their read transport have also been removed.
+
+The scope audit also removes the optional pin/unpin, mark-unread, mute/unmute and
+hide controls and the completed-action journal. Reply-to, like/unlike and fan
+custom-name editing remain from the original PRD F4/F5 requirements.
+
+A fresh composer shows no additional settings. Reply selection is still visible
+and removable. If **Edit** or failure restoration loads a saved message from an
+older release, its hidden-caption/GIF/participant/screening selections are shown
+as a compact summary, without raw provider IDs or fields for adding new values.
+**Clear these options** resets only those selections, preserves reply/text/media
+and leaves the original saved payload untouched. Existing retry/status/recovery
+semantics remain unchanged. Unconfirmed chat actions still offer status checking.
+
+Text sends retain the v1 default path; replies and media/PPV use the existing v2
+path. Decimal PPV prices, previews and the existing caption default are unchanged.
+No data migration, SDK update, Hub deployment or collector policy change is needed.
+
+### Audit boundary
+
+| Surface from the September 6 expansion | 0.1.54 result |
+|---|---|
+| Message options: caption lock, provider screening, GIF/reference lookup, manual IDs | Removed; previously saved selections are recoverable and visible |
+| Automatic Hub banned-word preview while typing | Removed; original message guard and actual send rejection handling remain |
+| Pin/unpin, mark unread, mute/unmute, hide | Removed from the Desktop UI; saved action identities/status remain readable |
+| Completed-command history in the chat menu | Removed; unresolved status checks remain |
+| Reply, like/unlike, custom name | Retained: original PRD F4/F5 requirements |
+| New followers, Spenders, decimal PPV, durable send/recovery | Outside the removed expansion; unchanged |
+
+## Historical implementation and 0.1.51 acceptance
+
+The remainder records the September 6 implementation and September 7 release
+acceptance. Its instructions to open Message options, run reference lookups or
+use the removed chat controls are superseded by D33 and the scope above.
+
+
 Implemented 2026-09-06; desktop decision D27, Hub decision 268. These are local
 implementation and test results, not a production rollout claim.
 
