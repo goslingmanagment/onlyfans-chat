@@ -44,6 +44,7 @@ export function createOfApiTransportClient(readClient: OfApiClient): OfApiClient
     getUserByUsername: (params) => readClient.getUserByUsername(params),
     getUsersByIds: (params) => readClient.getUsersByIds(params),
     listTransactions: (params) => readClient.listTransactions(params),
+    listFansLatest: (params) => readClient.listFansLatest(params),
     listFansAll: (params) => readClient.listFansAll(params),
     listFansActive: (params) => readClient.listFansActive(params),
     listUserLists: (params) => readClient.listUserLists(params),

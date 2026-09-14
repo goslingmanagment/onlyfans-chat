@@ -17,6 +17,7 @@ const READ_METHODS = [
   'getUsersByIds',
   'listTransactions',
   'listFansAll',
+  'listFansLatest',
   'listFansActive',
   'listUserLists',
   'listUserListUsers',

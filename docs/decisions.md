@@ -53,6 +53,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D32 | 2026-09-15 | New followers uses explicit paced Hub reads, conservative origin evidence and atomic OF command outreach custody (core #339) |
 
 | D33 | 2026-09-15 | Remove the unsolicited API options panel and optional chat controls from Desktop; keep stored payload recovery and the original reply/like/name requirements |
+| D34 | 2026-09-15 | New follower enumeration uses date-bounded latest subscriptions and explicit provider continuation (core #342) |
 
 ## Entries
 
@@ -791,3 +792,19 @@ PPV defaults, decimal pricing, guards and duplicate-send protections remain.
 The source version is prepared as 0.1.54. Publication still uses the normal
 release checks/tag/feed ritual; this decision is not a claim that an installer
 has shipped.
+
+**D34 (2026-09-15).** The 0.1.53 incident on LoraVie FREE returned 18 old,
+chronologically unordered records from `/fans/all` and completed with zero fans
+after two successful requests. The export omitted hasMore/next_page, so it cannot
+establish which stop branch fired. Both assumptions were invalid: an old page
+cannot terminate an unordered roster, and returned row count is not a cursor.
+The new-follower workflow now uses `/fans/latest`, `type=new`, padded calendar
+dates plus exact fixed local time bounds, strict `users`/pagination/source
+validation and only the provider's validated next offset. It preserves pacing,
+no hidden retries, and a bounded 250-page/5000-row scan. Journal page/stop/error
+metadata makes completeness decisions reviewable. See [operator contract](followers.md).
+
+Hub #342 classifies this roster as core audience, preserving explicit audience
+policy and legacy explicitly selected collection jobs. Deploy that support before
+shipping this client. The fix is included in the 0.1.54 release candidate; fixture checks do not
+claim a live Lora test. Ordinary roster/spender consumers are unchanged.
