@@ -3988,6 +3988,10 @@ export declare const aiGatewayPromptBlockSchema: z.ZodObject<{
         "5m": "5m";
     }>;
 }, z.core.$strict>;
+export declare const fanslyAvatarUrlSchema: z.ZodString;
+export declare const aiGatewayImagesSchema: z.ZodArray<z.ZodObject<{
+    url: z.ZodString;
+}, z.core.$strict>>;
 export declare const AI_FEATURE_DEBUG_PROMPT_BLOCK_MAX_CHARS = 2500000;
 export declare const aiFeatureDebugPromptBlockSchema: z.ZodObject<{
     text: z.ZodString;
@@ -4016,6 +4020,9 @@ export declare const aiFeatureDebugInputFrameSchema: z.ZodObject<{
         }>;
     }, z.core.$strict>>;
     contextManifest: z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    images: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        url: z.ZodString;
+    }, z.core.$strict>>>;
 }, z.core.$strict>;
 export declare const aiGatewayStreamBodySchema: z.ZodObject<{
     clientRequestId: z.ZodString;
@@ -4067,6 +4074,9 @@ export declare const aiGatewayStreamBodySchema: z.ZodObject<{
                 "5m": "5m";
             }>;
         }, z.core.$strict>>;
+        images: z.ZodOptional<z.ZodArray<z.ZodObject<{
+            url: z.ZodString;
+        }, z.core.$strict>>>;
     }, z.core.$strict>;
 }, z.core.$strict>;
 export declare const aiGatewayUsageSchema: z.ZodObject<{
@@ -4246,6 +4256,9 @@ export declare const aiFeatureStreamFrameSchema: z.ZodUnion<readonly [z.ZodDiscr
         }>;
     }, z.core.$strict>>;
     contextManifest: z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    images: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        url: z.ZodString;
+    }, z.core.$strict>>>;
 }, z.core.$strict>]>;
 export declare const aiPersonaSchema: z.ZodObject<{
     key: z.ZodString;
@@ -4410,6 +4423,7 @@ export declare const aiFeatureStreamBodySchema: z.ZodObject<{
     }, z.core.$strict>>>;
     preset: z.ZodOptional<z.ZodLiteral<"situation">>;
     summaryMode: z.ZodOptional<z.ZodLiteral<"short">>;
+    greetingMode: z.ZodOptional<z.ZodLiteral<"new-follower">>;
     clientContext: z.ZodOptional<z.ZodObject<{
         transcript: z.ZodString;
         messageCount: z.ZodNumber;
@@ -4418,6 +4432,8 @@ export declare const aiFeatureStreamBodySchema: z.ZodObject<{
         fanSubscriptionData: z.ZodDefault<z.ZodString>;
         fanBio: z.ZodOptional<z.ZodString>;
         fanCustomName: z.ZodOptional<z.ZodString>;
+        fanUsername: z.ZodOptional<z.ZodString>;
+        fanAvatarUrl: z.ZodOptional<z.ZodString>;
         pingSegment: z.ZodOptional<z.ZodEnum<{
             active: "active";
             "segment-a": "segment-a";
@@ -10574,6 +10590,7 @@ export declare const createOfapiCommandBodySchema: z.ZodDiscriminatedUnion<[z.Zo
         reuseProviderOperation: z.ZodDefault<z.ZodBoolean>;
     }, z.core.$strict>;
     retryOfCommandId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    outreachPurpose: z.ZodOptional<z.ZodLiteral<"new-follower">>;
     clientCommandId: z.ZodString;
     accountId: z.ZodString;
     conversationId: z.ZodString;
@@ -10604,6 +10621,7 @@ export declare const createOfapiCommandBodySchema: z.ZodDiscriminatedUnion<[z.Zo
     conversationId: z.ZodString;
 }, z.core.$strict>)[], z.ZodObject<{
     kind: z.ZodLiteral<"send_text_message_v1">;
+    outreachPurpose: z.ZodOptional<z.ZodLiteral<"new-follower">>;
     payload: z.ZodObject<{
         text: z.ZodString;
     }, z.core.$strict>;
@@ -10670,6 +10688,7 @@ export declare const ofapiCommandResponseSchema: z.ZodObject<{
         unsend_message_v1: "unsend_message_v1";
         mark_chat_read_v1: "mark_chat_read_v1";
     }>;
+    outreachPurpose: z.ZodOptional<z.ZodNullable<z.ZodLiteral<"new-follower">>>;
     accountId: z.ZodString;
     conversationId: z.ZodString;
     state: z.ZodEnum<{
@@ -12263,6 +12282,9 @@ declare const baseRouteSchemas: {
                         "5m": "5m";
                     }>;
                 }, z.core.$strict>>;
+                images: z.ZodOptional<z.ZodArray<z.ZodObject<{
+                    url: z.ZodString;
+                }, z.core.$strict>>>;
             }, z.core.$strict>;
         }, z.core.$strict>;
         readonly response: {
@@ -14461,6 +14483,7 @@ declare const baseRouteSchemas: {
                 reuseProviderOperation: z.ZodDefault<z.ZodBoolean>;
             }, z.core.$strict>;
             retryOfCommandId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            outreachPurpose: z.ZodOptional<z.ZodLiteral<"new-follower">>;
             clientCommandId: z.ZodString;
             accountId: z.ZodString;
             conversationId: z.ZodString;
@@ -14491,6 +14514,7 @@ declare const baseRouteSchemas: {
             conversationId: z.ZodString;
         }, z.core.$strict>)[], z.ZodObject<{
             kind: z.ZodLiteral<"send_text_message_v1">;
+            outreachPurpose: z.ZodOptional<z.ZodLiteral<"new-follower">>;
             payload: z.ZodObject<{
                 text: z.ZodString;
             }, z.core.$strict>;
@@ -14555,6 +14579,7 @@ declare const baseRouteSchemas: {
                     unsend_message_v1: "unsend_message_v1";
                     mark_chat_read_v1: "mark_chat_read_v1";
                 }>;
+                outreachPurpose: z.ZodOptional<z.ZodNullable<z.ZodLiteral<"new-follower">>>;
                 accountId: z.ZodString;
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
@@ -14599,6 +14624,7 @@ declare const baseRouteSchemas: {
                     unsend_message_v1: "unsend_message_v1";
                     mark_chat_read_v1: "mark_chat_read_v1";
                 }>;
+                outreachPurpose: z.ZodOptional<z.ZodNullable<z.ZodLiteral<"new-follower">>>;
                 accountId: z.ZodString;
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
@@ -14686,6 +14712,7 @@ declare const baseRouteSchemas: {
                     unsend_message_v1: "unsend_message_v1";
                     mark_chat_read_v1: "mark_chat_read_v1";
                 }>;
+                outreachPurpose: z.ZodOptional<z.ZodNullable<z.ZodLiteral<"new-follower">>>;
                 accountId: z.ZodString;
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
@@ -14763,6 +14790,7 @@ declare const baseRouteSchemas: {
                     unsend_message_v1: "unsend_message_v1";
                     mark_chat_read_v1: "mark_chat_read_v1";
                 }>;
+                outreachPurpose: z.ZodOptional<z.ZodNullable<z.ZodLiteral<"new-follower">>>;
                 accountId: z.ZodString;
                 conversationId: z.ZodString;
                 state: z.ZodEnum<{
@@ -18784,6 +18812,59 @@ declare const baseRouteSchemas: {
             }, z.core.$strip>;
         };
     };
+    readonly followerOutreachAttempt: {
+        readonly auth: {
+            readonly kind: "any";
+            readonly scope: "page";
+        };
+        readonly tags: readonly ["conversations"];
+        readonly summary: "Reserve and record one human-triggered follower greeting send";
+        readonly params: z.ZodObject<{
+            pageLabel: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            fanRef: z.ZodString;
+            attemptId: z.ZodString;
+            action: z.ZodEnum<{
+                dispatch: "dispatch";
+                sent: "sent";
+                reserve: "reserve";
+            }>;
+            messageRef: z.ZodOptional<z.ZodString>;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                owned: z.ZodBoolean;
+                state: z.ZodEnum<{
+                    expired: "expired";
+                    dispatching: "dispatching";
+                    sent: "sent";
+                    reserved: "reserved";
+                }>;
+                expiresAt: z.ZodNullable<z.ZodString>;
+            }, z.core.$strict>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+            }, z.core.$strip>;
+        };
+    };
     readonly workboardV2Unclaim: {
         readonly auth: {
             readonly kind: "any-session";
@@ -22358,6 +22439,7 @@ declare const baseRouteSchemas: {
             }, z.core.$strict>>>;
             preset: z.ZodOptional<z.ZodLiteral<"situation">>;
             summaryMode: z.ZodOptional<z.ZodLiteral<"short">>;
+            greetingMode: z.ZodOptional<z.ZodLiteral<"new-follower">>;
             clientContext: z.ZodOptional<z.ZodObject<{
                 transcript: z.ZodString;
                 messageCount: z.ZodNumber;
@@ -22366,6 +22448,8 @@ declare const baseRouteSchemas: {
                 fanSubscriptionData: z.ZodDefault<z.ZodString>;
                 fanBio: z.ZodOptional<z.ZodString>;
                 fanCustomName: z.ZodOptional<z.ZodString>;
+                fanUsername: z.ZodOptional<z.ZodString>;
+                fanAvatarUrl: z.ZodOptional<z.ZodString>;
                 pingSegment: z.ZodOptional<z.ZodEnum<{
                     active: "active";
                     "segment-a": "segment-a";

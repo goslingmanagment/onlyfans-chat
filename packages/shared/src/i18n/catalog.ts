@@ -699,6 +699,7 @@ export const UI_MESSAGES = {
     en: 'Hydration (chat-list backfill, fan details)',
     ru: 'Догрузка (список чатов, анкеты фанов)',
   },
+  'purpose.followers': { en: 'New followers (eligibility checks)', ru: 'Новые фаны (проверка переписки)' },
   'purpose.online': {
     en: 'Online now (active-fans refresh)',
     ru: 'Сейчас онлайн (обновление активных фанов)',

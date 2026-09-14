@@ -50,6 +50,8 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D29 | 2026-09-11 | Spenders shows two contact-age columns and one author-prefixed message; the chatter chooses when to Ping (core #294) |
 | D30 | 2026-09-12 | Spenders adds local search and neutral filters; errors and refresh outcomes remain distinct from empty data and source freshness; AI insertion is consumed once per job |
 
+| D32 | 2026-09-15 | New followers uses explicit paced Hub reads, conservative origin evidence and atomic OF command outreach custody (core #338) |
+
 ## Entries
 
 **D1 (2026-07-05).** Stage 4 desktop stop-loss: outbox dead-letter spool
@@ -721,3 +723,41 @@ Desktop operation. Publish Hub first, then the Windows installer and macOS DMG
 through the existing cross-platform CI, packaged smoke, and served-artifact
 verification gates. The final local full check passes 2,286 tests with five
 existing skips and eight existing lint warnings.
+
+
+**D32 (2026-09-15).** The new-followers workflow is freshly implemented for
+OnlyFans in a dedicated rail/palette surface. The Fansly extension is a behavioral
+reference only. Explicit consent precedes paid history reads, which can mark
+chats read. A run fixes both time bounds at start, pages the newest-first fan
+list, and keeps completed rows/drafts across pause/resume. Missing subscription
+dates and incomplete/ambiguous evidence remain visible and cannot enable send.
+Queue origin alone does not prove mass messaging: the OFAPI queue also accepts
+one recipient. Current welcome-template matches likewise cannot prove origin.
+These cases stay unknown pending stronger provider evidence. See
+[the workflow and validation contract](followers.md).
+
+All reads use the existing metered Hub client. A separate account FIFO spaces
+requests after completion and retains 429 cooldown across pause/recheck/history
+and send preflight. Cancellation is checked again after the ordinary limiter.
+Renderer reads cached, bounded VMs and receives batched main events; there is no
+renderer polling. History is shown in chronological order from already-fetched
+messages. Older history is an explicit action, with a visible finite cap.
+
+Generation reuses the existing coordinator and persona proof with core's
+new-follower Hi mode and one reviewed text result. Sending rechecks the full
+negative history and fresh sendability, compares the reviewed content revision,
+fences local outbox changes, then enqueues one standard v1 text command.
+SQLite v23 persists outreachPurpose independently of composer options. Generic
+inbox Retry cannot bypass fresh follower checks. Indeterminate sends are never
+automatically repeated or confirmed by loose local text matching. Core Decision
+338 adds atomic per-page/fan command custody across feature users; it does not
+lock native or ordinary chats while a command is waiting for delivery.
+
+Debug mode retains eight run journals (100000 events / 20M characters per run),
+with millisecond timestamps, page parameters, per-fan verdicts and explicit
+truncation. Journals persist at pause/completion/action/shutdown checkpoints in
+the encrypted local database; unexpected process termination can lose the
+unfinished checkpoint. Export never includes credentials, headers, prompts or
+message bodies. Normal transcript/draft storage follows the existing local
+cache policy. This change prepares code only: no deployment or release. Hub
+must ship first and the normal release contract-hash gate must pass.

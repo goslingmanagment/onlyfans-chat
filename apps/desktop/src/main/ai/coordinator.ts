@@ -198,6 +198,7 @@ const aiStartRequestSchema = z.object({
     mode: replyModeSchema.optional(),
     draftText: z.string().optional(),
     forceRegenerate: z.boolean().optional(),
+    greetingMode: z.literal('new-follower').optional(),
   }),
 });
 
@@ -210,6 +211,7 @@ interface ParsedParams {
   mode?: ReplyMode | undefined;
   draftText?: string | undefined;
   forceRegenerate?: boolean | undefined;
+  greetingMode?: 'new-follower' | undefined;
 }
 
 /**
@@ -383,7 +385,7 @@ export function buildFeatureResult(
       // hi-greeting returns 3 standalone greeting alternatives split by
       // [VARIANT]; every other reply feature splits sequential parts by [NEXT].
       const parts =
-        feature === 'hi-greeting'
+        feature === 'hi-greeting' && params.greetingMode !== 'new-follower'
           ? normalizeVariantReplyParts(rawText)
           : normalizeReplyParts(rawText);
       if (parts.length === 0) {
@@ -923,6 +925,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         tone: policy.supportsReplyTone ? (op.params.tone ?? settings.defaultReplyTone) : undefined,
         mode: policy.supportsReplyMode ? op.params.mode : undefined,
         draftText: op.params.draftText,
+        greetingMode: op.params.greetingMode,
         personaKey,
         expectedPersonaDefinitionId: persona.definitionId,
         isRegeneration: op.params.forceRegenerate === true,

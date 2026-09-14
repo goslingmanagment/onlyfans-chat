@@ -179,6 +179,7 @@ export function createFeatureAiGateway(options: FeatureAiGatewayOptions): AiFeat
                 pageLabel,
                 platform: 'onlyfans',
                 conversationRef: req.chatId,
+                ...(req.greetingMode ? { greetingMode: req.greetingMode, fanRef: req.chatId } : {}),
                 ...(req.tone !== undefined ? { replyTone: req.tone as never } : {}),
                 ...(req.mode !== undefined ? { replyMode: req.mode as never } : {}),
                 ...(req.draftText !== undefined ? { draftText: req.draftText } : {}),

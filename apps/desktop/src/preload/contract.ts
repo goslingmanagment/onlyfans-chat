@@ -1,3 +1,4 @@
+import type { FollowersChannels } from './followers-contract';
 import type { ComposerOptions, StoredComposer, ComposerAction } from '@chatgoose/shared/composer';
 import type { HubBannedPreview, ComposerReferenceKind } from '@chatgoose/shared/hub/index';
 // The renderer↔main contract: channel names + narrow view models (DESIGN §3.3 —
@@ -628,6 +629,7 @@ export interface AiStartRequest {
     mode?: ReplyMode;
     draftText?: string;
     forceRegenerate?: boolean;
+    greetingMode?: 'new-follower';
   };
 }
 
@@ -879,7 +881,7 @@ export interface GalleryItemVM {
 
 // ─── Channel map ─────────────────────────────────────────────────────────
 
-export interface InvokeChannels {
+export interface InvokeChannels extends FollowersChannels {
   'query:composer.bannedPreview': {args:{text:string};result:HubBannedPreview};
   'query:composer.references': {args:{accountId:string;kind:ComposerReferenceKind;query?:string};result:{items:{id:string;label:string;type:string|null;partnerId:string|null;guest:boolean|null}[];partial:boolean}};
   'query:composer.actions': {args:{accountId:string;chatId:string;messageId?:string};result:ComposerActionVM[]};
@@ -1162,6 +1164,7 @@ export interface SpendersRefreshEvent extends SpendersRefreshCountsVM {
 }
 
 export interface EventChannels {
+  'followers:changed': { accountId: string };
   'sync:event': SyncEvent | CreditBalanceEvent | SpendersRefreshEvent;
   'ai:event': OperationEvent;
   'db:changed': DbChangedEvent;
@@ -1265,6 +1268,18 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'cmd:spenders.refreshScope': true,
   'cmd:spenders.refreshStop': true,
   'query:online.snapshot': true,
+  'query:followers.snapshot': true,
+  'query:followers.detail': true,
+  'cmd:followers.start': true,
+  'cmd:followers.pause': true,
+  'cmd:followers.resume': true,
+  'cmd:followers.recheck': true,
+  'cmd:followers.older': true,
+  'cmd:followers.draft': true,
+  'cmd:followers.generate': true,
+  'cmd:followers.send': true,
+  'query:followers.trace': true,
+  'cmd:followers.export': true,
   'cmd:online.refresh': true,
   'query:vault.list': true,
   'query:vault.albums': true,

@@ -12,7 +12,7 @@ export interface ToastItem {
   chatId?: string;
 }
 
-export type AppView = 'workspace' | 'settings' | 'spenders' | 'online';
+export type AppView = 'workspace' | 'settings' | 'spenders' | 'online' | 'followers';
 
 /** Hub presence frame for one chat; stale entries expire client-side (TTL). */
 export interface PresenceEntry {
@@ -69,7 +69,7 @@ let toastSeq = 0;
 function initialView(): AppView {
   if (typeof window !== 'undefined' && typeof window.location !== 'undefined') {
     const view = new URLSearchParams(window.location.search).get('view');
-    if (view === 'settings' || view === 'spenders' || view === 'online') {
+    if (view === 'settings' || view === 'spenders' || view === 'online' || view === 'followers') {
       return view;
     }
   }
@@ -95,7 +95,7 @@ export const useUiStore = create<UiState>((set) => ({
   selectAccount: (accountId) =>
     set((s) => {
       if (s.selectedAccountId === accountId) return s;
-      const accountScopedView = s.view === 'spenders' || s.view === 'online' ? s.view : 'workspace';
+      const accountScopedView = s.view === 'spenders' || s.view === 'online' || s.view === 'followers' ? s.view : 'workspace';
       return { selectedAccountId: accountId, selectedChatId: null, view: accountScopedView };
     }),
   reconcileAccountSelection: (accountId) =>

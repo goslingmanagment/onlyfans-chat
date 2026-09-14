@@ -67,6 +67,26 @@ describe('send engine hub command transport', () => {
     cleanup();
   });
 
+  it('persists follower custody outside composer options and submits one protected v1 command', async () => {
+    const createOfapiCommand = vi.fn(async ({ command: request }) => command(request.clientCommandId, 'confirmed'));
+    const engine = createSendEngine({ client: makeStubClient().client, hubCommandClient: { createOfapiCommand, getOfapiCommand: vi.fn() }, data, messageGuard: allowMessageGuard, toMediaUrl, getSettings: async () => ({ markAsReadOnOpen: false }) });
+    const { localIds } = engine.sendParts({ accountId: ACCT, chatId: CHAT, parts: ['hello new fan'], outreachPurpose: 'new-follower' });
+    await drain();
+    expect(data.outbox.get(localIds[0] ?? '')).toMatchObject({ outreachPurpose: 'new-follower', composer: null, state: 'sent' });
+    expect(createOfapiCommand).toHaveBeenCalledTimes(1);
+    expect(createOfapiCommand.mock.calls[0]?.[0].command).toMatchObject({ kind: 'send_text_message_v1', outreachPurpose: 'new-follower', payload: { text: 'hello new fan' } });
+    engine.dispose();
+  });
+
+  it('refuses ordinary inbox retry for follower outreach so fresh eligibility cannot be bypassed', () => {
+    data.outbox.insertMany([{ localId: 'follower-failure', accountId: ACCT, chatId: CHAT, text: 'hello', outreachPurpose: 'new-follower', sequenceId: null, partIndex: 0, retryOf: null, createdAt: new Date().toISOString() }]);
+    data.outbox.transition({ localId: 'follower-failure', from: ['queued'], to: 'failed' });
+    const engine = createSendEngine({ client: makeStubClient().client, data, messageGuard: allowMessageGuard, toMediaUrl, getSettings: async () => ({ markAsReadOnOpen: false }) });
+    expect(() => engine.retry({ accountId: ACCT, localId: 'follower-failure', text: 'hello' })).toThrow('Перепроверьте');
+    expect(data.outbox.get('follower-failure')?.state).toBe('failed');
+    engine.dispose();
+  });
+
   it('uses core command intake/status without a Direct client or GET /messages', async () => {
     const direct = makeStubClient();
     const getOfapiCommand = vi.fn(async ({ commandId }: { commandId: string }) =>

@@ -8,6 +8,7 @@ import { parseOperationEvent, parseSyncEvent } from '@chatgoose/shared/protocol/
 import type { ChatListItemVM } from '../../../preload/contract';
 import { getBridge } from './bridge';
 import { qk } from './queries';
+import { resetFollowerDraftWriters } from '../features/followers/draftWriter';
 import { useUiStore } from '../state/uiStore';
 import { useSettingsCache } from '../state/settingsCache';
 import { useSpendersStore } from '../features/spenders/spendersStore';
@@ -71,7 +72,12 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
   function handleDbChanged(event: z.infer<typeof dbChangedSchema>): void {
     if (event.scope === 'settings' && settingsKeysInvalidateAiContext(event.settingsKeys)) {
       resetAiJobsForHubOriginChange();
+      resetFollowerDraftWriters();
+      // Runtime replacement invalidates account/fan custody, including inactive
+      // follower surfaces. Discard stale drafts/history view-models immediately.
+      void queryClient.resetQueries({ queryKey: ['followers'] });
     }
+    if (event.scope === 'accounts') queueInvalidate(['followers']);
     for (const key of dbChangedInvalidationKeysForEvent(event)) {
       queueInvalidate(key);
     }
@@ -80,6 +86,12 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
   const offDb = bridge.on('db:changed', (payload) => {
     const parsed = dbChangedSchema.safeParse(payload);
     if (parsed.success) handleDbChanged(parsed.data);
+  });
+
+  const followerChangedSchema = z.object({ accountId: z.string().min(1) });
+  const offFollowers = bridge.on('followers:changed', (payload) => {
+    const parsed = followerChangedSchema.safeParse(payload);
+    if (parsed.success) queueInvalidate(['followers', parsed.data.accountId]);
   });
 
   const creditBalanceSchema = z.object({ type: z.literal('creditBalance') });
@@ -246,6 +258,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
 
   return () => {
     offDb();
+    offFollowers();
     offSync();
     offAi();
     if (flushTimer !== null) clearTimeout(flushTimer);

@@ -136,6 +136,7 @@ export const kernelOperations = {
     eventsV2Snapshot: { method: "GET", path: "/api/v1/events/v2/snapshot" },
     eventsV2Stream: { method: "GET", path: "/api/v1/events/v2/stream" },
     fansSearch: { method: "GET", path: "/api/v2/fans/search" },
+    followerOutreachAttempt: { method: "POST", path: "/api/v1/pages/:pageLabel/follower-outreach/attempt" },
     getOfapiCommand: { method: "GET", path: "/api/v1/ofapi/commands/:commandId" },
     health: { method: "GET", path: "/api/v1/health" },
     healthSync: { method: "GET", path: "/api/v1/health/sync" },

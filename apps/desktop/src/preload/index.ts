@@ -8,6 +8,7 @@ const EVENT_CHANNELS: ReadonlySet<string> = new Set([
   'sync:event',
   'ai:event',
   'db:changed',
+  'followers:changed',
 ] satisfies EventChannelName[]);
 
 const bridge: ChatGooseBridge = {

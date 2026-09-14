@@ -17,6 +17,7 @@ import { ConversationPane } from '../features/conversation/ConversationPane';
 import { FanPanel } from '../features/fan-panel/FanPanel';
 import { SettingsSurface } from '../features/settings/SettingsSurface';
 import { SpendersSurface } from '../features/spenders/SpendersSurface';
+import { FollowersSurface } from '../features/followers/FollowersSurface';
 import { OnlineSurface } from '../features/online/OnlineSurface';
 
 export function AppShell(): React.JSX.Element {
@@ -87,6 +88,8 @@ export function AppShell(): React.JSX.Element {
           // Spenders is a SEPARATE page (owner v2 2026-06-13): no workspace
           // chat list — the board owns the screen, stats column right.
           <SpendersSurface />
+        ) : view === 'followers' ? (
+          <FollowersSurface />
         ) : view === 'online' ? (
           // Online-now is a SEPARATE flat-list page (owner variant C): no
           // workspace chat list — the surface owns the screen.

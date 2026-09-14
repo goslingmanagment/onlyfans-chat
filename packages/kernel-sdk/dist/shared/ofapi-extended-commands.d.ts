@@ -20,3 +20,5 @@ export type OfapiExtendedCommandPayload = OfapiSendV2Payload | {
 } | {
     messageId: string;
 } | Record<string, never>;
+/** A follower greeting is one immediate, free, stand-alone text message. */
+export declare function isOfapiFollowerGreetingPayload(payload: OfapiSendV2Payload): boolean;

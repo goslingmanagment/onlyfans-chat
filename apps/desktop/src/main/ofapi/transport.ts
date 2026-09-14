@@ -35,6 +35,7 @@ function disabledDiskUpload(): OfApiError {
 export function createOfApiTransportClient(readClient: OfApiClient): OfApiClient {
   return {
     creditMeter: readClient.creditMeter,
+    getWelcomeMessage: (params) => readClient.getWelcomeMessage(params),
     listAccounts: (params) => readClient.listAccounts(params),
     whoami: (params) => readClient.whoami(params),
     listChats: (params) => readClient.listChats(params),
