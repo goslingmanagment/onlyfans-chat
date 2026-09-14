@@ -49,6 +49,37 @@ describe('attachBridgeEvents', () => {
     vi.useRealTimers();
   });
 
+  it('keeps inactive follower caches current through the global batched event subscription', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+    const key = ['followers', 'acct_1', 'snapshot'];
+    queryClient.setQueryData(key, { state: 'running' });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const detach = attachBridgeEvents(queryClient);
+    for (const listener of bridgeMock.listeners.get('followers:changed') ?? []) {
+      listener({ accountId: 'acct_1' }); listener({ accountId: 'acct_1' }); listener({ accountId: 1 });
+    }
+    await vi.advanceTimersByTimeAsync(50);
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    detach();
+    expect(bridgeMock.listeners.get('followers:changed')?.size).toBe(0);
+    queryClient.clear();
+  });
+
+  it('discards follower VMs on committed runtime replacement and invalidates account-grant changes', async () => {
+    const queryClient = new QueryClient();
+    const key = ['followers', 'acct_1', 'detail', '123'];
+    queryClient.setQueryData(key, { draft: 'prior runtime draft' });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const detach = attachBridgeEvents(queryClient);
+    for (const listener of bridgeMock.listeners.get('db:changed') ?? []) listener({ scope: 'settings', settingsKeys: ['runtime.aiContext'] });
+    expect(queryClient.getQueryData(key)).toBeUndefined();
+    for (const listener of bridgeMock.listeners.get('db:changed') ?? []) listener({ scope: 'accounts' });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['followers'] });
+    detach(); queryClient.clear();
+  });
+
   it('invalidates accounts when chat rows change', async () => {
     const queryClient = new QueryClient();
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');

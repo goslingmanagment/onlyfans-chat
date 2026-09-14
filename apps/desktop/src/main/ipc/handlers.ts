@@ -1,3 +1,5 @@
+import { registerFollowersIpc } from '../followers/ipc';
+import type { FollowersService } from '../followers/service';
 import { parseComposerReferences } from '@chatgoose/shared/composer-references';
 // IPC invoke handlers — every InvokeChannels entry in src/preload/contract.ts.
 // Args are renderer-controlled (trust boundary): zod-validate everything
@@ -374,6 +376,7 @@ export interface ReadRuntimeProbeResult {
 }
 
 export interface IpcDeps {
+  followers?: FollowersService | null;
   data: DataLayer;
   settingsStore: SettingsStore;
   /** Resolves the navigation gate for the sending WebContents only. */
@@ -471,6 +474,7 @@ export interface IpcDeps {
 
 export function registerIpcHandlers(deps: IpcDeps): void {
   const { data, settingsStore } = deps;
+  registerFollowersIpc(() => deps.followers ?? null);
   const resolvePersonaContext = (): {
     scope: PersonaStorageScope | null;
     hubOrigin: string | null;

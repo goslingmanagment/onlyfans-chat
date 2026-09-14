@@ -47,6 +47,7 @@ import {
 } from '@chatgoose/shared';
 import { applyChatFilter, sortChatsByRecency } from '../lib/filters';
 import { fuzzyFilter } from '../lib/fuzzy';
+import { createMockFollowers } from './mockFollowers';
 
 // ─── deterministic RNG ───────────────────────────────────────────────────
 
@@ -689,6 +690,7 @@ export function createMockBridge(): ChatGooseBridge {
     'sync:event': new Set(),
     'ai:event': new Set(),
     'db:changed': new Set(),
+    'followers:changed': new Set(),
   };
 
   function emit<C extends EventChannelName>(channel: C, payload: EventChannels[C]): void {
@@ -1209,6 +1211,7 @@ export function createMockBridge(): ChatGooseBridge {
   }
 
   const handlers: InvokeHandlers = {
+    ...createMockFollowers((accountId) => emit('followers:changed', { accountId }), () => store.settings.debugMode),
     'query:accounts.list': () => store.accounts.map((a) => ({ ...a })),
     'query:chats.list': ({ accountId, filter, limit, offset }) => {
       const all = store.chats.get(accountId) ?? [];
@@ -1958,7 +1961,7 @@ export function createMockBridge(): ChatGooseBridge {
       // These local main handlers execute synchronously in request order.
       // Delay only their responses: delaying execution could let a reopen read
       // overtake the preceding clear/save and resurrect a fixture-only draft.
-      if (channel === 'query:draft.get' || channel === 'cmd:draft.set') {
+      if (channel === 'query:draft.get' || channel === 'cmd:draft.set' || channel === 'cmd:followers.draft' || channel === 'query:followers.detail') {
         const result = handler(args);
         await sleep(latencyMs);
         return result;

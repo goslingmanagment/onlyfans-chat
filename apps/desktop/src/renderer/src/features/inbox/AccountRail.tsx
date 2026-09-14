@@ -6,6 +6,7 @@ import { initialsOf } from '../../lib/messages';
 import { applyOrder, computeReorder } from '../../lib/order';
 import { cx } from '../../lib/cx';
 import { useT } from '../../lib/i18n';
+import { useFollowersCopy } from '../followers/copy';
 import { Skeleton } from '../../design/Skeleton';
 
 type DropPos = 'before' | 'after';
@@ -21,6 +22,7 @@ function dropPosFromEvent(e: React.DragEvent): DropPos {
 
 export function AccountRail(): React.JSX.Element {
   const t = useT();
+  const { c: followersCopy } = useFollowersCopy();
   const accounts = useAccounts();
   const accountOrder = useSettings().data?.accountOrder;
   const { mutate: saveSettings } = useUpdateSettings();
@@ -120,6 +122,15 @@ export function AccountRail(): React.JSX.Element {
         +
       </button>
       <div className="flex-1" />
+      <button
+        type="button"
+        title={followersCopy.title}
+        aria-label={followersCopy.title}
+        onClick={() => setView(view === 'followers' ? 'workspace' : 'followers')}
+        className={cx('flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] text-[15px] font-bold', view === 'followers' ? 'bg-clay-bg text-clay' : 'text-ink-low hover:text-ink-mid')}
+      >
+        <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="9" cy="8" r="3" /><path d="M3 20v-2a6 6 0 0 1 12 0v2M19 7v6m-3-3h6" /></svg>
+      </button>
       {/* Online-now page entry (variant C; sibling of Spenders, above it) */}
       <button
         type="button"

@@ -83,6 +83,7 @@ export interface SendEngine {
     accountId: string;
     chatId: string;
     parts: readonly string[];
+    outreachPurpose?: 'new-follower';
     composer?: ComposerOptions | undefined;
   }): { localIds: string[]; sequenceId: string | null };
   /**
@@ -190,6 +191,7 @@ const PRE_INTAKE_KERNEL_CODES: Record<string, number> = {
   service_unavailable: 503,
   not_found: 404,
   rate_limit_exceeded: 429,
+  follower_outreach_conflict: 409,
 };
 
 /**
@@ -626,6 +628,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
             accountId: row.accountId,
             conversationId: row.chatId,
             payload: { text: row.text },
+            ...(row.outreachPurpose ? { outreachPurpose: row.outreachPurpose } : {}),
             retryOfCommandId,
           } as const);
     const accepted = await hubCommandClient.createOfapiCommand({
@@ -945,7 +948,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       .items.filter((message) => message.isSentByMe && !message.deleted);
     const claimed = data.outbox.claimedMessageIds(accountId, chatId);
     for (const row of unconfirmed) {
-      if (row.composer) continue; // Rich sends settle only through the Hub's bound response/webhook evidence.
+      if (row.composer || row.outreachPurpose) continue; // Rich sends settle only through the Hub's bound response/webhook evidence.
       const match = candidates.find(
         (candidate: MessageRow) =>
           !claimed.has(candidate.messageId) && rowMatchesCandidate(row, candidate),
@@ -1066,7 +1069,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       if (!hubCommandClient?.readComposerReferences) return Promise.reject(hubWriteUnavailable());
       return hubCommandClient.readComposerReferences(args);
     },
-    sendParts({ accountId, chatId, parts, composer }) {
+    sendParts({ accountId, chatId, parts, composer, outreachPurpose }) {
       assertAcceptingWriteWork();
       if (parts.length === 0) {
         throw new Error('sendParts: at least one part is required');
@@ -1074,9 +1077,10 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       // Review #27 fix 3: default options ⇒ the v1 `{ text }` command exactly
       // as before (no v2 dependency, local-match verification stays possible);
       // any rich option ⇒ send_message_v2.
+      if (outreachPurpose && (parts.length !== 1 || composer)) throw new Error('Follower greetings must be one immediate plain-text message');
       const stored = composer && needsComposerV2(composer) ? storedComposerSchema.parse({ ...composer, priceCents: 0 }) : null;
       if (stored && parts.length > 1 && (stored.giphyId || stored.replyToMessageId || stored.rfTag.length || stored.rfPartner.length || stored.rfGuest.length)) throw new Error('Send a reply, GIF or release references as a single message.');
-      if (stored) for (const text of parts) validateComposer(accountId, chatId, text, stored);
+      if (stored && !outreachPurpose) for (const text of parts) validateComposer(accountId, chatId, text, stored);
       gateCanSend(accountId, chatId);
       for (const text of parts) {
         guardText({ accountId, chatId, text, surface: 'engine:sendParts' });
@@ -1086,6 +1090,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       const rows = parts.map((text, partIndex) => ({
         localId: randomUUID(),
         composer: stored,
+        outreachPurpose: outreachPurpose ?? null,
         accountId,
         chatId,
         text,
@@ -1159,6 +1164,7 @@ export function createSendEngine(options: SendEngineOptions): SendEngine {
       if (row === null || row.accountId !== accountId) {
         throw new Error('retry: unknown outbox row');
       }
+      if (row.outreachPurpose) throw new Error('Перепроверьте фана на экране «Новые» перед повтором приветствия');
       if (reuseProviderOperation && (!row.composer || !row.coreCommandId || text !== row.text)) throw new Error('Recovery requires an unchanged v2 draft and its accepted Hub command.');
       if (row.state === 'unconfirmed' && !reuseProviderOperation) {
         // The verifier owns unconfirmed rows: the send may have been delivered,

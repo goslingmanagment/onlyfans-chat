@@ -11,6 +11,7 @@ import { modCombo } from '../lib/modKey';
 import { Avatar } from '../design/Avatar';
 import { ListRow } from '../design/ListRow';
 import { Kbd } from '../design/Kbd';
+import { useFollowersCopy } from '../features/followers/copy';
 import { useT } from '../lib/i18n';
 import type { UiMessageKey } from '@chatgoose/shared/i18n/index';
 
@@ -36,6 +37,7 @@ export function CommandPalette(): React.JSX.Element | null {
 
 function PaletteBody(): React.JSX.Element {
   const t = useT();
+  const { c: followersCopy } = useFollowersCopy();
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const selectAccount = useUiStore((s) => s.selectAccount);
   const selectChat = useUiStore((s) => s.selectChat);
@@ -107,6 +109,7 @@ function PaletteBody(): React.JSX.Element {
       { id: 'act:ai-review', title: t('palette.aiReview', { combo: modCombo('E') }), run: () => startAiFromGlobal('chat-review', queryClient) },
       // Entry point for the Spenders board (PLAN item 12; recorded in DESIGN §1)
       { id: 'act:spenders', title: t('palette.spenders'), run: () => setView('spenders') },
+      { id: 'act:followers', title: followersCopy.title, run: () => setView('followers') },
       { id: 'act:online', title: t('palette.online'), run: () => setView('online') },
       { id: 'act:settings', title: t('sp.openSettings'), run: () => setView('settings') },
       { id: 'act:refresh', title: t('palette.forceRefresh'), run: () => forceRefresh.mutate(undefined) },
@@ -128,6 +131,7 @@ function PaletteBody(): React.JSX.Element {
     }
     return out;
   }, [
+    followersCopy.title,
     query,
     search.data,
     loadedChats.data,

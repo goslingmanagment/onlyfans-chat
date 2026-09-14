@@ -38,6 +38,7 @@ export declare const ofapiExtendedCommandOptions: readonly [z.ZodObject<{
         reuseProviderOperation: z.ZodDefault<z.ZodBoolean>;
     }, z.core.$strict>;
     retryOfCommandId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    outreachPurpose: z.ZodOptional<z.ZodLiteral<"new-follower">>;
     clientCommandId: z.ZodString;
     accountId: z.ZodString;
     conversationId: z.ZodString;

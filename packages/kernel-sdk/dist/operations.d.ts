@@ -543,6 +543,10 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v2/fans/search";
     };
+    readonly followerOutreachAttempt: {
+        readonly method: "POST";
+        readonly path: "/api/v1/pages/:pageLabel/follower-outreach/attempt";
+    };
     readonly getOfapiCommand: {
         readonly method: "GET";
         readonly path: "/api/v1/ofapi/commands/:commandId";

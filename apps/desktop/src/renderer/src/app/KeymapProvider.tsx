@@ -108,7 +108,8 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
           else if (isBoardView(ui.view) && (boardStoreForView(ui.view)?.getState().previewFanId ?? null) !== null) {
             // mockup: ESC closes the quick look; AI keeps running unless explicitly cancelled
             boardStoreForView(ui.view)?.getState().closePreview();
-          } else if (useAiStore.getState().op !== null) dismissDock();
+          } else if (ui.view === 'followers') ui.setView('workspace');
+          else if (useAiStore.getState().op !== null) dismissDock();
           else if (ui.view === 'settings') ui.setView('workspace');
           else if (isBoardView(ui.view)) ui.setView('workspace');
           else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();

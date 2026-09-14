@@ -59,6 +59,7 @@ export interface AiFeatureGatewayRequest {
   tone?: string | undefined;
   mode?: string | undefined;
   draftText?: string | undefined;
+  greetingMode?: 'new-follower' | undefined;
   personaKey?: string | undefined;
   /** Exact catalog definition the coordinator resolved. Core must enforce this
    * precondition and echo the applied identity before any output is accepted. */

@@ -31,6 +31,7 @@ const OUTBOX_STATES = [
 export type OutboxMediaId = string | number;
 
 export interface OutboxRow {
+  outreachPurpose?: 'new-follower' | null;
   composer?: StoredComposer | null;
   localId: string;
   accountId: string;
@@ -61,6 +62,7 @@ export interface OutboxRow {
 
 /** New rows always enter as 'queued'; only claimNextQueued moves them on. */
 export interface OutboxInsert {
+  outreachPurpose?: 'new-follower' | null;
   composer?: StoredComposer | null;
   localId: string;
   accountId: string;
@@ -80,9 +82,10 @@ export interface OutboxInsert {
 const COLUMNS =
   'local_id, account_id, chat_id, text, transport, state, sequence_id, part_index, message_id, ' +
   'error_code, error_message, text_highlights, attempts, retry_of, core_command_id, price, ' +
-  'media_files, previews, composer, created_at, updated_at';
+  'media_files, previews, composer, outreach_purpose, created_at, updated_at';
 
 const outboxSqlSchema = z.object({
+  outreach_purpose: z.literal('new-follower').nullable().optional(),
   local_id: z.string(),
   account_id: z.string(),
   chat_id: z.string(),
@@ -118,6 +121,7 @@ export function decodeOutboxRow(value: unknown): OutboxRow {
   const previewsJson: unknown = JSON.parse(row.previews);
   return {
     composer: row.composer ? storedComposerSchema.parse(JSON.parse(row.composer)) : null,
+    outreachPurpose: row.outreach_purpose ?? null,
     localId: row.local_id,
     accountId: row.account_id,
     chatId: row.chat_id,
@@ -200,11 +204,11 @@ const INSERT_SQL = `
 INSERT INTO outbox (
   local_id, account_id, chat_id, text, transport, state, sequence_id, part_index,
   message_id, error_code, error_message, text_highlights, attempts, retry_of,
-  price, media_files, previews, composer, created_at, updated_at
+  price, media_files, previews, composer, outreach_purpose, created_at, updated_at
 ) VALUES (
   @local_id, @account_id, @chat_id, @text, @transport, 'queued', @sequence_id, @part_index,
   NULL, NULL, NULL, '[]', 0, @retry_of,
-  @price, @media_files, @previews, @composer, @created_at, @created_at
+  @price, @media_files, @previews, @composer, @outreach_purpose, @created_at, @created_at
 )`;
 
 /** Thrown inside the revert transaction so a failed guard rolls back both rows. */
@@ -224,6 +228,7 @@ export function createOutboxQueries(db: ChatGooseDb, bus: DbChangeBus): OutboxQu
 
   function insertRow(row: OutboxInsert): void {
     db.prepare(INSERT_SQL).run({
+      outreach_purpose: row.outreachPurpose ?? null,
       local_id: row.localId,
       account_id: row.accountId,
       chat_id: row.chatId,

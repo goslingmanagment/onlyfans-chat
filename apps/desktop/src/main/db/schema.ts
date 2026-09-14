@@ -543,3 +543,8 @@ export const SCHEMA_V22 = `
 ALTER TABLE chats ADD COLUMN locally_hidden_at TEXT;
 UPDATE chats SET locally_hidden_at = updated_at WHERE locally_hidden = 1 AND locally_hidden_at IS NULL;
 `;
+
+// v23: outreach custody is command metadata, independent of composer options.
+export const SCHEMA_V23 = `
+ALTER TABLE outbox ADD COLUMN outreach_purpose TEXT CHECK (outreach_purpose IS NULL OR outreach_purpose = 'new-follower');
+`;

@@ -164,8 +164,10 @@ export interface OfApiRequestResponseEvent extends OfApiRequestEventBase {
  * tallies per-purpose request/credit counters off it.
  */
 export interface PurposeTagged {
+  retry?: RetryPolicy;
   purpose: OfApiPurpose;
   priority?: QueuePriority;
+  signal?: AbortSignal;
 }
 
 export interface ListChatsParams extends PurposeTagged {
@@ -179,6 +181,8 @@ export interface ListChatsParams extends PurposeTagged {
 }
 
 export interface ListMessagesParams extends PurposeTagged {
+  /** Eligibility proof must not silently discard malformed provider rows. */
+  strict?: boolean;
   accountId: string;
   chatId: string;
   limit?: number;
@@ -203,6 +207,8 @@ export interface ListTransactionsParams extends PurposeTagged {
 }
 
 export interface ListFansParams extends PurposeTagged {
+  retry?: RetryPolicy;
+  strict?: boolean;
   accountId: string;
   /** Upstream max 20. */
   limit?: number;
@@ -306,7 +312,15 @@ export type VaultUploadOutcome =
   | { kind: 'completed'; media: OfApiVaultMedia }
   | { kind: 'started'; prefixedId: string; pollingUrl: string };
 
+export interface WelcomeMessage {
+  id: string | number;
+  text: string;
+  media: Array<{ id: string | number }>;
+  isActive: boolean;
+}
+
 export interface OfApiClient {
+  getWelcomeMessage(params: PurposeTagged & { accountId: string; retry?: RetryPolicy }): Promise<WelcomeMessage>;
   readonly creditMeter: CreditMeter;
   listAccounts(params?: Partial<PurposeTagged>): Promise<OfApiAccount[]>;
   whoami(params?: Partial<PurposeTagged>): Promise<OfApiWhoami>;
@@ -423,6 +437,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     purpose: OfApiPurpose;
     priority?: QueuePriority;
     readIntent?: OfApiReadIntent;
+    signal?: AbortSignal;
   }
 
   async function requestJson(spec: RequestSpec): Promise<unknown> {
@@ -467,8 +482,9 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     try {
       response = await executor.execute(
         spec.accountKey,
-        () =>
-          fetchImpl(url, {
+        () => {
+          spec.signal?.throwIfAborted();
+          return fetchImpl(url, {
             method: spec.method,
             headers: requestHeaders,
             ...(spec.jsonBody !== undefined
@@ -476,8 +492,9 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
               : spec.formBody !== undefined
                 ? { body: spec.formBody() }
                 : {}),
-            signal: AbortSignal.timeout(spec.timeoutMs ?? requestTimeoutMs),
-          }),
+            signal: spec.signal ? AbortSignal.any([spec.signal, AbortSignal.timeout(spec.timeoutMs ?? requestTimeoutMs)]) : AbortSignal.timeout(spec.timeoutMs ?? requestTimeoutMs),
+          });
+        },
         {
           retry: spec.retry,
           ...(spec.priority !== undefined ? { priority: spec.priority } : {}),
@@ -572,6 +589,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     priority?: QueuePriority,
     retry: RetryPolicy = 'idempotent',
     readIntent?: OfApiReadIntent,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     return requestJson({
       accountKey,
@@ -582,6 +600,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       purpose,
       ...(priority !== undefined ? { priority } : {}),
       ...(readIntent !== undefined ? { readIntent } : {}),
+      ...(signal ? { signal } : {}),
     });
   }
 
@@ -650,14 +669,27 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       // against a live /fans/active response before the pilot gate.
       'filter[online]': params.online === true ? 1 : undefined,
       'filter[total_spent]': params.minTotalSpent,
-    });
+    }, params.priority, params.retry, undefined, params.signal);
     const { data } = unwrapEnvelope(payload, path);
     const parsed = parseWith(ofapiFansDataSchema, data, path);
+    if (params.strict && typeof parsed.hasMore !== 'boolean') throw ofApiShapeError(path, 'Missing explicit hasMore for follower proof');
     return { fans: parsed.list, hasMore: parsed.hasMore ?? false };
   }
 
   return {
     creditMeter,
+
+    async getWelcomeMessage(params): Promise<WelcomeMessage> {
+      const path = accountPath(params.accountId, '/settings/welcome-message');
+      const payload = await getJson(params.accountId, params.purpose, path, {}, params.priority, params.retry, undefined, params.signal);
+      const { data } = unwrapEnvelope(payload, path);
+      return parseWith(z.object({
+        id: z.union([z.string().min(1), z.number().int().safe().nonnegative()]),
+        text: z.string(),
+        media: z.array(z.object({ id: z.union([z.string().min(1), z.number().int().safe().nonnegative()]) })),
+        isActive: z.boolean(),
+      }), data, path);
+    },
 
     async listAccounts(params?: Partial<PurposeTagged>): Promise<OfApiAccount[]> {
       const path = '/accounts';
@@ -717,8 +749,12 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         first_id: params.firstId,
         last_id: params.lastId,
         skip_users: params.skipUsers ?? 'all',
-      }, params.priority, params.retry, params.readIntent);
+      }, params.priority, params.retry, params.readIntent, params.signal);
       const { data, nextPageUrl } = unwrapEnvelope(payload, path);
+      if (params.strict) {
+        const envelope = parseWith(z.object({ _pagination: z.object({ next_page: z.string().nullable() }) }), payload, path);
+        return { messages: parseWith(z.array(ofapiMessageSchema.extend({ id: z.number().int().safe().positive() })), data, path), nextPageUrl: envelope._pagination.next_page };
+      }
       return { messages: parseMessageList(data, path), nextPageUrl };
     },
 
@@ -749,7 +785,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         );
       }
       const path = accountPath(params.accountId, '/users/list');
-      const payload = await getJson(params.accountId, params.purpose, path, { ids: params.ids.join(',') });
+      const payload = await getJson(params.accountId, params.purpose, path, { ids: params.ids.join(',') }, params.priority, params.retry, undefined, params.signal);
       const { data } = unwrapEnvelope(payload, path);
       return parseWith(ofapiUsersByIdSchema, data, path);
     },

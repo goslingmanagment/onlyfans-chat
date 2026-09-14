@@ -1,3 +1,5 @@
+import { createFollowersService, type FollowersService } from './followers/service';
+import { generateFollowerGreeting } from './followers/generation';
 // Composition root (SPEC §4): keychain → encrypted db → settings → media://
 // protocol → OFAPI client → PollingSync → AI coordinator → IPC. All secrets
 // and network I/O live here in main; the renderer only ever sees typed IPC.
@@ -176,6 +178,7 @@ let messageGuard: MessageGuardRuntime | null = null;
 let vaultService: VaultService | null = null;
 let spendersService: SpendersService | null = null;
 let onlineService: OnlineService | null = null;
+let followersService: FollowersService | null = null;
 let spendersRefresh: SpendersRefreshService | null = null;
 let hub: HubModule | null = null;
 /** Process-scoped so inserted→sent correlation survives runtime rebuilds for
@@ -219,6 +222,7 @@ function isHubAuthFailure(error: unknown): boolean {
  * barrier is awaited before disposal/publishing a replacement engine.
  */
 async function deactivateOfapiRuntime(): Promise<void> {
+  const previousFollowers = followersService;
   const previousSync = sync;
   const previousSpendersRefresh = spendersRefresh;
   const previousSendEngine = sendEngine;
@@ -238,12 +242,14 @@ async function deactivateOfapiRuntime(): Promise<void> {
   vaultService = null;
   spendersService = null;
   onlineService = null;
+  followersService = null;
   spendersRefresh = null;
   recheckHubConfig = null;
   disposeEventForwarding = null;
   disposeRuntimeSettingsWatcher = null;
   disposeRuntimeCreditMeter = null;
 
+  await previousFollowers?.dispose();
   await stopRuntimeServices({
     disposeEventForwarding: previousEventForwarding,
     disposeSettingsWatcher: previousSettingsWatcher,
@@ -592,6 +598,7 @@ async function rebuildOfapiRuntime(
   const onRequestEvent =
     (transport: 'hub'): NonNullable<OfApiClientOptions['onRequestEvent']> =>
     (event: OfApiRequestEvent): void => {
+      followersService?.onRequestEvent(event);
       const match = /^\/([^/]+)\/chats\/([^/]+)\/messages$/.exec(event.path);
       if (!match) return;
       const accountId = decodeURIComponent(match[1] ?? event.accountKey);
@@ -993,6 +1000,17 @@ async function rebuildOfapiRuntime(
     },
   });
 
+  const nextFollowers = createFollowersService({
+    client: nextClient, data: dataLayer, toMediaUrl,
+    isDebug: () => dataLayer.settings.get('debugMode') === true,
+    onChanged: (accountId) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('followers:changed', { accountId }); },
+    generate: (accountId, fanId, signal) => generateFollowerGreeting(nextCoordinator, accountId, fanId, signal),
+    enqueue: (accountId, fanId, text) => {
+      const id = engine.sendParts({ accountId, chatId: fanId, parts: [text], outreachPurpose: 'new-follower' }).localIds[0];
+      if (!id) throw new Error('Greeting was not queued');
+      return id;
+    },
+  });
   let committed = false;
   try {
     // Load without DB writes; commit grants only after the old runtime drains.
@@ -1020,6 +1038,7 @@ async function rebuildOfapiRuntime(
     vaultService = nextVaultService;
     spendersService = nextSpendersService;
     onlineService = nextOnlineService;
+    followersService = nextFollowers;
     spendersRefresh = nextSpendersRefresh;
     activeAcceptanceDestinationIdentity = nextAcceptanceDestinationIdentity;
     if (aiDestinationChanged) {
@@ -1053,6 +1072,7 @@ async function rebuildOfapiRuntime(
     });
   } finally {
     if (!committed) {
+      await nextFollowers.dispose();
       disposeCandidateSettingsWatcher?.();
       unsubscribeSendSync();
       disposeCandidateCreditMeter?.();
@@ -1352,6 +1372,7 @@ async function boot(): Promise<void> {
     }
   });
   data.bus.subscribe((events) => {
+    for (const event of events) if (event.scope === 'outbox' && event.accountId) followersService?.onOutboxChanged(event.accountId);
     if (events.some((event) => event.scope === 'settings')) {
       void refreshUiPrefs();
       // A key save writes its keyMeta fingerprint to the settings table, so this
@@ -1842,6 +1863,7 @@ async function boot(): Promise<void> {
     get spenders() {
       return spendersService;
     },
+    get followers() { return followersService; },
     get online() {
       return onlineService;
     },
