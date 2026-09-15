@@ -105,7 +105,7 @@ export const deviceTokenItemSchema = z.object({
     isActive: z.boolean(),
     expiresAt: isoTimestamp,
     lastUsedAt: isoTimestamp.nullable(),
-    // Decision 347 (Р7): the x-client-version the token last presented, written
+    // Decision 349 (Р7): the x-client-version the token last presented, written
     // by the same UPDATE as lastUsedAt. Null until the token's first use.
     lastClientVersion: z.string().nullable(),
     createdAt: isoTimestamp,
@@ -166,11 +166,11 @@ export const adminUserSchema = authUserSchema.extend({
     // password+device-token chatter (#116) no longer reads "Never".
     disabledAt: isoTimestamp.nullable(),
     lastActiveAt: isoTimestamp.nullable(),
-    // Decision 347 (§4.1 p.12): "invited" = no password yet (the invite link has
+    // Decision 349 (§4.1 p.12): "invited" = no password yet (the invite link has
     // not been redeemed); "active" = a password is set.
     registrationState: registrationStateEnum,
 });
-// --- Decision 347: unified chatter account — account links (invite / reset),
+// --- Decision 349: unified chatter account — account links (invite / reset),
 // password-based device-token issuance, self-serve cabinet ---
 export const accountLinkKindEnum = z.enum(["invite", "password_reset"]);
 export const accountLinkStateEnum = z.enum(["active", "used", "expired", "revoked"]);
@@ -2184,7 +2184,7 @@ export const adminChatterUsageResponseSchema = z.object({
     }),
     rows: z.array(adminChatterUsageRowSchema),
 });
-// Decision 347: the caller's own AI spend (any session, any human role). Same
+// Decision 349: the caller's own AI spend (any session, any human role). Same
 // range semantics as the admin report; the row drops userId (it is the caller)
 // and a daily series is added for the cabinet's chart.
 export const authMyUsageDailyRowSchema = z.object({
@@ -7161,7 +7161,7 @@ const baseRouteSchemas = {
             404: errorResponseSchema,
         },
     },
-    // --- Decision 347: unified chatter account (PR-1A) ---
+    // --- Decision 349: unified chatter account (PR-1A) ---
     adminCreateInvite: {
         auth: { kind: "owner-session" },
         tags: ["admin"],
