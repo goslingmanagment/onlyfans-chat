@@ -88,6 +88,8 @@ import {
 } from './hub/acceptance-reporter';
 import { summarizeUsageSpool } from './hub/usage-store';
 import { hostname, tmpdir } from 'node:os';
+import { deviceTokenDigest } from './hub/credential-journal';
+import { hubAuthReasonOf, recoverFromHubAuthFailure } from './hub/auth-recovery';
 import {
   abandonHubDeviceTokenCustody,
   beginHubDeviceTokenRevocation,
@@ -203,6 +205,11 @@ let bootHubAuthFailed = false;
 /** Raw credential custody exists but its Hub origin/digest binding is absent or
  * invalid. Kept separate from auth failure because no network request is made. */
 let hubCredentialAttention = false;
+/** D35 §9 п.4: the ONE self-healing funnel every hub transport reports into.
+ *  Boot installs it; the bearer digest identifies the runtime generation whose
+ *  credential was rejected, so a late failure from a retired client can never
+ *  delete a newer sign-in. Null before boot wires it (and in the smoke run). */
+let hubAuthSelfHeal: ((error: unknown, bearerDigest: string) => void) | null = null;
 
 /** OfApiError and HubError both carry code CG-HUB-01 for hub auth rejections. */
 function isHubAuthFailure(error: unknown): boolean {
@@ -578,6 +585,12 @@ async function rebuildOfapiRuntime(
   hubCredentialAttention = hubCredentialAttention
     || classifyCredentialAttention(initialSettings);
   const hubBearer = initialConnection.bearer;
+  // One reporter per runtime generation, bound to the exact bearer it uses.
+  const activeBearerDigest = hubBearer === null ? null : deviceTokenDigest(hubBearer);
+  const noteHubAuthFailure = (error: unknown): void => {
+    if (activeBearerDigest === null) return;
+    hubAuthSelfHeal?.(error, activeBearerDigest);
+  };
   const nextAcceptanceDestinationIdentity =
     initialSettings.hubBaseUrl !== null && hubBearer !== null
       ? acceptanceDestinationIdentity(initialSettings.hubBaseUrl, hubBearer)
@@ -585,13 +598,17 @@ async function rebuildOfapiRuntime(
   const creditMeter = createCreditMeter();
   const onError =
     (transport: 'hub'): NonNullable<OfApiClientOptions['onError']> =>
-    (error, context): void =>
+    (error, context): void => {
       logger?.warn('ofapi', `${context.purpose} ${error.code}`, {
         code: error.code,
         transport,
         url: context.url,
         ...errorToFields(error),
       });
+      // D35: the read gateway is the transport a cold start hits FIRST — a
+      // revoked credential used to wedge here with no SDK request in sight.
+      noteHubAuthFailure(error);
+    };
   const onRequestEvent =
     (transport: 'hub'): NonNullable<OfApiClientOptions['onRequestEvent']> =>
     (event: OfApiRequestEvent): void => {
@@ -888,6 +905,8 @@ async function rebuildOfapiRuntime(
     data: dataLayer,
     settingsStore,
     keychain,
+    // The SDK lane reports into the same funnel as the read gateway.
+    onAuthFailure: noteHubAuthFailure,
     // Stage 4 / Proposal 4.1: every hub request carries x-client-version, the
     // fleet-version exit signal (and Stage 11's producer version upstream).
     clientVersion: app.getVersion(),
@@ -1469,6 +1488,43 @@ async function boot(): Promise<void> {
     () => rebuildOfapiRuntimeFromSettingsInsideMutation(options),
   );
 
+  // D35 §9 п.4: install the ONE self-healing funnel. Every hub transport — the
+  // read gateway, the SDK lane and the connection probe — reports its auth
+  // rejections here; `recoverFromHubAuthFailure` owns every predicate. A wipe
+  // then rebuilds the runtime signed-out, which is what flips the renderer to
+  // the sign-in screen (SettingsVM custody is gone, the reason remains).
+  let hubAuthRecoveryInFlight: Promise<void> | null = null;
+  hubAuthSelfHeal = (error: unknown, bearerDigest: string): void => {
+    if (hubAuthRecoveryInFlight !== null) return;
+    const liveData = data;
+    if (liveData === null) return;
+    const recovery = recoverFromHubAuthFailure({
+      error,
+      bearerDigest,
+      keychain,
+      settings: liveData.settings,
+      runCredentialMutation: (task) => settingsStore.runCredentialMutation(task),
+    }).then(async (outcome) => {
+      if (outcome !== 'wiped') return;
+      logger?.warn('hub', 'sign-in ended by the hub; local credential wiped', {
+        reason: hubAuthReasonOf(error),
+      });
+      cancelRuntimeRetries?.();
+      bootHubAuthFailed = false;
+      await refreshRedactionSecrets();
+      // Signed-out now: the rebuild deactivates the credential-bound runtime,
+      // and the settings-scope event moves the renderer to the sign-in screen.
+      await rebuildOfapiRuntimeFromSettings({ cancelPendingRetry: true });
+      liveData.bus.publish({ scope: 'settings' });
+      emitSyncStatusFrame();
+    }).catch((recoveryError: unknown) => {
+      logger?.warn('hub', 'hub auth self-healing deferred', errorToFields(recoveryError));
+    }).finally(() => {
+      hubAuthRecoveryInFlight = null;
+    });
+    hubAuthRecoveryInFlight = recovery;
+  };
+
   deviceCredentialRecoveryRetry = createBoundedRetry({
     task: () => ofapiRuntimeMutations.run(async () => {
       if (await recoverDeviceCredentialJournals()) {
@@ -1910,7 +1966,11 @@ async function boot(): Promise<void> {
       install: () => updateController?.install(),
     },
     testKey: (provider) =>
-      runKeyTest(provider, { settingsStore, clientVersion: app.getVersion() }),
+      runKeyTest(provider, {
+        settingsStore,
+        clientVersion: app.getVersion(),
+        onAuthFailure: (error, bearerDigest) => hubAuthSelfHeal?.(error, bearerDigest),
+      }),
     // Stage 24: one-time device-token sign-in (Settings → Hub). The token
     // lands in the keychain; the config recheck swings every hub consumer
     // (REST, SSE, read gateway) onto it without a restart.

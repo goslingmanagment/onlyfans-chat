@@ -61,7 +61,15 @@ export interface HubModuleOptions {
   /** App version forwarded as the x-client-version header (Stage 4 / Proposal 4.1). */
   clientVersion?: string;
   /** Test seam over createHubClient — no live network in tests. */
-  createClient?: (args: { baseUrl: string; apiKey: string; clientVersion?: string }) => HubClient;
+  createClient?: (args: {
+    baseUrl: string;
+    apiKey: string;
+    clientVersion?: string;
+    onAuthFailure?: (error: unknown) => void;
+  }) => HubClient;
+  /** D35: every SDK-lane auth rejection reports into main's one self-healing
+   *  funnel (the read gateway and the connection probe report into the same). */
+  onAuthFailure?: (error: unknown) => void;
   /** Telemetry-failure sink (defaults to console.warn); wired to the logger in main. */
   onWarn?: (message: string, fields?: Record<string, unknown>) => void;
 }
@@ -421,6 +429,7 @@ export function createHubModule(options: HubModuleOptions): HubModule {
         baseUrl: vm.hubBaseUrl,
         apiKey,
         ...(options.clientVersion !== undefined ? { clientVersion: options.clientVersion } : {}),
+        ...(options.onAuthFailure !== undefined ? { onAuthFailure: options.onAuthFailure } : {}),
       });
       const resolver = createPageLabelResolver({
         listPages: () => client.listPages(),

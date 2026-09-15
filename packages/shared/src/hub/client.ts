@@ -22,7 +22,7 @@ import {
   type KernelOperationResponse,
 } from '@kernel/sdk';
 import type { CgErrorCode, CgErrorDetail } from '../errors/index';
-import { CgError } from '../errors/index';
+import { CgError, isHubAuthReason } from '../errors/index';
 import type { LlmUsageMetrics } from '../usage-metrics';
 
 // Minimal ambient type for the WHATWG AbortController global (lib "ES2023"
@@ -221,9 +221,18 @@ function kernelErrorDetail(error: KernelApiError): CgErrorDetail {
     : error.body !== null && error.body !== undefined
       ? JSON.stringify(error.body)
       : '';
+  // D35 / core plan §4.5: a 401 for a device credential the kernel FOUND
+  // carries a machine reason. It is the only thing that may cost a client its
+  // stored sign-in, so it is lifted out of the body into typed detail here;
+  // an unknown or absent reason stays absent and the client fails closed.
+  const body: unknown = error.body;
+  const reason = typeof body === 'object' && body !== null
+    ? (body as { reason?: unknown }).reason
+    : undefined;
   return {
     ...(error.status !== null ? { status: error.status } : {}),
     ...(error.code !== null ? { kernelCode: error.code } : {}),
+    ...(isHubAuthReason(reason) ? { authReason: reason } : {}),
     ...(snippet ? { responseSnippet: snippet.slice(0, 400) } : {}),
   };
 }
@@ -370,6 +379,12 @@ export interface HubClientOptions {
    */
   clientVersion?: string;
   fetchImpl?: HubFetch;
+  /**
+   * D35: every hub call that comes back as an auth rejection is reported here
+   * BEFORE it is thrown, so the client owns exactly one self-healing funnel
+   * instead of one per caller. Reporting must never change the thrown error.
+   */
+  onAuthFailure?: (error: HubError) => void;
   /** Epoch ms clock; seam for the server-time offset computation. */
   now?: () => number;
   /** Seam over AbortSignal.timeout so tests can assert exact per-call budgets. */
@@ -551,7 +566,15 @@ export function createHubClient(options: HubClientOptions): HubClient {
     try {
       return await call();
     } catch (error) {
-      throw toHubError(error);
+      const hubError = toHubError(error);
+      if (hubError.reason === 'auth') {
+        try {
+          options.onAuthFailure?.(hubError);
+        } catch {
+          // Reporting must never replace the failure the caller is handling.
+        }
+      }
+      throw hubError;
     }
   }
 
