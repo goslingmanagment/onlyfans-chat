@@ -54,6 +54,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 
 | D33 | 2026-09-15 | Remove the unsolicited API options panel and optional chat controls from Desktop; keep stored payload recovery and the original reply/like/name requirements |
 | D34 | 2026-09-15 | New follower enumeration uses date-bounded latest subscriptions and explicit provider continuation (core #342) |
+| D35 | 2026-09-15 | One account per chatter: first-run sign-in screen, password sign-in without cookies, the legacy chatter key retired, self-healing on a reasoned 401, and the account cache bound to an identity (core unified-account plan §9) |
 
 ## Entries
 
@@ -808,3 +809,61 @@ Hub #342 classifies this roster as core audience, preserving explicit audience
 policy and legacy explicitly selected collection jobs. Deploy that support before
 shipping this client. The fix is included in the 0.1.54 release candidate; fixture checks do not
 claim a live Lora test. Ordinary roster/spender consumers are unchanged.
+
+**D35 (2026-09-15).** The desktop adopts the family's unified chatter account
+(core's unified-account plan, §9). Five rulings, all in one release:
+
+1. **One sign-in protocol, no cookie.** Issuance is a single public call,
+   `authIssueDeviceTokenWithPassword` in `pending` mode. The raw `/auth/login`
+   POST, the hand-parsed `set-cookie`, the cookie-carried reservation and the
+   logout are gone; the desktop never holds a session. Everything downstream of
+   the reservation — encrypted staging, the non-secret journal, the idempotent
+   activation and every crash-recovery branch — is unchanged, so existing
+   credentials keep working and nobody on the fleet re-signs in.
+
+2. **The first run is a sign-in screen.** It appears only when this machine
+   holds no device custody at all. A settling activation/revocation keeps the
+   workspace behind a banner, a quarantined credential keeps the Account
+   section's recovery, and an unreachable hub stays a status — none of them is
+   a sign-out. Sign-in answers with an outcome envelope
+   (CG-HUB-20 wrong login/password, CG-HUB-21 unreachable, CG-HUB-22 did not
+   finish, CG-HUB-23 the owner must reset the password) because an Electron
+   invoke rejection cannot carry a code the screen can localize.
+
+3. **The legacy chatter key is retired here, not "one release later"** (D19
+   phase 2 without the pause). The `hubApiKey`/`hubApiKeyStaged` slots, their
+   binding journal, the two-store credential-transition protocol they required,
+   `keyMeta`, the VM/patch fields, the env seed and the paste-a-key recovery are
+   all gone; the secret files are deleted once at boot like every other
+   decommissioned lane. An install that had only a key lands on the sign-in
+   screen. Production holds no such install.
+
+4. **A reasoned 401 heals itself.** The kernel's `reason`
+   (`token_revoked` | `token_expired`) is lifted into typed detail on all three
+   hub transports — the SDK lane, the OFAPI read gateway (the one a cold start
+   hits first, which used to wedge on "HUB AUTH" with no SDK request in sight)
+   and the connection probe — and all three report into ONE dispatcher. It wipes
+   local custody only with a reason the kernel actually sent, only when the
+   rejected bearer is still the stored one (digest compare), only inside the
+   credential FIFO, and never while a durable transition owns that custody. A
+   reasonless 401 still fails closed, exactly as before.
+
+5. **The account cache belongs to an identity.** Every authoritative reconcile
+   stamps whose identity produced it; `query:accounts.list` hands rows only to
+   that identity. This closes "A signs out, B signs in, B's first listAccounts
+   fails offline → B opens A's workspace", which D23's own rule made possible
+   (grants change only on a successful listAccounts). Nothing is deleted:
+   D23/#145 still hold, and A's workspace returns on A's next sign-in. An
+   install from before the stamp is unknown, not foreign.
+
+Vocabulary (plan §2) is now pinned, not merely intended: user-facing strings and
+the shipped guides may not name tokens, keys, APIs, bearers, activations,
+reservations or prefixes. Technical detail survives only in Diagnostics.
+`packages/shared/tests/copy-vocabulary.test.ts` fails on a violation and
+`documentation-cutover.test.ts` is inverted to match. Settings' "Agency Hub"
+section becomes "Account": who you are signed in as, the account page on the
+hub, sign out of this device, help signing in.
+
+The source version is prepared as 0.1.55. Publication still uses the normal
+release checks/tag/feed ritual, and the kernel side of the contract must be
+deployed first; this decision is not a claim that an installer has shipped.

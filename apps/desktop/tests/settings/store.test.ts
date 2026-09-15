@@ -365,6 +365,26 @@ describe('settings store', () => {
     expect(queries.rows.size).toBe(0);
   });
 
+  it('keeps an install signed in by an earlier build working, with no re-sign-in', async () => {
+    // §11 compatibility: 0.1.54 wrote exactly this shape (secret + binding).
+    // The update must not invalidate it — nobody on the fleet re-signs in.
+    const queries = createFakeQueries();
+    const secrets = createFakeSecrets();
+    seedSignedInDevice(queries, secrets, DEFAULT_AGENCY_HUB_BASE_URL, 'agency_hub_device_from_0_1_54');
+    const store = createSettingsStore({ queries, secrets });
+
+    await expect(store.get()).resolves.toMatchObject({
+      hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'bound',
+      hubSignedOutReason: null,
+    });
+    await expect(store.getHubConnection()).resolves.toMatchObject({
+      bearer: 'agency_hub_device_from_0_1_54',
+      deviceToken: 'agency_hub_device_from_0_1_54',
+      deviceTokenTransition: null,
+    });
+  });
+
   it('quarantines a readable credential when a fresh or purged DB has no origin binding', async () => {
     const queries = createFakeQueries();
     const secrets = createFakeSecrets();
