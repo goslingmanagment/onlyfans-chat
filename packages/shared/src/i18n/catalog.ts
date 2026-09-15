@@ -249,6 +249,7 @@ export const UI_MESSAGES = {
     en: 'The session on this device was ended. Sign in again.',
     ru: 'Сессия на этом устройстве завершена, войдите снова.',
   },
+  'auth.help': { en: 'Need help signing in', ru: 'Нужна помощь со входом' },
   'auth.transition.activation': { en: 'Finishing sign-in…', ru: 'Завершаем вход…' },
   'auth.transition.revocation': { en: 'Finishing sign-out…', ru: 'Завершаем выход…' },
 

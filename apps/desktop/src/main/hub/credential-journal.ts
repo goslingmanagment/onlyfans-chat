@@ -5,6 +5,9 @@ export const HUB_DEVICE_TOKEN_ACTIVATION_KEY = 'hubDeviceTokenActivation.v1';
 export const HUB_DEVICE_TOKEN_REVOCATION_KEY = 'hubDeviceTokenRevocation.v1';
 export const HUB_DEVICE_TOKEN_BINDING_KEY = 'hubDeviceTokenBinding.v1';
 export const HUB_DEVICE_IDENTITY_KEY = 'hubDeviceIdentity.v1';
+/** D35: why this machine stopped being signed in, for the sign-in screen's
+ * banner. Non-secret, display-only, and never a gate on anything. */
+export const HUB_SIGNED_OUT_KEY = 'hubSignedOut.v1';
 
 const journalBaseSchema = z.strictObject({
   version: z.literal(1),
@@ -58,6 +61,13 @@ export const hubDeviceIdentitySchema = z.strictObject({
   expiresAt: z.string().datetime().nullable(),
 });
 
+export const hubSignedOutSchema = z.strictObject({
+  version: z.literal(1),
+  reason: z.enum(['token_revoked', 'token_expired']),
+  at: z.string().datetime(),
+});
+
+export type HubSignedOut = z.infer<typeof hubSignedOutSchema>;
 export type HubDeviceTokenActivation = z.infer<typeof hubDeviceTokenActivationSchema>;
 export type HubDeviceTokenRevocation = z.infer<typeof hubDeviceTokenRevocationSchema>;
 export type StagedDeviceToken = z.infer<typeof stagedDeviceTokenSchema>;
@@ -123,6 +133,16 @@ export function readHubDeviceIdentity(
 ): HubDeviceIdentity | null {
   try {
     return readJournal(queries, HUB_DEVICE_IDENTITY_KEY, hubDeviceIdentitySchema);
+  } catch {
+    return null; // display metadata — never blocks credentials
+  }
+}
+
+export function readHubSignedOut(
+  queries: Pick<CredentialJournalQueries, 'get'>,
+): HubSignedOut | null {
+  try {
+    return readJournal(queries, HUB_SIGNED_OUT_KEY, hubSignedOutSchema);
   } catch {
     return null; // display metadata — never blocks credentials
   }

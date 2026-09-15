@@ -845,7 +845,7 @@ describe('activateStoredCredentialWithRetry', () => {
         scheduleRetry,
         onFailure,
       }),
-    ).rejects.toThrow(/token is stored and retrying automatically/i);
+    ).rejects.toMatchObject({ code: 'CG-HUB-22' });
     expect(onFailure).toHaveBeenCalledWith(cause);
     expect(scheduleRetry).toHaveBeenCalledTimes(1);
   });
@@ -869,7 +869,7 @@ describe('activateStoredCredentialWithRetry', () => {
       activate: () => Promise.reject(cause),
       scheduleRetry,
       shouldRetry: () => false,
-    })).rejects.toThrow(/credential was rejected/i);
+    })).rejects.toMatchObject({ code: 'CG-HUB-22' });
 
     expect(scheduleRetry).not.toHaveBeenCalled();
   });

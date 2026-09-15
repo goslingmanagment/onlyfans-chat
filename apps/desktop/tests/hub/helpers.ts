@@ -49,6 +49,7 @@ export function seedAccount(data: DataLayer, username = 'loravie', id = ACCT): v
 
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
+    hubSignedOutReason: null,
     hasHubDeviceToken: true,
     hubDeviceTokenBindingState: 'bound',
     hubDeviceTokenTransition: null,

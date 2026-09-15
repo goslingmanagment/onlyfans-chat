@@ -46,6 +46,7 @@ import {
   readDeviceTokenBinding,
   readDeviceTokenRevocation,
   readHubDeviceIdentity,
+  readHubSignedOut,
   type HubCredentialBinding,
 } from '../hub/credential-journal';
 
@@ -82,6 +83,7 @@ const PROD_HUB_ORIGIN = new URL(DEFAULT_AGENCY_HUB_BASE_URL).origin;
 
 export type PersistedSettings = Omit<
   SettingsVM,
+  | 'hubSignedOutReason'
   | 'hasHubDeviceToken'
   | 'hubDeviceTokenBindingState'
   | 'hubDeviceTokenTransition'
@@ -547,6 +549,14 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
           expiresAt: identity.expiresAt,
         }
       : null;
+    // D35: the sign-in screen's banner reason. Only meaningful while this
+    // machine holds no custody at all — otherwise it is a stale record of an
+    // earlier sign-out and must not colour a live session.
+    const signedOut = hubDeviceTokenBindingState === 'none'
+      && activation === null
+      && revocation === null
+      ? readHubSignedOut(queries)
+      : null;
     return {
       hasHubDeviceToken: hubDeviceTokenBindingState !== 'none',
       hubDeviceTokenBindingState,
@@ -556,6 +566,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
           ? 'revocation'
           : null,
       hubDeviceIdentity,
+      hubSignedOutReason: signedOut?.reason ?? null,
       appVersion,
       machineLabel,
       osPlatform,

@@ -3,6 +3,8 @@
 // invariants of the OFAPI read-runtime lifecycle live here as small, injected,
 // directly-testable helpers that index.ts wires.
 
+import { CgError } from '@chatgoose/shared/errors/index';
+
 /**
  * 4b: run a boot-time runtime activation so a failure NEVER aborts startup.
  *
@@ -525,12 +527,15 @@ export async function activateStoredCredentialWithRetry(options: {
     if (retryScheduled) {
       options.scheduleRetry();
     }
-    throw new Error(
-      retryScheduled
-        ? 'Device sign-in succeeded, but ChatGoose could not activate the runtime. The token is stored and retrying automatically.'
-        : 'Device sign-in succeeded, but the stored credential was rejected. Sign out or authenticate again to restore Hub access.',
-      { cause: error },
-    );
+    // D35: this is the honest "sign-in did not finish" class — the credential
+    // IS stored, only the runtime it authenticates did not come up. The
+    // registry copy never promises an automatic retry; the internal message
+    // (kept as the CgError message → detailText) says what actually happened.
+    throw new CgError('CG-HUB-22', {
+      message: retryScheduled
+        ? 'Signed in, but ChatGoose could not connect yet. The sign-in is kept and the connection is retried in the background.'
+        : 'Signed in, but the stored credential was rejected. Sign out, then sign in again.',
+    });
   }
 }
 

@@ -19,6 +19,12 @@ import { SettingsSurface } from '../features/settings/SettingsSurface';
 import { SpendersSurface } from '../features/spenders/SpendersSurface';
 import { FollowersSurface } from '../features/followers/FollowersSurface';
 import { OnlineSurface } from '../features/online/OnlineSurface';
+import { SignInScreen } from '../features/auth/SignInScreen';
+import {
+  hubDeviceTokenStatus,
+  requiresSignIn,
+} from '../features/settings/sections/hubSettingsLogic';
+import { useT } from '../lib/i18n';
 
 export function AppShell(): React.JSX.Element {
   const view = useUiStore((s) => s.view);
@@ -30,6 +36,7 @@ export function AppShell(): React.JSX.Element {
   const accounts = useAccounts();
   const settings = useSettings();
   const setFromSettings = useSettingsCache((s) => s.setFromSettings);
+  const t = useT();
 
   // This effect runs only when the healthy AppShell subtree commits. Its first
   // invoke proves preload/main IPC before the second releases the boot gate.
@@ -77,9 +84,33 @@ export function AppShell(): React.JSX.Element {
     return applyThemeSetting(uiTheme);
   }, [uiTheme]);
 
+  // D35 §9: the first-run gate. Only a machine with no device custody at all
+  // lands here; everything else (settling transition, quarantine, unreachable
+  // hub) keeps the workspace with its own banner or status.
+  const deviceStatus = settings.data === undefined
+    ? null
+    : hubDeviceTokenStatus(settings.data);
+  if (settings.data !== undefined && deviceStatus !== null && requiresSignIn(deviceStatus)) {
+    return <SignInScreen settings={settings.data} />;
+  }
+
+  const transition = settings.data?.hubDeviceTokenTransition ?? null;
+
   return (
     <div className="relative flex h-screen flex-col bg-bg0 font-sans text-base text-ink">
       <Titlebar />
+      {transition !== null && (
+        // A durable sign-in/sign-out owns the credential until it settles;
+        // say so instead of letting the workspace look merely disconnected.
+        <div
+          role="status"
+          className="border-b border-line bg-bg1 px-3 py-1 text-center text-[12px] text-ink-mid"
+        >
+          {transition === 'activation'
+            ? t('auth.transition.activation')
+            : t('auth.transition.revocation')}
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         <AccountRail />
         {view === 'settings' ? (

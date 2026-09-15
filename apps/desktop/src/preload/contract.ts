@@ -18,6 +18,7 @@ import type { LogLevel } from '@chatgoose/shared/diagnostics/log';
 import type { HubModeOverrideSetting } from '@chatgoose/shared/hub/mode';
 import type { UiLocaleSetting } from '@chatgoose/shared/i18n/index';
 import type { UiThemeSetting } from '@chatgoose/shared/theme';
+import type { UserFacingError } from '@chatgoose/shared/errors/index';
 import type {
   GuardCategory,
   GuardVerdict,
@@ -429,6 +430,11 @@ export interface SettingsVM {
    * как {username} · устройство {label}"). Null while no device custody exists.
    */
   hubDeviceIdentity: HubDeviceIdentityVM | null;
+  /**
+   * D35: why this machine is signed out, for the sign-in screen's banner.
+   * Non-null only while no device custody exists; display-only.
+   */
+  hubSignedOutReason: 'token_revoked' | 'token_expired' | null;
   /** Running app version (Hub diagnostics row); read-only in the VM. */
   appVersion: string;
   /** Machine hostname — a machine property, independent of any credential. */
@@ -499,6 +505,16 @@ export interface HubDeviceTokenResultVM {
   label: string;
   expiresAt: string;
 }
+
+/**
+ * D35: sign-in answers with an outcome, never a rejected invoke. An Electron
+ * invoke rejection reaches the renderer as an opaque, already-prefixed English
+ * Error, and the first-run screen has to show a localized CG-HUB-2x line — so
+ * main maps the failure to the registry here, exactly like `cmd:keys.test`.
+ */
+export type HubSignInResultVM =
+  | ({ ok: true } & HubDeviceTokenResultVM)
+  | { ok: false; error: UserFacingError };
 
 /** Result of probing a STORED key (cmd:keys.test). Never carries key material. */
 export interface KeyTestResultVM {
@@ -589,6 +605,7 @@ export type SettingsPatch = Partial<
     | 'hubDeviceTokenBindingState'
     | 'hubDeviceTokenTransition'
     | 'hubDeviceIdentity'
+    | 'hubSignedOutReason'
     | 'appVersion'
     | 'machineLabel'
     | 'osPlatform'
@@ -901,7 +918,7 @@ export interface InvokeChannels extends FollowersChannels {
   /** Stage 24: one-time hub sign-in — trades username+password for a keychain-held device token. */
   'cmd:hub.issueDeviceToken': {
     args: { username: string; password: string };
-    result: HubDeviceTokenResultVM;
+    result: HubSignInResultVM;
   };
   /** Stage 24 recovery: deletes the device token from the keychain (Settings → Hub). */
   'cmd:hub.signOutDevice': { args: void; result: void };

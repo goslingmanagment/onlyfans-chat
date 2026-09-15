@@ -466,6 +466,7 @@ function buildStore(): MockStore {
   ];
 
   const settings: SettingsVM = {
+    hubSignedOutReason: null,
     hasHubDeviceToken: true,
     hubDeviceTokenBindingState: 'bound',
     hubDeviceTokenTransition: null,
@@ -1384,6 +1385,7 @@ export function createMockBridge(): ChatGooseBridge {
       // the live sync status flip together so the standalone UI stays honest.
       store.settings = {
         ...store.settings,
+        hubSignedOutReason: null,
         hasHubDeviceToken: true,
         hubDeviceTokenBindingState: 'bound',
         hubDeviceTokenTransition: null,
@@ -1398,6 +1400,7 @@ export function createMockBridge(): ChatGooseBridge {
       store.sync.hub = 'live';
       emit('db:changed', { scope: 'settings' });
       return {
+        ok: true,
         keyPrefix: 'agency_hub_pending_device_mock',
         label: 'mock-machine',
         expiresAt: new Date(Date.now() + 90 * 24 * 3_600_000).toISOString(),

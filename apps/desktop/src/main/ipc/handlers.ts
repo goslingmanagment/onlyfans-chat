@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { composerOptionsSchema, composerActionSchema } from '@chatgoose/shared/composer';
 import { analyzePingSegment } from '@chatgoose/shared/transcript/index';
 import { messageGuardPolicySchema } from '@chatgoose/shared/message-guard/index';
+import { toUserFacing } from '@chatgoose/shared/errors/index';
 import type { DataLayer, OutboxRow } from '../db/index';
 import { effectivePersistedHubBaseUrl, type SettingsStore } from '../settings/store';
 import type { CreditMeter } from '../ofapi/credit-meter';
@@ -49,6 +50,7 @@ import type {
   HarvestStatusVM,
   KeyTestProvider,
   HubDeviceTokenResultVM,
+  HubSignInResultVM,
   KeyTestResultVM,
   LocalDataStatsVM,
   OutboxItemVM,
@@ -413,7 +415,7 @@ export interface IpcDeps {
   purge: () => Promise<void>;
   /** Settings "Test" buttons; probes the STORED key. Optional like vault. */
   testKey?: (provider: KeyTestProvider) => Promise<KeyTestResultVM>;
-  /** Stage 24: one-time hub device-token sign-in (Settings → Hub). */
+  /** Stage 24: one-time hub device sign-in (D35: the first-run screen). */
   hubAuth?: {
     issueDeviceToken: (args: { username: string; password: string }) => Promise<HubDeviceTokenResultVM>;
     /** Security-first recovery: deletes the token, deactivates its runtime, then tries fallback. */
@@ -713,12 +715,20 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return deps.testKey(args.provider);
   });
 
-  ipcMain.handle('cmd:hub.issueDeviceToken', (_event, rawArgs: unknown) => {
+  ipcMain.handle('cmd:hub.issueDeviceToken', async (_event, rawArgs: unknown): Promise<
+    HubSignInResultVM
+  > => {
     const args = hubIssueDeviceTokenSchema.parse(rawArgs);
     if (!deps.hubAuth) {
       throw new Error('Hub sign-in is not available in this build.');
     }
-    return deps.hubAuth.issueDeviceToken(args);
+    // D35: the sign-in screen needs the CG-HUB-2x code to localize, and an
+    // invoke rejection would flatten it into Electron's English wrapper.
+    try {
+      return { ok: true, ...(await deps.hubAuth.issueDeviceToken(args)) };
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error) };
+    }
   });
 
   ipcMain.handle('cmd:hub.signOutDevice', async (_event, rawArgs: unknown) => {
