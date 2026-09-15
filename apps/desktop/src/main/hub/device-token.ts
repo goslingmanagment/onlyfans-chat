@@ -204,7 +204,16 @@ function signInFailure(error: unknown): CgError {
         ? new CgError('CG-HUB-23', { detail })
         : new CgError('CG-HUB-22', { message: error.message, detail });
     }
-    if (error.category === 'network' || error.status === null || error.status >= 500) {
+    if (
+      error.category === 'network'
+      || error.status === null
+      || error.status >= 500
+      // A 404 means this ChatGoose server has no password sign-in route yet (a
+      // rolled-back or not-yet-deployed kernel). "Try again in a minute" would
+      // be a lie: it is the server that has to change, so this is the
+      // unreachable class, not the did-not-finish one.
+      || error.status === 404
+    ) {
       return new CgError('CG-HUB-21', { message: error.message, detail });
     }
     return new CgError('CG-HUB-22', { message: error.message, detail });

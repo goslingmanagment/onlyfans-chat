@@ -42,6 +42,9 @@ describe('redactSecrets', () => {
     expect(redactSecrets('sk-or-v1-0123456789abcdef0123')).toBe(REDACTED);
     expect(redactSecrets('ofapi_AbCdEf0123456789ghij')).toBe(REDACTED);
     expect(redactSecrets('agency_hub_core_abc123def456')).toBe(REDACTED);
+    // D35: the bearers this app actually holds today.
+    expect(redactSecrets('agency_hub_device_abc123def456')).toBe(REDACTED);
+    expect(redactSecrets('agency_hub_pending_device_abc123def456')).toBe(REDACTED);
   });
 
   it('masks Bearer header values', () => {

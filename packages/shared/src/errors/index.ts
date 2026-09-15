@@ -117,8 +117,8 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
   },
   // ── New for the desktop app (SPEC §11), not in the legacy extension registry ──
   'CG-OF-01': {
-    message: 'OnlyFans API key is invalid.',
-    recovery: 'Ask a manager to reconnect the page in Agency Hub, then try again.',
+    message: 'OnlyFans access for this page was rejected.',
+    recovery: 'Ask a manager to reconnect the page, then try again.',
   },
   'CG-OF-02': {
     message: 'OnlyFans account authentication failed.',

@@ -29,8 +29,8 @@ export const UI_MESSAGES = {
   // the wire message from the registry — these en values exist for catalog
   // parity/documentation only.
   'err.CG-OF-01': {
-    en: 'OnlyFans API key is invalid — ask a manager to reconnect the page in Agency Hub.',
-    ru: 'Ключ OFAPI отклонён — попросите менеджера переподключить страницу в Agency Hub.',
+    en: 'OnlyFans access for this page was rejected — ask a manager to reconnect the page.',
+    ru: 'Доступ к OnlyFans для этой страницы отклонён — попросите менеджера переподключить страницу.',
   },
   'err.CG-OF-02': {
     en: 'OnlyFans account authentication failed — ask a manager to reconnect the account.',
@@ -1309,8 +1309,8 @@ export const UI_MESSAGES = {
     ru: 'Доставка не подтверждена — возможно, сообщение дошло до фана',
   },
   'conv.recoveryRefusedExplainer': {
-    en: 'Hub refused to reuse the original key ({reason}) — delivery still unconfirmed; check the conversation before sending again',
-    ru: 'Hub отклонил восстановление с исходным ключом ({reason}) — доставка не подтверждена; проверьте переписку перед новой отправкой',
+    en: 'ChatGoose refused to reuse the original send ({reason}) — delivery still unconfirmed; check the conversation before sending again',
+    ru: 'ChatGoose отклонил повтор исходной отправки ({reason}) — доставка не подтверждена; проверьте переписку перед новой отправкой',
   },
   'conv.cannotSendFallback': {
     en: 'OnlyFans does not allow messaging this fan right now',

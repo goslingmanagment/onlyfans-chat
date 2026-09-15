@@ -44,7 +44,11 @@ const TOKEN_PATTERNS: readonly RegExp[] = [
   /sk-or-[A-Za-z0-9_-]{8,}/g, // OpenRouter
   /sk-[A-Za-z0-9_-]{20,}/g, // generic sk- keys
   /ofapi_[A-Za-z0-9_-]{8,}/g, // OnlyFans API (OFAPI) key — keys start with ofapi_
-  /agency_hub_core_[A-Za-z0-9_-]{6,}/g, // Agency Hub chatter key
+  /agency_hub_core_[A-Za-z0-9_-]{6,}/g, // retired chatter key (kept for old logs)
+  // D35: this machine's own bearer and the pending reservation it is activated
+  // from — the only hub credentials the app holds now.
+  /agency_hub_pending_device_[A-Za-z0-9_-]{6,}/g,
+  /agency_hub_device_[A-Za-z0-9_-]{6,}/g,
   /\bBearer\s+[A-Za-z0-9._-]{8,}/gi, // Authorization headers
 ];
 

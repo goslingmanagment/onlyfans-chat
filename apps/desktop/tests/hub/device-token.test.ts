@@ -227,6 +227,11 @@ describe('issueHubDeviceToken', () => {
     ['an unexplained refusal', 403, { error: 'forbidden', message: 'no', statusCode: 403 }, 'CG-HUB-22'],
     ['a hub that is down', 503, { error: 'unavailable', message: 'no', statusCode: 503 }, 'CG-HUB-21'],
     ['too many attempts', 429, { error: 'rate_limit', message: 'no', statusCode: 429 }, 'CG-HUB-22'],
+    // A kernel without the sign-in route (rolled back, or not deployed yet):
+    // the server has to change, so "try again in a minute" would be a lie.
+    ['a server without password sign-in', 404, {
+      error: 'not_found', message: 'Route not found', statusCode: 404,
+    }, 'CG-HUB-21'],
   ])('maps %s to %s without storing anything', async (_label, status, body, code) => {
     const fetchImpl = vi.fn(async () => jsonResponse(status, body));
     const setSecret = vi.fn();

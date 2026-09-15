@@ -367,17 +367,6 @@ export interface AiCoordinatorLike {
   markOperationAccepted?(operationId: string): boolean;
 }
 
-export interface ReadRuntimeProbeResult {
-  /**
-   * Set only after the same probe proves the stored token dead and the pasted
-   * key valid. SettingsStore records and replays this deletion in the same
-   * durable intent as key promotion.
-   */
-  deleteDeadDeviceToken?: boolean;
-  /** Non-custody side effects (redactor/log refresh) after commit. */
-  afterCommit?: () => Promise<void>;
-}
-
 export interface IpcDeps {
   followers?: FollowersService | null;
   data: DataLayer;
@@ -448,14 +437,14 @@ export interface IpcDeps {
     install: () => void;
   } | null;
   /**
-   * 4a: validate a candidate read runtime built from a hubApiKey/hubBaseUrl
-   * patch's overrides BEFORE it is persisted. Rejects (throws) with the
-   * validation error when the credential/URL fails account bootstrap; resolves
-   * (no-op) when the patch clears the hub or leaves nothing to probe. The
-   * caller persists ONLY after this resolves, so a bad key never reaches the
-   * keychain or the settings table (SPEC §15 — no half-applied credential).
+   * 4a: validate a candidate read runtime built from a hubBaseUrl patch's
+   * override BEFORE it is persisted. Rejects (throws) when the address fails
+   * account bootstrap; resolves (no-op) when the patch clears the hub or
+   * leaves nothing to probe. The caller persists ONLY after this resolves, so
+   * a bad address never reaches the settings table (SPEC §15 — no
+   * half-applied configuration).
   */
-  probeReadRuntimeForPatch?: (rawPatch: unknown) => Promise<ReadRuntimeProbeResult | void>;
+  probeReadRuntimeForPatch?: (rawPatch: unknown) => Promise<void>;
   /**
    * Serializes the complete validate/persist/cleanup/rebuild transaction with
    * device-token issue/sign-out. When provided, onOfapiRuntimeConfigChanged is

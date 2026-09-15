@@ -34,22 +34,29 @@ const FORBIDDEN: ReadonlyArray<{ label: string; pattern: RegExp }> = [
   { label: 'prefix', pattern: /(?<![\p{L}])prefix/iu },
 ];
 
-/** Strings owned by other domains: the OnlyFans vendor key a manager
- * reconnects, LLM context tokens / prompt prefixes, and the keyboard. */
+/**
+ * The Diagnostics block is the one place the plan keeps technical detail —
+ * listed key by key, so a NEW hub.diag.* string cannot smuggle machinery in.
+ */
+const DIAGNOSTICS_KEYS: ReadonlySet<string> = new Set([
+  'hub.diag.token',
+  'hub.diag.tokenInfo',
+  'hub.diag.tokenInfoShort',
+]);
+
+/** Strings owned by other domains: the OnlyFans vendor key a manager tops up,
+ * LLM context tokens / prompt prefixes, and the keyboard. */
 const DOMAIN_EXEMPT_KEYS: ReadonlySet<string> = new Set([
-  'err.CG-OF-01',
   'err.CG-OF-03',
   'err.CG-OF-04',
   'err.CG-OF-09',
   'context.tokens',
   'activity.colTokens',
   'behavior.promptCachingHint',
-  'conv.recoveryRefusedExplainer',
   'cheat.extraJump',
 ]);
 
 const DOMAIN_EXEMPT_CODES: ReadonlySet<string> = new Set([
-  'CG-OF-01',
   'CG-OF-03',
   'CG-OF-04',
   'CG-OF-09',
@@ -75,7 +82,7 @@ const MAIN_SOURCES = [
 const QUOTE = "['\"" + String.fromCharCode(96) + ']';
 const THROWN_MESSAGE = new RegExp(
   '(?:new (?:Cg)?Error\\(\\s*(?:\'CG-[A-Z]+-\\d+\',\\s*\\{[^}]*?message:\\s*)?|_MESSAGE\\s*=\\s*)'
-  + '(' + QUOTE + ')([^\'\"' + String.fromCharCode(96) + ']{12,})\\1',
+  + '(' + QUOTE + ')([^\'"' + String.fromCharCode(96) + ']{12,})\\1',
   'g',
 );
 
@@ -92,7 +99,7 @@ function offendingWords(text: string): string[] {
 describe('D35 user-facing vocabulary', () => {
   it('keeps the UI catalog free of credential machinery', () => {
     for (const [key, entry] of Object.entries(UI_MESSAGES)) {
-      if (key.startsWith('hub.diag.') || DOMAIN_EXEMPT_KEYS.has(key)) continue;
+      if (DIAGNOSTICS_KEYS.has(key) || DOMAIN_EXEMPT_KEYS.has(key)) continue;
       expect(offendingWords(entry.en), `${key}.en`).toEqual([]);
       expect(offendingWords(entry.ru), `${key}.ru`).toEqual([]);
     }

@@ -93,7 +93,6 @@ export type PersistedSettings = Omit<
   | 'appVersion'
   | 'machineLabel'
   | 'osPlatform'
-  | 'keyMeta'
 >;
 
 export const PERSISTED_SETTINGS_KEYS = [
