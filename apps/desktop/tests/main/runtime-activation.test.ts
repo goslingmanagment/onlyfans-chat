@@ -548,7 +548,7 @@ describe('runFailClosedTerminalPurge', () => {
     const recover = vi.fn(async () => true);
 
     await expect(requireSettledDeviceCredentialCustody({ recover }))
-      .rejects.toThrow(/cannot be purged.*device-token.*pending/i);
+      .rejects.toThrow(/cannot be purged.*sign-in or sign-out is still finishing/i);
     expect(recover).toHaveBeenCalledTimes(1);
 
     await expect(requireSettledDeviceCredentialCustody({
@@ -595,7 +595,7 @@ describe('runFailClosedTerminalPurge', () => {
         deviceToken: null,
       }),
       revoke,
-    })).rejects.toThrow(/cannot be purged.*no provable Hub origin/i);
+    })).rejects.toThrow(/cannot be purged.*cannot be matched to an address/i);
     expect(revoke).not.toHaveBeenCalled();
   });
 

@@ -383,6 +383,11 @@ export interface HubClientOptions {
    * D35: every hub call that comes back as an auth rejection is reported here
    * BEFORE it is thrown, so the client owns exactly one self-healing funnel
    * instead of one per caller. Reporting must never change the thrown error.
+   *
+   * Wired to the SDK's own `onAuthError` hook rather than to a catch block:
+   * the hook fires on typed calls, raw calls AND the two AI SSE paths, which
+   * are the chatter's main work — a catch in `delegate` would have missed
+   * every generation.
    */
   onAuthFailure?: (error: HubError) => void;
   /** Epoch ms clock; seam for the server-time offset computation. */
@@ -548,6 +553,17 @@ export function createHubClient(options: HubClientOptions): HubClient {
       auth: { mode: 'bearer', token: () => apiKey },
       headers: versionHeader,
       fetch: bridgedFetch(timeoutMs) as NonNullable<KernelClientOptions['fetch']>,
+      ...(options.onAuthFailure !== undefined
+        ? {
+            onAuthError: (error): void => {
+              try {
+                options.onAuthFailure?.(toHubError(error));
+              } catch {
+                // Reporting must never replace the failure being thrown.
+              }
+            },
+          }
+        : {}),
     };
   }
 
@@ -566,15 +582,10 @@ export function createHubClient(options: HubClientOptions): HubClient {
     try {
       return await call();
     } catch (error) {
-      const hubError = toHubError(error);
-      if (hubError.reason === 'auth') {
-        try {
-          options.onAuthFailure?.(hubError);
-        } catch {
-          // Reporting must never replace the failure the caller is handling.
-        }
-      }
-      throw hubError;
+      // Auth rejections are reported by the SDK's onAuthError hook above, on
+      // every path this client has — reporting again here would double-fire
+      // for typed calls and still miss the streams.
+      throw toHubError(error);
     }
   }
 

@@ -213,7 +213,7 @@ export async function requireSettledDeviceCredentialCustody(options: {
 }): Promise<void> {
   if (await options.recover()) {
     throw new Error(
-      'Local data cannot be purged while Hub device-token activation or revocation is still pending. Retry after the Hub is reachable.',
+      'Local data cannot be purged while a sign-in or sign-out is still finishing. Try again once ChatGoose is reachable.',
     );
   }
 }
@@ -242,7 +242,7 @@ export async function settleDeviceCredentialBeforePurge(options: {
     || current.deviceToken === null
   ) {
     throw new Error(
-      'Local data cannot be purged while a device token has no provable Hub origin. Use “Forget locally” first only if an administrator will revoke the legacy token.',
+      'Local data cannot be purged while this device’s sign-in cannot be matched to an address. Use “Forget locally” first, and only if the owner will end that sign-in.',
     );
   }
   await options.revoke({
@@ -471,7 +471,7 @@ export async function replaceRuntimeSecurityFirst(options: {
 }
 
 export const HUB_DEVICE_TOKEN_ALREADY_STORED_MESSAGE =
-  'A Hub device token is already stored. Sign out before signing in again.';
+  'This device is already signed in. Sign out before signing in again.';
 
 /**
  * One FIFO owner for the complete device-credential lifecycle. Issuance must

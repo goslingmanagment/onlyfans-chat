@@ -108,6 +108,54 @@ describe('the reason survives every hub transport', () => {
     expect(hubAuthReasonOf(seen[0])).toBe('token_revoked');
   });
 
+  it('SDK lane covers the AI streams — the chatter\'s actual work', async () => {
+    // The generation lanes are SSE, not typed calls: a catch inside the typed
+    // delegate would report `listPages()` and silently miss every Fast Reply.
+    const seen: unknown[] = [];
+    const client = createHubClient({
+      baseUrl: HUB,
+      apiKey: TOKEN,
+      fetchImpl: async () => unauthorized('token_revoked'),
+      onAuthFailure: (error) => seen.push(error),
+    });
+
+    await expect(client.streamAiFeature(
+      {
+        feature: 'fast-reply',
+        request: {
+          clientRequestId: '00000000-0000-4000-8000-00000000f001',
+          pageLabel: 'loravie',
+          platform: 'onlyfans',
+          conversationRef: 'chat_42',
+        },
+      },
+      { onText: () => undefined },
+    )).rejects.toMatchObject({ code: 'CG-HUB-01' });
+    expect(hubAuthReasonOf(seen[0])).toBe('token_revoked');
+
+    seen.length = 0;
+    await expect(client.streamAiGateway(
+      {
+        request: {
+          clientRequestId: '00000000-0000-4000-8000-00000000f002',
+          feature: 'fast-reply',
+          pageLabel: 'loravie',
+          platform: 'onlyfans',
+          platformUserId: '42',
+          model: 'anthropic:claude-sonnet-4-6',
+          reasoningEffort: 'off',
+          isRegeneration: false,
+          prompt: {
+            systemBlocks: [{ text: 'system', cache: 'none' }],
+            userBlocks: [{ text: 'hi', cache: 'none' }],
+          },
+        },
+      },
+      { onText: () => undefined },
+    )).rejects.toMatchObject({ code: 'CG-HUB-01' });
+    expect(hubAuthReasonOf(seen[0])).toBe('token_revoked');
+  });
+
   it('read-gateway lane: a cold start with no SDK request still carries it', async () => {
     const seen: unknown[] = [];
     const client = createOfApiClient({

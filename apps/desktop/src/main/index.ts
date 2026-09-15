@@ -1533,7 +1533,7 @@ async function boot(): Promise<void> {
           // spin connectivity retries until the user explicitly abandons it.
           return;
         }
-        throw new Error('Hub device-token recovery is still waiting for connectivity.');
+        throw new Error('Finishing the sign-in change is still waiting for a connection.');
       }
       await rebuildOfapiRuntimeFromSettingsInsideMutation();
     }),
@@ -1671,7 +1671,7 @@ async function boot(): Promise<void> {
         && connection.deviceTokenTransition === null
       ) {
         throw new Error(
-          'The stored device token has no provable Hub origin. Use “Forget locally”, then sign in again; ask an administrator to revoke the legacy token on the old Hub.',
+          'This device’s stored sign-in cannot be matched to an address. Use “Forget locally”, then sign in again, and ask the owner to end the old sign-in.',
         );
       }
       await deactivateOfapiRuntime();
@@ -1687,7 +1687,7 @@ async function boot(): Promise<void> {
           });
           if (await recoverDeviceCredentialJournals()) {
             revocationPending = true;
-            revocationError = new Error('Remote device-token activation settlement is still deferred.');
+            revocationError = new Error('The sign-in is not confirmed by the server yet.');
             deviceCredentialRecoveryRetry?.start();
           } else {
             // Recovery either promoted a Core-confirmed active token (which
@@ -1700,7 +1700,7 @@ async function boot(): Promise<void> {
       }
       if (revocationError === null && connection.deviceToken !== null) {
         if (connection.hubBaseUrl === null) {
-          throw new Error('Cannot revoke the device token without a Hub base URL.');
+          throw new Error('Cannot end this device’s sign-in without a ChatGoose address.');
         }
         try {
           await settingsStore.runCredentialMutation(() => beginHubDeviceTokenRevocation({
@@ -1733,7 +1733,7 @@ async function boot(): Promise<void> {
         try {
           if (await recoverDeviceCredentialJournals()) {
             revocationPending = true;
-            revocationError = new Error('Remote device-token revocation is still deferred.');
+            revocationError = new Error('The sign-out is not confirmed by the server yet.');
             deviceCredentialRecoveryRetry?.start();
           }
         } catch (error) {
@@ -1752,12 +1752,15 @@ async function boot(): Promise<void> {
       if (revocationError !== null) {
         if (!revocationPending) {
           throw new Error(
-            'Device sign-out failed before durable remote revocation started; the existing device token remains active.',
+            'Sign-out did not start on the server, so this device is still signed in.',
             { cause: revocationError },
           );
         }
         throw new Error(
-          'Device sign-out is safely pending remote credential settlement or revocation; ChatGoose is using the chatter-key fallback and will retry automatically.',
+          // D35: no mechanism is named and no automatic retry is promised (D26);
+          // what the chatter needs to know is that the sign-out is safe and this
+          // device is disconnected until the server confirms it.
+          'Sign-out is safely pending: the server has not confirmed it yet, and this device stays disconnected until it does.',
           { cause: revocationError },
         );
       }

@@ -98,14 +98,14 @@ function readJournal<T>(
   try {
     raw = queries.get(key);
   } catch (error) {
-    throw new Error(`Credential journal ${key} is unreadable; refusing to use device credentials.`, {
+    throw new Error(`Sign-in record ${key} is unreadable; refusing to use this device’s sign-in.`, {
       cause: error,
     });
   }
   if (raw === undefined) return null;
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
-    throw new Error(`Credential journal ${key} is corrupt; refusing to use device credentials.`);
+    throw new Error(`Sign-in record ${key} is corrupt; refusing to use this device’s sign-in.`);
   }
   return parsed.data;
 }
@@ -156,7 +156,7 @@ export function parseStagedDeviceToken(
   try {
     json = JSON.parse(raw);
   } catch {
-    throw new Error('Encrypted device-token staging record is corrupt.');
+    throw new Error('The protected sign-in copy is corrupt.');
   }
   const parsed = stagedDeviceTokenSchema.safeParse(json);
   if (
@@ -164,7 +164,7 @@ export function parseStagedDeviceToken(
     || parsed.data.journalId !== expected.journalId
     || deviceTokenDigest(parsed.data.token) !== expected.tokenDigest
   ) {
-    throw new Error('Encrypted device-token staging record does not match its durable journal.');
+    throw new Error('The protected sign-in copy does not match its record.');
   }
   return parsed.data;
 }

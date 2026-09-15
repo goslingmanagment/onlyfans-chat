@@ -439,7 +439,7 @@ describe('settings store', () => {
     expect((await store.get()).hasHubDeviceToken).toBe(true);
 
     await expect(store.update({ hubBaseUrl: 'http://127.0.0.1:4000' }))
-      .rejects.toThrow(/sign out.*device token.*Hub URL/i);
+      .rejects.toThrow(/sign out of this device before changing the address/i);
 
     const vm = await store.get();
     expect(vm.hubBaseUrl).toBe(DEFAULT_AGENCY_HUB_BASE_URL);
@@ -469,7 +469,7 @@ describe('settings store', () => {
     const rowsBefore = new Map(queries.rows);
 
     await expect(store.update({ hubBaseUrl: 'http://localhost:4000' }))
-      .rejects.toThrow(/sign out.*device token.*Hub URL/i);
+      .rejects.toThrow(/sign out of this device before changing the address/i);
     expect(queries.rows).toEqual(rowsBefore);
     expect(secrets.values.has('hubDeviceTokenStaged')).toBe(true);
 
@@ -497,7 +497,7 @@ describe('settings store', () => {
     });
 
     await expect(store.update({ hubBaseUrl: 'http://localhost:4000' }))
-      .rejects.toThrow(/sign out.*device token.*Hub URL/i);
+      .rejects.toThrow(/sign out of this device before changing the address/i);
 
     await abandonHubDeviceTokenCustody({ keychain: secrets, settings: queries });
     await expect(store.update({ hubBaseUrl: 'http://localhost:4000' })).resolves.toMatchObject({

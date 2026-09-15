@@ -55,6 +55,30 @@ const DOMAIN_EXEMPT_CODES: ReadonlySet<string> = new Set([
   'CG-OF-09',
 ]);
 
+/**
+ * Main-process files whose thrown messages reach the chatter verbatim: the
+ * sign-out/abandon mutations render `error.message` in the Account section, a
+ * refused settings save renders it under the form, and the danger zone renders
+ * the purge refusals. A shipped string here ("using the chatter-key fallback
+ * and will retry automatically") is what made this scan necessary.
+ */
+const MAIN_SOURCES = [
+  '../../../apps/desktop/src/main/index.ts',
+  '../../../apps/desktop/src/main/runtime-activation.ts',
+  '../../../apps/desktop/src/main/hub/device-token.ts',
+  '../../../apps/desktop/src/main/hub/credential-journal.ts',
+  '../../../apps/desktop/src/main/hub/auth-recovery.ts',
+  '../../../apps/desktop/src/main/hub/test-connection.ts',
+] as const;
+
+/** `new Error('…')`, `new CgError('CG-…', { message: '…' })`, `X_MESSAGE = '…'`. */
+const QUOTE = "['\"" + String.fromCharCode(96) + ']';
+const THROWN_MESSAGE = new RegExp(
+  '(?:new (?:Cg)?Error\\(\\s*(?:\'CG-[A-Z]+-\\d+\',\\s*\\{[^}]*?message:\\s*)?|_MESSAGE\\s*=\\s*)'
+  + '(' + QUOTE + ')([^\'\"' + String.fromCharCode(96) + ']{12,})\\1',
+  'g',
+);
+
 const GUIDES = [
   '../../../docs/WINDOWS-GUIDE.html',
   '../../../docs/WINDOWS-VERIFICATION.md',
@@ -80,6 +104,17 @@ describe('D35 user-facing vocabulary', () => {
       const definition = CG_ERROR_REGISTRY[code];
       expect(offendingWords(definition.message), `${code}.message`).toEqual([]);
       expect(offendingWords(definition.recovery), `${code}.recovery`).toEqual([]);
+    }
+  });
+
+  it('keeps every message main can show the chatter free of credential machinery', () => {
+    for (const relative of MAIN_SOURCES) {
+      const source = readFileSync(new URL(relative, import.meta.url), 'utf8');
+      for (const match of source.matchAll(THROWN_MESSAGE)) {
+        // `${key}` is an interpolated identifier, not a word the chatter reads.
+        const text = (match[2] ?? '').replace(/\$\{[^}]*\}/g, '…');
+        expect(offendingWords(text), `${relative}: ${text.slice(0, 80)}`).toEqual([]);
+      }
     }
   });
 

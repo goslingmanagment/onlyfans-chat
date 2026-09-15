@@ -503,7 +503,7 @@ describe('hub IPC wiring', () => {
 
     await expect(invoke('cmd:settings.update', {
       hubBaseUrl: 'http://localhost:4000',
-    })).rejects.toThrow(/sign out.*device token.*Hub URL/i);
+    })).rejects.toThrow(/sign out of this device before changing the address/i);
 
     expect(setSecret).not.toHaveBeenCalled();
     expect(deleteSecret).not.toHaveBeenCalled();

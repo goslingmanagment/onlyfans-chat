@@ -95,13 +95,13 @@ function requireMatchingActiveDeviceTokenBinding(
     || binding.tokenDigest !== deviceTokenDigest(token)
   ) {
     throw new Error(
-      'Stored Hub device token is not cryptographically bound to this Hub; re-enrol or explicitly forget it before network use.',
+      'This device’s stored sign-in cannot be matched to this address; sign in again, or forget it locally first.',
     );
   }
 }
 
 export const HUB_DEVICE_TOKEN_HUB_SWITCH_BLOCKED_MESSAGE =
-  'Sign out the stored Hub device token before changing the Hub URL.';
+  'Sign out of this device before changing the address.';
 
 /**
  * Credential transitions own the global runtime-mutation queue. A fetch with
@@ -330,7 +330,7 @@ export async function issueHubDeviceToken(input: IssueHubDeviceTokenInput): Prom
       try {
         if (await input.keychain.getSecret('hubDeviceTokenStaged') !== null) {
           notifyActivationDeferred(
-            new Error('Hub device-token activation committed; encrypted staging cleanup is pending.'),
+            new Error('Sign-in is committed; clearing its protected copy is still pending.'),
           );
         }
       } catch (error) {
@@ -365,11 +365,11 @@ async function completeHubDeviceTokenActivation(
 ): Promise<HubDeviceTokenResult> {
   const journal = readDeviceTokenActivation(input.settings);
   if (journal === null) {
-    throw new Error('No pending Hub device-token activation exists.');
+    throw new Error('No unfinished sign-in exists on this device.');
   }
   const rawStaged = await input.keychain.getSecret('hubDeviceTokenStaged');
   if (rawStaged === null) {
-    throw new Error('Hub device-token activation journal is missing encrypted custody.');
+    throw new Error('The unfinished sign-in has lost its protected copy.');
   }
   const staged = parseStagedDeviceToken(rawStaged, {
     journalId: journal.id,
@@ -377,7 +377,7 @@ async function completeHubDeviceTokenActivation(
   });
   const baseUrl = (input.baseUrl ?? journal.hubBaseUrl).trim().replace(/\/+$/, '');
   if (baseUrl !== journal.hubBaseUrl) {
-    throw new Error('Hub device-token activation origin does not match its journal.');
+    throw new Error('The unfinished sign-in belongs to a different address.');
   }
   const clientVersion = input.clientVersion?.trim();
   const fetchImpl = boundedDeviceTokenFetch(input.fetchImpl ?? fetch);
@@ -552,7 +552,7 @@ export async function beginHubDeviceTokenRevocation(
   const baseUrl = input.baseUrl.trim().replace(/\/+$/, '');
   const token = input.token.trim();
   if (baseUrl.length === 0 || token.length === 0) {
-    throw new Error('Hub base URL and device token are required for sign-out.');
+    throw new Error('A ChatGoose address and a stored sign-in are required to sign out.');
   }
   requireMatchingActiveDeviceTokenBinding(input.settings, baseUrl, token);
   const journal: HubDeviceTokenRevocation = {
@@ -587,7 +587,7 @@ async function completeHubDeviceTokenRevocation(
 ): Promise<'revoked' | 'already-invalid'> {
   const journal = readDeviceTokenRevocation(input.settings);
   if (journal === null) {
-    throw new Error('No pending Hub device-token revocation exists.');
+    throw new Error('No unfinished sign-out exists on this device.');
   }
   if (journal.remoteSettled) {
     let active: string | null;
@@ -595,13 +595,13 @@ async function completeHubDeviceTokenRevocation(
       active = await input.keychain.getSecret('hubDeviceToken');
     } catch (error) {
       throw new UnrelatedActiveDeviceTokenError(
-        'Hub device-token revocation cannot inspect active custody; explicit local abandonment is required.',
+        'Sign-out cannot read this device’s stored sign-in; forget it locally to continue.',
         { cause: error },
       );
     }
     if (active !== null && deviceTokenDigest(active) !== journal.tokenDigest) {
       throw new UnrelatedActiveDeviceTokenError(
-        'Hub device-token revocation found unrelated active custody; explicit local abandonment is required.',
+        'Sign-out found a different stored sign-in on this device; forget it locally to continue.',
       );
     }
     await input.keychain.deleteSecret('hubDeviceToken');
@@ -619,7 +619,7 @@ async function completeHubDeviceTokenRevocation(
   }
   const rawStaged = await input.keychain.getSecret('hubDeviceTokenRevoking');
   if (rawStaged === null) {
-    throw new Error('Hub device-token revocation journal is missing encrypted custody.');
+    throw new Error('The unfinished sign-out has lost its protected copy.');
   }
   const staged = parseStagedDeviceToken(rawStaged, {
     journalId: journal.id,
@@ -652,7 +652,7 @@ async function completeHubDeviceTokenRevocation(
       if (readDeviceTokenRevocation(input.settings)?.remoteSettled !== true) throw error;
     }
     throw new UnrelatedActiveDeviceTokenError(
-      'Hub device-token revocation found unrelated active custody; explicit local abandonment is required.',
+      'Sign-out found a different stored sign-in on this device; forget it locally to continue.',
     );
   }
   await input.keychain.deleteSecret('hubDeviceToken');
@@ -720,7 +720,7 @@ export async function recoverHubDeviceTokenLifecycle(
   let activation = readDeviceTokenActivation(input.settings);
   let revocation = readDeviceTokenRevocation(input.settings);
   if (activation !== null && revocation !== null) {
-    throw new Error('Conflicting Hub device-token activation and revocation journals.');
+    throw new Error('This device has a conflicting unfinished sign-in and sign-out.');
   }
   let activationRequiresAbandonment = false;
   if (activation !== null) {
@@ -973,7 +973,7 @@ export async function revokeHubDeviceToken(
   const baseUrl = input.baseUrl.trim().replace(/\/+$/, '');
   const token = input.token.trim();
   if (baseUrl.length === 0 || token.length === 0) {
-    throw new Error('Hub base URL and device token are required for sign-out.');
+    throw new Error('A ChatGoose address and a stored sign-in are required to sign out.');
   }
   const clientVersion = input.clientVersion?.trim();
   const fetchImpl = boundedDeviceTokenFetch(input.fetchImpl ?? fetch);
