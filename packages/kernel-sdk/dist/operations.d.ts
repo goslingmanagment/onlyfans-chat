@@ -43,6 +43,14 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/admin/connections";
     };
+    readonly adminCreateAccountLink: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/users/:username/links";
+    };
+    readonly adminCreateInvite: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/invites";
+    };
     readonly adminCreateModel: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/models";
@@ -102,6 +110,10 @@ export declare const kernelOperations: {
     readonly adminIssueDeviceToken: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/users/:username/device-tokens";
+    };
+    readonly adminListAccountLinks: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/users/:username/links";
     };
     readonly adminListApiKeys: {
         readonly method: "GET";
@@ -271,9 +283,17 @@ export declare const kernelOperations: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/users/:username/reactivate";
     };
+    readonly adminRevokeAccountLink: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/users/:username/links/:linkId/revoke";
+    };
     readonly adminRevokeApiKeys: {
         readonly method: "DELETE";
         readonly path: "/api/v1/admin/users/:username/api-keys";
+    };
+    readonly adminRevokeDeviceToken: {
+        readonly method: "DELETE";
+        readonly path: "/api/v1/admin/users/:username/device-tokens/:tokenId";
     };
     readonly adminRevokeDeviceTokens: {
         readonly method: "DELETE";
@@ -322,6 +342,10 @@ export declare const kernelOperations: {
     readonly adminSyncTriggerAll: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/sync/trigger-all";
+    };
+    readonly adminTerminateAllAccess: {
+        readonly method: "POST";
+        readonly path: "/api/v1/admin/users/:username/terminate-access";
     };
     readonly adminTestProxy: {
         readonly method: "POST";
@@ -479,17 +503,45 @@ export declare const kernelOperations: {
         readonly method: "POST";
         readonly path: "/api/v1/auth/change-password";
     };
+    readonly authInspectAccountLink: {
+        readonly method: "POST";
+        readonly path: "/api/v1/auth/links/inspect";
+    };
     readonly authIssueDeviceToken: {
         readonly method: "POST";
         readonly path: "/api/v1/auth/device-tokens";
+    };
+    readonly authIssueDeviceTokenWithPassword: {
+        readonly method: "POST";
+        readonly path: "/api/v1/auth/device-tokens/password";
+    };
+    readonly authListDevices: {
+        readonly method: "GET";
+        readonly path: "/api/v1/auth/devices";
+    };
+    readonly authMyUsage: {
+        readonly method: "GET";
+        readonly path: "/api/v1/auth/usage";
+    };
+    readonly authRedeemAccountLink: {
+        readonly method: "POST";
+        readonly path: "/api/v1/auth/links/redeem";
     };
     readonly authReserveDeviceToken: {
         readonly method: "POST";
         readonly path: "/api/v1/auth/device-tokens/reservations";
     };
+    readonly authRevokeAllDevices: {
+        readonly method: "POST";
+        readonly path: "/api/v1/auth/devices/revoke-all";
+    };
     readonly authRevokeCurrentDeviceToken: {
         readonly method: "DELETE";
         readonly path: "/api/v1/auth/device-tokens/current";
+    };
+    readonly authRevokeDevice: {
+        readonly method: "DELETE";
+        readonly path: "/api/v1/auth/devices/:deviceId";
     };
     readonly cancelOfapiCommand: {
         readonly method: "POST";

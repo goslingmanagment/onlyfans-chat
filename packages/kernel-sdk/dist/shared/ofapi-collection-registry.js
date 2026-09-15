@@ -63,6 +63,8 @@ export function classifyOfapiCollectionOperation(operation) {
         return "core_messages";
     if (/transaction|chargeback/.test(operation))
         return "core_payments";
+    if (operation === "ofapi_read_fans_latest")
+        return "core_audience";
     if (/fans_active|fans_all|subscriber|fan_profile|user_detail|users_get/.test(operation) && !/link/.test(operation))
         return "core_audience";
     if (["ofapi_gateway_user", "ofapi_gateway_users_list", "ofapi_gateway_user_lists", "ofapi_gateway_user_list_users"].includes(operation))
