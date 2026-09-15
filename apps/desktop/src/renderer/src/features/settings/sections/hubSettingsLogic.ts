@@ -6,8 +6,6 @@ import { DEFAULT_AGENCY_HUB_BASE_URL } from '@chatgoose/shared';
 
 export interface HubCredentialSettings {
   hubBaseUrl: string | null;
-  hasHubKey: boolean;
-  hubApiKeyBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
   hasHubDeviceToken: boolean;
   hubDeviceTokenBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
 }
@@ -34,31 +32,26 @@ export function hubDeviceTokenStatus(input: {
 }
 
 /**
- * Stage 24: the device token is the primary hub credential, the chatter key
- * a kernel-dual-acceptance fallback (device-token.ts resolveHubCredential).
- * Either one configures the hub — a token-only install must read the same
- * as a key-only one.
+ * D35: the bound device credential of this machine is the only hub credential
+ * there is — an install is configured exactly when it is signed in.
  */
 export function isHubConfigured(settings: HubCredentialSettings): boolean {
-  return settings.hubBaseUrl !== null && (
-    settings.hubApiKeyBindingState === 'bound'
-    || settings.hubDeviceTokenBindingState === 'bound'
-  );
+  return settings.hubBaseUrl !== null
+    && settings.hubDeviceTokenBindingState === 'bound';
 }
 
-/** D19: how the leftover legacy chatter key reads in the UI. With a bound
- * device token any residue is invisible (main decommissions it); a key-only
- * machine shows a migration nudge while the key works, or a device-sign-in
- * CTA once the key is quarantined (never a paste-a-key CTA). */
-export type LegacyKeyState = 'working-fallback' | 'isolated' | null;
-
-export function legacyKeyState(settings: {
-  hasHubKey: boolean;
-  hubApiKeyBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
-  hubDeviceTokenBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
-}): LegacyKeyState {
-  if (!settings.hasHubKey || settings.hubDeviceTokenBindingState === 'bound') return null;
-  return settings.hubApiKeyBindingState === 'bound' ? 'working-fallback' : 'isolated';
+/**
+ * D35 §9: the first-run gate. ONLY a machine with no device custody at all
+ * sees the sign-in screen — a settling activation/revocation keeps the
+ * workspace (with its banner), a quarantined credential keeps the existing
+ * Account-section recovery, and an unreachable hub is a status, not a
+ * sign-out. A wipe (expired/revoked) turns custody into 'unset' first, which
+ * is what brings the screen up with its banner.
+ */
+export function requiresSignIn(
+  status: 'activation' | 'revocation' | 'configured' | 'attention' | 'unset',
+): boolean {
+  return status === 'unset';
 }
 
 export function canIssueHubDeviceToken(input: {

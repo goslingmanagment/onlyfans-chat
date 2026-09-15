@@ -4,7 +4,7 @@
 // list for the mapping section. Main-process only (SPEC §15.1).
 
 import { z } from 'zod';
-import { CgError } from '@chatgoose/shared/errors/index';
+import { CgError, isHubAuthReason } from '@chatgoose/shared/errors/index';
 
 export const HUB_AUTH_ME_PATH = '/api/v1/auth/me';
 
@@ -15,13 +15,20 @@ const authMeSchema = z.looseObject({
   user: z.looseObject({
     username: z.string(),
     role: z.string(),
-    assignedPages: z.array(z.looseObject({ label: z.string() })),
+    assignedPages: z.array(z.looseObject({
+      label: z.string(),
+      // D35 §9 п.5: this app is the OnlyFans client. A chatter whose pages are
+      // all Fansly has nothing to work on HERE, and a count that included them
+      // read as "connected, 3 pages" over an empty workspace.
+      platform: z.string().optional(),
+    })),
   }),
 });
 
 export interface HubProbeResult {
   username: string;
   role: string;
+  /** OnlyFans pages only — the ones this app can actually open. */
   pages: number;
 }
 
@@ -62,7 +69,24 @@ export async function probeHubConnection(
     throw new CgError('CG-HUB-02', { message: `Hub unreachable: ${url}` });
   }
   if (response.status === 401 || response.status === 403) {
-    throw new CgError('CG-HUB-01', { detail: { status: response.status } });
+    // D35: the probe is the third hub transport, and a cold start can reach it
+    // before any other. Carry the kernel's machine reason so the ONE recovery
+    // dispatcher sees the same evidence here as on the other two.
+    let reason: unknown;
+    try {
+      const body: unknown = await response.json();
+      reason = typeof body === 'object' && body !== null
+        ? (body as { reason?: unknown }).reason
+        : undefined;
+    } catch {
+      // A non-JSON rejection simply carries no reason: fail closed.
+    }
+    throw new CgError('CG-HUB-01', {
+      detail: {
+        status: response.status,
+        ...(isHubAuthReason(reason) ? { authReason: reason } : {}),
+      },
+    });
   }
   if (!response.ok) {
     throw new CgError('CG-HUB-02', { detail: { status: response.status } });
@@ -80,6 +104,9 @@ export async function probeHubConnection(
   return {
     username: parsed.data.user.username,
     role: parsed.data.user.role,
-    pages: parsed.data.user.assignedPages.length,
+    pages: parsed.data.user.assignedPages.filter(
+      // An older kernel without the field cannot be assumed to be Fansly.
+      (page) => page.platform === undefined || page.platform === 'onlyfans',
+    ).length,
   };
 }

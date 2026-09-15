@@ -105,6 +105,9 @@ export const deviceTokenItemSchema = z.object({
     isActive: z.boolean(),
     expiresAt: isoTimestamp,
     lastUsedAt: isoTimestamp.nullable(),
+    // Decision 349 (Р7): the x-client-version the token last presented, written
+    // by the same UPDATE as lastUsedAt. Null until the token's first use.
+    lastClientVersion: z.string().nullable(),
     createdAt: isoTimestamp,
     revokedAt: isoTimestamp.nullable(),
     revokedReason: z.string().nullable(),
@@ -155,6 +158,7 @@ export const adminUserApiKeyStatusSchema = z.object({
     activeKeyCreatedAt: isoTimestamp.nullable(),
     activeKeyLastUsedAt: isoTimestamp.nullable(),
 });
+export const registrationStateEnum = z.enum(["invited", "active"]);
 export const adminUserSchema = authUserSchema.extend({
     apiKeyStatus: adminUserApiKeyStatusSchema.nullable(),
     // Decision #126: deactivation tombstone (null = active) and the honest
@@ -162,6 +166,110 @@ export const adminUserSchema = authUserSchema.extend({
     // password+device-token chatter (#116) no longer reads "Never".
     disabledAt: isoTimestamp.nullable(),
     lastActiveAt: isoTimestamp.nullable(),
+    // Decision 349 (§4.1 p.12): "invited" = no password yet (the invite link has
+    // not been redeemed); "active" = a password is set.
+    registrationState: registrationStateEnum,
+});
+// --- Decision 349: unified chatter account — account links (invite / reset),
+// password-based device-token issuance, self-serve cabinet ---
+export const accountLinkKindEnum = z.enum(["invite", "password_reset"]);
+export const accountLinkStateEnum = z.enum(["active", "used", "expired", "revoked"]);
+export const accountLinkItemSchema = z.object({
+    id: intId,
+    kind: accountLinkKindEnum,
+    keyPrefix: z.string(),
+    state: accountLinkStateEnum,
+    expiresAt: isoTimestamp,
+    usedAt: isoTimestamp.nullable(),
+    revokedAt: isoTimestamp.nullable(),
+    revokedReason: z.string().nullable(),
+    createdAt: isoTimestamp,
+    createdBy: z.number().int().nullable(),
+});
+export const issuedAccountLinkSchema = z.object({
+    id: intId,
+    kind: accountLinkKindEnum,
+    keyPrefix: z.string(),
+    // The raw link token — returned exactly once at creation, never again (not
+    // in audit, observations, logs or any URL path). Clients place it in the URL
+    // FRAGMENT (`/join#<token>`) and send it back only in a POST body.
+    token: z.string(),
+    expiresAt: isoTimestamp,
+});
+// Link lifetime: 7 days by default, 30 days at most (§4.1 p.3).
+const accountLinkExpiresInHours = z.number().int().min(1).max(720);
+export const inviteRoleEnum = z.enum(["chatter", "team_lead"]);
+export const adminCreateInviteBodySchema = z.object({
+    username: z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, "username may contain latin letters, digits, dots, underscores and dashes"),
+    role: inviteRoleEnum.optional(),
+    pageLabels: z.array(z.string().min(1)).max(100),
+    expiresInHours: accountLinkExpiresInHours.optional(),
+});
+export const adminCreateInviteResponseSchema = z.object({
+    user: adminUserSchema,
+    link: issuedAccountLinkSchema,
+});
+export const adminCreateAccountLinkBodySchema = z.object({
+    kind: accountLinkKindEnum,
+    expiresInHours: accountLinkExpiresInHours.optional(),
+});
+export const accountLinkTokenBodySchema = z.object({
+    token: z.string().min(1).max(512),
+});
+export const authInspectAccountLinkResponseSchema = z.discriminatedUnion("state", [
+    z.object({
+        state: z.literal("active"),
+        kind: accountLinkKindEnum,
+        username: z.string(),
+        expiresAt: isoTimestamp,
+        // Platforms of the pages assigned to the invited user, so the "done"
+        // screen offers only the clients the person actually needs.
+        platforms: z.array(platformEnum),
+    }),
+    // A link that is no longer redeemable discloses nothing but its state.
+    z.object({ state: z.enum(["used", "expired", "revoked"]) }),
+]);
+export const authRedeemAccountLinkBodySchema = z.object({
+    token: z.string().min(1).max(512),
+    // §4.2: 12–256 characters, not in the shared common-password blacklist
+    // (checked server-side; the schema carries only the length bounds).
+    password: z.string().min(12).max(256),
+});
+export const authRedeemAccountLinkResponseSchema = z.object({
+    username: z.string(),
+});
+export const deviceTokenIssueModeEnum = z.enum(["active", "pending"]);
+export const authIssueDeviceTokenWithPasswordBodySchema = z.object({
+    username: z.string().trim().min(1).max(100),
+    password: z.string().min(1).max(1024),
+    label: z.string().min(1).max(120),
+    // active  → a live device token (the extension: one atomic storage write);
+    // pending → a 10-minute reservation, activated through authActivateDeviceToken
+    //           after the client has durably staged custody (the desktop).
+    mode: deviceTokenIssueModeEnum,
+});
+export const authIssueDeviceTokenWithPasswordResponseSchema = z.discriminatedUnion("mode", [
+    issuedDeviceTokenResponseSchema.extend({ mode: z.literal("active") }),
+    reservedDeviceTokenResponseSchema.extend({ mode: z.literal("pending") }),
+]);
+export const ownDeviceItemSchema = z.object({
+    id: intId,
+    label: z.string(),
+    keyPrefix: z.string(),
+    lastClientVersion: z.string().nullable(),
+    expiresAt: isoTimestamp,
+    lastUsedAt: isoTimestamp.nullable(),
+    createdAt: isoTimestamp,
+});
+export const authRevokeAllDevicesResponseSchema = z.object({
+    deviceTokens: z.number().int().nonnegative(),
+    sessions: z.number().int().nonnegative(),
+});
+export const adminTerminateAllAccessResponseSchema = z.object({
+    deviceTokens: z.number().int().nonnegative(),
+    sessions: z.number().int().nonnegative(),
+    apiKeys: z.number().int().nonnegative(),
+    links: z.number().int().nonnegative(),
 });
 export const authStateSchema = z.object({
     authMethod: z.enum(["session", "api_key", "device_token"]),
@@ -2075,6 +2183,23 @@ export const adminChatterUsageResponseSchema = z.object({
         timeZone: z.string().min(1),
     }),
     rows: z.array(adminChatterUsageRowSchema),
+});
+// Decision 349: the caller's own AI spend (any session, any human role). Same
+// range semantics as the admin report; the row drops userId (it is the caller)
+// and a daily series is added for the cabinet's chart.
+export const authMyUsageDailyRowSchema = z.object({
+    date: businessDate,
+    requestCount: z.number().int().nonnegative(),
+    costMicroUsd: z.number().int().nonnegative(),
+});
+export const authMyUsageResponseSchema = z.object({
+    range: z.object({
+        from: businessDate,
+        to: businessDate,
+        timeZone: z.string().min(1),
+    }),
+    row: adminChatterUsageRowSchema.omit({ userId: true }),
+    daily: z.array(authMyUsageDailyRowSchema),
 });
 // Admin schemas
 export const adminCreateUserBodySchema = z.object({
@@ -7034,6 +7159,194 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+        },
+    },
+    // --- Decision 349: unified chatter account (PR-1A) ---
+    adminCreateInvite: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Invite a person: create the account, assign pages and mint a one-time invite link — one transaction",
+        description: "Creates the user WITHOUT a password, assigns every listed page "
+            + "and creates an invite link (7 days by default, 30 at most) atomically: a "
+            + "failure on any page leaves neither user nor link behind. The raw link "
+            + "token is returned exactly once. Usernames are unique case-insensitively.",
+        body: adminCreateInviteBodySchema,
+        response: {
+            200: adminCreateInviteResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    adminCreateAccountLink: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Create a one-time invite or password-reset link for a user (returned once)",
+        description: "A new link of either kind supersedes every previously active "
+            + "link of the same user. `invite` is accepted only for an unfinished "
+            + "registration; a user with a password gets `password_reset`. Owners "
+            + "cannot be reset by link (they change their password themselves).",
+        params: z.object({ username: z.string().min(1) }),
+        body: adminCreateAccountLinkBodySchema,
+        response: {
+            200: issuedAccountLinkSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    adminListAccountLinks: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "List a user's invite and password-reset links with their state",
+        params: z.object({ username: z.string().min(1) }),
+        response: {
+            200: z.array(accountLinkItemSchema),
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    adminRevokeAccountLink: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Revoke one of a user's links (idempotent on an already inactive link)",
+        params: z.object({
+            username: z.string().min(1),
+            linkId: z.coerce.number().int().positive(),
+        }),
+        response: {
+            200: accountLinkItemSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    adminRevokeDeviceToken: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Revoke ONE of a user's device tokens (\"revoke this sign-in\")",
+        params: z.object({
+            username: z.string().min(1),
+            tokenId: z.coerce.number().int().positive(),
+        }),
+        response: {
+            200: z.object({ revoked: z.literal(true) }),
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    adminTerminateAllAccess: {
+        auth: { kind: "owner-session" },
+        tags: ["admin"],
+        summary: "Terminate every sign-in of a user: device tokens, reservations, sessions, API keys and active links",
+        description: "The strongest revocation short of deactivation (§4.4). The "
+            + "user is NOT disabled and the password is NOT changed: a fresh login "
+            + "with the valid password still works. Owner accounts are refused.",
+        params: z.object({ username: z.string().min(1) }),
+        response: {
+            200: adminTerminateAllAccessResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    authInspectAccountLink: {
+        auth: { kind: "public" },
+        tags: ["auth"],
+        summary: "Inspect an invite / password-reset link before redeeming it",
+        description: "The token travels in the POST body, never in the path. An "
+            + "active link discloses its kind, the username, the expiry and the "
+            + "platforms of the assigned pages; an inactive one only its state; an "
+            + "unknown token is 404. Rate-limited per IP (30/min).",
+        body: accountLinkTokenBodySchema,
+        response: {
+            200: authInspectAccountLinkResponseSchema,
+            400: errorResponseSchema,
+            404: errorResponseSchema,
+            429: errorResponseSchema,
+        },
+    },
+    authRedeemAccountLink: {
+        auth: { kind: "public" },
+        tags: ["auth"],
+        summary: "Redeem a link: set the password (invite) or reset it and terminate every sign-in (password_reset)",
+        description: "One-time: the link is marked used in the same transaction as "
+            + "the password. A used, expired or revoked link answers 409 `conflict` "
+            + "with `reason` = used | expired | revoked. Rate-limited per IP (10/min).",
+        body: authRedeemAccountLinkBodySchema,
+        response: {
+            200: authRedeemAccountLinkResponseSchema,
+            400: errorResponseSchema,
+            404: errorResponseSchema,
+            409: errorResponseSchema,
+            429: errorResponseSchema,
+        },
+    },
+    authIssueDeviceTokenWithPassword: {
+        auth: { kind: "public" },
+        tags: ["auth"],
+        summary: "Sign in a device with username + password: issue a device token (active) or a reservation (pending) — no cookie",
+        description: "The single client sign-in protocol (Р2). Shares the per-account "
+            + "backoff and the `auth.login_failed` audit with `login`; wrong "
+            + "credentials answer 401 without an oracle. A user flagged "
+            + "must_change_password answers 403 `password_change_required`. "
+            + "Rate-limited per IP (20/min).",
+        body: authIssueDeviceTokenWithPasswordBodySchema,
+        response: {
+            200: authIssueDeviceTokenWithPasswordResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            429: errorResponseSchema,
+        },
+    },
+    authListDevices: {
+        auth: { kind: "any-session" },
+        tags: ["auth"],
+        summary: "List the caller's live devices (active device tokens)",
+        response: {
+            200: z.array(ownDeviceItemSchema),
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+        },
+    },
+    authRevokeDevice: {
+        auth: { kind: "any-session" },
+        tags: ["auth"],
+        summary: "Sign out one of the caller's own devices",
+        params: z.object({ deviceId: z.coerce.number().int().positive() }),
+        response: {
+            200: z.object({ revoked: z.literal(true) }),
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+        },
+    },
+    authRevokeAllDevices: {
+        auth: { kind: "any-session" },
+        tags: ["auth"],
+        summary: "Sign out on all devices: every device token and reservation, every session except the current one",
+        response: {
+            200: authRevokeAllDevicesResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+        },
+    },
+    authMyUsage: {
+        auth: { kind: "any-session" },
+        tags: ["auth"],
+        summary: "The caller's own AI usage: totals, feature breakdown and a daily series",
+        querystring: adminChatterUsageQuerySchema,
+        response: {
+            200: authMyUsageResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
         },
     },
     archiveConversationMessages: {

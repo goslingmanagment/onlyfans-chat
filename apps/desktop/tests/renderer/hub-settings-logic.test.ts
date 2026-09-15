@@ -4,8 +4,8 @@ import {
   hasHubDeviceTokenCustody,
   hubDeviceTokenStatus,
   hubUrlChangeRequiresDeviceSignOut,
-  legacyKeyState,
   isHubConfigured,
+  requiresSignIn,
 } from '../../src/renderer/src/features/settings/sections/hubSettingsLogic';
 
 describe('hasHubDeviceTokenCustody', () => {
@@ -43,70 +43,76 @@ describe('hasHubDeviceTokenCustody', () => {
 });
 
 describe('isHubConfigured', () => {
-  it('a legacy chatter key alone configures the hub', () => {
+  it('the signed-in device credential configures the hub', () => {
     expect(
       isHubConfigured({
         hubBaseUrl: 'https://hub.example.com',
-        hasHubKey: true,
-        hubApiKeyBindingState: 'bound',
-        hasHubDeviceToken: false,
-        hubDeviceTokenBindingState: 'none',
-      }),
-    ).toBe(true);
-  });
-
-  it('a device token ALONE configures the hub (no legacy key needed)', () => {
-    expect(
-      isHubConfigured({
-        hubBaseUrl: 'https://hub.example.com',
-        hasHubKey: false,
-        hubApiKeyBindingState: 'none',
         hasHubDeviceToken: true,
         hubDeviceTokenBindingState: 'bound',
       }),
     ).toBe(true);
   });
 
-  it('neither credential leaves the hub unconfigured', () => {
+  it('no credential leaves the hub unconfigured', () => {
     expect(
       isHubConfigured({
         hubBaseUrl: 'https://hub.example.com',
-        hasHubKey: false,
-        hubApiKeyBindingState: 'none',
         hasHubDeviceToken: false,
         hubDeviceTokenBindingState: 'none',
       }),
     ).toBe(false);
   });
 
-  it('no base URL leaves the hub unconfigured even with a credential', () => {
+  it('no base URL leaves the hub unconfigured even when signed in', () => {
     expect(isHubConfigured({
       hubBaseUrl: null,
-      hasHubKey: true,
-      hubApiKeyBindingState: 'bound',
-      hasHubDeviceToken: false,
-      hubDeviceTokenBindingState: 'none',
-    })).toBe(
-      false,
-    );
-    expect(isHubConfigured({
-      hubBaseUrl: null,
-      hasHubKey: false,
-      hubApiKeyBindingState: 'none',
       hasHubDeviceToken: true,
       hubDeviceTokenBindingState: 'bound',
-    })).toBe(
-      false,
-    );
+    })).toBe(false);
   });
 
-  it('quarantines existing credentials whose saved Hub origin is not proven', () => {
+  it('quarantines a credential whose saved Hub origin is not proven', () => {
     expect(isHubConfigured({
       hubBaseUrl: 'https://hub.example.com',
-      hasHubKey: true,
-      hubApiKeyBindingState: 'unbound',
       hasHubDeviceToken: true,
       hubDeviceTokenBindingState: 'mismatch',
+    })).toBe(false);
+  });
+});
+
+describe('requiresSignIn (D35 first-run gate)', () => {
+  it('shows the sign-in screen only with no device custody at all', () => {
+    expect(requiresSignIn('unset')).toBe(true);
+    expect(requiresSignIn('configured')).toBe(false);
+    expect(requiresSignIn('activation')).toBe(false);
+    expect(requiresSignIn('revocation')).toBe(false);
+    // Quarantined custody keeps the Account section's recovery affordances —
+    // a sign-in screen there would offer a second credential it must refuse.
+    expect(requiresSignIn('attention')).toBe(false);
+  });
+
+  it('follows hubDeviceTokenStatus through every custody shape', () => {
+    const gate = (input: Parameters<typeof hubDeviceTokenStatus>[0]): boolean =>
+      requiresSignIn(hubDeviceTokenStatus(input));
+    expect(gate({
+      hasHubDeviceToken: false,
+      hubDeviceTokenBindingState: 'none',
+      hubDeviceTokenTransition: null,
+    })).toBe(true);
+    expect(gate({
+      hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'bound',
+      hubDeviceTokenTransition: null,
+    })).toBe(false);
+    expect(gate({
+      hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'unbound',
+      hubDeviceTokenTransition: null,
+    })).toBe(false);
+    expect(gate({
+      hasHubDeviceToken: false,
+      hubDeviceTokenBindingState: 'none',
+      hubDeviceTokenTransition: 'activation',
     })).toBe(false);
   });
 });
@@ -167,44 +173,5 @@ describe('hubUrlChangeRequiresDeviceSignOut', () => {
       savedHubBaseUrl: 'https://gosling-agency.ru',
       hasStoredDeviceToken: true,
     })).toBe(false);
-  });
-});
-
-describe('legacyKeyState (D19)', () => {
-  it('is null with a bound device token regardless of key state', () => {
-    expect(legacyKeyState({
-      hasHubKey: true,
-      hubApiKeyBindingState: 'unbound',
-      hubDeviceTokenBindingState: 'bound',
-    })).toBeNull();
-  });
-
-  it('working-fallback for a bound key on a key-only machine', () => {
-    expect(legacyKeyState({
-      hasHubKey: true,
-      hubApiKeyBindingState: 'bound',
-      hubDeviceTokenBindingState: 'none',
-    })).toBe('working-fallback');
-  });
-
-  it('isolated for a quarantined key with no token', () => {
-    expect(legacyKeyState({
-      hasHubKey: true,
-      hubApiKeyBindingState: 'unbound',
-      hubDeviceTokenBindingState: 'none',
-    })).toBe('isolated');
-    expect(legacyKeyState({
-      hasHubKey: true,
-      hubApiKeyBindingState: 'unreadable',
-      hubDeviceTokenBindingState: 'none',
-    })).toBe('isolated');
-  });
-
-  it('null without any key', () => {
-    expect(legacyKeyState({
-      hasHubKey: false,
-      hubApiKeyBindingState: 'none',
-      hubDeviceTokenBindingState: 'none',
-    })).toBeNull();
   });
 });

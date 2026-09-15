@@ -59,18 +59,15 @@ describe('activateRuntimeNonFatal (4b)', () => {
 
 describe('hubCredentialNeedsAttention', () => {
   const bound = {
-    hasHubKey: true,
-    hubApiKeyBindingState: 'bound' as const,
-    hasHubDeviceToken: false,
-    hubDeviceTokenBindingState: 'none' as const,
+    hasHubDeviceToken: true,
+    hubDeviceTokenBindingState: 'bound' as const,
     hubDeviceTokenTransition: null,
   };
 
   it('surfaces a surviving lifecycle journal even when every custody file is missing', () => {
     expect(hubCredentialNeedsAttention({
-      ...bound,
-      hasHubKey: false,
-      hubApiKeyBindingState: 'none',
+      hasHubDeviceToken: false,
+      hubDeviceTokenBindingState: 'none',
       hubDeviceTokenTransition: 'revocation',
     })).toBe(true);
   });
@@ -79,30 +76,16 @@ describe('hubCredentialNeedsAttention', () => {
     expect(hubCredentialNeedsAttention(bound)).toBe(false);
   });
 
-  it('bound device token suppresses a quarantined legacy key (Maxim regression)', () => {
+  it('is silent on a signed-out machine (D35: nothing else can be stored)', () => {
     expect(hubCredentialNeedsAttention({
-      hasHubKey: true,
-      hubApiKeyBindingState: 'unbound',
-      hasHubDeviceToken: true,
-      hubDeviceTokenBindingState: 'bound',
+      hasHubDeviceToken: false,
+      hubDeviceTokenBindingState: 'none',
       hubDeviceTokenTransition: null,
     })).toBe(false);
   });
 
-  it('quarantined key still raises attention without a bound device token', () => {
+  it('device-credential trouble is never suppressed', () => {
     expect(hubCredentialNeedsAttention({
-      hasHubKey: true,
-      hubApiKeyBindingState: 'unbound',
-      hasHubDeviceToken: false,
-      hubDeviceTokenBindingState: 'none',
-      hubDeviceTokenTransition: null,
-    })).toBe(true);
-  });
-
-  it('device-token trouble is never suppressed', () => {
-    expect(hubCredentialNeedsAttention({
-      hasHubKey: false,
-      hubApiKeyBindingState: 'none',
       hasHubDeviceToken: true,
       hubDeviceTokenBindingState: 'mismatch',
       hubDeviceTokenTransition: null,
@@ -565,7 +548,7 @@ describe('runFailClosedTerminalPurge', () => {
     const recover = vi.fn(async () => true);
 
     await expect(requireSettledDeviceCredentialCustody({ recover }))
-      .rejects.toThrow(/cannot be purged.*device-token.*pending/i);
+      .rejects.toThrow(/cannot be purged.*sign-in or sign-out is still finishing/i);
     expect(recover).toHaveBeenCalledTimes(1);
 
     await expect(requireSettledDeviceCredentialCustody({
@@ -612,7 +595,7 @@ describe('runFailClosedTerminalPurge', () => {
         deviceToken: null,
       }),
       revoke,
-    })).rejects.toThrow(/cannot be purged.*no provable Hub origin/i);
+    })).rejects.toThrow(/cannot be purged.*cannot be matched to an address/i);
     expect(revoke).not.toHaveBeenCalled();
   });
 
@@ -862,7 +845,7 @@ describe('activateStoredCredentialWithRetry', () => {
         scheduleRetry,
         onFailure,
       }),
-    ).rejects.toThrow(/token is stored and retrying automatically/i);
+    ).rejects.toMatchObject({ code: 'CG-HUB-22' });
     expect(onFailure).toHaveBeenCalledWith(cause);
     expect(scheduleRetry).toHaveBeenCalledTimes(1);
   });
@@ -886,7 +869,7 @@ describe('activateStoredCredentialWithRetry', () => {
       activate: () => Promise.reject(cause),
       scheduleRetry,
       shouldRetry: () => false,
-    })).rejects.toThrow(/credential was rejected/i);
+    })).rejects.toMatchObject({ code: 'CG-HUB-22' });
 
     expect(scheduleRetry).not.toHaveBeenCalled();
   });

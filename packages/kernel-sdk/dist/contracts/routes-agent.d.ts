@@ -1754,7 +1754,7 @@ export declare const agentExportPolicyEnum: z.ZodEnum<{
     no_raw_transcript_export_endpoint_yet: "no_raw_transcript_export_endpoint_yet";
     agent_read_plane_v1: "agent_read_plane_v1";
 }>;
-/** = `syncStreamEnum` (schema.ts), exactly seventeen. */
+/** = `syncStreamEnum` (schema.ts), exactly eightteen. */
 export declare const agentSyncStreamEnum: z.ZodEnum<{
     subscribers: "subscribers";
     notifications: "notifications";
@@ -1784,6 +1784,7 @@ export declare const agentObservationSourceEnum: z.ZodEnum<{
     pull: "pull";
     client_capture: "client_capture";
     ofapi_capture: "ofapi_capture";
+    fansly_ws: "fansly_ws";
 }>;
 export declare const agentPlatformCapabilitiesSchema: z.ZodObject<{
     platform: z.ZodEnum<{
@@ -11690,6 +11691,7 @@ export declare const agentObservationsQuerySchema: z.ZodObject<{
         pull: "pull";
         client_capture: "client_capture";
         ofapi_capture: "ofapi_capture";
+        fansly_ws: "fansly_ws";
     }>>;
     kind: z.ZodOptional<z.ZodString>;
     producer: z.ZodOptional<z.ZodString>;
@@ -11715,6 +11717,7 @@ export declare const agentObservationEnvelopeSchema: z.ZodObject<{
         pull: "pull";
         client_capture: "client_capture";
         ofapi_capture: "ofapi_capture";
+        fansly_ws: "fansly_ws";
     }>;
     producer: z.ZodString;
     platform: z.ZodNullable<z.ZodEnum<{
@@ -11747,6 +11750,7 @@ export declare const agentObservationsResponseSchema: z.ZodObject<{
             pull: "pull";
             client_capture: "client_capture";
             ofapi_capture: "ofapi_capture";
+            fansly_ws: "fansly_ws";
         }>;
         producer: z.ZodString;
         platform: z.ZodNullable<z.ZodEnum<{
@@ -12306,6 +12310,7 @@ export declare const agentObservationPayloadResponseSchema: z.ZodObject<{
         pull: "pull";
         client_capture: "client_capture";
         ofapi_capture: "ofapi_capture";
+        fansly_ws: "fansly_ws";
     }>;
     receivedAt: z.ZodString;
     payloadSha256: z.ZodString;
@@ -17745,21 +17750,25 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18644,26 +18653,31 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -20074,26 +20088,31 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21046,26 +21065,31 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22025,26 +22049,31 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23025,31 +23054,37 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23949,26 +23984,31 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25064,26 +25104,31 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25109,6 +25154,7 @@ export declare const agentRouteSchemas: {
                 pull: "pull";
                 client_capture: "client_capture";
                 ofapi_capture: "ofapi_capture";
+                fansly_ws: "fansly_ws";
             }>>;
             kind: z.ZodOptional<z.ZodString>;
             producer: z.ZodOptional<z.ZodString>;
@@ -25138,6 +25184,7 @@ export declare const agentRouteSchemas: {
                         pull: "pull";
                         client_capture: "client_capture";
                         ofapi_capture: "ofapi_capture";
+                        fansly_ws: "fansly_ws";
                     }>;
                     producer: z.ZodString;
                     platform: z.ZodNullable<z.ZodEnum<{
@@ -25678,26 +25725,31 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25725,6 +25777,7 @@ export declare const agentRouteSchemas: {
                     pull: "pull";
                     client_capture: "client_capture";
                     ofapi_capture: "ofapi_capture";
+                    fansly_ws: "fansly_ws";
                 }>;
                 receivedAt: z.ZodString;
                 payloadSha256: z.ZodString;
@@ -26267,31 +26320,37 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -27285,31 +27344,37 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -28054,36 +28119,43 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -28716,31 +28788,37 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -29394,36 +29472,43 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -30066,26 +30151,31 @@ export declare const agentRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };

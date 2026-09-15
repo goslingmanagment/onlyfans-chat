@@ -20,6 +20,7 @@ import { createRateLimiter, createRequestExecutor } from './rate-limiter';
 import type { QueuePriority, RateLimiter, RateLimiterOptions, RetryPolicy, SleepFn } from './rate-limiter';
 import { OfApiError, mapOfApiHttpError, mapOfApiNetworkError, ofApiShapeError, parseRetryAfterMs } from './errors';
 import type { FixtureCapture } from './fixture-capture';
+import { isHubAuthReason, type HubAuthReason } from '@chatgoose/shared/errors/index';
 import {
   ofapiAccountSchema,
   ofapiChatMediaDataSchema,
@@ -405,6 +406,13 @@ function headersToRecord(headers: Headers): Record<string, string> {
   return out;
 }
 
+/** D35: the kernel's 401 `reason`, when the hub read gateway answers with one. */
+function hubAuthReasonOfBody(body: unknown): HubAuthReason | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const reason = (body as { reason?: unknown }).reason;
+  return isHubAuthReason(reason) ? reason : null;
+}
+
 export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
   const baseUrl = (options.baseUrl ?? OFAPI_BASE_URL).replace(/\/$/, '');
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -584,7 +592,16 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         options.authErrorCode !== undefined &&
         upstreamMapped.code === 'CG-OF-01'
           ? new OfApiError(options.authErrorCode, {
-              ...(upstreamMapped.detail !== undefined ? { detail: upstreamMapped.detail } : {}),
+              // D35: a hub-origin 401 can carry the kernel's machine reason —
+              // the ONLY thing that may cost this machine its sign-in. Lift it
+              // into typed detail here (this branch is hub-origin by
+              // construction, so a vendor OFAPI 401 can never reach it).
+              detail: {
+                ...(upstreamMapped.detail ?? {}),
+                ...(hubAuthReasonOfBody(body) !== null
+                  ? { authReason: hubAuthReasonOfBody(body)! }
+                  : {}),
+              },
             })
           : upstreamMapped;
       options.onError?.(mapped, { url, purpose: spec.purpose });

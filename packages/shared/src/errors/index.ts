@@ -57,6 +57,11 @@ export const CG_ERROR_CODES = [
   'CG-HUB-08',
   'CG-HUB-09',
   'CG-HUB-10',
+  // D35: the four sign-in outcomes a chatter can see on the first-run screen.
+  'CG-HUB-20',
+  'CG-HUB-21',
+  'CG-HUB-22',
+  'CG-HUB-23',
   'CG-GUARD-01',
   'CG-GUARD-02',
 ] as const;
@@ -112,8 +117,8 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
   },
   // ── New for the desktop app (SPEC §11), not in the legacy extension registry ──
   'CG-OF-01': {
-    message: 'OnlyFans API key is invalid.',
-    recovery: 'Ask a manager to reconnect the page in Agency Hub, then try again.',
+    message: 'OnlyFans access for this page was rejected.',
+    recovery: 'Ask a manager to reconnect the page, then try again.',
   },
   'CG-OF-02': {
     message: 'OnlyFans account authentication failed.',
@@ -196,6 +201,25 @@ export const CG_ERROR_REGISTRY: Record<CgErrorCode, CgErrorDefinition> = {
     message: 'AI provider request failed.',
     recovery: 'Tell a manager and include the error code. Do not keep retrying until the provider issue is checked.',
   },
+  // ── D35 sign-in outcomes. The chatter knows only a login, a password and
+  // this device — never the mechanics behind them, so the wording stays on
+  // "sign in", "password" and "the owner" (plan §2 vocabulary).
+  'CG-HUB-20': {
+    message: 'Wrong login or password.',
+    recovery: 'Check the login and the password, then sign in again. If the password is lost, ask the owner for a new sign-in link.',
+  },
+  'CG-HUB-21': {
+    message: 'ChatGoose is unreachable.',
+    recovery: 'Check the internet connection, then try to sign in again.',
+  },
+  'CG-HUB-22': {
+    message: 'Sign-in did not finish.',
+    recovery: 'Try to sign in again in a minute. Tell the owner if it keeps failing.',
+  },
+  'CG-HUB-23': {
+    message: 'This account cannot sign in yet.',
+    recovery: 'The owner has to reset your password. Write to the owner.',
+  },
   'CG-GUARD-01': {
     message: 'Message Guard blocked this message.',
     recovery: 'Edit the highlighted text and send again.',
@@ -235,10 +259,24 @@ export function isUserFacingError(value: unknown): value is UserFacingError {
 
 // ── Typed error ─────────────────────────────────────────────────────────────
 
+/**
+ * D35 / core plan §4.5: the machine reason a kernel 401 carries when the
+ * presented device credential matched a row. Only these two values are
+ * actionable — anything else (including a reasonless 401) stays fail-closed.
+ */
+export const HUB_AUTH_REASONS = ['token_revoked', 'token_expired'] as const;
+export type HubAuthReason = (typeof HUB_AUTH_REASONS)[number];
+
+export function isHubAuthReason(value: unknown): value is HubAuthReason {
+  return typeof value === 'string' && (HUB_AUTH_REASONS as readonly string[]).includes(value);
+}
+
 export interface CgErrorDetail {
   status?: number;
   provider?: string;
   providerMessage?: string;
+  /** Kernel 401 `reason` (D35): the self-healing dispatcher's only trigger. */
+  authReason?: HubAuthReason;
   /** The kernel error body's machine code (e.g. "quota_denied", "gate_min_messages"). */
   kernelCode?: string;
   responseSnippet?: string;

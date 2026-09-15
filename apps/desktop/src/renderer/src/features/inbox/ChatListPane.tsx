@@ -5,7 +5,13 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { UiMessageKey } from '@chatgoose/shared/i18n/index';
 import type { ChatFilter } from '../../../../preload/contract';
-import { useChats, usePagedChats, useReconcileUnread, useSettings } from '../../bridge/queries';
+import {
+  useAccounts,
+  useChats,
+  usePagedChats,
+  useReconcileUnread,
+  useSettings,
+} from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { chatFilterCounts } from '../../lib/filters';
 import { useT } from '../../lib/i18n';
@@ -40,7 +46,21 @@ export function ChatListPane(): React.JSX.Element {
   const countItems = chatFilter === 'all' ? chats.items : (allChats.data?.items ?? []);
   const counts = chatFilterCounts(countItems);
   const settings = useSettings();
+  const accounts = useAccounts();
   const spendStyle = settings.data?.spendStyle ?? 'figure';
+  // D35 §9 п.5: zero granted OnlyFans pages is an ACCOUNT fact, not an empty
+  // inbox. "No chats yet · they appear after the first sync" told a chatter to
+  // wait for a sync that will never bring anything. But it only becomes a fact
+  // once THIS identity has actually reconciled: right after a first sign-in the
+  // list is empty because nothing has loaded yet, and "write to the owner"
+  // there would be a lie.
+  const grantsReconciled = settings.data?.accountGrantsReconciled === true;
+  const noGrantedPages = accounts.data !== undefined
+    && accounts.data.length === 0
+    && grantsReconciled;
+  const pagesStillLoading = accounts.data !== undefined
+    && accounts.data.length === 0
+    && !grantsReconciled;
   const { mutate: reconcileUnread } = useReconcileUnread();
 
   const items = chats.items;
@@ -109,14 +129,20 @@ export function ChatListPane(): React.JSX.Element {
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
         {chats.isPending && <SkeletonRows />}
         {!chats.isPending && items.length === 0 && (
-          <EmptyState
-            title={chatFilter === 'all' ? t('inbox.emptyAllTitle') : t('inbox.emptyFilteredTitle')}
-            hint={
-              chatFilter === 'all'
-                ? t('inbox.emptyAllHint')
-                : t('inbox.emptyFilteredHint')
-            }
-          />
+          noGrantedPages ? (
+            <EmptyState title={t('inbox.noPagesTitle')} hint={t('inbox.noPagesHint')} />
+          ) : pagesStillLoading ? (
+            <EmptyState title={t('inbox.pagesLoadingTitle')} hint={t('inbox.pagesLoadingHint')} />
+          ) : (
+            <EmptyState
+              title={chatFilter === 'all' ? t('inbox.emptyAllTitle') : t('inbox.emptyFilteredTitle')}
+              hint={
+                chatFilter === 'all'
+                  ? t('inbox.emptyAllHint')
+                  : t('inbox.emptyFilteredHint')
+              }
+            />
+          )
         )}
         {items.length > 0 && (
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>

@@ -357,23 +357,18 @@ describe('hub IPC wiring', () => {
 
   it('splits read-runtime rebuilds from hub stream override rechecks', async () => {
     const { onHubConfigChanged, onOfapiRuntimeConfigChanged } = register(data);
-    await invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_x' });
+    await invoke('cmd:settings.update', { hubBaseUrl: 'http://localhost:4000' });
     expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(1);
     expect(onHubConfigChanged).not.toHaveBeenCalled();
-    await invoke('cmd:settings.update', { hubBaseUrl: 'http://localhost:4000' });
-    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(2);
     // Stage 24: ofapiReadTransport is a frozen 'hub' literal — patching it is
     // a no-op and must NOT rebuild the runtime.
     await invoke('cmd:settings.update', { ofapiReadTransport: 'hub' });
-    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(2);
+    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(1);
     await invoke('cmd:settings.update', { hubModeOverride: 'polling' });
     expect(onHubConfigChanged).toHaveBeenCalledTimes(1);
+    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(1);
+    await invoke('cmd:settings.update', { hubBaseUrl: 'http://127.0.0.1:4000' });
     expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(2);
-    await invoke('cmd:settings.update', {
-      hubBaseUrl: 'http://127.0.0.1:4000',
-      hubApiKey: 'agency_hub_core_y',
-    });
-    expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(3);
     expect(onHubConfigChanged).toHaveBeenCalledTimes(1);
   });
 
@@ -388,7 +383,7 @@ describe('hub IPC wiring', () => {
     expect(recheck).not.toContain('nextHub.reconfigure()');
   });
 
-  it('skips probe/rebuild for an unchanged hub URL but preserves real URL and key transitions', async () => {
+  it('skips probe/rebuild for an unchanged hub URL but preserves real address transitions', async () => {
     const probeReadRuntimeForPatch = vi.fn(async () => undefined);
     const { onOfapiRuntimeConfigChanged } = register(data, { probeReadRuntimeForPatch });
     const current = (await invoke('query:settings.get')) as SettingsVM;
@@ -404,7 +399,7 @@ describe('hub IPC wiring', () => {
     });
 
     await invoke('cmd:settings.update', { hubBaseUrl: 'http://localhost:4000' });
-    await invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_changed' });
+    await invoke('cmd:settings.update', { hubBaseUrl: 'http://127.0.0.1:4000' });
     expect(probeReadRuntimeForPatch).toHaveBeenCalledTimes(2);
     expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(2);
   });
@@ -416,7 +411,7 @@ describe('hub IPC wiring', () => {
     expect(onOfapiRuntimeConfigChanged).not.toHaveBeenCalled();
     // Validation failure must not trigger a reconnect.
     await expect(
-      invoke('cmd:settings.update', { hubBaseUrl: '', hubApiKey: 'k' }),
+      invoke('cmd:settings.update', { hubBaseUrl: '' }),
     ).rejects.toThrow();
     expect(onHubConfigChanged).not.toHaveBeenCalled();
     expect(onOfapiRuntimeConfigChanged).not.toHaveBeenCalled();
@@ -445,7 +440,7 @@ describe('hub IPC wiring', () => {
     };
   }
 
-  it('4a: rejects a hub credential save and persists nothing when validation fails', async () => {
+  it('4a: rejects a hub address save and persists nothing when validation fails', async () => {
     const settingsStore = createSettingsStore({ queries: data.settings, secrets: statefulSecrets() });
     const updateSpy = vi.spyOn(settingsStore, 'update');
     const probeReadRuntimeForPatch = vi.fn(async () => {
@@ -457,18 +452,19 @@ describe('hub IPC wiring', () => {
     });
 
     await expect(
-      invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_bad' }),
+      invoke('cmd:settings.update', { hubBaseUrl: 'http://localhost:4000' }),
     ).rejects.toThrow(/CG-HUB-01/);
 
     expect(probeReadRuntimeForPatch).toHaveBeenCalledTimes(1);
     // No persist: settingsStore.update never ran (SPEC §15 — no half-applied
-    // credential), so keychain + settings table are untouched.
+    // configuration), so the settings table is untouched.
     expect(updateSpy).not.toHaveBeenCalled();
-    expect(((await invoke('query:settings.get')) as SettingsVM).hasHubKey).toBe(false);
+    expect(((await invoke('query:settings.get')) as SettingsVM).hubBaseUrl)
+      .toBe('https://gosling-agency.ru');
     expect(onOfapiRuntimeConfigChanged).not.toHaveBeenCalled();
   });
 
-  it('4a: persists and rebuilds once the hub credential validates', async () => {
+  it('4a: persists and rebuilds once the hub address validates', async () => {
     const settingsStore = createSettingsStore({ queries: data.settings, secrets: statefulSecrets() });
     const probeReadRuntimeForPatch = vi.fn(async () => undefined);
     const { onOfapiRuntimeConfigChanged } = register(data, {
@@ -476,16 +472,16 @@ describe('hub IPC wiring', () => {
       probeReadRuntimeForPatch,
     });
 
-    await invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_good' });
+    await invoke('cmd:settings.update', { hubBaseUrl: 'http://localhost:4000' });
 
     expect(probeReadRuntimeForPatch).toHaveBeenCalledTimes(1);
     expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(1);
-    expect(((await invoke('query:settings.get')) as SettingsVM).hasHubKey).toBe(true);
+    expect(((await invoke('query:settings.get')) as SettingsVM).hubBaseUrl)
+      .toBe('http://localhost:4000');
   });
 
   it('rejects a Hub URL switch with a stored device token before IPC mutates credentials or rebuilds', async () => {
     const values = new Map<SecretName, string>([
-      ['hubApiKey', 'agency_hub_core_old'],
       ['hubDeviceToken', 'agency_hub_device_live'],
     ]);
     const setSecret = vi.fn(async (name: SecretName, value: string) => {
@@ -507,89 +503,13 @@ describe('hub IPC wiring', () => {
 
     await expect(invoke('cmd:settings.update', {
       hubBaseUrl: 'http://localhost:4000',
-      hubApiKey: 'agency_hub_core_new',
-    })).rejects.toThrow(/sign out.*device token.*Hub URL/i);
+    })).rejects.toThrow(/sign out of this device before changing the address/i);
 
     expect(setSecret).not.toHaveBeenCalled();
     expect(deleteSecret).not.toHaveBeenCalled();
     expect(onOfapiRuntimeConfigChanged).not.toHaveBeenCalled();
-    expect(values.get('hubApiKey')).toBe('agency_hub_core_old');
     expect(values.get('hubDeviceToken')).toBe('agency_hub_device_live');
     expect((await settingsStore.get()).hubBaseUrl).toBe('https://gosling-agency.ru');
-  });
-
-  it('4a: commits proven-dead-token cleanup before replacement-key promotion', async () => {
-    const order: string[] = [];
-    const values = new Map<SecretName, string>([['hubDeviceToken', 'device-dead']]);
-    const secrets = {
-      getSecret: (name: SecretName) => Promise.resolve(values.get(name) ?? null),
-      hasSecret: (name: SecretName) => Promise.resolve(values.has(name)),
-      setSecret: (name: SecretName, value: string) => {
-        order.push(`persist:${name}`);
-        values.set(name, value);
-        return Promise.resolve();
-      },
-      deleteSecret: (name: SecretName) => {
-        order.push(`cleanup:${name}`);
-        values.delete(name);
-        return Promise.resolve();
-      },
-    };
-    const settingsStore = createSettingsStore({ queries: data.settings, secrets });
-    const onOfapiRuntimeConfigChanged = vi.fn(async () => {
-      order.push('rebuild');
-    });
-    const probeReadRuntimeForPatch = vi.fn(async () => {
-      order.push('probe');
-      return {
-        deleteDeadDeviceToken: true,
-        afterCommit: async () => {
-          order.push('commit');
-        },
-      };
-    });
-    register(data, { settingsStore, probeReadRuntimeForPatch, onOfapiRuntimeConfigChanged });
-
-    const result = (await invoke('cmd:settings.update', {
-      hubApiKey: 'agency_hub_core_replacement',
-    })) as SettingsVM;
-
-    expect(order).toEqual([
-      'probe',
-      'persist:hubApiKeyStaged',
-      'cleanup:hubDeviceToken',
-      'persist:hubApiKey',
-      'cleanup:hubApiKeyStaged',
-      'commit',
-      'rebuild',
-    ]);
-    expect(result.hasHubKey).toBe(true);
-    expect(result.hasHubDeviceToken).toBe(false);
-  });
-
-  it('4a: carries proven-dead-token cleanup inside the durable settings commit', async () => {
-    const update = vi.fn(async (_patch: unknown, options?: { deleteDeadHubDeviceToken?: boolean }) => {
-      expect(options?.deleteDeadHubDeviceToken).toBe(true);
-      throw new Error('must not persist');
-    });
-    const backingStore = createSettingsStore({ queries: data.settings, secrets: statefulSecrets() });
-    const settingsStore: IpcDeps['settingsStore'] = {
-      get: () => backingStore.get(),
-      getHubConnection: () => backingStore.getHubConnection(),
-      update,
-      runCredentialMutation: (task) => task(),
-      decommissionQuarantinedHubKey: () => Promise.resolve(false),
-      backfillHubDeviceIdentity: () => Promise.resolve(false),
-    };
-    register(data, {
-      settingsStore,
-      probeReadRuntimeForPatch: async () => ({ deleteDeadDeviceToken: true }),
-    });
-
-    await expect(
-      invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_replacement' }),
-    ).rejects.toThrow(/must not persist/);
-    expect(update).toHaveBeenCalledTimes(1);
   });
 
   it('4a: non-hub settings patches skip the read-runtime probe', async () => {
@@ -608,59 +528,21 @@ describe('hub IPC wiring', () => {
     register(data, { onOfapiRuntimeConfigChanged });
 
     await expect(
-      invoke('cmd:settings.update', { hubApiKey: 'agency_hub_core_x' }),
+      invoke('cmd:settings.update', { hubBaseUrl: 'http://localhost:4000' }),
     ).rejects.toThrow(/account bootstrap failed/);
     expect(onOfapiRuntimeConfigChanged).toHaveBeenCalledTimes(1);
   });
 
-  it('serializes stale-token cleanup with sign-out and the next sign-in', async () => {
+  it('serializes a slow sign-out with the next sign-in (one credential at a time)', async () => {
     const queue = createRuntimeMutationQueue();
     const order: string[] = [];
     let storedDeviceToken: string | null = 'device-a';
-    let hasHubKey = false;
-    let stagedHubApiKey: string | null = null;
     let mintCount = 0;
-    let releaseCleanup: (() => void) | undefined;
-    let cleanupStarted: (() => void) | undefined;
-    const cleanupStartedPromise = new Promise<void>((resolve) => {
-      cleanupStarted = resolve;
+    let releaseDelete: (() => void) | undefined;
+    let deleteStarted: (() => void) | undefined;
+    const deleteStartedPromise = new Promise<void>((resolve) => {
+      deleteStarted = resolve;
     });
-    const secrets = {
-      getSecret: async (name: SecretName) => {
-        if (name === 'hubDeviceToken') return storedDeviceToken;
-        if (name === 'hubApiKey') return hasHubKey ? 'hub-key' : null;
-        if (name === 'hubApiKeyStaged') return stagedHubApiKey;
-        return null;
-      },
-      hasSecret: async (name: SecretName) => {
-        if (name === 'hubDeviceToken') return storedDeviceToken !== null;
-        if (name === 'hubApiKey') return hasHubKey;
-        return name === 'hubApiKeyStaged' && stagedHubApiKey !== null;
-      },
-      setSecret: async (name: SecretName, value: string) => {
-        if (name === 'hubApiKey') {
-          hasHubKey = true;
-        } else if (name === 'hubApiKeyStaged') {
-          stagedHubApiKey = value;
-        }
-      },
-      deleteSecret: async (name: SecretName) => {
-        if (name === 'hubDeviceToken') {
-          order.push('cleanup:start');
-          cleanupStarted?.();
-          await new Promise<void>((resolve) => {
-            releaseCleanup = () => {
-              order.push('cleanup:delete');
-              resolve();
-            };
-          });
-          storedDeviceToken = null;
-        } else if (name === 'hubApiKeyStaged') {
-          stagedHubApiKey = null;
-        }
-      },
-    };
-    const settingsStore = createSettingsStore({ queries: data.settings, secrets });
     const lifecycle = createSerializedCredentialLifecycle<string, string>({
       queue,
       readStoredCredential: async () => storedDeviceToken,
@@ -687,7 +569,14 @@ describe('hub IPC wiring', () => {
               }
             : {}),
           deleteCredential: async () => {
-            order.push(`delete:${storedDeviceToken ?? 'none'}`);
+            order.push('delete:start');
+            deleteStarted?.();
+            await new Promise<void>((resolve) => {
+              releaseDelete = () => {
+                order.push('delete:done');
+                resolve();
+              };
+            });
             storedDeviceToken = null;
           },
           activateFallback: async () => {
@@ -696,36 +585,25 @@ describe('hub IPC wiring', () => {
         });
       },
     });
-    register(data, {
-      settingsStore,
-      runReadRuntimeMutation: (task) => queue.run(task),
-      probeReadRuntimeForPatch: async () => ({ deleteDeadDeviceToken: true }),
-      onOfapiRuntimeConfigChanged: async () => {
-        order.push('rebuild');
-      },
-    });
 
-    const settingsUpdate = invoke('cmd:settings.update', {
-      hubApiKey: 'agency_hub_core_replacement',
-    });
-    await cleanupStartedPromise;
     const signOut = lifecycle.signOut();
+    await deleteStartedPromise;
     const nextSignIn = lifecycle.issue('device-b');
     await Promise.resolve();
+    // The sign-in must not mint while sign-out still owns the credential —
+    // otherwise sign-out would delete the freshly issued one by name.
     expect(mintCount).toBe(0);
 
-    releaseCleanup?.();
-    await settingsUpdate;
+    releaseDelete?.();
     await signOut;
     await expect(nextSignIn).resolves.toBe('device-b');
     expect(storedDeviceToken).toBe('device-b');
     expect(mintCount).toBe(1);
     expect(order).toEqual([
-      'cleanup:start',
-      'cleanup:delete',
-      'rebuild',
       'deactivate',
-      'delete:none',
+      'revoke:device-a',
+      'delete:start',
+      'delete:done',
       'activate:fallback',
       'issue:device-b',
       'activate:stored',

@@ -466,8 +466,8 @@ function buildStore(): MockStore {
   ];
 
   const settings: SettingsVM = {
-    hasHubKey: false,
-    hubApiKeyBindingState: 'none',
+    hubSignedOutReason: null,
+    accountGrantsReconciled: true,
     hasHubDeviceToken: true,
     hubDeviceTokenBindingState: 'bound',
     hubDeviceTokenTransition: null,
@@ -507,9 +507,6 @@ function buildStore(): MockStore {
     uiLocale: 'system',
     uiScale: 1,
     uiTheme: 'light',
-    keyMeta: {
-      hub: { last4: 'h8b2', setAt: Date.now() - 12 * 86_400_000 },
-    },
     featureModels: {
       'fast-reply': 'anthropic:claude-sonnet-4-6',
       'help-me': 'anthropic:claude-sonnet-4-6',
@@ -1302,10 +1299,8 @@ export function createMockBridge(): ChatGooseBridge {
         syncedSummariesToday: 0,
       },
       ai: {
-        gatewayConfigured: store.settings.hubBaseUrl !== null && (
-          store.settings.hubApiKeyBindingState === 'bound'
-          || store.settings.hubDeviceTokenBindingState === 'bound'
-        ),
+        gatewayConfigured: store.settings.hubBaseUrl !== null
+          && store.settings.hubDeviceTokenBindingState === 'bound',
       },
       sends: { ...store.sync.sendsToday },
       credits: {
@@ -1391,6 +1386,9 @@ export function createMockBridge(): ChatGooseBridge {
       // the live sync status flip together so the standalone UI stays honest.
       store.settings = {
         ...store.settings,
+        hubSignedOutReason: null,
+        // Mock: the first reconcile lands with the sign-in.
+        accountGrantsReconciled: true,
         hasHubDeviceToken: true,
         hubDeviceTokenBindingState: 'bound',
         hubDeviceTokenTransition: null,
@@ -1405,6 +1403,7 @@ export function createMockBridge(): ChatGooseBridge {
       store.sync.hub = 'live';
       emit('db:changed', { scope: 'settings' });
       return {
+        ok: true,
         keyPrefix: 'agency_hub_pending_device_mock',
         label: 'mock-machine',
         expiresAt: new Date(Date.now() + 90 * 24 * 3_600_000).toISOString(),
@@ -1418,7 +1417,7 @@ export function createMockBridge(): ChatGooseBridge {
         hubDeviceTokenTransition: null,
         hubDeviceIdentity: null,
       };
-      if (!store.settings.hasHubKey) store.sync.hub = 'off';
+      store.sync.hub = 'off';
       emit('db:changed', { scope: 'settings' });
     },
     'cmd:hub.abandonDevice': () => {
@@ -1429,18 +1428,16 @@ export function createMockBridge(): ChatGooseBridge {
         hubDeviceTokenTransition: null,
         hubDeviceIdentity: null,
       };
-      if (!store.settings.hasHubKey) store.sync.hub = 'off';
+      store.sync.hub = 'off';
       emit('db:changed', { scope: 'settings' });
     },
     'cmd:keys.test': () => {
-      // Mock: hub probe follows the mock config (D19: token or key configures).
-      const configured = store.settings.hubBaseUrl !== null && (
-        store.settings.hasHubKey
-        || store.settings.hubDeviceTokenBindingState === 'bound'
-      );
+      // Mock: the hub probe follows the mock config (D35: signed in or not).
+      const configured = store.settings.hubBaseUrl !== null
+        && store.settings.hubDeviceTokenBindingState === 'bound';
       return configured
         ? { ok: true, code: null, message: '', username: 'dasha', role: 'chatter', pages: 2 }
-        : { ok: false, code: 'HUB_NOT_CONFIGURED', message: 'Hub base URL or credential missing.' };
+        : { ok: false, code: 'HUB_NOT_CONFIGURED', message: 'Not signed in.' };
     },
     'query:localData.stats': () => ({
       dbBytes: 38_200_000,
@@ -1588,17 +1585,13 @@ export function createMockBridge(): ChatGooseBridge {
     },
     'cmd:sync.focusAccount': () => undefined,
     'cmd:settings.update': (patch) => {
-      const { hubApiKey, ...rest } = patch;
-      store.settings = { ...store.settings, ...rest };
-      if (hubApiKey !== undefined) store.settings.hasHubKey = hubApiKey.trim().length > 0;
-      // Mock hub: configured = instantly live (exercises the status chip).
-      // D19: a bound device token configures the hub the same as a key.
+      store.settings = { ...store.settings, ...patch };
+      // Mock hub: signed in = instantly live (exercises the status chip).
       store.sync.hub =
         store.settings.hubModeOverride === 'polling'
           ? 'off'
           : store.settings.hubBaseUrl !== null
-              && (store.settings.hasHubKey
-                || store.settings.hubDeviceTokenBindingState === 'bound')
+              && store.settings.hubDeviceTokenBindingState === 'bound'
             ? 'live'
             : 'off';
       store.sync.hubMode =

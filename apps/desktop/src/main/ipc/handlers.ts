@@ -9,6 +9,9 @@ import { z } from 'zod';
 import { composerOptionsSchema, composerActionSchema } from '@chatgoose/shared/composer';
 import { analyzePingSegment } from '@chatgoose/shared/transcript/index';
 import { messageGuardPolicySchema } from '@chatgoose/shared/message-guard/index';
+import { toUserFacing } from '@chatgoose/shared/errors/index';
+import { grantsBelongToCurrentIdentity, readGrantOwner } from '../db/grant-owner';
+import { readHubDeviceIdentity } from '../hub/credential-journal';
 import type { DataLayer, OutboxRow } from '../db/index';
 import { effectivePersistedHubBaseUrl, type SettingsStore } from '../settings/store';
 import type { CreditMeter } from '../ofapi/credit-meter';
@@ -49,6 +52,7 @@ import type {
   HarvestStatusVM,
   KeyTestProvider,
   HubDeviceTokenResultVM,
+  HubSignInResultVM,
   KeyTestResultVM,
   LocalDataStatsVM,
   OutboxItemVM,
@@ -363,17 +367,6 @@ export interface AiCoordinatorLike {
   markOperationAccepted?(operationId: string): boolean;
 }
 
-export interface ReadRuntimeProbeResult {
-  /**
-   * Set only after the same probe proves the stored token dead and the pasted
-   * key valid. SettingsStore records and replays this deletion in the same
-   * durable intent as key promotion.
-   */
-  deleteDeadDeviceToken?: boolean;
-  /** Non-custody side effects (redactor/log refresh) after commit. */
-  afterCommit?: () => Promise<void>;
-}
-
 export interface IpcDeps {
   followers?: FollowersService | null;
   data: DataLayer;
@@ -413,7 +406,7 @@ export interface IpcDeps {
   purge: () => Promise<void>;
   /** Settings "Test" buttons; probes the STORED key. Optional like vault. */
   testKey?: (provider: KeyTestProvider) => Promise<KeyTestResultVM>;
-  /** Stage 24: one-time hub device-token sign-in (Settings → Hub). */
+  /** Stage 24: one-time hub device sign-in (D35: the first-run screen). */
   hubAuth?: {
     issueDeviceToken: (args: { username: string; password: string }) => Promise<HubDeviceTokenResultVM>;
     /** Security-first recovery: deletes the token, deactivates its runtime, then tries fallback. */
@@ -444,14 +437,14 @@ export interface IpcDeps {
     install: () => void;
   } | null;
   /**
-   * 4a: validate a candidate read runtime built from a hubApiKey/hubBaseUrl
-   * patch's overrides BEFORE it is persisted. Rejects (throws) with the
-   * validation error when the credential/URL fails account bootstrap; resolves
-   * (no-op) when the patch clears the hub or leaves nothing to probe. The
-   * caller persists ONLY after this resolves, so a bad key never reaches the
-   * keychain or the settings table (SPEC §15 — no half-applied credential).
+   * 4a: validate a candidate read runtime built from a hubBaseUrl patch's
+   * override BEFORE it is persisted. Rejects (throws) when the address fails
+   * account bootstrap; resolves (no-op) when the patch clears the hub or
+   * leaves nothing to probe. The caller persists ONLY after this resolves, so
+   * a bad address never reaches the settings table (SPEC §15 — no
+   * half-applied configuration).
   */
-  probeReadRuntimeForPatch?: (rawPatch: unknown) => Promise<ReadRuntimeProbeResult | void>;
+  probeReadRuntimeForPatch?: (rawPatch: unknown) => Promise<void>;
   /**
    * Serializes the complete validate/persist/cleanup/rebuild transaction with
    * device-token issue/sign-out. When provided, onOfapiRuntimeConfigChanged is
@@ -491,6 +484,15 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   };
 
   ipcMain.handle('query:accounts.list', () => {
+    // D35 §9 п.9: cached grants belong to the identity that reconciled them.
+    // A different person signing in on this machine sees nothing until their
+    // own first successful reconcile — the rows stay in SQLite (D23).
+    if (!grantsBelongToCurrentIdentity(
+      readGrantOwner(data.settings),
+      readHubDeviceIdentity(data.settings)?.username ?? null,
+    )) {
+      return [];
+    }
     const { scope } = resolvePersonaContext();
     const catalog = scope === null ? null : loadPersonaCatalog(data.settings, scope);
     const accountMappings = loadPersonaAccountMappings(data.settings, scope);
@@ -665,10 +667,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       coreCredits,
       // Stage 31: AI is the kernel feature lane — configured = hub transport up.
       ai: {
-        gatewayConfigured: settings.hubBaseUrl !== null && (
-          settings.hubApiKeyBindingState === 'bound'
-          || settings.hubDeviceTokenBindingState === 'bound'
-        ),
+        gatewayConfigured: settings.hubBaseUrl !== null
+          && settings.hubDeviceTokenBindingState === 'bound',
       },
     });
   });
@@ -715,12 +715,20 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return deps.testKey(args.provider);
   });
 
-  ipcMain.handle('cmd:hub.issueDeviceToken', (_event, rawArgs: unknown) => {
+  ipcMain.handle('cmd:hub.issueDeviceToken', async (_event, rawArgs: unknown): Promise<
+    HubSignInResultVM
+  > => {
     const args = hubIssueDeviceTokenSchema.parse(rawArgs);
     if (!deps.hubAuth) {
       throw new Error('Hub sign-in is not available in this build.');
     }
-    return deps.hubAuth.issueDeviceToken(args);
+    // D35: the sign-in screen needs the CG-HUB-2x code to localize, and an
+    // invoke rejection would flatten it into Electron's English wrapper.
+    try {
+      return { ok: true, ...(await deps.hubAuth.issueDeviceToken(args)) };
+    } catch (error) {
+      return { ok: false, error: toUserFacing(error) };
+    }
   });
 
   ipcMain.handle('cmd:hub.signOutDevice', async (_event, rawArgs: unknown) => {
@@ -957,45 +965,34 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:settings.update', async (_event, rawPatch: unknown) => {
     const rawPatchObject = typeof rawPatch === 'object' && rawPatch !== null;
-    const mayTouchReadRuntime =
-      rawPatchObject && ('hubApiKey' in rawPatch || 'hubBaseUrl' in rawPatch);
+    const mayTouchReadRuntime = rawPatchObject && 'hubBaseUrl' in rawPatch;
     const persistPatch = async () => {
       // Recompute under the credential queue: two overlapping URL patches must
       // not make this decision from an obsolete pre-lock settings snapshot.
-      let touchedReadRuntime = rawPatchObject && 'hubApiKey' in rawPatch;
+      let touchedReadRuntime = false;
       if (rawPatchObject && 'hubBaseUrl' in rawPatch) {
         const current = await settingsStore.get();
-        touchedReadRuntime = touchedReadRuntime || rawPatch.hubBaseUrl !== current.hubBaseUrl;
+        touchedReadRuntime = rawPatch.hubBaseUrl !== current.hubBaseUrl;
       }
-      // 4a (SPEC §15): for hub-affecting keys, VALIDATE a candidate read runtime
-      // built from the patch overrides BEFORE persisting. A bad key/URL rejects
-      // here with nothing written to the keychain or the settings table — no
-      // half-applied credential. Non-hub patches keep persist-then-return.
-      const probeResult =
-        touchedReadRuntime && deps.probeReadRuntimeForPatch
-          ? await deps.probeReadRuntimeForPatch(rawPatch)
-          : undefined;
-      // A dead device token shadows both the old and candidate chatter keys.
-      // Its deletion is part of SettingsStore's durable transition: before the
-      // intent the old state is intact; after it, restart recovery repeats both
-      // token cleanup and candidate-key promotion. The outer credential FIFO
-      // also prevents deleting a subsequently issued token by name.
-      const result = await settingsStore.update(rawPatch, {
-        deleteDeadHubDeviceToken: probeResult?.deleteDeadDeviceToken === true,
-      });
-      await probeResult?.afterCommit?.();
+      // 4a (SPEC §15): for an address change, VALIDATE a candidate read runtime
+      // built from the patch override BEFORE persisting. A bad address rejects
+      // here with nothing written to the settings table — no half-applied
+      // configuration. Other patches keep persist-then-return.
+      if (touchedReadRuntime && deps.probeReadRuntimeForPatch) {
+        await deps.probeReadRuntimeForPatch(rawPatch);
+      }
+      const result = await settingsStore.update(rawPatch);
       if (touchedReadRuntime) {
         await deps.onOfapiRuntimeConfigChanged?.();
       }
       return result;
     };
-    // The token cleanup deletes by keychain name. Keep it under the same FIFO
-    // ownership as sign-in/sign-out so it cannot delete a newer token that was
-    // issued while a validated settings update was awaiting persistence.
+    // An address change races sign-in/sign-out over the same custody, so keep
+    // it under the same FIFO ownership.
     const result = mayTouchReadRuntime && deps.runReadRuntimeMutation !== undefined
       ? await deps.runReadRuntimeMutation(persistPatch)
       : await persistPatch();
-    // Fires on hub-mode override patches only. Hub URL/key/read-transport edits
+    // Fires on hub-mode override patches only. Address/read-transport edits
     // rebuild the read runtime above, after account-bootstrap validation.
     const touchedHubOverride =
       typeof rawPatch === 'object' &&

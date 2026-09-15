@@ -198,7 +198,6 @@ describe('DEFAULT_SETTINGS (legacy §5.1 shape, desktop keys)', () => {
     expect(DEFAULT_SETTINGS).toEqual({
       ofapiApiKey: '',
       agencyHubBaseUrl: '',
-      agencyHubApiKey: '',
       quickMessageCount: 100,
       pingMessageCount: 100,
       improveMessageCount: 25,

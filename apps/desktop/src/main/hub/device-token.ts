@@ -1,15 +1,18 @@
-// Stage 24: one-time device-token issuance (kernel Stage 22 adoption). The
-// chatter signs in once with username+password; the desktop trades the
-// session for a device-bound bearer (`agency_hub_device_…`, sliding 90 d)
-// stored in the keychain. The legacy chatter key stays accepted as fallback
-// (kernel dual-acceptance) — its retirement is a later, kernel-declared step.
+// Stage 24: one-time device-token issuance (kernel Stage 22 adoption), reworked
+// by D35 (unified-account plan §9). The chatter signs in once with a login and
+// a password and this machine gets its own bearer (`agency_hub_device_…`,
+// sliding 90 d) in the keychain.
 //
-// The Electron main process has no cookie jar, so the session cookie from
-// login is captured off the raw response and carried explicitly through the
-// SDK client's static-headers seam for the issue + logout calls.
+// D35 replaced the cookie ceremony with ONE public call: the kernel's
+// `authIssueDeviceTokenWithPassword` in `pending` mode hands back a
+// reservation, and everything downstream of it — encrypted staging, the
+// non-secret journal, the idempotent activation, every crash-recovery path —
+// is unchanged. There is no login, no `set-cookie` parsing and no logout left:
+// the desktop never holds a session.
 
 import { randomUUID } from 'node:crypto';
 import { createClient, KernelApiError } from '@kernel/sdk';
+import { CgError } from '@chatgoose/shared/errors/index';
 import type { Keychain } from '../secrets/keychain';
 import {
   HUB_DEVICE_IDENTITY_KEY,
@@ -92,13 +95,13 @@ function requireMatchingActiveDeviceTokenBinding(
     || binding.tokenDigest !== deviceTokenDigest(token)
   ) {
     throw new Error(
-      'Stored Hub device token is not cryptographically bound to this Hub; re-enrol or explicitly forget it before network use.',
+      'This device’s stored sign-in cannot be matched to this address; sign in again, or forget it locally first.',
     );
   }
 }
 
 export const HUB_DEVICE_TOKEN_HUB_SWITCH_BLOCKED_MESSAGE =
-  'Sign out the stored Hub device token before changing the Hub URL.';
+  'Sign out of this device before changing the address.';
 
 /**
  * Credential transitions own the global runtime-mutation queue. A fetch with
@@ -168,6 +171,78 @@ function boundedDeviceTokenFetch(fetchImpl: typeof fetch): typeof fetch {
   };
 }
 
+/** The kernel error body's machine reason, when it carries one. */
+function kernelReasonOf(error: KernelApiError): string | null {
+  const body: unknown = error.body;
+  if (typeof body !== 'object' || body === null) return null;
+  const reason = (body as { reason?: unknown }).reason;
+  return typeof reason === 'string' ? reason : null;
+}
+
+function kernelDetail(error: KernelApiError): { status?: number; kernelCode?: string } {
+  return {
+    ...(error.status !== null ? { status: error.status } : {}),
+    ...(error.code !== null ? { kernelCode: error.code } : {}),
+  };
+}
+
+/**
+ * D35: the four outcomes a chatter can see on the sign-in screen. Anything the
+ * kernel did not classify lands on CG-HUB-22 ("sign-in did not finish") rather
+ * than inventing a cause — the registry copy names only real actions (D26).
+ */
+function signInFailure(error: unknown): CgError {
+  if (error instanceof CgError) return error;
+  if (error instanceof KernelApiError) {
+    const detail = kernelDetail(error);
+    if (error.status === 401) {
+      return new CgError('CG-HUB-20', { detail });
+    }
+    if (error.status === 403) {
+      const reason = kernelReasonOf(error) ?? error.code;
+      return reason === 'password_change_required'
+        ? new CgError('CG-HUB-23', { detail })
+        : new CgError('CG-HUB-22', { message: error.message, detail });
+    }
+    if (
+      error.category === 'network'
+      || error.status === null
+      || error.status >= 500
+      // A 404 means this ChatGoose server has no password sign-in route yet (a
+      // rolled-back or not-yet-deployed kernel). "Try again in a minute" would
+      // be a lie: it is the server that has to change, so this is the
+      // unreachable class, not the did-not-finish one.
+      || error.status === 404
+    ) {
+      return new CgError('CG-HUB-21', { message: error.message, detail });
+    }
+    return new CgError('CG-HUB-22', { message: error.message, detail });
+  }
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+    return new CgError('CG-HUB-21', { message: error.message });
+  }
+  return new CgError('CG-HUB-22', {
+    ...(error instanceof Error ? { message: error.message } : {}),
+  });
+}
+
+/** Everything after the reservation exists: a failure here leaves recoverable
+ * custody behind, so it is the honest "did not finish" class. */
+function activationFailure(error: unknown): CgError {
+  if (error instanceof KernelApiError) {
+    const detail = kernelDetail(error);
+    return error.category === 'network'
+      ? new CgError('CG-HUB-21', { message: error.message, detail })
+      : new CgError('CG-HUB-22', { message: error.message, detail });
+  }
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+    return new CgError('CG-HUB-21', { message: error.message });
+  }
+  return new CgError('CG-HUB-22', {
+    ...(error instanceof Error ? { message: error.message } : {}),
+  });
+}
+
 export async function issueHubDeviceToken(input: IssueHubDeviceTokenInput): Promise<HubDeviceTokenResult> {
   const baseUrl = input.baseUrl.trim().replace(/\/+$/, '');
   const rawFetchImpl = input.fetchImpl ?? fetch;
@@ -185,30 +260,41 @@ export async function issueHubDeviceToken(input: IssueHubDeviceTokenInput): Prom
       ? { 'x-client-version': clientVersion }
       : {};
 
-  const login = await fetchImpl(`${baseUrl}/api/v1/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json', ...versionHeaders },
-    body: JSON.stringify({ username: input.username.trim(), password: input.password }),
-  });
-  if (login.status === 401 || login.status === 403) {
-    throw new Error('Invalid username or password.');
-  }
-  if (!login.ok) {
-    throw new Error(`Hub login failed (${login.status}).`);
-  }
-  const setCookie = login.headers.get('set-cookie');
-  const sessionCookie = setCookie?.split(';')[0] ?? null;
-  if (!sessionCookie) {
-    throw new Error('Hub login returned no session cookie.');
-  }
-
   const client = createClient({
     baseUrl,
-    headers: { cookie: sessionCookie, ...versionHeaders },
+    headers: versionHeaders,
     fetch: fetchImpl,
   });
+  let reserved: {
+    token: string;
+    reservationId: number;
+    label: string;
+    keyPrefix: string;
+    reservationExpiresAt: string;
+  };
   try {
-    const reserved = await client.authReserveDeviceToken({ body: { label: input.label } });
+    // D35 / plan Р2: one public call, no cookie. `pending` keeps the desktop's
+    // crash-safe custody protocol — the bearer only becomes real at activation.
+    const issued = await client.authIssueDeviceTokenWithPassword({
+      body: {
+        username: input.username.trim(),
+        password: input.password,
+        label: input.label,
+        mode: 'pending',
+      },
+    });
+    if (issued.mode !== 'pending') {
+      // A kernel that answered `active` to a `pending` request has no
+      // reservation to stage; refuse rather than treat a live bearer as one.
+      throw new CgError('CG-HUB-22', {
+        message: 'Sign-in returned an unexpected shape for this device.',
+      });
+    }
+    reserved = issued;
+  } catch (error) {
+    throw signInFailure(error);
+  }
+  {
     const journal: HubDeviceTokenActivation = {
       version: 1,
       id: randomUUID(),
@@ -253,7 +339,7 @@ export async function issueHubDeviceToken(input: IssueHubDeviceTokenInput): Prom
       try {
         if (await input.keychain.getSecret('hubDeviceTokenStaged') !== null) {
           notifyActivationDeferred(
-            new Error('Hub device-token activation committed; encrypted staging cleanup is pending.'),
+            new Error('Sign-in is committed; clearing its protected copy is still pending.'),
           );
         }
       } catch (error) {
@@ -274,11 +360,8 @@ export async function issueHubDeviceToken(input: IssueHubDeviceTokenInput): Prom
       if (transitionStillDurable) {
         notifyActivationDeferred(error);
       }
-      throw error;
+      throw activationFailure(error);
     }
-  } finally {
-    // One-time session: best-effort hygiene, never fails the issuance.
-    await client.logout().catch(() => undefined);
   }
 }
 
@@ -291,11 +374,11 @@ async function completeHubDeviceTokenActivation(
 ): Promise<HubDeviceTokenResult> {
   const journal = readDeviceTokenActivation(input.settings);
   if (journal === null) {
-    throw new Error('No pending Hub device-token activation exists.');
+    throw new Error('No unfinished sign-in exists on this device.');
   }
   const rawStaged = await input.keychain.getSecret('hubDeviceTokenStaged');
   if (rawStaged === null) {
-    throw new Error('Hub device-token activation journal is missing encrypted custody.');
+    throw new Error('The unfinished sign-in has lost its protected copy.');
   }
   const staged = parseStagedDeviceToken(rawStaged, {
     journalId: journal.id,
@@ -303,7 +386,7 @@ async function completeHubDeviceTokenActivation(
   });
   const baseUrl = (input.baseUrl ?? journal.hubBaseUrl).trim().replace(/\/+$/, '');
   if (baseUrl !== journal.hubBaseUrl) {
-    throw new Error('Hub device-token activation origin does not match its journal.');
+    throw new Error('The unfinished sign-in belongs to a different address.');
   }
   const clientVersion = input.clientVersion?.trim();
   const fetchImpl = boundedDeviceTokenFetch(input.fetchImpl ?? fetch);
@@ -478,7 +561,7 @@ export async function beginHubDeviceTokenRevocation(
   const baseUrl = input.baseUrl.trim().replace(/\/+$/, '');
   const token = input.token.trim();
   if (baseUrl.length === 0 || token.length === 0) {
-    throw new Error('Hub base URL and device token are required for sign-out.');
+    throw new Error('A ChatGoose address and a stored sign-in are required to sign out.');
   }
   requireMatchingActiveDeviceTokenBinding(input.settings, baseUrl, token);
   const journal: HubDeviceTokenRevocation = {
@@ -513,7 +596,7 @@ async function completeHubDeviceTokenRevocation(
 ): Promise<'revoked' | 'already-invalid'> {
   const journal = readDeviceTokenRevocation(input.settings);
   if (journal === null) {
-    throw new Error('No pending Hub device-token revocation exists.');
+    throw new Error('No unfinished sign-out exists on this device.');
   }
   if (journal.remoteSettled) {
     let active: string | null;
@@ -521,13 +604,13 @@ async function completeHubDeviceTokenRevocation(
       active = await input.keychain.getSecret('hubDeviceToken');
     } catch (error) {
       throw new UnrelatedActiveDeviceTokenError(
-        'Hub device-token revocation cannot inspect active custody; explicit local abandonment is required.',
+        'Sign-out cannot read this device’s stored sign-in; forget it locally to continue.',
         { cause: error },
       );
     }
     if (active !== null && deviceTokenDigest(active) !== journal.tokenDigest) {
       throw new UnrelatedActiveDeviceTokenError(
-        'Hub device-token revocation found unrelated active custody; explicit local abandonment is required.',
+        'Sign-out found a different stored sign-in on this device; forget it locally to continue.',
       );
     }
     await input.keychain.deleteSecret('hubDeviceToken');
@@ -545,7 +628,7 @@ async function completeHubDeviceTokenRevocation(
   }
   const rawStaged = await input.keychain.getSecret('hubDeviceTokenRevoking');
   if (rawStaged === null) {
-    throw new Error('Hub device-token revocation journal is missing encrypted custody.');
+    throw new Error('The unfinished sign-out has lost its protected copy.');
   }
   const staged = parseStagedDeviceToken(rawStaged, {
     journalId: journal.id,
@@ -578,7 +661,7 @@ async function completeHubDeviceTokenRevocation(
       if (readDeviceTokenRevocation(input.settings)?.remoteSettled !== true) throw error;
     }
     throw new UnrelatedActiveDeviceTokenError(
-      'Hub device-token revocation found unrelated active custody; explicit local abandonment is required.',
+      'Sign-out found a different stored sign-in on this device; forget it locally to continue.',
     );
   }
   await input.keychain.deleteSecret('hubDeviceToken');
@@ -646,7 +729,7 @@ export async function recoverHubDeviceTokenLifecycle(
   let activation = readDeviceTokenActivation(input.settings);
   let revocation = readDeviceTokenRevocation(input.settings);
   if (activation !== null && revocation !== null) {
-    throw new Error('Conflicting Hub device-token activation and revocation journals.');
+    throw new Error('This device has a conflicting unfinished sign-in and sign-out.');
   }
   let activationRequiresAbandonment = false;
   if (activation !== null) {
@@ -899,7 +982,7 @@ export async function revokeHubDeviceToken(
   const baseUrl = input.baseUrl.trim().replace(/\/+$/, '');
   const token = input.token.trim();
   if (baseUrl.length === 0 || token.length === 0) {
-    throw new Error('Hub base URL and device token are required for sign-out.');
+    throw new Error('A ChatGoose address and a stored sign-in are required to sign out.');
   }
   const clientVersion = input.clientVersion?.trim();
   const fetchImpl = boundedDeviceTokenFetch(input.fetchImpl ?? fetch);
@@ -922,99 +1005,4 @@ export async function revokeHubDeviceToken(
     }
     throw error;
   }
-}
-
-/**
- * The hub bearer credential: device token when present, legacy chatter key
- * otherwise (kernel dual-acceptance holds through the rollout window).
- */
-export async function resolveHubCredential(
-  keychain: Pick<Keychain, 'getSecret'>,
-): Promise<string | null> {
-  const deviceToken = await keychain.getSecret('hubDeviceToken');
-  if (deviceToken !== null && deviceToken.trim().length > 0) {
-    return deviceToken;
-  }
-  return keychain.getSecret('hubApiKey');
-}
-
-/**
- * The hub bearer that `resolveHubCredential` WOULD return after
- * `settingsStore.update(patch)` is applied — computed WITHOUT persisting, so a
- * pre-persist validation (4a: index.ts's read-runtime probe) can test exactly
- * the credential that will authenticate.
- *
- * MUST mirror settings/store.ts `update()`'s credential rules (kept in lockstep):
- *   • a hub switch is rejected while a device token exists, because only the
- *     explicit sign-out path can revoke it remotely before deleting local custody;
- *   • once no device token exists, a switch wipes the old chatter key unless the
- *     SAME patch carries a replacement;
- *   • without a switch the device token is preserved and still shadows any
- *     chatter-key write (resolveHubCredential prefers it unconditionally).
- */
-/**
- * I116-2 (W4.1): the paste-a-key recovery on a dead device token. The 4a
- * probe validates with the credential the patch WOULD resolve — the stored
- * device token whenever one exists, because it shadows any pasted chatter key
- * (`resolveHubCredential` prefers it unconditionally). When that probe fails
- * AUTH and the patch carries a fresh key, the documented recovery used to
- * fail SILENTLY: the stale token 401'd, the save rejected, nothing surfaced.
- * Returns the pasted key to RE-PROBE with — on its success the stored token
- * is provably dead and must be cleared — or null when the failure is not
- * this exact shape (a real credential rejection stays a rejection).
- */
-export function probeRetryKeyAfterAuthFailure(input: {
-  /** The bearer the failed probe actually used. */
-  usedCredential: string;
-  currentDeviceToken: string | null;
-  /** parsed patch value; `undefined` = key not in the patch. */
-  patchHubApiKey: string | undefined;
-  hubSwitched: boolean;
-  /** True when the probe failure was an auth rejection (CG-HUB-01). */
-  authFailure: boolean;
-}): string | null {
-  if (!input.authFailure || input.hubSwitched) {
-    return null;
-  }
-  const token = input.currentDeviceToken?.trim() ?? '';
-  if (token.length === 0 || input.usedCredential !== input.currentDeviceToken) {
-    return null; // the probe already used the pasted key — a real rejection
-  }
-  const pasted = input.patchHubApiKey?.trim() ?? '';
-  if (pasted.length === 0 || pasted === input.usedCredential) {
-    return null;
-  }
-  return pasted;
-}
-
-export function effectiveHubBearerAfterPatch(input: {
-  /** parsed patch value; `undefined` = key not in the patch, '' = clear. */
-  patchHubApiKey: string | undefined;
-  /** parsed patch value; `undefined` = URL not in the patch. */
-  patchHubBaseUrl: string | null | undefined;
-  currentHubBaseUrl: string | null;
-  currentDeviceToken: string | null;
-  currentHubApiKey: string | null;
-}): string | null {
-  const hubSwitched =
-    input.patchHubBaseUrl !== undefined && input.patchHubBaseUrl !== input.currentHubBaseUrl;
-
-  const currentDeviceToken = input.currentDeviceToken?.trim() ?? '';
-  if (hubSwitched && currentDeviceToken.length > 0) {
-    // A settings save has no authenticated old-Hub revocation transaction. If
-    // it merely deleted local custody, the old bearer would remain live and the
-    // app would lose its only handle for revoking it. Force the explicit
-    // security-first sign-out lifecycle instead.
-    throw new Error(HUB_DEVICE_TOKEN_HUB_SWITCH_BLOCKED_MESSAGE);
-  }
-  if (currentDeviceToken.length > 0) {
-    return input.currentDeviceToken;
-  }
-
-  if (input.patchHubApiKey !== undefined) {
-    const trimmed = input.patchHubApiKey.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-  // Key not in the patch: a switch wiped the old one; otherwise it survives.
-  return hubSwitched ? null : input.currentHubApiKey;
 }

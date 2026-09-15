@@ -1,13 +1,12 @@
-// Agency Hub connection (SPEC §6.2/§9, reworked per D19): device-token-first.
-// The calm state is one human card — who is signed in, on which machine, and
-// whether the hub works; every diagnostic (token fingerprint, stream state,
-// app version, hub URL, page-label overrides, probe) lives under a collapsed
-// "Advanced" block. The chatter API key has NO input here anymore: humans
-// authenticate with password + device token (core Decision #116); a leftover
-// legacy key only ever surfaces as a migration/sign-in notice, and main
-// decommissions a quarantined one automatically once a bound token exists.
-// "Test connection" probes the SAVED config via GET /api/v1/auth/me in main —
-// the renderer stays networkless.
+// The "Account" section (SPEC §6.2/§9, reworked per D19 and D35). The calm
+// state is one human card — who is signed in, on which machine, and whether
+// the connection works — plus three actions: open the account page on the
+// hub, sign out of this device, and get help signing in. Every diagnostic
+// (credential fingerprint, stream state, app version, address, page-label
+// overrides, probe) lives under a collapsed "Advanced" block. D35: there is
+// no sign-in form here — the first-run screen owns sign-in — and no trace of
+// the retired chatter key. "Test connection" probes the SAVED config via
+// GET /api/v1/auth/me in main — the renderer stays networkless.
 
 import { useState } from 'react';
 import type { KeyTestResultVM, SettingsVM, SyncStatusVM } from '../../../../../preload/contract';
@@ -16,7 +15,6 @@ import {
   useAccounts,
   useExportDiagnostics,
   useHubAbandonDevice,
-  useHubDeviceTokenIssue,
   useHubSignOutDevice,
   useKeyTest,
   useSyncStatus,
@@ -26,13 +24,12 @@ import { Badge } from '../../../design/Badge';
 import { Button } from '../../../design/Button';
 import { Section, type PatchFn } from '../SettingsSurface';
 import {
-  canIssueHubDeviceToken,
   hasHubDeviceTokenCustody,
   hubDeviceTokenStatus,
   hubUrlChangeRequiresDeviceSignOut,
   isHubConfigured,
-  legacyKeyState,
 } from './hubSettingsLogic';
+import { HELP_SIGN_IN_URL } from '../../auth/links';
 
 type HubState = SyncStatusVM['hub'];
 
@@ -76,9 +73,6 @@ export function HubSettings({
   patch: PatchFn;
 }): React.JSX.Element {
   const [baseUrl, setBaseUrl] = useState(settings.hubBaseUrl ?? '');
-  const [signInUser, setSignInUser] = useState('');
-  const [signInPassword, setSignInPassword] = useState('');
-  const deviceToken = useHubDeviceTokenIssue();
   const signOutDevice = useHubSignOutDevice();
   const abandonDevice = useHubAbandonDevice();
   const exportDiagnostics = useExportDiagnostics();
@@ -94,7 +88,6 @@ export function HubSettings({
   const hasDeviceTokenCustody = hasHubDeviceTokenCustody(settings);
   const deviceTokenStatus = hubDeviceTokenStatus(settings);
   const identity = settings.hubDeviceIdentity;
-  const keyState = legacyKeyState(settings);
   const showAbandonDevice = settings.hubDeviceTokenTransition !== null
     || settings.hubDeviceTokenBindingState !== 'bound'
     || signOutDevice.isError;
@@ -124,7 +117,12 @@ export function HubSettings({
     test.reset();
   }
 
-  const busy = deviceToken.isPending || signOutDevice.isPending || abandonDevice.isPending;
+  const busy = signOutDevice.isPending || abandonDevice.isPending;
+  // §9: while a durable activation/revocation settles, the hub owns the
+  // credential — the workspace banner says so and sign-out stays locked.
+  // "Forget locally" deliberately stays available: it is the documented
+  // last resort when that transition can never settle.
+  const transitionLocked = busy || settings.hubDeviceTokenTransition !== null;
 
   return (
     <Section title={t('hub.title')}>
@@ -146,11 +144,25 @@ export function HubSettings({
                 {t('hub.connected.sub', { label: identity.label })}
               </div>
             )}
-            <div className="flex items-center gap-3 pt-2.5">
+            <div className="flex flex-wrap items-center gap-3 pt-2.5">
+              {settings.hubBaseUrl !== null && (
+                // Opened through the window-open handler's external allowlist;
+                // the account page (devices, password, own AI spend) lives on
+                // the hub, not in this app.
+                <a
+                  href={`${settings.hubBaseUrl}/account`}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={t('hub.openAccountHint')}
+                  className="rounded-chip border border-line bg-bg2 px-3 py-1 text-[12.5px] font-semibold text-ink-mid hover:border-clay-line hover:bg-clay-bg hover:text-clay-deep"
+                >
+                  {t('hub.openAccount')}
+                </a>
+              )}
               <Button
                 variant="danger"
                 size="sm"
-                disabled={busy}
+                disabled={transitionLocked}
                 onClick={() => signOutDevice.mutate()}
               >
                 {signOutDevice.isPending
@@ -170,57 +182,20 @@ export function HubSettings({
                     : t('hub.deviceToken.abandon')}
                 </Button>
               )}
+              <a
+                href={HELP_SIGN_IN_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[12px] text-ink-mid underline underline-offset-2 hover:text-clay-deep"
+              >
+                {t('hub.helpSignIn')}
+              </a>
             </div>
           </div>
         ) : deviceTokenStatus === 'unset' ? (
           <div className="py-1">
             <div className="text-[15px] font-semibold">{t('hub.notConnected.title')}</div>
             <p className="pt-0.5 text-[11.5px] text-ink-mid">{t('hub.notConnected.hint')}</p>
-            <div className="flex max-w-xl items-center gap-3 pt-2.5">
-              <label htmlFor="hub-signin-user" className="sr-only">
-                {t('hub.deviceToken.username')}
-              </label>
-              <input
-                id="hub-signin-user"
-                type="text"
-                value={signInUser}
-                onChange={(e) => setSignInUser(e.target.value)}
-                placeholder={t('hub.deviceToken.username')}
-                autoComplete="off"
-                spellCheck={false}
-                className={INPUT_CLASS}
-              />
-              <label htmlFor="hub-signin-password" className="sr-only">
-                {t('hub.deviceToken.password')}
-              </label>
-              <input
-                id="hub-signin-password"
-                type="password"
-                value={signInPassword}
-                onChange={(e) => setSignInPassword(e.target.value)}
-                placeholder={t('hub.deviceToken.password')}
-                autoComplete="off"
-                spellCheck={false}
-                className={INPUT_CLASS}
-              />
-              <Button
-                disabled={!canIssueHubDeviceToken({
-                  username: signInUser,
-                  password: signInPassword,
-                  hasStoredDeviceToken: hasDeviceTokenCustody,
-                  issuePending: deviceToken.isPending,
-                  signOutPending: signOutDevice.isPending || abandonDevice.isPending,
-                })}
-                onClick={() => {
-                  deviceToken.mutate(
-                    { username: signInUser.trim(), password: signInPassword },
-                    { onSuccess: () => setSignInPassword('') },
-                  );
-                }}
-              >
-                {deviceToken.isPending ? t('hub.deviceToken.signingIn') : t('hub.deviceToken.signIn')}
-              </Button>
-            </div>
           </div>
         ) : (
           <div className="py-1">
@@ -267,12 +242,6 @@ export function HubSettings({
         {/* Narrow live region: only status/error lines announce — never the
             whole section (typing, badge polling, details toggling). */}
         <div aria-live="polite" className="space-y-2">
-          {keyState === 'working-fallback' && (
-            <p className="text-[12px] text-ink-mid">{t('hub.legacyKey.working')}</p>
-          )}
-          {keyState === 'isolated' && (
-            <p className="text-[12px] text-bad">{t('hub.legacyKey.isolated')}</p>
-          )}
           {hub === 'auth-failed' && <p className="text-[12px] text-bad">{t('hub.authFailedBody')}</p>}
 
           {signOutDevice.isError && (
@@ -287,13 +256,6 @@ export function HubSettings({
               {abandonDevice.error instanceof Error
                 ? abandonDevice.error.message
                 : t('hub.deviceToken.abandonFailed')}
-            </p>
-          )}
-          {deviceToken.isError && (
-            <p className="text-[11.5px] text-bad">
-              {deviceToken.error instanceof Error
-                ? deviceToken.error.message
-                : t('hub.deviceToken.failed')}
             </p>
           )}
         </div>

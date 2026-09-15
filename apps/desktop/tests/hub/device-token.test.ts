@@ -1,28 +1,24 @@
-// Stage 24: one-time device-token issuance + credential fallback. The main
-// process has no cookie jar — the login session cookie is captured off the
-// raw response and carried explicitly on the issue/logout calls.
+// Stage 24 device-token issuance, reworked by D35: ONE public password call
+// (`authIssueDeviceTokenWithPassword`, mode `pending`) replaces the
+// login → set-cookie → reserve → logout ceremony. Everything downstream of the
+// reservation — staging, journal, activation, recovery — is unchanged, so the
+// whole matrix below moves through this one fixture.
 
 import { describe, expect, it, vi } from 'vitest';
 import {
   abandonHubDeviceTokenCustody,
   beginHubDeviceTokenRevocation,
-  effectiveHubBearerAfterPatch,
-  HUB_DEVICE_TOKEN_HUB_SWITCH_BLOCKED_MESSAGE,
   HUB_DEVICE_TOKEN_REQUEST_TIMEOUT_MS,
   issueHubDeviceToken,
-  probeRetryKeyAfterAuthFailure,
   recoverHubDeviceTokenLifecycle,
   requestHubDeviceTokenActivationCancellation,
   revokeHubDeviceToken,
-  resolveHubCredential,
 } from '../../src/main/hub/device-token';
 import {
-  HUB_DEVICE_IDENTITY_KEY,
   HUB_DEVICE_TOKEN_BINDING_KEY,
   HUB_DEVICE_TOKEN_ACTIVATION_KEY,
   HUB_DEVICE_TOKEN_REVOCATION_KEY,
   deviceTokenDigest,
-  readDeviceTokenActivation,
   readHubDeviceIdentity,
 } from '../../src/main/hub/credential-journal';
 import { createRuntimeMutationQueue } from '../../src/main/runtime-activation';
@@ -106,20 +102,12 @@ function successfulLifecycleFetch(
 ) {
   return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
-    if (url.endsWith('/api/v1/auth/login')) {
-      return jsonResponse(200, { authMethod: 'session', user: { username: 'anton' } }, {
-        'set-cookie': 'agency_hub_session=tok123; Path=/; HttpOnly',
-      });
-    }
-    if (url.endsWith('/api/v1/auth/device-tokens/reservations')) {
-      return jsonResponse(200, PENDING);
+    if (url.endsWith('/api/v1/auth/device-tokens/password')) {
+      return jsonResponse(200, { ...PENDING, mode: 'pending' });
     }
     if (url.endsWith('/api/v1/auth/device-tokens/activate')) {
       onActivate?.({ authorization: requestHeaders(input, init).get('authorization') });
       return jsonResponse(200, ACTIVATED);
-    }
-    if (url.endsWith('/api/v1/auth/logout')) {
-      return jsonResponse(200, { ok: true });
     }
     throw new Error(`unexpected url ${url}`);
   });
@@ -158,9 +146,20 @@ describe('issueHubDeviceToken', () => {
       hubBaseUrl: 'https://hub.test',
       tokenDigest: deviceTokenDigest(PENDING.token),
     });
+    // D35: the identity is no longer display-only — it stamps the grant cache
+    // (grant-owner.ts), so an activation that forgot to write it would let the
+    // next person inherit this one's workspace.
+    expect(readHubDeviceIdentity(storage.settings)).toEqual({
+      version: 1,
+      username: 'anton',
+      label: 'test-machine',
+      tokenLast4: PENDING.token.slice(-4),
+      issuedAt: expect.any(String),
+      expiresAt: ACTIVATED.expiresAt,
+    });
   });
 
-  it('stamps x-client-version on login, reserve, activate, and logout', async () => {
+  it('stamps x-client-version on the password sign-in and the activation', async () => {
     const calls: Array<{ url: string; xClientVersion: string | null }> = [];
     const baseFetch = successfulLifecycleFetch();
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -182,16 +181,59 @@ describe('issueHubDeviceToken', () => {
     });
 
     expect(calls.map((call) => call.url)).toEqual([
-      'https://hub.test/api/v1/auth/login',
-      'https://hub.test/api/v1/auth/device-tokens/reservations',
+      'https://hub.test/api/v1/auth/device-tokens/password',
       'https://hub.test/api/v1/auth/device-tokens/activate',
-      'https://hub.test/api/v1/auth/logout',
     ]);
     expect(calls.every((call) => call.xClientVersion === '0.1.29')).toBe(true);
   });
 
-  it('maps bad credentials to a clear error and stores nothing', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse(401, { error: 'unauthorized' }));
+  it('signs in with one password call and no cookie', async () => {
+    const seen: Array<{ url: string; body: unknown; cookie: string | null }> = [];
+    const base = successfulLifecycleFetch();
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      seen.push({
+        url: String(input),
+        body: typeof init?.body === 'string' ? JSON.parse(init.body) : null,
+        cookie: requestHeaders(input, init).get('cookie'),
+      });
+      return base(input, init);
+    });
+    const storage = lifecycleStorage();
+
+    await issueHubDeviceToken({
+      baseUrl: 'https://hub.test',
+      username: ' anton ',
+      password: 'pw',
+      label: 'Desktop · test-machine',
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl,
+    });
+
+    expect(seen[0]).toMatchObject({
+      url: 'https://hub.test/api/v1/auth/device-tokens/password',
+      body: { username: 'anton', password: 'pw', label: 'Desktop · test-machine', mode: 'pending' },
+    });
+    expect(seen.every((call) => call.cookie === null)).toBe(true);
+    expect(seen.map((call) => call.url)).not.toContain('https://hub.test/api/v1/auth/login');
+    expect(seen.map((call) => call.url)).not.toContain('https://hub.test/api/v1/auth/logout');
+  });
+
+  it.each([
+    ['wrong login or password', 401, { error: 'unauthorized', message: 'no', statusCode: 401 }, 'CG-HUB-20'],
+    ['a password the owner must reset', 403, {
+      error: 'forbidden', message: 'no', statusCode: 403, reason: 'password_change_required',
+    }, 'CG-HUB-23'],
+    ['an unexplained refusal', 403, { error: 'forbidden', message: 'no', statusCode: 403 }, 'CG-HUB-22'],
+    ['a hub that is down', 503, { error: 'unavailable', message: 'no', statusCode: 503 }, 'CG-HUB-21'],
+    ['too many attempts', 429, { error: 'rate_limit', message: 'no', statusCode: 429 }, 'CG-HUB-22'],
+    // A kernel without the sign-in route (rolled back, or not deployed yet):
+    // the server has to change, so "try again in a minute" would be a lie.
+    ['a server without password sign-in', 404, {
+      error: 'not_found', message: 'Route not found', statusCode: 404,
+    }, 'CG-HUB-21'],
+  ])('maps %s to %s without storing anything', async (_label, status, body, code) => {
+    const fetchImpl = vi.fn(async () => jsonResponse(status, body));
     const setSecret = vi.fn();
     const storage = lifecycleStorage();
     storage.keychain.setSecret = setSecret;
@@ -204,12 +246,15 @@ describe('issueHubDeviceToken', () => {
       keychain: storage.keychain,
       settings: storage.settings,
       fetchImpl,
-    })).rejects.toThrow(/Invalid username or password/);
+    })).rejects.toMatchObject({ code });
     expect(setSecret).not.toHaveBeenCalled();
+    expect(storage.journals.size).toBe(0);
   });
 
-  it('fails loudly when login returns no session cookie', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse(200, { ok: true }));
+  it('reports an unreachable hub as CG-HUB-21', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('fetch failed');
+    });
     const storage = lifecycleStorage();
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test',
@@ -219,10 +264,34 @@ describe('issueHubDeviceToken', () => {
       keychain: storage.keychain,
       settings: storage.settings,
       fetchImpl,
-    })).rejects.toThrow(/no session cookie/);
+    })).rejects.toMatchObject({ code: 'CG-HUB-21' });
+    expect(storage.secrets.size).toBe(0);
   });
 
-  it('times out an unresponsive login without publishing recoverable custody', async () => {
+  it('refuses an active bearer when it asked for a reservation', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      mode: 'active',
+      token: 'agency_hub_device_live',
+      id: 7,
+      label: 'm',
+      keyPrefix: 'agency_hub_device_live',
+      expiresAt: ACTIVATED.expiresAt,
+    }));
+    const storage = lifecycleStorage();
+    await expect(issueHubDeviceToken({
+      baseUrl: 'https://hub.test',
+      username: 'anton',
+      password: 'pw',
+      label: 'm',
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl,
+    })).rejects.toMatchObject({ code: 'CG-HUB-22' });
+    expect(storage.secrets.size).toBe(0);
+    expect(storage.journals.size).toBe(0);
+  });
+
+  it('times out an unresponsive sign-in without publishing recoverable custody', async () => {
     vi.useFakeTimers();
     try {
       const storage = lifecycleStorage();
@@ -251,7 +320,10 @@ describe('issueHubDeviceToken', () => {
 
       const result = await settled;
       expect(result.ok).toBe(false);
-      expect(result.error).toMatchObject({ name: 'TimeoutError' });
+      expect(result.error).toMatchObject({
+        code: 'CG-HUB-21',
+        detail: { kernelCode: 'timeout' },
+      });
       expect(observedSignal).toMatchObject({ aborted: true });
       expect(storage.journals.size).toBe(0);
       expect(storage.secrets.size).toBe(0);
@@ -274,7 +346,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl,
-    })).rejects.toMatchObject({ status: 404 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 404 } });
     expect(storage.secrets.has('hubDeviceToken')).toBe(false);
     expect(storage.secrets.has('hubDeviceTokenStaged')).toBe(true);
     expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(true);
@@ -292,7 +364,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     // Covers the crash-after-local-promotion shape too: only the exact
     // journal-bound active copy may be removed on terminal invalidation.
     storage.secrets.set('hubDeviceToken', PENDING.token);
@@ -325,7 +397,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: offline,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     const replacement = 'agency_hub_device_unrelated_live';
     storage.secrets.set('hubDeviceToken', replacement);
     storage.journals.set(HUB_DEVICE_TOKEN_BINDING_KEY, {
@@ -396,7 +468,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     storage.secrets.delete('hubDeviceTokenStaged');
     const onCustodyRecovery = vi.fn();
     const recoveryFetch = vi.fn();
@@ -429,7 +501,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     storage.secrets.set('hubDeviceToken', PENDING.token);
     storage.secrets.delete('hubDeviceTokenStaged');
     const onCustodyRecovery = vi.fn();
@@ -471,7 +543,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     const replacement = 'agency_hub_device_unrelated_replacement';
     storage.secrets.set('hubDeviceToken', replacement);
     const recoveryFetch = vi.fn(async (input: string | URL | Request) => {
@@ -520,7 +592,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     const recoveryFetch = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
       if (url.endsWith('/api/v1/auth/device-tokens/activate')) {
@@ -565,7 +637,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     const replacement = 'agency_hub_device_restored_during_activate';
     const onCustodyRecovery = vi.fn();
     const recoveryFetch = vi.fn(async (input: string | URL | Request) => {
@@ -828,7 +900,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: offline,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     storage.secrets.set('hubDeviceToken', PENDING.token);
     const originalGet = storage.keychain.getSecret.getMockImplementation()!;
     storage.keychain.getSecret.mockImplementation(async (name) => {
@@ -865,7 +937,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: offline,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     const originalGet = storage.keychain.getSecret.getMockImplementation()!;
     storage.keychain.getSecret.mockImplementation(async (name) => {
       if (name === 'hubDeviceToken') throw new Error('DPAPI active decrypt failed');
@@ -973,8 +1045,11 @@ describe('durable device-token revocation', () => {
     })).resolves.toBe('revoked');
     expect(storage.secrets.has('hubDeviceToken')).toBe(false);
     expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(false);
-    expect(storage.secrets.get('hubApiKey')).toBe('agency_hub_core_fallback');
     expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(false);
+    // Sign-out takes the identity with it: a surviving record would stamp the
+    // next person's reconcile with the previous person's username.
+    expect(readHubDeviceIdentity(storage.settings)).toBeNull();
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_BINDING_KEY)).toBe(false);
   });
 
   it('keeps exact custody and journal quarantined while offline', async () => {
@@ -1339,268 +1414,7 @@ describe('durable device-token revocation', () => {
     expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(false);
     expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(false);
     expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(false);
-  });
-});
-
-describe('resolveHubCredential', () => {
-  function keychainWith(secrets: Record<string, string | null>) {
-    return { getSecret: async (name: string) => secrets[name] ?? null } as never;
-  }
-
-  it('prefers the device token, falls back to the chatter key, and reports absence', async () => {
-    await expect(resolveHubCredential(keychainWith({
-      hubDeviceToken: 'agency_hub_device_x',
-      hubApiKey: 'agency_hub_core_y',
-    }))).resolves.toBe('agency_hub_device_x');
-
-    await expect(resolveHubCredential(keychainWith({
-      hubDeviceToken: null,
-      hubApiKey: 'agency_hub_core_y',
-    }))).resolves.toBe('agency_hub_core_y');
-
-    await expect(resolveHubCredential(keychainWith({
-      hubDeviceToken: '  ',
-      hubApiKey: 'agency_hub_core_y',
-    }))).resolves.toBe('agency_hub_core_y');
-
-    await expect(resolveHubCredential(keychainWith({}))).resolves.toBeNull();
-  });
-});
-
-// 4a: the pre-persist validation probe (index.ts) must test EXACTLY the bearer
-// that settingsStore.update(patch) would leave active — this mirrors store.ts
-// update()'s device-token/chatter-key rules so a good save is never
-// falsely rejected and a bad one never slips through.
-describe('effectiveHubBearerAfterPatch', () => {
-  it('returns the new chatter key when no device token is present (the common save)', () => {
-    expect(
-      effectiveHubBearerAfterPatch({
-        patchHubApiKey: 'agency_hub_core_new',
-        patchHubBaseUrl: undefined,
-        currentHubBaseUrl: 'https://gosling-agency.ru',
-        currentDeviceToken: null,
-        currentHubApiKey: null,
-      }),
-    ).toBe('agency_hub_core_new');
-  });
-
-  it('keeps the device token when a chatter key is patched without a hub switch (token shadows)', () => {
-    // resolveHubCredential prefers the device token unconditionally; a chatter
-    // key write that does not switch hubs leaves it in place, so THAT is what
-    // will actually authenticate — validate it, not the shadowed new key.
-    expect(
-      effectiveHubBearerAfterPatch({
-        patchHubApiKey: 'agency_hub_core_new',
-        patchHubBaseUrl: undefined,
-        currentHubBaseUrl: 'https://gosling-agency.ru',
-        currentDeviceToken: 'agency_hub_device_live',
-        currentHubApiKey: 'agency_hub_core_old',
-      }),
-    ).toBe('agency_hub_device_live');
-  });
-
-  it('rejects a hub switch with a device token even when the patch has a replacement key', () => {
-    expect(() =>
-      effectiveHubBearerAfterPatch({
-        patchHubApiKey: 'agency_hub_core_forNewHub',
-        patchHubBaseUrl: 'http://localhost:4000',
-        currentHubBaseUrl: 'https://gosling-agency.ru',
-        currentDeviceToken: 'agency_hub_device_live',
-        currentHubApiKey: 'agency_hub_core_old',
-      }),
-    ).toThrow(HUB_DEVICE_TOKEN_HUB_SWITCH_BLOCKED_MESSAGE);
-  });
-
-  it('rejects a hub switch with a device token when no replacement key is present', () => {
-    expect(() =>
-      effectiveHubBearerAfterPatch({
-        patchHubApiKey: undefined,
-        patchHubBaseUrl: 'http://localhost:4000',
-        currentHubBaseUrl: 'https://gosling-agency.ru',
-        currentDeviceToken: 'agency_hub_device_live',
-        currentHubApiKey: 'agency_hub_core_old',
-      }),
-    ).toThrow(HUB_DEVICE_TOKEN_HUB_SWITCH_BLOCKED_MESSAGE);
-  });
-
-  it('uses the replacement key on a hub switch after explicit device sign-out', () => {
-    expect(
-      effectiveHubBearerAfterPatch({
-        patchHubApiKey: 'agency_hub_core_forNewHub',
-        patchHubBaseUrl: 'http://localhost:4000',
-        currentHubBaseUrl: 'https://gosling-agency.ru',
-        currentDeviceToken: null,
-        currentHubApiKey: 'agency_hub_core_old',
-      }),
-    ).toBe('agency_hub_core_forNewHub');
-  });
-
-  it('returns null on a hub switch without a device token or replacement key', () => {
-    expect(
-      effectiveHubBearerAfterPatch({
-        patchHubApiKey: undefined,
-        patchHubBaseUrl: 'http://localhost:4000',
-        currentHubBaseUrl: 'https://gosling-agency.ru',
-        currentDeviceToken: null,
-        currentHubApiKey: 'agency_hub_core_old',
-      }),
-    ).toBeNull();
-  });
-
-  it('treats an empty/whitespace patched key as a clear (null)', () => {
-    expect(
-      effectiveHubBearerAfterPatch({
-        patchHubApiKey: '   ',
-        patchHubBaseUrl: undefined,
-        currentHubBaseUrl: 'https://gosling-agency.ru',
-        currentDeviceToken: null,
-        currentHubApiKey: 'agency_hub_core_old',
-      }),
-    ).toBeNull();
-  });
-
-  it('preserves the current chatter key when the patch does not touch credentials', () => {
-    expect(
-      effectiveHubBearerAfterPatch({
-        patchHubApiKey: undefined,
-        patchHubBaseUrl: undefined,
-        currentHubBaseUrl: 'https://gosling-agency.ru',
-        currentDeviceToken: null,
-        currentHubApiKey: 'agency_hub_core_old',
-      }),
-    ).toBe('agency_hub_core_old');
-  });
-});
-
-// I116-2 (W4.1): the paste-a-key recovery on a dead device token — the probe
-// fallback matrix. The retry key is returned ONLY for the exact silent-failure
-// shape: stored token was the probed bearer, it failed AUTH, and the patch
-// carries a different non-empty key.
-describe('probeRetryKeyAfterAuthFailure', () => {
-  const base = {
-    usedCredential: 'agency_hub_device_dead',
-    currentDeviceToken: 'agency_hub_device_dead',
-    patchHubApiKey: 'agency_hub_core_fresh',
-    hubSwitched: false,
-    authFailure: true,
-  };
-
-  it('returns the pasted key when the stored token shadowed it and failed auth', () => {
-    expect(probeRetryKeyAfterAuthFailure(base)).toBe('agency_hub_core_fresh');
-  });
-
-  it('trims the pasted key', () => {
-    expect(probeRetryKeyAfterAuthFailure({ ...base, patchHubApiKey: '  agency_hub_core_fresh  ' })).toBe(
-      'agency_hub_core_fresh',
-    );
-  });
-
-  it('does not retry on non-auth probe failures (network, 5xx)', () => {
-    expect(probeRetryKeyAfterAuthFailure({ ...base, authFailure: false })).toBeNull();
-  });
-
-  it('does not retry on a hub switch (the pasted key was already the probed bearer)', () => {
-    expect(probeRetryKeyAfterAuthFailure({ ...base, hubSwitched: true })).toBeNull();
-  });
-
-  it('does not retry when no device token exists (the pasted key itself was rejected)', () => {
-    expect(
-      probeRetryKeyAfterAuthFailure({
-        ...base,
-        currentDeviceToken: null,
-        usedCredential: 'agency_hub_core_fresh',
-      }),
-    ).toBeNull();
-  });
-
-  it('does not retry when the probe already used the pasted key', () => {
-    expect(
-      probeRetryKeyAfterAuthFailure({
-        ...base,
-        usedCredential: 'agency_hub_core_fresh',
-      }),
-    ).toBeNull();
-  });
-
-  it('does not retry when the patch carries no key or an empty key', () => {
-    expect(probeRetryKeyAfterAuthFailure({ ...base, patchHubApiKey: undefined })).toBeNull();
-    expect(probeRetryKeyAfterAuthFailure({ ...base, patchHubApiKey: '   ' })).toBeNull();
-  });
-});
-
-describe('device identity journal (D19)', () => {
-  it('readHubDeviceIdentity fails open on corrupt records', () => {
-    const storage = lifecycleStorage();
-    storage.settings.set(HUB_DEVICE_IDENTITY_KEY, { garbage: true });
     expect(readHubDeviceIdentity(storage.settings)).toBeNull();
-  });
-
-  it('activation journal accepts records without username (pre-D19 builds)', () => {
-    const storage = lifecycleStorage();
-    storage.settings.set(HUB_DEVICE_TOKEN_ACTIVATION_KEY, {
-      version: 1,
-      id: '4a34cbb3-2bfc-4dcd-9a6a-9902133de1a3',
-      hubBaseUrl: 'https://hub.test',
-      tokenDigest: deviceTokenDigest(PENDING.token),
-      reservationId: PENDING.reservationId,
-      label: PENDING.label,
-      keyPrefix: PENDING.keyPrefix,
-      reservationExpiresAt: PENDING.reservationExpiresAt,
-    });
-    expect(readDeviceTokenActivation(storage.settings)?.username).toBeNull();
-  });
-
-  it('activation commit persists the device identity', async () => {
-    const storage = lifecycleStorage();
-    await issueHubDeviceToken({
-      baseUrl: 'https://hub.test/',
-      username: ' Maxim ',
-      password: 'pw',
-      label: 'Kevin',
-      keychain: storage.keychain,
-      settings: storage.settings,
-      fetchImpl: successfulLifecycleFetch(),
-    });
-    const identity = readHubDeviceIdentity(storage.settings);
-    expect(identity).toMatchObject({
-      username: 'Maxim',
-      label: PENDING.label,
-      tokenLast4: PENDING.token.slice(-4),
-      expiresAt: ACTIVATED.expiresAt,
-    });
-    expect(identity!.issuedAt).not.toBeNull();
-    expect(Date.parse(identity!.issuedAt!)).not.toBeNaN();
-  });
-
-  it('revocation removes the device identity', async () => {
-    const storage = lifecycleStorage({ hubDeviceToken: PENDING.token });
-    storage.settings.set(HUB_DEVICE_IDENTITY_KEY, {
-      version: 1,
-      username: 'Maxim',
-      label: 'Kevin',
-      tokenLast4: PENDING.token.slice(-4),
-      issuedAt: '2026-07-15T21:42:15.000Z',
-      expiresAt: ACTIVATED.expiresAt,
-    });
-    await expect(beginHubDeviceTokenRevocation({
-      baseUrl: 'https://hub.test/', token: PENDING.token,
-      keychain: storage.keychain, settings: storage.settings,
-      fetchImpl: vi.fn(async () => jsonResponse(200, { revoked: true })),
-    })).resolves.toBe('revoked');
-    expect(readHubDeviceIdentity(storage.settings)).toBeNull();
-  });
-
-  it('abandon removes the device identity', async () => {
-    const storage = lifecycleStorage({ hubDeviceToken: PENDING.token });
-    storage.settings.set(HUB_DEVICE_IDENTITY_KEY, {
-      version: 1,
-      username: 'Maxim',
-      label: 'Kevin',
-      tokenLast4: PENDING.token.slice(-4),
-      issuedAt: '2026-07-15T21:42:15.000Z',
-      expiresAt: ACTIVATED.expiresAt,
-    });
-    await abandonHubDeviceTokenCustody({ keychain: storage.keychain, settings: storage.settings });
-    expect(readHubDeviceIdentity(storage.settings)).toBeNull();
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_BINDING_KEY)).toBe(false);
   });
 });

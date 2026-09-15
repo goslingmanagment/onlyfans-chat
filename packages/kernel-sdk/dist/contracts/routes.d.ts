@@ -67,6 +67,7 @@ export declare const deviceTokenItemSchema: z.ZodObject<{
     isActive: z.ZodBoolean;
     expiresAt: z.ZodString;
     lastUsedAt: z.ZodNullable<z.ZodString>;
+    lastClientVersion: z.ZodNullable<z.ZodString>;
     createdAt: z.ZodString;
     revokedAt: z.ZodNullable<z.ZodString>;
     revokedReason: z.ZodNullable<z.ZodString>;
@@ -119,6 +120,10 @@ export declare const adminUserApiKeyStatusSchema: z.ZodObject<{
     activeKeyCreatedAt: z.ZodNullable<z.ZodString>;
     activeKeyLastUsedAt: z.ZodNullable<z.ZodString>;
 }, z.core.$strip>;
+export declare const registrationStateEnum: z.ZodEnum<{
+    active: "active";
+    invited: "invited";
+}>;
 export declare const adminUserSchema: z.ZodObject<{
     id: z.ZodNumber;
     username: z.ZodString;
@@ -147,6 +152,191 @@ export declare const adminUserSchema: z.ZodObject<{
     }, z.core.$strip>>;
     disabledAt: z.ZodNullable<z.ZodString>;
     lastActiveAt: z.ZodNullable<z.ZodString>;
+    registrationState: z.ZodEnum<{
+        active: "active";
+        invited: "invited";
+    }>;
+}, z.core.$strip>;
+export declare const accountLinkKindEnum: z.ZodEnum<{
+    invite: "invite";
+    password_reset: "password_reset";
+}>;
+export declare const accountLinkStateEnum: z.ZodEnum<{
+    active: "active";
+    expired: "expired";
+    revoked: "revoked";
+    used: "used";
+}>;
+export declare const accountLinkItemSchema: z.ZodObject<{
+    id: z.ZodNumber;
+    kind: z.ZodEnum<{
+        invite: "invite";
+        password_reset: "password_reset";
+    }>;
+    keyPrefix: z.ZodString;
+    state: z.ZodEnum<{
+        active: "active";
+        expired: "expired";
+        revoked: "revoked";
+        used: "used";
+    }>;
+    expiresAt: z.ZodString;
+    usedAt: z.ZodNullable<z.ZodString>;
+    revokedAt: z.ZodNullable<z.ZodString>;
+    revokedReason: z.ZodNullable<z.ZodString>;
+    createdAt: z.ZodString;
+    createdBy: z.ZodNullable<z.ZodNumber>;
+}, z.core.$strip>;
+export declare const issuedAccountLinkSchema: z.ZodObject<{
+    id: z.ZodNumber;
+    kind: z.ZodEnum<{
+        invite: "invite";
+        password_reset: "password_reset";
+    }>;
+    keyPrefix: z.ZodString;
+    token: z.ZodString;
+    expiresAt: z.ZodString;
+}, z.core.$strip>;
+export declare const inviteRoleEnum: z.ZodEnum<{
+    team_lead: "team_lead";
+    chatter: "chatter";
+}>;
+export declare const adminCreateInviteBodySchema: z.ZodObject<{
+    username: z.ZodString;
+    role: z.ZodOptional<z.ZodEnum<{
+        team_lead: "team_lead";
+        chatter: "chatter";
+    }>>;
+    pageLabels: z.ZodArray<z.ZodString>;
+    expiresInHours: z.ZodOptional<z.ZodNumber>;
+}, z.core.$strip>;
+export declare const adminCreateInviteResponseSchema: z.ZodObject<{
+    user: z.ZodObject<{
+        id: z.ZodNumber;
+        username: z.ZodString;
+        role: z.ZodEnum<{
+            owner: "owner";
+            team_lead: "team_lead";
+            chatter: "chatter";
+            content_manager: "content_manager";
+        }>;
+        mustChangePassword: z.ZodBoolean;
+        assignedPages: z.ZodArray<z.ZodObject<{
+            id: z.ZodNumber;
+            label: z.ZodString;
+            platform: z.ZodEnum<{
+                fansly: "fansly";
+                onlyfans: "onlyfans";
+            }>;
+            modelSlug: z.ZodString;
+            modelName: z.ZodString;
+        }, z.core.$strip>>;
+        apiKeyStatus: z.ZodNullable<z.ZodObject<{
+            activeKeyPrefix: z.ZodNullable<z.ZodString>;
+            activeKeyCount: z.ZodNumber;
+            activeKeyCreatedAt: z.ZodNullable<z.ZodString>;
+            activeKeyLastUsedAt: z.ZodNullable<z.ZodString>;
+        }, z.core.$strip>>;
+        disabledAt: z.ZodNullable<z.ZodString>;
+        lastActiveAt: z.ZodNullable<z.ZodString>;
+        registrationState: z.ZodEnum<{
+            active: "active";
+            invited: "invited";
+        }>;
+    }, z.core.$strip>;
+    link: z.ZodObject<{
+        id: z.ZodNumber;
+        kind: z.ZodEnum<{
+            invite: "invite";
+            password_reset: "password_reset";
+        }>;
+        keyPrefix: z.ZodString;
+        token: z.ZodString;
+        expiresAt: z.ZodString;
+    }, z.core.$strip>;
+}, z.core.$strip>;
+export declare const adminCreateAccountLinkBodySchema: z.ZodObject<{
+    kind: z.ZodEnum<{
+        invite: "invite";
+        password_reset: "password_reset";
+    }>;
+    expiresInHours: z.ZodOptional<z.ZodNumber>;
+}, z.core.$strip>;
+export declare const accountLinkTokenBodySchema: z.ZodObject<{
+    token: z.ZodString;
+}, z.core.$strip>;
+export declare const authInspectAccountLinkResponseSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
+    state: z.ZodLiteral<"active">;
+    kind: z.ZodEnum<{
+        invite: "invite";
+        password_reset: "password_reset";
+    }>;
+    username: z.ZodString;
+    expiresAt: z.ZodString;
+    platforms: z.ZodArray<z.ZodEnum<{
+        fansly: "fansly";
+        onlyfans: "onlyfans";
+    }>>;
+}, z.core.$strip>, z.ZodObject<{
+    state: z.ZodEnum<{
+        expired: "expired";
+        revoked: "revoked";
+        used: "used";
+    }>;
+}, z.core.$strip>], "state">;
+export declare const authRedeemAccountLinkBodySchema: z.ZodObject<{
+    token: z.ZodString;
+    password: z.ZodString;
+}, z.core.$strip>;
+export declare const authRedeemAccountLinkResponseSchema: z.ZodObject<{
+    username: z.ZodString;
+}, z.core.$strip>;
+export declare const deviceTokenIssueModeEnum: z.ZodEnum<{
+    pending: "pending";
+    active: "active";
+}>;
+export declare const authIssueDeviceTokenWithPasswordBodySchema: z.ZodObject<{
+    username: z.ZodString;
+    password: z.ZodString;
+    label: z.ZodString;
+    mode: z.ZodEnum<{
+        pending: "pending";
+        active: "active";
+    }>;
+}, z.core.$strip>;
+export declare const authIssueDeviceTokenWithPasswordResponseSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
+    token: z.ZodString;
+    id: z.ZodNumber;
+    label: z.ZodString;
+    keyPrefix: z.ZodString;
+    expiresAt: z.ZodString;
+    mode: z.ZodLiteral<"active">;
+}, z.core.$strip>, z.ZodObject<{
+    token: z.ZodString;
+    reservationId: z.ZodNumber;
+    label: z.ZodString;
+    keyPrefix: z.ZodString;
+    reservationExpiresAt: z.ZodString;
+    mode: z.ZodLiteral<"pending">;
+}, z.core.$strip>], "mode">;
+export declare const ownDeviceItemSchema: z.ZodObject<{
+    id: z.ZodNumber;
+    label: z.ZodString;
+    keyPrefix: z.ZodString;
+    lastClientVersion: z.ZodNullable<z.ZodString>;
+    expiresAt: z.ZodString;
+    lastUsedAt: z.ZodNullable<z.ZodString>;
+    createdAt: z.ZodString;
+}, z.core.$strip>;
+export declare const authRevokeAllDevicesResponseSchema: z.ZodObject<{
+    deviceTokens: z.ZodNumber;
+    sessions: z.ZodNumber;
+}, z.core.$strip>;
+export declare const adminTerminateAllAccessResponseSchema: z.ZodObject<{
+    deviceTokens: z.ZodNumber;
+    sessions: z.ZodNumber;
+    apiKeys: z.ZodNumber;
+    links: z.ZodNumber;
 }, z.core.$strip>;
 export declare const authStateSchema: z.ZodObject<{
     authMethod: z.ZodEnum<{
@@ -4755,6 +4945,100 @@ export declare const adminChatterUsageResponseSchema: z.ZodObject<{
         }, z.core.$strip>>;
         regenerateRatePct: z.ZodNumber;
         warning: z.ZodBoolean;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const authMyUsageDailyRowSchema: z.ZodObject<{
+    date: z.ZodString;
+    requestCount: z.ZodNumber;
+    costMicroUsd: z.ZodNumber;
+}, z.core.$strip>;
+export declare const authMyUsageResponseSchema: z.ZodObject<{
+    range: z.ZodObject<{
+        from: z.ZodString;
+        to: z.ZodString;
+        timeZone: z.ZodString;
+    }, z.core.$strip>;
+    row: z.ZodObject<{
+        username: z.ZodString;
+        cost: z.ZodObject<{
+            microUsd: z.ZodNumber;
+            approximate: z.ZodBoolean;
+        }, z.core.$strip>;
+        tokenCounts: z.ZodObject<{
+            input: z.ZodNumber;
+            output: z.ZodNumber;
+            cacheWrite: z.ZodNumber;
+            cacheRead: z.ZodNumber;
+            cacheTotal: z.ZodNumber;
+        }, z.core.$strip>;
+        regenerateRatePct: z.ZodNumber;
+        gateway: z.ZodObject<{
+            requestCount: z.ZodNumber;
+            completedCount: z.ZodNumber;
+            failedCount: z.ZodNumber;
+            cancelledCount: z.ZodNumber;
+            quotaDeniedCount: z.ZodNumber;
+            openReservationCount: z.ZodNumber;
+            providerBreakdown: z.ZodArray<z.ZodObject<{
+                provider: z.ZodEnum<{
+                    anthropic: "anthropic";
+                    openrouter: "openrouter";
+                }>;
+                requestCount: z.ZodNumber;
+                costMicroUsd: z.ZodNumber;
+            }, z.core.$strip>>;
+        }, z.core.$strip>;
+        totalGenerations: z.ZodNumber;
+        topFeature: z.ZodNullable<z.ZodObject<{
+            feature: z.ZodEnum<{
+                "fast-reply": "fast-reply";
+                "improve-draft": "improve-draft";
+                "help-me": "help-me";
+                "fan-summary": "fan-summary";
+                "chat-review": "chat-review";
+                scan: "scan";
+                ping: "ping";
+                "hi-greeting": "hi-greeting";
+                "workboard-closing": "workboard-closing";
+                "coach-chat": "coach-chat";
+                "voice-script": "voice-script";
+            }>;
+            requestCount: z.ZodNumber;
+            sharePct: z.ZodNumber;
+        }, z.core.$strip>>;
+        featureBreakdown: z.ZodArray<z.ZodObject<{
+            feature: z.ZodEnum<{
+                "fast-reply": "fast-reply";
+                "improve-draft": "improve-draft";
+                "help-me": "help-me";
+                "fan-summary": "fan-summary";
+                "chat-review": "chat-review";
+                scan: "scan";
+                ping: "ping";
+                "hi-greeting": "hi-greeting";
+                "workboard-closing": "workboard-closing";
+                "coach-chat": "coach-chat";
+                "voice-script": "voice-script";
+            }>;
+            requestCount: z.ZodNumber;
+            sharePct: z.ZodNumber;
+            tokenCounts: z.ZodObject<{
+                input: z.ZodNumber;
+                output: z.ZodNumber;
+                cacheWrite: z.ZodNumber;
+                cacheRead: z.ZodNumber;
+                cacheTotal: z.ZodNumber;
+            }, z.core.$strip>;
+            costMicroUsd: z.ZodNumber;
+            costApproximate: z.ZodBoolean;
+            regenerateRatePct: z.ZodNumber;
+        }, z.core.$strip>>;
+        warning: z.ZodBoolean;
+    }, z.core.$strip>;
+    daily: z.ZodArray<z.ZodObject<{
+        date: z.ZodString;
+        requestCount: z.ZodNumber;
+        costMicroUsd: z.ZodNumber;
     }, z.core.$strip>>;
 }, z.core.$strip>;
 export declare const adminCreateUserBodySchema: z.ZodObject<{
@@ -11886,11 +12170,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -11958,11 +12244,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 status: z.ZodEnum<{
@@ -12062,16 +12350,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12126,6 +12417,7 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12175,16 +12467,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12212,16 +12507,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12293,36 +12591,43 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12342,16 +12647,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12371,16 +12679,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodLiteral<"sync_snapshot_required">;
@@ -12506,21 +12817,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodLiteral<"sync_snapshot_restart_required">;
@@ -12547,16 +12862,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodLiteral<"sync_snapshot_required">;
@@ -12597,16 +12915,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12669,11 +12990,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12730,26 +13053,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12778,16 +13106,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12819,11 +13150,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12856,16 +13189,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12923,11 +13259,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -12960,26 +13298,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13006,31 +13349,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13053,26 +13402,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13100,11 +13454,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13143,21 +13499,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13188,26 +13548,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13245,21 +13610,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13332,21 +13701,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13417,26 +13790,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13543,11 +13921,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13583,21 +13963,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13657,26 +14041,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13735,26 +14124,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13805,26 +14199,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13862,26 +14261,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -13968,26 +14372,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -14052,26 +14461,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -14141,16 +14555,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -14185,26 +14602,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -14260,26 +14682,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -14354,26 +14781,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -14422,11 +14854,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -14653,31 +15087,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -14741,21 +15181,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -14819,26 +15263,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -14939,11 +15388,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -14992,16 +15443,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15058,16 +15512,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15096,16 +15553,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15215,16 +15675,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15258,11 +15721,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15302,6 +15767,7 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15346,36 +15812,43 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15415,16 +15888,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15446,21 +15922,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 410: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15481,11 +15961,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15629,11 +16111,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15671,11 +16155,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15813,16 +16299,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -15961,16 +16450,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16073,16 +16565,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16153,16 +16648,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16229,16 +16727,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16331,16 +16832,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16407,16 +16911,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16486,16 +16993,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16543,16 +17053,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16617,16 +17130,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16691,16 +17207,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16805,21 +17324,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16890,16 +17413,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16942,16 +17468,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -16994,16 +17523,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -17037,16 +17569,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -17073,16 +17608,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -17113,16 +17651,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -17194,16 +17735,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -17400,21 +17944,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -17566,21 +18114,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -17699,21 +18251,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -17869,21 +18425,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -17979,21 +18539,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18104,21 +18668,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18200,21 +18768,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18404,21 +18976,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18556,21 +19132,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18602,21 +19182,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18639,21 +19223,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18681,21 +19269,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18719,21 +19311,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18757,21 +19353,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18799,16 +19399,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18847,21 +19450,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18885,16 +19492,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -18998,21 +19608,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -19121,21 +19735,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -19163,21 +19781,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -19214,11 +19836,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -19336,11 +19960,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -19640,16 +20266,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -19714,16 +20343,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -20466,11 +21098,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21199,16 +21833,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21395,16 +22032,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21450,11 +22090,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21495,11 +22137,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21549,16 +22193,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21607,16 +22254,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21731,11 +22381,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21789,16 +22441,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21859,16 +22514,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21899,16 +22557,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21948,16 +22609,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -21973,11 +22637,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22016,16 +22682,22 @@ declare const baseRouteSchemas: {
                 }, z.core.$strip>>;
                 disabledAt: z.ZodNullable<z.ZodString>;
                 lastActiveAt: z.ZodNullable<z.ZodString>;
+                registrationState: z.ZodEnum<{
+                    active: "active";
+                    invited: "invited";
+                }>;
             }, z.core.$strip>>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22049,6 +22721,7 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22075,11 +22748,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22122,21 +22797,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22166,16 +22845,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22200,16 +22882,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22237,11 +22922,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22272,21 +22959,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22320,21 +23011,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22366,26 +23061,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22468,36 +23168,43 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22532,11 +23239,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22580,16 +23289,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22693,16 +23405,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22747,16 +23462,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22781,21 +23499,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22837,16 +23559,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22868,16 +23593,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22905,11 +23633,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22944,16 +23674,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -22974,16 +23707,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23008,21 +23744,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23044,21 +23784,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23081,16 +23825,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23115,16 +23862,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23150,16 +23900,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23181,11 +23934,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23204,11 +23959,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23230,6 +23987,7 @@ declare const baseRouteSchemas: {
                 isActive: z.ZodBoolean;
                 expiresAt: z.ZodString;
                 lastUsedAt: z.ZodNullable<z.ZodString>;
+                lastClientVersion: z.ZodNullable<z.ZodString>;
                 createdAt: z.ZodString;
                 revokedAt: z.ZodNullable<z.ZodString>;
                 revokedReason: z.ZodNullable<z.ZodString>;
@@ -23238,16 +23996,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23275,21 +24036,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23316,6 +24081,7 @@ declare const baseRouteSchemas: {
                 isActive: z.ZodBoolean;
                 expiresAt: z.ZodString;
                 lastUsedAt: z.ZodNullable<z.ZodString>;
+                lastClientVersion: z.ZodNullable<z.ZodString>;
                 createdAt: z.ZodString;
                 revokedAt: z.ZodNullable<z.ZodString>;
                 revokedReason: z.ZodNullable<z.ZodString>;
@@ -23324,21 +24090,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23359,16 +24129,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23401,11 +24174,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23429,16 +24204,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23460,16 +24238,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23503,16 +24284,696 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminCreateInvite: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Invite a person: create the account, assign pages and mint a one-time invite link — one transaction";
+        readonly description: string;
+        readonly body: z.ZodObject<{
+            username: z.ZodString;
+            role: z.ZodOptional<z.ZodEnum<{
+                team_lead: "team_lead";
+                chatter: "chatter";
+            }>>;
+            pageLabels: z.ZodArray<z.ZodString>;
+            expiresInHours: z.ZodOptional<z.ZodNumber>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                user: z.ZodObject<{
+                    id: z.ZodNumber;
+                    username: z.ZodString;
+                    role: z.ZodEnum<{
+                        owner: "owner";
+                        team_lead: "team_lead";
+                        chatter: "chatter";
+                        content_manager: "content_manager";
+                    }>;
+                    mustChangePassword: z.ZodBoolean;
+                    assignedPages: z.ZodArray<z.ZodObject<{
+                        id: z.ZodNumber;
+                        label: z.ZodString;
+                        platform: z.ZodEnum<{
+                            fansly: "fansly";
+                            onlyfans: "onlyfans";
+                        }>;
+                        modelSlug: z.ZodString;
+                        modelName: z.ZodString;
+                    }, z.core.$strip>>;
+                    apiKeyStatus: z.ZodNullable<z.ZodObject<{
+                        activeKeyPrefix: z.ZodNullable<z.ZodString>;
+                        activeKeyCount: z.ZodNumber;
+                        activeKeyCreatedAt: z.ZodNullable<z.ZodString>;
+                        activeKeyLastUsedAt: z.ZodNullable<z.ZodString>;
+                    }, z.core.$strip>>;
+                    disabledAt: z.ZodNullable<z.ZodString>;
+                    lastActiveAt: z.ZodNullable<z.ZodString>;
+                    registrationState: z.ZodEnum<{
+                        active: "active";
+                        invited: "invited";
+                    }>;
+                }, z.core.$strip>;
+                link: z.ZodObject<{
+                    id: z.ZodNumber;
+                    kind: z.ZodEnum<{
+                        invite: "invite";
+                        password_reset: "password_reset";
+                    }>;
+                    keyPrefix: z.ZodString;
+                    token: z.ZodString;
+                    expiresAt: z.ZodString;
+                }, z.core.$strip>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminCreateAccountLink: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Create a one-time invite or password-reset link for a user (returned once)";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            username: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            kind: z.ZodEnum<{
+                invite: "invite";
+                password_reset: "password_reset";
+            }>;
+            expiresInHours: z.ZodOptional<z.ZodNumber>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                id: z.ZodNumber;
+                kind: z.ZodEnum<{
+                    invite: "invite";
+                    password_reset: "password_reset";
+                }>;
+                keyPrefix: z.ZodString;
+                token: z.ZodString;
+                expiresAt: z.ZodString;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminListAccountLinks: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "List a user's invite and password-reset links with their state";
+        readonly params: z.ZodObject<{
+            username: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodArray<z.ZodObject<{
+                id: z.ZodNumber;
+                kind: z.ZodEnum<{
+                    invite: "invite";
+                    password_reset: "password_reset";
+                }>;
+                keyPrefix: z.ZodString;
+                state: z.ZodEnum<{
+                    active: "active";
+                    expired: "expired";
+                    revoked: "revoked";
+                    used: "used";
+                }>;
+                expiresAt: z.ZodString;
+                usedAt: z.ZodNullable<z.ZodString>;
+                revokedAt: z.ZodNullable<z.ZodString>;
+                revokedReason: z.ZodNullable<z.ZodString>;
+                createdAt: z.ZodString;
+                createdBy: z.ZodNullable<z.ZodNumber>;
+            }, z.core.$strip>>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminRevokeAccountLink: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Revoke one of a user's links (idempotent on an already inactive link)";
+        readonly params: z.ZodObject<{
+            username: z.ZodString;
+            linkId: z.ZodCoercedNumber<unknown>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                id: z.ZodNumber;
+                kind: z.ZodEnum<{
+                    invite: "invite";
+                    password_reset: "password_reset";
+                }>;
+                keyPrefix: z.ZodString;
+                state: z.ZodEnum<{
+                    active: "active";
+                    expired: "expired";
+                    revoked: "revoked";
+                    used: "used";
+                }>;
+                expiresAt: z.ZodString;
+                usedAt: z.ZodNullable<z.ZodString>;
+                revokedAt: z.ZodNullable<z.ZodString>;
+                revokedReason: z.ZodNullable<z.ZodString>;
+                createdAt: z.ZodString;
+                createdBy: z.ZodNullable<z.ZodNumber>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminRevokeDeviceToken: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Revoke ONE of a user's device tokens (\"revoke this sign-in\")";
+        readonly params: z.ZodObject<{
+            username: z.ZodString;
+            tokenId: z.ZodCoercedNumber<unknown>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                revoked: z.ZodLiteral<true>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminTerminateAllAccess: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Terminate every sign-in of a user: device tokens, reservations, sessions, API keys and active links";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            username: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                deviceTokens: z.ZodNumber;
+                sessions: z.ZodNumber;
+                apiKeys: z.ZodNumber;
+                links: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly authInspectAccountLink: {
+        readonly auth: {
+            readonly kind: "public";
+        };
+        readonly tags: readonly ["auth"];
+        readonly summary: "Inspect an invite / password-reset link before redeeming it";
+        readonly description: string;
+        readonly body: z.ZodObject<{
+            token: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodDiscriminatedUnion<[z.ZodObject<{
+                state: z.ZodLiteral<"active">;
+                kind: z.ZodEnum<{
+                    invite: "invite";
+                    password_reset: "password_reset";
+                }>;
+                username: z.ZodString;
+                expiresAt: z.ZodString;
+                platforms: z.ZodArray<z.ZodEnum<{
+                    fansly: "fansly";
+                    onlyfans: "onlyfans";
+                }>>;
+            }, z.core.$strip>, z.ZodObject<{
+                state: z.ZodEnum<{
+                    expired: "expired";
+                    revoked: "revoked";
+                    used: "used";
+                }>;
+            }, z.core.$strip>], "state">;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 429: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly authRedeemAccountLink: {
+        readonly auth: {
+            readonly kind: "public";
+        };
+        readonly tags: readonly ["auth"];
+        readonly summary: "Redeem a link: set the password (invite) or reset it and terminate every sign-in (password_reset)";
+        readonly description: string;
+        readonly body: z.ZodObject<{
+            token: z.ZodString;
+            password: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                username: z.ZodString;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 429: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly authIssueDeviceTokenWithPassword: {
+        readonly auth: {
+            readonly kind: "public";
+        };
+        readonly tags: readonly ["auth"];
+        readonly summary: "Sign in a device with username + password: issue a device token (active) or a reservation (pending) — no cookie";
+        readonly description: string;
+        readonly body: z.ZodObject<{
+            username: z.ZodString;
+            password: z.ZodString;
+            label: z.ZodString;
+            mode: z.ZodEnum<{
+                pending: "pending";
+                active: "active";
+            }>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodDiscriminatedUnion<[z.ZodObject<{
+                token: z.ZodString;
+                id: z.ZodNumber;
+                label: z.ZodString;
+                keyPrefix: z.ZodString;
+                expiresAt: z.ZodString;
+                mode: z.ZodLiteral<"active">;
+            }, z.core.$strip>, z.ZodObject<{
+                token: z.ZodString;
+                reservationId: z.ZodNumber;
+                label: z.ZodString;
+                keyPrefix: z.ZodString;
+                reservationExpiresAt: z.ZodString;
+                mode: z.ZodLiteral<"pending">;
+            }, z.core.$strip>], "mode">;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 429: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly authListDevices: {
+        readonly auth: {
+            readonly kind: "any-session";
+        };
+        readonly tags: readonly ["auth"];
+        readonly summary: "List the caller's live devices (active device tokens)";
+        readonly response: {
+            readonly 200: z.ZodArray<z.ZodObject<{
+                id: z.ZodNumber;
+                label: z.ZodString;
+                keyPrefix: z.ZodString;
+                lastClientVersion: z.ZodNullable<z.ZodString>;
+                expiresAt: z.ZodString;
+                lastUsedAt: z.ZodNullable<z.ZodString>;
+                createdAt: z.ZodString;
+            }, z.core.$strip>>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly authRevokeDevice: {
+        readonly auth: {
+            readonly kind: "any-session";
+        };
+        readonly tags: readonly ["auth"];
+        readonly summary: "Sign out one of the caller's own devices";
+        readonly params: z.ZodObject<{
+            deviceId: z.ZodCoercedNumber<unknown>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                revoked: z.ZodLiteral<true>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly authRevokeAllDevices: {
+        readonly auth: {
+            readonly kind: "any-session";
+        };
+        readonly tags: readonly ["auth"];
+        readonly summary: "Sign out on all devices: every device token and reservation, every session except the current one";
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                deviceTokens: z.ZodNumber;
+                sessions: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly authMyUsage: {
+        readonly auth: {
+            readonly kind: "any-session";
+        };
+        readonly tags: readonly ["auth"];
+        readonly summary: "The caller's own AI usage: totals, feature breakdown and a daily series";
+        readonly querystring: z.ZodObject<{
+            from: z.ZodOptional<z.ZodString>;
+            to: z.ZodOptional<z.ZodString>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                range: z.ZodObject<{
+                    from: z.ZodString;
+                    to: z.ZodString;
+                    timeZone: z.ZodString;
+                }, z.core.$strip>;
+                row: z.ZodObject<{
+                    username: z.ZodString;
+                    cost: z.ZodObject<{
+                        microUsd: z.ZodNumber;
+                        approximate: z.ZodBoolean;
+                    }, z.core.$strip>;
+                    tokenCounts: z.ZodObject<{
+                        input: z.ZodNumber;
+                        output: z.ZodNumber;
+                        cacheWrite: z.ZodNumber;
+                        cacheRead: z.ZodNumber;
+                        cacheTotal: z.ZodNumber;
+                    }, z.core.$strip>;
+                    regenerateRatePct: z.ZodNumber;
+                    gateway: z.ZodObject<{
+                        requestCount: z.ZodNumber;
+                        completedCount: z.ZodNumber;
+                        failedCount: z.ZodNumber;
+                        cancelledCount: z.ZodNumber;
+                        quotaDeniedCount: z.ZodNumber;
+                        openReservationCount: z.ZodNumber;
+                        providerBreakdown: z.ZodArray<z.ZodObject<{
+                            provider: z.ZodEnum<{
+                                anthropic: "anthropic";
+                                openrouter: "openrouter";
+                            }>;
+                            requestCount: z.ZodNumber;
+                            costMicroUsd: z.ZodNumber;
+                        }, z.core.$strip>>;
+                    }, z.core.$strip>;
+                    totalGenerations: z.ZodNumber;
+                    topFeature: z.ZodNullable<z.ZodObject<{
+                        feature: z.ZodEnum<{
+                            "fast-reply": "fast-reply";
+                            "improve-draft": "improve-draft";
+                            "help-me": "help-me";
+                            "fan-summary": "fan-summary";
+                            "chat-review": "chat-review";
+                            scan: "scan";
+                            ping: "ping";
+                            "hi-greeting": "hi-greeting";
+                            "workboard-closing": "workboard-closing";
+                            "coach-chat": "coach-chat";
+                            "voice-script": "voice-script";
+                        }>;
+                        requestCount: z.ZodNumber;
+                        sharePct: z.ZodNumber;
+                    }, z.core.$strip>>;
+                    featureBreakdown: z.ZodArray<z.ZodObject<{
+                        feature: z.ZodEnum<{
+                            "fast-reply": "fast-reply";
+                            "improve-draft": "improve-draft";
+                            "help-me": "help-me";
+                            "fan-summary": "fan-summary";
+                            "chat-review": "chat-review";
+                            scan: "scan";
+                            ping: "ping";
+                            "hi-greeting": "hi-greeting";
+                            "workboard-closing": "workboard-closing";
+                            "coach-chat": "coach-chat";
+                            "voice-script": "voice-script";
+                        }>;
+                        requestCount: z.ZodNumber;
+                        sharePct: z.ZodNumber;
+                        tokenCounts: z.ZodObject<{
+                            input: z.ZodNumber;
+                            output: z.ZodNumber;
+                            cacheWrite: z.ZodNumber;
+                            cacheRead: z.ZodNumber;
+                            cacheTotal: z.ZodNumber;
+                        }, z.core.$strip>;
+                        costMicroUsd: z.ZodNumber;
+                        costApproximate: z.ZodBoolean;
+                        regenerateRatePct: z.ZodNumber;
+                    }, z.core.$strip>>;
+                    warning: z.ZodBoolean;
+                }, z.core.$strip>;
+                daily: z.ZodArray<z.ZodObject<{
+                    date: z.ZodString;
+                    requestCount: z.ZodNumber;
+                    costMicroUsd: z.ZodNumber;
+                }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23550,11 +25011,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23590,11 +25053,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23630,11 +25095,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23710,16 +25177,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23757,21 +25227,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23836,26 +25310,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23920,21 +25399,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -23999,21 +25482,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24078,26 +25565,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24144,26 +25636,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24203,26 +25700,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24265,26 +25767,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24303,11 +25810,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24373,11 +25882,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24399,11 +25910,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24427,16 +25940,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24464,21 +25980,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24499,21 +26019,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24553,11 +26077,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24650,26 +26176,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24718,21 +26249,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24753,16 +26288,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24812,16 +26350,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24846,16 +26387,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24882,21 +26426,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24944,21 +26492,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -24992,11 +26544,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25028,11 +26582,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25060,11 +26616,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25106,11 +26664,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25153,11 +26713,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25209,11 +26771,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25232,11 +26796,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25262,16 +26828,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25374,11 +26943,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25399,16 +26970,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25427,11 +27001,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25451,11 +27027,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25487,11 +27065,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25598,11 +27178,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25632,21 +27214,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25672,21 +27258,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25717,21 +27307,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25822,21 +27416,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -25965,21 +27563,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -26055,21 +27657,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -26162,16 +27768,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -26305,21 +27914,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -26413,21 +28026,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -26506,21 +28123,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -26590,21 +28211,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -26656,26 +28281,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -26710,11 +28340,13 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -26737,16 +28369,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -27651,21 +29286,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -28550,26 +30189,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -29980,26 +31624,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -30952,26 +32601,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -31931,26 +33585,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -32931,31 +34590,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -33855,26 +35520,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -34970,26 +36640,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -35015,6 +36690,7 @@ declare const baseRouteSchemas: {
                 pull: "pull";
                 client_capture: "client_capture";
                 ofapi_capture: "ofapi_capture";
+                fansly_ws: "fansly_ws";
             }>>;
             kind: z.ZodOptional<z.ZodString>;
             producer: z.ZodOptional<z.ZodString>;
@@ -35044,6 +36720,7 @@ declare const baseRouteSchemas: {
                         pull: "pull";
                         client_capture: "client_capture";
                         ofapi_capture: "ofapi_capture";
+                        fansly_ws: "fansly_ws";
                     }>;
                     producer: z.ZodString;
                     platform: z.ZodNullable<z.ZodEnum<{
@@ -35584,26 +37261,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -35631,6 +37313,7 @@ declare const baseRouteSchemas: {
                     pull: "pull";
                     client_capture: "client_capture";
                     ofapi_capture: "ofapi_capture";
+                    fansly_ws: "fansly_ws";
                 }>;
                 receivedAt: z.ZodString;
                 payloadSha256: z.ZodString;
@@ -36173,31 +37856,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -37191,31 +38880,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -37960,36 +39655,43 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -38622,31 +40324,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -39300,36 +41008,43 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -39972,26 +41687,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -40009,21 +41729,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 revision: z.ZodNumber;
@@ -40190,21 +41914,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 revision: z.ZodNumber;
@@ -40286,21 +42014,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 revision: z.ZodNumber;
@@ -40343,21 +42075,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -40382,21 +42118,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -40425,21 +42165,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -40467,31 +42211,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 jobId: z.ZodString;
@@ -40519,31 +42269,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 materialId: z.ZodString;
@@ -40572,31 +42328,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 pageId: z.ZodNumber;
@@ -40684,31 +42446,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodUUID;
@@ -40743,31 +42511,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 dryRun: z.ZodBoolean;
@@ -40796,31 +42570,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 rows: z.ZodArray<z.ZodObject<{
@@ -40861,31 +42641,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 rows: z.ZodArray<z.ZodObject<{
@@ -40929,31 +42715,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 dryRun: z.ZodBoolean;
@@ -41010,31 +42802,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 dryRun: z.ZodBoolean;
@@ -41072,31 +42870,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 jobs: z.ZodArray<z.ZodObject<{
@@ -41151,31 +42955,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 jobId: z.ZodString;
@@ -41204,31 +43014,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 dryRun: z.ZodBoolean;
@@ -41258,31 +43074,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 jobId: z.ZodString;
@@ -41312,31 +43134,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 pageId: z.ZodNumber;
@@ -41377,31 +43205,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 pageId: z.ZodNumber;
@@ -41482,16 +43316,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -41552,16 +43389,19 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
         };
     };
@@ -41587,26 +43427,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 snapshotId: z.ZodNumber;
@@ -41662,26 +43507,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 credentialFingerprint: z.ZodString;
@@ -41741,26 +43591,31 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 credentialFingerprint: z.ZodString;
@@ -41802,21 +43657,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodNullable<z.ZodObject<{
                 version: z.ZodString;
@@ -41843,21 +43702,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodNullable<z.ZodObject<{
                 version: z.ZodString;
@@ -41887,21 +43750,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 version: z.ZodNullable<z.ZodString>;
@@ -41933,21 +43800,25 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 version: z.ZodString;
@@ -41975,31 +43846,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 resources: z.ZodArray<z.ZodObject<{
@@ -42189,31 +44066,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 resources: z.ZodArray<z.ZodObject<{
@@ -42540,31 +44423,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -42646,31 +44535,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -42748,31 +44643,37 @@ declare const baseRouteSchemas: {
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 resources: z.ZodArray<z.ZodObject<{
@@ -43092,6 +44993,20 @@ export type SpenderListResponse = z.infer<typeof spenderListResponseSchema>;
 export type SpenderSeriesQuery = z.infer<typeof spenderSeriesQuerySchema>;
 export type SpenderSeriesResponse = z.infer<typeof spenderSeriesResponseSchema>;
 export type AdminCreateUserBody = z.infer<typeof adminCreateUserBodySchema>;
+export type AdminCreateInviteBody = z.infer<typeof adminCreateInviteBodySchema>;
+export type AdminCreateInviteResponse = z.infer<typeof adminCreateInviteResponseSchema>;
+export type AdminCreateAccountLinkBody = z.infer<typeof adminCreateAccountLinkBodySchema>;
+export type AccountLinkItem = z.infer<typeof accountLinkItemSchema>;
+export type AccountLinkKind = z.infer<typeof accountLinkKindEnum>;
+export type AccountLinkState = z.infer<typeof accountLinkStateEnum>;
+export type IssuedAccountLink = z.infer<typeof issuedAccountLinkSchema>;
+export type AuthInspectAccountLinkResponse = z.infer<typeof authInspectAccountLinkResponseSchema>;
+export type AuthRedeemAccountLinkBody = z.infer<typeof authRedeemAccountLinkBodySchema>;
+export type AuthIssueDeviceTokenWithPasswordBody = z.infer<typeof authIssueDeviceTokenWithPasswordBodySchema>;
+export type AuthIssueDeviceTokenWithPasswordResponse = z.infer<typeof authIssueDeviceTokenWithPasswordResponseSchema>;
+export type OwnDeviceItem = z.infer<typeof ownDeviceItemSchema>;
+export type AuthMyUsageResponse = z.infer<typeof authMyUsageResponseSchema>;
+export type AdminTerminateAllAccessResponse = z.infer<typeof adminTerminateAllAccessResponseSchema>;
 export type AdminSetPasswordBody = z.infer<typeof adminSetPasswordBodySchema>;
 export type AdminAssignPageBody = z.infer<typeof adminAssignPageBodySchema>;
 export type AdminIssueApiKeyBody = z.infer<typeof adminIssueApiKeyBodySchema>;

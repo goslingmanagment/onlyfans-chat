@@ -307,31 +307,32 @@ describe('evaluateAiGate', () => {
     expect(evaluateAiGate({ mapped: true, hasLlmKey: true })).toEqual({ ok: true });
   });
 
-  it('Stage 31: a hub connection IS the AI configuration (vendor keys retired)', () => {
+  it('Stage 31 / D35: the signed-in device IS the AI configuration', () => {
     expect(
-      hasConfiguredAiTransport({ hasHubKey: true, hubApiKeyBindingState: 'bound', hasHubDeviceToken: false, hubDeviceTokenBindingState: 'none', hubBaseUrl: 'https://hub.example.com' }),
+      hasConfiguredAiTransport({
+        hasHubDeviceToken: true,
+        hubDeviceTokenBindingState: 'bound',
+        hubBaseUrl: 'https://hub.example.com',
+      }),
     ).toBe(true);
     expect(
-      hasConfiguredAiTransport({ hasHubKey: false, hubApiKeyBindingState: 'none', hasHubDeviceToken: false, hubDeviceTokenBindingState: 'none', hubBaseUrl: 'https://hub.example.com' }),
+      hasConfiguredAiTransport({
+        hasHubDeviceToken: false,
+        hubDeviceTokenBindingState: 'none',
+        hubBaseUrl: 'https://hub.example.com',
+      }),
     ).toBe(false);
     expect(
-      hasConfiguredAiTransport({ hasHubKey: true, hubApiKeyBindingState: 'bound', hasHubDeviceToken: false, hubDeviceTokenBindingState: 'none', hubBaseUrl: null }),
+      hasConfiguredAiTransport({
+        hasHubDeviceToken: true,
+        hubDeviceTokenBindingState: 'bound',
+        hubBaseUrl: null,
+      }),
     ).toBe(false);
   });
 
-  it('0.1.31 audit fix: a device token ALONE configures AI (no legacy key needed)', () => {
-    expect(
-      hasConfiguredAiTransport({ hasHubKey: false, hubApiKeyBindingState: 'none', hasHubDeviceToken: true, hubDeviceTokenBindingState: 'bound', hubBaseUrl: 'https://hub.example.com' }),
-    ).toBe(true);
-    expect(
-      hasConfiguredAiTransport({ hasHubKey: false, hubApiKeyBindingState: 'none', hasHubDeviceToken: true, hubDeviceTokenBindingState: 'bound', hubBaseUrl: null }),
-    ).toBe(false);
-  });
-
-  it('does not enable AI for legacy credentials without a proven Hub binding', () => {
+  it('does not enable AI for a credential without a proven Hub binding', () => {
     expect(hasConfiguredAiTransport({
-      hasHubKey: true,
-      hubApiKeyBindingState: 'unbound',
       hasHubDeviceToken: true,
       hubDeviceTokenBindingState: 'mismatch',
       hubBaseUrl: 'https://hub.example.com',

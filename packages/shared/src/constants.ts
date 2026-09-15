@@ -131,7 +131,6 @@ export const DEFAULT_FEATURE_REASONING: Record<ModelSelectableFeature, Reasoning
 export interface Settings {
   ofapiApiKey: string;
   agencyHubBaseUrl: string;
-  agencyHubApiKey: string;
   quickMessageCount: number;
   pingMessageCount: number;
   improveMessageCount: number;
@@ -146,7 +145,6 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   ofapiApiKey: '',
   agencyHubBaseUrl: '',
-  agencyHubApiKey: '',
   quickMessageCount: QUICK_DEFAULT_MESSAGE_COUNT,
   pingMessageCount: PING_DEFAULT_MESSAGE_COUNT,
   improveMessageCount: IMPROVE_DEFAULT_MESSAGE_COUNT,

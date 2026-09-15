@@ -46,11 +46,9 @@ function resetAiStore(): void {
 function makeQueryClient(): QueryClient {
   const queryClient = new QueryClient();
   queryClient.setQueryData(qk.settings, {
-    // Stage 31: a hub connection IS the AI configuration.
-    hasHubKey: true,
-    hubApiKeyBindingState: 'bound',
-    hasHubDeviceToken: false,
-    hubDeviceTokenBindingState: 'none',
+    // Stage 31 / D35: the signed-in device IS the AI configuration.
+    hasHubDeviceToken: true,
+    hubDeviceTokenBindingState: 'bound',
     hubBaseUrl: 'https://hub.example.com',
     defaultReplyTone: 'casual',
   } as SettingsVM);

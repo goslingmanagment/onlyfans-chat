@@ -21,26 +21,31 @@ export declare const ofapiVendorRouteSchemas: {
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 401: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 403: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 409: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 503: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 200: import("zod").ZodObject<{
                 snapshotId: import("zod").ZodNumber;
@@ -96,26 +101,31 @@ export declare const ofapiVendorRouteSchemas: {
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 401: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 403: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 409: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 503: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 200: import("zod").ZodObject<{
                 credentialFingerprint: import("zod").ZodString;
@@ -175,26 +185,31 @@ export declare const ofapiVendorRouteSchemas: {
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 401: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 403: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 409: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 503: import("zod").ZodObject<{
                 error: import("zod").ZodString;
                 message: import("zod").ZodString;
                 statusCode: import("zod").ZodNumber;
+                reason: import("zod").ZodOptional<import("zod").ZodString>;
             }, import("zod/v4/core").$strip>;
             readonly 200: import("zod").ZodObject<{
                 credentialFingerprint: import("zod").ZodString;

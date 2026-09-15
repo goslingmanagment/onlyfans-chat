@@ -571,7 +571,7 @@ export const agentMembershipStateEnum = z.enum(["active", "inactive", "unknown"]
  * whose vendored runtime schema still carries the old `z.literal`.
  */
 export const agentExportPolicyEnum = z.enum(agentExportPolicyValues);
-/** = `syncStreamEnum` (schema.ts), exactly seventeen. */
+/** = `syncStreamEnum` (schema.ts), exactly eightteen. */
 export const agentSyncStreamEnum = z.enum([
     "light",
     "fan_identities",
@@ -601,6 +601,7 @@ export const agentObservationSourceEnum = z.enum([
     "command_result",
     "operator",
     "ofapi_capture",
+    "fansly_ws",
 ]);
 // ---------------------------------------------------------------------------
 // #1 agentCapabilities — GET /api/v1/agent/capabilities

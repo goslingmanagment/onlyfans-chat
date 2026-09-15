@@ -335,6 +335,16 @@ export function useHubDeviceTokenIssue() {
       // actually changed; that committed event owns any global AI reset.
       endAiHubOriginChange();
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
+      // D35 §9 п.9: a new identity must not inherit the previous one's
+      // workspace from cache. Main already hides its granted rows; drop the
+      // renderer's copy of them (and everything keyed by them) so the screen
+      // rebuilds from the first successful reconcile under this identity.
+      void queryClient.invalidateQueries({ queryKey: qk.accounts });
+      void queryClient.invalidateQueries({ queryKey: ['chats'] });
+      void queryClient.invalidateQueries({ queryKey: ['chats-paged'] });
+      void queryClient.invalidateQueries({ queryKey: ['messages'] });
+      void queryClient.invalidateQueries({ queryKey: ['fan'] });
+      void queryClient.invalidateQueries({ queryKey: qk.personalities });
     },
   });
 }
@@ -631,8 +641,7 @@ export function useUpdateSettings() {
   return useMutation({
     mutationFn: (patch: SettingsPatch) => getBridge().invoke('cmd:settings.update', patch),
     onMutate: (patch) => {
-      const blocksAi = 'hubBaseUrl' in patch
-        || 'hubApiKey' in patch;
+      const blocksAi = 'hubBaseUrl' in patch;
       if (blocksAi) beginAiHubOriginChange();
       return { blocksAi };
     },
@@ -640,7 +649,7 @@ export function useUpdateSettings() {
       queryClient.setQueryData(qk.settings, settings);
       void queryClient.invalidateQueries({ queryKey: qk.syncStatus });
       void queryClient.invalidateQueries({ queryKey: qk.activity });
-      if ('hubBaseUrl' in patch || 'hubApiKey' in patch) {
+      if ('hubBaseUrl' in patch) {
         // Hub replacement swaps the scoped catalog + mappings. Main's
         // runtime.aiContext event separately resets jobs only when its exact
         // origin/principal fingerprint actually changed.

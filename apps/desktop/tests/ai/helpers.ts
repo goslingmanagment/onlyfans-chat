@@ -46,10 +46,10 @@ export function memoryDataLayer(): DataLayer {
 
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
-    hasHubKey: true,
-    hubApiKeyBindingState: 'bound',
-    hasHubDeviceToken: false,
-    hubDeviceTokenBindingState: 'none',
+    hubSignedOutReason: null,
+    accountGrantsReconciled: true,
+    hasHubDeviceToken: true,
+    hubDeviceTokenBindingState: 'bound',
     hubDeviceTokenTransition: null,
     hubDeviceIdentity: null,
     appVersion: '0.0.0-test',
@@ -84,9 +84,6 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     uiLocale: 'system',
     uiScale: 1,
     uiTheme: 'light',
-    keyMeta: {
-      hub: { last4: 'core', setAt: 0 },
-    },
     featureModels: { ...DEFAULT_FEATURE_MODELS },
     featureReasoning: { ...DEFAULT_FEATURE_REASONING },
     quickMessageCount: 5,
@@ -113,21 +110,18 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
 }
 
 export function makeSettingsStore(vm: SettingsVM): SettingsStore {
-  const hubApiKey = vm.hasHubKey ? 'agency_hub_core_test' : null;
   const deviceToken = vm.hasHubDeviceToken ? 'agency_hub_device_test' : null;
   return {
     get: () => Promise.resolve(vm),
     getHubConnection: () => Promise.resolve({
       settings: vm,
       hubBaseUrl: vm.hubBaseUrl,
-      bearer: deviceToken ?? hubApiKey,
+      bearer: deviceToken,
       deviceToken,
-      hubApiKey,
       deviceTokenTransition: null,
     }),
     update: () => Promise.resolve(vm),
     runCredentialMutation: (task) => task(),
-    decommissionQuarantinedHubKey: () => Promise.resolve(false),
     backfillHubDeviceIdentity: () => Promise.resolve(false),
   };
 }

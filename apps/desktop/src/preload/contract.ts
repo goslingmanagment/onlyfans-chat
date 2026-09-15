@@ -18,6 +18,7 @@ import type { LogLevel } from '@chatgoose/shared/diagnostics/log';
 import type { HubModeOverrideSetting } from '@chatgoose/shared/hub/mode';
 import type { UiLocaleSetting } from '@chatgoose/shared/i18n/index';
 import type { UiThemeSetting } from '@chatgoose/shared/theme';
+import type { UserFacingError } from '@chatgoose/shared/errors/index';
 import type {
   GuardCategory,
   GuardVerdict,
@@ -365,9 +366,6 @@ export type HubCredentialBindingState =
   | 'unreadable';
 
 export interface SettingsVM {
-  hasHubKey: boolean;
-  /** Whether the encrypted Hub key is proven to belong to the saved origin. */
-  hubApiKeyBindingState: HubCredentialBindingState;
   featureModels: Record<ModelSelectableFeature, string>;
   featureReasoning: Record<ModelSelectableFeature, ReasoningEffort>;
   quickMessageCount: number;
@@ -417,7 +415,7 @@ export interface SettingsVM {
   aiGatewayTransport: 'feature';
   /** Dev/support-only sync override. Default 'auto'; non-auto persists across restarts. */
   hubModeOverride: HubModeOverrideSetting;
-  /** Stage 24: a device-bound hub token is stored (preferred over the chatter key). */
+  /** Stage 24: this machine holds its own hub bearer (D35: the only one). */
   hasHubDeviceToken: boolean;
   /** Whether the encrypted device token is proven to belong to the saved origin. */
   hubDeviceTokenBindingState: HubCredentialBindingState;
@@ -432,6 +430,17 @@ export interface SettingsVM {
    * как {username} · устройство {label}"). Null while no device custody exists.
    */
   hubDeviceIdentity: HubDeviceIdentityVM | null;
+  /**
+   * D35: why this machine is signed out, for the sign-in screen's banner.
+   * Non-null only while no device custody exists; display-only.
+   */
+  hubSignedOutReason: 'token_revoked' | 'token_expired' | null;
+  /**
+   * D35: true once the CURRENT identity has committed an authoritative grant
+   * snapshot on this machine. An empty account list before that is "not loaded
+   * yet"; after it, the account genuinely has no OnlyFans pages.
+   */
+  accountGrantsReconciled: boolean;
   /** Running app version (Hub diagnostics row); read-only in the VM. */
   appVersion: string;
   /** Machine hostname — a machine property, independent of any credential. */
@@ -480,26 +489,11 @@ export interface SettingsVM {
   uiScale: number;
   /** Color theme; 'system' follows the OS color scheme at runtime. */
   uiTheme: UiThemeSetting;
-  /**
-   * Non-secret fingerprints of stored keys ({last4, setAt}) recorded when a key
-   * is saved — read-only in the VM (not patchable), null when never recorded.
-   */
-  keyMeta: KeyMetaVM;
 }
 
-export interface KeyMetaEntry {
-  last4: string;
-  /** Epoch ms when the key was last saved. */
-  setAt: number;
-}
-
-export interface KeyMetaVM {
-  hub: KeyMetaEntry | null;
-}
-
-/** D19: who signed this machine in, for display only. Never carries the token
- * (only its last-4 fingerprint, keyMeta convention). Dates are null when the
- * record was rebuilt by crash recovery — the UI omits them rather than guess. */
+/** D19: who signed this machine in, for display only. Never carries the bearer
+ * (only its last-4 fingerprint). Dates are null when the record was rebuilt by
+ * crash recovery — the UI omits them rather than guess. */
 export interface HubDeviceIdentityVM {
   username: string | null;
   label: string;
@@ -517,6 +511,16 @@ export interface HubDeviceTokenResultVM {
   label: string;
   expiresAt: string;
 }
+
+/**
+ * D35: sign-in answers with an outcome, never a rejected invoke. An Electron
+ * invoke rejection reaches the renderer as an opaque, already-prefixed English
+ * Error, and the first-run screen has to show a localized CG-HUB-2x line — so
+ * main maps the failure to the registry here, exactly like `cmd:keys.test`.
+ */
+export type HubSignInResultVM =
+  | ({ ok: true } & HubDeviceTokenResultVM)
+  | { ok: false; error: UserFacingError };
 
 /** Result of probing a STORED key (cmd:keys.test). Never carries key material. */
 export interface KeyTestResultVM {
@@ -603,20 +607,17 @@ export interface AiFeatureCostsVM {
 export type SettingsPatch = Partial<
   Omit<
     SettingsVM,
-    | 'hasHubKey'
-    | 'hubApiKeyBindingState'
     | 'hasHubDeviceToken'
     | 'hubDeviceTokenBindingState'
+    | 'hubDeviceTokenTransition'
     | 'hubDeviceIdentity'
+    | 'hubSignedOutReason'
+    | 'accountGrantsReconciled'
     | 'appVersion'
     | 'machineLabel'
     | 'osPlatform'
-    | 'keyMeta'
   >
-> & {
-  /** Chatter key (`agency_hub_core_…`) — write-only into the keychain. */
-  hubApiKey?: string;
-};
+>;
 
 export interface AiStartRequest {
   operationId: string;
@@ -924,7 +925,7 @@ export interface InvokeChannels extends FollowersChannels {
   /** Stage 24: one-time hub sign-in — trades username+password for a keychain-held device token. */
   'cmd:hub.issueDeviceToken': {
     args: { username: string; password: string };
-    result: HubDeviceTokenResultVM;
+    result: HubSignInResultVM;
   };
   /** Stage 24 recovery: deletes the device token from the keychain (Settings → Hub). */
   'cmd:hub.signOutDevice': { args: void; result: void };

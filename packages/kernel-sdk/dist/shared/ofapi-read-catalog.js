@@ -40,7 +40,7 @@ read("fans_expired", "fans/expired", "profile_notifications", "list", "offset", 
     "filter[duration]": text,
     "filter[max_total_spent]": "int:0:1000000000",
 }, { defaultCollect: true });
-read("fans_latest", "fans/latest", "profile_notifications", "users", "offset", {
+read("fans_latest", "fans/latest", "core_audience", "users", "offset", {
     ...page,
     ...dates,
     type: "enum:total|renew|new",

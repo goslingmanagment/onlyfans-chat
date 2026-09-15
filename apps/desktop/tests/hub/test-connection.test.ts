@@ -25,6 +25,42 @@ function fetchReturning(status: number, body = ME_BODY) {
 }
 
 describe('probeHubConnection', () => {
+  it('counts ONLY OnlyFans pages — this app cannot open a Fansly one (D35)', async () => {
+    const mixed = JSON.stringify({
+      authMethod: 'device_token',
+      user: {
+        id: 17,
+        username: 'grisha',
+        role: 'chatter',
+        assignedPages: [
+          { id: 1, label: 'loravie', platform: 'onlyfans', modelSlug: 'lora', modelName: 'Lora' },
+          { id: 2, label: 'ari', platform: 'fansly', modelSlug: 'ari', modelName: 'Ari' },
+          { id: 3, label: 'lilly', platform: 'fansly', modelSlug: 'lilly', modelName: 'Lilly' },
+        ],
+      },
+    });
+    const impl: HubProbeFetch = () => Promise.resolve(new Response(mixed, { status: 200 }));
+    await expect(probeHubConnection('https://hub.example.com', 'agency_hub_device_k', impl))
+      .resolves.toEqual({ username: 'grisha', role: 'chatter', pages: 1 });
+  });
+
+  it('reports zero pages for a chatter with no OnlyFans work at all', async () => {
+    const fanslyOnly = JSON.stringify({
+      authMethod: 'device_token',
+      user: {
+        id: 17,
+        username: 'grisha',
+        role: 'chatter',
+        assignedPages: [
+          { id: 2, label: 'ari', platform: 'fansly', modelSlug: 'ari', modelName: 'Ari' },
+        ],
+      },
+    });
+    const impl: HubProbeFetch = () => Promise.resolve(new Response(fanslyOnly, { status: 200 }));
+    await expect(probeHubConnection('https://hub.example.com', 'agency_hub_device_k', impl))
+      .resolves.toMatchObject({ pages: 0 });
+  });
+
   it('GETs {base}/api/v1/auth/me (trailing slash trimmed) and returns the principal', async () => {
     const { impl, urls } = fetchReturning(200);
     const result = await probeHubConnection('https://hub.example.com/', 'agency_hub_core_k', impl);
