@@ -146,6 +146,17 @@ describe('issueHubDeviceToken', () => {
       hubBaseUrl: 'https://hub.test',
       tokenDigest: deviceTokenDigest(PENDING.token),
     });
+    // D35: the identity is no longer display-only — it stamps the grant cache
+    // (grant-owner.ts), so an activation that forgot to write it would let the
+    // next person inherit this one's workspace.
+    expect(readHubDeviceIdentity(storage.settings)).toEqual({
+      version: 1,
+      username: 'anton',
+      label: 'test-machine',
+      tokenLast4: PENDING.token.slice(-4),
+      issuedAt: expect.any(String),
+      expiresAt: ACTIVATED.expiresAt,
+    });
   });
 
   it('stamps x-client-version on the password sign-in and the activation', async () => {
@@ -1029,8 +1040,11 @@ describe('durable device-token revocation', () => {
     })).resolves.toBe('revoked');
     expect(storage.secrets.has('hubDeviceToken')).toBe(false);
     expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(false);
-    expect(storage.secrets.get('hubApiKey')).toBe('agency_hub_core_fallback');
     expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(false);
+    // Sign-out takes the identity with it: a surviving record would stamp the
+    // next person's reconcile with the previous person's username.
+    expect(readHubDeviceIdentity(storage.settings)).toBeNull();
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_BINDING_KEY)).toBe(false);
   });
 
   it('keeps exact custody and journal quarantined while offline', async () => {
@@ -1395,5 +1409,7 @@ describe('durable device-token revocation', () => {
     expect(storage.secrets.has('hubDeviceTokenRevoking')).toBe(false);
     expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(false);
     expect(storage.journals.has(HUB_DEVICE_TOKEN_REVOCATION_KEY)).toBe(false);
+    expect(readHubDeviceIdentity(storage.settings)).toBeNull();
+    expect(storage.journals.has(HUB_DEVICE_TOKEN_BINDING_KEY)).toBe(false);
   });
 });

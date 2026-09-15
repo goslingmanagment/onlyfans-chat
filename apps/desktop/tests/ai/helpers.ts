@@ -47,6 +47,7 @@ export function memoryDataLayer(): DataLayer {
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
     hubSignedOutReason: null,
+    accountGrantsReconciled: true,
     hasHubDeviceToken: true,
     hubDeviceTokenBindingState: 'bound',
     hubDeviceTokenTransition: null,

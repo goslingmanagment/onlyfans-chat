@@ -1146,6 +1146,11 @@ export const UI_MESSAGES = {
   'inbox.filterUnread': { en: 'Unread', ru: 'Непрочитанные' },
   'inbox.filterTips': { en: 'Tips', ru: 'Чаевые' },
   // D35: zero granted OnlyFans pages is an account fact, not an empty inbox.
+  'inbox.pagesLoadingTitle': { en: 'Loading your pages…', ru: 'Загружаем ваши страницы…' },
+  'inbox.pagesLoadingHint': {
+    en: 'This takes a moment right after signing in.',
+    ru: 'Сразу после входа это занимает несколько секунд.',
+  },
   'inbox.noPagesTitle': {
     en: 'This account has no OnlyFans pages',
     ru: 'У аккаунта нет страниц OnlyFans',

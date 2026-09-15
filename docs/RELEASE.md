@@ -127,17 +127,21 @@ demoable without a real feed.
 
 **Release ritual:**
 
-> **Credential-origin migration for the lifecycle-v2 release is mandatory.**
-> Builds through v0.1.41 stored API keys/device tokens without a durable Hub
-> origin+digest binding. The new build deliberately quarantines that legacy
-> custody instead of risking a loopback/restored credential being sent to the
-> production default after Local Data purge or partial profile restore. On the
-> first upgraded boot, operators must re-paste the chatter API key. For a legacy
-> device token they must use **Forget locally**, have an administrator revoke the
-> old token on its original Hub, and then sign the device in again. The status bar
-> shows **HUB CREDENTIAL** until this is complete. Do not publish this release
-> until the fleet owner has scheduled and communicated that re-enrolment and the
-> old-Hub token inventory/revocation path is ready.
+> **Credential-origin migration (historical, lifecycle-v2 release).** Builds
+> through v0.1.41 stored their hub credential without a durable origin+digest
+> binding, so the lifecycle-v2 build quarantines that custody rather than risk
+> sending a restored credential to the production address. Such an install
+> recovers with **Forget locally** followed by a fresh sign-in, and the owner
+> ends the old sign-in on their side; the status bar shows **HUB CREDENTIAL**
+> until it is done.
+>
+> **D35 (0.1.55) supersedes the other half of this note.** There is no key to
+> re-paste any more: humans sign in with a login and a password, and an install
+> that held only the retired key lands on the first-run sign-in screen. A
+> credential bound by 0.1.42+ is NOT invalidated by the upgrade — nobody on the
+> fleet re-signs in. Publish only after the kernel side of the D35 contract is
+> deployed: the build gate compares production's contract hash with the vendored
+> one.
 
 1. Bump `version` in `apps/desktop/package.json`, run `pnpm check`, and commit on
    `main`.

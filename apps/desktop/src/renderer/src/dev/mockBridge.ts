@@ -467,6 +467,7 @@ function buildStore(): MockStore {
 
   const settings: SettingsVM = {
     hubSignedOutReason: null,
+    accountGrantsReconciled: true,
     hasHubDeviceToken: true,
     hubDeviceTokenBindingState: 'bound',
     hubDeviceTokenTransition: null,
@@ -1386,6 +1387,8 @@ export function createMockBridge(): ChatGooseBridge {
       store.settings = {
         ...store.settings,
         hubSignedOutReason: null,
+        // Mock: the first reconcile lands with the sign-in.
+        accountGrantsReconciled: true,
         hasHubDeviceToken: true,
         hubDeviceTokenBindingState: 'bound',
         hubDeviceTokenTransition: null,

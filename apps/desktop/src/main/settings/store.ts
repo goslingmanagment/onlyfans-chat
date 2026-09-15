@@ -39,6 +39,7 @@ import {
   personaStorageScopeForHub,
 } from '../personas/pending';
 import type { SecretName } from '../secrets/keychain';
+import { grantsBelongToCurrentIdentity, readGrantOwner } from '../db/grant-owner';
 import {
   HUB_DEVICE_IDENTITY_KEY,
   deviceTokenDigest,
@@ -83,6 +84,7 @@ const PROD_HUB_ORIGIN = new URL(DEFAULT_AGENCY_HUB_BASE_URL).origin;
 
 export type PersistedSettings = Omit<
   SettingsVM,
+  | 'accountGrantsReconciled'
   | 'hubSignedOutReason'
   | 'hasHubDeviceToken'
   | 'hubDeviceTokenBindingState'
@@ -557,6 +559,13 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       && revocation === null
       ? readHubSignedOut(queries)
       : null;
+    // D35 §9 п.5/п.9: has THIS identity ever committed an authoritative grant
+    // snapshot on this machine? Until it has, an empty account list means "not
+    // loaded yet", not "you have no pages" — a fresh sign-in used to be told to
+    // write to the owner before its first sync had a chance to run.
+    const grantOwner = readGrantOwner(queries);
+    const accountGrantsReconciled = grantOwner !== null
+      && grantsBelongToCurrentIdentity(grantOwner, identity?.username ?? null);
     return {
       hasHubDeviceToken: hubDeviceTokenBindingState !== 'none',
       hubDeviceTokenBindingState,
@@ -567,6 +576,7 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
           : null,
       hubDeviceIdentity,
       hubSignedOutReason: signedOut?.reason ?? null,
+      accountGrantsReconciled,
       appVersion,
       machineLabel,
       osPlatform,

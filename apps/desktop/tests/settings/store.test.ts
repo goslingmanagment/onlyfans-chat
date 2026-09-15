@@ -14,6 +14,10 @@ import {
   deviceTokenDigest,
 } from '@main/hub/credential-journal';
 import { abandonHubDeviceTokenCustody } from '@main/hub/device-token';
+import {
+  hubDeviceTokenStatus,
+  requiresSignIn,
+} from '../../src/renderer/src/features/settings/sections/hubSettingsLogic';
 import type { SecretStoreLike, SettingsQueries } from '@main/settings/store';
 import {
   LEGACY_PERSONA_SCOPE_CLAIM_KEY,
@@ -383,6 +387,49 @@ describe('settings store', () => {
       deviceToken: 'agency_hub_device_from_0_1_54',
       deviceTokenTransition: null,
     });
+  });
+
+  it("keeps an undecryptable credential 'unreadable' — never a silent sign-out", async () => {
+    // A DPAPI/keychain hiccup at boot must NOT read as "no credential": that
+    // would drop the whole fleet on the sign-in screen with nothing said, and
+    // it would let cleanup destroy custody that was never proven non-bound.
+    const queries = createFakeQueries();
+    const baseSecrets = createFakeSecrets();
+    seedSignedInDevice(queries, baseSecrets);
+    const unreadableSecrets: FakeSecrets = {
+      ...baseSecrets,
+      getSecret: (name) => name === 'hubDeviceToken'
+        ? Promise.reject(new Error('DPAPI decrypt failed'))
+        : baseSecrets.getSecret(name),
+      hasSecret: (name) => name === 'hubDeviceToken'
+        ? Promise.reject(new Error('DPAPI decrypt failed'))
+        : baseSecrets.hasSecret(name),
+    };
+    const store = createSettingsStore({ queries, secrets: unreadableSecrets });
+
+    const vm = await store.get();
+    expect(vm).toMatchObject({
+      hasHubDeviceToken: true,
+      hubDeviceTokenBindingState: 'unreadable',
+    });
+    // The UI reads it as "attention" (the Account section's recovery), and the
+    // first-run gate deliberately stays shut.
+    const status = hubDeviceTokenStatus(vm);
+    expect(status).toBe('attention');
+    expect(requiresSignIn(status)).toBe(false);
+
+    // Connection resolution still fails closed: no bearer is handed out.
+    await expect(store.getHubConnection()).resolves.toMatchObject({
+      bearer: null,
+      deviceToken: null,
+      settings: { hubDeviceTokenBindingState: 'unreadable' },
+    });
+    // And the explicit escape hatch still works on custody it cannot read.
+    await expect(abandonHubDeviceTokenCustody({
+      keychain: unreadableSecrets,
+      settings: queries,
+    })).resolves.toBeUndefined();
+    expect(baseSecrets.values.has('hubDeviceToken')).toBe(false);
   });
 
   it('quarantines a readable credential when a fresh or purged DB has no origin binding', async () => {

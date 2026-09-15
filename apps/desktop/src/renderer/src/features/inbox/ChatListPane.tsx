@@ -50,8 +50,17 @@ export function ChatListPane(): React.JSX.Element {
   const spendStyle = settings.data?.spendStyle ?? 'figure';
   // D35 §9 п.5: zero granted OnlyFans pages is an ACCOUNT fact, not an empty
   // inbox. "No chats yet · they appear after the first sync" told a chatter to
-  // wait for a sync that will never bring anything.
-  const noGrantedPages = accounts.data !== undefined && accounts.data.length === 0;
+  // wait for a sync that will never bring anything. But it only becomes a fact
+  // once THIS identity has actually reconciled: right after a first sign-in the
+  // list is empty because nothing has loaded yet, and "write to the owner"
+  // there would be a lie.
+  const grantsReconciled = settings.data?.accountGrantsReconciled === true;
+  const noGrantedPages = accounts.data !== undefined
+    && accounts.data.length === 0
+    && grantsReconciled;
+  const pagesStillLoading = accounts.data !== undefined
+    && accounts.data.length === 0
+    && !grantsReconciled;
   const { mutate: reconcileUnread } = useReconcileUnread();
 
   const items = chats.items;
@@ -122,6 +131,8 @@ export function ChatListPane(): React.JSX.Element {
         {!chats.isPending && items.length === 0 && (
           noGrantedPages ? (
             <EmptyState title={t('inbox.noPagesTitle')} hint={t('inbox.noPagesHint')} />
+          ) : pagesStillLoading ? (
+            <EmptyState title={t('inbox.pagesLoadingTitle')} hint={t('inbox.pagesLoadingHint')} />
           ) : (
             <EmptyState
               title={chatFilter === 'all' ? t('inbox.emptyAllTitle') : t('inbox.emptyFilteredTitle')}

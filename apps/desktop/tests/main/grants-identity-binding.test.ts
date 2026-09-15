@@ -45,6 +45,40 @@ function visibleTo(data: DataLayer, username: string | null): number {
     : 0;
 }
 
+describe('the empty workspace only accuses the owner after a real reconcile', () => {
+  // §9 п.5 review fix: an empty account list right after signing in means "not
+  // loaded yet". Telling that chatter "no OnlyFans pages — write to the owner"
+  // before their first sync is a lie they would act on.
+  const reconciledFor = (data: DataLayer, username: string | null): boolean => {
+    const owner = readGrantOwner(data.settings);
+    return owner !== null && grantsBelongToCurrentIdentity(owner, username);
+  };
+
+  it('is "still loading" on a fresh install that has never reconciled', () => {
+    const data = memoryDataLayer();
+    signedInAs(data, 'grisha');
+    expect(reconciledFor(data, 'grisha')).toBe(false);
+  });
+
+  it('becomes "no pages" once this identity reconciled an empty snapshot', () => {
+    const data = memoryDataLayer();
+    signedInAs(data, 'grisha');
+    applyAccountGrantSnapshot([], data);
+    expect(reconciledFor(data, 'grisha')).toBe(true);
+    expect(data.accounts.listGranted()).toHaveLength(0);
+  });
+
+  it('is "still loading" again for the next person until they reconcile', () => {
+    const data = memoryDataLayer();
+    signedInAs(data, 'grisha');
+    applyAccountGrantSnapshot([account('acct_1', 'loravie')], data);
+    signedInAs(data, 'nikita');
+    expect(reconciledFor(data, 'nikita')).toBe(false);
+    applyAccountGrantSnapshot([], data);
+    expect(reconciledFor(data, 'nikita')).toBe(true);
+  });
+});
+
 describe('grantsBelongToCurrentIdentity', () => {
   it('shows a cache to the identity that produced it', () => {
     expect(grantsBelongToCurrentIdentity({ version: 1, username: 'grisha' }, 'grisha')).toBe(true);

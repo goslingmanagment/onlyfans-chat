@@ -435,6 +435,12 @@ export interface SettingsVM {
    * Non-null only while no device custody exists; display-only.
    */
   hubSignedOutReason: 'token_revoked' | 'token_expired' | null;
+  /**
+   * D35: true once the CURRENT identity has committed an authoritative grant
+   * snapshot on this machine. An empty account list before that is "not loaded
+   * yet"; after it, the account genuinely has no OnlyFans pages.
+   */
+  accountGrantsReconciled: boolean;
   /** Running app version (Hub diagnostics row); read-only in the VM. */
   appVersion: string;
   /** Machine hostname — a machine property, independent of any credential. */
@@ -606,6 +612,7 @@ export type SettingsPatch = Partial<
     | 'hubDeviceTokenTransition'
     | 'hubDeviceIdentity'
     | 'hubSignedOutReason'
+    | 'accountGrantsReconciled'
     | 'appVersion'
     | 'machineLabel'
     | 'osPlatform'
