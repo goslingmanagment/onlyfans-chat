@@ -842,7 +842,10 @@ claim a live Lora test. Ordinary roster/spender consumers are unchanged.
    (`token_revoked` | `token_expired`) is lifted into typed detail on all three
    hub transports — the SDK lane, the OFAPI read gateway (the one a cold start
    hits first, which used to wedge on "HUB AUTH" with no SDK request in sight)
-   and the connection probe — and all three report into ONE dispatcher. It wipes
+   and the connection probe — and all three report into ONE dispatcher. The SDK
+   lane is wired to the SDK's own `onAuthError` hook rather than to a catch
+   block, because the chatter's actual work (Fast Reply and every other
+   generation) rides two SSE paths that no typed-call catch would see. It wipes
    local custody only with a reason the kernel actually sent, only when the
    rejected bearer is still the stored one (digest compare), only inside the
    credential FIFO, and never while a durable transition owns that custody. A
@@ -859,8 +862,11 @@ claim a live Lora test. Ordinary roster/spender consumers are unchanged.
 Vocabulary (plan §2) is now pinned, not merely intended: user-facing strings and
 the shipped guides may not name tokens, keys, APIs, bearers, activations,
 reservations or prefixes. Technical detail survives only in Diagnostics.
-`packages/shared/tests/copy-vocabulary.test.ts` fails on a violation and
-`documentation-cutover.test.ts` is inverted to match. Settings' "Agency Hub"
+`packages/shared/tests/copy-vocabulary.test.ts` fails on a violation — in the
+catalog, in the error registry, in the three guides AND in the main-process
+messages the Account section renders verbatim (a shipped "using the chatter-key
+fallback and will retry automatically" is what made that last scope necessary)
+— and `documentation-cutover.test.ts` is inverted to match. Settings' "Agency Hub"
 section becomes "Account": who you are signed in as, the account page on the
 hub, sign out of this device, help signing in.
 
