@@ -102,6 +102,23 @@ export const UI_MESSAGES = {
     en: 'The AI provider request failed — tell a manager and include the error code.',
     ru: 'Запрос к AI-провайдеру завершился ошибкой — сообщите менеджеру и передайте код ошибки.',
   },
+  // ── D35: the four sign-in outcomes of the first-run screen ──
+  'err.CG-HUB-20': {
+    en: 'Wrong login or password. Check them and sign in again — or ask the owner for a new sign-in link.',
+    ru: 'Неверный логин или пароль. Проверьте их и войдите снова — или попросите у владельца новую ссылку для входа.',
+  },
+  'err.CG-HUB-21': {
+    en: 'ChatGoose is unreachable. Check the internet connection and try to sign in again.',
+    ru: 'ChatGoose недоступен. Проверьте интернет и попробуйте войти ещё раз.',
+  },
+  'err.CG-HUB-22': {
+    en: 'Sign-in did not finish. Try again in a minute; tell the owner if it keeps failing.',
+    ru: 'Вход не завершился. Попробуйте ещё раз через минуту; если не выходит — напишите владельцу.',
+  },
+  'err.CG-HUB-23': {
+    en: 'This account cannot sign in yet: the owner has to reset your password. Write to the owner.',
+    ru: 'В этот аккаунт пока нельзя войти: владелец должен сбросить пароль. Напишите владельцу.',
+  },
   'aidock.quotaLow': {
     en: 'AI limit for this page: {n} generations left today — resets at midnight UTC.',
     ru: 'Лимит AI на эту страницу: осталось {n} генераций на сегодня — сброс в полночь UTC.',
@@ -119,24 +136,32 @@ export const UI_MESSAGES = {
     ru: 'Политика Message Guard недоступна.',
   },
 
-  // ── Agency Hub ────────────────────────────────────────────────────────────
-  'hub.title': { en: 'Agency Hub', ru: 'Agency Hub' },
-  'hub.baseUrl.label': { en: 'Hub base URL', ru: 'Адрес хаба' },
-  'hub.baseUrl.hint': { en: "your agency's core server", ru: 'core-сервер вашего агентства' },
-  // ── D19: device-first minimal section ──
-  'hub.connected.title': { en: 'Connected as {username}', ru: 'Подключено как {username}' },
-  'hub.connected.titleAnon': { en: 'Device connected', ru: 'Устройство подключено' },
+  // ── Account (D35: one login + password; the chatter never sees the
+  //    machinery behind them — plan §2 vocabulary, pinned by
+  //    packages/shared/tests/copy-vocabulary.test.ts) ─────────────────────────
+  'hub.title': { en: 'Account', ru: 'Аккаунт' },
+  'hub.baseUrl.label': { en: 'ChatGoose address', ru: 'Адрес ChatGoose' },
+  'hub.baseUrl.hint': { en: "your agency's server", ru: 'сервер вашего агентства' },
+  'hub.connected.title': { en: 'Signed in as {username}', ru: 'Вы вошли как {username}' },
+  'hub.connected.titleAnon': { en: 'Signed in on this device', ru: 'Вы вошли на этом устройстве' },
   'hub.connected.sub': {
-    en: 'Device {label} · sync and sending go through your agency hub',
-    ru: 'Устройство {label} · синхронизация и отправка идут через hub агентства',
+    en: 'Device {label} · chats and sending go through your agency',
+    ru: 'Устройство {label} · переписка и отправка идут через агентство',
   },
-  'hub.signOutDevice': { en: 'Sign out this device', ru: 'Выйти с этого устройства' },
-  'hub.notConnected.title': { en: 'Device not connected', ru: 'Устройство не подключено' },
+  'hub.openAccount': { en: 'Account', ru: 'Аккаунт' },
+  'hub.openAccountHint': {
+    en: 'Opens your account page in the browser: devices, password, your AI spend',
+    ru: 'Откроет страницу аккаунта в браузере: устройства, пароль, ваши траты на ИИ',
+  },
+  'hub.helpSignIn': { en: 'Need help signing in', ru: 'Нужна помощь со входом' },
+  'hub.signOutDevice': { en: 'Sign out of this device', ru: 'Выйти с этого устройства' },
+  'hub.notConnected.title': { en: 'Not signed in', ru: 'Вы не вошли' },
   'hub.notConnected.hint': {
-    en: 'Sign in with your own login — this machine gets its own token.',
-    ru: 'Войдите под своим логином — этой машине выдастся собственный токен.',
+    en: 'Sign in with your login and password.',
+    ru: 'Войдите своим логином и паролем.',
   },
   'hub.advanced': { en: 'Advanced', ru: 'Дополнительно' },
+  // Diagnostics only (hub.diag.*): the one place technical details are allowed.
   'hub.diag.token': { en: 'Device token', ru: 'Токен устройства' },
   'hub.diag.tokenInfo': {
     en: '…{last4} · issued {issued} · valid to {expires}, renews itself',
@@ -154,16 +179,8 @@ export const UI_MESSAGES = {
     en: '{version} · machine {label} · {os}',
     ru: '{version} · машина {label} · {os}',
   },
-  'hub.legacyKey.working': {
-    en: 'Running on a legacy key — sign in with the device to switch to a token.',
-    ru: 'Работает на legacy-ключе — войдите устройством, чтобы перейти на токен.',
-  },
-  'hub.legacyKey.isolated': {
-    en: 'Access is paused: the stored legacy key cannot be verified. Sign in with the device.',
-    ru: 'Доступ приостановлен: сохранённый legacy-ключ нельзя подтвердить. Войдите устройством.',
-  },
   'hub.credentialAttention': { en: 'attention', ru: 'нужно действие' },
-  'hub.deviceToken.username': { en: 'Username', ru: 'Логин' },
+  'hub.deviceToken.username': { en: 'Login', ru: 'Логин' },
   'hub.deviceToken.password': { en: 'Password', ru: 'Пароль' },
   'hub.deviceToken.signIn': { en: 'Sign in', ru: 'Войти' },
   'hub.deviceToken.signingIn': { en: 'Signing in…', ru: 'Вход…' },
@@ -174,55 +191,66 @@ export const UI_MESSAGES = {
   'hub.deviceToken.abandon': { en: 'Forget locally', ru: 'Забыть локально' },
   'hub.deviceToken.abandoning': { en: 'Forgetting…', ru: 'Удаление…' },
   'hub.deviceToken.abandonFailed': {
-    en: 'Could not remove local device credentials',
-    ru: 'Не удалось удалить локальные данные устройства',
+    en: 'Could not remove the local sign-in of this device',
+    ru: 'Не удалось удалить локальный вход этого устройства',
   },
   'hub.deviceToken.abandonHint': {
-    en: 'Last resort when the old Hub is permanently unavailable',
-    ru: 'Аварийный вариант, если старый Hub окончательно недоступен',
+    en: 'Last resort when the old address is permanently unavailable',
+    ru: 'Аварийный вариант, если старый адрес окончательно недоступен',
   },
   'hub.deviceToken.abandonConfirm': {
-    en: 'Forget this device token locally without contacting the old Hub? The old Hub may retain a live token until an administrator revokes it. Use this only when the old Hub is permanently unavailable.',
-    ru: 'Удалить токен устройства только локально, не обращаясь к старому Hub? На старом Hub токен может остаться активным, пока администратор его не отзовёт. Используйте это только если старый Hub окончательно недоступен.',
+    en: 'Forget this sign-in on this device without telling the old address? The old address may still consider this device signed in until the owner ends it. Use this only when the old address is permanently unavailable.',
+    ru: 'Забыть вход на этом устройстве, не сообщая старому адресу? Старый адрес может считать устройство вошедшим, пока владелец не завершит вход. Используйте это, только если старый адрес окончательно недоступен.',
   },
   'hub.deviceToken.signOutBeforeHubChange': {
-    en: 'Sign out this device before changing the Hub URL.',
-    ru: 'Перед сменой URL хаба выйдите из этого устройства.',
+    en: 'Sign out of this device before changing the address.',
+    ru: 'Перед сменой адреса выйдите с этого устройства.',
   },
   'hub.deviceToken.bindingAttention': {
-    en: 'This device token is quarantined because its Hub origin cannot be proven. Forget it locally, then sign in again. An administrator should revoke any legacy token on the old Hub.',
-    ru: 'Токен устройства изолирован: его Hub нельзя подтвердить. Удалите его локально и войдите заново. Старый токен нужно отозвать администратору на прежнем Hub.',
+    en: 'This sign-in is paused: ChatGoose cannot prove which address it belongs to. Forget it locally, then sign in again; ask the owner to end the old sign-in.',
+    ru: 'Вход приостановлен: ChatGoose не может подтвердить, к какому адресу он относится. Забудьте его локально и войдите заново; попросите владельца завершить старый вход.',
   },
   'hub.status.connecting': { en: 'connecting…', ru: 'подключение…' },
   'hub.status.live': { en: 'live', ru: 'работает' },
   'hub.status.degraded': { en: 'degraded — polling covers', ru: 'сбой — опрос подстраховывает' },
-  // A16 (W4.1): credential-neutral — a revoked DEVICE TOKEN lands here too,
-  // and «ключ отклонён» pointed token installs at the wrong fix.
+  // A16 (W4.1): credential-neutral — a revoked sign-in lands here too.
   'hub.status.auth-failed': { en: 'auth failed', ru: 'доступ отклонён' },
   'hub.status.stopped': { en: 'stopped', ru: 'остановлен' },
-  // Credential-neutral (mirrors errors/index.ts CG-HUB-01, a08a251). D19: the
-  // remedy is always the device sign-in — the UI never asks a human to paste
-  // an API key (core Decision #116).
+  // D35: an unexplained rejection stays fail-closed — the reasoned ones wipe
+  // the local sign-in and land on the sign-in screen instead of this line.
   'hub.authFailedBody': {
-    en: 'CG-HUB-01 — the hub rejected the credential. Sign out if a device session is still listed, then sign in again to issue a fresh device token.',
-    ru: 'CG-HUB-01 — хаб отклонил учётные данные. Если сессия устройства ещё числится — нажмите «Выйти», затем войдите заново, чтобы получить новый токен устройства.',
+    en: 'CG-HUB-01 — ChatGoose refused this device. Sign out, then sign in again.',
+    ru: 'CG-HUB-01 — ChatGoose отклонил это устройство. Выйдите, затем войдите заново.',
   },
-  'hub.pageLabels.title': { en: 'Hub page labels', ru: 'Метки страниц хаба' },
+  'hub.pageLabels.title': { en: 'Page names', ru: 'Названия страниц' },
   'hub.pageLabels.hint': {
-    en: 'Each account auto-matches a hub page by its username. Set a label only when that match misses; leave empty for auto.',
-    ru: 'Аккаунт сам подбирает страницу хаба по username. Заполняйте метку, только если автоподбор промахнулся; пусто — авто.',
+    en: 'Each account matches its page by username. Set a name only when that match misses; leave empty for auto.',
+    ru: 'Аккаунт сам подбирает свою страницу по username. Заполняйте, только если автоподбор промахнулся; пусто — авто.',
   },
   'hub.pageLabels.placeholder': { en: 'auto (match by username)', ru: 'авто (по username)' },
-  'hub.saveBtn': { en: 'Save hub settings', ru: 'Сохранить настройки хаба' },
+  'hub.saveBtn': { en: 'Save', ru: 'Сохранить' },
   'hub.testBtn': { en: 'Test connection', ru: 'Проверить подключение' },
   'hub.testOk': {
-    en: 'Connected — {username} ({role}) · pages: {pages}',
-    ru: 'Подключено — {username} ({role}) · страниц: {pages}',
+    en: 'Connected — {username} ({role}) · OnlyFans pages: {pages}',
+    ru: 'Подключено — {username} ({role}) · страниц OnlyFans: {pages}',
   },
   'hub.testNeedsConfig': {
-    en: 'Set the hub base URL and sign in with the device first.',
-    ru: 'Сначала заполните адрес хаба и войдите устройством.',
+    en: 'Sign in first.',
+    ru: 'Сначала войдите.',
   },
+
+  // ── Sign-in screen (D35, first run) ───────────────────────────────────────
+  'auth.title': { en: 'Sign in to ChatGoose', ru: 'Вход в ChatGoose' },
+  'auth.subtitle': {
+    en: 'Use the login and the password you chose from the owner’s link.',
+    ru: 'Введите логин и пароль, которые вы задали по ссылке от владельца.',
+  },
+  'auth.signedOut': {
+    en: 'The session on this device was ended. Sign in again.',
+    ru: 'Сессия на этом устройстве завершена, войдите снова.',
+  },
+  'auth.transition.activation': { en: 'Finishing sign-in…', ru: 'Завершаем вход…' },
+  'auth.transition.revocation': { en: 'Finishing sign-out…', ru: 'Завершаем выход…' },
 
   // ── Models / context size ─────────────────────────────────────────────────
   'models.title': { en: 'Models', ru: 'Модели' },
@@ -451,8 +479,8 @@ export const UI_MESSAGES = {
   // ── Local data (danger zone) ──────────────────────────────────────────────
   'danger.title': { en: 'Local data', ru: 'Локальные данные' },
   'danger.hint': {
-    en: 'Purges the encrypted local cache (chats, messages, media). The device sign-in is revoked on Hub first; sign in on this device again afterward.',
-    ru: 'Очищает зашифрованный локальный кэш (чаты, сообщения, медиа). Сначала вход устройства отзывается на Hub; после очистки войдите на этом устройстве заново.',
+    en: 'Purges the encrypted local cache (chats, messages, media). The sign-in of this device is ended first; sign in again afterward.',
+    ru: 'Очищает зашифрованный локальный кэш (чаты, сообщения, медиа). Сначала завершается вход на этом устройстве; после очистки войдите заново.',
   },
   'danger.stats': {
     en: 'Database {db} · media cache {media} ({files})',
@@ -500,8 +528,8 @@ export const UI_MESSAGES = {
     ru: 'Удалить весь локальный кэш?',
   },
   'danger.purgeKernelWarning': {
-    en: 'The server holds no copy of local messages, transactions, or telemetry yet — purging deletes them permanently. Recent chats re-sync from OFAPI; older history does not. Any device token is remotely revoked before deletion; sign in on this device again afterward.',
-    ru: 'На сервере ещё нет копии локальных сообщений, транзакций и телеметрии — очистка удалит их безвозвратно. Свежие чаты пересинхронизируются из OFAPI, старая история — нет. Перед удалением токен устройства будет отозван на Hub; после очистки войдите на этом устройстве заново.',
+    en: 'The server holds no copy of local messages, transactions, or telemetry yet — purging deletes them permanently. Recent chats re-sync from OFAPI; older history does not. The sign-in of this device is ended first; sign in again afterward.',
+    ru: 'На сервере ещё нет копии локальных сообщений, транзакций и телеметрии — очистка удалит их безвозвратно. Свежие чаты пересинхронизируются из OFAPI, старая история — нет. Перед удалением вход на этом устройстве будет завершён; после очистки войдите заново.',
   },
   'danger.purgeExportFirst': {
     en: 'Export diagnostics first',
@@ -573,14 +601,14 @@ export const UI_MESSAGES = {
     ru: '— подключён {dur} · битых кадров: {n}',
   },
   'activity.hubNotConfigured': {
-    en: '— not configured (Settings → Agency Hub)',
-    ru: '— не настроен (Настройки → Agency Hub)',
+    en: '— not configured (Settings → Account)',
+    ru: '— не настроен (Настройки → Аккаунт)',
   },
   // A16 (W4.1): credential-neutral — the rejected bearer is usually the
   // DEVICE TOKEN now; naming the chatter key sent users to the wrong fix.
   'activity.hubKeyRejected': {
-    en: '— hub rejected the credential, sign in again (Settings → Agency Hub)',
-    ru: '— хаб отклонил учётные данные, войдите заново (Настройки → Agency Hub)',
+    en: '— ChatGoose refused this device, sign in again (Settings → Account)',
+    ru: '— ChatGoose отклонил это устройство, войдите заново (Настройки → Аккаунт)',
   },
   'activity.hubUnreachableSince': {
     en: '— unreachable since {time}, reconnecting',
@@ -610,8 +638,8 @@ export const UI_MESSAGES = {
     ru: '— генерация через шлюз ядра агентства',
   },
   'activity.aiOff': {
-    en: '— hub not connected yet (Settings → Agency Hub)',
-    ru: '— хаб ещё не подключён (Настройки → Agency Hub)',
+    en: '— not signed in yet (Settings → Account)',
+    ru: '— вы ещё не вошли (Настройки → Аккаунт)',
   },
   'activity.sendsLine': {
     en: '{sent} sent · {failed} failed · {unconfirmed} unconfirmed',
@@ -950,8 +978,8 @@ export const UI_MESSAGES = {
   'sp.set.down': { en: 'Down', ru: 'Ниже' },
   'sp.set.empty': { en: 'No lists mapped yet.', ru: 'Списки пока не выбраны.' },
   'sp.set.noKey': {
-    en: 'Lists load once Agency Hub is configured; Direct OFAPI is rollback only.',
-    ru: 'Списки загрузятся после настройки Agency Hub; Direct OFAPI только для отката.',
+    en: 'Lists load once you are signed in; Direct OFAPI is rollback only.',
+    ru: 'Списки загрузятся после входа; Direct OFAPI только для отката.',
   },
   'sp.set.fansCount': { en: '{n} fans', ru: '{n} фанов' },
   // ── Spenders page stats panel (owner v2 2026-06-13; mockups/experiments/spenders-page-2.html) ──
@@ -1116,6 +1144,15 @@ export const UI_MESSAGES = {
   'inbox.acctReauthSuffix': { en: ' — re-auth needed, ping admin', ru: ' — нужна повторная авторизация, напишите админу' },
   'inbox.filterUnread': { en: 'Unread', ru: 'Непрочитанные' },
   'inbox.filterTips': { en: 'Tips', ru: 'Чаевые' },
+  // D35: zero granted OnlyFans pages is an account fact, not an empty inbox.
+  'inbox.noPagesTitle': {
+    en: 'This account has no OnlyFans pages',
+    ru: 'У аккаунта нет страниц OnlyFans',
+  },
+  'inbox.noPagesHint': {
+    en: 'Write to the owner — pages are assigned on their side.',
+    ru: 'Напишите владельцу — страницы назначает он.',
+  },
   'inbox.emptyAllTitle': { en: 'No chats yet', ru: 'Чатов пока нет' },
   'inbox.emptyFilteredTitle': { en: 'Nothing here', ru: 'Здесь пусто' },
   'inbox.emptyAllHint': { en: 'Chats appear as soon as the first sync completes.', ru: 'Чаты появятся, как только пройдёт первая синхронизация.' },
@@ -1337,8 +1374,8 @@ export const UI_MESSAGES = {
     ru: 'Назначьте активную личность в настройках',
   },
   'aidock.gate.noKey': {
-    en: 'Connect Agency Hub in Settings (sign in on this device)',
-    ru: 'Подключите Agency Hub в настройках (войдите на этом устройстве)',
+    en: 'Sign in under Settings → Account',
+    ru: 'Войдите в настройках → Аккаунт',
   },
   'aidock.pingBlocked': { en: 'Fan is active — use Reply', ru: 'Фан активен — используйте Reply' },
   'aidock.hiLocked': {

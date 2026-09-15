@@ -17,11 +17,21 @@ describe('kernel cutover documentation gates', () => {
   ];
 
   for (const path of windowsDocs) {
-    it(`${path} uses device sign-in instead of a full OFAPI key`, () => {
+    // D35: the guides speak the chatter's vocabulary — a login, a password and
+    // the devices they are signed in on. The credential machinery is gone from
+    // the copy (the word-level pin lives in
+    // packages/shared/tests/copy-vocabulary.test.ts).
+    it(`${path} explains the sign-in screen without credential machinery`, () => {
       const text = read(path);
       expect(text).not.toMatch(/API-ключи|Ключ OFAPI|ChatGoose-Setup-0\.1\.0/);
-      expect(text).toMatch(/Agency Hub/);
-      expect(text).toMatch(/device token/i);
+      expect(text).not.toMatch(/device token/i);
+      expect(text).not.toMatch(/API key/i);
+      expect(text).not.toMatch(/(?<![\p{L}])токен/iu);
+      expect(text).not.toMatch(/(?<![\p{L}])ключ/iu);
+      expect(text).not.toMatch(/Agency Hub/);
+      expect(text).toMatch(/ChatGoose/);
+      expect(text).toMatch(/(?<![\p{L}])аккаунт/iu);
+      expect(text).toMatch(/логин и пароль/i);
     });
   }
 
