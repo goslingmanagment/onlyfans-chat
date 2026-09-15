@@ -30,6 +30,8 @@ import {
   type ToMediaUrl,
 } from './mappers';
 import { compareMessageIds } from './message-id';
+import { writeGrantOwner } from '../db/grant-owner';
+import { readHubDeviceIdentity } from '../hub/credential-journal';
 import type {
   SyncListener,
   SyncProvider,
@@ -2206,6 +2208,9 @@ export function applyAccountGrantSnapshot(
   // Reconcile it even during initial boot: a prior build only upserted the new
   // ids, leaving replaced OFAPI identities visible forever in local cache.
   data.accounts.reconcileGrants(accounts.map((account) => mapAccount(account, toMediaUrl)));
+  // D35 §9 п.9: stamp WHOSE grants these are. Reading the identity here (not
+  // from a parameter) keeps every caller of this commit point honest.
+  writeGrantOwner(data.settings, readHubDeviceIdentity(data.settings)?.username ?? null);
   for (const account of accounts) {
     if (account.is_authenticated === false) {
       // surfaced via account auth state; PRD F10 banner reads from db

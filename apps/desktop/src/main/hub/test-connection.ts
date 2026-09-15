@@ -15,13 +15,20 @@ const authMeSchema = z.looseObject({
   user: z.looseObject({
     username: z.string(),
     role: z.string(),
-    assignedPages: z.array(z.looseObject({ label: z.string() })),
+    assignedPages: z.array(z.looseObject({
+      label: z.string(),
+      // D35 §9 п.5: this app is the OnlyFans client. A chatter whose pages are
+      // all Fansly has nothing to work on HERE, and a count that included them
+      // read as "connected, 3 pages" over an empty workspace.
+      platform: z.string().optional(),
+    })),
   }),
 });
 
 export interface HubProbeResult {
   username: string;
   role: string;
+  /** OnlyFans pages only — the ones this app can actually open. */
   pages: number;
 }
 
@@ -97,6 +104,9 @@ export async function probeHubConnection(
   return {
     username: parsed.data.user.username,
     role: parsed.data.user.role,
-    pages: parsed.data.user.assignedPages.length,
+    pages: parsed.data.user.assignedPages.filter(
+      // An older kernel without the field cannot be assumed to be Fansly.
+      (page) => page.platform === undefined || page.platform === 'onlyfans',
+    ).length,
   };
 }

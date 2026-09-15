@@ -10,6 +10,8 @@ import { composerOptionsSchema, composerActionSchema } from '@chatgoose/shared/c
 import { analyzePingSegment } from '@chatgoose/shared/transcript/index';
 import { messageGuardPolicySchema } from '@chatgoose/shared/message-guard/index';
 import { toUserFacing } from '@chatgoose/shared/errors/index';
+import { grantsBelongToCurrentIdentity, readGrantOwner } from '../db/grant-owner';
+import { readHubDeviceIdentity } from '../hub/credential-journal';
 import type { DataLayer, OutboxRow } from '../db/index';
 import { effectivePersistedHubBaseUrl, type SettingsStore } from '../settings/store';
 import type { CreditMeter } from '../ofapi/credit-meter';
@@ -493,6 +495,15 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   };
 
   ipcMain.handle('query:accounts.list', () => {
+    // D35 §9 п.9: cached grants belong to the identity that reconciled them.
+    // A different person signing in on this machine sees nothing until their
+    // own first successful reconcile — the rows stay in SQLite (D23).
+    if (!grantsBelongToCurrentIdentity(
+      readGrantOwner(data.settings),
+      readHubDeviceIdentity(data.settings)?.username ?? null,
+    )) {
+      return [];
+    }
     const { scope } = resolvePersonaContext();
     const catalog = scope === null ? null : loadPersonaCatalog(data.settings, scope);
     const accountMappings = loadPersonaAccountMappings(data.settings, scope);

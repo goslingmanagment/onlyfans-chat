@@ -335,6 +335,16 @@ export function useHubDeviceTokenIssue() {
       // actually changed; that committed event owns any global AI reset.
       endAiHubOriginChange();
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
+      // D35 §9 п.9: a new identity must not inherit the previous one's
+      // workspace from cache. Main already hides its granted rows; drop the
+      // renderer's copy of them (and everything keyed by them) so the screen
+      // rebuilds from the first successful reconcile under this identity.
+      void queryClient.invalidateQueries({ queryKey: qk.accounts });
+      void queryClient.invalidateQueries({ queryKey: ['chats'] });
+      void queryClient.invalidateQueries({ queryKey: ['chats-paged'] });
+      void queryClient.invalidateQueries({ queryKey: ['messages'] });
+      void queryClient.invalidateQueries({ queryKey: ['fan'] });
+      void queryClient.invalidateQueries({ queryKey: qk.personalities });
     },
   });
 }
