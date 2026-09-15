@@ -1581,7 +1581,9 @@ async function boot(): Promise<void> {
           baseUrl: connection.hubBaseUrl!,
           username,
           password,
-          label: hostname(),
+          // Р7: one label convention across clients — the owner's device list
+          // reads "Desktop · <machine>" next to the extension's "Firefox · <OS>".
+          label: `Desktop · ${hostname()}`,
           keychain,
           settings: bootData.settings,
           // Stage 4 / Proposal 4.1 (N5): a machine mid-onboarding must not be

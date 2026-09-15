@@ -1,6 +1,8 @@
-// Stage 24: one-time device-token issuance + credential fallback. The main
-// process has no cookie jar — the login session cookie is captured off the
-// raw response and carried explicitly on the issue/logout calls.
+// Stage 24 device-token issuance, reworked by D35: ONE public password call
+// (`authIssueDeviceTokenWithPassword`, mode `pending`) replaces the
+// login → set-cookie → reserve → logout ceremony. Everything downstream of the
+// reservation — staging, journal, activation, recovery — is unchanged, so the
+// whole matrix below moves through this one fixture.
 
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -106,20 +108,12 @@ function successfulLifecycleFetch(
 ) {
   return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
-    if (url.endsWith('/api/v1/auth/login')) {
-      return jsonResponse(200, { authMethod: 'session', user: { username: 'anton' } }, {
-        'set-cookie': 'agency_hub_session=tok123; Path=/; HttpOnly',
-      });
-    }
-    if (url.endsWith('/api/v1/auth/device-tokens/reservations')) {
-      return jsonResponse(200, PENDING);
+    if (url.endsWith('/api/v1/auth/device-tokens/password')) {
+      return jsonResponse(200, { ...PENDING, mode: 'pending' });
     }
     if (url.endsWith('/api/v1/auth/device-tokens/activate')) {
       onActivate?.({ authorization: requestHeaders(input, init).get('authorization') });
       return jsonResponse(200, ACTIVATED);
-    }
-    if (url.endsWith('/api/v1/auth/logout')) {
-      return jsonResponse(200, { ok: true });
     }
     throw new Error(`unexpected url ${url}`);
   });
@@ -160,7 +154,7 @@ describe('issueHubDeviceToken', () => {
     });
   });
 
-  it('stamps x-client-version on login, reserve, activate, and logout', async () => {
+  it('stamps x-client-version on the password sign-in and the activation', async () => {
     const calls: Array<{ url: string; xClientVersion: string | null }> = [];
     const baseFetch = successfulLifecycleFetch();
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -182,16 +176,54 @@ describe('issueHubDeviceToken', () => {
     });
 
     expect(calls.map((call) => call.url)).toEqual([
-      'https://hub.test/api/v1/auth/login',
-      'https://hub.test/api/v1/auth/device-tokens/reservations',
+      'https://hub.test/api/v1/auth/device-tokens/password',
       'https://hub.test/api/v1/auth/device-tokens/activate',
-      'https://hub.test/api/v1/auth/logout',
     ]);
     expect(calls.every((call) => call.xClientVersion === '0.1.29')).toBe(true);
   });
 
-  it('maps bad credentials to a clear error and stores nothing', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse(401, { error: 'unauthorized' }));
+  it('signs in with one password call and no cookie', async () => {
+    const seen: Array<{ url: string; body: unknown; cookie: string | null }> = [];
+    const base = successfulLifecycleFetch();
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      seen.push({
+        url: String(input),
+        body: typeof init?.body === 'string' ? JSON.parse(init.body) : null,
+        cookie: requestHeaders(input, init).get('cookie'),
+      });
+      return base(input, init);
+    });
+    const storage = lifecycleStorage();
+
+    await issueHubDeviceToken({
+      baseUrl: 'https://hub.test',
+      username: ' anton ',
+      password: 'pw',
+      label: 'Desktop · test-machine',
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl,
+    });
+
+    expect(seen[0]).toMatchObject({
+      url: 'https://hub.test/api/v1/auth/device-tokens/password',
+      body: { username: 'anton', password: 'pw', label: 'Desktop · test-machine', mode: 'pending' },
+    });
+    expect(seen.every((call) => call.cookie === null)).toBe(true);
+    expect(seen.map((call) => call.url)).not.toContain('https://hub.test/api/v1/auth/login');
+    expect(seen.map((call) => call.url)).not.toContain('https://hub.test/api/v1/auth/logout');
+  });
+
+  it.each([
+    ['wrong login or password', 401, { error: 'unauthorized', message: 'no', statusCode: 401 }, 'CG-HUB-20'],
+    ['a password the owner must reset', 403, {
+      error: 'forbidden', message: 'no', statusCode: 403, reason: 'password_change_required',
+    }, 'CG-HUB-23'],
+    ['an unexplained refusal', 403, { error: 'forbidden', message: 'no', statusCode: 403 }, 'CG-HUB-22'],
+    ['a hub that is down', 503, { error: 'unavailable', message: 'no', statusCode: 503 }, 'CG-HUB-21'],
+    ['too many attempts', 429, { error: 'rate_limit', message: 'no', statusCode: 429 }, 'CG-HUB-22'],
+  ])('maps %s to %s without storing anything', async (_label, status, body, code) => {
+    const fetchImpl = vi.fn(async () => jsonResponse(status, body));
     const setSecret = vi.fn();
     const storage = lifecycleStorage();
     storage.keychain.setSecret = setSecret;
@@ -204,12 +236,15 @@ describe('issueHubDeviceToken', () => {
       keychain: storage.keychain,
       settings: storage.settings,
       fetchImpl,
-    })).rejects.toThrow(/Invalid username or password/);
+    })).rejects.toMatchObject({ code });
     expect(setSecret).not.toHaveBeenCalled();
+    expect(storage.journals.size).toBe(0);
   });
 
-  it('fails loudly when login returns no session cookie', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse(200, { ok: true }));
+  it('reports an unreachable hub as CG-HUB-21', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('fetch failed');
+    });
     const storage = lifecycleStorage();
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test',
@@ -219,10 +254,34 @@ describe('issueHubDeviceToken', () => {
       keychain: storage.keychain,
       settings: storage.settings,
       fetchImpl,
-    })).rejects.toThrow(/no session cookie/);
+    })).rejects.toMatchObject({ code: 'CG-HUB-21' });
+    expect(storage.secrets.size).toBe(0);
   });
 
-  it('times out an unresponsive login without publishing recoverable custody', async () => {
+  it('refuses an active bearer when it asked for a reservation', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, {
+      mode: 'active',
+      token: 'agency_hub_device_live',
+      id: 7,
+      label: 'm',
+      keyPrefix: 'agency_hub_device_live',
+      expiresAt: ACTIVATED.expiresAt,
+    }));
+    const storage = lifecycleStorage();
+    await expect(issueHubDeviceToken({
+      baseUrl: 'https://hub.test',
+      username: 'anton',
+      password: 'pw',
+      label: 'm',
+      keychain: storage.keychain,
+      settings: storage.settings,
+      fetchImpl,
+    })).rejects.toMatchObject({ code: 'CG-HUB-22' });
+    expect(storage.secrets.size).toBe(0);
+    expect(storage.journals.size).toBe(0);
+  });
+
+  it('times out an unresponsive sign-in without publishing recoverable custody', async () => {
     vi.useFakeTimers();
     try {
       const storage = lifecycleStorage();
@@ -251,7 +310,10 @@ describe('issueHubDeviceToken', () => {
 
       const result = await settled;
       expect(result.ok).toBe(false);
-      expect(result.error).toMatchObject({ name: 'TimeoutError' });
+      expect(result.error).toMatchObject({
+        code: 'CG-HUB-21',
+        detail: { kernelCode: 'timeout' },
+      });
       expect(observedSignal).toMatchObject({ aborted: true });
       expect(storage.journals.size).toBe(0);
       expect(storage.secrets.size).toBe(0);
@@ -274,7 +336,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl,
-    })).rejects.toMatchObject({ status: 404 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 404 } });
     expect(storage.secrets.has('hubDeviceToken')).toBe(false);
     expect(storage.secrets.has('hubDeviceTokenStaged')).toBe(true);
     expect(storage.journals.has(HUB_DEVICE_TOKEN_ACTIVATION_KEY)).toBe(true);
@@ -292,7 +354,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     // Covers the crash-after-local-promotion shape too: only the exact
     // journal-bound active copy may be removed on terminal invalidation.
     storage.secrets.set('hubDeviceToken', PENDING.token);
@@ -325,7 +387,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: offline,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     const replacement = 'agency_hub_device_unrelated_live';
     storage.secrets.set('hubDeviceToken', replacement);
     storage.journals.set(HUB_DEVICE_TOKEN_BINDING_KEY, {
@@ -396,7 +458,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     storage.secrets.delete('hubDeviceTokenStaged');
     const onCustodyRecovery = vi.fn();
     const recoveryFetch = vi.fn();
@@ -429,7 +491,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     storage.secrets.set('hubDeviceToken', PENDING.token);
     storage.secrets.delete('hubDeviceTokenStaged');
     const onCustodyRecovery = vi.fn();
@@ -471,7 +533,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     const replacement = 'agency_hub_device_unrelated_replacement';
     storage.secrets.set('hubDeviceToken', replacement);
     const recoveryFetch = vi.fn(async (input: string | URL | Request) => {
@@ -520,7 +582,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     const recoveryFetch = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
       if (url.endsWith('/api/v1/auth/device-tokens/activate')) {
@@ -565,7 +627,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: unavailable,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     const replacement = 'agency_hub_device_restored_during_activate';
     const onCustodyRecovery = vi.fn();
     const recoveryFetch = vi.fn(async (input: string | URL | Request) => {
@@ -828,7 +890,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: offline,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     storage.secrets.set('hubDeviceToken', PENDING.token);
     const originalGet = storage.keychain.getSecret.getMockImplementation()!;
     storage.keychain.getSecret.mockImplementation(async (name) => {
@@ -865,7 +927,7 @@ describe('issueHubDeviceToken', () => {
     await expect(issueHubDeviceToken({
       baseUrl: 'https://hub.test', username: 'anton', password: 'pw', label: 'test-machine',
       keychain: storage.keychain, settings: storage.settings, fetchImpl: offline,
-    })).rejects.toMatchObject({ status: 503 });
+    })).rejects.toMatchObject({ code: 'CG-HUB-22', detail: { status: 503 } });
     const originalGet = storage.keychain.getSecret.getMockImplementation()!;
     storage.keychain.getSecret.mockImplementation(async (name) => {
       if (name === 'hubDeviceToken') throw new Error('DPAPI active decrypt failed');

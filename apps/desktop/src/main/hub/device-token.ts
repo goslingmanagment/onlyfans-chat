@@ -1,15 +1,18 @@
-// Stage 24: one-time device-token issuance (kernel Stage 22 adoption). The
-// chatter signs in once with username+password; the desktop trades the
-// session for a device-bound bearer (`agency_hub_device_…`, sliding 90 d)
-// stored in the keychain. The legacy chatter key stays accepted as fallback
-// (kernel dual-acceptance) — its retirement is a later, kernel-declared step.
+// Stage 24: one-time device-token issuance (kernel Stage 22 adoption), reworked
+// by D35 (unified-account plan §9). The chatter signs in once with a login and
+// a password and this machine gets its own bearer (`agency_hub_device_…`,
+// sliding 90 d) in the keychain.
 //
-// The Electron main process has no cookie jar, so the session cookie from
-// login is captured off the raw response and carried explicitly through the
-// SDK client's static-headers seam for the issue + logout calls.
+// D35 replaced the cookie ceremony with ONE public call: the kernel's
+// `authIssueDeviceTokenWithPassword` in `pending` mode hands back a
+// reservation, and everything downstream of it — encrypted staging, the
+// non-secret journal, the idempotent activation, every crash-recovery path —
+// is unchanged. There is no login, no `set-cookie` parsing and no logout left:
+// the desktop never holds a session.
 
 import { randomUUID } from 'node:crypto';
 import { createClient, KernelApiError } from '@kernel/sdk';
+import { CgError } from '@chatgoose/shared/errors/index';
 import type { Keychain } from '../secrets/keychain';
 import {
   HUB_DEVICE_IDENTITY_KEY,
@@ -168,6 +171,69 @@ function boundedDeviceTokenFetch(fetchImpl: typeof fetch): typeof fetch {
   };
 }
 
+/** The kernel error body's machine reason, when it carries one. */
+function kernelReasonOf(error: KernelApiError): string | null {
+  const body: unknown = error.body;
+  if (typeof body !== 'object' || body === null) return null;
+  const reason = (body as { reason?: unknown }).reason;
+  return typeof reason === 'string' ? reason : null;
+}
+
+function kernelDetail(error: KernelApiError): { status?: number; kernelCode?: string } {
+  return {
+    ...(error.status !== null ? { status: error.status } : {}),
+    ...(error.code !== null ? { kernelCode: error.code } : {}),
+  };
+}
+
+/**
+ * D35: the four outcomes a chatter can see on the sign-in screen. Anything the
+ * kernel did not classify lands on CG-HUB-22 ("sign-in did not finish") rather
+ * than inventing a cause — the registry copy names only real actions (D26).
+ */
+function signInFailure(error: unknown): CgError {
+  if (error instanceof CgError) return error;
+  if (error instanceof KernelApiError) {
+    const detail = kernelDetail(error);
+    if (error.status === 401) {
+      return new CgError('CG-HUB-20', { detail });
+    }
+    if (error.status === 403) {
+      const reason = kernelReasonOf(error) ?? error.code;
+      return reason === 'password_change_required'
+        ? new CgError('CG-HUB-23', { detail })
+        : new CgError('CG-HUB-22', { message: error.message, detail });
+    }
+    if (error.category === 'network' || error.status === null || error.status >= 500) {
+      return new CgError('CG-HUB-21', { message: error.message, detail });
+    }
+    return new CgError('CG-HUB-22', { message: error.message, detail });
+  }
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+    return new CgError('CG-HUB-21', { message: error.message });
+  }
+  return new CgError('CG-HUB-22', {
+    ...(error instanceof Error ? { message: error.message } : {}),
+  });
+}
+
+/** Everything after the reservation exists: a failure here leaves recoverable
+ * custody behind, so it is the honest "did not finish" class. */
+function activationFailure(error: unknown): CgError {
+  if (error instanceof KernelApiError) {
+    const detail = kernelDetail(error);
+    return error.category === 'network'
+      ? new CgError('CG-HUB-21', { message: error.message, detail })
+      : new CgError('CG-HUB-22', { message: error.message, detail });
+  }
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+    return new CgError('CG-HUB-21', { message: error.message });
+  }
+  return new CgError('CG-HUB-22', {
+    ...(error instanceof Error ? { message: error.message } : {}),
+  });
+}
+
 export async function issueHubDeviceToken(input: IssueHubDeviceTokenInput): Promise<HubDeviceTokenResult> {
   const baseUrl = input.baseUrl.trim().replace(/\/+$/, '');
   const rawFetchImpl = input.fetchImpl ?? fetch;
@@ -185,30 +251,41 @@ export async function issueHubDeviceToken(input: IssueHubDeviceTokenInput): Prom
       ? { 'x-client-version': clientVersion }
       : {};
 
-  const login = await fetchImpl(`${baseUrl}/api/v1/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json', ...versionHeaders },
-    body: JSON.stringify({ username: input.username.trim(), password: input.password }),
-  });
-  if (login.status === 401 || login.status === 403) {
-    throw new Error('Invalid username or password.');
-  }
-  if (!login.ok) {
-    throw new Error(`Hub login failed (${login.status}).`);
-  }
-  const setCookie = login.headers.get('set-cookie');
-  const sessionCookie = setCookie?.split(';')[0] ?? null;
-  if (!sessionCookie) {
-    throw new Error('Hub login returned no session cookie.');
-  }
-
   const client = createClient({
     baseUrl,
-    headers: { cookie: sessionCookie, ...versionHeaders },
+    headers: versionHeaders,
     fetch: fetchImpl,
   });
+  let reserved: {
+    token: string;
+    reservationId: number;
+    label: string;
+    keyPrefix: string;
+    reservationExpiresAt: string;
+  };
   try {
-    const reserved = await client.authReserveDeviceToken({ body: { label: input.label } });
+    // D35 / plan Р2: one public call, no cookie. `pending` keeps the desktop's
+    // crash-safe custody protocol — the bearer only becomes real at activation.
+    const issued = await client.authIssueDeviceTokenWithPassword({
+      body: {
+        username: input.username.trim(),
+        password: input.password,
+        label: input.label,
+        mode: 'pending',
+      },
+    });
+    if (issued.mode !== 'pending') {
+      // A kernel that answered `active` to a `pending` request has no
+      // reservation to stage; refuse rather than treat a live bearer as one.
+      throw new CgError('CG-HUB-22', {
+        message: 'Sign-in returned an unexpected shape for this device.',
+      });
+    }
+    reserved = issued;
+  } catch (error) {
+    throw signInFailure(error);
+  }
+  {
     const journal: HubDeviceTokenActivation = {
       version: 1,
       id: randomUUID(),
@@ -274,11 +351,8 @@ export async function issueHubDeviceToken(input: IssueHubDeviceTokenInput): Prom
       if (transitionStillDurable) {
         notifyActivationDeferred(error);
       }
-      throw error;
+      throw activationFailure(error);
     }
-  } finally {
-    // One-time session: best-effort hygiene, never fails the issuance.
-    await client.logout().catch(() => undefined);
   }
 }
 
