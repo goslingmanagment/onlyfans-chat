@@ -34,37 +34,46 @@ describe('keychain', () => {
     await rm(secretsDir, { recursive: true, force: true });
   });
 
-  it('deletes decommissioned legacy secrets on request (Stage 24 ofapiKey + Stage 31 vendor keys)', async () => {
+  it('deletes decommissioned legacy secrets on request (Stage 24 ofapiKey, Stage 31 vendor keys, D35 chatter key)', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    // Simulate a pre-cutover install: the team-wide direct-read key plus the
-    // two local AI vendor keys (their names are no longer in SECRET_NAMES, so
-    // they are seeded as raw files the way an old release left them).
-    await keychain.setSecret('hubApiKey', 'keep-me');
+    // Simulate a pre-cutover install: the team-wide direct-read key, the two
+    // local AI vendor keys and the retired chatter key with its staging slot
+    // (none of those names are in SECRET_NAMES any more, so they are seeded as
+    // raw files the way an old release left them).
+    await keychain.setSecret('hubDeviceToken', 'keep-me');
     const { writeFile } = await import('node:fs/promises');
     await writeFile(join(secretsDir, 'ofapiKey.secret'), Buffer.from('enc:legacy'));
     await writeFile(join(secretsDir, 'anthropicKey.secret'), Buffer.from('enc:vendor-a'));
     await writeFile(join(secretsDir, 'openRouterKey.secret'), Buffer.from('enc:vendor-b'));
+    await writeFile(join(secretsDir, 'hubApiKey.secret'), Buffer.from('enc:chatter'));
+    await writeFile(join(secretsDir, 'hubApiKeyStaged.secret'), Buffer.from('enc:chatter-staged'));
 
     await keychain.deleteDecommissionedSecrets();
 
     const { readFile } = await import('node:fs/promises');
-    await expect(readFile(join(secretsDir, 'ofapiKey.secret'))).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(readFile(join(secretsDir, 'anthropicKey.secret'))).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(readFile(join(secretsDir, 'openRouterKey.secret'))).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(await keychain.getSecret('hubApiKey')).toBe('keep-me');
+    for (const name of [
+      'ofapiKey.secret',
+      'anthropicKey.secret',
+      'openRouterKey.secret',
+      'hubApiKey.secret',
+      'hubApiKeyStaged.secret',
+    ]) {
+      await expect(readFile(join(secretsDir, name))).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    expect(await keychain.getSecret('hubDeviceToken')).toBe('keep-me');
   });
 
   it('roundtrips a secret through the fake safeStorage', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await keychain.setSecret('hubApiKey', 'sk-ofapi-test-123');
-    expect(await keychain.getSecret('hubApiKey')).toBe('sk-ofapi-test-123');
-    expect(await keychain.hasSecret('hubApiKey')).toBe(true);
+    await keychain.setSecret('hubDeviceToken', 'sk-ofapi-test-123');
+    expect(await keychain.getSecret('hubDeviceToken')).toBe('sk-ofapi-test-123');
+    expect(await keychain.hasSecret('hubDeviceToken')).toBe(true);
   });
 
   it('persists encrypted bytes on disk (file !== plaintext)', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await keychain.setSecret('hubApiKey', 'sk-hub-super-secret');
-    const fileBytes = await readFile(join(secretsDir, 'hubApiKey.secret'));
+    await keychain.setSecret('hubDeviceToken', 'sk-hub-super-secret');
+    const fileBytes = await readFile(join(secretsDir, 'hubDeviceToken.secret'));
     expect(fileBytes.includes(Buffer.from('sk-hub-super-secret', 'utf8'))).toBe(false);
     expect(fileBytes.subarray(0, MARKER.length).equals(MARKER)).toBe(true);
   });
@@ -79,11 +88,11 @@ describe('keychain', () => {
 
   it('atomically replaces a secret and leaves no temporary file behind', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await keychain.setSecret('hubApiKey', 'old-key');
-    await keychain.setSecret('hubApiKey', 'replacement-key');
+    await keychain.setSecret('hubDeviceToken', 'old-key');
+    await keychain.setSecret('hubDeviceToken', 'replacement-key');
 
-    expect(await keychain.getSecret('hubApiKey')).toBe('replacement-key');
-    expect((await readdir(secretsDir)).sort()).toEqual(['hubApiKey.secret']);
+    expect(await keychain.getSecret('hubDeviceToken')).toBe('replacement-key');
+    expect((await readdir(secretsDir)).sort()).toEqual(['hubDeviceToken.secret']);
   });
 
   it('returns null / false for missing secrets', async () => {
@@ -94,29 +103,29 @@ describe('keychain', () => {
 
   it('deletes a secret (idempotently)', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await keychain.setSecret('hubApiKey', 'to-be-deleted');
-    await keychain.deleteSecret('hubApiKey');
-    expect(await keychain.getSecret('hubApiKey')).toBeNull();
-    await expect(keychain.deleteSecret('hubApiKey')).resolves.toBeUndefined();
+    await keychain.setSecret('hubDeviceToken', 'to-be-deleted');
+    await keychain.deleteSecret('hubDeviceToken');
+    expect(await keychain.getSecret('hubDeviceToken')).toBeNull();
+    await expect(keychain.deleteSecret('hubDeviceToken')).resolves.toBeUndefined();
   });
 
   it('rejects empty secret values', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await expect(keychain.setSecret('hubApiKey', '')).rejects.toThrow();
+    await expect(keychain.setSecret('hubDeviceToken', '')).rejects.toThrow();
   });
 
   it('refuses to persist when OS encryption is unavailable', async () => {
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(false), secretsDir });
-    await expect(keychain.setSecret('hubApiKey', 'value')).rejects.toThrow(/unavailable/);
+    await expect(keychain.setSecret('hubDeviceToken', 'value')).rejects.toThrow(/unavailable/);
     expect(await readdir(secretsDir)).toEqual([]);
   });
 
   it('allowlists the hub chatter key (write-only secret, SPEC §6.2)', async () => {
-    expect(SECRET_NAMES).toContain('hubApiKey');
+    expect(SECRET_NAMES).toContain('hubDeviceToken');
     const keychain = createKeychain({ safeStorage: createFakeSafeStorage(), secretsDir });
-    await keychain.setSecret('hubApiKey', 'agency_hub_core_abc');
-    expect(await keychain.getSecret('hubApiKey')).toBe('agency_hub_core_abc');
-    const fileBytes = await readFile(join(secretsDir, 'hubApiKey.secret'));
+    await keychain.setSecret('hubDeviceToken', 'agency_hub_core_abc');
+    expect(await keychain.getSecret('hubDeviceToken')).toBe('agency_hub_core_abc');
+    const fileBytes = await readFile(join(secretsDir, 'hubDeviceToken.secret'));
     expect(fileBytes.includes(Buffer.from('agency_hub_core_abc', 'utf8'))).toBe(false);
   });
 

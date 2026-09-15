@@ -39,8 +39,10 @@ function definitionId(key: string, incarnation = '1'): string {
   return `${TEST_DEFINITION_ID}:${key}:${incarnation}`;
 }
 
-function makeKeychain(hubApiKey: string | null): Pick<Keychain, 'getSecret'> {
-  return { getSecret: (name) => Promise.resolve(name === 'hubApiKey' ? hubApiKey : null) };
+function makeKeychain(deviceToken: string | null): Pick<Keychain, 'getSecret'> {
+  return {
+    getSecret: (name) => Promise.resolve(name === 'hubDeviceToken' ? deviceToken : null),
+  };
 }
 
 function makeDynamicSettingsStore(
@@ -53,18 +55,15 @@ function makeDynamicSettingsStore(
     getHubConnection: async () => {
       const settings = await get();
       const deviceToken = settings.hasHubDeviceToken ? 'agency_hub_device_test' : null;
-      const hubApiKey = settings.hasHubKey ? 'agency_hub_core_x' : null;
       return {
         settings,
         hubBaseUrl: settings.hubBaseUrl,
-        bearer: deviceToken ?? hubApiKey,
+        bearer: deviceToken,
         deviceToken,
-        hubApiKey,
         deviceTokenTransition: null,
       };
     },
     runCredentialMutation: (task) => task(),
-    decommissionQuarantinedHubKey: () => Promise.resolve(false),
     backfillHubDeviceIdentity: () => Promise.resolve(false),
   };
 }
@@ -86,11 +85,9 @@ describe('createHubModule', () => {
       settingsStore: makeSettingsStore(
         makeSettingsVM({
           hubBaseUrl: null,
-          hasHubKey: false,
-          keyMeta: { hub: null },
         }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
     });
     await module.reconfigure();
@@ -116,9 +113,9 @@ describe('createHubModule', () => {
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
     });
     await module.reconfigure();
@@ -147,9 +144,9 @@ describe('createHubModule', () => {
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
     });
     await module.reconfigure();
@@ -188,9 +185,9 @@ describe('createHubModule', () => {
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
     });
     await module.reconfigure();
@@ -245,9 +242,9 @@ describe('createHubModule', () => {
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient,
     });
     await module.reconfigure();
@@ -274,14 +271,14 @@ describe('createHubModule', () => {
     let releaseSettings!: () => void;
     const settingsPending = new Promise<ReturnType<typeof makeSettingsVM>>((resolve) => {
       releaseSettings = () => resolve(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       );
     });
     const createClient = vi.fn(() => makeFakeHubClient());
     const module = createHubModule({
       data,
       settingsStore: makeDynamicSettingsStore(() => settingsPending),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient,
     });
     const configuring = module.reconfigure();
@@ -318,9 +315,9 @@ describe('createHubModule', () => {
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
     });
 
@@ -373,9 +370,9 @@ describe('createHubModule', () => {
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
       onWarn,
     });
@@ -434,9 +431,9 @@ describe('createHubModule', () => {
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
     });
 
@@ -497,9 +494,9 @@ describe('createHubModule', () => {
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
       onWarn,
     });
@@ -577,9 +574,9 @@ describe('createHubModule', () => {
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
     });
 
@@ -611,17 +608,17 @@ describe('createHubModule', () => {
     const createClient = vi.fn()
       .mockReturnValueOnce(oldClient)
       .mockReturnValue(replacementClient);
-    let settings = makeSettingsVM({ hubBaseUrl: 'https://hub-a.example.com', hasHubKey: true });
+    let settings = makeSettingsVM({ hubBaseUrl: 'https://hub-a.example.com' });
     const module = createHubModule({
       data,
       settingsStore: makeDynamicSettingsStore(() => settings),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient,
     });
     await module.reconfigure();
     expect(oldClient.listAiPersonaCatalog).toHaveBeenCalledTimes(1);
 
-    settings = makeSettingsVM({ hubBaseUrl: 'https://hub-b.example.com', hasHubKey: true });
+    settings = makeSettingsVM({ hubBaseUrl: 'https://hub-b.example.com' });
     const replacement = module.reconfigure();
     await vi.waitFor(async () => {
       expect(await module.getOfapiCreditsSummary()).toBeNull();
@@ -656,9 +653,9 @@ describe('createHubModule', () => {
     const module = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
     });
     await module.reconfigure();
@@ -682,8 +679,6 @@ describe('createHubModule', () => {
       settingsStore: makeSettingsStore(
         makeSettingsVM({
           hubBaseUrl: null,
-          hasHubKey: false,
-          keyMeta: { hub: null },
         }),
       ),
       keychain: makeKeychain(null),
@@ -699,9 +694,9 @@ describe('createHubModule', () => {
     const configured = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
     });
     await configured.reconfigure();
@@ -726,11 +721,9 @@ describe('createHubModule', () => {
       settingsStore: makeSettingsStore(
         makeSettingsVM({
           hubBaseUrl: null,
-          hasHubKey: false,
-          keyMeta: { hub: null },
         }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
       onWarn: warn,
     });
@@ -742,9 +735,9 @@ describe('createHubModule', () => {
     const configured = createHubModule({
       data,
       settingsStore: makeSettingsStore(
-        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true }),
+        makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' }),
       ),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
       onWarn: warn,
     });
@@ -762,20 +755,18 @@ describe('createHubModule', () => {
     vi.useFakeTimers();
     const data = memoryDataLayer();
     const client = makeFakeHubClient();
-    const vmConfigured = makeSettingsVM({ hubBaseUrl: 'https://hub.example.com', hasHubKey: true });
+    const vmConfigured = makeSettingsVM({ hubBaseUrl: 'https://hub.example.com' });
     let current = vmConfigured;
     const module = createHubModule({
       data,
       settingsStore: makeDynamicSettingsStore(() => current),
-      keychain: makeKeychain('agency_hub_core_x'),
+      keychain: makeKeychain('agency_hub_device_test'),
       createClient: () => client,
     });
     await module.reconfigure();
 
     current = makeSettingsVM({
       hubBaseUrl: null,
-      hasHubKey: false,
-      keyMeta: { hub: null },
     });
     await module.reconfigure();
 

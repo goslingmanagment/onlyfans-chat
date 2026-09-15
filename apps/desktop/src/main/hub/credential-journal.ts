@@ -4,7 +4,6 @@ import { z } from 'zod';
 export const HUB_DEVICE_TOKEN_ACTIVATION_KEY = 'hubDeviceTokenActivation.v1';
 export const HUB_DEVICE_TOKEN_REVOCATION_KEY = 'hubDeviceTokenRevocation.v1';
 export const HUB_DEVICE_TOKEN_BINDING_KEY = 'hubDeviceTokenBinding.v1';
-export const HUB_API_KEY_BINDING_KEY = 'hubApiKeyBinding.v1';
 export const HUB_DEVICE_IDENTITY_KEY = 'hubDeviceIdentity.v1';
 
 const journalBaseSchema = z.strictObject({
@@ -117,12 +116,6 @@ export function readDeviceTokenBinding(
   queries: Pick<CredentialJournalQueries, 'get'>,
 ): HubCredentialBinding | null {
   return readJournal(queries, HUB_DEVICE_TOKEN_BINDING_KEY, hubCredentialBindingSchema);
-}
-
-export function readHubApiKeyBinding(
-  queries: Pick<CredentialJournalQueries, 'get'>,
-): HubCredentialBinding | null {
-  return readJournal(queries, HUB_API_KEY_BINDING_KEY, hubCredentialBindingSchema);
 }
 
 export function readHubDeviceIdentity(

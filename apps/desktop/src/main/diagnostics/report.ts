@@ -59,12 +59,11 @@ export interface DiagnosticsInputs {
 
 /** Strip every last-4 fingerprint carrier before the settings VM enters the
  * bundle (SPEC §15: the file is meant to leave the machine, so even partial
- * key material goes). D19 added hubDeviceIdentity, which carries tokenLast4. */
+ * credential material goes): hubDeviceIdentity carries tokenLast4. */
 export function settingsForDiagnosticsExport<T extends {
-  keyMeta: unknown;
   hubDeviceIdentity: unknown;
-}>(vm: T): Omit<T, 'keyMeta' | 'hubDeviceIdentity'> {
-  const { keyMeta: _keyMeta, hubDeviceIdentity: _identity, ...rest } = vm;
+}>(vm: T): Omit<T, 'hubDeviceIdentity'> {
+  const { hubDeviceIdentity: _identity, ...rest } = vm;
   return rest;
 }
 

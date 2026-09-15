@@ -59,18 +59,15 @@ describe('activateRuntimeNonFatal (4b)', () => {
 
 describe('hubCredentialNeedsAttention', () => {
   const bound = {
-    hasHubKey: true,
-    hubApiKeyBindingState: 'bound' as const,
-    hasHubDeviceToken: false,
-    hubDeviceTokenBindingState: 'none' as const,
+    hasHubDeviceToken: true,
+    hubDeviceTokenBindingState: 'bound' as const,
     hubDeviceTokenTransition: null,
   };
 
   it('surfaces a surviving lifecycle journal even when every custody file is missing', () => {
     expect(hubCredentialNeedsAttention({
-      ...bound,
-      hasHubKey: false,
-      hubApiKeyBindingState: 'none',
+      hasHubDeviceToken: false,
+      hubDeviceTokenBindingState: 'none',
       hubDeviceTokenTransition: 'revocation',
     })).toBe(true);
   });
@@ -79,30 +76,16 @@ describe('hubCredentialNeedsAttention', () => {
     expect(hubCredentialNeedsAttention(bound)).toBe(false);
   });
 
-  it('bound device token suppresses a quarantined legacy key (Maxim regression)', () => {
+  it('is silent on a signed-out machine (D35: nothing else can be stored)', () => {
     expect(hubCredentialNeedsAttention({
-      hasHubKey: true,
-      hubApiKeyBindingState: 'unbound',
-      hasHubDeviceToken: true,
-      hubDeviceTokenBindingState: 'bound',
+      hasHubDeviceToken: false,
+      hubDeviceTokenBindingState: 'none',
       hubDeviceTokenTransition: null,
     })).toBe(false);
   });
 
-  it('quarantined key still raises attention without a bound device token', () => {
+  it('device-credential trouble is never suppressed', () => {
     expect(hubCredentialNeedsAttention({
-      hasHubKey: true,
-      hubApiKeyBindingState: 'unbound',
-      hasHubDeviceToken: false,
-      hubDeviceTokenBindingState: 'none',
-      hubDeviceTokenTransition: null,
-    })).toBe(true);
-  });
-
-  it('device-token trouble is never suppressed', () => {
-    expect(hubCredentialNeedsAttention({
-      hasHubKey: false,
-      hubApiKeyBindingState: 'none',
       hasHubDeviceToken: true,
       hubDeviceTokenBindingState: 'mismatch',
       hubDeviceTokenTransition: null,

@@ -29,21 +29,14 @@ export async function activateRuntimeNonFatal(
 
 /** A durable lifecycle journal can outlive every readable custody file. Keep
  * that possible remote-orphan state globally visible even when no active local
- * secret remains for the ordinary hasCredential checks to observe. */
+ * secret remains for the ordinary hasCredential checks to observe.
+ * D35: the legacy chatter key is gone, so device custody is the whole story. */
 export function hubCredentialNeedsAttention(settings: {
-  hasHubKey: boolean;
-  hubApiKeyBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
   hasHubDeviceToken: boolean;
   hubDeviceTokenBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
   hubDeviceTokenTransition: 'activation' | 'revocation' | null;
 }): boolean {
-  // A bound device token is the active bearer; a leftover legacy key is dead
-  // weight the boot decommission pass removes (D19). Only surface it while no
-  // healthy device credential exists.
-  const legacyKeyAttention = settings.hasHubKey
-    && settings.hubApiKeyBindingState !== 'bound'
-    && settings.hubDeviceTokenBindingState !== 'bound';
-  return legacyKeyAttention || (
+  return (
     settings.hasHubDeviceToken && settings.hubDeviceTokenBindingState !== 'bound'
   ) || settings.hubDeviceTokenTransition !== null;
 }

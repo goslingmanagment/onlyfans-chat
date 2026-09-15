@@ -287,21 +287,17 @@ export interface AiGateInput {
 }
 
 export interface AiTransportSettings {
-  hasHubKey: boolean;
-  hubApiKeyBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
   hasHubDeviceToken: boolean;
   hubDeviceTokenBindingState: 'none' | 'bound' | 'unbound' | 'mismatch' | 'unreadable';
   hubBaseUrl: string | null;
 }
 
-/** Stage 31 cutover: the kernel feature lane is the only AI transport —
- * a hub connection IS the AI configuration (vendor keys retired). Either
- * credential counts: the device token (preferred) or the legacy chatter key. */
+/** Stage 31 cutover: the kernel feature lane is the only AI transport — a hub
+ * connection IS the AI configuration (vendor keys retired). D35: that
+ * connection is the signed-in device credential. */
 export function hasConfiguredAiTransport(settings: AiTransportSettings): boolean {
-  return settings.hubBaseUrl !== null && (
-    settings.hubApiKeyBindingState === 'bound'
-    || settings.hubDeviceTokenBindingState === 'bound'
-  );
+  return settings.hubBaseUrl !== null
+    && settings.hubDeviceTokenBindingState === 'bound';
 }
 
 export type AiGate =

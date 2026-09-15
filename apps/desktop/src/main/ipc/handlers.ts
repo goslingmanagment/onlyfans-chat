@@ -665,10 +665,8 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       coreCredits,
       // Stage 31: AI is the kernel feature lane — configured = hub transport up.
       ai: {
-        gatewayConfigured: settings.hubBaseUrl !== null && (
-          settings.hubApiKeyBindingState === 'bound'
-          || settings.hubDeviceTokenBindingState === 'bound'
-        ),
+        gatewayConfigured: settings.hubBaseUrl !== null
+          && settings.hubDeviceTokenBindingState === 'bound',
       },
     });
   });
@@ -957,45 +955,34 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle('cmd:settings.update', async (_event, rawPatch: unknown) => {
     const rawPatchObject = typeof rawPatch === 'object' && rawPatch !== null;
-    const mayTouchReadRuntime =
-      rawPatchObject && ('hubApiKey' in rawPatch || 'hubBaseUrl' in rawPatch);
+    const mayTouchReadRuntime = rawPatchObject && 'hubBaseUrl' in rawPatch;
     const persistPatch = async () => {
       // Recompute under the credential queue: two overlapping URL patches must
       // not make this decision from an obsolete pre-lock settings snapshot.
-      let touchedReadRuntime = rawPatchObject && 'hubApiKey' in rawPatch;
+      let touchedReadRuntime = false;
       if (rawPatchObject && 'hubBaseUrl' in rawPatch) {
         const current = await settingsStore.get();
-        touchedReadRuntime = touchedReadRuntime || rawPatch.hubBaseUrl !== current.hubBaseUrl;
+        touchedReadRuntime = rawPatch.hubBaseUrl !== current.hubBaseUrl;
       }
-      // 4a (SPEC §15): for hub-affecting keys, VALIDATE a candidate read runtime
-      // built from the patch overrides BEFORE persisting. A bad key/URL rejects
-      // here with nothing written to the keychain or the settings table — no
-      // half-applied credential. Non-hub patches keep persist-then-return.
-      const probeResult =
-        touchedReadRuntime && deps.probeReadRuntimeForPatch
-          ? await deps.probeReadRuntimeForPatch(rawPatch)
-          : undefined;
-      // A dead device token shadows both the old and candidate chatter keys.
-      // Its deletion is part of SettingsStore's durable transition: before the
-      // intent the old state is intact; after it, restart recovery repeats both
-      // token cleanup and candidate-key promotion. The outer credential FIFO
-      // also prevents deleting a subsequently issued token by name.
-      const result = await settingsStore.update(rawPatch, {
-        deleteDeadHubDeviceToken: probeResult?.deleteDeadDeviceToken === true,
-      });
-      await probeResult?.afterCommit?.();
+      // 4a (SPEC §15): for an address change, VALIDATE a candidate read runtime
+      // built from the patch override BEFORE persisting. A bad address rejects
+      // here with nothing written to the settings table — no half-applied
+      // configuration. Other patches keep persist-then-return.
+      if (touchedReadRuntime && deps.probeReadRuntimeForPatch) {
+        await deps.probeReadRuntimeForPatch(rawPatch);
+      }
+      const result = await settingsStore.update(rawPatch);
       if (touchedReadRuntime) {
         await deps.onOfapiRuntimeConfigChanged?.();
       }
       return result;
     };
-    // The token cleanup deletes by keychain name. Keep it under the same FIFO
-    // ownership as sign-in/sign-out so it cannot delete a newer token that was
-    // issued while a validated settings update was awaiting persistence.
+    // An address change races sign-in/sign-out over the same custody, so keep
+    // it under the same FIFO ownership.
     const result = mayTouchReadRuntime && deps.runReadRuntimeMutation !== undefined
       ? await deps.runReadRuntimeMutation(persistPatch)
       : await persistPatch();
-    // Fires on hub-mode override patches only. Hub URL/key/read-transport edits
+    // Fires on hub-mode override patches only. Address/read-transport edits
     // rebuild the read runtime above, after account-bootstrap validation.
     const touchedHubOverride =
       typeof rawPatch === 'object' &&

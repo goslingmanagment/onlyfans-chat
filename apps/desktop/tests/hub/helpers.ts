@@ -49,10 +49,8 @@ export function seedAccount(data: DataLayer, username = 'loravie', id = ACCT): v
 
 export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM {
   return {
-    hasHubKey: true,
-    hubApiKeyBindingState: 'bound',
-    hasHubDeviceToken: false,
-    hubDeviceTokenBindingState: 'none',
+    hasHubDeviceToken: true,
+    hubDeviceTokenBindingState: 'bound',
     hubDeviceTokenTransition: null,
     hubDeviceIdentity: null,
     appVersion: '0.0.0-test',
@@ -87,9 +85,6 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     uiLocale: 'system',
     uiScale: 1,
     uiTheme: 'light',
-    keyMeta: {
-      hub: { last4: 'core', setAt: 0 },
-    },
     featureModels: {
       'fast-reply': 'anthropic:claude-sonnet-4-6',
       'help-me': 'anthropic:claude-sonnet-4-6',
@@ -124,24 +119,18 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
 }
 
 export function makeSettingsStore(vm: SettingsVM): SettingsStore {
-  const bearer = vm.hasHubDeviceToken
-    ? 'agency_hub_device_test'
-    : vm.hasHubKey
-      ? 'agency_hub_core_test'
-      : null;
+  const bearer = vm.hasHubDeviceToken ? 'agency_hub_device_test' : null;
   return {
     get: () => Promise.resolve(vm),
     getHubConnection: () => Promise.resolve({
       settings: vm,
       hubBaseUrl: vm.hubBaseUrl,
       bearer,
-      deviceToken: vm.hasHubDeviceToken ? bearer : null,
-      hubApiKey: vm.hasHubKey ? 'agency_hub_core_test' : null,
+      deviceToken: bearer,
       deviceTokenTransition: null,
     }),
     update: () => Promise.resolve(vm),
     runCredentialMutation: (task) => task(),
-    decommissionQuarantinedHubKey: () => Promise.resolve(false),
     backfillHubDeviceIdentity: () => Promise.resolve(false),
   };
 }

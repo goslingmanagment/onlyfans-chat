@@ -164,7 +164,6 @@ describe('settingsForDiagnosticsExport (D19)', () => {
   it('strips every last-4 fingerprint carrier from the exported VM', () => {
     const vm = {
       hubBaseUrl: 'https://hub.test',
-      keyMeta: { hub: { last4: 'a4f2', setAt: 1 } },
       hubDeviceIdentity: {
         username: 'Maxim',
         label: 'Kevin',
@@ -176,6 +175,5 @@ describe('settingsForDiagnosticsExport (D19)', () => {
     const exported = settingsForDiagnosticsExport(vm);
     expect(exported).toEqual({ hubBaseUrl: 'https://hub.test' });
     expect(JSON.stringify(exported)).not.toContain('W7vt');
-    expect(JSON.stringify(exported)).not.toContain('a4f2');
   });
 });

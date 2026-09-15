@@ -8,13 +8,8 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 export const SECRET_NAMES = [
-  'hubApiKey',
-  // Crash-safe credential replacement stages the candidate here before a
-  // non-secret SQLite intent is published. The value is still safeStorage-
-  // encrypted and is never selected as a runtime bearer directly.
-  'hubApiKeyStaged',
-  // Stage 24: device-bound hub credential (agency_hub_device_…); preferred
-  // over hubApiKey when present. Issued via Settings → Hub sign-in.
+  // Stage 24: device-bound hub credential (agency_hub_device_…), the only hub
+  // bearer since D35 retired the legacy chatter key.
   'hubDeviceToken',
   // Server-generated pending token. Never selected as a runtime bearer until
   // Core activation and local promotion both complete.
@@ -57,11 +52,15 @@ export interface Keychain {
 
 /** Legacy secret files removed on boot: Stage 24 killed direct OFAPI reads;
  * Stage 31 killed direct AI provider calls (all generation rides the kernel
- * gateway — vendor keys live kernel-side only). */
+ * gateway — vendor keys live kernel-side only); D35 killed the legacy chatter
+ * key and its staging slot (humans sign in with a password, robots use the
+ * kernel's own lanes). */
 const DECOMMISSIONED_SECRET_FILES = [
   'ofapiKey.secret',
   'anthropicKey.secret',
   'openRouterKey.secret',
+  'hubApiKey.secret',
+  'hubApiKeyStaged.secret',
 ] as const;
 
 /** 32-byte random key as 64 hex chars (DB / media-cache encryption keys). */

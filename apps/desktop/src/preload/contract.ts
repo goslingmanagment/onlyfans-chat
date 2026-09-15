@@ -365,9 +365,6 @@ export type HubCredentialBindingState =
   | 'unreadable';
 
 export interface SettingsVM {
-  hasHubKey: boolean;
-  /** Whether the encrypted Hub key is proven to belong to the saved origin. */
-  hubApiKeyBindingState: HubCredentialBindingState;
   featureModels: Record<ModelSelectableFeature, string>;
   featureReasoning: Record<ModelSelectableFeature, ReasoningEffort>;
   quickMessageCount: number;
@@ -417,7 +414,7 @@ export interface SettingsVM {
   aiGatewayTransport: 'feature';
   /** Dev/support-only sync override. Default 'auto'; non-auto persists across restarts. */
   hubModeOverride: HubModeOverrideSetting;
-  /** Stage 24: a device-bound hub token is stored (preferred over the chatter key). */
+  /** Stage 24: this machine holds its own hub bearer (D35: the only one). */
   hasHubDeviceToken: boolean;
   /** Whether the encrypted device token is proven to belong to the saved origin. */
   hubDeviceTokenBindingState: HubCredentialBindingState;
@@ -480,26 +477,11 @@ export interface SettingsVM {
   uiScale: number;
   /** Color theme; 'system' follows the OS color scheme at runtime. */
   uiTheme: UiThemeSetting;
-  /**
-   * Non-secret fingerprints of stored keys ({last4, setAt}) recorded when a key
-   * is saved — read-only in the VM (not patchable), null when never recorded.
-   */
-  keyMeta: KeyMetaVM;
 }
 
-export interface KeyMetaEntry {
-  last4: string;
-  /** Epoch ms when the key was last saved. */
-  setAt: number;
-}
-
-export interface KeyMetaVM {
-  hub: KeyMetaEntry | null;
-}
-
-/** D19: who signed this machine in, for display only. Never carries the token
- * (only its last-4 fingerprint, keyMeta convention). Dates are null when the
- * record was rebuilt by crash recovery — the UI omits them rather than guess. */
+/** D19: who signed this machine in, for display only. Never carries the bearer
+ * (only its last-4 fingerprint). Dates are null when the record was rebuilt by
+ * crash recovery — the UI omits them rather than guess. */
 export interface HubDeviceIdentityVM {
   username: string | null;
   label: string;
@@ -603,20 +585,15 @@ export interface AiFeatureCostsVM {
 export type SettingsPatch = Partial<
   Omit<
     SettingsVM,
-    | 'hasHubKey'
-    | 'hubApiKeyBindingState'
     | 'hasHubDeviceToken'
     | 'hubDeviceTokenBindingState'
+    | 'hubDeviceTokenTransition'
     | 'hubDeviceIdentity'
     | 'appVersion'
     | 'machineLabel'
     | 'osPlatform'
-    | 'keyMeta'
   >
-> & {
-  /** Chatter key (`agency_hub_core_…`) — write-only into the keychain. */
-  hubApiKey?: string;
-};
+>;
 
 export interface AiStartRequest {
   operationId: string;

@@ -631,8 +631,7 @@ export function useUpdateSettings() {
   return useMutation({
     mutationFn: (patch: SettingsPatch) => getBridge().invoke('cmd:settings.update', patch),
     onMutate: (patch) => {
-      const blocksAi = 'hubBaseUrl' in patch
-        || 'hubApiKey' in patch;
+      const blocksAi = 'hubBaseUrl' in patch;
       if (blocksAi) beginAiHubOriginChange();
       return { blocksAi };
     },
@@ -640,7 +639,7 @@ export function useUpdateSettings() {
       queryClient.setQueryData(qk.settings, settings);
       void queryClient.invalidateQueries({ queryKey: qk.syncStatus });
       void queryClient.invalidateQueries({ queryKey: qk.activity });
-      if ('hubBaseUrl' in patch || 'hubApiKey' in patch) {
+      if ('hubBaseUrl' in patch) {
         // Hub replacement swaps the scoped catalog + mappings. Main's
         // runtime.aiContext event separately resets jobs only when its exact
         // origin/principal fingerprint actually changed.
