@@ -151,6 +151,7 @@ export declare const adminUserSchema: z.ZodObject<{
         activeKeyLastUsedAt: z.ZodNullable<z.ZodString>;
     }, z.core.$strip>>;
     disabledAt: z.ZodNullable<z.ZodString>;
+    deletedAt: z.ZodNullable<z.ZodString>;
     lastActiveAt: z.ZodNullable<z.ZodString>;
     registrationState: z.ZodEnum<{
         active: "active";
@@ -238,6 +239,7 @@ export declare const adminCreateInviteResponseSchema: z.ZodObject<{
             activeKeyLastUsedAt: z.ZodNullable<z.ZodString>;
         }, z.core.$strip>>;
         disabledAt: z.ZodNullable<z.ZodString>;
+        deletedAt: z.ZodNullable<z.ZodString>;
         lastActiveAt: z.ZodNullable<z.ZodString>;
         registrationState: z.ZodEnum<{
             active: "active";
@@ -22681,6 +22683,7 @@ declare const baseRouteSchemas: {
                     activeKeyLastUsedAt: z.ZodNullable<z.ZodString>;
                 }, z.core.$strip>>;
                 disabledAt: z.ZodNullable<z.ZodString>;
+                deletedAt: z.ZodNullable<z.ZodString>;
                 lastActiveAt: z.ZodNullable<z.ZodString>;
                 registrationState: z.ZodEnum<{
                     active: "active";
@@ -23476,6 +23479,12 @@ declare const baseRouteSchemas: {
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
         };
     };
     readonly adminSetPassword: {
@@ -23485,7 +23494,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Set a user password";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly body: z.ZodObject<{
             password: z.ZodString;
@@ -23528,7 +23537,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Assign a page to a user";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly body: z.ZodObject<{
             pageLabel: z.ZodString;
@@ -23554,6 +23563,12 @@ declare const baseRouteSchemas: {
                     modelSlug: z.ZodString;
                     modelName: z.ZodString;
                 }, z.core.$strip>>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
@@ -23582,12 +23597,18 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Unassign a page from a user";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
             pageLabel: z.ZodString;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
                 ok: z.ZodLiteral<true>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
@@ -23616,7 +23637,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "List API keys for a user";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodArray<z.ZodObject<{
@@ -23641,6 +23662,12 @@ declare const baseRouteSchemas: {
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
         };
     };
     readonly adminIssueApiKey: {
@@ -23650,7 +23677,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Issue an API key for a user";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly body: z.ZodObject<{
             pageLabel: z.ZodOptional<z.ZodString>;
@@ -23670,6 +23697,12 @@ declare const baseRouteSchemas: {
                     modelName: z.ZodString;
                 }, z.core.$strip>>;
             }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
@@ -23688,6 +23721,12 @@ declare const baseRouteSchemas: {
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
         };
     };
     readonly adminRevokeApiKeys: {
@@ -23697,7 +23736,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Revoke all API keys for a user";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -23728,10 +23767,10 @@ declare const baseRouteSchemas: {
             readonly kind: "owner-session";
         };
         readonly tags: readonly ["admin"];
-        readonly summary: "Deactivate a user (decision #126: soft tombstone, never delete)";
+        readonly summary: "Disable a user temporarily, retaining their login and history";
         readonly description: string;
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -23774,11 +23813,54 @@ declare const baseRouteSchemas: {
         readonly summary: "Reactivate a deactivated user";
         readonly description: string;
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
                 ok: z.ZodLiteral<true>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly adminDeleteUser: {
+        readonly auth: {
+            readonly kind: "owner-session";
+        };
+        readonly tags: readonly ["admin"];
+        readonly summary: "Permanently delete an account and release its login";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            userId: z.ZodCoercedNumber<unknown>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                ok: z.ZodLiteral<true>;
+                revokedApiKeys: z.ZodNumber;
+                revokedDeviceTokens: z.ZodNumber;
+                revokedSessions: z.ZodNumber;
             }, z.core.$strip>;
             readonly 400: z.ZodObject<{
                 error: z.ZodString;
@@ -23976,7 +24058,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "List a user's device tokens";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodArray<z.ZodObject<{
@@ -24019,7 +24101,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Issue a device token for a user (returned once)";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly body: z.ZodObject<{
             label: z.ZodString;
@@ -24056,6 +24138,12 @@ declare const baseRouteSchemas: {
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
         };
     };
     readonly adminSetDeviceTokenHarvestCapability: {
@@ -24066,7 +24154,7 @@ declare const baseRouteSchemas: {
         readonly summary: "Bind or remove a device token's Desktop harvest capability";
         readonly description: string;
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
             tokenId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly body: z.ZodObject<{
@@ -24119,7 +24207,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Revoke all of a user's device tokens";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -24191,7 +24279,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Grant a user model-scope access (present and future pages)";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly body: z.ZodObject<{
             modelSlug: z.ZodString;
@@ -24199,6 +24287,12 @@ declare const baseRouteSchemas: {
         readonly response: {
             readonly 200: z.ZodObject<{
                 ok: z.ZodLiteral<true>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
@@ -24227,12 +24321,18 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Revoke a user's model-scope grant";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
             modelSlug: z.ZodString;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
                 ok: z.ZodLiteral<true>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
@@ -24261,7 +24361,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Access-grant history for one user (active and revoked)";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -24345,6 +24445,7 @@ declare const baseRouteSchemas: {
                         activeKeyLastUsedAt: z.ZodNullable<z.ZodString>;
                     }, z.core.$strip>>;
                     disabledAt: z.ZodNullable<z.ZodString>;
+                    deletedAt: z.ZodNullable<z.ZodString>;
                     lastActiveAt: z.ZodNullable<z.ZodString>;
                     registrationState: z.ZodEnum<{
                         active: "active";
@@ -24396,7 +24497,7 @@ declare const baseRouteSchemas: {
         readonly summary: "Create a one-time invite or password-reset link for a user (returned once)";
         readonly description: string;
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly body: z.ZodObject<{
             kind: z.ZodEnum<{
@@ -24449,7 +24550,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "List a user's invite and password-reset links with their state";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodArray<z.ZodObject<{
@@ -24499,7 +24600,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Revoke one of a user's links (idempotent on an already inactive link)";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
             linkId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly response: {
@@ -24550,7 +24651,7 @@ declare const baseRouteSchemas: {
         readonly tags: readonly ["admin"];
         readonly summary: "Revoke ONE of a user's device tokens (\"revoke this sign-in\")";
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
             tokenId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly response: {
@@ -24585,7 +24686,7 @@ declare const baseRouteSchemas: {
         readonly summary: "Terminate every sign-in of a user: device tokens, reservations, sessions, API keys and active links";
         readonly description: string;
         readonly params: z.ZodObject<{
-            username: z.ZodString;
+            userId: z.ZodCoercedNumber<unknown>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{

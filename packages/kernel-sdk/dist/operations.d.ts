@@ -17,7 +17,7 @@ export declare const kernelOperations: {
     };
     readonly adminAssignPage: {
         readonly method: "POST";
-        readonly path: "/api/v1/admin/users/:username/pages";
+        readonly path: "/api/v1/admin/users/by-id/:userId/pages";
     };
     readonly adminChatterUsage: {
         readonly method: "GET";
@@ -45,7 +45,7 @@ export declare const kernelOperations: {
     };
     readonly adminCreateAccountLink: {
         readonly method: "POST";
-        readonly path: "/api/v1/admin/users/:username/links";
+        readonly path: "/api/v1/admin/users/by-id/:userId/links";
     };
     readonly adminCreateInvite: {
         readonly method: "POST";
@@ -69,7 +69,7 @@ export declare const kernelOperations: {
     };
     readonly adminDeactivateUser: {
         readonly method: "POST";
-        readonly path: "/api/v1/admin/users/:username/deactivate";
+        readonly path: "/api/v1/admin/users/by-id/:userId/deactivate";
     };
     readonly adminDeleteModel: {
         readonly method: "DELETE";
@@ -78,6 +78,10 @@ export declare const kernelOperations: {
     readonly adminDeletePage: {
         readonly method: "DELETE";
         readonly path: "/api/v1/admin/pages/:pageLabel";
+    };
+    readonly adminDeleteUser: {
+        readonly method: "DELETE";
+        readonly path: "/api/v1/admin/users/by-id/:userId";
     };
     readonly adminDeviceTokenAdoption: {
         readonly method: "GET";
@@ -97,7 +101,7 @@ export declare const kernelOperations: {
     };
     readonly adminGrantModel: {
         readonly method: "POST";
-        readonly path: "/api/v1/admin/users/:username/models";
+        readonly path: "/api/v1/admin/users/by-id/:userId/models";
     };
     readonly adminIncidents: {
         readonly method: "GET";
@@ -105,27 +109,27 @@ export declare const kernelOperations: {
     };
     readonly adminIssueApiKey: {
         readonly method: "POST";
-        readonly path: "/api/v1/admin/users/:username/api-keys";
+        readonly path: "/api/v1/admin/users/by-id/:userId/api-keys";
     };
     readonly adminIssueDeviceToken: {
         readonly method: "POST";
-        readonly path: "/api/v1/admin/users/:username/device-tokens";
+        readonly path: "/api/v1/admin/users/by-id/:userId/device-tokens";
     };
     readonly adminListAccountLinks: {
         readonly method: "GET";
-        readonly path: "/api/v1/admin/users/:username/links";
+        readonly path: "/api/v1/admin/users/by-id/:userId/links";
     };
     readonly adminListApiKeys: {
         readonly method: "GET";
-        readonly path: "/api/v1/admin/users/:username/api-keys";
+        readonly path: "/api/v1/admin/users/by-id/:userId/api-keys";
     };
     readonly adminListDeviceTokens: {
         readonly method: "GET";
-        readonly path: "/api/v1/admin/users/:username/device-tokens";
+        readonly path: "/api/v1/admin/users/by-id/:userId/device-tokens";
     };
     readonly adminListUserGrants: {
         readonly method: "GET";
-        readonly path: "/api/v1/admin/users/:username/grants";
+        readonly path: "/api/v1/admin/users/by-id/:userId/grants";
     };
     readonly adminListUsers: {
         readonly method: "GET";
@@ -281,35 +285,35 @@ export declare const kernelOperations: {
     };
     readonly adminReactivateUser: {
         readonly method: "POST";
-        readonly path: "/api/v1/admin/users/:username/reactivate";
+        readonly path: "/api/v1/admin/users/by-id/:userId/reactivate";
     };
     readonly adminRevokeAccountLink: {
         readonly method: "POST";
-        readonly path: "/api/v1/admin/users/:username/links/:linkId/revoke";
+        readonly path: "/api/v1/admin/users/by-id/:userId/links/:linkId/revoke";
     };
     readonly adminRevokeApiKeys: {
         readonly method: "DELETE";
-        readonly path: "/api/v1/admin/users/:username/api-keys";
+        readonly path: "/api/v1/admin/users/by-id/:userId/api-keys";
     };
     readonly adminRevokeDeviceToken: {
         readonly method: "DELETE";
-        readonly path: "/api/v1/admin/users/:username/device-tokens/:tokenId";
+        readonly path: "/api/v1/admin/users/by-id/:userId/device-tokens/:tokenId";
     };
     readonly adminRevokeDeviceTokens: {
         readonly method: "DELETE";
-        readonly path: "/api/v1/admin/users/:username/device-tokens";
+        readonly path: "/api/v1/admin/users/by-id/:userId/device-tokens";
     };
     readonly adminRevokeModel: {
         readonly method: "DELETE";
-        readonly path: "/api/v1/admin/users/:username/models/:modelSlug";
+        readonly path: "/api/v1/admin/users/by-id/:userId/models/:modelSlug";
     };
     readonly adminSetDeviceTokenHarvestCapability: {
         readonly method: "PATCH";
-        readonly path: "/api/v1/admin/users/:username/device-tokens/:tokenId/harvest-capability";
+        readonly path: "/api/v1/admin/users/by-id/:userId/device-tokens/:tokenId/harvest-capability";
     };
     readonly adminSetPassword: {
         readonly method: "PATCH";
-        readonly path: "/api/v1/admin/users/:username/password";
+        readonly path: "/api/v1/admin/users/by-id/:userId/password";
     };
     readonly adminSyncBlockPause: {
         readonly method: "POST";
@@ -345,7 +349,7 @@ export declare const kernelOperations: {
     };
     readonly adminTerminateAllAccess: {
         readonly method: "POST";
-        readonly path: "/api/v1/admin/users/:username/terminate-access";
+        readonly path: "/api/v1/admin/users/by-id/:userId/terminate-access";
     };
     readonly adminTestProxy: {
         readonly method: "POST";
@@ -353,7 +357,7 @@ export declare const kernelOperations: {
     };
     readonly adminUnassignPage: {
         readonly method: "DELETE";
-        readonly path: "/api/v1/admin/users/:username/pages/:pageLabel";
+        readonly path: "/api/v1/admin/users/by-id/:userId/pages/:pageLabel";
     };
     readonly adminUpdateCredentials: {
         readonly method: "PATCH";

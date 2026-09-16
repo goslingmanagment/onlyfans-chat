@@ -188,6 +188,9 @@ export const ofapiMessageSchema = ofapiChatMessageSchema.extend({
   /** Fan's note accompanying a tip — OF HTML (SPEC §8.2 tip ladder, live-verified). */
   tipText: z.string().nullish(),
   fromUser: z.looseObject({ id: z.number().nullish() }).nullish(),
+  /** OF queue id. On a delivered welcome it equals the welcome-template id
+   * (live-verified 2026-09-15); personal DMs carry their own unrelated ids. */
+  queueId: z.union([z.number(), z.string()]).nullish(),
 });
 
 export type OfApiMessage = z.infer<typeof ofapiMessageSchema>;
