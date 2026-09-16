@@ -33,12 +33,18 @@ transactionally frozen roster. `type=new` excludes renewals, but classification
 of a returning subscriber and the precise meaning of `subscribeAt` still need
 live-account verification. See D34 and Hub decision 342.
 
-OnlyFans does not provide sufficiently strong message-origin evidence in the
-vendored contract to tell a single-recipient scheduled message from a mass
-message using `isFromQueue`, or to prove welcome origin from matching text.
-These outgoing messages remain **unknown**, with their reason and cached chat
-visible. The feature deliberately does not invite a greeting on this evidence.
-`queueId` also appears on personal-message examples and is not an exclusion.
+OnlyFans delivers the welcome template through its own queue: each delivered
+copy carries `queueId` equal to the welcome-template id (live-verified on
+LoraVie FREE 2026-09-15, 12 of 12 chats; personal DMs carry unrelated queue
+ids). A sent message whose `queueId` equals the current template id is
+**automatic** and does not block ready (D36). Everything else keeps the
+conservative reading: `isFromQueue` cannot tell a single-recipient scheduled
+message from a mass message, and a bare template-text match without the id is
+not origin proof. Those outgoing messages remain **unknown**, with their reason
+and cached chat visible; the feature does not invite a greeting on that
+evidence. A template re-created under a new id makes its earlier deliveries
+contacted/unknown, never ready. A bare `queueId` on its own is not an exclusion:
+it also appears on personal messages.
 
 Pause to work with an already-checked fan. Generate creates one editable greeting
 through the existing AI coordinator and server-owned OF context. View/review the

@@ -113,6 +113,32 @@ describe("OnlyFans eligibility evidence", () => {
       assessHistory([message({ queueId: 900 })], false, welcome).status,
     ).toBe("contacted");
   });
+  it("recognises the delivered welcome template by its queue id", () => {
+    const delivered = message({ queueId: 1, text: "<p>Welcome!</p>" });
+    expect(messageKind(delivered, welcome)).toBe("automatic");
+    expect(assessHistory([delivered], true, welcome)).toMatchObject({
+      status: "ready",
+      reason: "В истории только автоматическое welcome-сообщение",
+      proof: null,
+    });
+    // An edited template keeps its id: earlier deliveries stay automatic.
+    expect(
+      messageKind(message({ queueId: "1", text: "older wording" }), welcome),
+    ).toBe("automatic");
+    // Without the template the id proves nothing.
+    expect(messageKind(message({ queueId: 1 }), null)).toBe("ambiguous");
+    // A bare text match under a foreign queue id is still not origin proof.
+    expect(
+      messageKind(message({ queueId: 900, text: "<p>Welcome!</p>" }), welcome),
+    ).toBe("ambiguous");
+    // Incomplete history stays unknown even when all of it is automatic.
+    expect(assessHistory([delivered], false, welcome).status).toBe("unknown");
+    // Personal contact after the welcome still wins.
+    expect(
+      assessHistory([message({ id: 11, text: "hey" }), delivered], true, welcome)
+        .status,
+    ).toBe("contacted");
+  });
   it("fails closed for missing origin flags, welcome candidates and incomplete history", () => {
     expect(
       assessHistory([message({ isFromQueue: undefined })], true, welcome)
@@ -456,6 +482,24 @@ describe("new follower workflow", () => {
       ["2", "ready"],
       ["5", "unknown"],
     ]);
+  });
+  it("lets a fan who only received the automatic welcome become ready", async () => {
+    const { service, finish } = setup([fan(1)], {
+      listMessages: async () => ({
+        messages: [message({ id: 77, queueId: 1, text: "<p>Welcome!</p>" })],
+        nextPageUrl: null,
+      }),
+    });
+    service.start(accountId, 24);
+    await finish();
+    expect(service.snapshot({ accountId }).counts).toMatchObject({ ready: 1 });
+    expect(service.detail(accountId, "1")).toMatchObject({
+      row: {
+        status: "ready",
+        reason: "В истории только автоматическое welcome-сообщение",
+      },
+      messages: [{ id: "77", kind: "automatic", text: "Welcome!" }],
+    });
   });
   it("stops at full-history cap with unknown instead of ready", async () => {
     const { service, finish } = setup([fan(1)], {

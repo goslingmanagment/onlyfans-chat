@@ -55,6 +55,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D33 | 2026-09-15 | Remove the unsolicited API options panel and optional chat controls from Desktop; keep stored payload recovery and the original reply/like/name requirements |
 | D34 | 2026-09-15 | New follower enumeration uses date-bounded latest subscriptions and explicit provider continuation (core #342) |
 | D35 | 2026-09-15 | One account per chatter: first-run sign-in screen, password sign-in without cookies, the legacy chatter key retired, self-healing on a reasoned 401, and the account cache bound to an identity (core unified-account plan §9) |
+| D36 | 2026-09-16 | New followers: a delivered welcome is recognised by `queueId` equal to the welcome-template id and no longer blocks ready (amends D32) |
 
 ## Entries
 
@@ -873,3 +874,20 @@ hub, sign out of this device, help signing in.
 The source version is prepared as 0.1.55. Publication still uses the normal
 release checks/tag/feed ritual, and the kernel side of the contract must be
 deployed first; this decision is not a claim that an installer has shipped.
+
+**D36 (2026-09-16).** On LoraVie FREE every new fan receives the OF welcome
+template within seconds of subscribing, so under D32 every not-yet-contacted fan
+was `unknown` («Не удалось проверить») and the feature could never offer a
+greeting (operator report 2026-09-15, journal run 1e4a58aa). Hub-journaled
+provider bodies of that run showed the missing origin proof: all 12 delivered
+welcome copies carried `queueId` equal to the welcome-template id
+(31662501628) with `isFromQueue:false`, while personal DMs carried unrelated
+queue ids. A sent message whose `queueId` equals the current template id is now
+`automatic`; a complete history of only automatic messages is `ready` («В
+истории только автоматическое welcome-сообщение»). Everything else keeps the
+D32 reading: `isFromQueue:true`, a missing flag, an unavailable template, or a
+bare text/media match without the id remain ambiguous and hold the fan at
+`unknown`. A template re-created under a new id turns its earlier deliveries
+into contacted/unknown, never ready — the safe direction. Fixture checks cover
+the id match, id-with-edited-text, foreign-id text match, incomplete history
+and the service-level ready path.

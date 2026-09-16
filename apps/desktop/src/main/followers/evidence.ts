@@ -11,15 +11,30 @@ export function plain(value: string | null | undefined): string {
   return htmlToPlainText(value ?? "").trim();
 }
 
-/** queueId is NOT a mass-message proof: OFAPI also returns it on personal DMs.
- * Matching the current welcome template is only a candidate, since OF does not
- * provide an immutable welcome-origin flag. Ambiguous outgoing messages deny
- * a negative verdict; template edits must never turn uncertainty into a send. */
+/** OF delivers the welcome template through its own queue: every delivered
+ * copy carries `queueId` equal to the welcome-template id (live-verified on
+ * LoraVie FREE 2026-09-15, 12/12 chats; personal DMs carry unrelated queue
+ * ids). That equality is the origin proof D32 asked for (D36). A bare queueId
+ * is still NOT a mass-message proof: OFAPI also returns it on personal DMs. */
+export function isWelcomeDelivery(
+  message: OfApiMessage,
+  welcome: WelcomeMessage | null,
+): boolean {
+  if (welcome === null) return false;
+  if (message.queueId === null || message.queueId === undefined) return false;
+  return String(message.queueId) === String(welcome.id);
+}
+
+/** Matching only the current welcome text/media is a candidate, not proof, since
+ * OF does not provide an immutable welcome-origin flag. Ambiguous outgoing
+ * messages deny a negative verdict; template edits must never turn uncertainty
+ * into a send. */
 export function messageKind(
   message: OfApiMessage,
   welcome: WelcomeMessage | null,
 ): FollowerMessageVM["kind"] {
   if (!message.isSentByMe) return "incoming";
+  if (isWelcomeDelivery(message, welcome)) return "automatic";
   // OFAPI's queue supports one recipient and scheduled personal messages.
   // queue=true alone cannot prove mass outreach or an automatic welcome.
   if (message.isFromQueue === true) return "ambiguous";
@@ -105,13 +120,13 @@ export function assessHistory(
     return {
       status: "unknown",
       reason:
-        "Нельзя отличить welcome/рассылку от личного или отложенного сообщения",
+        "Нельзя отличить рассылку или отложенное сообщение от личного — проверьте чат вручную",
       proof: null,
     };
   return {
     status: "ready",
     reason: messages.length
-      ? "В полной истории только сообщения рассылки"
+      ? "В истории только автоматическое welcome-сообщение"
       : "История пуста",
     proof: null,
   };
