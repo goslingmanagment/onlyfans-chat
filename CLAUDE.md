@@ -1,83 +1,69 @@
 # CLAUDE.md — ChatGoose Desktop
 
-Desktop chat client for OnlyFans agency chatters with built-in AI assistance (reply generation, coaching, fan summaries, reactivation pings). Successor to the ChatGoose Firefox extension for Fansly. We cannot inject into OnlyFans, so this app renders its own chat interface on top of the third-party OnlyFans API (onlyfansapi.com, "OFAPI") — OnlyFans accounts are connected through OFAPI, and the desktop reaches OFAPI through the Agency Hub "core" (reads proxied via the hub read-gateway, writes via the command outbox). (Renamed 2026-07-30: `core` → `goose/hub`, `chatgoose` → `goose/fansly-ext`, `chatgoose_desktop_fable` → `goose/of-desktop`; GitHub repo names unchanged.)
+Electron desktop chat client for OnlyFans agency chatters with built-in AI
+(replies, coaching, fan summaries, pings, supporters board). OnlyFans can't
+be injected into, so the app renders its own chat UI over the third-party
+OnlyFans API (onlyfansapi.com, "OFAPI"). It is a client of the Agency Hub
+(`~/code/goose/hub`, "core" / "the kernel"): every platform read goes
+through the hub read gateway and every write (text, typing, unsend,
+mark-read, media) through its command outbox, via the vendored
+`@kernel/sdk`; AI is kernel-only (no vendor SDKs, keys or prompts here).
+Sign-in: one account per chatter, login + password, device token (D35).
+Sibling for Fansly: `~/code/goose/fansly-ext`.
 
-**Current architecture:** the app is a kernel client. ALL platform reads go
-through core's read gateway and ALL writes (text/typing/unsend/mark-read/media)
-through the command outbox, both via the vendored `@kernel/sdk` and authenticated
-with per-device tokens. AI is kernel-only (D4 / core #111): this repo holds no
-vendor AI SDKs, provider keys, or prompt library. Do not keep a manually updated
-"current release" here: local source truth is `apps/desktop/package.json`, release
-history is Git tags, and the actually deployed version must be verified against
-the auto-update feed. The 0.1.30/0.1.31 dead-on-launch incident remains relevant
-only as a rollback prohibition in `docs/RELEASE.md` and decision D8.**
+## Where the truth is
 
-## Read these before designing or building anything
+- `docs/decisions.md` — decision log (quick-ref table + entries);
+  cross-repo rulings live in the hub's log and are referenced by number.
+- Hub `docs/error-handling.md` — family-wide error taxonomy.
+- `docs/followers.md`, `docs/spenders.md`, `docs/ofapi-composer.md` —
+  current operator docs for those surfaces (composer partly reverted, D33).
+- `docs/RELEASE.md` — build and ship: a `v*` tag → Windows build →
+  auto-update for all users. Version is `apps/desktop/package.json` + tags.
+- `docs/vendor/onlyfansapi/` — vendored OFAPI docs: `openapi.json` is the
+  field-level truth (query with `jq`), `llms-full.txt` (grep, don't read).
+  Per-page docs: append `.mdx` to any `docs.onlyfansapi.com` URL.
+- `docs/research/onlyfansapi.md` — OFAPI capability map and gotchas;
+  `docs/research/reactivation-guide.md` — ping templates, byte-for-byte;
+  `docs/research/legacy-chatgoose.md` — behaviors ported from the predecessor.
+- `docs/DESIGN.md` — §3 perf checklist and the §5 mockup are the visual
+  reference.
+- Historical, read on demand, never as current truth: `docs/PRD.md`,
+  `SPEC.md`, `PLAN.md`, `SESSIONS.md`, `docs/generated/` (maps from July),
+  `docs/research/agency-hub-core.md`.
 
-| Doc | What it answers |
-|---|---|
-| `docs/decisions.md` | This repo's decision log (quick-ref table + full entries) + the family law; cross-repo rulings live in core's log and are referenced by number |
-| Core `docs/error-handling.md` | Family-wide error-handling canon: structural identity, client aliases, retry wording, producer consistency, and persistence/tombstone law |
-| `docs/generated/` | Point-in-time code maps. Verify each banner's snapshot SHA before relying on claims or line numbers; supplemental, not current truth until regenerated |
-| `docs/research/legacy-chatgoose.md` | Complete behavioral inventory of the predecessor (features, prompts, exact constants/timeouts, lessons). Normative for ported behavior |
-| `docs/research/onlyfansapi.md` | OFAPI capability map, real-time strategy, credits/pricing, gotchas, key docs URLs |
-| `docs/research/agency-hub-core.md` | Capability map of the Agency Hub "core" backend (`~/code/goose/hub`) — the live ChatMuse contract, auth model, what P6 adds there |
-| `docs/research/reactivation-guide.md` | Agency reactivation playbook — ping templates (A1–A11 / B1–B5) byte-for-byte + normative tone rules for any reactivation-message generation |
-| `docs/RELEASE.md` | How to build/ship the desktop installer: a `v*` tag → auto-update reaching all users (hands off to `WINDOWS-GUIDE.html`) |
-| `docs/vendor/onlyfansapi/` | Vendored API docs: `openapi.json` (field-level source of truth — query with `jq`), `llms-full.txt` (grep, don't read whole), see its README |
+## Layout and checks
 
-**Historical docs — read on demand, never as current truth:** `docs/PRD.md`,
-`docs/SPEC.md`, `docs/PLAN.md`, `docs/DESIGN.md`, `docs/SESSIONS.md` are
-point-in-time records; on any conflict, current code + `docs/decisions.md` win.
-Do not replay their phases or treat their architecture/transport sections as
-current. Their surviving normative exceptions are already pinned in this file
-(SPEC §15 invariants under Hard rules; PRD §7 + DESIGN §3/§5 design constraints
-under Conventions) plus one kept here: the fail-closed live-send/test-fan
-safety protocol in `docs/SESSIONS.md` remains binding.
+pnpm monorepo: `apps/desktop` (Electron + React + TS strict + Tailwind),
+`packages/shared` (pure TS, densest tests), `packages/kernel-sdk` (vendored:
+never hand-edit; re-vendor from the hub with its `scripts/vendor-sdk.mjs`
+when new operations are needed; the vendor test + typecheck pin the
+contract hash).
 
-## Hard rules
+- `pnpm check` = typecheck + lint + test + build, green before a commit; CI
+  runs it on Linux and Windows.
+- Running the app for real: skill `run-desktop`
+  (`.claude/skills/run-desktop`), isolated keyless profile.
+- Hub-side changes may be made in the same session: keep the contract in
+  sync, run the hub's own checks, commit the two repos separately.
 
-- **Product scope:** API support or an endpoint inventory does not authorize new
-  Desktop controls. Add user-facing capabilities only when the owner explicitly
-  requests that product scope. Do not expose raw provider IDs, screening modes,
-  reference browsers or command journals just because the SDK supports them
-  (owner correction 2026-09-15, D33).
+## Things that bite
 
-- **Verify OFAPI shapes against `docs/vendor/onlyfansapi/openapi.json` or fresh `.mdx` pages — never from memory.** Per-page docs: append `.mdx` to any `docs.onlyfansapi.com` URL.
-- **Before implementing any OFAPI subsystem, read its primary docs** — grep `docs/vendor/onlyfansapi/llms-full.txt` and/or fetch the curated `.mdx` URLs listed in `docs/research/onlyfansapi.md` §8. The research summary is for planning; it is not sufficient detail for implementation.
-- **Do NOT look at `~/code/chatgoose_desktop`** — abandoned incorrect implementation, explicitly excluded by the owner.
-- The central backend is the **Agency Hub "core"** repo (`~/code/goose/hub`, in production: Fastify + Postgres). Everything privileged lives there: the read-gateway, the command outbox, the AI gateway, money, device-token auth. Server-side work (OFAPI webhooks, SSE fanout, gateway features) happens in that repo, not here — this repo consumes the contract through the vendored SDK (see "Kernel SDK" below). Core's OpenAPI snapshot: `~/code/goose/hub/reference/agency-hub.openapi.json`.
-- **Core edits: same session is OK when needed** (owner decision 2026-06-21 — a separate session per core change was too inconvenient). `~/code/goose/hub` is the central backend (production: Fastify + Postgres + React dashboard); default to consuming its contract (SPEC §9) read-only, but when desktop work genuinely needs a core-side change you MAY patch core in this same session. When you do: (1) keep both sides of the contract in sync — SPEC §9.2 here ↔ core's OpenAPI (`~/code/goose/hub/reference/agency-hub.openapi.json`); (2) run core's own checks before committing there, since it's live; (3) commit core separately from desktop (one commit still touches one repo). For larger core-side tracks (P6 etc.), still record them in `docs/PLAN.md`. Core reads this repo's SPEC §9.2, `docs/research/onlyfansapi.md` §4, and the Phase-0 webhook fixtures as its brief.
-- The legacy repo `~/code/goose/fansly-ext` is a **read-only behavioral reference — do NOT copy its code** (owner decision 2026-06-10: it was written for/by weaker models; write everything fresh). What carries over literally is exactly three things: **prompts byte-for-byte**; **product constants/data** (timeouts, temperatures, message counts, ping thresholds, model registry, `CG-*` error taxonomy — tuned config, catalogued in `docs/research/legacy-chatgoose.md`); and **test cases as behavior facts** (re-express legacy test cases in fresh test code, but never drop cases — they encode production-found edge cases: Gemini leak patterns, escape ordering, cache-staleness matrix). When unsure what the exact behavior is, read the legacy source to learn it — then implement your own. Never reproduce Fansly-specific parts (DOM injection, session capture, Fansly endpoints) — the split is in that doc's §10.
-- SPEC §15 invariants are review-blocking: secrets/network only in Electron main; `packages/shared` stays platform-pure; zod at every trust boundary; never auto-retry an indeterminate send; AI never sends without explicit human action; local DB/media cache encrypted at rest.
-- **This repo assembles no prompts and holds no vendor AI anything** (decision D4 / core #111). The prompt library was byte-migrated INTO core (core Stage 30, sha256-pinned manifest) and is frozen there; generations send refs + `clientContext` to core's feature lane and stream the result. Any prompt work happens in `~/code/goose/hub`, gated by its manifest pin — never here.
-- Record current decisions in `docs/decisions.md` and update current operator or
-  contract docs in the same change. Do not make old phase prose look current by
-  silently patching isolated paragraphs; use explicit superseded banners or a
-  current as-built replacement.
-
-## Kernel SDK: versioning and pinning
-
-- The kernel contract is consumed ONLY through the vendored compiled SDK at
-  `packages/kernel-sdk` (dist + `kernel-sdk.vendor.json` recording the
-  `contractHash`, SDK version, and the core commit it was cut from). **Never
-  hand-edit anything under it.**
-- Re-vendor only when this app needs new operations: in `~/code/goose/hub`, run
-  `node scripts/vendor-sdk.mjs ../of-desktop/packages/kernel-sdk`
-  (after `pnpm contracts:generate` there), then commit the vendor directory
-  here as its own change.
-- Two gates protect the pin (drill-proven 2026-07-07): the vendor test
-  (`packages/shared/tests/kernel-sdk-vendor.test.ts` — manifest hash must equal
-  the SDK's exported `KERNEL_CONTRACT_HASH`) catches a partial/hand-edited
-  vendor, and `pnpm typecheck` catches a breaking contract change (a renamed
-  op fails compilation at every call site). Both run inside `pnpm check` on
-  every PR.
-
-## Conventions
-
-- pnpm monorepo: `apps/desktop` (Electron + React + TS strict + Tailwind), `packages/shared` (pure TS; named to avoid collision with the "core" repo). No `apps/hub` here. Layout: SPEC §3.
-- `pnpm check` = typecheck + lint + unit tests + build — must pass before any commit (legacy discipline: 783 tests on the predecessor).
-- Tests: Vitest; pure functions in `packages/shared` get the densest coverage; OFAPI client tested against recorded fixtures in `tests/fixtures/`.
-- UI is designed from scratch against `docs/DESIGN.md` (PRD §7 principles + DESIGN §3 perf checklist are review-blocking; the §5 mockup is the binding visual reference); use the frontend-design skill for new surfaces; warm professional theme — light by default plus an optional dark theme (owner 2026-06-13), implemented as a pure CSS-variable swap (`.dark` on `<html>`, never per-component dark styling); keyboard-first.
-- All amounts: OFAPI returns dollars; legacy Fansly used mills — don't port mills→USD conversions into OFAPI code paths.
-- Two ID namespaces: OFAPI `acct_…` vs raw OnlyFans numeric ids (`chat_id === fan.id`). Never mix.
+- Product scope: SDK or API support does not authorize new UI. Add
+  user-facing capabilities only when the owner asks; don't expose raw
+  provider IDs, screening modes or command journals (D33).
+- Verify OFAPI shapes against `openapi.json` or a fresh `.mdx`, never from
+  memory; read the endpoint's docs before implementing a subsystem.
+- Secrets and network only in Electron main; `packages/shared` stays
+  platform-pure; zod at every trust boundary; local DB and media cache
+  encrypted at rest (SPEC §15).
+- AI never sends without explicit human action; never auto-retry an
+  indeterminate send. Live test sends only to the owner's test fan
+  (`P3_SEND_TEST_FAN_ID` in `.env`); without it, no live send at all.
+- Amounts from OFAPI are dollars; the Fansly predecessor used mills, don't
+  port mills→USD conversions here.
+- Two ID namespaces: OFAPI `acct_…` vs raw OnlyFans numeric ids
+  (`chat_id === fan.id`). Never mix.
+- Theme is a CSS-variable swap (`.dark` on `<html>`), never per-component
+  dark styling. Use the frontend-design skill for new surfaces.
+- Never roll back to 0.1.30/0.1.31 (dead on launch; D8, `docs/RELEASE.md`).
