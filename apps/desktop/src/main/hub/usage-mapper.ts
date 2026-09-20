@@ -43,8 +43,8 @@ export const usageEventPayloadSchema = z.object({
  */
 export type MappedHubUsageEvent = Omit<HubUsageEvent, 'conversationId' | 'durationMs' | 'feature'> & {
   /** Narrowed to the desktop's reportable set: the wire enum also carries
-   * kernel-internal features (Stage 29's workboard-closing) that this lane
-   * never emits. */
+   * features this lane never emits (today `coach-chat` and `voice-script`;
+   * `workboard-closing` left the enum with core Decision 376). */
   feature: HubUsageFeature;
   conversationId?: string;
   durationMs?: number;

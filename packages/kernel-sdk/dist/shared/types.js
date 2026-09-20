@@ -89,7 +89,12 @@ export const ofapiCaptureJobStates = [
     "complete",
     "cancelled",
 ];
-export const userRoles = ["owner", "team_lead", "chatter", "content_manager"];
+// Decision 370: `content_manager` left the wire enum with the API-key lane —
+// the role had no credential path (no session, no bearer) and zero rows in
+// production. The PG enum value stays (migrations are forward-only), so a
+// historical row is still readable by raw SQL; it simply cannot be created,
+// authenticated or serialized any more.
+export const userRoles = ["owner", "team_lead", "chatter"];
 export const creatableUserRoles = ["owner", "team_lead", "chatter"];
 export const fanFlagTypes = ["whale", "vip", "risky"];
 export const aiUsageFeatures = [
@@ -101,8 +106,6 @@ export const aiUsageFeatures = [
     "scan",
     "ping",
     "hi-greeting",
-    // Stage 29: internal gateway lane for the workboard closing classifier.
-    "workboard-closing",
     "coach-chat",
     // Voice notes: the ElevenLabs TTS lane's script-generation feature.
     "voice-script",
