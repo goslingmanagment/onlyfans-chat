@@ -14,7 +14,7 @@ import { CgError } from '@chatgoose/shared/errors/index';
 import { parseOperationEvent } from '@chatgoose/shared/protocol/index';
 import type { OperationEvent } from '@chatgoose/shared/protocol/index';
 import type { LlmUsageMetrics } from '@chatgoose/shared/usage-metrics';
-import { createAiCoordinator } from '@main/ai/index';
+import { buildFeatureResult, createAiCoordinator } from '@main/ai/index';
 import type { AiCoordinator, AiCoordinatorDeps } from '@main/ai/index';
 import type { DataLayer } from '@main/db/index';
 import { personaCatalogKey, storePersonaCatalog } from '@main/personas/catalog';
@@ -707,5 +707,29 @@ describe('AiCoordinator', () => {
     // to dedup against — every call counts; the documented best-effort limit.
     expect(coordinator.markOperationAccepted('op-never')).toBe(true);
     expect(coordinator.markOperationAccepted('op-never')).toBe(true);
+  });
+});
+
+// Core Decision 379: the variant split is keyed on the requested variant
+// count, not on the retired `greetingMode` alias. The New Followers draft
+// (variantCount 1) is one message and must never be cut into alternatives.
+describe('buildFeatureResult — hi-greeting variants', () => {
+  it('splits by [VARIANT] only when no variantCount was requested', () => {
+    const raw = 'hey you![VARIANT]well hello[VARIANT]took you long enough';
+
+    expect(buildFeatureResult('hi-greeting', raw, {}).parts).toEqual([
+      'hey you!',
+      'well hello',
+      'took you long enough',
+    ]);
+
+    expect(buildFeatureResult('hi-greeting', raw, { variantCount: 1 }).parts).toEqual([raw]);
+  });
+
+  it('keeps the single New Followers draft as one part', () => {
+    const result = buildFeatureResult('hi-greeting', 'hey, glad you found me', {
+      variantCount: 1,
+    });
+    expect(result.parts).toEqual(['hey, glad you found me']);
   });
 });

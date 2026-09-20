@@ -384,6 +384,71 @@ describe('feature gateway adapter (Stage 31)', () => {
     ]);
   });
 
+  // Core Decision 379: hi-greeting has no mode. New Followers asks for one
+  // variant explicitly and the deprecated `greetingMode: 'new-follower'` alias
+  // never reaches the wire again; the chat Hi overlay still sends neither and
+  // keeps the kernel default of three variants.
+  it('sends variantCount (never greetingMode) for the New Followers greeting', async () => {
+    const captureHiGreeting = async (variantCount: 1 | undefined) => {
+      const captured: Array<{ feature: string; request: Record<string, unknown> }> = [];
+      const adapter = createFeatureAiGateway({
+        client: {
+          streamAiFeature: ((
+            args: { feature: string; request: Record<string, unknown> },
+            callbacks: HubAiGatewayStreamCallbacks,
+          ) => {
+            captured.push(args);
+            callbacks.onMeta?.({
+              requestId: '33333333-3333-4333-8333-333333333333',
+              clientRequestId: 'op-hi',
+              personaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
+              quotaRemainingRequests: null,
+            });
+            callbacks.onText('hey');
+            return Promise.resolve('hey');
+          }) as never,
+        },
+        resolvePageLabel: () => Promise.resolve('lora-of'),
+        isPageLabelCurrent: () => true,
+        onPersonaDefinitionStale: () => undefined,
+      });
+      adapter.stream(
+        {
+          feature: 'hi-greeting',
+          clientRequestId: 'op-hi',
+          accountId: ACCT,
+          chatId: CHAT,
+          ...(variantCount !== undefined ? { variantCount } : {}),
+          personaKey: 'builtin:lora',
+          expectedPersonaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
+          isRegeneration: false,
+        },
+        { onText: () => undefined, onError: () => undefined, onComplete: () => undefined },
+      );
+      await flushAsync();
+      return captured[0]!.request;
+    };
+
+    const followersRequest = await captureHiGreeting(1);
+    expect(followersRequest).toEqual({
+      clientRequestId: 'op-hi',
+      pageLabel: 'lora-of',
+      platform: 'onlyfans',
+      conversationRef: CHAT,
+      variantCount: 1,
+      fanRef: CHAT,
+      personaKey: 'builtin:lora',
+      expectedPersonaDefinitionId: `${TEST_PERSONA_DEFINITION_ID}:builtin:lora:1`,
+      isRegeneration: false,
+    });
+    expect(followersRequest).not.toHaveProperty('greetingMode');
+
+    const chatHiRequest = await captureHiGreeting(undefined);
+    expect(chatHiRequest).not.toHaveProperty('variantCount');
+    expect(chatHiRequest).not.toHaveProperty('greetingMode');
+    expect(chatHiRequest).not.toHaveProperty('fanRef');
+  });
+
   it('accepts no stream output without the exact applied-definition meta proof', async () => {
     for (const appliedDefinitionId of [undefined, 'v1:different-persona-definition']) {
       let callbacks!: HubAiGatewayStreamCallbacks;

@@ -59,7 +59,10 @@ export interface AiFeatureGatewayRequest {
   tone?: string | undefined;
   mode?: string | undefined;
   draftText?: string | undefined;
-  greetingMode?: 'new-follower' | undefined;
+  /** hi-greeting only (core Decision 379): how many greeting variants the
+   * kernel should produce. New Followers asks for the single draft it sends;
+   * the chat Hi overlay omits it and keeps the kernel default of three. */
+  variantCount?: 1 | undefined;
   personaKey?: string | undefined;
   /** Exact catalog definition the coordinator resolved. Core must enforce this
    * precondition and echo the applied identity before any output is accepted. */

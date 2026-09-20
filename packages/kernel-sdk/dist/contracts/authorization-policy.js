@@ -5,7 +5,7 @@ const KIND_DESCRIPTIONS = {
     "session": "dashboard cookie session (owner/team_lead)",
     "any-session": "any live cookie session, any human role",
     "owner-session": "dashboard cookie session, owner role only",
-    "apiKey": "bearer API key or device token",
+    "apiKey": "device-token bearer (historical kind name: Decision 370 retired API keys)",
     "device-token": "device-token bearer only",
     "pending-device-token": "short-lived pending device-token bearer, activation route only",
     "agentKey": "Agent Read Plane key only; no human principal is admitted",

@@ -56,6 +56,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D34 | 2026-09-15 | New follower enumeration uses date-bounded latest subscriptions and explicit provider continuation (core #342) |
 | D35 | 2026-09-15 | One account per chatter: first-run sign-in screen, password sign-in without cookies, the legacy chatter key retired, self-healing on a reasoned 401, and the account cache bound to an identity (core unified-account plan §9) |
 | D36 | 2026-09-16 | New followers: a delivered welcome is recognised by `queueId` equal to the welcome-template id and no longer blocks ready (amends D32) |
+| D37 | 2026-09-20 | SDK re-vendored from deployed core 82571f3c; New Followers asks for `variantCount: 1` and the deprecated `greetingMode` alias leaves this client (core #379) |
 
 ## Entries
 
@@ -891,3 +892,45 @@ bare text/media match without the id remain ambiguous and hold the fan at
 into contacted/unknown, never ready — the safe direction. Fixture checks cover
 the id match, id-with-edited-text, foreign-id text match, incomplete history
 and the service-level ready path.
+
+**D37 (2026-09-20).** The vendored `@kernel/sdk` moves from core `579b0e34`
+(contract hash `8e9dda0b…`) to the deployed core `82571f3c` (hash
+`2620650e…`), which is what production answers on `/api/v1/health` today, so
+`apps/desktop/scripts/assert-release-sdk-vendor.mjs` passes again. Three core
+decisions accumulated in that span — the API-key lane retired (#370), thirteen
+`workboardV2*` operations removed (#376), the hi-greeting parameters added
+(#379) — and none of them removed anything this client calls: typecheck and
+the full unit suite were green on the re-vendor alone. `HUB_USAGE_FEATURES`
+remains a subset of the SDK's `aiUsageFeatures`; `workboard-closing` left that
+enum, so the only source change was the usage-mapper comment that named it.
+
+New Followers now asks the kernel for `variantCount: 1` (core #379) instead of
+the deprecated `greetingMode: "new-follower"` alias; `fanRef` still rides with
+it, so the kernel keeps persisting an explicit fan ref on the generation row.
+The client-side rule that split three chat-Hi alternatives by `[VARIANT]` is
+keyed on the requested count instead of the mode, and the queue's "exactly one
+message" guard is unchanged.
+
+The alias did one thing beyond the count: it skipped `gate_hi_greeting_limit`
+(kernel `apps/runtime/src/modules/ai/features/index.ts`, `assertHiGreetingFreshness`,
+limit 10). Without it the kernel counts every message in its OnlyFans archive
+window for that conversation — there is no automation evidence on this lane, so
+#379's personal-message count does not apply here. That gate cannot reach a
+follower this queue would greet: `generate()` refuses anything but `ready`
+(`src/main/followers/service.ts`), and `ready` (`src/main/followers/evidence.ts`,
+`assessHistory`) means a complete history with no incoming message, no personal
+outgoing one and nothing ambiguous — welcome deliveries only. Measured on
+production `dm_message_archive` on 2026-09-20: of 6 301 OnlyFans conversations
+with zero incoming messages, the largest holds 6 messages and none exceeds ten.
+The kernel's 400 for the gate was already mapped to CG-FLOW-09
+(`src/main/hub/ai-feature-gateway.ts`), because the chat Hi button has always
+been subject to it.
+
+Tests pin the wire shape: the gateway adapter sends `variantCount: 1` with
+`fanRef` and no `greetingMode` for the queue and neither field for chat Hi
+(`tests/ai/feature-lane.test.ts`), `buildFeatureResult` splits by `[VARIANT]`
+only when no count was requested (`tests/ai/coordinator.test.ts`), and
+`generateFollowerGreeting` starts the operation with `params: { variantCount: 1 }`
+(`tests/followers/generation.test.ts`). Not verified here: prompt quality — the
+unified template changes generations on both surfaces, and core #379 leaves
+that sampling to the owner.

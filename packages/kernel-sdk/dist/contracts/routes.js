@@ -8,7 +8,7 @@ import { ofapiVendorRouteSchemas } from "./routes-ofapi-vendor";
 import { ofapiReadCollectionsRouteSchemas } from "./routes-ofapi-read-collections";
 import { ofapiExportRouteSchemas } from "./routes-ofapi-exports";
 import { ofapiCollectionRouteSchemas } from "./routes-ofapi-collection";
-import { PERIOD_OPTIONS, SPENDER_PERIOD_OPTIONS, SPENDER_RETENTION_STATUSES, SPENDER_SERIES_GRANULARITIES, FANSLY_CLIENT_CHECK_ROUTES, aiUsageFeatures, creatableUserRoles, fanFlagTypes, ofapiCaptureJobStates, transactionReportingBuckets, userRoles, } from "../shared/index";
+import { PERIOD_OPTIONS, SPENDER_PERIOD_OPTIONS, SPENDER_RETENTION_STATUSES, SPENDER_SERIES_GRANULARITIES, FANSLY_CLIENT_CHECK_ROUTES, aiUsageFeatures, fanFlagTypes, ofapiCaptureJobStates, transactionReportingBuckets, userRoles, } from "../shared/index";
 import { z } from "zod";
 // Agent Read Plane operations #1-#10. Declared in their own module (one coherent
 // contract with its own envelope law and principal) and spread into routeSchemas
@@ -27,7 +27,6 @@ const spenderSeriesGranularityEnum = z.enum(SPENDER_SERIES_GRANULARITIES);
 const nonCustomPeriodEnum = z.enum(["today", "7d", "30d", "all"]);
 const transactionReportingBucketEnum = z.enum(transactionReportingBuckets);
 const userRoleEnum = z.enum(userRoles);
-const creatableUserRoleEnum = z.enum(creatableUserRoles);
 const fanFlagEnum = z.enum(fanFlagTypes);
 const aiUsageFeatureEnum = z.enum(aiUsageFeatures);
 const spenderScopeKindEnum = z.enum(["page", "model", "agency"]);
@@ -65,7 +64,11 @@ export const authUserSchema = z.object({
     id: intId,
     username: z.string(),
     role: userRoleEnum,
-    // Stage 22: admin-set passwords may force a change on first session login.
+    // DEPRECATED (Decision 370): the #116(b) flag is retired — this field is a
+    // wire-only constant `false`. It stays forever because the vendored client
+    // SDKs declare it required (`$strip` tolerates extra fields, never missing
+    // ones): dropping it would turn `me()` into response_validation_failed on
+    // every un-revendored extension and desktop install.
     mustChangePassword: z.boolean(),
     assignedPages: z.array(pageRefSchema),
 });
@@ -73,9 +76,6 @@ export const authUserSchema = z.object({
 export const changePasswordBodySchema = z.object({
     currentPassword: z.string().min(1).max(1024),
     newPassword: z.string().min(8).max(256),
-});
-export const deviceTokenLabelBodySchema = z.object({
-    label: z.string().min(1).max(120),
 });
 export const issuedDeviceTokenResponseSchema = z.object({
     // The raw bearer token — returned exactly once at issuance.
@@ -117,8 +117,9 @@ export const deviceTokenHarvestCapabilityBodySchema = z.object({
     // one preserved Desktop database identity.
     machineId: z.string().uuid().nullable(),
 });
-// D116(c) fleet-gate foundation (desktop D19): per active chatter, token
-// freshness and remaining active API keys. Read-only reporting surface.
+// D116(c) fleet-gate foundation (desktop D19): per active chatter, device-token
+// freshness. Read-only reporting surface. (Decision 370 retired the API-key
+// columns with the lane itself.)
 // Deliberately NO aggregate go/no-go boolean: chatter-role automation
 // accounts (probes/scripts) are indistinguishable from humans until the
 // service-account split lands, so any all-chatters flag would be
@@ -129,8 +130,6 @@ export const deviceTokenAdoptionRowSchema = z.object({
     hasFreshDeviceToken: z.boolean(),
     deviceTokenLastUsedAt: isoTimestamp.nullable(),
     deviceTokenExpiresAt: isoTimestamp.nullable(),
-    activeApiKeys: z.number().int().nonnegative(),
-    apiKeyLastUsedAt: isoTimestamp.nullable(),
 });
 export const deviceTokenAdoptionReportSchema = z.object({
     generatedAt: isoTimestamp,
@@ -139,7 +138,6 @@ export const deviceTokenAdoptionReportSchema = z.object({
     summary: z.object({
         activeChatters: z.number().int().nonnegative(),
         onFreshTokens: z.number().int().nonnegative(),
-        withActiveApiKeys: z.number().int().nonnegative(),
     }),
 });
 export const accessGrantItemSchema = z.object({
@@ -152,18 +150,11 @@ export const accessGrantItemSchema = z.object({
     revokedBy: z.number().int().nullable(),
     revokedAt: isoTimestamp.nullable(),
 });
-export const adminUserApiKeyStatusSchema = z.object({
-    activeKeyPrefix: z.string().nullable(),
-    activeKeyCount: z.number().int().nonnegative(),
-    activeKeyCreatedAt: isoTimestamp.nullable(),
-    activeKeyLastUsedAt: isoTimestamp.nullable(),
-});
 export const registrationStateEnum = z.enum(["invited", "active"]);
 export const adminUserSchema = authUserSchema.extend({
-    apiKeyStatus: adminUserApiKeyStatusSchema.nullable(),
     // Decision #126: deactivation tombstone (null = active) and the honest
-    // activity signal — max(last api-key use, last device-token use), so a
-    // password+device-token chatter (#116) no longer reads "Never".
+    // activity signal — the last device-token use (Decision 370 retired the
+    // API-key half of it with the lane).
     disabledAt: isoTimestamp.nullable(),
     // Deleted accounts retain their immutable attribution but cannot authenticate.
     deletedAt: isoTimestamp.nullable(),
@@ -270,11 +261,10 @@ export const authRevokeAllDevicesResponseSchema = z.object({
 export const adminTerminateAllAccessResponseSchema = z.object({
     deviceTokens: z.number().int().nonnegative(),
     sessions: z.number().int().nonnegative(),
-    apiKeys: z.number().int().nonnegative(),
     links: z.number().int().nonnegative(),
 });
 export const authStateSchema = z.object({
-    authMethod: z.enum(["session", "api_key", "device_token"]),
+    authMethod: z.enum(["session", "device_token"]),
     user: authUserSchema,
 });
 const serviceHealthStatusEnum = z.enum(["ok", "degraded"]);
@@ -1197,257 +1187,6 @@ export const pageConversationPreviewResponseSchema = z.object({
     messageSyncUx: syncUxSummarySchema,
     messages: z.array(pageConversationPreviewMessageSchema),
 });
-// --- Workboard v2 schemas ---
-const workboardV2TabEnum = z.enum(["subscribers", "spenders", "fresh_mass", "old_mass", "service"]);
-const workboardV2SecondaryStatusEnum = z.enum([
-    "recent_purchase",
-    "need_reply",
-    "due_now",
-    "later",
-    "dont_touch_today",
-]);
-export const workboardV2QuerySchema = z.object({
-    tab: workboardV2TabEnum,
-    status: z
-        .string()
-        .optional()
-        .transform((value) => (value ? value.split(",").map((s) => s.trim()).filter(Boolean) : undefined)),
-    limit: z.coerce.number().int().min(1).max(200).default(50),
-    offset: z.coerce.number().int().min(0).default(0),
-});
-export const workboardV2ItemSchema = z.object({
-    fanId: intId,
-    fan: z.object({
-        platformUserId: z.string().nullable(),
-        pageAlias: z.string().nullable(),
-        username: z.string().nullable(),
-        displayName: z.string().nullable(),
-    }),
-    tab: workboardV2TabEnum,
-    massSubstate: z.enum(["fresh", "gray", "active", "dead", "archived"]).nullable(),
-    value: z.object({
-        score: z.number(),
-        tier: z.enum(["whale", "vip", "payer", "new"]),
-        confidence: z.enum(["high", "low"]),
-    }),
-    urgency: z.object({
-        score: z.number(),
-        severity: z.enum(["critical", "high", "medium", "normal", "muted"]),
-    }),
-    rankScore: z.number(),
-    secondaryStatus: workboardV2SecondaryStatusEnum,
-    needsReply: z.boolean(),
-    needsHumanTriage: z.boolean(),
-    isPurchaseFollowup: z.boolean(),
-    whyNow: z.object({ code: z.string().nullable(), value: z.number().nullable() }),
-    reasonChips: z.array(z.string()),
-    quality: z.object({
-        qScore: z.number().nullable(),
-        qConfidence: z.enum(["high", "medium", "low"]),
-    }),
-    closingVerdict: z
-        .object({
-        layer: z.enum(["l1", "l2", "fresh", "unverified", "model_last", "unknown"]),
-        needsReply: z.boolean(),
-        state: z
-            .enum(["question", "buy_signal", "smalltalk", "closing", "cold", "complaint"])
-            .nullable(),
-        reason: z.string().nullable(),
-    })
-        .nullable(),
-    online: z.boolean(),
-    ltv: z.object({ creatorNetAmountMills: mills }),
-    subscription: z.object({
-        expiresAt: isoTimestamp.nullable(),
-        autoRenew: z.boolean().nullable(),
-    }),
-    conversation: z.object({
-        lastFanMessageAt: isoTimestamp.nullable(),
-        lastModelMessageAt: isoTimestamp.nullable(),
-        preview: z.string().nullable(),
-        coverageStatus: z.enum(["pending_backfill", "partial_window", "complete"]),
-        platformConversationId: z.string().nullable(),
-    }),
-    serviceReason: z.string().nullable(),
-});
-export const workboardV2CountSchema = z.object({
-    tab: workboardV2TabEnum,
-    secondaryStatus: workboardV2SecondaryStatusEnum,
-    count: z.number().int(),
-});
-export const workboardV2OldMassBudgetSchema = z.object({
-    used: z.number().int(),
-    total: z.number().int(),
-    resetsAt: isoTimestamp,
-});
-export const workboardClaimLeaseSchema = z.object({
-    fanId: intId,
-    claimedByUserId: intId,
-    claimedByUsername: z.string(),
-    expiresAt: isoTimestamp,
-});
-export const workboardV2ResponseSchema = z.object({
-    tab: workboardV2TabEnum,
-    total: z.number().int(),
-    limit: z.number().int(),
-    offset: z.number().int(),
-    items: z.array(workboardV2ItemSchema),
-    // Stage 23: live claim leases — coordination, not access control.
-    claims: z.array(workboardClaimLeaseSchema),
-    counts: z.array(workboardV2CountSchema),
-    oldMassBudget: workboardV2OldMassBudgetSchema.nullable(),
-    aiCoverage: z.object({
-        enabled: z.boolean(),
-        classified: z.number().int(),
-        closingsFound: z.number().int(),
-        callsToday: z.number().int(),
-        spenderTotal: z.number().int(),
-        spenderDiagnosed: z.number().int(),
-        spenderPending: z.number().int(),
-    }),
-});
-export const workboardV2ListsBandSchema = z.object({
-    key: z.string(),
-    label: z.string(),
-    count: z.number().int(),
-    items: z.array(workboardV2ItemSchema),
-});
-export const workboardV2ListsResponseSchema = z.object({
-    bands: z.array(workboardV2ListsBandSchema),
-    total: z.number().int(),
-    truncated: z.boolean(),
-});
-export const workboardV2ContactBodySchema = z.object({
-    fanId: intId,
-    action: z.enum(["opened", "handled", "snoozed"]).default("handled"),
-    wasProductive: z.boolean().default(true),
-});
-export const workboardV2ContactResponseSchema = z.object({
-    ok: z.literal(true),
-    fanId: intId,
-});
-export const workboardV2RecomputeResponseSchema = z.object({
-    ok: z.literal(true),
-    evaluated: z.number().int(),
-});
-export const workboardV2SnoozeBodySchema = z.object({
-    fanId: intId,
-    days: z.number().int().min(1).max(120),
-});
-export const workboardV2SnoozeResponseSchema = z.object({
-    ok: z.literal(true),
-    fanId: intId,
-    snoozedUntil: isoTimestamp.nullable(),
-});
-export const workboardV2FanParamsSchema = pageParamsSchema.extend({
-    fanId: z.coerce.number().int().positive(),
-});
-export const workboardV2OkResponseSchema = z.object({
-    ok: z.literal(true),
-    fanId: intId,
-});
-// ── Workboard v2 AI analytics (L2 closing classifier) panel ───────────────────
-const workboardV2ConversationStateEnum = z.enum([
-    "question",
-    "buy_signal",
-    "smalltalk",
-    "closing",
-    "cold",
-    "complaint",
-]);
-const aiSettingsSourceSchema = z.enum(["override", "env"]);
-export const workboardV2AiSettingsSchema = z.object({
-    enabled: z.boolean(),
-    hasApiKey: z.boolean(),
-    model: z.string(),
-    dailyCapMin: z.number().int(),
-    dailyCapMax: z.number().int(),
-    envEnabled: z.boolean(),
-    source: z.object({
-        enabled: aiSettingsSourceSchema,
-        dailyCapMax: aiSettingsSourceSchema,
-        model: aiSettingsSourceSchema,
-    }),
-    override: z.object({
-        enabled: z.boolean().nullable(),
-        dailyCapMax: z.number().int().nullable(),
-        model: z.string().nullable(),
-    }),
-});
-const aiUsageBucketSchema = z.object({
-    calls: z.number().int(),
-    inputTokens: z.number().int(),
-    outputTokens: z.number().int(),
-    costUsd: z.number(),
-});
-export const workboardV2AiReportSchema = z.object({
-    settings: workboardV2AiSettingsSchema,
-    usage: z.object({
-        today: aiUsageBucketSchema,
-        last30d: aiUsageBucketSchema,
-        daily: z.array(aiUsageBucketSchema.extend({ date: z.string() })),
-    }),
-    coverage: z.object({
-        tails: z.number().int(),
-        classified: z.number().int(),
-        closings: z.number().int(),
-        pending: z.number().int(),
-        spenders: z.number().int(),
-        spenderDiagnosed: z.number().int(),
-        spenderPending: z.number().int(),
-        spenderL2Classified: z.number().int(),
-        spenderClosings: z.number().int(),
-        spenderNoVisibleDialog: z.number().int(),
-        spenderModelLast: z.number().int(),
-        spenderFanLast: z.number().int(),
-        spenderUnknownLast: z.number().int(),
-    }),
-    states: z.array(z.object({ state: z.string(), count: z.number().int() })),
-    recent: z.array(z.object({
-        messageId: z.string(),
-        tail: z.string(),
-        state: workboardV2ConversationStateEnum.nullable(),
-        needsReply: z.boolean(),
-        reason: z.string().nullable(),
-        model: z.string().nullable(),
-        classifiedAt: isoTimestamp,
-    })),
-});
-export const workboardV2AiSettingsBodySchema = z.object({
-    enabled: z.boolean().nullable(),
-    dailyCapMax: z.number().int().min(1).max(5000).nullable(),
-    model: z.string().trim().min(1).max(120).nullable(),
-});
-export const workboardV2AiClassifyBodySchema = z.object({
-    reclassify: z.boolean().default(false),
-});
-export const workboardV2AiClassifyResponseSchema = z.object({
-    ok: z.literal(true),
-    // The run is async: it returns immediately with a 'running' run-log row id; the
-    // dashboard polls the run log for completion. alreadyRunning = a run was in flight.
-    runId: z.number().int(),
-    status: z.string(),
-    alreadyRunning: z.boolean(),
-});
-export const workboardV2AiRunSchema = z.object({
-    id: z.number().int(),
-    pageLabel: z.string().nullable(),
-    trigger: z.enum(["cron", "manual", "reclassify"]),
-    model: z.string().nullable(),
-    classified: z.number().int(),
-    calls: z.number().int(),
-    inputTokens: z.number().int(),
-    outputTokens: z.number().int(),
-    deferred: z.number().int(),
-    cleared: z.number().int(),
-    costUsd: z.number(),
-    status: z.string(),
-    error: z.string().nullable(),
-    createdAt: isoTimestamp,
-});
-export const workboardV2AiRunsResponseSchema = z.object({
-    runs: z.array(workboardV2AiRunSchema),
-});
 export const pageConversationMessageItemSchema = z.object({
     messageId: z.string(),
     senderRole: z.enum(["fan", "model", "system", "unknown"]),
@@ -2045,6 +1784,15 @@ export const aiFeatureStreamBodySchema = z.object({
     // chatterQuestion field is absent or whitespace-only.
     preset: z.literal("situation").optional(),
     summaryMode: z.literal("short").optional(),
+    // hi-greeting only (Decision 379): how many greeting variants the unified
+    // template asks for. The chat Hi button sends 3, the New Followers queue
+    // sends 1. Absent means 3, or 1 under the deprecated alias below.
+    variantCount: z.union([z.literal(1), z.literal(3)]).optional(),
+    // DEPRECATED alias (Decision 379), kept for released clients (extension
+    // <= 2.4.3, of-desktop). It keeps its Decision 333 semantics exactly: the
+    // identity validations, one message when variantCount is absent, and the
+    // freshness gate skipped. New clients send variantCount instead. Do not
+    // remove while a supported client still sends it.
     greetingMode: z.literal("new-follower").optional(),
     // Stage 32: client-loaded context for platforms whose kernel archive is
     // pull-cadenced (Fansly: dm_conversations 30 min / dm_messages 24 h — no
@@ -2064,15 +1812,30 @@ export const aiFeatureStreamBodySchema = z.object({
         // account note contentType 12002). Read by the ping template today;
         // optional for clients released before it.
         fanCustomName: z.string().max(200).optional(),
+        // hi-greeting only (Decision 379; any hi-greeting request, no longer tied
+        // to the deprecated greetingMode alias). The kernel never fetches the URL.
         fanUsername: z.string().max(200).optional(),
         fanAvatarUrl: fanslyAvatarUrlSchema.optional(),
+        // hi-greeting only (Decision 379): messages in the window that are NOT
+        // automatic/mass sends (fan messages plus the model's personal ones). The
+        // freshness gate counts these when present, so a fan holding only welcome
+        // and mass messages is not locked out. Never above messageCount.
+        personalMessageCount: z.number().int().min(0).max(5000).optional(),
         pingSegment: z.enum(["segment-a", "segment-b", "active"]).optional(),
         // Whole days since the fan's latest text message, computed from the same
         // analysis (and clock) that selected pingSegment. Ping only; optional for
         // compatibility with clients released before Decision #127.
         fanSilenceDays: z.number().int().min(0).max(FAN_SILENCE_DAYS_MAX).optional(),
         transcriptCoverage: z.enum(["full-history", "window"]).optional(),
-    }).strict().optional(),
+    }).strict().superRefine((value, ctx) => {
+        if (value.personalMessageCount !== undefined && value.personalMessageCount > value.messageCount) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["personalMessageCount"],
+                message: "personalMessageCount cannot exceed messageCount",
+            });
+        }
+    }).optional(),
 }).strict();
 export const aiRestrictedGenerationSchema = z.object({
     generationRef: z.string(),
@@ -2204,36 +1967,8 @@ export const authMyUsageResponseSchema = z.object({
     daily: z.array(authMyUsageDailyRowSchema),
 });
 // Admin schemas
-export const adminCreateUserBodySchema = z.object({
-    username: z.string().min(1).max(100),
-    role: creatableUserRoleEnum,
-    password: z.string().min(8).max(256).optional(),
-});
-export const adminSetPasswordBodySchema = z.object({
-    password: z.string().min(8).max(256),
-    // Stage 22: force a change on the first session login (chatter invite flow v1).
-    mustChangePassword: z.boolean().optional(),
-});
 export const adminAssignPageBodySchema = z.object({
     pageLabel: z.string().min(1),
-});
-export const adminIssueApiKeyBodySchema = z.object({
-    pageLabel: z.string().min(1).optional(),
-});
-export const apiKeyItemSchema = z.object({
-    id: intId,
-    keyPrefix: z.string(),
-    userId: z.number().int(),
-    isActive: z.boolean(),
-    revokedAt: isoTimestamp.nullable(),
-    revokedReason: z.string().nullable(),
-    createdAt: isoTimestamp,
-    lastUsedAt: isoTimestamp.nullable(),
-});
-export const issuedApiKeyResponseSchema = z.object({
-    key: z.string(),
-    keyPrefix: z.string(),
-    assignedPages: z.array(pageRefSchema),
 });
 export const syncRunItemSchema = z.object({
     runId: z.number().int(),
@@ -4349,7 +4084,9 @@ export const ofapiDmColdArchiveStatusResponseSchema = z.object({
 //   session        cookie-session dashboard roles (owner/team_lead)
 //   any-session    any live cookie session, any human role (self-serve auth)
 //   owner-session  cookie session with the owner role (admin surface, swagger/openapi)
-//   apiKey         bearer API key or device token (desktop/extension lanes)
+//   apiKey         bearer device token (desktop/extension lanes). Historical
+//                  name, kept deliberately: Decision 370 retired API keys, and
+//                  renaming the kind would touch hundreds of declarations
 //   device-token   device-token bearer only (current-device self-service)
 //   agentKey       Agent Read Plane machine key only — there is no human behind
 //                  this principal (agent-read slice 0b; no route declares it yet)
@@ -5225,7 +4962,7 @@ const baseRouteSchemas = {
         tags: ["usage"],
         summary: "Stream a chatter AI generation through the core gateway",
         description: "Default-off ChatMuse gateway for desktop AI generations. The runtime route "
-            + "uses chatter API-key auth, validates the prompt-stream request contract, and must not "
+            + "uses chatter device-token auth, validates the prompt-stream request contract, and must not "
             + "reach provider network while the gateway flag is disabled.",
         body: aiGatewayStreamBodySchema,
         response: {
@@ -5260,7 +4997,7 @@ const baseRouteSchemas = {
         tags: ["events"],
         summary: "SSE stream of sync events for the chatter's assigned pages",
         description: "`text/event-stream` of SyncEvent frames (`event: sync`, `data` = "
-            + "JSON SyncEvent, `id` = journal event id). Chatter API-key auth only; events "
+            + "JSON SyncEvent, `id` = journal event id). Chatter device-token auth only; events "
             + "are filtered to the chatter's assigned pages. Supports `Last-Event-ID` "
             + "header (or `lastEventId` query parameter) replay from the ~7-day journal.",
         querystring: z.object({
@@ -6308,117 +6045,6 @@ const baseRouteSchemas = {
             404: errorResponseSchema,
         },
     },
-    // --- Workboard ---
-    workboardV2: {
-        auth: { kind: "session", scope: "page" },
-        tags: ["workboard"],
-        summary: "Get a Workboard v2 tab queue (priority engine) for one page",
-        params: pageParamsSchema,
-        querystring: workboardV2QuerySchema,
-        response: {
-            200: workboardV2ResponseSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    workboardV2Lists: {
-        auth: { kind: "session", scope: "page" },
-        tags: ["workboard"],
-        summary: "Get Workboard v2 spender lists (lifetime gross-spend bands) for one page",
-        params: pageParamsSchema,
-        response: {
-            200: workboardV2ListsResponseSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    workboardV2Contact: {
-        auth: { kind: "session", scope: "page" },
-        tags: ["workboard"],
-        summary: "Record a chatter touch (Готово) on a Workboard v2 fan",
-        params: pageParamsSchema,
-        body: workboardV2ContactBodySchema,
-        response: {
-            200: workboardV2ContactResponseSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    workboardV2Recompute: {
-        auth: { kind: "session", scope: "page" },
-        tags: ["workboard"],
-        summary: "Recompute the Workboard v2 queue for one page (on-demand)",
-        params: pageParamsSchema,
-        response: {
-            200: workboardV2RecomputeResponseSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    workboardV2Snooze: {
-        auth: { kind: "session", scope: "page" },
-        tags: ["workboard"],
-        summary: "Snooze a fan on Workboard v2 (moves to Service; re-evaluates instantly)",
-        params: pageParamsSchema,
-        body: workboardV2SnoozeBodySchema,
-        response: {
-            200: workboardV2SnoozeResponseSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    workboardV2Unsnooze: {
-        auth: { kind: "session", scope: "page" },
-        tags: ["workboard"],
-        summary: "Unsnooze a fan on Workboard v2 (re-evaluates instantly)",
-        params: workboardV2FanParamsSchema,
-        response: {
-            200: workboardV2OkResponseSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    workboardV2UndoContact: {
-        auth: { kind: "session", scope: "page" },
-        tags: ["workboard"],
-        summary: "Undo the last Готово touch for a fan (re-evaluates instantly)",
-        params: workboardV2FanParamsSchema,
-        response: {
-            200: workboardV2OkResponseSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    workboardV2Claim: {
-        auth: { kind: "any-session", scope: "page" },
-        tags: ["workboard"],
-        summary: "Claim a fan (soft coordination lease, TTL'd, non-blocking)",
-        params: pageParamsSchema,
-        body: z.object({
-            fanId: intId,
-            ttlMinutes: z.number().int().min(1).max(240).optional(),
-        }),
-        response: {
-            200: z.object({ ok: z.literal(true), fanId: intId, expiresAt: isoTimestamp }),
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
     followerOutreachAttempt: {
         auth: { kind: "any", scope: "page" },
         tags: ["conversations"],
@@ -6433,69 +6059,6 @@ const baseRouteSchemas = {
         response: {
             200: z.object({ owned: z.boolean(), state: z.enum(["reserved", "dispatching", "sent", "expired"]), expiresAt: isoTimestamp.nullable() }).strict(),
             400: errorResponseSchema, 401: errorResponseSchema, 403: errorResponseSchema, 404: errorResponseSchema,
-        },
-    },
-    workboardV2Unclaim: {
-        auth: { kind: "any-session", scope: "page" },
-        tags: ["workboard"],
-        summary: "Release a fan claim",
-        params: z.object({ pageLabel: z.string().min(1), fanId: z.coerce.number().int().positive() }),
-        response: {
-            200: z.object({ ok: z.literal(true), fanId: intId }),
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    workboardV2Ai: {
-        auth: { kind: "owner-session", scope: "page" },
-        tags: ["workboard"],
-        summary: "AI (L2 closing classifier) analytics + settings for a page",
-        params: pageParamsSchema,
-        response: {
-            200: workboardV2AiReportSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    workboardV2AiSettings: {
-        auth: { kind: "owner-session", scope: "page" },
-        tags: ["workboard"],
-        summary: "Update per-page AI classifier settings (owner only)",
-        params: pageParamsSchema,
-        body: workboardV2AiSettingsBodySchema,
-        response: {
-            200: workboardV2AiReportSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    workboardV2AiClassify: {
-        auth: { kind: "owner-session", scope: "page" },
-        tags: ["workboard"],
-        summary: "Run (or re-run) the AI classifier for a page now (owner only)",
-        params: pageParamsSchema,
-        body: workboardV2AiClassifyBodySchema,
-        response: {
-            200: workboardV2AiClassifyResponseSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    workboardV2AiRuns: {
-        auth: { kind: "owner-session" },
-        tags: ["workboard"],
-        summary: "Global AI classifier run log (owner only)",
-        response: {
-            200: workboardV2AiRunsResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
         },
     },
     // --- Phase 4: Dashboard routes ---
@@ -6864,33 +6427,6 @@ const baseRouteSchemas = {
             403: errorResponseSchema,
         },
     },
-    adminCreateUser: {
-        auth: { kind: "owner-session" },
-        tags: ["admin"],
-        summary: "Create a new user",
-        body: adminCreateUserBodySchema,
-        response: {
-            200: authUserSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    adminSetPassword: {
-        auth: { kind: "owner-session" },
-        tags: ["admin"],
-        summary: "Set a user password",
-        params: z.object({ userId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
-        body: adminSetPasswordBodySchema,
-        response: {
-            200: z.object({ ok: z.literal(true) }),
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
     adminAssignPage: {
         auth: { kind: "owner-session" },
         tags: ["admin"],
@@ -6918,58 +6454,18 @@ const baseRouteSchemas = {
             404: errorResponseSchema,
         },
     },
-    adminListApiKeys: {
-        auth: { kind: "owner-session" },
-        tags: ["admin"],
-        summary: "List API keys for a user",
-        params: z.object({ userId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
-        response: {
-            200: z.array(apiKeyItemSchema),
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
-    adminIssueApiKey: {
-        auth: { kind: "owner-session" },
-        tags: ["admin"],
-        summary: "Issue an API key for a user",
-        params: z.object({ userId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
-        body: adminIssueApiKeyBodySchema,
-        response: {
-            200: issuedApiKeyResponseSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-            409: errorResponseSchema,
-        },
-    },
-    adminRevokeApiKeys: {
-        auth: { kind: "owner-session" },
-        tags: ["admin"],
-        summary: "Revoke all API keys for a user",
-        params: z.object({ userId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
-        response: {
-            200: z.object({ revokedCount: z.number().int() }),
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-        },
-    },
     adminDeactivateUser: {
         auth: { kind: "owner-session" },
         tags: ["admin"],
         summary: "Disable a user temporarily, retaining their login and history",
         description: "Sets the disabled_at tombstone and revokes every credential "
-            + "(API keys, device tokens, sessions) in one transaction. History and "
+            + "(device tokens, reservations, sessions, links) in one transaction. History and "
             + "attribution are preserved and the login stays reserved. "
             + "Owners and the calling account itself cannot be deactivated.",
         params: z.object({ userId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
         response: {
             200: z.object({
                 ok: z.literal(true),
-                revokedApiKeys: z.number().int().nonnegative(),
                 revokedDeviceTokens: z.number().int().nonnegative(),
                 revokedSessions: z.number().int().nonnegative(),
             }),
@@ -6983,9 +6479,10 @@ const baseRouteSchemas = {
         auth: { kind: "owner-session" },
         tags: ["admin"],
         summary: "Reactivate a deactivated user",
-        description: "Clears disabled_at. Registration and password-change requirements "
-            + "are preserved. Previously revoked credentials remain revoked; issue "
-            + "fresh ones if needed. Permanently deleted accounts cannot be restored.",
+        description: "Clears disabled_at. The stored password works again immediately "
+            + "and the registration state is preserved; device tokens stay revoked — the "
+            + "person signs in again from each device. Permanently deleted accounts "
+            + "cannot be restored.",
         params: z.object({ userId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
         response: {
             200: z.object({ ok: z.literal(true) }),
@@ -7008,7 +6505,6 @@ const baseRouteSchemas = {
         response: {
             200: z.object({
                 ok: z.literal(true),
-                revokedApiKeys: z.number().int().nonnegative(),
                 revokedDeviceTokens: z.number().int().nonnegative(),
                 revokedSessions: z.number().int().nonnegative(),
             }),
@@ -7022,39 +6518,11 @@ const baseRouteSchemas = {
         auth: { kind: "any-session" },
         tags: ["auth"],
         summary: "Change the caller's own password",
-        description: "Verifies the current password, sets the new one, clears "
-            + "must_change_password, and revokes every session — log in again with the "
-            + "new credential.",
+        description: "Verifies the current password, sets the new one and revokes "
+            + "every session — log in again with the new credential.",
         body: changePasswordBodySchema,
         response: {
             200: z.object({ ok: z.literal(true) }),
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-        },
-    },
-    authIssueDeviceToken: {
-        auth: { kind: "any-session" },
-        tags: ["auth"],
-        summary: "Issue a device token for the caller (returned once)",
-        body: deviceTokenLabelBodySchema,
-        response: {
-            200: issuedDeviceTokenResponseSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-        },
-    },
-    authReserveDeviceToken: {
-        auth: { kind: "any-session" },
-        tags: ["auth"],
-        summary: "Reserve a crash-safe device token for the caller (returned once)",
-        description: "Creates a short-lived pending credential in a separate table. "
-            + "It cannot authenticate ordinary API routes and must be explicitly activated "
-            + "after the client has durably staged local custody.",
-        body: deviceTokenLabelBodySchema,
-        response: {
-            200: reservedDeviceTokenResponseSchema,
             400: errorResponseSchema,
             401: errorResponseSchema,
             403: errorResponseSchema,
@@ -7078,7 +6546,7 @@ const baseRouteSchemas = {
         tags: ["auth"],
         summary: "Revoke the current device-token bearer",
         description: "Revokes exactly the credential authenticating this request. "
-            + "Cookie sessions and API keys are rejected; sibling device tokens are untouched.",
+            + "Cookie sessions are rejected; sibling device tokens are untouched.",
         response: {
             200: z.object({ revoked: z.literal(true) }),
             401: errorResponseSchema,
@@ -7095,21 +6563,6 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
-        },
-    },
-    adminIssueDeviceToken: {
-        auth: { kind: "owner-session" },
-        tags: ["admin"],
-        summary: "Issue a device token for a user (returned once)",
-        params: z.object({ userId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
-        body: deviceTokenLabelBodySchema,
-        response: {
-            200: issuedDeviceTokenResponseSchema,
-            400: errorResponseSchema,
-            401: errorResponseSchema,
-            403: errorResponseSchema,
-            404: errorResponseSchema,
-            409: errorResponseSchema,
         },
     },
     adminSetDeviceTokenHarvestCapability: {
@@ -7148,8 +6601,8 @@ const baseRouteSchemas = {
         tags: ["admin"],
         summary: "Device-token adoption across active chatters (D116(c) gate report)",
         description: "Read-only: per active chatter, whether a live device token "
-            + "was used within the freshness window, plus remaining active API keys. "
-            + "Foundation for the client key-fallback deletion gate.",
+            + "was used within the freshness window, and which client version it last "
+            + "spoke. The fleet gate for retiring a client lane reads these rows.",
         response: {
             200: deviceTokenAdoptionReportSchema,
             401: errorResponseSchema,
@@ -7276,7 +6729,7 @@ const baseRouteSchemas = {
     adminTerminateAllAccess: {
         auth: { kind: "owner-session" },
         tags: ["admin"],
-        summary: "Terminate every sign-in of a user: device tokens, reservations, sessions, API keys and active links",
+        summary: "Terminate every sign-in of a user: device tokens, reservations, sessions and active links",
         description: "The strongest revocation short of deactivation (§4.4). The "
             + "user is NOT disabled and the password is NOT changed: a fresh login "
             + "with the valid password still works. Owner accounts are refused.",
@@ -7327,15 +6780,12 @@ const baseRouteSchemas = {
         summary: "Sign in a device with username + password: issue a device token (active) or a reservation (pending) — no cookie",
         description: "The single client sign-in protocol (Р2). Shares the per-account "
             + "backoff and the `auth.login_failed` audit with `login`; wrong "
-            + "credentials answer 401 without an oracle. A user flagged "
-            + "must_change_password answers 403 `password_change_required`. "
-            + "Rate-limited per IP (20/min).",
+            + "credentials answer 401 without an oracle. Rate-limited per IP (20/min).",
         body: authIssueDeviceTokenWithPasswordBodySchema,
         response: {
             200: authIssueDeviceTokenWithPasswordResponseSchema,
             400: errorResponseSchema,
             401: errorResponseSchema,
-            403: errorResponseSchema,
             429: errorResponseSchema,
         },
     },

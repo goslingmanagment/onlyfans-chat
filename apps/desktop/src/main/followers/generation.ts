@@ -48,7 +48,9 @@ export function generateFollowerGreeting(
         feature: "hi-greeting",
         accountId,
         chatId: fanId,
-        params: { greetingMode: "new-follower" },
+        // One draft, not the chat overlay's three variants (core Decision 379
+        // replaced the deprecated `greetingMode: "new-follower"` alias).
+        params: { variantCount: 1 },
       });
     } catch (error) {
       cleanup();
