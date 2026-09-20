@@ -179,7 +179,14 @@ export function createFeatureAiGateway(options: FeatureAiGatewayOptions): AiFeat
                 pageLabel,
                 platform: 'onlyfans',
                 conversationRef: req.chatId,
-                ...(req.greetingMode ? { greetingMode: req.greetingMode, fanRef: req.chatId } : {}),
+                // Core Decision 379: the New Followers draft asks for one
+                // variant explicitly; the deprecated `greetingMode` alias is
+                // gone. `fanRef` still rides with it — on OnlyFans the fan id
+                // IS the conversation id, and the kernel persists the explicit
+                // ref on the generation row.
+                ...(req.variantCount !== undefined
+                  ? { variantCount: req.variantCount, fanRef: req.chatId }
+                  : {}),
                 ...(req.tone !== undefined ? { replyTone: req.tone as never } : {}),
                 ...(req.mode !== undefined ? { replyMode: req.mode as never } : {}),
                 ...(req.draftText !== undefined ? { draftText: req.draftText } : {}),

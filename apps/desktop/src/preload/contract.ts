@@ -629,7 +629,9 @@ export interface AiStartRequest {
     mode?: ReplyMode;
     draftText?: string;
     forceRegenerate?: boolean;
-    greetingMode?: 'new-follower';
+    /** hi-greeting only: 1 = the single New Followers draft (core Decision
+     * 379). Absent = the chat Hi overlay's three variants. */
+    variantCount?: 1;
   };
 }
 

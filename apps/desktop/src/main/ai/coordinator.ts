@@ -198,7 +198,7 @@ const aiStartRequestSchema = z.object({
     mode: replyModeSchema.optional(),
     draftText: z.string().optional(),
     forceRegenerate: z.boolean().optional(),
-    greetingMode: z.literal('new-follower').optional(),
+    variantCount: z.literal(1).optional(),
   }),
 });
 
@@ -211,7 +211,9 @@ interface ParsedParams {
   mode?: ReplyMode | undefined;
   draftText?: string | undefined;
   forceRegenerate?: boolean | undefined;
-  greetingMode?: 'new-follower' | undefined;
+  /** hi-greeting only (core Decision 379): 1 = the single New Followers draft.
+   * Absent = the chat Hi overlay's three variants. */
+  variantCount?: 1 | undefined;
 }
 
 /**
@@ -382,10 +384,11 @@ export function buildFeatureResult(
   const policy = getFeaturePolicy(feature);
   switch (policy.resultKind) {
     case 'reply': {
-      // hi-greeting returns 3 standalone greeting alternatives split by
-      // [VARIANT]; every other reply feature splits sequential parts by [NEXT].
+      // A three-variant hi-greeting returns standalone alternatives split by
+      // [VARIANT]; the single New Followers draft (variantCount 1) and every
+      // other reply feature split sequential parts by [NEXT].
       const parts =
-        feature === 'hi-greeting' && params.greetingMode !== 'new-follower'
+        feature === 'hi-greeting' && params.variantCount === undefined
           ? normalizeVariantReplyParts(rawText)
           : normalizeReplyParts(rawText);
       if (parts.length === 0) {
@@ -925,7 +928,7 @@ export function createAiCoordinator(deps: AiCoordinatorDeps): AiCoordinator {
         tone: policy.supportsReplyTone ? (op.params.tone ?? settings.defaultReplyTone) : undefined,
         mode: policy.supportsReplyMode ? op.params.mode : undefined,
         draftText: op.params.draftText,
-        greetingMode: op.params.greetingMode,
+        variantCount: op.params.variantCount,
         personaKey,
         expectedPersonaDefinitionId: persona.definitionId,
         isRegeneration: op.params.forceRegenerate === true,
