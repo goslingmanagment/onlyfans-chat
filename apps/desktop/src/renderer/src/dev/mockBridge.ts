@@ -543,6 +543,18 @@ function buildStore(): MockStore {
 
   const freshness: Record<string, string> = {};
   for (const account of accounts) freshness[account.id] = new Date().toISOString();
+  // D38 demo states for plain-vite dev: `?listSync=syncing` (SYNCING for 15 s,
+  // list last verified on the previous Thursday 16:07 → banner) or
+  // `?listSync=stale` (live, list 13 minutes old → banner).
+  const listSyncScenario = mockListSyncScenario();
+  const nowMs = Date.now();
+  const listVerifiedAt: Record<string, string> = { ...freshness };
+  if (listSyncScenario !== null) {
+    const verifiedAt = listSyncScenario === 'syncing'
+      ? previousThursdayAt1607(nowMs)
+      : new Date(nowMs - 13 * 60_000).toISOString();
+    for (const account of accounts) listVerifiedAt[account.id] = verifiedAt;
+  }
 
   return {
     accounts,
@@ -556,7 +568,10 @@ function buildStore(): MockStore {
       creditsUsedToday: 1_243,
       rpmRemaining: 4_969,
       freshness,
-      listVerifiedAt: { ...freshness },
+      listVerifiedAt,
+      listSyncing: listSyncScenario === 'syncing',
+      listSyncingSince: listSyncScenario === 'syncing' ? new Date(nowMs - 15_000).toISOString() : null,
+      listEpochStartedAt: new Date(nowMs - 15_000).toISOString(),
       state: 'live',
       hub: 'live',
       hubMode: 'live',
@@ -678,6 +693,22 @@ type InvokeHandlers = {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** D38 plain-vite demo switch (`?listSync=syncing|stale`); dev mock only. */
+function mockListSyncScenario(): 'syncing' | 'stale' | null {
+  if (typeof location === 'undefined') return null;
+  const value = new URLSearchParams(location.search).get('listSync');
+  return value === 'syncing' || value === 'stale' ? value : null;
+}
+
+function previousThursdayAt1607(nowMs: number): string {
+  const at = new Date(nowMs);
+  at.setHours(16, 7, 0, 0);
+  do {
+    at.setDate(at.getDate() - 1);
+  } while (at.getDay() !== 4);
+  return at.toISOString();
+}
+
 export function createMockBridge(): ChatGooseBridge {
   // Mirror the host browser so hotkey labels look right in plain-vite dev.
   const platform =
@@ -698,7 +729,9 @@ export function createMockBridge(): ChatGooseBridge {
     const now = new Date().toISOString();
     for (const account of store.accounts) {
       store.sync.freshness[account.id] = now;
-      store.sync.listVerifiedAt[account.id] = now;
+      if (mockListSyncScenario() === null) {
+        store.sync.listVerifiedAt[account.id] = now;
+      }
     }
     store.creditsToday += store.accounts.length;
     store.sync.creditsUsedToday = store.creditsToday;

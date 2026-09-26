@@ -16,12 +16,16 @@ import { createHash } from 'node:crypto';
 import {
   domainSnapshotRequiredSchema,
   domainSnapshotResponseSchema,
+  frameProvenance,
+  isOnlyFansAccountRef,
   mapDomainFrame,
   parseDomainEventFrame,
   parseSyncEvent,
   syncSnapshotRequiredSchema,
   syncSnapshotRestartRequiredSchema,
   syncSnapshotResponseSchema,
+  type DomainEventFrame,
+  type HubFrameProvenance,
   type SyncEvent,
   type SyncSnapshotRequired,
   type SyncSnapshotResponse,
@@ -35,6 +39,42 @@ export const HUB_SNAPSHOT_PATH = '/api/v1/events/snapshot';
 export const HUB_V2_SSE_PATH = '/api/v1/events/v2/stream';
 export const HUB_V2_SNAPSHOT_PATH = '/api/v1/events/v2/snapshot';
 export type HubSyncProtocol = 'v2' | 'v1';
+/** H3 (core #265): the v2 stream and snapshot narrow to one platform. */
+export type HubStreamPlatform = 'onlyfans' | 'fansly';
+
+/**
+ * What the transport knows about one delivered event, beyond the event
+ * itself (D38). Attention (toasts, «последний пуш») and sync intents decide
+ * on it; the event union stays the renderer's wire contract.
+ */
+export interface HubFrameMeta {
+  lane: 'durable' | 'ephemeral';
+  /** v2 durable frames only; null on v1 and on the ephemeral lane. */
+  provenance: HubFrameProvenance | null;
+  /** Journal time of the fact (v2 durable frames); null when unknown. */
+  occurredAt: string | null;
+  /** Arrived after THIS connection's replay_completed marker. The ephemeral
+   * lane is always live; v1 has no marker and keeps its legacy treatment
+   * (every frame counts as delivered live). */
+  deliveredLive: boolean;
+  accountSeq: number | null;
+  transactionRef: string | null;
+  thread: { fanName: string | null; username: string | null } | null;
+}
+
+/** Post-commit effect a synchronous event handler hands back (emits, kicks). */
+export type HubEventCommit = void | (() => void);
+
+/** Replay accounting of one connection, reported with replay_completed. */
+export interface HubReplaySummary {
+  frames: number;
+  /** Frames per Core numeric page id (acceptance: only the OnlyFans pages). */
+  framesByAccount: Record<string, number>;
+  /** Frames skipped by the client-side platform filter. */
+  offPlatformFrames: number;
+  /** Connection open → marker. */
+  ms: number;
+}
 export type HubSnapshotPageMode = 'probe' | 'bounded' | 'legacy';
 export const HUB_SNAPSHOT_MESSAGE_LIMIT = 100;
 export const HUB_SNAPSHOT_CURSOR_CONTRACT = 'bounded_v1';
@@ -258,10 +298,22 @@ export interface HubSyncOptions {
   now?: () => number;
   /** Backoff delays only — the watchdog uses real timers (abortable). */
   sleep?: SleepFn;
-  /** Awaited before the frame's id is persisted (handle-then-checkpoint). */
-  onEvent: (event: SyncEvent) => void | Promise<void>;
+  /**
+   * D38: applies one event SYNCHRONOUSLY, inside the same SQLite transaction
+   * that persists the frame's resume cursor — local state, sync intents and
+   * the checkpoint commit together or not at all. It must never await the
+   * network; follow-up reads are durable intents. A returned function runs
+   * after the commit (emits, notifications, worker kicks). Throwing rolls the
+   * whole frame back and replays it (poison breaker counts it).
+   */
+  onEvent: (event: SyncEvent, meta: HubFrameMeta) => HubEventCommit;
+  /** Synchronous transaction runner shared with the cursor store (production:
+   * the local DB's transaction). Default: run inline (isolated tests). */
+  runInTransaction?: <Result>(fn: () => Result) => Result;
+  /** Platform the v2 stream/snapshot is narrowed to. Default 'onlyfans'. */
+  platform?: HubStreamPlatform;
   /** v2 replay/live boundary: core's stream.replay_completed marker. */
-  onCaughtUp?: () => void;
+  onCaughtUp?: (summary: HubReplaySummary) => void;
   /** Local OFAPI accounts this client is allowed to apply. Omit only in isolated tests. */
   accountIds?: readonly string[];
   /** Idempotently applies one validated snapshot page before its cursor is persisted. */
@@ -389,6 +441,17 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
   const protocol: HubSyncProtocol = options.protocol ?? 'v2';
+  const platform: HubStreamPlatform = options.platform ?? 'onlyfans';
+  const runInTransaction = options.runInTransaction ?? (<Result>(fn: () => Result): Result => fn());
+  /** Per-connection replay state (reset in connectOnce). */
+  let connectionReplayCompleted = false;
+  let replayCounters: { frames: number; byAccount: Record<string, number>; offPlatform: number; openedAtMs: number } = {
+    frames: 0,
+    byAccount: {},
+    offPlatform: 0,
+    openedAtMs: 0,
+  };
+  const clock = options.now ?? Date.now;
   if (protocol === 'v2' && (options.getV2Cursor === undefined || options.setV2Cursor === undefined)) {
     throw new Error('createHubSync: protocol v2 requires getV2Cursor/setV2Cursor');
   }
@@ -602,8 +665,12 @@ export function createHubSync(options: HubSyncOptions): HubSync {
   function streamUrl(): string {
     if (protocol === 'v2') {
       const cursor = options.getV2Cursor!();
-      const resume = cursor !== null ? `?cursor=${encodeURIComponent(cursor)}` : '';
-      return `${baseUrl}${HUB_V2_SSE_PATH}${resume}`;
+      // H3: always narrow to this client's platform. Cursors Core mints for a
+      // narrowed stream are bound to it (resuming one without `platform` is a
+      // 400), and an older Core ignores the parameter — the client-side
+      // platform filter in handleV2Frame covers that case.
+      const resume = cursor !== null ? `cursor=${encodeURIComponent(cursor)}&` : '';
+      return `${baseUrl}${HUB_V2_SSE_PATH}?${resume}platform=${platform}`;
     }
     const lastEventId = options.getLastEventId();
     const resume = lastEventId !== null ? `?lastEventId=${encodeURIComponent(lastEventId)}` : '';
@@ -633,10 +700,69 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       dropped += 1;
       return;
     }
-    await options.onEvent(event);
-    // Checkpoint AFTER handling so a crash mid-handle replays, never skips.
-    if (frame.id !== null && /^\d+$/.test(frame.id)) {
-      options.setLastEventId(Number(frame.id));
+    // D38: handle and checkpoint in one transaction — a crash can no longer
+    // land between the local state and the resume cursor.
+    commitFrame(event, v1Meta(), () => {
+      if (frame.id !== null && /^\d+$/.test(frame.id)) {
+        options.setLastEventId(Number(frame.id));
+      }
+    });
+  }
+
+  function v1Meta(): HubFrameMeta {
+    return {
+      lane: 'durable',
+      provenance: null,
+      occurredAt: null,
+      deliveredLive: true,
+      accountSeq: null,
+      transactionRef: null,
+      thread: null,
+    };
+  }
+
+  function domainMeta(domainFrame: DomainEventFrame): HubFrameMeta {
+    return {
+      lane: 'durable',
+      provenance: frameProvenance(domainFrame),
+      occurredAt: domainFrame.occurredAt,
+      deliveredLive: connectionReplayCompleted,
+      accountSeq: domainFrame.accountSeq,
+      transactionRef: domainFrame.transactionRef ?? null,
+      thread: domainFrame.thread ?? null,
+    };
+  }
+
+  /**
+   * One frame = one transaction: the handler's local writes (and the intents
+   * it opens) plus the checkpoint. The post-commit effect runs only after the
+   * commit, so nothing is announced for state that may still roll back.
+   */
+  function commitFrame(
+    event: SyncEvent,
+    meta: HubFrameMeta,
+    checkpoint: () => void,
+  ): void {
+    // Assigned inside the transaction callback (not tracked by narrowing).
+    let afterCommit = undefined as HubEventCommit;
+    runInTransaction(() => {
+      const result: unknown = options.onEvent(event, meta);
+      if (result instanceof Promise) {
+        // A regression guard: an async handler would escape the transaction.
+        void result.catch(() => undefined);
+        throw new Error('hub onEvent must be synchronous (D38)');
+      }
+      afterCommit = result as HubEventCommit;
+      checkpoint();
+    });
+    if (typeof afterCommit === 'function') {
+      try {
+        afterCommit();
+      } catch (error) {
+        options.onWarn?.('hub post-commit effect failed', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
@@ -678,7 +804,19 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         dropped += 1;
         return;
       }
-      await options.onEvent(event);
+      commitFrame(
+        event,
+        {
+          lane: 'ephemeral',
+          provenance: null,
+          occurredAt: null,
+          deliveredLive: true,
+          accountSeq: null,
+          transactionRef: null,
+          thread: null,
+        },
+        () => undefined,
+      );
       return;
     }
     if (frame.event === 'control') {
@@ -709,7 +847,16 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         // Only expose the live boundary after its resume point is durable.
         // Otherwise a failed cursor write could make replayed backlog look
         // live (and eligible for notifications) on the next connection.
-        options.onCaughtUp?.();
+        const firstMarker = !connectionReplayCompleted;
+        connectionReplayCompleted = true;
+        if (firstMarker) {
+          options.onCaughtUp?.({
+            frames: replayCounters.frames,
+            framesByAccount: { ...replayCounters.byAccount },
+            offPlatformFrames: replayCounters.offPlatform,
+            ms: clock() - replayCounters.openedAtMs,
+          });
+        }
       }
       return; // unknown control types are forward-compat noise, not errors
     }
@@ -725,6 +872,25 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     const domainFrame = parseDomainEventFrame(json);
     if (domainFrame === null) {
       rejectMalformedV2Frame(frame, 'schema mismatch');
+    }
+    if (!connectionReplayCompleted) {
+      replayCounters.frames += 1;
+      const key = String(domainFrame.accountId);
+      replayCounters.byAccount[key] = (replayCounters.byAccount[key] ?? 0) + 1;
+    }
+    if (typeof domainFrame.accountRef === 'string' && !isOnlyFansAccountRef(domainFrame.accountRef)) {
+      // Client-side platform filter (H3): an older Core ignores `platform=` on
+      // a cursorless request and replays every granted platform. A page whose
+      // ref is not an OnlyFans OFAPI account is not this client's to apply —
+      // checkpoint past it; never mistake it for grant drift.
+      dropped += 1;
+      if (!connectionReplayCompleted) {
+        replayCounters.offPlatform += 1;
+      }
+      if (frame.id !== null && frame.id.length > 0) {
+        options.setV2Cursor!(frame.id);
+      }
+      return;
     }
     if (
       typeof domainFrame.accountRef === 'string'
@@ -742,9 +908,14 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       throw new HubV2AccountScopeDriftError(drift);
     }
     const event = mapDomainFrame(domainFrame);
+    const cursor = frame.id !== null && frame.id.length > 0 ? frame.id : null;
     if (event !== null && (allowedAccountIds === null || allowedAccountIds.has(event.accountId))) {
       try {
-        await options.onEvent(event);
+        commitFrame(event, domainMeta(domainFrame), () => {
+          if (cursor !== null) {
+            options.setV2Cursor!(cursor);
+          }
+        });
       } catch (error) {
         // Feed the poison breaker: same frame rejecting again bumps the
         // count; a different frame starts a fresh candidate.
@@ -772,12 +943,12 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       ) {
         poisonCandidate = null; // the frame finally applied — poison cleared
       }
+      return;
     }
-    // Checkpoint AFTER handling so a crash mid-handle replays, never skips.
     // Unmapped/unknown types checkpoint too — that is the forward-compat
     // contract (the cursor must advance past events this client ignores).
-    if (frame.id !== null && frame.id.length > 0) {
-      options.setV2Cursor!(frame.id);
+    if (cursor !== null) {
+      options.setV2Cursor!(cursor);
     }
   }
 
@@ -799,6 +970,8 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       // pin the new cursor near genesis and an erased account-sequence hole can
       // send this client through the same 409 -> snapshot loop forever.
       snapshotUrl.searchParams.set('sourceCursor', sourceV2Cursor);
+      // H3: the minted cursor is bound to the platform the stream resumes with.
+      snapshotUrl.searchParams.set('platform', platform);
       response = await fetchImpl(snapshotUrl.toString(), {
         method: 'GET',
         headers: {
@@ -1202,6 +1375,8 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     abort = new AbortController();
     const signal = abort.signal;
     let receivedBytes = false;
+    connectionReplayCompleted = false;
+    replayCounters = { frames: 0, byAccount: {}, offPlatform: 0, openedAtMs: clock() };
     let watchdog: ReturnType<typeof setTimeout> | null = null;
     const armWatchdog = (): void => {
       if (watchdog) {

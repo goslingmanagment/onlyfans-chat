@@ -14,8 +14,15 @@ import { useT } from '../lib/i18n';
 import { selectStatusAge } from './statusAge';
 import { statusBarMode, STATUS_BAR_TIPS } from './statusBarTips';
 
-const TONE_DOT = { ok: 'bg-online', warn: 'bg-warn', bad: 'bg-bad' } as const;
-const TONE_TEXT = { ok: '', warn: 'text-warn', bad: 'text-bad' } as const;
+const TONE_DOT = {
+  ok: 'bg-online',
+  warn: 'bg-warn',
+  bad: 'bg-bad',
+  // SYNCING: the one moving thing in the bar — a slow breath; a steady dot
+  // under reduced motion.
+  sync: 'bg-amber motion-safe:animate-[sync-breath_1.6s_ease-in-out_infinite]',
+} as const;
+const TONE_TEXT = { ok: '', warn: 'text-warn', bad: 'text-bad', sync: 'text-amber' } as const;
 
 function Segment({
   tip,
@@ -58,14 +65,19 @@ export function StatusBar(): React.JSX.Element {
 
   const status = sync.data ?? null;
   const override = status?.hubModeOverride ?? 'auto';
-  const mode = statusBarMode(status?.state ?? 'offline', status?.hub ?? 'off', override);
+  const mode = statusBarMode(
+    status?.state ?? 'offline',
+    status?.hub ?? 'off',
+    override,
+    status?.listSyncing === true,
+  );
   const age = selectStatusAge(status, selectedAccountId);
   const openActivity = (): void => setView('settings');
 
   return (
     <footer className="num flex h-[30px] flex-none items-center gap-[18px] border-t border-line bg-bg1 px-4 text-micro tracking-[0.05em] text-ink-low">
       <Segment
-        tip={mode.tip}
+        tip={mode.tipKey !== undefined ? t(mode.tipKey) : mode.tip}
         onClick={openActivity}
         className={cx(
           'rounded-full border border-line-strong bg-bg2 px-2 py-[3px]',

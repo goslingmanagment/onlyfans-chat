@@ -619,6 +619,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       deps.sync?.hubStatus?.() ??
       (deps.bootHubAuthFailed?.() === true ? ('auth-failed' as const) : ('off' as const));
     const hubActivity = deps.sync?.hubActivity?.() ?? null;
+    const listSync = deps.sync?.listSync?.() ?? null;
     const today = utcDayOf(Date.now());
     return {
       creditsBalance: snapshot?.balance ?? null,
@@ -626,6 +627,11 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       rpmRemaining: snapshot?.rpmRemaining ?? null,
       freshness: syncStatus.freshness,
       listVerifiedAt: syncStatus.listVerifiedAt ?? syncStatus.freshness,
+      listSyncing: listSync?.syncing === true,
+      listSyncingSince:
+        listSync?.syncingSinceMs == null ? null : new Date(listSync.syncingSinceMs).toISOString(),
+      listEpochStartedAt:
+        listSync?.epochStartedAtMs == null ? null : new Date(listSync.epochStartedAtMs).toISOString(),
       state: hubStatus === 'live' ? 'live' : syncStatus.state,
       hub: hubStatus,
       hubMode: deps.sync?.hubMode?.() ?? 'off',

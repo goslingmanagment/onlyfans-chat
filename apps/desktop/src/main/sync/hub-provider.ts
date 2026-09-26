@@ -15,8 +15,22 @@ import type {
   SyncSnapshotThread,
 } from '@chatgoose/shared/protocol/index';
 import type { DataLayer } from '../db/index';
-import type { HubSync, HubSyncStatus } from './hub-sync';
+import type {
+  HubEventCommit,
+  HubFrameMeta,
+  HubReplaySummary,
+  HubSync,
+  HubSyncStatus,
+} from './hub-sync';
+import { createSyncIntentWorker, type SyncIntentWorker } from './intents';
 import { compareMessageIds } from './message-id';
+import type {
+  HubMessageApplyOutcome,
+  ListReadOutcome,
+  ListReadRecord,
+  ListReadTrigger,
+  ListVerificationReason,
+} from './polling-sync';
 import type { SyncListener, SyncProvider, SyncStatusSnapshot } from './provider';
 
 export type HubMode = 'live' | 'degraded' | 'off';
@@ -60,11 +74,28 @@ type PollingLike = SyncProvider & {
     chatId: string,
     message: NormalizedSyncMessage,
   ): Promise<boolean>;
+  /** D38: synchronous apply inside the frame transaction. */
+  applyHubMessage(
+    accountId: string,
+    chatId: string,
+    message: NormalizedSyncMessage,
+  ): HubMessageApplyOutcome;
+  /** D38: page-1 read outside the cadence (verification, safety, intents). */
+  readAccountHead(
+    accountId: string,
+    trigger: ListReadTrigger,
+    options?: { preserveLocalHead?: boolean; bodyDeltas?: boolean },
+  ): Promise<ListReadOutcome>;
+  readChatTailForIntent(accountId: string, chatId: string): Promise<ListReadOutcome>;
+  verifyAccounts(accountIds: readonly string[], reason: ListVerificationReason): void;
+  noteSystemResume(): void;
+  listHeadReached(accountId: string, chatId: string, messageId: string): boolean;
 };
 
 export interface HubFactoryCallbacks {
-  onEvent: (event: SyncEvent) => Promise<void>;
-  onCaughtUp: () => void;
+  /** D38: synchronous; runs inside the frame's cursor transaction. */
+  onEvent: (event: SyncEvent, meta?: HubFrameMeta) => HubEventCommit;
+  onCaughtUp: (summary?: HubReplaySummary) => void;
   onStatusChange: (status: HubSyncStatus) => void;
   onSnapshot: (snapshot: SyncSnapshotResponse) => Promise<void>;
   onSnapshotRequired: (input: {
@@ -86,6 +117,8 @@ export interface HubAwareSyncOptions {
   ) => Promise<HubSync | null>;
   /** Dev/support-only D3 override. Auto keeps production behavior. */
   hubModeOverride?: () => HubModeOverrideSetting;
+  /** settings.autoReadChats — decides how a thin frame's intent is proven. */
+  autoReadEnabled?: () => boolean;
   now?: () => number;
   onLog?: (
     level: 'debug' | 'info' | 'warn' | 'error',
@@ -162,11 +195,35 @@ const eventStatsSchema = z.object({
 });
 type EventStats = z.infer<typeof eventStatsSchema>;
 
+/**
+ * D38 list-freshness state for the status bar and the inbox banner. SYNCING
+ * lasts from the start of a verification epoch (session start, a stream
+ * outage longer than 60 s, a replay gap) until Core's replay_completed marker
+ * AND a page-1 verification (or its exhausted retries) of every account.
+ */
+export interface ListSyncSnapshot {
+  syncing: boolean;
+  /** Epoch ms the current SYNCING stretch began; null while not syncing. */
+  syncingSinceMs: number | null;
+  /** Start of the current verification epoch; null before the first one. */
+  epochStartedAtMs: number | null;
+  epochReason: ListVerificationReason | null;
+}
+
 export interface HubAwareSync extends SyncProvider {
   pollAccount(accountId: string): Promise<void>;
   refreshAccountHead(accountId: string): Promise<void>;
   /** Recreates the hub connection from current settings (key/URL changes). */
   reconfigureHub(): Promise<void>;
+  /** D38: PollingSync reports every successful page-1 read here. */
+  handleListRead(record: ListReadRecord): void;
+  /** D38: PollingSync reports an exhausted verification here. */
+  handleListVerificationFailed(accountId: string, reason: ListVerificationReason): void;
+  /** D38: the OS resumed from sleep — one safety check. */
+  noteSystemResume(): void;
+  listSync(): ListSyncSnapshot;
+  /** D38 diagnostics/tests: the intent worker. */
+  syncIntents(): SyncIntentWorker;
   /** Hub status/liveness changes; payload is read through query:sync.status. */
   subscribeStatus(listener: () => void): () => void;
   hubStatus(): HubSyncStatus | null;
@@ -175,11 +232,67 @@ export interface HubAwareSync extends SyncProvider {
   hubActivity(): HubActivitySnapshot;
 }
 
+/**
+ * D38 toast age gate: a hub frame whose fact is older than this never alerts,
+ * whatever its provenance says. Core's automatic webhook redelivery (H2) only
+ * redelivers attempts older than 10 minutes, and a redelivery that lost its
+ * provenance header would otherwise ring as news.
+ */
+export const NOTIFICATION_MAX_AGE_MS = 3 * 60_000;
+/** A stream outage longer than this re-verifies every account's list. */
+export const RECONNECT_VERIFY_AFTER_MS = 60_000;
+/**
+ * Re-verification is paid work started by a stream transition, so it is
+ * bounded (incident 2026-07-15: a flapping stream must never scale reads):
+ * at most one epoch per this window, i.e. ≤ 1 page-1 read per account per
+ * 5 minutes however often the stream drops or Core answers 409.
+ */
+export const REVERIFY_MIN_INTERVAL_MS = 5 * 60_000;
+/** Fail-open for a Core without the replay_completed marker (v1 fallback). */
+const REPLAY_MARKER_FALLBACK_MS = 60_000;
+
+/** Meta for callers without a transport: the v1 legacy treatment. */
+const NO_FRAME_META: HubFrameMeta = {
+  lane: 'durable',
+  provenance: null,
+  occurredAt: null,
+  deliveredLive: true,
+  accountSeq: null,
+  transactionRef: null,
+  thread: null,
+};
+
+/**
+ * D38 «live frame»: delivered after this connection's replay boundary AND
+ * (v2) labelled `live` by Core. The ephemeral lane is live by construction;
+ * v1 frames carry no provenance and keep their legacy treatment.
+ */
+export function isLiveFrame(meta: HubFrameMeta): boolean {
+  if (meta.lane === 'ephemeral') {
+    return true;
+  }
+  if (meta.provenance === null) {
+    return meta.deliveredLive;
+  }
+  return meta.deliveredLive && meta.provenance === 'live';
+}
+
+interface VerificationEpoch {
+  reason: ListVerificationReason;
+  startedAtMs: number;
+  replayCompleted: boolean;
+  pending: Set<string>;
+  verified: Set<string>;
+  failed: Set<string>;
+  completedAtMs: number | null;
+}
+
 export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
   const { polling, data, createHub } = options;
   const now = options.now ?? Date.now;
   const onLog = options.onLog ?? (() => undefined);
   const modeOverride = options.hubModeOverride ?? (() => 'auto' as const);
+  const autoReadEnabled = options.autoReadEnabled ?? ((): boolean => false);
 
   const listeners = new Set<SyncListener>();
   const statusListeners = new Set<() => void>();
@@ -331,13 +444,14 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     recordLifetime('applied', eventType);
   }
 
-  function recordDailyReceived(event: SyncEvent): void {
+  function recordDailyReceived(event: SyncEvent, live: boolean): void {
     eventStats = {
       ...eventStats,
       count: eventStats.count + 1,
       byType: bumpMap(eventStats.byType, event.type),
-      lastEventAt: now(),
-      lastEventType: event.type,
+      // D38: «последний пуш» counts only live frames — a replayed backlog at
+      // launch must not read as «ПУШ 0 с назад».
+      ...(live ? { lastEventAt: now(), lastEventType: event.type } : {}),
     };
     recordLifetime('received', event.type);
   }
@@ -350,9 +464,9 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     }
   }
 
-  function recordHubEvent(event: SyncEvent): void {
+  function recordHubEvent(event: SyncEvent, live: boolean): void {
     ensureStatsForToday();
-    recordDailyReceived(event);
+    recordDailyReceived(event, live);
     persistEventStats();
   }
 
@@ -418,6 +532,13 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       onLog('info', 'attention gate re-armed after suspend', {
         gapMs: nowMs - lastSleepTickMs,
       });
+      // D38: the same wake also owes one safety check of the focused list
+      // (deferred: this can run inside a frame transaction).
+      setTimeout(() => {
+        if (running) {
+          polling.noteSystemResume();
+        }
+      }, 0);
     }
     lastSleepTickMs = nowMs;
   }
@@ -433,13 +554,43 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     }
   }
 
+  /** D38: provenance and age gate for v2 durable frames (null = passes). */
+  function frameAttentionVeto(meta: HubFrameMeta | undefined): string | null {
+    if (meta === undefined || meta.lane !== 'durable' || meta.provenance === null) {
+      return null; // v1 / polling / tests without a transport: legacy rules
+    }
+    if (meta.provenance !== 'live') {
+      // redelivery / repair / unknown (a missing or unrecognised value).
+      return `provenance-${meta.provenance}`;
+    }
+    const occurredMs = meta.occurredAt === null ? Number.NaN : Date.parse(meta.occurredAt);
+    if (!Number.isFinite(occurredMs)) {
+      return 'age-unknown';
+    }
+    if (now() - occurredMs > NOTIFICATION_MAX_AGE_MS) {
+      return 'too-old';
+    }
+    return null;
+  }
+
   function attentionEligible(
     event: Extract<SyncEvent, { type: 'messageReceived' }>,
     source: 'hub' | 'polling',
+    meta?: HubFrameMeta,
   ): boolean {
     maybeRearmAfterSuspend();
     const key = `${event.accountId}/${event.chatId}/${event.messageId}`;
     if (alertedIds.has(key)) {
+      return false;
+    }
+    const veto = source === 'hub' ? frameAttentionVeto(meta) : null;
+    if (veto !== null) {
+      onLog('debug', 'attention gate: frame not news', {
+        veto,
+        accountId: event.accountId,
+        chatId: event.chatId,
+        messageId: event.messageId,
+      });
       return false;
     }
     let eligible: boolean;
@@ -489,12 +640,13 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
 
   function emitMessageEvent(
     event: Extract<SyncEvent, { type: 'messageReceived' | 'messageSent' }>,
+    meta?: HubFrameMeta,
   ): void {
     if (event.type !== 'messageReceived') {
       emit(event);
       return;
     }
-    emit(attentionEligible(event, 'hub') ? event : { ...event, live: false });
+    emit(attentionEligible(event, 'hub', meta) ? event : { ...event, live: false });
   }
 
   function emitStatus(): void {
@@ -803,41 +955,109 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       accountsBefore: previousAccountIds.length,
       accountsAfter: handledAccountIds.length,
     });
+    // A revoked account can no longer be verified: it must not pin SYNCING.
+    if (epoch !== null) {
+      for (const accountId of [...epoch.pending]) {
+        if (!handledAccountIds.includes(accountId)) {
+          epoch.pending.delete(accountId);
+        }
+      }
+      maybeCompleteEpoch();
+    }
+    // D38: a replay gap (409) or grant rebaseline re-proves every list.
+    reverifyLists('gap');
     return handledAccountIds;
   }
 
-  async function handleHubEvent(event: SyncEvent): Promise<void> {
-    recordHubEvent(event);
+  // ── D38 sync intents ─────────────────────────────────────────────────────
+  const intents: SyncIntentWorker = createSyncIntentWorker({
+    data,
+    reads: {
+      // Intent-driven list reads are body-free and lag-safe (a thin frame's
+      // list can trail the frame), except for a deletion: only an
+      // authoritative read can move a deleted head back to the survivor.
+      accountHead: (accountId, readOptions) =>
+        polling.readAccountHead(accountId, 'intent', {
+          preserveLocalHead: !readOptions.authoritative,
+          bodyDeltas: false,
+        }),
+      chatTail: (accountId, chatId) => polling.readChatTailForIntent(accountId, chatId),
+      autoReadEnabled,
+      listHeadReached: (accountId, chatId, messageId) =>
+        polling.listHeadReached(accountId, chatId, messageId),
+    },
+    accountReady: (accountId) => epoch?.pending.has(accountId) !== true,
+    clearTombstonedHeads: (accountId, messageIds) => {
+      clearStillTombstonedCachedHeads(accountId, messageIds);
+    },
+    now,
+    onLog,
+  });
+
+  /**
+   * «List not older than T» for a frame. A replayed frame describes the past,
+   * so a read that started after the fact proves it (the startup page-1 read
+   * usually does). A live frame is dated by its local receipt, which is also
+   * safe against a skewed local clock.
+   */
+  function frameNotBeforeMs(meta: HubFrameMeta): number {
+    const receivedMs = now();
+    if (!meta.deliveredLive && meta.occurredAt !== null) {
+      const occurredMs = Date.parse(meta.occurredAt);
+      if (Number.isFinite(occurredMs)) {
+        return Math.min(occurredMs, receivedMs);
+      }
+    }
+    return receivedMs;
+  }
+
+  /**
+   * D38: applies one hub event SYNCHRONOUSLY inside HubSync's frame
+   * transaction (local state + sync intents + the v2 cursor commit together)
+   * and never awaits the network. Whatever read the frame still owes becomes a
+   * durable sync intent; the returned effect runs after the commit.
+   */
+  function handleHubEvent(event: SyncEvent, meta: HubFrameMeta = NO_FRAME_META): HubEventCommit {
+    recordHubEvent(event, isLiveFrame(meta));
+    const effects: Array<() => void> = [];
+    let kickIntents = false;
     switch (event.type) {
       case 'messageReceived':
       case 'messageSent': {
+        let appliedLocally = false;
         if (event.message && event.message.id === event.messageId) {
+          let outcome: HubMessageApplyOutcome | 'error';
           try {
-            if (await polling.ingestHubMessage(event.accountId, event.chatId, event.message)) {
-              onLog('debug', 'hub enriched message applied', {
+            outcome = polling.applyHubMessage(event.accountId, event.chatId, event.message);
+          } catch {
+            outcome = 'error';
+          }
+          if (outcome === 'applied' || outcome === 'tombstoned' || outcome === 'chat-missing') {
+            // M arrived: any thin-frame obligation for it is met.
+            intents.closeChatMessage(event.accountId, event.chatId, event.messageId, 'message-arrived');
+            if (outcome === 'chat-missing') {
+              // The row is stored but the chat is unknown here: a list read owes it.
+              intents.openAccountList(event.accountId, frameNotBeforeMs(meta), 'unknown-chat');
+              kickIntents = true;
+            }
+            onLog('debug', 'hub enriched message applied', {
+              type: event.type,
+              accountId: event.accountId,
+              chatId: event.chatId,
+              messageId: event.messageId,
+            });
+            appliedLocally = true;
+          } else {
+            recordFallback(
+              outcome === 'error' ? 'hub-ingest-error-fallback' : 'hub-malformed-message-fallback',
+              event.type,
+              {
                 type: event.type,
                 accountId: event.accountId,
                 chatId: event.chatId,
                 messageId: event.messageId,
-              });
-              emitMessageEvent(event);
-              recordApplied(event.type);
-              break;
-            }
-            recordFallback('hub-malformed-message-fallback', event.type, {
-              type: event.type,
-              accountId: event.accountId,
-              chatId: event.chatId,
-              messageId: event.messageId,
-            });
-          } catch {
-            recordFallback('hub-ingest-error-fallback', event.type, {
-              type: event.type,
-              accountId: event.accountId,
-              chatId: event.chatId,
-              messageId: event.messageId,
-            });
-            // fall through to the legacy reconciliation path below
+              },
+            );
           }
         } else {
           recordFallback(
@@ -852,14 +1072,19 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
             },
           );
         }
-
-        // Older Core frames and incomplete/mismatched bodies still reconcile via
-        // the polling provider. With auto-read off this is list-only.
-        // Cursor safety: a thin frame is not durable locally until this fallback
-        // read has really applied. Let failure reject onEvent so HubSync replays
-        // the frame instead of checkpointing past missing state.
-        await polling.refreshChat(event.accountId, event.chatId, undefined, event.messageId);
-        emitMessageEvent(event);
+        if (!appliedLocally) {
+          // Thin frame (D13): the fallback read is a durable obligation in the
+          // same transaction as the cursor — never awaited here.
+          kickIntents =
+            intents.openChatMessage(
+              event.accountId,
+              event.chatId,
+              event.messageId,
+              frameNotBeforeMs(meta),
+              'thin-frame',
+            ) || kickIntents;
+        }
+        effects.push(() => emitMessageEvent(event, meta));
         recordApplied(event.type);
         break;
       }
@@ -881,29 +1106,31 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         if (event.messageId !== undefined) {
           data.messages.markOpened(event.accountId, event.chatId, event.messageId);
         }
-        // Best-effort preview refresh, detached from the checkpoint. No
-        // expectedMessageId: an unlocked PPV is historical and legitimately
-        // absent from the cached tail window; demanding it locally is what
-        // wedged the stream.
-        void polling
-          .refreshChat(event.accountId, event.chatId, undefined, undefined)
-          .then(() => {
-            // If the refresh materialized a previously uncached target, apply
-            // the same fact now. The SQL merge prevents this (or a later stale
-            // fetch) from ever regressing an already-opened message.
-            if (event.messageId !== undefined) {
-              data.messages.markOpened(event.accountId, event.chatId, event.messageId);
-            }
-          })
-          .catch(() => {
-            recordFallback('hub-notification-refresh-failed', event.type, {
-              type: event.type,
-              accountId: event.accountId,
-              chatId: event.chatId,
-              messageId: event.messageId,
+        effects.push(() => {
+          // Best-effort preview refresh, detached from the checkpoint and
+          // started only after the commit. No expectedMessageId: an unlocked
+          // PPV is historical and legitimately absent from the cached tail
+          // window; demanding it locally is what wedged the stream.
+          void polling
+            .refreshChat(event.accountId, event.chatId, undefined, undefined)
+            .then(() => {
+              // If the refresh materialized a previously uncached target, apply
+              // the same fact now. The SQL merge prevents this (or a later stale
+              // fetch) from ever regressing an already-opened message.
+              if (event.messageId !== undefined) {
+                data.messages.markOpened(event.accountId, event.chatId, event.messageId);
+              }
+            })
+            .catch(() => {
+              recordFallback('hub-notification-refresh-failed', event.type, {
+                type: event.type,
+                accountId: event.accountId,
+                chatId: event.chatId,
+                messageId: event.messageId,
+              });
             });
-          });
-        emit(event);
+          emit(event);
+        });
         recordApplied(event.type);
         break;
       case 'tipReceived':
@@ -916,35 +1143,38 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
           chatId: event.chatId,
           messageId: event.messageId,
         });
-        void polling
-          .refreshChat(event.accountId, event.chatId, undefined, undefined)
-          .catch(() => {
-            recordFallback('hub-notification-refresh-failed', event.type, {
-              type: event.type,
-              accountId: event.accountId,
-              chatId: event.chatId,
-              messageId: event.messageId,
+        effects.push(() => {
+          void polling
+            .refreshChat(event.accountId, event.chatId, undefined, undefined)
+            .catch(() => {
+              recordFallback('hub-notification-refresh-failed', event.type, {
+                type: event.type,
+                accountId: event.accountId,
+                chatId: event.chatId,
+                messageId: event.messageId,
+              });
             });
-          });
-        emit(event);
+          emit(event);
+        });
         recordApplied(event.type);
         break;
       case 'messageDeleted': {
         const chatId = event.chatId ?? lookupChatId(event.accountId, event.messageId);
+        // An authoritative page-1 read owes the survivor head; a cached head
+        // that still shows the deleted message afterwards is cleared.
+        intents.openDeleteHead(event.accountId, event.messageId, frameNotBeforeMs(meta));
+        kickIntents = true;
         if (chatId === null) {
           recordFallback('unknown-delete-head-refresh', event.type, {
             accountId: event.accountId,
             messageId: event.messageId,
           });
-          await polling.reconcileAccountHeadNow(event.accountId);
-          clearStillTombstonedCachedHeads(event.accountId, [event.messageId]);
-          return; // unknown message: nothing to tombstone, drop silently
+          break; // unknown message: nothing to tombstone, no re-emit
         }
         // Tombstone (deleted=1) publishes bus scope 'messages' for the chat.
         data.messages.markDeleted(event.accountId, chatId, [event.messageId]);
-        await polling.reconcileAccountHeadNow(event.accountId);
-        clearStillTombstonedCachedHeads(event.accountId, [event.messageId]);
-        emit({ ...event, chatId });
+        intents.closeChatMessage(event.accountId, chatId, event.messageId, 'message-deleted');
+        effects.push(() => emit({ ...event, chatId }));
         recordApplied(event.type);
         break;
       }
@@ -952,15 +1182,162 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         // This event is a nudge, not a replacement chat snapshot. In
         // particular, subscription events are projected to chatListUpdated
         // while the read gateway may still advertise the previous message
-        // head. Preserve a newer Hub-delivered head until an authoritative
-        // ordinary poll or messageDeleted reconciliation proves otherwise.
-        await polling.refreshAccountHead(event.accountId);
+        // head. The owed list read is lag-safe (keeps a newer local head).
+        intents.openAccountList(event.accountId, frameNotBeforeMs(meta), 'list-nudge');
+        kickIntents = true;
         recordApplied(event.type);
         break;
       default:
-        emit(event); // typing/presence/accountAuthChanged/…
+        effects.push(() => emit(event)); // typing/presence/accountAuthChanged/…
         recordApplied(event.type);
     }
+    return () => {
+      for (const effect of effects) {
+        effect();
+      }
+      if (kickIntents) {
+        intents.kick();
+      }
+    };
+  }
+
+  // ── D38 list verification epochs (SYNCING) ───────────────────────────────
+  let epoch: VerificationEpoch | null = null;
+  /** When the stream last stopped being live (null while live / never live). */
+  let notLiveSinceMs: number | null = null;
+  let replayFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearReplayFallback(): void {
+    if (replayFallbackTimer !== null) {
+      clearTimeout(replayFallbackTimer);
+      replayFallbackTimer = null;
+    }
+  }
+
+  function armReplayFallback(): void {
+    clearReplayFallback();
+    const current = epoch;
+    if (current === null || current.replayCompleted || !hubLive) {
+      return;
+    }
+    replayFallbackTimer = setTimeout(() => {
+      replayFallbackTimer = null;
+      if (epoch !== current || current.replayCompleted || !hubLive) {
+        return;
+      }
+      onLog('warn', 'replay marker missing; treating the stream as caught up', {
+        reason: current.reason,
+        liveForMs: REPLAY_MARKER_FALLBACK_MS,
+      });
+      current.replayCompleted = true;
+      maybeCompleteEpoch();
+    }, REPLAY_MARKER_FALLBACK_MS);
+  }
+
+  function beginEpoch(reason: ListVerificationReason, accountIds: readonly string[]): void {
+    epoch = {
+      reason,
+      startedAtMs: now(),
+      replayCompleted: false,
+      pending: new Set(accountIds),
+      verified: new Set(),
+      failed: new Set(),
+      completedAtMs: null,
+    };
+    onLog('info', 'list sync started', { reason, accounts: accountIds.length });
+    armReplayFallback();
+    emitStatus();
+  }
+
+  function maybeCompleteEpoch(): void {
+    const current = epoch;
+    if (current === null || current.completedAtMs !== null) {
+      return;
+    }
+    if (!current.replayCompleted || current.pending.size > 0) {
+      return;
+    }
+    current.completedAtMs = now();
+    clearReplayFallback();
+    // Acceptance: how long SYNCING lasted, and what it proved.
+    onLog('info', 'list sync complete', {
+      reason: current.reason,
+      ms: current.completedAtMs - current.startedAtMs,
+      verified: current.verified.size,
+      failed: [...current.failed],
+    });
+    intents.kick();
+    emitStatus();
+  }
+
+  function hubSyncApplies(): boolean {
+    return hub !== null && modeOverride() !== 'polling';
+  }
+
+  function listSyncSnapshot(): ListSyncSnapshot {
+    const current = epoch;
+    const syncing = hubSyncApplies() && current !== null && current.completedAtMs === null;
+    return {
+      syncing,
+      syncingSinceMs: syncing ? current.startedAtMs : null,
+      epochStartedAtMs: current?.startedAtMs ?? null,
+      epochReason: current?.reason ?? null,
+    };
+  }
+
+  function handleCaughtUp(summary?: HubReplaySummary): void {
+    sawReplayCompleted = true;
+    if (summary !== undefined) {
+      // Acceptance: the replay should carry only the OnlyFans pages.
+      onLog('info', 'hub replay completed', { ...summary });
+    }
+    if (epoch !== null && !epoch.replayCompleted) {
+      epoch.replayCompleted = true;
+      maybeCompleteEpoch();
+    }
+  }
+
+  function handleListRead(record: ListReadRecord): void {
+    const current = epoch;
+    if (
+      current !== null
+      && current.pending.has(record.accountId)
+      && record.startedAtMs >= current.startedAtMs
+    ) {
+      current.pending.delete(record.accountId);
+      current.verified.add(record.accountId);
+      maybeCompleteEpoch();
+    }
+    intents.noteListRead(record.accountId, record.startedAtMs);
+    emitStatus();
+  }
+
+  function handleListVerificationFailed(accountId: string): void {
+    const current = epoch;
+    if (current !== null && current.pending.delete(accountId)) {
+      current.failed.add(accountId);
+      maybeCompleteEpoch();
+    }
+    intents.kick();
+    emitStatus();
+  }
+
+  /** A stream outage > 60 s or a replay gap: the list must be re-proven. */
+  function reverifyLists(reason: ListVerificationReason): void {
+    if (!running) {
+      return;
+    }
+    if (epoch !== null && now() - epoch.startedAtMs < REVERIFY_MIN_INTERVAL_MS) {
+      // The replayed stream still carries every event of the gap; the list
+      // was proven less than 5 minutes ago. Coalesce instead of paying again.
+      onLog('info', 'list re-verification coalesced', {
+        reason,
+        sinceLastEpochMs: now() - epoch.startedAtMs,
+      });
+      return;
+    }
+    beginEpoch(reason, handledAccountIds);
+    polling.verifyAccounts(handledAccountIds, reason);
   }
 
   function handleHubStatus(status: HubSyncStatus): void {
@@ -968,6 +1345,23 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     const override = modeOverride();
     statusChangedAtMs = now();
     liveSinceMs = isLive ? (liveSinceMs ?? now()) : null;
+    if (isLive && !hubLive) {
+      // D38: only an outage longer than 60 s re-verifies the list (the
+      // planned 15-min reconnect never leaves 'live'); a recovery epoch that
+      // already began during the outage covers it.
+      const outageMs = notLiveSinceMs === null ? null : now() - notLiveSinceMs;
+      const coveredByEpoch = epoch !== null
+        && notLiveSinceMs !== null
+        && epoch.startedAtMs >= notLiveSinceMs;
+      notLiveSinceMs = null;
+      // Bounded paid work on a transition (see REVERIFY_MIN_INTERVAL_MS).
+      if (outageMs !== null && outageMs > RECONNECT_VERIFY_AFTER_MS && !coveredByEpoch) {
+        onLog('info', 'stream back after an outage; re-verifying lists', { outageMs });
+        reverifyLists('reconnect');
+      }
+    } else if (!isLive && hubLive) {
+      notLiveSinceMs = now();
+    }
     if (override === 'hub') {
       if (isLive && !hubLive) {
         onLog('info', 'SSE live; force-hub keeps polling suspended', { status, override });
@@ -1033,13 +1427,17 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     const next = await createHub(
       {
         onEvent: handleHubEvent,
-        onCaughtUp: () => {
-          sawReplayCompleted = true;
+        onCaughtUp: handleCaughtUp,
+        onStatusChange: (status) => {
+          handleHubStatus(status);
+          if (status === 'live') {
+            armReplayFallback();
+          }
         },
-        onStatusChange: handleHubStatus,
         onSnapshot: applyHubSnapshot,
         onSnapshotRequired: (input) => {
           recordFallback('hub-replay-gap-snapshot', 'syncSnapshotRequired', input);
+          reverifyLists('gap');
         },
         onV2GapRecovered: handleV2GapRecovered,
       },
@@ -1102,6 +1500,11 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         sleepDetector = setInterval(maybeRearmAfterSuspend, SLEEP_TICK_MS);
       }
       handledAccountIds = [...accountIds];
+      // D38: the session starts SYNCING; polling.start runs each account's
+      // verification (page 1 first) in parallel with the hub replay.
+      notLiveSinceMs = null;
+      beginEpoch('session-start', handledAccountIds);
+      intents.start();
       polling.start(accountIds);
       void startHub();
     },
@@ -1111,6 +1514,8 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         clearInterval(sleepDetector);
         sleepDetector = null;
       }
+      clearReplayFallback();
+      intents.stop();
       stopHub();
       await polling.stop();
     },
@@ -1149,6 +1554,14 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     hubStatus: () => hub?.status() ?? null,
     hubMode,
     hubModeOverride: () => modeOverride(),
+    handleListRead,
+    handleListVerificationFailed,
+    noteSystemResume() {
+      onLog('info', 'system resumed; one safety check');
+      polling.noteSystemResume();
+    },
+    listSync: listSyncSnapshot,
+    syncIntents: () => intents,
     hubActivity: (): HubActivitySnapshot => {
       const day = utcDayOf(now());
       const sameDay = eventStats.day === day;

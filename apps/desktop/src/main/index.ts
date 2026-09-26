@@ -12,6 +12,7 @@ import {
   nativeImage,
   nativeTheme,
   Notification,
+  powerMonitor,
   protocol,
   safeStorage,
   shell,
@@ -155,6 +156,8 @@ import type {
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 
 const HUB_OFAPI_READ_TIMEOUT_MS = 75_000;
+/** D38 instrumentation: process start (launch → first page-1 paint). */
+const PROCESS_LAUNCHED_AT_MS = Date.now() - Math.round(process.uptime() * 1000);
 
 let mainWindow: BrowserWindow | null = null;
 const rendererReadiness = createRendererReadiness();
@@ -782,12 +785,19 @@ async function rebuildOfapiRuntime(
   // Minting registers the remote URL in media_urls; only registered tokens
   // resolve through the media:// handler (SPEC §4).
   const toMediaUrl = createToMediaUrl(dataLayer.mediaUrls);
+  // D38: PollingSync reports list reads to the hub-aware provider built right
+  // after it (SYNCING state, sync intents) — late-bound on purpose.
+  let listReadSink: HubAwareSync | null = null;
   const polling = createPollingSync({
     client: nextClient,
     data: dataLayer,
     toMediaUrl,
     // DIAGNOSTIC (temporary — empty-thread investigation 2026-06-23): scope 'diag'.
     onLog: (level, message, fields) => logger?.log(level, 'diag', message, fields),
+    launchedAtMs: PROCESS_LAUNCHED_AT_MS,
+    onListRead: (record) => listReadSink?.handleListRead(record),
+    onListVerificationFailed: (accountId, reason) =>
+      listReadSink?.handleListVerificationFailed(accountId, reason),
     isBudgetExhausted: () => budgetGuard.isExhausted(),
     // Default OFF: no automatic message-body reads (poll deltas, sweeps, media
     // polling) so OnlyFans never marks a chat read without an explicit open.
@@ -824,6 +834,7 @@ async function rebuildOfapiRuntime(
     data: dataLayer,
     onLog: (level, message, fields) => logger?.log(level, 'sync', message, fields),
     hubModeOverride: () => settingsCache?.hubModeOverride ?? 'auto',
+    autoReadEnabled: () => settingsCache?.autoReadChats ?? false,
     // Resolved per (re)connect attempt so settings edits take effect on
     // reconfigureHub without re-running OFAPI init. Null = hub mode off.
     createHub: async (
@@ -867,6 +878,10 @@ async function rebuildOfapiRuntime(
         // still show up in the fleet-adoption release gate.
         clientVersion: app.getVersion(),
         accountIds,
+        // D38: one SQLite transaction per frame — local state, sync intents
+        // and the v2 cursor (a settings row of this same DB) commit together.
+        runInTransaction: (fn) => dataLayer.db.transaction(fn),
+        platform: 'onlyfans',
         onEvent,
         onCaughtUp,
         onSnapshot,
@@ -896,6 +911,8 @@ async function rebuildOfapiRuntime(
       });
     },
   });
+
+  listReadSink = nextSync;
 
   // Hub REST cluster (SPEC §8.5/§8.6): summary push + usage reporter. It stays
   // alive for this candidate runtime's whole lifetime. URL/bearer changes
@@ -2365,6 +2382,12 @@ if (!app.requestSingleInstanceLock()) {
       if (BrowserWindow.getAllWindows().length === 0) {
         mainWindow = createWindow();
       }
+    });
+    // D38: one safety check of the focused account's list after the OS
+    // resumed (skipped when a read already happened in the last 5 minutes).
+    powerMonitor.on('resume', () => {
+      logger?.info('app', 'system resume');
+      sync?.noteSystemResume();
     });
   });
 }

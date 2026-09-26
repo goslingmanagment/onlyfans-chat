@@ -35,7 +35,8 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_fan_tx_fan'); // v6 spend window
       expect(indexes).toContain('idx_message_guard_events_occurred');
       expect(indexes).toContain('idx_message_guard_events_hash');
-      expect(SCHEMA_VERSION).toBe(23);
+      expect(indexes).toContain('idx_sync_intents_account'); // v24 (D38)
+      expect(SCHEMA_VERSION).toBe(24);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       const guardCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('message_guard_events')")
@@ -168,6 +169,46 @@ describe('migration runner', () => {
       .prepare("SELECT last_message_id FROM chats WHERE account_id = 'acct_1' AND chat_id = '101'")
       .get();
     expect(upgraded).toEqual({ last_message_id: null });
+    db.close();
+  });
+
+  it('v23 → v24 seeds the delta detector from the head and adds the durable intents table (D38)', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 23));
+    expect(readSchemaVersion(db)).toBe(23);
+    db.exec(
+      "INSERT INTO chats (account_id, chat_id, fan_name, raw, updated_at, last_message_id) " +
+        "VALUES ('acct_1', '101', 'Fan', '{}', '2026-09-01T10:00:00.000Z', '900')",
+    );
+    db.exec(
+      "INSERT INTO chats (account_id, chat_id, fan_name, raw, updated_at, last_message_id) " +
+        "VALUES ('acct_1', '102', 'Empty', '{}', '2026-09-01T10:00:00.000Z', NULL)",
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 23, to: SCHEMA_VERSION });
+    expect(
+      db
+        .prepare("SELECT chat_id, sync_baseline_message_id FROM chats WHERE account_id = 'acct_1' ORDER BY chat_id")
+        .all(),
+    ).toEqual([
+      { chat_id: '101', sync_baseline_message_id: '900' },
+      { chat_id: '102', sync_baseline_message_id: null },
+    ]);
+    // The natural key is unique per open obligation ('' = not applicable).
+    db.exec(
+      "INSERT INTO sync_intents (kind, account_id, not_before_ms, reason, next_attempt_ms, created_ms) " +
+        "VALUES ('account_list', 'acct_1', 1, 'list-nudge', 1, 1)",
+    );
+    expect(() =>
+      db.exec(
+        "INSERT INTO sync_intents (kind, account_id, not_before_ms, reason, next_attempt_ms, created_ms) " +
+          "VALUES ('account_list', 'acct_1', 2, 'list-nudge', 2, 2)",
+      )).toThrow(/UNIQUE/);
+    expect(() =>
+      db.exec(
+        "INSERT INTO sync_intents (kind, account_id, not_before_ms, reason, next_attempt_ms, created_ms) " +
+          "VALUES ('bogus', 'acct_1', 2, 'x', 2, 2)",
+      )).toThrow(/CHECK/);
     db.close();
   });
 

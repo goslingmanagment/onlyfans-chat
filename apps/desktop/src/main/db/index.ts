@@ -36,6 +36,8 @@ import { createMessageGuardEventsQueries } from './queries/message-guard-events'
 import type { MessageGuardEventsQueries } from './queries/message-guard-events';
 import { createUnsendCommandQueries } from './queries/unsend-commands';
 import type { UnsendCommandQueries } from './queries/unsend-commands';
+import { createSyncIntentsQueries } from './queries/sync-intents';
+import type { SyncIntentsQueries } from './queries/sync-intents';
 
 export interface DataLayer {
   db: ChatGooseDb;
@@ -55,6 +57,7 @@ export interface DataLayer {
   threadFetchLog: ThreadFetchLogQueries;
   messageGuardEvents: MessageGuardEventsQueries;
   unsendCommands: UnsendCommandQueries;
+  syncIntents: SyncIntentsQueries;
   close(): void;
 }
 
@@ -85,6 +88,7 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     threadFetchLog: createThreadFetchLogQueries(db),
     messageGuardEvents: createMessageGuardEventsQueries(db, bus),
     unsendCommands: createUnsendCommandQueries(db),
+    syncIntents: createSyncIntentsQueries(db),
     close() {
       bus.flushNow();
       bus.dispose();
@@ -173,3 +177,10 @@ export type {
   UnsendCommandQueries,
   UnsendCommandRow,
 } from './queries/unsend-commands';
+export { createSyncIntentsQueries } from './queries/sync-intents';
+export type {
+  OpenSyncIntentArgs,
+  SyncIntentKind,
+  SyncIntentRow,
+  SyncIntentsQueries,
+} from './queries/sync-intents';

@@ -457,8 +457,47 @@ export const domainEventFrameSchema = z.object({
   accountRef: z.string().nullable().optional(),
   /** Normalized message payload on message.received/sent (same shape as v1). */
   payload: z.unknown().optional(),
+  // H3 serve-time fields (core #265). Every one of them is advisory, so a
+  // malformed value degrades to "absent" instead of rejecting the durable
+  // frame: a rejected frame freezes the cursor and trips the poison breaker.
+  /** Ledger transaction ref on transaction.posted (money facts, D2). */
+  transactionRef: z.string().nullable().optional().catch(undefined),
+  /** Closed enum on the wire (`live | redelivery | repair`), deliberately
+   * parsed open here: an unknown value must mean "not live", never a
+   * frame_validation_failed. Read it through {@link frameProvenance}. */
+  provenance: z.unknown().optional(),
+  /** Fan labels on money-fact frames whose conversation Core knows. */
+  thread: z.object({
+    fanName: z.string().nullable(),
+    username: z.string().nullable(),
+  }).optional().catch(undefined),
 });
 export type DomainEventFrame = z.infer<typeof domainEventFrameSchema>;
+
+/**
+ * What Core knows about how a durable frame's fact reached its ledger (H3).
+ * `live` means "not a KNOWN redelivery or repair" — it is not a freshness
+ * signal (replayed backlog is labelled `live` too). A missing or unrecognised
+ * value is `unknown`, which every consumer must treat as not live.
+ */
+export const HUB_FRAME_PROVENANCES = ['live', 'redelivery', 'repair', 'unknown'] as const;
+export type HubFrameProvenance = (typeof HUB_FRAME_PROVENANCES)[number];
+
+export function frameProvenance(frame: Pick<DomainEventFrame, 'provenance'>): HubFrameProvenance {
+  const value = frame.provenance;
+  return value === 'live' || value === 'redelivery' || value === 'repair' ? value : 'unknown';
+}
+
+/**
+ * Client-side platform filter for the v2 stream. The desktop asks Core for
+ * `platform=onlyfans`, but an older Core silently ignores the parameter on a
+ * cursorless request and would replay every granted platform. OFAPI names
+ * OnlyFans accounts `acct_…` (Fansly accounts are `fansly_acct_…`); a frame
+ * whose page has no OnlyFans OFAPI ref is not this client's to apply.
+ */
+export function isOnlyFansAccountRef(ref: string | null | undefined): ref is string {
+  return typeof ref === 'string' && /^acct_[A-Za-z0-9_-]+$/.test(ref);
+}
 
 export const domainSnapshotRequiredSchema = z.object({
   error: z.literal('sync_snapshot_required'),

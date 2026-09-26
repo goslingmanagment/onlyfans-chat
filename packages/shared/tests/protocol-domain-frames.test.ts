@@ -14,7 +14,10 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  frameProvenance,
+  isOnlyFansAccountRef,
   mapDomainFrame,
+  parseDomainEventFrame,
   parseSyncEvent,
   type DomainEventFrame,
 } from '../src/protocol/index';
@@ -146,5 +149,58 @@ describe('parseSyncEvent messageReceived attention metadata', () => {
 
   it('keeps marker-less and polling-origin payloads backward compatible', () => {
     expect(parseSyncEvent(received)).toEqual(received);
+  });
+});
+
+// ── H3 serve-time fields (core #265), parsed tolerantly for D38 ─────────────
+
+describe('H3 frame fields', () => {
+  const wire = {
+    accountId: 8,
+    accountSeq: 41,
+    type: 'message.received',
+    occurredAt: '2026-09-26T16:07:00.000Z',
+    data: {},
+    conversationRef: '777',
+    messageRef: '9001',
+    accountRef: 'acct_fe79aa',
+  };
+
+  it('reads provenance from the closed enum and maps anything else to unknown', () => {
+    for (const value of ['live', 'redelivery', 'repair'] as const) {
+      const parsed = parseDomainEventFrame({ ...wire, provenance: value });
+      expect(parsed).not.toBeNull();
+      expect(frameProvenance(parsed!)).toBe(value);
+    }
+    // Missing = the lookup failed: unknown, never live.
+    expect(frameProvenance(parseDomainEventFrame(wire)!)).toBe('unknown');
+    // A value outside the enum (a newer Core) must not reject the durable frame.
+    const future = parseDomainEventFrame({ ...wire, provenance: 'backfill' });
+    expect(future).not.toBeNull();
+    expect(frameProvenance(future!)).toBe('unknown');
+    expect(frameProvenance(parseDomainEventFrame({ ...wire, provenance: 7 })!)).toBe('unknown');
+  });
+
+  it('keeps transactionRef and thread, and degrades malformed ones to absent', () => {
+    const money = parseDomainEventFrame({
+      ...wire,
+      type: 'transaction.posted',
+      transactionRef: 'tx-123',
+      thread: { fanName: 'Kevin', username: null },
+    });
+    expect(money).toMatchObject({ transactionRef: 'tx-123', thread: { fanName: 'Kevin', username: null } });
+
+    const junk = parseDomainEventFrame({ ...wire, transactionRef: 42, thread: { fanName: 1 } });
+    expect(junk).not.toBeNull();
+    expect(junk!.transactionRef).toBeUndefined();
+    expect(junk!.thread).toBeUndefined();
+  });
+
+  it('recognises OnlyFans OFAPI account refs only', () => {
+    expect(isOnlyFansAccountRef('acct_fe79aa')).toBe(true);
+    expect(isOnlyFansAccountRef('fansly_acct_123')).toBe(false);
+    expect(isOnlyFansAccountRef('')).toBe(false);
+    expect(isOnlyFansAccountRef(null)).toBe(false);
+    expect(isOnlyFansAccountRef(undefined)).toBe(false);
   });
 });

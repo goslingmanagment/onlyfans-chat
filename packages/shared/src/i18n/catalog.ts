@@ -761,6 +761,12 @@ export const UI_MESSAGES = {
   'sb.listVerified': { en: 'LIST', ru: 'СПИСОК' },
   'sb.ago': { en: 'AGO', ru: 'НАЗАД' },
   'sb.shortcuts': { en: 'SHORTCUTS', ru: 'КЛАВИШИ' },
+  // D38: the SYNCING status word stays English (status code); its tooltip RU
+  // text is owner-approved byte for byte (plan 2026-09-26 §2).
+  'sb.syncingTip': {
+    en: 'The app is catching up on events missed while it was closed and checking the chat list against OnlyFans. Usually a few seconds.',
+    ru: 'Приложение догоняет события, пропущенные пока оно было закрыто, и сверяет список чатов с OnlyFans. Обычно несколько секунд.',
+  },
 
   // ── Online surface (variant C, flat; RU pinned to mockups/experiments/online-flat.html) ──
   'online.title': { en: 'Online now', ru: 'Сейчас онлайн' },
@@ -1159,6 +1165,10 @@ export const UI_MESSAGES = {
     en: 'Write to the owner — pages are assigned on their side.',
     ru: 'Напишите владельцу — страницы назначает он.',
   },
+  // D38: the one banner above the chat list — the list shown is as of {when}
+  // (e.g. «чт 16:07») and a fresh read is under way.
+  'inbox.listStaleBanner': { en: 'List from {when}, updating…', ru: 'Список от {when}, обновляется…' },
+  'inbox.listStaleBannerNoTime': { en: 'List is updating…', ru: 'Список обновляется…' },
   'inbox.emptyAllTitle': { en: 'No chats yet', ru: 'Чатов пока нет' },
   'inbox.emptyFilteredTitle': { en: 'Nothing here', ru: 'Здесь пусто' },
   'inbox.emptyAllHint': { en: 'Chats appear as soon as the first sync completes.', ru: 'Чаты появятся, как только пройдёт первая синхронизация.' },

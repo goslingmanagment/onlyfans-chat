@@ -3,8 +3,12 @@
 // mapping through the request path, credit telemetry wiring, and the SPEC §7
 // guard that write methods are never auto-retried (send paths live in send.test.ts).
 
-import { describe, expect, it } from 'vitest';
-import { createOfApiClient } from '@main/ofapi/client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createOfApiClient,
+  OFAPI_DEEP_HISTORY_READ_TIMEOUT_MS,
+  OFAPI_FAST_READ_TIMEOUT_MS,
+} from '@main/ofapi/client';
 import type { OfApiClientOptions, OfApiRequestEvent } from '@main/ofapi/client';
 import { OfApiError } from '@main/ofapi/errors';
 import type { CreditMeterSnapshot } from '@main/ofapi/credit-meter';
@@ -493,5 +497,65 @@ describe('write methods never auto-retry (SPEC §7 / §15.5)', () => {
     const { client, requests } = makeClient([() => jsonResponse(fixture)]);
     await client.listChats({ purpose: 'hot-poll', accountId: ACCOUNT_ID });
     expect(requests.every((request) => request.method === 'GET')).toBe(true);
+  });
+});
+
+// D38: the hub gateway gives up at 20 s (60 s for explicit deep history,
+// core #262); the client waits 5 s longer so the hub's typed answer wins.
+describe('read timeouts and list retry policy (D38)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function timeoutsOf(spy: { mock: { calls: ReadonlyArray<ReadonlyArray<unknown>> } }): number[] {
+    return spy.mock.calls.map((call) => call[0] as number);
+  }
+
+  it('chats, chat messages and transactions use 25 s; explicit deep history 65 s; other reads keep the default', async () => {
+    const spy = vi.spyOn(AbortSignal, 'timeout');
+    const chats = loadFixture('list-chats.json');
+    const messages = loadFixture('list-messages.json');
+    const { client } = makeClient(
+      [
+        () => jsonResponse(chats),
+        () => jsonResponse(messages),
+        () => jsonResponse(messages),
+        () => jsonResponse({ data: { list: [], hasMore: false } }),
+        () => jsonResponse([]),
+      ],
+      { requestTimeoutMs: 75_000 },
+    );
+    await client.listChats({ purpose: 'hot-poll', accountId: ACCOUNT_ID, retry: 'none' });
+    await client.listMessages({ purpose: 'message-tail', accountId: ACCOUNT_ID, chatId: '1' });
+    await client.listMessages({
+      purpose: 'message-tail',
+      accountId: ACCOUNT_ID,
+      chatId: '1',
+      firstId: '100',
+      order: 'desc',
+      readIntent: 'deep-history-v1',
+    });
+    await client.listTransactions({ purpose: 'spend-sweep', accountId: ACCOUNT_ID });
+    await client.listAccounts();
+    expect(timeoutsOf(spy)).toEqual([
+      OFAPI_FAST_READ_TIMEOUT_MS,
+      OFAPI_FAST_READ_TIMEOUT_MS,
+      OFAPI_DEEP_HISTORY_READ_TIMEOUT_MS,
+      OFAPI_FAST_READ_TIMEOUT_MS,
+      75_000,
+    ]);
+    expect(OFAPI_FAST_READ_TIMEOUT_MS).toBe(25_000);
+    expect(OFAPI_DEEP_HISTORY_READ_TIMEOUT_MS).toBe(65_000);
+  });
+
+  it('a list read with retry none makes exactly one attempt on a 503', async () => {
+    const { client, requests } = makeClient([
+      () => jsonResponse({ message: 'upstream down' }, { status: 503 }),
+      () => jsonResponse(loadFixture('list-chats.json')),
+    ]);
+    await expect(
+      client.listChats({ purpose: 'hot-poll', accountId: ACCOUNT_ID, retry: 'none' }),
+    ).rejects.toBeInstanceOf(OfApiError);
+    expect(requests).toHaveLength(1);
   });
 });

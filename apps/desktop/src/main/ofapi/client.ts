@@ -82,6 +82,16 @@ export function estimateUploadCredits(bytes: number): number {
 /** Multipart uploads can outlive the default API deadline (100 MB cap). */
 export const UPLOAD_TIMEOUT_MS = 5 * 60_000;
 
+/**
+ * D38: Core's read gateway gives up on chats, chat-message and transaction
+ * reads after 20 s (60 s for an explicit deep-history page, core #262). The
+ * client waits 5 s longer than the hub so the hub's own timeout answer (a
+ * typed error) arrives first, instead of a blind abort racing it. Every other
+ * gateway read keeps the client-wide default.
+ */
+export const OFAPI_FAST_READ_TIMEOUT_MS = 25_000;
+export const OFAPI_DEEP_HISTORY_READ_TIMEOUT_MS = 65_000;
+
 /** Rate-limiter key for team-level endpoints (no account scope). */
 const GLOBAL_KEY = '__global__';
 
@@ -619,6 +629,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     retry: RetryPolicy = 'idempotent',
     readIntent?: OfApiReadIntent,
     signal?: AbortSignal,
+    timeoutMs?: number,
   ): Promise<unknown> {
     return requestJson({
       accountKey,
@@ -630,6 +641,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
       ...(priority !== undefined ? { priority } : {}),
       ...(readIntent !== undefined ? { readIntent } : {}),
       ...(signal ? { signal } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });
   }
 
@@ -744,7 +756,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         query: params.query,
         // Always explicit: live default differs from the documented default (SPEC §5).
         skip_users: params.skipUsers ?? 'none',
-      });
+      }, params.priority, params.retry, undefined, params.signal, OFAPI_FAST_READ_TIMEOUT_MS);
       const { data, nextPageUrl } = unwrapEnvelope(payload, path);
       return { chats: parseWith(z.array(ofapiChatSchema), data, path), nextPageUrl };
     },
@@ -778,7 +790,10 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         first_id: params.firstId,
         last_id: params.lastId,
         skip_users: params.skipUsers ?? 'all',
-      }, params.priority, params.retry, params.readIntent, params.signal);
+      }, params.priority, params.retry, params.readIntent, params.signal,
+      params.readIntent === 'deep-history-v1'
+        ? OFAPI_DEEP_HISTORY_READ_TIMEOUT_MS
+        : OFAPI_FAST_READ_TIMEOUT_MS);
       const { data, nextPageUrl } = unwrapEnvelope(payload, path);
       if (params.strict) {
         const envelope = parseWith(z.object({ _pagination: z.object({ next_page: z.string().nullable() }) }), payload, path);
@@ -831,7 +846,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         type: params.type,
         marker: params.marker,
         startDate: params.startDate,
-      });
+      }, params.priority, params.retry, undefined, params.signal, OFAPI_FAST_READ_TIMEOUT_MS);
       const { data, nextPageUrl } = unwrapEnvelope(payload, path);
       const parsed = parseWith(ofapiTransactionsDataSchema, data, path);
       return {

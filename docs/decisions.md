@@ -57,6 +57,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D35 | 2026-09-15 | One account per chatter: first-run sign-in screen, password sign-in without cookies, the legacy chatter key retired, self-healing on a reasoned 401, and the account cache bound to an identity (core unified-account plan §9) |
 | D36 | 2026-09-16 | New followers: a delivered welcome is recognised by `queueId` equal to the welcome-template id and no longer blocks ready (amends D32) |
 | D37 | 2026-09-20 | SDK re-vendored from deployed core 82571f3c; New Followers asks for `variantCount: 1` and the deprecated `greetingMode` alias leaves this client (core #379) |
+| D38 | 2026-09-26 | Fresh list at launch: page 1 first and page by page, hub frames commit state + durable sync intents + the v2 cursor in one transaction and never await the network, `platform=onlyfans`, SYNCING + one list banner, toast age/provenance gate; SDK re-vendored from deployed core a51e687d (H3, core #265) |
 
 ## Entries
 
@@ -934,3 +935,99 @@ only when no count was requested (`tests/ai/coordinator.test.ts`), and
 (`tests/followers/generation.test.ts`). Not verified here: prompt quality — the
 unified template changes generations on both surfaces, and core #379 leaves
 that sampling to the owner.
+
+**D38 (2026-09-26).** Owner-approved plan «OF Desktop: PPV purchases and the
+stale startup list», stage D1 (`_docs/2026-09-26-of-desktop-purchases-and-startup-plan.md`).
+For ~80 s after launch the desktop showed yesterday's list: the first poll
+walked five pages per account and wrote rows only after the whole walk, hub
+list reads could hang 60 s, the v2 stream replayed every granted platform
+(~17.6k Fansly frames ahead of OnlyFans at the 2026-09-25 launch), and a
+`subscription.started` handler awaited a list read that waited on the hung
+sweep until the 45 s SSE watchdog dropped the connection — while the status
+bar already said HUB LIVE on the stream's first byte.
+
+1. **SDK re-vendored** from the deployed core `a51e687d` (contract `21a767b8…`,
+   = production `/api/v1/health`). The desktop keeps parsing v2 frames with
+   its own schema (`packages/shared/src/protocol`), not the SDK's
+   `subscribeDomainEvents`: H3's `provenance` is a closed enum there and an
+   unknown value would be `frame_validation_failed`. Here `provenance` is read
+   open (`frameProvenance`: anything but `live | redelivery | repair` is
+   `unknown` = not live); malformed `transactionRef` / `thread` degrade to
+   absent instead of rejecting the durable frame.
+2. **`platform=onlyfans`** on the v2 stream (every connect, cursorless too)
+   and on the v2 snapshot; the H3 cursors it mints are bound to it. A
+   client-side filter stays, because an older Core ignores the parameter on a
+   cursorless request: a frame whose `accountRef` is not an OnlyFans OFAPI
+   ref (`acct_…`) is checkpointed past, never mistaken for grant drift.
+3. **One transaction per frame.** `handleHubEvent` is synchronous and never
+   awaits the network. HubSync runs it and the v2 cursor write (a `settings`
+   row of the same DB) inside one SQLite transaction; emits, notifications and
+   detached reads run only after the commit. A crash between local state and
+   checkpoint is impossible; an async handler is refused.
+4. **Sync intents** (`sync_intents`, schema v24) carry every read a frame
+   still owes, committed with the frame: `account_list` «list not older than
+   T» (subscription nudges, an enriched message for an unknown chat) is closed
+   by any successful page-1 read that started at T + 2 s or later, with at
+   most one intent-driven read per account per 30 s; `chat_message` (thin
+   frames, D13) needs the exact row with auto-read and a head at or past M in
+   list-only mode, and closes when M arrives from any source or is deleted;
+   `delete_head` asks for an authoritative read and then clears a cached head
+   that still shows the deleted message. Failed reads back off 5/10/20 s and
+   close with a warning after three (the safety read covers them). T is the
+   frame's `occurredAt` for replayed frames — the startup read proves them for
+   free — and the local receipt time for live ones. Intents wait while their
+   account's verification is pending and survive restarts.
+5. **Startup.** Each account's first poll IS its verification: page 1 is
+   written, painted and reported the moment it arrives, in parallel with the
+   replay; deeper pages and hydration are written page by page with the local
+   head preserved; a failed page-1 read retries after 5, 10 and 20 s and then
+   gives up. `chats.sync_baseline_message_id` is now the delta detector, apart
+   from the UI head: the head is published at once, the detector advances only
+   after the automatic body delta reached it (auto-read) or at once
+   (list-only), so an unfinished delta is re-detected instead of lost. An
+   authoritative page 1 still moves a head backwards (a missed deletion) but
+   keeps a newer head another writer stored while the read was in flight.
+6. **Timeouts and retries.** Chat-list reads are `retry: 'none'` (every caller
+   owns its schedule). Client timeouts follow the hub's (core #262): 25 s for
+   chats, chat messages and transactions, 65 s for explicit deep history;
+   other gateway reads keep 75 s.
+7. **Double unread on replay** fixed: a hub message raises `unread_count` only
+   when it is newer than the current head (the list's count already includes
+   the head and everything before it).
+8. **Safety net.** While the stream is live (hidden window included), page 1
+   of the focused account every 5 minutes, skipped when any successful page-1
+   read of it happened in the last 5 minutes; one check after the OS resumes
+   (Electron `powerMonitor` and the existing sleep detector), same skip rule.
+9. **Toast gate.** A v2 frame alerts only with provenance `live`, an
+   `occurredAt` at most 3 minutes old (`NOTIFICATION_MAX_AGE_MS`; Core's
+   automatic redelivery only touches attempts older than 10 minutes) and the
+   existing replay_completed rule. `redelivery`, `repair` and unknown never
+   alert. v1 frames and polling keep their D24 rules.
+10. **SYNCING and re-verification.** A verification epoch starts at session
+    start, after a stream outage longer than 60 s and after a replay gap
+    (409 / grant rebaseline); the planned 15-minute reconnect never leaves
+    LIVE. Status `SYNCING` (amber, `sb.syncingTip` — the owner-approved text)
+    lasts until Core's replay marker AND a page-1 read (or exhausted retries)
+    of every account; without a marker for 60 s of live stream it fails open.
+    Re-verification is paid work started by a transition, so it is coalesced
+    to at most one epoch per 5 minutes (incident 2026-07-15: a flapping stream
+    must not scale reads). «ПУШ» counts only live frames (after the
+    connection's marker, provenance `live`).
+11. **One banner** above the chat list (D33-approved; no other UI):
+    «Список от чт 16:07, обновляется…» for the selected account when the
+    current epoch has not verified it yet and its list is older than 5
+    minutes, when SYNCING lasts over 10 s while it is still unverified, or when
+    the stream is live but its list is older than 12 minutes. The time is the
+    durable «list verified» clock (start of the last successful page-1 read,
+    persisted at most once a minute).
+
+Acceptance instrumentation (desktop log): `[diag] list page1 painted`
+(`sinceLaunchMs` from process start, `readMs`, `trigger`), `[diag] list
+verified` / `list verification retry scheduled` / `list verification gave up`,
+`[diag] safety read` / `safety read skipped`, `[sync] hub replay completed`
+(`framesByAccount` by Core page id, `offPlatformFrames`), `[sync] list sync
+started` / `list sync complete`, `[sync] sync intent opened` / `closed` /
+`gave up` / `read`. D2 builds on the same frame meta (`provenance`,
+`transactionRef`, `thread`) and effect list; the detached PPV/tip
+`refreshChat` stays until D2 removes it. Not verified here: the p95 paint
+target and the credit rate on real OFAPI — both need the release and its logs.

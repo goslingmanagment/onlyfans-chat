@@ -5,6 +5,7 @@
 // sign-off. DEGRADED / OFFLINE / HUB AUTH cover states the mockup strip does
 // not show (added in the same style).
 
+import type { UiMessageKey } from '@chatgoose/shared/i18n/index';
 import type { SyncStatusVM } from '../../../preload/contract';
 
 export const STATUS_BAR_TIPS = {
@@ -36,17 +37,29 @@ export const STATUS_BAR_TIPS = {
 
 export interface StatusBarMode {
   /** The bar's mode word — matches the Activity panel badge (mockup). */
-  word: 'POLLING' | 'HUB LIVE' | 'DEGRADED' | 'OFFLINE';
-  tone: 'ok' | 'warn' | 'bad';
+  word: 'POLLING' | 'HUB LIVE' | 'SYNCING' | 'DEGRADED' | 'OFFLINE';
+  /** `sync` = amber, the app's "pending" tone (D38 SYNCING). */
+  tone: 'ok' | 'warn' | 'bad' | 'sync';
   tip: string;
+  /** Catalog-localized tooltip (newer words); wins over `tip` when set. */
+  tipKey?: UiMessageKey;
 }
 
-/** Live hub SSE is the primary signal; polling failures are secondary there. */
+/**
+ * Live hub SSE is the primary signal; polling failures are secondary there.
+ * D38: while the stream connects or is live, SYNCING (amber) replaces
+ * HUB LIVE until replay_completed and every account's page-1 verification —
+ * the first byte of the stream is no longer enough to claim LIVE.
+ */
 export function statusBarMode(
   state: SyncStatusVM['state'],
   hub: SyncStatusVM['hub'],
   override: SyncStatusVM['hubModeOverride'] = 'auto',
+  syncing = false,
 ): StatusBarMode {
+  if (syncing && (hub === 'live' || hub === 'connecting')) {
+    return { word: 'SYNCING', tone: 'sync', tip: '', tipKey: 'sb.syncingTip' };
+  }
   if (hub === 'live') {
     return { word: 'HUB LIVE', tone: 'ok', tip: STATUS_BAR_TIPS.hubLive };
   }

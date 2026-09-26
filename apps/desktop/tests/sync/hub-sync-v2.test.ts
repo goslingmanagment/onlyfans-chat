@@ -5,16 +5,19 @@
 // rebaseline through a fresh cursor plus paginated durable state snapshots.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SyncSnapshotResponse } from '@chatgoose/shared/protocol/index';
+import type { SyncEvent, SyncSnapshotResponse } from '@chatgoose/shared/protocol/index';
 import {
   createHubSync,
   HUB_SNAPSHOT_PATH,
   HUB_V2_SNAPSHOT_PATH,
   HUB_V2_SSE_PATH,
+  type HubFrameMeta,
+  type HubReplaySummary,
   type HubSseFetch,
   type HubSnapshotRecoveryProgress,
   type HubSyncStatus,
 } from '../../src/main/sync/hub-sync';
+import { createDataLayer, type DataLayer } from '../../src/main/db/index';
 
 const ACCT = 'acct_hub_v2_test';
 const NEW_ACCT = 'acct_hub_v2_new';
@@ -22,6 +25,7 @@ const NEW_ACCT = 'acct_hub_v2_new';
 function v2SnapshotRequest(sourceCursor: string): string {
   const url = new URL(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
   url.searchParams.set('sourceCursor', sourceCursor);
+  url.searchParams.set('platform', 'onlyfans');
   return url.toString();
 }
 
@@ -300,7 +304,7 @@ describe('createHubSync (protocol v2)', () => {
     h.sync.start();
     await drainMicrotasks();
 
-    expect(h.calls[0]!.url).toBe(`https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_START`);
+    expect(h.calls[0]!.url).toBe(`https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_START&platform=onlyfans`);
     expect(h.calls[0]!.headers.authorization).toBe('Bearer agency_hub_core_k1');
     // Stage 4 / Proposal 4.1: fleet-adoption gate reads this off every hub request.
     expect(h.calls[0]!.headers['x-client-version']).toBe('0.1.29');
@@ -498,9 +502,9 @@ describe('createHubSync (protocol v2)', () => {
     await drainMicrotasks();
 
     expect(h.calls.map((call) => call.url)).toEqual([
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_OLD_GRANT`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_OLD_GRANT&platform=onlyfans`,
       v2SnapshotRequest('CUR_OLD_GRANT'),
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_OLD_GRANT`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_OLD_GRANT&platform=onlyfans`,
     ]);
     expect(h.log).toEqual(['gap-recovered']);
     expect(h.cursor()).toBe('CUR_OLD_GRANT');
@@ -876,11 +880,11 @@ describe('createHubSync (protocol v2)', () => {
     await drainMicrotasks();
 
     expect(calls.map((call) => call.url)).toEqual([
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE&platform=onlyfans`,
       v2SnapshotRequest('CUR_STALE'),
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&snapshotCursor=22&pageMode=bounded_v1&messageLimit=100&stateCursor=STATE_FROM_OLD_CONTRACT`,
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH_1`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH_1&platform=onlyfans`,
     ]);
     expect(clears[0]).toMatchObject({ stateCursor: 'STATE_FROM_OLD_CONTRACT' });
     expect(warnings).toContain('hub persisted snapshot cursor rejected; restarting once fresh');
@@ -1138,11 +1142,11 @@ describe('createHubSync (protocol v2)', () => {
     await drainMicrotasks();
 
     expect(calls.map((call) => call.url)).toEqual([
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE&platform=onlyfans`,
       v2SnapshotRequest('CUR_STALE'),
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&snapshotCursor=22&pageMode=bounded_v1&messageLimit=100&stateCursor=STATE_BELOW_FLOOR`,
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH_1`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH_1&platform=onlyfans`,
     ]);
     expect(applied).toEqual(['fresh-restart']);
     expect(streamCursor).toBe('CUR_FRESH_1');
@@ -1289,7 +1293,7 @@ describe('createHubSync (protocol v2)', () => {
     expect(h.calls[2]!.url).toContain(`${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0`);
     expect(h.calls[3]!.url).toContain('pageCursor=9');
     expect(h.calls[4]!.url).toContain('cursor=CUR_RESCOPED');
-    expect(h.calls.some((call) => call.url === `https://hub.test${HUB_V2_SSE_PATH}`)).toBe(false);
+    expect(h.calls.some((call) => call.url === `https://hub.test${HUB_V2_SSE_PATH}?platform=onlyfans`)).toBe(false);
     expect(h.log).toEqual([
       'gap-recovered',
       'snapshot:rescoped-1:9',
@@ -1328,10 +1332,10 @@ describe('createHubSync (protocol v2)', () => {
     await drainMicrotasks();
 
     expect(h.calls.map((call) => call.url)).toEqual([
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_OLD_GRANT`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_OLD_GRANT&platform=onlyfans`,
       v2SnapshotRequest('CUR_OLD_GRANT'),
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${NEW_ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_REPLACED`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_REPLACED&platform=onlyfans`,
     ]);
     expect(h.calls.some((call) => call.url.includes(`accountId=${ACCT}`))).toBe(false);
     expect(h.log).toEqual([
@@ -1398,15 +1402,15 @@ describe('createHubSync (protocol v2)', () => {
     await drainMicrotasks();
 
     expect(h.calls.map((call) => call.url)).toEqual([
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE&platform=onlyfans`,
       v2SnapshotRequest('CUR_STALE'),
       // No A state walk was allowed for CUR_A_ONLY: reconnect with the still
       // stale cursor and obtain an AB-bound baseline instead.
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE&platform=onlyfans`,
       v2SnapshotRequest('CUR_STALE'),
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${NEW_ACCT}&afterSeq=0&pageCursor=0&limit=1&snapshotCursor=22&pageMode=bounded_v1&messageLimit=100`,
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_A_AND_B`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_A_AND_B&platform=onlyfans`,
     ]);
     expect(h.log).toEqual([
       'gap-recovered',
@@ -1449,9 +1453,9 @@ describe('createHubSync (protocol v2)', () => {
     await drainMicrotasks();
 
     expect(h.calls.map((call) => call.url)).toEqual([
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_REVOKED`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_REVOKED&platform=onlyfans`,
       v2SnapshotRequest('CUR_REVOKED'),
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_EMPTY`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_EMPTY&platform=onlyfans`,
     ]);
     expect(h.log).toEqual(['gap-recovered', 'persist:CUR_EMPTY']);
 
@@ -1502,7 +1506,7 @@ describe('createHubSync (protocol v2)', () => {
 
     expect(h.calls[2]!.url).toContain(`accountId=${ACCT}`);
     expect(h.calls[3]!.url).toContain(`accountId=${NEW_ACCT}`);
-    expect(h.calls[4]!.url).toBe(`https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`);
+    expect(h.calls[4]!.url).toBe(`https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE&platform=onlyfans`);
     expect(h.cursor()).toBe('CUR_STALE');
     expect(h.log).toEqual(['gap-recovered', 'snapshot:covered:done']);
     h.sync.stop();
@@ -1573,5 +1577,234 @@ describe('createHubSync (protocol v2)', () => {
       getLastEventId: () => null,
       setLastEventId: () => undefined,
     })).toThrow(/getV2Cursor/);
+  });
+});
+
+// ─── D38: platform filter, frame meta, one-transaction commit ───────────────
+
+describe('HubSync v2 transport (D38)', () => {
+  let data: DataLayer;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    data = createDataLayer({
+      driverPath: 'bsqlite3-mc-node',
+      filePath: ':memory:',
+      encryptionKey: null,
+    });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    data.close();
+  });
+
+  const CURSOR_KEY = 'test.v2Cursor';
+
+  function makeTransportSync(
+    responses: Array<{ status: number; stream: FakeStream | null; json?: unknown }>,
+    options: {
+      onEvent?: (event: SyncEvent, meta: HubFrameMeta) => void | (() => void);
+      failCursor?: string | null;
+      onCaughtUp?: (summary: HubReplaySummary) => void;
+      onWarn?: (message: string) => void;
+    } = {},
+  ): { sync: ReturnType<typeof createHubSync>; calls: FetchCall[]; failCursor: { value: string | null } } {
+    const { fetchImpl, calls } = makeHarness(responses);
+    const failCursor = { value: options.failCursor ?? null };
+    const sync = createHubSync({
+      protocol: 'v2',
+      baseUrl: 'https://hub.test',
+      apiKey: 'device-token',
+      fetchImpl,
+      sleep: () => Promise.resolve(),
+      accountIds: [ACCT],
+      runInTransaction: (fn) => data.db.transaction(fn),
+      onEvent: options.onEvent ?? (() => undefined),
+      ...(options.onCaughtUp !== undefined ? { onCaughtUp: options.onCaughtUp } : {}),
+      ...(options.onWarn !== undefined ? { onWarn: (message) => options.onWarn?.(message) } : {}),
+      getLastEventId: () => null,
+      setLastEventId: () => undefined,
+      getV2Cursor: () => (data.settings.get(CURSOR_KEY) as string | undefined) ?? null,
+      setV2Cursor: (cursor) => {
+        if (cursor === failCursor.value) {
+          throw new Error('disk full while persisting the cursor');
+        }
+        data.settings.set(CURSOR_KEY, cursor);
+      },
+    });
+    return { sync, calls, failCursor };
+  }
+
+  it('asks Core for platform=onlyfans on a cursorless connect and on resume', async () => {
+    const first = makeStream();
+    const second = makeStream();
+    const h = makeTransportSync([
+      { status: 200, stream: first },
+      { status: 200, stream: second },
+    ]);
+    h.sync.start();
+    await drainMicrotasks();
+    expect(h.calls[0]!.url).toBe(`https://hub.test${HUB_V2_SSE_PATH}?platform=onlyfans`);
+    first.send(controlFrame('CUR_1', { type: 'replay_completed' }));
+    await drainMicrotasks();
+    first.close();
+    await drainMicrotasks();
+    expect(h.calls[1]!.url).toBe(`https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_1&platform=onlyfans`);
+    h.sync.stop();
+  });
+
+  it('skips frames of a non-OnlyFans page (an older Core ignoring platform=) without drift recovery', async () => {
+    const stream = makeStream();
+    const seen: SyncEvent[] = [];
+    let summary: HubReplaySummary | null = null;
+    const h = makeTransportSync([{ status: 200, stream }], {
+      onEvent: (event) => {
+        seen.push(event);
+      },
+      onCaughtUp: (value) => {
+        summary = value;
+      },
+    });
+    h.sync.start();
+    await drainMicrotasks();
+    stream.send(messageFrame('CUR_F1', { accountId: 3, accountRef: 'fansly_acct_abc', messageRef: 'f1' }));
+    stream.send(messageFrame('CUR_O1', { accountId: 8, accountSeq: 2, messageRef: 'o1' }));
+    stream.send(controlFrame('CUR_O1', { type: 'replay_completed' }));
+    await drainMicrotasks();
+
+    expect(seen.map((event) => (event.type === 'messageReceived' ? event.messageId : null))).toEqual(['o1']);
+    expect(data.settings.get(CURSOR_KEY)).toBe('CUR_O1');
+    // No snapshot / grant recovery was attempted for the foreign page.
+    expect(h.calls).toHaveLength(1);
+    expect(summary).toMatchObject({
+      frames: 2,
+      framesByAccount: { '3': 1, '8': 1 },
+      offPlatformFrames: 1,
+    });
+    h.sync.stop();
+  });
+
+  it('hands every frame its meta: tolerant provenance and the replay boundary', async () => {
+    const stream = makeStream();
+    const metas: HubFrameMeta[] = [];
+    const h = makeTransportSync([{ status: 200, stream }], {
+      onEvent: (_event, meta) => {
+        metas.push(meta);
+      },
+    });
+    h.sync.start();
+    await drainMicrotasks();
+    stream.send(messageFrame('C1', { messageRef: 'm1', accountSeq: 1, provenance: 'live' }));
+    stream.send(messageFrame('C2', { messageRef: 'm2', accountSeq: 2 })); // missing = unknown
+    stream.send(controlFrame('C2', { type: 'replay_completed' }));
+    stream.send(messageFrame('C3', {
+      messageRef: 'm3',
+      accountSeq: 3,
+      provenance: 'redelivery',
+      transactionRef: 'tx-9',
+      thread: { fanName: 'Kevin', username: 'kev' },
+    }));
+    // A value outside the closed enum must not fail the frame (the SDK's own
+    // subscribeDomainEvents would throw frame_validation_failed here).
+    stream.send(messageFrame('C4', { messageRef: 'm4', accountSeq: 4, provenance: 'backfill-v9' }));
+    stream.send(messageFrame('C5', { messageRef: 'm5', accountSeq: 5, provenance: 'repair', thread: 'junk' }));
+    await drainMicrotasks();
+
+    expect(metas.map((meta) => [meta.provenance, meta.deliveredLive])).toEqual([
+      ['live', false],
+      ['unknown', false],
+      ['redelivery', true],
+      ['unknown', true],
+      ['repair', true],
+    ]);
+    expect(metas[2]).toMatchObject({
+      lane: 'durable',
+      occurredAt: '2026-07-06T10:00:00.000Z',
+      accountSeq: 3,
+      transactionRef: 'tx-9',
+      thread: { fanName: 'Kevin', username: 'kev' },
+    });
+    expect(metas[4]!.thread).toBeNull(); // malformed advisory field degrades to absent
+    expect(data.settings.get(CURSOR_KEY)).toBe('C5');
+    h.sync.stop();
+  });
+
+  it('commits local state, intents and the cursor in ONE transaction — a failed cursor write rolls the frame back', async () => {
+    const first = makeStream();
+    const second = makeStream();
+    const afterCommit: string[] = [];
+    const applied: string[] = [];
+    const h = makeTransportSync(
+      [
+        { status: 200, stream: first },
+        { status: 200, stream: second },
+      ],
+      {
+        failCursor: 'CUR_2',
+        onEvent: (event) => {
+          if (event.type !== 'messageReceived') return undefined;
+          applied.push(event.messageId);
+          // Local state + a durable intent, exactly like hub-provider does.
+          data.settings.set(`applied.${event.messageId}`, true);
+          data.syncIntents.open({
+            kind: 'account_list',
+            accountId: event.accountId,
+            notBeforeMs: 1,
+            reason: 'list-nudge',
+            nextAttemptMs: 1,
+            nowMs: 1,
+          });
+          return () => {
+            afterCommit.push(event.messageId);
+          };
+        },
+      },
+    );
+    h.sync.start();
+    await drainMicrotasks();
+    first.send(messageFrame('CUR_1', { messageRef: 'one', accountSeq: 1 }));
+    await drainMicrotasks();
+    expect(data.settings.get('applied.one')).toBe(true);
+    expect(data.settings.get(CURSOR_KEY)).toBe('CUR_1');
+    expect(afterCommit).toEqual(['one']);
+    data.syncIntents.closeAllForAccount(ACCT);
+
+    // The process "crashes" between the local write and the cursor write:
+    // the transaction takes both down, nothing is announced.
+    first.send(messageFrame('CUR_2', { messageRef: 'two', accountSeq: 2 }));
+    await drainMicrotasks();
+    expect(applied).toEqual(['one', 'two']);
+    expect(data.settings.get('applied.two')).toBeUndefined();
+    expect(data.syncIntents.listOpen()).toEqual([]);
+    expect(data.settings.get(CURSOR_KEY)).toBe('CUR_1');
+    expect(afterCommit).toEqual(['one']);
+
+    // The resume replays the frame from the durable cursor and applies it once.
+    h.failCursor.value = null;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await drainMicrotasks();
+    expect(h.calls[1]!.url).toContain('cursor=CUR_1');
+    second.send(messageFrame('CUR_2', { messageRef: 'two', accountSeq: 2 }));
+    await drainMicrotasks();
+    expect(data.settings.get('applied.two')).toBe(true);
+    expect(data.syncIntents.listOpen()).toHaveLength(1);
+    expect(data.settings.get(CURSOR_KEY)).toBe('CUR_2');
+    expect(afterCommit).toEqual(['one', 'two']);
+    h.sync.stop();
+  });
+
+  it('refuses an async handler (it would escape the frame transaction)', async () => {
+    const stream = makeStream();
+    const warnings: string[] = [];
+    const h = makeTransportSync([{ status: 200, stream }], {
+      onEvent: (() => Promise.resolve()) as unknown as (event: SyncEvent, meta: HubFrameMeta) => void,
+      onWarn: (message) => warnings.push(message),
+    });
+    h.sync.start();
+    await drainMicrotasks();
+    stream.send(messageFrame('CUR_1', { messageRef: 'async', accountSeq: 1 }));
+    await drainMicrotasks();
+    expect(data.settings.get(CURSOR_KEY)).toBeUndefined();
+    h.sync.stop();
   });
 });
