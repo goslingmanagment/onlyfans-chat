@@ -509,6 +509,51 @@ describe('sync intent worker never starves the event loop (review #36)', () => {
     expect(chatReads).toBe(1);
   });
 
+  it('a read that throws counts as a failed read, never an unhandled rejection', async () => {
+    persistChatIntent('acct_live');
+    data.syncIntents.open({
+      kind: 'account_list',
+      accountId: 'acct_list',
+      notBeforeMs: Date.now() - 60_000,
+      reason: 'list-nudge',
+      nextAttemptMs: Date.now() - 60_000,
+      nowMs: Date.now() - 60_000,
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    const logs: string[] = [];
+    let reads = 0;
+    const worker = createSyncIntentWorker({
+      data,
+      reads: {
+        accountHead: async () => {
+          reads += 1;
+          throw new Error('gateway exploded');
+        },
+        chatTail: async () => {
+          reads += 1;
+          throw new Error('tail exploded');
+        },
+        autoReadEnabled: () => true,
+        listHeadReached: () => false,
+      },
+      accountReady: () => true,
+      clearTombstonedHeads: () => undefined,
+      onLog: (_level, message) => logs.push(message),
+    });
+    worker.start();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    worker.stop();
+    process.off('unhandledRejection', onUnhandled);
+    expect(unhandled).toEqual([]);
+    expect(reads).toBe(2);
+    expect(logs.filter((message) => message === 'sync intent read threw')).toHaveLength(2);
+    expect(worker.openIntents().map((row) => row.attempts)).toEqual([1, 1]);
+  });
+
   it('closes intents of accounts the runtime no longer handles, without a read', async () => {
     persistChatIntent('acct_revoked');
     data.syncIntents.open({

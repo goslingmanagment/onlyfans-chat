@@ -251,6 +251,16 @@ export type ListReadOutcome = 'ok' | 'failed' | 'busy' | 'gone';
  * `list-only` = auto-read is off (a body read would mark the chat read). */
 export type ChatTailReadOutcome = ListReadOutcome | 'list-only';
 
+export interface ReadAccountHeadOptions {
+  /** Keep a newer local head (hub-driven reads can lag the frame they serve). */
+  preserveLocalHead?: boolean;
+  /** Also fetch the automatic body delta of changed chats (auto-read only). */
+  bodyDeltas?: boolean;
+  /** Head ids a hub delete frame owes a re-check of: such a cached head is
+   * never kept over the list's survivor, however recently it was written. */
+  tombstonedHeadIds?: readonly string[];
+}
+
 /** Synchronous hub-message apply (D38: the frame transaction never awaits). */
 export type HubMessageApplyOutcome =
   | 'applied'
@@ -422,7 +432,7 @@ export type PollingSync = SyncProvider & {
   readAccountHead(
     accountId: string,
     trigger: ListReadTrigger,
-    options?: { preserveLocalHead?: boolean; bodyDeltas?: boolean },
+    options?: ReadAccountHeadOptions,
   ): Promise<ListReadOutcome>;
   /** D38: auto-read tail read for a chat intent; `gone` when auto-read is off. */
   readChatTailForIntent(accountId: string, chatId: string): Promise<ChatTailReadOutcome>;
@@ -1286,8 +1296,12 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
       protectHeadsWrittenSinceIso: string;
       preserveEqualHeadMetadata?: boolean;
       owedDeltaChatIds: ReadonlySet<string>;
+      tombstonedHeadIds?: ReadonlySet<string>;
     },
   ): void {
+    const tombstones = options.tombstonedHeadIds !== undefined
+      ? { tombstonedHeadIds: options.tombstonedHeadIds }
+      : {};
     upsertChatRows(
       accountId,
       chats,
@@ -1295,8 +1309,9 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
         ? {
             preserveLocalHead: true,
             ...(options.preserveEqualHeadMetadata === true ? { preserveEqualHeadMetadata: true } : {}),
+            ...tombstones,
           }
-        : { preserveHeadsWrittenSince: options.protectHeadsWrittenSinceIso },
+        : { preserveHeadsWrittenSince: options.protectHeadsWrittenSinceIso, ...tombstones },
     );
     const detectors: Array<{ chatId: string; messageId: string | null }> = [];
     for (const chat of chats) {
@@ -1458,10 +1473,31 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
     return cached.lastMessageId !== null && next.lastMessageId === null;
   }
 
+  /**
+   * A cached head that is known to be deleted — its message row is a
+   * tombstone, or a hub delete frame owes a re-check of exactly that id — is
+   * never worth keeping over the list's survivor. Without this, a message
+   * sent and deleted within seconds stayed protected as a «recent head» and
+   * the delete follow-up then blanked the preview and sank the chat.
+   */
+  function cachedHeadIsTombstoned(
+    accountId: string,
+    cached: ChatRow,
+    tombstonedHeadIds: ReadonlySet<string> | undefined,
+  ): boolean {
+    const headId = cached.lastMessageId;
+    if (headId === null) {
+      return false;
+    }
+    return tombstonedHeadIds?.has(headId) === true
+      || data.messages.get(accountId, cached.chatId, headId)?.deleted === true;
+  }
+
   function applyLocalHeadGuard(
     accountId: string,
     next: ChatUpsert,
     preserveEqualHeadMetadata: boolean,
+    tombstonedHeadIds?: ReadonlySet<string>,
   ): ChatUpsert {
     const cached = data.chats.get(accountId, next.chatId);
     const sameHead =
@@ -1470,7 +1506,9 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
       cached.lastMessageId === next.lastMessageId;
     if (
       cached === null ||
-      (!cachedHeadIsNewer(cached, next) && !(preserveEqualHeadMetadata && sameHead))
+      (!cachedHeadIsNewer(cached, next) && !(preserveEqualHeadMetadata && sameHead)) ||
+      (cached.lastMessageId !== next.lastMessageId
+        && cachedHeadIsTombstoned(accountId, cached, tombstonedHeadIds))
     ) {
       return next;
     }
@@ -1495,6 +1533,8 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
       /** Authoritative write that still keeps a NEWER head stored after this
        * ISO instant (a live frame that landed while the read was in flight). */
       preserveHeadsWrittenSince?: string;
+      /** Head ids a hub delete frame owes a re-check of (never preserved). */
+      tombstonedHeadIds?: ReadonlySet<string>;
     } = {},
   ): void {
     const chatUpserts = [];
@@ -1504,13 +1544,18 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
       if (mapped) {
         if (options.preserveLocalHead === true) {
           chatUpserts.push(
-            applyLocalHeadGuard(accountId, mapped, options.preserveEqualHeadMetadata === true),
+            applyLocalHeadGuard(
+              accountId,
+              mapped,
+              options.preserveEqualHeadMetadata === true,
+              options.tombstonedHeadIds,
+            ),
           );
         } else if (options.preserveHeadsWrittenSince !== undefined) {
           const cached = data.chats.get(accountId, mapped.chatId);
           chatUpserts.push(
             cached !== null && cached.updatedAt > options.preserveHeadsWrittenSince
-              ? applyLocalHeadGuard(accountId, mapped, false)
+              ? applyLocalHeadGuard(accountId, mapped, false, options.tombstonedHeadIds)
               : mapped,
           );
         } else {
@@ -1953,6 +1998,7 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
       prevSuccessAt: number | null;
       bodyDeltas: boolean;
       preserveLocalHead: boolean;
+      tombstonedHeadIds?: ReadonlySet<string>;
     },
   ): Promise<{ nextOffset: number }> {
     const owesBodyReads = autoReadEnabled();
@@ -1970,6 +2016,9 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
           mode: pageIndex === 0 && !options.preserveLocalHead ? 'authoritative' : 'preserve',
           ...(options.preserveLocalHead ? { preserveEqualHeadMetadata: true } : {}),
           protectHeadsWrittenSinceIso,
+          ...(options.tombstonedHeadIds !== undefined
+            ? { tombstonedHeadIds: options.tombstonedHeadIds }
+            : {}),
           owedDeltaChatIds: owesBodyReads
             ? new Set(pageDeltas.map((delta) => delta.chatId))
             : new Set<string>(),
@@ -2105,7 +2154,7 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
   async function readAccountHeadInner(
     accountId: string,
     trigger: ListReadTrigger,
-    options: { preserveLocalHead?: boolean; bodyDeltas?: boolean },
+    options: ReadAccountHeadOptions,
   ): Promise<ListReadOutcome> {
     const loop = loops.get(accountId);
     if (!loop) {
@@ -2132,6 +2181,9 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
         prevSuccessAt: loop.lastSuccessAt,
         bodyDeltas: options.bodyDeltas === true,
         preserveLocalHead: options.preserveLocalHead === true,
+        ...(options.tombstonedHeadIds !== undefined && options.tombstonedHeadIds.length > 0
+          ? { tombstonedHeadIds: new Set(options.tombstonedHeadIds) }
+          : {}),
       });
       loop.lastSuccessAt = now();
       loop.consecutiveFailures = 0;
@@ -2154,7 +2206,7 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
   function readAccountHead(
     accountId: string,
     trigger: ListReadTrigger,
-    options: { preserveLocalHead?: boolean; bodyDeltas?: boolean } = {},
+    options: ReadAccountHeadOptions = {},
   ): Promise<ListReadOutcome> {
     return trackActive(readAccountHeadInner(accountId, trigger, options));
   }

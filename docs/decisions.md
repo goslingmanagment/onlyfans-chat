@@ -1001,7 +1001,11 @@ bar already said HUB LIVE on the stream's first byte.
    keeps a newer head written within 10 s before the read or during it
    (`HEAD_WRITE_PROTECT_MS`): the list endpoint lags the webhook, and a safety
    read one second after a hub message would otherwise put the old preview
-   back and clear its unread for up to five minutes.
+   back and clear its unread for up to five minutes. A head known to be
+   deleted is never kept — its message row is a tombstone, or it is the id a
+   `delete_head` re-check names: a message sent and deleted within seconds
+   (pages 8/9: ~3 a day, median gap 0–1 s) falls back to the survivor instead
+   of a blank preview sunk to the bottom of the list.
 6. **Timeouts and retries.** Chat-list reads are `retry: 'none'` (every caller
    owns its schedule). Client timeouts follow the hub's (core #262): 25 s for
    chats, chat messages and transactions, 65 s for explicit deep history;
@@ -1023,7 +1027,9 @@ bar already said HUB LIVE on the stream's first byte.
    04:18–04:54 UTC, 181–277 s) and 0.1.56 notified them. The age is measured
    on the hub's clock — the offset comes from the `Date` header of every
    stream (re)connect and v2 snapshot, median of the last five, local clock as
-   the fallback — so a PC clock minutes off neither mutes nor admits alerts;
+   the fallback; an offset beyond a minute is trusted only once two samples
+   agree — so a PC clock minutes off neither mutes nor admits alerts, and one
+   bogus `Date` header cannot either;
    the D24 epoch rule uses the same offset. v1 frames and polling keep their
    D24 rules. The first message of a chat the list does not have yet is
    announced without waiting for the list read: with the fan's name from the

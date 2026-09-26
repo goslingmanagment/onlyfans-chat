@@ -31,6 +31,7 @@ import type {
   ListReadRecord,
   ListReadTrigger,
   ListVerificationReason,
+  ReadAccountHeadOptions,
 } from './polling-sync';
 import type { SyncListener, SyncProvider, SyncStatusSnapshot } from './provider';
 
@@ -85,7 +86,7 @@ type PollingLike = SyncProvider & {
   readAccountHead(
     accountId: string,
     trigger: ListReadTrigger,
-    options?: { preserveLocalHead?: boolean; bodyDeltas?: boolean },
+    options?: ReadAccountHeadOptions,
   ): Promise<ListReadOutcome>;
   readChatTailForIntent(accountId: string, chatId: string): Promise<ChatTailReadOutcome>;
   verifyAccounts(accountIds: readonly string[], reason: ListVerificationReason): void;
@@ -251,6 +252,8 @@ const CLOCK_SKEW_WARN_MS = 60_000;
 /** The hub's Date header truncates to whole seconds: +0.5 s on average. */
 const DATE_HEADER_ROUNDING_MS = 500;
 const CLOCK_SAMPLES = 5;
+/** Samples within this of each other agree (Date is whole-second, RTT noise). */
+const CLOCK_AGREEMENT_MS = 10_000;
 /** A stream outage longer than this re-verifies every account's list. */
 export const RECONNECT_VERIFY_AFTER_MS = 60_000;
 /**
@@ -524,7 +527,15 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       clockSamples.shift();
     }
     const sorted = [...clockSamples].sort((left, right) => left - right);
-    hubClockOffsetMs = sorted[Math.floor(sorted.length / 2)] ?? 0;
+    const candidate = sorted[Math.floor(sorted.length / 2)] ?? 0;
+    const agreeing = clockSamples.filter(
+      (sample) => Math.abs(sample - candidate) <= CLOCK_AGREEMENT_MS,
+    ).length;
+    // A skew beyond a minute changes which alerts ring: trust it only when two
+    // samples agree, so one bogus Date header can neither mute nor admit.
+    if (Math.abs(candidate) <= CLOCK_SKEW_WARN_MS || agreeing >= 2) {
+      hubClockOffsetMs = candidate;
+    }
     if (Math.abs(hubClockOffsetMs) > CLOCK_SKEW_WARN_MS && !clockSkewWarned) {
       clockSkewWarned = true;
       onLog('warn', 'local clock differs from the hub; alerts use the hub clock', {
@@ -1028,6 +1039,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         polling.readAccountHead(accountId, 'intent', {
           preserveLocalHead: !readOptions.authoritative,
           bodyDeltas: false,
+          tombstonedHeadIds: readOptions.tombstonedHeadIds,
         }),
       chatTail: (accountId, chatId) => polling.readChatTailForIntent(accountId, chatId),
       autoReadEnabled,

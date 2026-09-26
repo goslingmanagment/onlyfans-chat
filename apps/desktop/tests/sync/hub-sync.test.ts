@@ -1613,7 +1613,9 @@ describe('createHubAwareSync (provider composition)', () => {
       await Promise.resolve();
       await Promise.resolve();
       knownChat();
-      callbacks().onServerDate(trueNowMs - 500, trueNowMs + localSkewMs); // whole-second Date header
+      // Two agreeing whole-second Date headers (connect + reconnect).
+      callbacks().onServerDate(trueNowMs - 500, trueNowMs + localSkewMs);
+      callbacks().onServerDate(trueNowMs - 500, trueNowMs + localSkewMs);
       callbacks().onCaughtUp();
       await runEvent(
         callbacks(),
@@ -1654,6 +1656,32 @@ describe('createHubAwareSync (provider composition)', () => {
         liveMeta({ occurredAt: new Date(PROVIDER_NOW_MS - NOTIFICATION_MAX_AGE_MS - 1_000).toISOString() }),
       );
       expect(events.at(-1)).toMatchObject({ live: false });
+      provider.stop();
+    });
+
+    it('one bogus Date header cannot mute alerts; two agreeing ones are trusted', async () => {
+      const { provider, callbacks, events, logs } = build();
+      provider.start([ACCT]);
+      await Promise.resolve();
+      await Promise.resolve();
+      knownChat();
+      callbacks().onCaughtUp();
+      const fresh = async (messageId: string): Promise<boolean> => {
+        await runEvent(
+          callbacks(),
+          { type: 'messageReceived', accountId: ACCT, chatId: '101', messageId, message: hubMessage({ id: messageId }) },
+          liveMeta({ occurredAt: new Date(PROVIDER_NOW_MS).toISOString() }),
+        );
+        const event = events.at(-1);
+        return event?.type === 'messageReceived' && event.live !== false;
+      };
+      // A proxy answering with a Date 1 hour ahead, once.
+      callbacks().onServerDate(PROVIDER_NOW_MS + 60 * 60_000, PROVIDER_NOW_MS);
+      await expect(fresh('after-bogus')).resolves.toBe(true);
+      expect(logs.some((log) => log.message.startsWith('local clock differs from the hub'))).toBe(false);
+      // The same skew seen twice is real.
+      callbacks().onServerDate(PROVIDER_NOW_MS + 60 * 60_000, PROVIDER_NOW_MS);
+      await expect(fresh('after-two')).resolves.toBe(false);
       provider.stop();
     });
 

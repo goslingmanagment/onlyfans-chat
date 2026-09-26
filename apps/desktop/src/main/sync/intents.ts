@@ -54,8 +54,12 @@ export type SyncIntentCloseReason =
 
 export interface SyncIntentReads {
   /** Intent-driven page-1 read, body-free. `authoritative` may move a head
-   * backwards (a deletion); otherwise a newer local head is kept. */
-  accountHead(accountId: string, options: { authoritative: boolean }): Promise<ListReadOutcome>;
+   * backwards (a deletion); otherwise a newer local head is kept. A cached
+   * head in `tombstonedHeadIds` is never kept over the list's survivor. */
+  accountHead(
+    accountId: string,
+    options: { authoritative: boolean; tombstonedHeadIds: readonly string[] },
+  ): Promise<ListReadOutcome>;
   /** Auto-read body read of one chat: `gone` = the account has no polling
    * loop (revoked / not handled), `list-only` = auto-read is off. */
   chatTail(accountId: string, chatId: string): Promise<ChatTailReadOutcome>;
@@ -119,6 +123,10 @@ export interface SyncIntentWorker {
   openIntents(): SyncIntentRow[];
 }
 
+function errorFields(error: unknown): Record<string, unknown> {
+  return { error: error instanceof Error ? error.message : String(error) };
+}
+
 function backoffMs(failedReads: number): number {
   return INTENT_BACKOFF_BASE_MS * 2 ** Math.max(0, failedReads - 1);
 }
@@ -138,6 +146,13 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
   const lastAccountReadAt = new Map<string, number>();
   /** Start of the last CHAT read per intent id (anti-spin floor). */
   const lastChatReadAt = new Map<number, number>();
+
+  /** Last-resort sink for a failure outside the guarded read (e.g. a DB
+   * error while recording an outcome): logged, never an unhandled rejection.
+   * The anti-spin floors were set before the read, so no retry storm. */
+  function unexpected(error: unknown): void {
+    onLog('warn', 'sync intent worker step failed', errorFields(error));
+  }
 
   function describe(row: SyncIntentRow): Record<string, unknown> {
     return {
@@ -267,8 +282,17 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
     const startedAtMs = now();
     lastAccountReadAt.set(accountId, startedAtMs);
     try {
-      const authoritative = targets.some((row) => row.kind === 'delete_head');
-      const outcome = await reads.accountHead(accountId, { authoritative });
+      const tombstonedHeadIds = targets
+        .filter((row) => row.kind === 'delete_head')
+        .map((row) => row.messageId);
+      const authoritative = tombstonedHeadIds.length > 0;
+      let outcome: ListReadOutcome;
+      try {
+        outcome = await reads.accountHead(accountId, { authoritative, tombstonedHeadIds });
+      } catch (error) {
+        onLog('warn', 'sync intent read threw', { accountId, read: 'list', ...errorFields(error) });
+        outcome = 'failed';
+      }
       onLog(outcome === 'ok' ? 'info' : 'warn', 'sync intent read', {
         accountId,
         read: 'list',
@@ -313,7 +337,18 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
     const startedAtMs = now();
     lastChatReadAt.set(row.id, startedAtMs);
     try {
-      const outcome = await reads.chatTail(row.accountId, row.chatId);
+      let outcome: ChatTailReadOutcome;
+      try {
+        outcome = await reads.chatTail(row.accountId, row.chatId);
+      } catch (error) {
+        onLog('warn', 'sync intent read threw', {
+          accountId: row.accountId,
+          chatId: row.chatId,
+          read: 'chat',
+          ...errorFields(error),
+        });
+        outcome = 'failed';
+      }
       onLog(outcome === 'ok' ? 'info' : 'warn', 'sync intent read', {
         accountId: row.accountId,
         chatId: row.chatId,
@@ -379,7 +414,7 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
         const dueMs = Math.max(Math.min(...listTargets.map(listDueAt)), gateMs);
         if (dueMs <= nowMs) {
           const due = listTargets.filter((row) => listDueAt(row) <= nowMs);
-          void runAccountRead(accountId, due);
+          void runAccountRead(accountId, due).catch(unexpected);
           continue;
         }
         nextWakeMs = Math.min(nextWakeMs, dueMs);
@@ -398,7 +433,7 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
           chatDueAt(row) < chatDueAt(earliest) ? row : earliest);
         const dueMs = chatDueAt(next);
         if (dueMs <= nowMs) {
-          void runChatRead(next);
+          void runChatRead(next).catch(unexpected);
           continue;
         }
         nextWakeMs = Math.min(nextWakeMs, dueMs);
