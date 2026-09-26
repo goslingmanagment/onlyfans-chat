@@ -555,6 +555,10 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/events/stream";
     };
+    readonly eventsV2Facts: {
+        readonly method: "GET";
+        readonly path: "/api/v1/events/v2/facts";
+    };
     readonly eventsV2Snapshot: {
         readonly method: "GET";
         readonly path: "/api/v1/events/v2/snapshot";

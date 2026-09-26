@@ -454,6 +454,8 @@ export async function fetchVoiceNoteAudio(options, input) {
  * contract as v1: the server bounds stream lifetime; consumers own the loop).
  * A 409 becomes `onSnapshotRequired` with the per-account detail; recover via
  * `client.eventsV2Snapshot(...)` and resubscribe with the fresh cursor.
+ * `platform` narrows the stream to one platform's granted accounts; pass the
+ * same value to the snapshot and on every resume (its cursors are bound to it).
  */
 export function subscribeDomainEvents(options, input) {
     const abort = new AbortController();
@@ -462,7 +464,7 @@ export function subscribeDomainEvents(options, input) {
         const response = await openSseResponse({
             options,
             method: "GET",
-            path: "/api/v1/events/v2/stream",
+            path: `/api/v1/events/v2/stream${input.platform ? `?platform=${input.platform}` : ""}`,
             headers: input.cursor ? { "last-event-id": input.cursor } : undefined,
             signal: abort.signal,
         });

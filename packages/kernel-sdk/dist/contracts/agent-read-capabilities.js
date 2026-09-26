@@ -17,7 +17,7 @@
 /**
  * Exactly five. Adding a sixth is a contract change: it widens what a key can be
  * granted, so it travels with a migration for the `agent_keys` CHECK, an entry in
- * the per-operation requirement table, and a decisions.md line.
+ * the per-operation requirement table, and regression coverage.
  */
 export const AGENT_CAPABILITIES = [
     /** Verbatim message text: transcripts, search snippets, thread material. */

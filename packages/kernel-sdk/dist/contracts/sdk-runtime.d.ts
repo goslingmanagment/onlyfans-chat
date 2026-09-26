@@ -164,9 +164,12 @@ export declare function fetchVoiceNoteAudio(options: KernelClientOptions, input:
  * contract as v1: the server bounds stream lifetime; consumers own the loop).
  * A 409 becomes `onSnapshotRequired` with the per-account detail; recover via
  * `client.eventsV2Snapshot(...)` and resubscribe with the fresh cursor.
+ * `platform` narrows the stream to one platform's granted accounts; pass the
+ * same value to the snapshot and on every resume (its cursors are bound to it).
  */
 export declare function subscribeDomainEvents(options: KernelClientOptions, input: {
     cursor?: string | null;
+    platform?: "onlyfans" | "fansly";
     onFrame: (frame: {
         cursor: string;
         event: DomainEventFrame;

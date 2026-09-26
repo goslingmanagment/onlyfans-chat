@@ -1,5 +1,7 @@
 export type DomainEventWatermarks = ReadonlyMap<number, number>;
 export type DomainEventCursorScope = "granted";
+/** H3: the platform a cursor's account set is narrowed to (v5/v6 only). */
+export type DomainEventCursorPlatform = "onlyfans" | "fansly";
 export interface DomainEventCursorRecovery {
     kind: "snapshot";
     /** Highest non-dry-run erasure_log id observed when the cursor was minted. */
@@ -16,6 +18,7 @@ export type DecodedDomainEventCursor = {
     watermarks: Map<number, number>;
     scope: DomainEventCursorScope | null;
     recovery: DomainEventCursorRecovery | null;
+    platform: DomainEventCursorPlatform | null;
 } | {
     ok: false;
     reason: string;
@@ -23,5 +26,6 @@ export type DecodedDomainEventCursor = {
 export declare function encodeDomainEventCursor(watermarks: DomainEventWatermarks, options?: {
     scope?: DomainEventCursorScope;
     recovery?: DomainEventCursorRecovery;
+    platform?: DomainEventCursorPlatform;
 }): string;
 export declare function decodeDomainEventCursor(text: string): DecodedDomainEventCursor;

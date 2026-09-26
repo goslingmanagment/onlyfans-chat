@@ -8299,6 +8299,7 @@ export declare const notificationsDeliveryAttemptItemSchema: z.ZodObject<{
         incident_opened: "incident_opened";
         incident_resolved: "incident_resolved";
         incident_manually_resolved: "incident_manually_resolved";
+        alert_digest_scheduled: "alert_digest_scheduled";
     }>;
     status: z.ZodString;
     reportDate: z.ZodNullable<z.ZodString>;
@@ -8315,6 +8316,7 @@ export declare const notificationsReportHistoryResponseSchema: z.ZodObject<{
             incident_opened: "incident_opened";
             incident_resolved: "incident_resolved";
             incident_manually_resolved: "incident_manually_resolved";
+            alert_digest_scheduled: "alert_digest_scheduled";
         }>;
         status: z.ZodString;
         reportDate: z.ZodNullable<z.ZodString>;
@@ -8838,6 +8840,29 @@ export declare const syncSnapshotRestartRequiredResponseSchema: z.ZodObject<{
     replayFloor: z.ZodNumber;
     snapshotPath: z.ZodLiteral<"/api/v1/events/snapshot">;
 }, z.core.$strip>;
+/** H3: what Core knows about how a durable frame's fact reached the ledger.
+ * `redelivery` — its source OFAPI webhook receipt carries the provider's
+ * redelivery header (`x-ofapi-redelivery-of`); `repair` — a superseding
+ * correction (`data.supersedesEventId`); `live` — neither is KNOWN. `live` is
+ * NOT "fresh": old facts are labelled `live` on every replay before
+ * `replay_completed`, after re-canonicalization of old observations by a new
+ * parser version (e.g. formerly quarantined PPVs), on Fansly history pulls
+ * (no webhook lane, never looked up), on OFAPI's own automatic retries (no
+ * redelivery header) and on receipts past retention. A missing
+ * `provenance` means unknown (the lookup failed): treat it as not live.
+ * Business identity (refs, dedup) is the same in all three.
+ * Clients deciding on attention (toasts, sounds) must combine `live` with
+ * the stream's `replay_completed` boundary AND an age check on `occurredAt`
+ * — and even that is not proof: when the upstream payload has no timestamp
+ * of its own, `occurredAt` falls back to the receipt time. Never toast from
+ * `GET /api/v1/events/v2/facts` (catch-up of history, not news). */
+export declare const domainEventProvenanceEnum: z.ZodEnum<{
+    live: "live";
+    redelivery: "redelivery";
+    repair: "repair";
+}>;
+/** H3: the money facts `GET /api/v1/events/v2/facts` serves. */
+export declare const domainEventFactTypes: readonly ["message.ppv_unlocked", "tip.received", "transaction.posted"];
 export declare const domainEventFrameSchema: z.ZodObject<{
     accountId: z.ZodNumber;
     accountSeq: z.ZodNumber;
@@ -8849,6 +8874,16 @@ export declare const domainEventFrameSchema: z.ZodObject<{
     messageRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     accountRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     payload: z.ZodOptional<z.ZodUnknown>;
+    transactionRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    provenance: z.ZodOptional<z.ZodEnum<{
+        live: "live";
+        redelivery: "redelivery";
+        repair: "repair";
+    }>>;
+    thread: z.ZodOptional<z.ZodObject<{
+        fanName: z.ZodNullable<z.ZodString>;
+        username: z.ZodNullable<z.ZodString>;
+    }, z.core.$strip>>;
 }, z.core.$strip>;
 export declare const domainEventsSnapshotRequiredAccountSchema: z.ZodObject<{
     accountId: z.ZodNumber;
@@ -8876,6 +8911,35 @@ export declare const domainEventsSnapshotResponseSchema: z.ZodObject<{
         accountRef: z.ZodNullable<z.ZodString>;
         currentSeq: z.ZodNumber;
     }, z.core.$strip>>;
+}, z.core.$strip>;
+/** H3: one page of an account's money facts, in account_seq order. */
+export declare const domainEventFactsResponseSchema: z.ZodObject<{
+    accountId: z.ZodNumber;
+    throughSeq: z.ZodNumber;
+    facts: z.ZodArray<z.ZodObject<{
+        accountId: z.ZodNumber;
+        accountSeq: z.ZodNumber;
+        type: z.ZodString;
+        occurredAt: z.ZodString;
+        data: z.ZodUnknown;
+        fanRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        conversationRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        messageRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        accountRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        payload: z.ZodOptional<z.ZodUnknown>;
+        transactionRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        provenance: z.ZodOptional<z.ZodEnum<{
+            live: "live";
+            redelivery: "redelivery";
+            repair: "repair";
+        }>>;
+        thread: z.ZodOptional<z.ZodObject<{
+            fanName: z.ZodNullable<z.ZodString>;
+            username: z.ZodNullable<z.ZodString>;
+        }, z.core.$strip>>;
+    }, z.core.$strip>>;
+    nextAfterSeq: z.ZodNumber;
+    hasMore: z.ZodBoolean;
 }, z.core.$strip>;
 export declare const syncSnapshotQuerySchema: z.ZodObject<{
     accountId: z.ZodString;
@@ -12022,6 +12086,10 @@ declare const baseRouteSchemas: {
         readonly description: string;
         readonly querystring: z.ZodObject<{
             cursor: z.ZodOptional<z.ZodString>;
+            platform: z.ZodOptional<z.ZodEnum<{
+                fansly: "fansly";
+                onlyfans: "onlyfans";
+            }>>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodString;
@@ -12068,6 +12136,10 @@ declare const baseRouteSchemas: {
         readonly querystring: z.ZodObject<{
             accounts: z.ZodOptional<z.ZodString>;
             sourceCursor: z.ZodOptional<z.ZodString>;
+            platform: z.ZodOptional<z.ZodEnum<{
+                fansly: "fansly";
+                onlyfans: "onlyfans";
+            }>>;
         }, z.core.$strip>;
         readonly response: {
             readonly 200: z.ZodObject<{
@@ -12091,6 +12163,73 @@ declare const baseRouteSchemas: {
                 reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly eventsV2Facts: {
+        readonly auth: {
+            readonly kind: "any";
+        };
+        readonly tags: readonly ["events"];
+        readonly summary: "Money facts (PPV unlocks, tips, posted transactions) of one granted account";
+        readonly description: string;
+        readonly querystring: z.ZodObject<{
+            accountId: z.ZodCoercedNumber<unknown>;
+            afterSeq: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+            limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                accountId: z.ZodNumber;
+                throughSeq: z.ZodNumber;
+                facts: z.ZodArray<z.ZodObject<{
+                    accountId: z.ZodNumber;
+                    accountSeq: z.ZodNumber;
+                    type: z.ZodString;
+                    occurredAt: z.ZodString;
+                    data: z.ZodUnknown;
+                    fanRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+                    conversationRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+                    messageRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+                    accountRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+                    payload: z.ZodOptional<z.ZodUnknown>;
+                    transactionRef: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+                    provenance: z.ZodOptional<z.ZodEnum<{
+                        live: "live";
+                        redelivery: "redelivery";
+                        repair: "repair";
+                    }>>;
+                    thread: z.ZodOptional<z.ZodObject<{
+                        fanName: z.ZodNullable<z.ZodString>;
+                        username: z.ZodNullable<z.ZodString>;
+                    }, z.core.$strip>>;
+                }, z.core.$strip>>;
+                nextAfterSeq: z.ZodNumber;
+                hasMore: z.ZodBoolean;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
@@ -24927,6 +25066,7 @@ declare const baseRouteSchemas: {
                         incident_opened: "incident_opened";
                         incident_resolved: "incident_resolved";
                         incident_manually_resolved: "incident_manually_resolved";
+                        alert_digest_scheduled: "alert_digest_scheduled";
                     }>;
                     status: z.ZodString;
                     reportDate: z.ZodNullable<z.ZodString>;
@@ -42944,6 +43084,8 @@ export type NotificationsReportHistoryResponse = z.infer<typeof notificationsRep
 export type DomainEventFrame = z.infer<typeof domainEventFrameSchema>;
 export type DomainEventsSnapshotRequired = z.infer<typeof domainEventsSnapshotRequiredResponseSchema>;
 export type DomainEventsSnapshotResponse = z.infer<typeof domainEventsSnapshotResponseSchema>;
+export type DomainEventProvenance = z.infer<typeof domainEventProvenanceEnum>;
+export type DomainEventFactsResponse = z.infer<typeof domainEventFactsResponseSchema>;
 export type ChangePasswordBody = z.infer<typeof changePasswordBodySchema>;
 export type DeviceTokenItem = z.infer<typeof deviceTokenItemSchema>;
 export type IssuedDeviceTokenResponse = z.infer<typeof issuedDeviceTokenResponseSchema>;
