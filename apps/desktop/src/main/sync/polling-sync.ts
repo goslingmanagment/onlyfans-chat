@@ -100,7 +100,7 @@ const SPEND_INITIAL_WINDOW_MS = 30 * 24 * 60 * 60_000;
  * are business facts and the kernel holds no copy yet; the read window stays
  * 30 d, only the prune cutoff moved.
  */
-const SPEND_RETENTION_MS = 310 * 24 * 60 * 60_000;
+export const SPEND_RETENTION_MS = 310 * 24 * 60 * 60_000;
 
 // ── D38: list freshness ──────────────────────────────────────────────────
 /** A session/epoch verification (page 1 of an account) that fails retries
@@ -2433,8 +2433,9 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
   }
 
   /** Incremental transactions walk → fan_transactions. First run covers the
-   *  full -30days window; later runs resume from the newest cached row minus
-   *  the overlap, so steady state is ~1 page (≈1 credit) per sweep. */
+   *  full -30days window; later runs resume from the newest row the sweep
+   *  itself read minus the overlap, so steady state is ~1 page (≈1 credit)
+   *  per sweep. */
   async function sweepFanSpend(accountId: string): Promise<void> {
     let coverage = data.settings.getParsed(spendCoverageKey(accountId), spendCoverageSchema);
     if (coverage === undefined) {
@@ -2451,7 +2452,9 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
     }
 
     const backfill = coverage.status === 'backfill' ? coverage : null;
-    const latest = data.fanTransactions.latestCreatedAt(accountId);
+    // D39: the sweep's own watermark — rows Core's transaction.posted wrote
+    // at once do not count, or one instant row could skip unread history.
+    const latest = data.fanTransactions.sweepWatermark(accountId);
     const sinceMs = backfill !== null || latest === null
       ? null
       : Date.parse(latest) - SPEND_SWEEP_OVERLAP_MS;

@@ -22,6 +22,7 @@ import {
   type KernelOperationResponse,
 } from '@kernel/sdk';
 import type { CgErrorCode, CgErrorDetail } from '../errors/index';
+import { domainEventFactsPageSchema, type DomainEventFactsPage } from '../protocol/index';
 import { CgError, isHubAuthReason } from '../errors/index';
 import type { LlmUsageMetrics } from '../usage-metrics';
 
@@ -46,6 +47,9 @@ export const HUB_LIST_PAGES_TIMEOUT_MS = 10_000;
 export const HUB_OFAPI_CREDITS_TIMEOUT_MS = 5_000;
 /** C6b command outbox calls are DB-only while execution is default-off. */
 export const HUB_OFAPI_COMMAND_TIMEOUT_MS = 10_000;
+/** D39: one money-facts page is a DB-only ledger read (H3: page 8 from seq 0
+ * cold ≈ 0.6 s); the H2 gateway budget is plenty. */
+export const HUB_MONEY_FACTS_TIMEOUT_MS = 20_000;
 
 /**
  * Core's zod cap on PUT profile body (string length, matching core's check).
@@ -327,6 +331,17 @@ export type HubIngestObservationEvent = z.infer<typeof routeSchemas.ingestObserv
 /** Core #140: the kernel's echo of the prompt it actually assembled. Arrives
  * only when the caller asked for it (capability header) AND the owner's
  * time-bounded window names this chatter — silence is "not now", not an error. */
+/**
+ * D39: one `GET /api/v1/events/v2/facts` answer. `ahead-of-head` is Core's
+ * 409 (the watermark is past the account's head — restart from 0);
+ * `forbidden` is its 403 (the page is outside this credential's grants).
+ * Facts stay unparsed rows: the caller reads each one tolerantly.
+ */
+export type HubMoneyFactsResult =
+  | { kind: 'page'; page: DomainEventFactsPage }
+  | { kind: 'ahead-of-head'; message: string }
+  | { kind: 'forbidden' };
+
 export interface HubAiDebugInput {
   systemBlocks: Array<{ text: string; cache: string }>;
   userBlocks: Array<{ text: string; cache: string }>;
@@ -429,6 +444,20 @@ export interface HubClient {
   ): Promise<string>;
   /** Global persona definitions are owner-managed; clients receive metadata only. */
   listAiPersonaCatalog(options?: { timeoutMs?: number }): Promise<HubAiPersonaCatalogEntry[]>;
+  /**
+   * D39: one page of an account's money facts (PPV unlocks, tips, posted
+   * transactions) by account_seq, through the SDK's `eventsV2Facts`
+   * operation. A read of existing ledger rows — no OFAPI credits. The body is
+   * validated with the desktop's tolerant frame schema, not the SDK's closed
+   * provenance enum (hence `raw`).
+   */
+  listMoneyFacts(args: {
+    /** Core page id (numeric), not the OFAPI `acct_…` ref. */
+    accountId: number;
+    afterSeq: number;
+    limit: number;
+    timeoutMs?: number;
+  }): Promise<HubMoneyFactsResult>;
   /** Stage 31: stream a KERNEL-ASSEMBLED feature generation (Stage 30 route).
    *  Same SSE frames as streamAiGateway; the kernel loads context and builds
    *  the prompt — the desktop sends refs only. */
@@ -754,6 +783,37 @@ export function createHubClient(options: HubClientOptions): HubClient {
       const response = await delegate(() =>
         clientFor(personaOptions?.timeoutMs ?? HUB_LIST_PAGES_TIMEOUT_MS).aiPersonaCatalog());
       return response.personas;
+    },
+
+    async listMoneyFacts({ accountId, afterSeq, limit, timeoutMs }) {
+      const response = await delegate(() =>
+        clientFor(timeoutMs ?? HUB_MONEY_FACTS_TIMEOUT_MS).raw('eventsV2Facts', {
+          query: { accountId, afterSeq, limit },
+        }));
+      if (response.status === 409) {
+        return { kind: 'ahead-of-head', message: (await response.text().catch(() => '')).slice(0, 400) };
+      }
+      if (response.status === 403) {
+        return { kind: 'forbidden' };
+      }
+      if (response.status === 401) {
+        throw new HubError('auth', { message: 'money facts: hub rejected the credential', detail: { status: 401 } });
+      }
+      if (response.status !== 200) {
+        throw new HubError('http', {
+          message: `money facts request failed (${response.status})`,
+          detail: { status: response.status },
+        });
+      }
+      const payload: unknown = await delegate(() => response.json() as Promise<unknown>);
+      const parsed = domainEventFactsPageSchema.safeParse(payload);
+      if (!parsed.success) {
+        throw new HubError('invalid-response', {
+          message: 'money facts page failed validation',
+          detail: { providerMessage: parsed.error.message.slice(0, 400), status: 200 },
+        });
+      }
+      return { kind: 'page', page: parsed.data };
     },
 
     async streamAiFeature({ feature, request: streamRequest, signal, debugPromptEcho }, callbacks) {

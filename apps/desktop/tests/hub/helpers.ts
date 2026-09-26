@@ -320,6 +320,7 @@ export function makeFakeHubClient(
       overrides.listAiPersonaCatalog ?? (() => Promise.resolve([])),
     ),
     getServerTimeOffsetMs: () => null,
+    listMoneyFacts: vi.fn(() => Promise.resolve({ kind: 'forbidden' as const })),
     listPagesMock,
     getFanProfileMock,
     putFanProfileMock,

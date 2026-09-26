@@ -1,6 +1,8 @@
 // Rolling per-fan transaction store feeding the chat-list 30-day spend figure
 // (DESIGN §1). The sync sweep walks GET /{account}/transactions incrementally
-// (newest cached created_at minus an overlap); reads aggregate at query time
+// (newest created_at IT read, minus an overlap); since D39 Core's
+// transaction.posted also lands here at once (source 'hub'), keyed the same
+// way so no transaction is counted twice; reads aggregate at query time
 // in chats.list, so the 30-day window rolls without re-fetching. Rows older
 // than the retention horizon are pruned by the same sweep. All aggregates sum
 // `net` (creator earnings) — the same basis as the fans.spending lifetime
@@ -11,24 +13,43 @@ import type { ChatGooseDb } from '../database';
 import type { DbChangeBus } from '../change-bus';
 import type { FanTransactionUpsert } from '../rows';
 
+// The sweep's own write: OFAPI's list is the reconciling source, so it
+// overwrites an instant hub row of the same transaction and claims it
+// ('sweep') — the row the sweep has now read counts toward its watermark.
 const UPSERT_SQL = `
-INSERT INTO fan_transactions (account_id, tx_id, fan_id, amount, net, type, created_at)
-VALUES (@account_id, @tx_id, @fan_id, @amount, @net, @type, @created_at)
+INSERT INTO fan_transactions (account_id, tx_id, fan_id, amount, net, type, created_at, source)
+VALUES (@account_id, @tx_id, @fan_id, @amount, @net, @type, @created_at, 'sweep')
 ON CONFLICT (account_id, tx_id) DO UPDATE SET
   fan_id = excluded.fan_id,
   amount = excluded.amount,
   net = excluded.net,
   type = excluded.type,
-  created_at = excluded.created_at`;
+  created_at = excluded.created_at,
+  source = 'sweep'`;
+
+// D39: Core's transaction.posted, applied at once. Same key as the sweep's
+// row (Core's transactionRef is OFAPI's transaction id), so a transaction the
+// sweep already stored is left alone — one money change per transaction.
+const INSERT_FROM_HUB_SQL = `
+INSERT INTO fan_transactions (account_id, tx_id, fan_id, amount, net, type, created_at, source)
+VALUES (@account_id, @tx_id, @fan_id, @amount, @net, @type, @created_at, 'hub')
+ON CONFLICT (account_id, tx_id) DO NOTHING`;
 
 const maxCreatedAtSchema = z.object({ max_created_at: z.string().nullable() });
 
 export interface FanTransactionsQueries {
-  /** Idempotent by (account_id, tx_id); publishes a chats-scope change (the
-   *  visible artifact is the chat list's 30-day figure). */
+  /** The sweep's write. Idempotent by (account_id, tx_id); publishes a
+   *  chats-scope change (the visible artifact is the chat list's 30-day
+   *  figure). */
   upsertMany(rows: readonly FanTransactionUpsert[]): void;
-  /** Newest stored created_at for the account — the incremental-sweep cursor. */
-  latestCreatedAt(accountId: string): string | null;
+  /** D39: one transaction from Core's transaction.posted. Inserts only when
+   *  the transaction is not stored yet (true = inserted); never moves the
+   *  sweep's watermark. */
+  insertFromHub(row: FanTransactionUpsert): boolean;
+  /** Newest created_at among rows the SWEEP read — its incremental cursor.
+   *  Instant hub rows are excluded (D39): they must never make the sweep skip
+   *  a transaction it has not read itself. */
+  sweepWatermark(accountId: string): string | null;
   /** Per-fan SUM(amount) since the cutoff — the Spenders board 30-day green
    *  figure (account-wide GROUP BY; the rolling store is small by design). */
   sumByFanSince(accountId: string, cutoffIso: string): Map<string, number>;
@@ -75,10 +96,27 @@ export function createFanTransactionsQueries(
       }
     },
 
-    latestCreatedAt(accountId) {
+    insertFromHub(row) {
+      const { changes } = db.prepare(INSERT_FROM_HUB_SQL).run({
+        account_id: row.accountId,
+        tx_id: row.txId,
+        fan_id: row.fanId,
+        amount: row.amount,
+        net: row.net,
+        type: row.type,
+        created_at: row.createdAt,
+      });
+      if (changes > 0) {
+        bus.publish({ scope: 'chats', accountId: row.accountId });
+      }
+      return changes > 0;
+    },
+
+    sweepWatermark(accountId) {
       const row: unknown = db
         .prepare(
-          'SELECT MAX(created_at) AS max_created_at FROM fan_transactions WHERE account_id = @account_id',
+          `SELECT MAX(created_at) AS max_created_at FROM fan_transactions
+           WHERE account_id = @account_id AND source = 'sweep'`,
         )
         .get({ account_id: accountId });
       return row === undefined ? null : maxCreatedAtSchema.parse(row).max_created_at;

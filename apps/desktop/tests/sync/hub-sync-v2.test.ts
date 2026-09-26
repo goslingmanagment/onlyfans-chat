@@ -206,6 +206,8 @@ describe('createHubSync (protocol v2)', () => {
     cursor: () => string | null;
     gapRecoveries: () => number;
     caughtUps: () => number;
+    /** D39: page ids handed out by v2 snapshot recoveries. */
+    accountPages: Array<ReadonlyArray<{ accountRef: string; hubAccountId: number }>>;
   }
 
   function makeV2Sync(
@@ -235,6 +237,7 @@ describe('createHubSync (protocol v2)', () => {
     let caughtUps = 0;
     let snapshotPages = 0;
     let v2CursorWrites = 0;
+    const accountPages: V2Harness['accountPages'] = [];
     const sync = createHubSync({
       protocol: 'v2',
       baseUrl: 'https://hub.test/',
@@ -271,6 +274,7 @@ describe('createHubSync (protocol v2)', () => {
         return options.refreshedAccountIds ?? [ACCT];
       },
       onStatusChange: (status) => statuses.push(status),
+      onAccountPages: (pages) => accountPages.push(pages),
       getLastEventId: () => null,
       setLastEventId: () => undefined,
       getV2Cursor: () => cursor,
@@ -295,6 +299,7 @@ describe('createHubSync (protocol v2)', () => {
       cursor: () => cursor,
       gapRecoveries: () => gapRecoveries,
       caughtUps: () => caughtUps,
+      accountPages,
     };
   }
 
@@ -1343,6 +1348,8 @@ describe('createHubSync (protocol v2)', () => {
       'snapshot:new-grant:done',
       'persist:CUR_REPLACED',
     ]);
+    // D39: the snapshot names the new account's Core page (facts catch-up).
+    expect(h.accountPages).toEqual([[{ accountRef: NEW_ACCT, hubAccountId: 8 }]]);
 
     stream.send(messageFrame('CUR_NEW_EVENT', { accountRef: NEW_ACCT }));
     await drainMicrotasks();
@@ -1720,12 +1727,80 @@ describe('HubSync v2 transport (D38)', () => {
     expect(metas[2]).toMatchObject({
       lane: 'durable',
       occurredAt: '2026-07-06T10:00:00.000Z',
+      hubAccountId: 7, // D39: the Core page id keys the facts catch-up
       accountSeq: 3,
       transactionRef: 'tx-9',
       thread: { fanName: 'Kevin', username: 'kev' },
     });
     expect(metas[4]!.thread).toBeNull(); // malformed advisory field degrades to absent
     expect(data.settings.get(CURSOR_KEY)).toBe('C5');
+    h.sync.stop();
+  });
+
+  it('D39: maps money frames (PPV price, transaction.posted) and checkpoints them', async () => {
+    const stream = makeStream();
+    const seen: Array<{ event: SyncEvent; meta: HubFrameMeta }> = [];
+    const h = makeTransportSync([{ status: 200, stream }], {
+      onEvent: (event, meta) => {
+        seen.push({ event, meta });
+      },
+    });
+    h.sync.start();
+    await drainMicrotasks();
+    stream.send(controlFrame('C0', { type: 'replay_completed' }));
+    stream.send(messageFrame('C1', {
+      accountId: 9,
+      accountSeq: 246115,
+      type: 'message.ppv_unlocked',
+      occurredAt: '2026-09-26T14:37:00.000Z',
+      data: { amountText: '$67.00', amountUsd: 67 },
+      conversationRef: '499106230',
+      messageRef: '11388202223077',
+      provenance: 'live',
+      thread: { fanName: 'Neil/US', username: 'u499106230' },
+    }));
+    stream.send(messageFrame('C2', {
+      accountId: 9,
+      accountSeq: 246116,
+      type: 'transaction.posted',
+      occurredAt: '2026-09-26T14:37:10.000Z',
+      data: { amount: 67, netAmount: 53.6, amountUnit: 'dollars', transactionType: 'message' },
+      fanRef: '499106230',
+      conversationRef: null,
+      messageRef: null,
+      transactionRef: 'eb118196c33625aa23c4dda8de8e4501',
+      provenance: 'live',
+    }));
+    await drainMicrotasks();
+
+    expect(seen.map((entry) => entry.event)).toEqual([
+      {
+        type: 'ppvUnlocked',
+        accountId: ACCT,
+        chatId: '499106230',
+        messageId: '11388202223077',
+        amountUsd: 67,
+      },
+      {
+        type: 'transactionPosted',
+        accountId: ACCT,
+        fanId: '499106230',
+        transactionId: 'eb118196c33625aa23c4dda8de8e4501',
+        amountUsd: 67,
+        netUsd: 53.6,
+        transactionType: 'message',
+        createdAt: '2026-09-26T14:37:10.000Z',
+      },
+    ]);
+    expect(seen[0]!.meta).toMatchObject({
+      hubAccountId: 9,
+      accountSeq: 246115,
+      provenance: 'live',
+      deliveredLive: true,
+      thread: { fanName: 'Neil/US', username: 'u499106230' },
+    });
+    expect(seen[1]!.meta.transactionRef).toBe('eb118196c33625aa23c4dda8de8e4501');
+    expect(data.settings.get(CURSOR_KEY)).toBe('C2');
     h.sync.stop();
   });
 

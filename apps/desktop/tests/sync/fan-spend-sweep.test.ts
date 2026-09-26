@@ -260,6 +260,41 @@ describe('fan-spend sweep', () => {
     sync.stop();
   });
 
+  it('D39: an instant hub transaction neither moves the sweep watermark nor counts twice', async () => {
+    const t1 = tx('t1', 101, 50, 2);
+    stub.setTransactions([t1]);
+    const sync = makeSync();
+    await bootAndSweep(sync);
+
+    // Core's transaction.posted lands at once, newer than anything swept.
+    const t2 = tx('t2', 101, 25, 0);
+    expect(data.fanTransactions.insertFromHub({
+      accountId: ACCT,
+      txId: 't2',
+      fanId: '101',
+      amount: 25,
+      net: 20,
+      type: 'tip',
+      createdAt: t2.createdAt ?? '',
+    })).toBe(true);
+    expect(spendOf('101').spend30d).toBeCloseTo(60);
+
+    stub.setTransactions([t2, t1]);
+    await vi.advanceTimersByTimeAsync(REDUCED_SPEND_SWEEP_INTERVAL_MS);
+    await drainPoll();
+    // Still from the newest row the SWEEP read (t1) minus the overlap — not
+    // from the hub row, which would skip whatever came in between.
+    const expectedStart = new Date(Date.parse(t1.createdAt ?? '') - 60 * 60_000)
+      .toISOString()
+      .slice(0, 19)
+      .replace('T', ' ');
+    expect(stub.txCalls[1]?.startDate).toBe(expectedStart);
+    // The sweep read t2 too: same key, one money change.
+    expect(spendOf('101').spend30d).toBeCloseTo(60);
+    expect(data.fanTransactions.sweepWatermark(ACCT)).toBe(t2.createdAt);
+    sync.stop();
+  });
+
   it('a sweep is not re-run before its cadence elapses', async () => {
     stub.setTransactions([tx('t1', 101, 50, 2)]);
     const sync = makeSync();

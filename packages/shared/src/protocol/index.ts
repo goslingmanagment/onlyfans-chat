@@ -271,6 +271,16 @@ export const ppvUnlockedEventSchema = z.object({
   accountId: idSchema,
   chatId: idSchema,
   messageId: idSchema.optional(),
+  /** D39: the PPV price in dollars (Core's `amountUsd`, else the strictly
+   * parsed `amountText`); absent when unknown — never fabricated. */
+  amountUsd: z.number().nonnegative().optional(),
+  /** D39: the fan's label for the quiet purchase alert, resolved in main. */
+  fanName: z.string().min(1).optional(),
+  /** D39: true only when main decided this purchase is news (a quiet alert);
+   * absent or false = state only. Deliberately opposite to messageReceived's
+   * `live`, whose absence means "alert": a purchase alerts only on an
+   * explicit yes. */
+  live: z.boolean().optional(),
 });
 
 export const tipReceivedEventSchema = z.object({
@@ -280,6 +290,29 @@ export const tipReceivedEventSchema = z.object({
   messageId: idSchema.optional(),
   // OFAPI amounts are dollars; absent when upstream omits it (never fabricate).
   amountUsd: z.number().nonnegative().optional(),
+  /** D39: see ppvUnlocked. */
+  fanName: z.string().min(1).optional(),
+  /** D39: see ppvUnlocked — only an explicit true alerts. */
+  live: z.boolean().optional(),
+});
+
+/**
+ * D39: one posted OnlyFans transaction (Core `transaction.posted`). Applied in
+ * main straight into fan_transactions keyed by the transaction id — the same
+ * id OFAPI's transactions list returns, so the hourly sweep never counts it
+ * twice. Never forwarded as an alert.
+ */
+export const transactionPostedEventSchema = z.object({
+  type: z.literal('transactionPosted'),
+  accountId: idSchema,
+  /** The paying fan (raw OnlyFans user id = chat id). */
+  fanId: idSchema,
+  transactionId: idSchema,
+  /** Gross amount in dollars (never mills). */
+  amountUsd: z.number().positive(),
+  netUsd: z.number().nonnegative().optional(),
+  transactionType: z.string().min(1).optional(),
+  createdAt: z.string(),
 });
 
 export const presenceEventSchema = z.object({
@@ -325,6 +358,7 @@ export const syncEventSchema = z.discriminatedUnion('type', [
   messageSentEventSchema,
   ppvUnlockedEventSchema,
   tipReceivedEventSchema,
+  transactionPostedEventSchema,
   presenceEventSchema,
   typingEventSchema,
   accountAuthChangedEventSchema,
@@ -532,10 +566,68 @@ export const domainSnapshotResponseSchema = z.object({
 });
 export type DomainSnapshotResponse = z.infer<typeof domainSnapshotResponseSchema>;
 
+/** H3: the money facts `GET /api/v1/events/v2/facts` serves (D39 catch-up). */
+export const DOMAIN_EVENT_FACT_TYPES = [
+  'message.ppv_unlocked',
+  'tip.received',
+  'transaction.posted',
+] as const;
+
+/**
+ * One `GET /api/v1/events/v2/facts` page. `facts` stays `unknown[]` here and
+ * each row is read with {@link parseDomainEventFrame}: the SDK's own schema
+ * has a CLOSED provenance enum, so one unknown value (or one malformed row)
+ * would fail the whole page and wedge the catch-up forever.
+ */
+export const domainEventFactsPageSchema = z.object({
+  accountId: z.number().int(),
+  throughSeq: z.number().int().nonnegative(),
+  facts: z.array(z.unknown()),
+  nextAfterSeq: z.number().int().nonnegative(),
+  hasMore: z.boolean(),
+});
+export type DomainEventFactsPage = z.infer<typeof domainEventFactsPageSchema>;
+
 const AUTH_OK_STATUSES = new Set(['connected', 'reconnected', 'session_expired']);
 
 function nonNegativeNumberOf(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function positiveNumberOf(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * `{AMOUNT}` of an OFAPI PPV notification ("$45.00") as dollars — Core's
+ * `parseOfapiPpvAmountUsd` rule verbatim: a dollar sign, whole dollars,
+ * optional two-digit cents, nothing else; anything else is null (an honest
+ * unknown beats a plausible guess on a money field). Integer cents first, so
+ * "$13.99" is 13.99 and not a float sum. PPV events written before Core added
+ * the numeric `amountUsd` (H2) carry only this text.
+ */
+export function parsePpvAmountText(value: unknown): number | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const match = /^\$(0|[1-9][0-9]{0,5})(?:\.([0-9]{2}))?$/.exec(value);
+  if (!match) {
+    return null;
+  }
+  const cents = Number(match[1]) * 100 + Number(match[2] ?? '0');
+  return cents / 100;
+}
+
+function ppvAmountUsdOf(data: Record<string, unknown>): number | undefined {
+  const direct = nonNegativeNumberOf(data.amountUsd);
+  if (direct !== undefined) {
+    return direct;
+  }
+  return parsePpvAmountText(data.amountText) ?? undefined;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function frameDataRecord(frame: DomainEventFrame): Record<string, unknown> {
@@ -551,7 +643,8 @@ function frameDataRecord(frame: DomainEventFrame): Record<string, unknown> {
  * The 10 v1-era members: messageReceived/messageSent/messageDeleted/
  * ppvUnlocked/tipReceived/presence/chatListUpdated/accountAuthChanged map
  * here; typing rides the ephemeral lane; readStateChanged was always
- * synthesized locally (the server never sent it).
+ * synthesized locally (the server never sent it). D39 adds
+ * transactionPosted (transaction.posted), which has no v1 twin.
  */
 export function mapDomainFrame(frame: DomainEventFrame): SyncEvent | null {
   const accountId = frame.accountRef ?? null;
@@ -583,6 +676,7 @@ export function mapDomainFrame(frame: DomainEventFrame): SyncEvent | null {
     }
     case 'message.ppv_unlocked': {
       const chatId = frame.conversationRef ?? null;
+      const amountUsd = ppvAmountUsdOf(data);
       return chatId === null
         ? null
         : {
@@ -590,7 +684,40 @@ export function mapDomainFrame(frame: DomainEventFrame): SyncEvent | null {
             accountId,
             chatId,
             ...(frame.messageRef ? { messageId: frame.messageRef } : {}),
+            ...(amountUsd !== undefined ? { amountUsd } : {}),
           };
+    }
+    case 'transaction.posted': {
+      // D39: the money itself (tips, PPV, subscriptions). Core keys it by the
+      // OFAPI transaction id (`transactionRef`) and names the payer in fanRef;
+      // there is no conversation ref on this kind. OnlyFans amounts are
+      // dollars (A46's `amountUnit`, absent on events written before it): a
+      // declared other unit is refused rather than mis-scaled.
+      const fanId = nonEmptyString(frame.fanRef);
+      const transactionId = nonEmptyString(frame.transactionRef);
+      const amountUsd = positiveNumberOf(data.amount);
+      const unit = data.amountUnit;
+      if (
+        fanId === undefined
+        || transactionId === undefined
+        || amountUsd === undefined
+        || (unit !== undefined && unit !== null && unit !== 'dollars')
+        || !Number.isFinite(Date.parse(frame.occurredAt))
+      ) {
+        return null;
+      }
+      const netUsd = nonNegativeNumberOf(data.netAmount);
+      const transactionType = nonEmptyString(data.transactionType);
+      return {
+        type: 'transactionPosted',
+        accountId,
+        fanId,
+        transactionId,
+        amountUsd,
+        ...(netUsd !== undefined ? { netUsd } : {}),
+        ...(transactionType !== undefined ? { transactionType } : {}),
+        createdAt: frame.occurredAt,
+      };
     }
     case 'tip.received': {
       const chatId = frame.conversationRef ?? null;

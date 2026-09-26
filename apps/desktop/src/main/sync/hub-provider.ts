@@ -24,6 +24,14 @@ import type {
 } from './hub-sync';
 import { createSyncIntentWorker, type SyncIntentWorker } from './intents';
 import { compareMessageIds } from './message-id';
+import {
+  applyMoneyFact,
+  createMoneyFactsCatchUp,
+  type MoneyFactEvent,
+  type MoneyFactOutcome,
+  type MoneyFactsCatchUp,
+  type MoneyFactsFetch,
+} from './money-facts';
 import type {
   ChatTailReadOutcome,
   HubMessageApplyOutcome,
@@ -46,6 +54,8 @@ const HUB_FALLBACK_REASONS = [
   'hub-replay-gap-snapshot',
   'hub-v2-gap-cursor-rebaseline',
   'unknown-delete-head-refresh',
+  /** D39: a money fact failed to apply locally; the facts catch-up re-applies it. */
+  'hub-money-fact-error',
 ] as const;
 
 export type HubFallbackReason = (typeof HUB_FALLBACK_REASONS)[number];
@@ -109,6 +119,8 @@ export interface HubFactoryCallbacks {
   onV2GapRecovered: () => Promise<readonly string[]>;
   /** The hub's Date header (see HubSyncOptions.onServerDate). */
   onServerDate: (serverDateMs: number, receivedAtLocalMs: number) => void;
+  /** D39: page ids a v2 snapshot answered with (HubSyncOptions.onAccountPages). */
+  onAccountPages: (pages: ReadonlyArray<{ accountRef: string; hubAccountId: number }>) => void;
 }
 
 export interface HubAwareSyncOptions {
@@ -123,6 +135,11 @@ export interface HubAwareSyncOptions {
   hubModeOverride?: () => HubModeOverrideSetting;
   /** settings.autoReadChats — decides how a thin frame's intent is proven. */
   autoReadEnabled?: () => boolean;
+  /**
+   * D39: one `GET /api/v1/events/v2/facts` page through the hub's SDK client
+   * (the facts catch-up). Omitted = no catch-up (tests, hub not configured).
+   */
+  moneyFacts?: MoneyFactsFetch;
   now?: () => number;
   onLog?: (
     level: 'debug' | 'info' | 'warn' | 'error',
@@ -228,6 +245,8 @@ export interface HubAwareSync extends SyncProvider {
   listSync(): ListSyncSnapshot;
   /** D38 diagnostics/tests: the intent worker. */
   syncIntents(): SyncIntentWorker;
+  /** D39 diagnostics/tests: the money facts catch-up. */
+  moneyFactsCatchUp(): MoneyFactsCatchUp;
   /** Hub status/liveness changes; payload is read through query:sync.status. */
   subscribeStatus(listener: () => void): () => void;
   hubStatus(): HubSyncStatus | null;
@@ -272,6 +291,7 @@ const NO_FRAME_META: HubFrameMeta = {
   provenance: null,
   occurredAt: null,
   deliveredLive: true,
+  hubAccountId: null,
   accountSeq: null,
   transactionRef: null,
   thread: null,
@@ -637,6 +657,20 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     maybeRearmAfterSuspend();
     const key = `${event.accountId}/${event.chatId}/${event.messageId}`;
     if (alertedIds.has(key)) {
+      return false;
+    }
+    // D39: a tip MESSAGE never alerts or rings (owner decision) — the tip's
+    // quiet alert comes from Core's tip.received fact. Polling events carry
+    // no body; their row is already written, so it answers.
+    const isTipMessage = event.message?.isTip
+      ?? data.messages.get(event.accountId, event.chatId, event.messageId)?.isTip
+      ?? false;
+    if (isTipMessage) {
+      onLog('debug', 'attention gate: a tip message is not an alert', {
+        accountId: event.accountId,
+        chatId: event.chatId,
+        messageId: event.messageId,
+      });
       return false;
     }
     const veto = source === 'hub' ? frameAttentionVeto(meta) : null;
@@ -1025,6 +1059,9 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     intents.closeAccountsExcept(handledAccountIds);
     // D38: a replay gap (409) or grant rebaseline re-proves every list.
     reverifyLists('gap');
+    // D39: the fresh cursor resumes past the gap; only the ledger read proves
+    // the money facts inside it (free, never an alert).
+    facts.request(handledAccountIds, 'gap');
     return handledAccountIds;
   }
 
@@ -1054,6 +1091,126 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     now,
     onLog,
   });
+
+  // ── D39 purchases ─────────────────────────────────────────────────────────
+  /** Diagnostic label of the next hub (re)configuration's catch-up. */
+  let nextFactsReason: 'session-start' | 'reconfigure' = 'session-start';
+  const facts: MoneyFactsCatchUp = createMoneyFactsCatchUp({
+    data,
+    fetchFacts: options.moneyFacts ?? null,
+    accountHandled: (accountId) => handledAccountIds.includes(accountId),
+    now,
+    onLog,
+  });
+
+  /** A v2 snapshot's page ids (gap/grant recovery), before any frame. */
+  function noteAccountPages(
+    pages: ReadonlyArray<{ accountRef: string; hubAccountId: number }>,
+  ): void {
+    for (const page of pages) {
+      try {
+        if (facts.notePage(page.accountRef, page.hubAccountId)) {
+          facts.request([page.accountRef], 'page-mapped');
+        }
+      } catch (error) {
+        onLog('warn', 'money facts page mapping failed', {
+          accountId: page.accountRef,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  /**
+   * The fan's label for a purchase alert, without awaiting a read: Core's
+   * thread label, the local chat row, the local fans cache; a handle
+   * (username) only when no display name exists anywhere.
+   */
+  function purchaseFanName(
+    accountId: string,
+    chatId: string,
+    thread: HubFrameMeta['thread'],
+  ): string | undefined {
+    const chat = data.chats.get(accountId, chatId);
+    const fan = data.fans.get(accountId, chatId);
+    return [
+      thread?.fanName,
+      chat?.fanName,
+      fan?.customName,
+      fan?.name,
+      thread?.username,
+      fan?.username,
+    ].find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim();
+  }
+
+  /**
+   * D39 quiet purchase alert gate (null = alert). Only a v2 stream frame
+   * labelled `live`, delivered after THIS connection's replay_completed and at
+   * most NOTIFICATION_MAX_AGE_MS old on the hub clock is news; a PPV must also
+   * be new to this device. Replay, repair, redelivery, unknown provenance, v1
+   * and the facts catch-up (which never calls this) stay silent.
+   */
+  function purchaseAlertVeto(
+    event: Extract<MoneyFactEvent, { type: 'ppvUnlocked' | 'tipReceived' }>,
+    meta: HubFrameMeta,
+    outcome: MoneyFactOutcome | 'error',
+  ): string | null {
+    if (meta.lane !== 'durable' || meta.provenance === null) {
+      return 'not-v2-stream';
+    }
+    if (!meta.deliveredLive) {
+      return 'replay';
+    }
+    const frameVeto = frameAttentionVeto(meta);
+    if (frameVeto !== null) {
+      return frameVeto;
+    }
+    if (outcome !== 'error' && outcome.kind === 'ppv' && outcome.recorded && !outcome.newFact) {
+      return 'known-fact';
+    }
+    const key = event.type === 'ppvUnlocked' && event.messageId !== undefined
+      ? `ppv/${event.accountId}/${event.messageId}`
+      : `${event.type}/${event.accountId}/${meta.hubAccountId ?? '?'}:${meta.accountSeq ?? '?'}`;
+    if (alertedIds.has(key)) {
+      return 'already-alerted';
+    }
+    markAlerted(key);
+    return null;
+  }
+
+  /**
+   * Acceptance (D39): one line per money fact applied from the stream. Joins
+   * Core's `v2 money frame written` log and `domain_events` on
+   * (hubAccountId, accountSeq); `appliedAt` is on the hub's clock, so
+   * «hub receipt → local apply» = appliedAt − the webhook's received_at.
+   */
+  function logMoneyFactApplied(
+    event: MoneyFactEvent,
+    meta: HubFrameMeta,
+    outcome: MoneyFactOutcome | 'error',
+    alertVeto: string | null,
+  ): void {
+    const appliedAtHubMs = hubNowMs();
+    const occurredMs = meta.occurredAt === null ? Number.NaN : Date.parse(meta.occurredAt);
+    onLog('info', 'purchase applied', {
+      type: event.type,
+      accountId: event.accountId,
+      hubAccountId: meta.hubAccountId,
+      accountSeq: meta.accountSeq,
+      ...(event.type === 'transactionPosted'
+        ? { fanId: event.fanId, transactionId: event.transactionId }
+        : { chatId: event.chatId, messageId: event.messageId ?? null }),
+      amountUsd: event.amountUsd ?? null,
+      provenance: meta.provenance,
+      replay: !meta.deliveredLive,
+      outcome: outcome === 'error' ? 'error' : outcome,
+      alert: event.type === 'transactionPosted' ? false : alertVeto === null,
+      alertVeto,
+      occurredAt: meta.occurredAt,
+      appliedAt: new Date(appliedAtHubMs).toISOString(),
+      sinceOccurredMs: Number.isFinite(occurredMs) ? appliedAtHubMs - occurredMs : null,
+    });
+  }
 
   /**
    * «List not older than T» for a frame. A replayed frame describes the past,
@@ -1102,6 +1259,19 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     recordHubEvent(event, isLiveFrame(meta));
     const effects: Array<() => void> = [];
     let kickIntents = false;
+    if (meta.lane === 'durable' && meta.hubAccountId !== null) {
+      // D39: every durable frame names its account's Core page id — the key
+      // of the facts catch-up. A first sight owes the account its history.
+      let pageDue: boolean;
+      try {
+        pageDue = facts.notePage(event.accountId, meta.hubAccountId);
+      } catch {
+        pageDue = false; // bookkeeping must never reject the frame
+      }
+      if (pageDue) {
+        effects.push(() => facts.request([event.accountId], 'page-mapped'));
+      }
+    }
     switch (event.type) {
       case 'messageReceived':
       case 'messageSent': {
@@ -1171,75 +1341,58 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         break;
       }
       case 'ppvUnlocked':
-        // Notification-shaped events are ADVISORY toward the stream cursor:
-        // the unlock is applied locally through the monotonic markOpened
-        // merge, and OFAPI itself reports isOpened on any later body read, so
-        // this handler must never reject. A rejected onEvent blocks the
-        // checkpoint, and a deterministically failing frame (incident
-        // 2026-07-15: core shipped the creator id as the conversation) then
-        // replays forever — an SSE reconnect loop that burns paid reads. Only
-        // message-body carriers (messageReceived/Sent) may reject.
-        recordFallback('hub-notification-fallback', event.type, {
-          type: event.type,
-          accountId: event.accountId,
-          chatId: event.chatId,
-          messageId: event.messageId,
-        });
-        if (event.messageId !== undefined) {
-          data.messages.markOpened(event.accountId, event.chatId, event.messageId);
-        }
-        effects.push(() => {
-          // Best-effort preview refresh, detached from the checkpoint and
-          // started only after the commit. No expectedMessageId: an unlocked
-          // PPV is historical and legitimately absent from the cached tail
-          // window; demanding it locally is what wedged the stream.
-          void polling
-            .refreshChat(event.accountId, event.chatId, undefined, undefined)
-            .then(() => {
-              // If the refresh materialized a previously uncached target, apply
-              // the same fact now. The SQL merge prevents this (or a later stale
-              // fetch) from ever regressing an already-opened message.
-              if (event.messageId !== undefined) {
-                data.messages.markOpened(event.accountId, event.chatId, event.messageId);
-              }
-            })
-            .catch(() => {
-              recordFallback('hub-notification-refresh-failed', event.type, {
-                type: event.type,
-                accountId: event.accountId,
-                chatId: event.chatId,
-                messageId: event.messageId,
-              });
-            });
-          emit(event);
-        });
-        recordApplied(event.type);
-        break;
       case 'tipReceived':
-        // Notification-shaped events are not full messages — and, like
-        // ppvUnlocked above, advisory toward the cursor: the refresh is
-        // best-effort and must not reject the checkpoint.
-        recordFallback('hub-notification-fallback', event.type, {
-          type: event.type,
-          accountId: event.accountId,
-          chatId: event.chatId,
-          messageId: event.messageId,
-        });
-        effects.push(() => {
-          void polling
-            .refreshChat(event.accountId, event.chatId, undefined, undefined)
-            .catch(() => {
-              recordFallback('hub-notification-refresh-failed', event.type, {
-                type: event.type,
-                accountId: event.accountId,
-                chatId: event.chatId,
-                messageId: event.messageId,
-              });
-            });
-          emit(event);
-        });
+      case 'transactionPosted': {
+        // D39: money facts apply locally, synchronously, in the frame's
+        // transaction — no paid chat read any more. Like every notification-
+        // shaped event they are ADVISORY toward the stream cursor and must
+        // never reject: a deterministically failing frame replays forever
+        // (incident 2026-07-15). A failed apply is logged; the facts catch-up
+        // re-applies it from the ledger.
+        let outcome: MoneyFactOutcome | 'error';
+        try {
+          outcome = applyMoneyFact(
+            data,
+            event,
+            {
+              hubAccountId: meta.hubAccountId,
+              accountSeq: meta.accountSeq,
+              provenance: meta.provenance ?? 'unknown',
+              occurredAt: meta.occurredAt,
+              source: 'stream',
+            },
+            now(),
+          );
+        } catch (error) {
+          outcome = 'error';
+          recordFallback('hub-money-fact-error', event.type, {
+            type: event.type,
+            accountId: event.accountId,
+            accountSeq: meta.accountSeq,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        if (event.type === 'transactionPosted') {
+          // State only (the chat list's spend figure follows via db:changed);
+          // a tip or purchase alert comes from its own fact, never from here.
+          logMoneyFactApplied(event, meta, outcome, 'transaction');
+          recordApplied(event.type);
+          break;
+        }
+        const veto = purchaseAlertVeto(event, meta, outcome);
+        logMoneyFactApplied(event, meta, outcome, veto);
+        const fanName = veto === null
+          ? purchaseFanName(event.accountId, event.chatId, meta.thread)
+          : undefined;
+        const announced: MoneyFactEvent = {
+          ...event,
+          ...(fanName !== undefined ? { fanName } : {}),
+          live: veto === null,
+        };
+        effects.push(() => emit(announced));
         recordApplied(event.type);
         break;
+      }
       case 'messageDeleted': {
         const chatId = event.chatId ?? lookupChatId(event.accountId, event.messageId);
         // An authoritative page-1 read owes the survivor head; a cached head
@@ -1520,9 +1673,11 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         onSnapshotRequired: (input) => {
           recordFallback('hub-replay-gap-snapshot', 'syncSnapshotRequired', input);
           reverifyLists('gap');
+          facts.request(handledAccountIds, 'gap');
         },
         onV2GapRecovered: handleV2GapRecovered,
         onServerDate: noteServerDate,
+        onAccountPages: noteAccountPages,
       },
       handledAccountIds,
     );
@@ -1547,6 +1702,11 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     onLog('info', 'hub configured; starting SSE');
     emitStatus();
     hub.start();
+    // D39: the facts catch-up from each account's watermark — the whole
+    // history the first time. Every (re)configuration: a new credential
+    // starts its stream without a cursor, which skips history.
+    facts.request(handledAccountIds, nextFactsReason);
+    nextFactsReason = 'reconfigure';
   }
 
   function stopHub(): void {
@@ -1591,6 +1751,8 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       // no longer handles would otherwise stay open forever.
       intents.closeAccountsExcept(handledAccountIds);
       intents.start();
+      facts.start();
+      nextFactsReason = 'session-start';
       polling.start(accountIds);
       void startHub();
     },
@@ -1602,6 +1764,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       }
       clearReplayFallback();
       intents.stop();
+      facts.stop();
       stopHub();
       await polling.stop();
     },
@@ -1648,6 +1811,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     },
     listSync: listSyncSnapshot,
     syncIntents: () => intents,
+    moneyFactsCatchUp: () => facts,
     hubActivity: (): HubActivitySnapshot => {
       const day = utcDayOf(now());
       const sameDay = eventStats.day === day;

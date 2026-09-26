@@ -1038,6 +1038,15 @@ export const UI_MESSAGES = {
   'notif.sentYou': { en: 'sent you a message', ru: 'прислал(а) сообщение' },
   'notif.media': { en: 'Media', ru: 'Медиа' },
   'notif.tip': { en: 'Tip', ru: 'Чаевые' },
+  // D39 quiet purchase alerts (owner-approved wording «<фан> купил(а) PPV $89»,
+  // «<фан> отправил(а) чаевые $5»): the fan's name is the title, the verb
+  // phrase the body. `{amount}` is a dollar figure or empty (unknown price).
+  'notif.ppvBought': { en: 'bought PPV {amount}', ru: 'купил(а) PPV {amount}' },
+  'notif.tipSent': { en: 'sent a tip {amount}', ru: 'отправил(а) чаевые {amount}' },
+  // No name anywhere (hub thread, local chat, fans cache): neutral wording.
+  'notif.ppvTitle': { en: 'PPV purchase', ru: 'Покупка PPV' },
+  'notif.ppvBoughtByFan': { en: 'A fan bought PPV {amount}', ru: 'Фан купил(а) PPV {amount}' },
+  'notif.tipSentByFan': { en: 'A fan sent a tip {amount}', ru: 'Фан отправил(а) чаевые {amount}' },
   'notif.budgetTitle': { en: 'Credit budget at 80%', ru: 'Бюджет кредитов: 80%' },
   'notif.budgetBody': {
     en: '{used} of {budget} credits used this shift.',

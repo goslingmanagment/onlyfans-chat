@@ -47,6 +47,7 @@ function liveMeta(atMs: number, accountSeq: number): HubFrameMeta {
     provenance: 'live',
     occurredAt: new Date(atMs).toISOString(),
     deliveredLive: true,
+    hubAccountId: null,
     accountSeq,
     transactionRef: null,
     thread: null,

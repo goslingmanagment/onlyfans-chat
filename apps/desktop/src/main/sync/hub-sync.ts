@@ -57,6 +57,9 @@ export interface HubFrameMeta {
    * lane is always live; v1 has no marker and keeps its legacy treatment
    * (every frame counts as delivered live). */
   deliveredLive: boolean;
+  /** Core's numeric page id of a v2 durable frame (D39: the key of the
+   * `/events/v2/facts` catch-up); null on v1 and on the ephemeral lane. */
+  hubAccountId: number | null;
   accountSeq: number | null;
   transactionRef: string | null;
   thread: { fanName: string | null; username: string | null } | null;
@@ -354,6 +357,12 @@ export interface HubSyncOptions {
    * allowlist with this set before applying durable state pages.
    */
   onV2GapRecovered?: () => readonly string[] | Promise<readonly string[]>;
+  /**
+   * D39: the OFAPI-ref → Core page id pairs a v2 snapshot answered with (a
+   * gap or grant recovery). A newly granted account learns its page id here
+   * before its first frame, so its facts catch-up can start at once.
+   */
+  onAccountPages?: (pages: ReadonlyArray<{ accountRef: string; hubAccountId: number }>) => void;
 }
 
 export interface HubSync {
@@ -739,6 +748,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       provenance: null,
       occurredAt: null,
       deliveredLive: true,
+      hubAccountId: null,
       accountSeq: null,
       transactionRef: null,
       thread: null,
@@ -751,6 +761,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       provenance: frameProvenance(domainFrame),
       occurredAt: domainFrame.occurredAt,
       deliveredLive: connectionReplayCompleted,
+      hubAccountId: domainFrame.accountId,
       accountSeq: domainFrame.accountSeq,
       transactionRef: domainFrame.transactionRef ?? null,
       thread: domainFrame.thread ?? null,
@@ -835,6 +846,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
           provenance: null,
           occurredAt: null,
           deliveredLive: true,
+          hubAccountId: null,
           accountSeq: null,
           transactionRef: null,
           thread: null,
@@ -1025,6 +1037,10 @@ export function createHubSync(options: HubSyncOptions): HubSync {
       throw new Error('hub v2 snapshot recovery stopped');
     }
     const newlyMintedCursor = parsed.data.cursor;
+    options.onAccountPages?.(parsed.data.accounts.flatMap((account) =>
+      isOnlyFansAccountRef(account.accountRef)
+        ? [{ accountRef: account.accountRef, hubAccountId: account.accountId }]
+        : []));
     if (
       scopeDrift !== undefined
       && !parsed.data.accounts.some((account) =>

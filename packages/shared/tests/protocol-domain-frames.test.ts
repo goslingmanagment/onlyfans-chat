@@ -14,10 +14,12 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  domainEventFactsPageSchema,
   frameProvenance,
   isOnlyFansAccountRef,
   mapDomainFrame,
   parseDomainEventFrame,
+  parsePpvAmountText,
   parseSyncEvent,
   type DomainEventFrame,
 } from '../src/protocol/index';
@@ -118,6 +120,94 @@ describe('mapDomainFrame', () => {
       expect(mapDomainFrame(frame({ type: 'account.auth_changed', data: { status } })))
         .toEqual({ type: 'accountAuthChanged', accountId: ACCT, authenticated: false });
     }
+  });
+
+  it('D39: a PPV unlock carries its price — Core\'s amountUsd, else the strict amountText', () => {
+    expect(mapDomainFrame(frame({
+      type: 'message.ppv_unlocked',
+      data: { amountText: '$89.00', amountUsd: 89, messageLink: '<a>message</a>' },
+    }))).toEqual({ type: 'ppvUnlocked', accountId: ACCT, chatId: '777', messageId: '9001', amountUsd: 89 });
+    // Events written before H2 carry only the display text (all 526 on pages
+    // 8/9 on 2026-09-26).
+    expect(mapDomainFrame(frame({
+      type: 'message.ppv_unlocked',
+      data: { amountText: '$13.99' },
+    }))).toMatchObject({ amountUsd: 13.99 });
+    // Core's strict parse said null, and the text is not a strict price:
+    // unknown stays unknown.
+    expect(mapDomainFrame(frame({
+      type: 'message.ppv_unlocked',
+      data: { amountText: '€10', amountUsd: null },
+    }))).not.toHaveProperty('amountUsd');
+  });
+
+  it('D39: parses the PPV amount text exactly like Core (parseOfapiPpvAmountUsd)', () => {
+    expect(parsePpvAmountText('$67.00')).toBe(67);
+    expect(parsePpvAmountText('$5')).toBe(5);
+    expect(parsePpvAmountText('$13.99')).toBe(13.99);
+    expect(parsePpvAmountText('$0.50')).toBe(0.5);
+    for (const bad of ['67', '$1,000.00', '$13.9', '$ 5', 'USD 5', '$05', '', null, 67]) {
+      expect(parsePpvAmountText(bad)).toBeNull();
+    }
+  });
+
+  it('D39: maps transaction.posted to one money change keyed by the OFAPI transaction id', () => {
+    const posted = frame({
+      type: 'transaction.posted',
+      conversationRef: null,
+      messageRef: null,
+      fanRef: '499106230',
+      transactionRef: 'eb118196c33625aa23c4dda8de8e4501',
+      occurredAt: '2026-09-26T14:37:10.000Z',
+      data: {
+        amount: 67,
+        netAmount: 53.6,
+        feeAmount: 13.4,
+        amountUnit: 'dollars',
+        transactionType: 'message',
+        status: 'loading',
+      },
+    });
+    expect(mapDomainFrame(posted)).toEqual({
+      type: 'transactionPosted',
+      accountId: ACCT,
+      fanId: '499106230',
+      transactionId: 'eb118196c33625aa23c4dda8de8e4501',
+      amountUsd: 67,
+      netUsd: 53.6,
+      transactionType: 'message',
+      createdAt: '2026-09-26T14:37:10.000Z',
+    });
+    // Historical events without A46's amountUnit are OnlyFans dollars.
+    const legacy = { ...(posted.data as Record<string, unknown>) };
+    delete legacy.amountUnit;
+    expect(mapDomainFrame({ ...posted, data: legacy })).toMatchObject({ amountUsd: 67 });
+    // The wire shape survives the main → renderer schema.
+    expect(parseSyncEvent(mapDomainFrame(posted))).toMatchObject({ type: 'transactionPosted' });
+
+    // Never a mis-scaled or unkeyed money change.
+    expect(mapDomainFrame({ ...posted, data: { ...legacy, amountUnit: 'mills' } })).toBeNull();
+    expect(mapDomainFrame({ ...posted, transactionRef: null })).toBeNull();
+    expect(mapDomainFrame({ ...posted, fanRef: null })).toBeNull();
+    expect(mapDomainFrame({ ...posted, data: { ...legacy, amount: 0 } })).toBeNull();
+    expect(mapDomainFrame({ ...posted, occurredAt: 'not a date' })).toBeNull();
+  });
+
+  it('D39: reads a facts page without failing on one malformed row or an unknown provenance', () => {
+    const page = domainEventFactsPageSchema.parse({
+      accountId: 9,
+      throughSeq: 246116,
+      facts: [
+        { ...frame({ type: 'message.ppv_unlocked' }), provenance: 'teleported' },
+        { garbage: true },
+      ],
+      nextAfterSeq: 246116,
+      hasMore: false,
+    });
+    const first = parseDomainEventFrame(page.facts[0]);
+    expect(first).not.toBeNull();
+    expect(frameProvenance(first!)).toBe('unknown');
+    expect(parseDomainEventFrame(page.facts[1])).toBeNull();
   });
 
   it('returns null for unknown types, non-OFAPI accounts, and missing required refs', () => {
