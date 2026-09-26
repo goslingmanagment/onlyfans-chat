@@ -258,7 +258,7 @@ DELETE FROM credit_log WHERE purpose = 'supporters';
 // cut, while transaction `amount` is the gross fan payment — summing gross next
 // to a net lifetime made the green figure exceed the total for young fans.
 // New `net` column: OFAPI tx.net, fallback 0.8 × amount (mappers). The rebuild
-// intentionally discards cached rows (they lack net): latestCreatedAt() turns
+// intentionally discards cached rows (they lack net): the sweep watermark turns
 // null, so the next sweep's first-run path refetches the full -30days window.
 export const SCHEMA_V9 = `
 DROP TABLE fan_transactions;
@@ -519,6 +519,7 @@ export const ALL_TABLES = [
   'message_guard_events',
   'harvest_uploaded_revisions',
   'sync_intents',
+  'message_facts',
 ] as const;
 
 // Preserve the exact new send payload and every closed action's logical identity.
@@ -583,4 +584,45 @@ CREATE TABLE sync_intents (
   UNIQUE (kind, account_id, chat_id, message_id)
 );
 CREATE INDEX idx_sync_intents_account ON sync_intents (account_id, kind);
+`;
+
+// v25 (D39) — purchases.
+//
+// `message_facts` holds Core's `message.ppv_unlocked` facts keyed by the
+// message they unlock. It exists so a purchase is never lost to arrival
+// order: a fact may land before its message row (with auto-read off most PPV
+// rows are not cached at all) and the row may be re-written later by a stale
+// read that still says "not opened". Every message write therefore consults
+// this table (messages.ts: `is_opened` becomes 1 whenever a fact exists), and
+// recording a fact opens a row that is already there. A `repair` fact
+// (provenance) replaces an older fact for the same message under a wrong chat
+// (the 2026-07 creator-id refs, Core INC-001): the business key of a PPV fact
+// is (account, message). `hub_account_id` + `account_seq` name the ledger
+// row, `source` says which lane delivered it first (live stream or the
+// `/events/v2/facts` catch-up).
+//
+// `fan_transactions.source` separates rows the hourly transactions sweep read
+// itself ('sweep') from rows applied at once from Core's `transaction.posted`
+// ('hub'). The sweep's incremental watermark is the newest 'sweep' row only, so
+// an instant hub row can never make the sweep skip what it has not read. A
+// sweep read of a hub row makes it 'sweep' (same key: one money change per
+// transaction either way). Existing rows were all read by the sweep.
+export const SCHEMA_V25 = `
+CREATE TABLE message_facts (
+  account_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('ppv_unlocked')),
+  hub_account_id INTEGER,
+  account_seq INTEGER,
+  amount_usd REAL,
+  provenance TEXT NOT NULL,
+  occurred_at TEXT,
+  source TEXT NOT NULL CHECK (source IN ('stream', 'catch-up')),
+  recorded_at TEXT NOT NULL,
+  PRIMARY KEY (account_id, chat_id, message_id)
+);
+CREATE INDEX idx_message_facts_message ON message_facts (account_id, message_id);
+ALTER TABLE fan_transactions ADD COLUMN source TEXT NOT NULL DEFAULT 'sweep'
+  CHECK (source IN ('sweep', 'hub'));
 `;

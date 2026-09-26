@@ -37,6 +37,7 @@ import type {
   ListVerificationReason,
 } from '../../src/main/sync/polling-sync';
 import type { HubSync } from '../../src/main/sync/hub-sync';
+import type { MoneyFactsFetch } from '../../src/main/sync/money-facts';
 import type { SyncProvider } from '../../src/main/sync/provider';
 import { mapHubMessage } from '../../src/main/sync/mappers';
 import { createDataLayer, type DataLayer } from '../../src/main/db/index';
@@ -1101,7 +1102,7 @@ describe('createHubAwareSync (provider composition)', () => {
     data.close();
   });
 
-  function build(buildOptions: { autoRead?: boolean } = {}): {
+  function build(buildOptions: { autoRead?: boolean; moneyFacts?: MoneyFactsFetch } = {}): {
     provider: ReturnType<typeof createHubAwareSync>;
     polling: FakePolling;
     hub: FakeHub;
@@ -1123,6 +1124,7 @@ describe('createHubAwareSync (provider composition)', () => {
       data,
       now: () => nowMs,
       autoReadEnabled: () => buildOptions.autoRead === true,
+      ...(buildOptions.moneyFacts !== undefined ? { moneyFacts: buildOptions.moneyFacts } : {}),
       createHub: (callbacks) => {
         captured = callbacks;
         return Promise.resolve(hub);
@@ -1287,6 +1289,7 @@ describe('createHubAwareSync (provider composition)', () => {
       provenance: 'live',
       occurredAt: new Date(PROVIDER_NOW_MS).toISOString(),
       deliveredLive: true,
+      hubAccountId: 9,
       accountSeq: 1,
       transactionRef: null,
       thread: null,
@@ -2905,7 +2908,7 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
-  it('tipReceived and ppvUnlocked refresh best-effort without demanding the message locally', async () => {
+  it('D39: tipReceived and ppvUnlocked apply locally and never start a paid chat read', async () => {
     const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
     await Promise.resolve();
@@ -2919,30 +2922,28 @@ describe('createHubAwareSync (provider composition)', () => {
       amountUsd: 5,
     });
     await runEvent(callbacks(), { type: 'ppvUnlocked', accountId: ACCT, chatId: '5', messageId: '2' });
-    // No expectedMessageId: notification-shaped events reference historical
-    // messages that are legitimately absent from the cached window; demanding
-    // them locally is what wedged the stream (incident 2026-07-15).
-    expect(polling.refreshCalls).toEqual([
-      { accountId: ACCT, chatId: '5' },
-      { accountId: ACCT, chatId: '5' },
-    ]);
-    expect(events.filter((e) => e.type === 'tipReceived' || e.type === 'ppvUnlocked')).toHaveLength(2);
+    // 0.1.57 still paid one refreshChat per frame (~6 purchases/day, and one
+    // per repaired fact) — the fact is applied locally now.
+    expect(polling.refreshCalls).toEqual([]);
+    // No transport meta (v1 legacy): state only, never an alert.
+    expect(events.filter((e) => e.type === 'tipReceived' || e.type === 'ppvUnlocked'))
+      .toEqual([
+        expect.objectContaining({ type: 'tipReceived', live: false }),
+        expect.objectContaining({ type: 'ppvUnlocked', live: false }),
+      ]);
     expect(provider.hubActivity()).toMatchObject({
       eventsByTypeToday: { tipReceived: 1, ppvUnlocked: 1 },
       appliedByTypeToday: { tipReceived: 1, ppvUnlocked: 1 },
-      fallbackByTypeToday: { tipReceived: 1, ppvUnlocked: 1 },
-      fallbackByReasonToday: { 'hub-notification-fallback': 2 },
+      fallbackByTypeToday: {},
       lifetime: {
         received: { total: 2, byType: { tipReceived: 1, ppvUnlocked: 1 } },
         applied: { total: 2, byType: { tipReceived: 1, ppvUnlocked: 1 } },
-        fallback: { total: 2, byType: { tipReceived: 1, ppvUnlocked: 1 } },
-        fallbackByReason: { 'hub-notification-fallback': 2 },
       },
     });
     provider.stop();
   });
 
-  it('durably unlocks an older cached PPV without demanding it from the refresh', async () => {
+  it('durably unlocks an older cached PPV through a recorded purchase fact, and never rejects the frame', async () => {
     const { provider, polling, callbacks } = build();
     seedMessage('2', '5', {
       createdAt: '2026-06-11T10:00:00.000Z',
@@ -2958,9 +2959,6 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    // The unlock fact applies through the monotonic markOpened merge before
-    // any refresh; the refresh itself is best-effort preview upkeep and never
-    // carries an expectedMessageId (incident 2026-07-15).
     await runEvent(callbacks(), {
       type: 'ppvUnlocked',
       accountId: ACCT,
@@ -2968,27 +2966,25 @@ describe('createHubAwareSync (provider composition)', () => {
       messageId: '2',
     });
 
-    expect(polling.refreshCalls).toEqual([{
-      accountId: ACCT,
-      chatId: '5',
-    }]);
+    expect(polling.refreshCalls).toEqual([]);
     expect(data.chats.get(ACCT, '5')?.lastMessageId).toBe('3');
     expect(data.messages.get(ACCT, '5', '2')?.isOpened).toBe(true);
+    expect(data.messageFacts.has(ACCT, '5', '2')).toBe(true);
 
-    // A failing best-effort refresh must not reject the handler — a rejected
-    // onEvent freezes the stream cursor, and a deterministic failure then
-    // replays the same frame forever (incident 2026-07-15). The failure is
-    // still visible in telemetry.
-    polling.refreshError = new Error('refresh permanently failing');
+    // A failing apply must not reject the handler — a rejected onEvent
+    // freezes the stream cursor, and a deterministic failure then replays the
+    // same frame forever (incident 2026-07-15). The catch-up re-applies it.
+    const spy = vi.spyOn(data.messageFacts, 'recordPpvUnlock').mockImplementation(() => {
+      throw new Error('disk full');
+    });
     await expect(runEvent(callbacks(), {
       type: 'ppvUnlocked',
       accountId: ACCT,
       chatId: '5',
-      messageId: '2',
+      messageId: '4',
     })).resolves.toBeUndefined();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(provider.hubActivity().fallbackByReasonToday['hub-notification-refresh-failed']).toBe(1);
+    spy.mockRestore();
+    expect(provider.hubActivity().fallbackByReasonToday['hub-money-fact-error']).toBe(1);
 
     // A later stale body/list reconciliation cannot undo the unlock fact.
     seedMessage('2', '5', {
@@ -3456,5 +3452,341 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(after.liveSinceMs).toBeNull();
     expect(after.statusChangedAtMs).toBe(Date.parse('2026-06-11T12:02:00Z'));
     provider.stop();
+  });
+  // ── D39: purchases ─────────────────────────────────────────────────────
+
+  describe('D39 purchases', () => {
+    const PAGE_ID = 9;
+
+    /** A started provider past its replay marker, chat 101 known locally. */
+    async function started(buildOptions: Parameters<typeof build>[0] = {}) {
+      const ctx = build(buildOptions);
+      ctx.provider.start([ACCT]);
+      await Promise.resolve();
+      await Promise.resolve();
+      knownChat();
+      return ctx;
+    }
+
+    function purchaseMeta(overrides: Partial<HubFrameMeta> = {}): HubFrameMeta {
+      return liveMeta({
+        hubAccountId: PAGE_ID,
+        occurredAt: new Date(PROVIDER_NOW_MS - 60_000).toISOString(),
+        thread: { fanName: 'Neil/US', username: 'u101' },
+        ...overrides,
+      });
+    }
+
+    function lastPurchase(events: SyncEvent[]) {
+      return events.filter((event) => event.type === 'ppvUnlocked' || event.type === 'tipReceived').at(-1);
+    }
+
+    it('alerts only for a live-provenance frame after replay_completed within the age gate', async () => {
+      const { provider, callbacks, events, polling } = await started();
+      const provenances = ['live', 'redelivery', 'repair', 'unknown'] as const;
+      const matrix: Array<{ provenance: string; deliveredLive: boolean; ageMs: number; alert: boolean }> = [];
+      let n = 0;
+      for (const provenance of provenances) {
+        for (const deliveredLive of [false, true]) {
+          for (const ageMs of [60_000, NOTIFICATION_MAX_AGE_MS + 60_000]) {
+            for (const type of ['ppvUnlocked', 'tipReceived'] as const) {
+              n += 1;
+              const meta = purchaseMeta({
+                provenance,
+                deliveredLive,
+                accountSeq: 1000 + n,
+                occurredAt: new Date(PROVIDER_NOW_MS - ageMs).toISOString(),
+              });
+              await runEvent(
+                callbacks(),
+                type === 'ppvUnlocked'
+                  ? { type, accountId: ACCT, chatId: '101', messageId: `ppv-${n}`, amountUsd: 89 }
+                  : { type, accountId: ACCT, chatId: '101', amountUsd: 5 },
+                meta,
+              );
+              const event = lastPurchase(events);
+              matrix.push({
+                provenance,
+                deliveredLive,
+                ageMs,
+                alert: event !== undefined && 'live' in event && event.live === true,
+              });
+            }
+          }
+        }
+      }
+      // Exactly one cell of the matrix is news: live, after the marker, fresh.
+      expect(matrix.filter((cell) => cell.alert)).toEqual([
+        { provenance: 'live', deliveredLive: true, ageMs: 60_000, alert: true },
+        { provenance: 'live', deliveredLive: true, ageMs: 60_000, alert: true },
+      ]);
+      // Every frame still applied its state; none started a paid read.
+      expect(data.messageFacts.countByAccount(ACCT)).toBe(provenances.length * 2 * 2);
+      expect(polling.refreshCalls).toEqual([]);
+      provider.stop();
+    });
+
+    it('the alert carries the fan name and the dollar amount for the toast', async () => {
+      const { provider, callbacks, events } = await started();
+      await runEvent(
+        callbacks(),
+        { type: 'ppvUnlocked', accountId: ACCT, chatId: '101', messageId: 'p1', amountUsd: 89 },
+        purchaseMeta({ accountSeq: 1 }),
+      );
+      expect(lastPurchase(events)).toEqual({
+        type: 'ppvUnlocked',
+        accountId: ACCT,
+        chatId: '101',
+        messageId: 'p1',
+        amountUsd: 89,
+        fanName: 'Neil/US',
+        live: true,
+      });
+      provider.stop();
+    });
+
+    it('resolves the fan name: Core thread, local chat, fans cache, a handle last, else nothing', async () => {
+      const { provider, callbacks, events } = await started();
+      const nameFor = async (chatId: string, thread: HubFrameMeta['thread'], seq: number) => {
+        await runEvent(
+          callbacks(),
+          { type: 'tipReceived', accountId: ACCT, chatId, amountUsd: 5 },
+          purchaseMeta({ accountSeq: seq, thread }),
+        );
+        const event = lastPurchase(events);
+        return event?.type === 'tipReceived' ? event.fanName : 'n/a';
+      };
+      expect(await nameFor('101', { fanName: 'Neil/US', username: 'u101' }, 1)).toBe('Neil/US');
+      // knownChat() names chat 101 «Fan 101».
+      expect(await nameFor('101', { fanName: null, username: 'u101' }, 2)).toBe('Fan 101');
+      data.fans.upsert({
+        accountId: ACCT,
+        fanId: '202',
+        username: 'u202',
+        name: 'Kevin',
+        customName: null,
+        avatar: null,
+        about: null,
+        lastSeen: null,
+        spending: null,
+        subscription: null,
+        fetchedAt: '2026-06-11T10:00:00.000Z',
+      });
+      expect(await nameFor('202', null, 3)).toBe('Kevin');
+      expect(await nameFor('303', { fanName: null, username: 'u303' }, 4)).toBe('u303');
+      expect(await nameFor('404', null, 5)).toBeUndefined();
+      provider.stop();
+    });
+
+    it('a PPV already recorded (e.g. by the catch-up) never alerts again; a tip alerts once per fact', async () => {
+      const { provider, callbacks, events, logs } = await started();
+      data.messageFacts.recordPpvUnlock({
+        accountId: ACCT,
+        chatId: '101',
+        messageId: 'known',
+        hubAccountId: PAGE_ID,
+        accountSeq: 7,
+        amountUsd: 89,
+        provenance: 'live',
+        occurredAt: null,
+        source: 'catch-up',
+      }, new Date(PROVIDER_NOW_MS).toISOString());
+      await runEvent(
+        callbacks(),
+        { type: 'ppvUnlocked', accountId: ACCT, chatId: '101', messageId: 'known', amountUsd: 89 },
+        purchaseMeta({ accountSeq: 7 }),
+      );
+      expect(lastPurchase(events)).toMatchObject({ live: false });
+      expect(logs).toContainEqual(expect.objectContaining({
+        message: 'purchase applied',
+        fields: expect.objectContaining({ alert: false, alertVeto: 'known-fact' }),
+      }));
+
+      const tip = { type: 'tipReceived' as const, accountId: ACCT, chatId: '101', amountUsd: 5 };
+      await runEvent(callbacks(), tip, purchaseMeta({ accountSeq: 8 }));
+      expect(lastPurchase(events)).toMatchObject({ live: true });
+      await runEvent(callbacks(), tip, purchaseMeta({ accountSeq: 8 }));
+      expect(lastPurchase(events)).toMatchObject({ live: false });
+      provider.stop();
+    });
+
+    it('logs every applied money fact with the join keys and the hub-clock apply time', async () => {
+      const { provider, callbacks, logs } = await started();
+      callbacks().onServerDate(PROVIDER_NOW_MS + 1_500, PROVIDER_NOW_MS);
+      await runEvent(
+        callbacks(),
+        { type: 'ppvUnlocked', accountId: ACCT, chatId: '101', messageId: 'p9', amountUsd: 67 },
+        purchaseMeta({ accountSeq: 246115, occurredAt: '2026-06-11T11:59:00.000Z' }),
+      );
+      const line = logs.filter((log) => log.message === 'purchase applied').at(-1);
+      expect(line?.fields).toMatchObject({
+        type: 'ppvUnlocked',
+        accountId: ACCT,
+        hubAccountId: PAGE_ID,
+        accountSeq: 246115,
+        chatId: '101',
+        messageId: 'p9',
+        amountUsd: 67,
+        provenance: 'live',
+        replay: false,
+        outcome: { kind: 'ppv', recorded: true, newFact: true, rowOpened: false, superseded: 0 },
+        alert: true,
+        alertVeto: null,
+        occurredAt: '2026-06-11T11:59:00.000Z',
+        // Local clock + the measured hub offset (+2 s: 1.5 s + Date rounding).
+        appliedAt: '2026-06-11T12:00:02.000Z',
+        sinceOccurredMs: 62_000,
+      });
+      provider.stop();
+    });
+
+    it('transaction.posted lands in fan_transactions at once, emits nothing, and counts once', async () => {
+      const { provider, callbacks, events, logs } = await started();
+      const posted = {
+        type: 'transactionPosted' as const,
+        accountId: ACCT,
+        fanId: '101',
+        transactionId: 'eb118196c33625aa23c4dda8de8e4501',
+        amountUsd: 67,
+        netUsd: 53.6,
+        transactionType: 'message',
+        createdAt: new Date(PROVIDER_NOW_MS - 60_000).toISOString(),
+      };
+      const before = events.length;
+      await runEvent(callbacks(), posted, purchaseMeta({ accountSeq: 246116, transactionRef: posted.transactionId }));
+      await runEvent(callbacks(), posted, purchaseMeta({ accountSeq: 246116, transactionRef: posted.transactionId }));
+      expect(events.length).toBe(before);
+      expect(data.fanTransactions.statsByFanSince(ACCT, '2026-01-01T00:00:00.000Z').get('101'))
+        .toEqual({ total: 53.6, count: 1 });
+      expect(logs.filter((log) => log.message === 'purchase applied').map((log) => log.fields?.['outcome']))
+        .toEqual([
+          { kind: 'transaction', inserted: true, skipped: null },
+          { kind: 'transaction', inserted: false, skipped: null },
+        ]);
+      provider.stop();
+    });
+
+    it('a tip message no longer alerts or rings, from the hub or from polling', async () => {
+      const { provider, callbacks, events, polling } = await started();
+      callbacks().onCaughtUp();
+      await runEvent(
+        callbacks(),
+        {
+          type: 'messageReceived',
+          accountId: ACCT,
+          chatId: '101',
+          messageId: 'tip-msg',
+          message: hubMessage({ id: 'tip-msg', isTip: true, tipAmountUsd: 5 }),
+        },
+        liveMeta({ occurredAt: new Date(PROVIDER_NOW_MS).toISOString() }),
+      );
+      expect(events.at(-1)).toMatchObject({ type: 'messageReceived', messageId: 'tip-msg', live: false });
+
+      // Polling emits id-only events; the stored row says it is a tip.
+      seedMessage('poll-tip', '101', { isTip: true, tipAmount: 5, createdAt: new Date(PROVIDER_NOW_MS).toISOString() });
+      polling.emit({ type: 'messageReceived', accountId: ACCT, chatId: '101', messageId: 'poll-tip' });
+      expect(events.at(-1)).toMatchObject({ messageId: 'poll-tip', live: false });
+
+      // An ordinary message still alerts.
+      await runEvent(
+        callbacks(),
+        {
+          type: 'messageReceived',
+          accountId: ACCT,
+          chatId: '101',
+          messageId: 'plain',
+          message: hubMessage({ id: 'plain' }),
+        },
+        liveMeta({ occurredAt: new Date(PROVIDER_NOW_MS).toISOString() }),
+      );
+      expect(events.at(-1)).toMatchObject({ messageId: 'plain' });
+      expect(events.at(-1)).not.toHaveProperty('live', false);
+      provider.stop();
+    });
+
+    it('catch-up: waits for the page id, runs on it and after a gap, and never emits an alert', async () => {
+      const fetches: Array<{ hubAccountId: number; afterSeq: number }> = [];
+      const facts = [
+        {
+          accountId: PAGE_ID,
+          accountSeq: 5,
+          type: 'message.ppv_unlocked',
+          occurredAt: new Date(PROVIDER_NOW_MS - 30_000).toISOString(),
+          data: { amountUsd: 89 },
+          fanRef: '101',
+          conversationRef: '101',
+          messageRef: 'caught-1',
+          accountRef: ACCT,
+          provenance: 'live',
+          thread: { fanName: 'Neil/US', username: 'u101' },
+        },
+        {
+          accountId: PAGE_ID,
+          accountSeq: 6,
+          type: 'tip.received',
+          occurredAt: new Date(PROVIDER_NOW_MS - 30_000).toISOString(),
+          data: { amountGross: 5 },
+          fanRef: '101',
+          conversationRef: '101',
+          messageRef: null,
+          accountRef: ACCT,
+          provenance: 'live',
+        },
+      ];
+      const moneyFacts: MoneyFactsFetch = (args) => {
+        fetches.push({ hubAccountId: args.hubAccountId, afterSeq: args.afterSeq });
+        const rows = facts.filter((fact) => fact.accountSeq > args.afterSeq);
+        return Promise.resolve({
+          kind: 'page',
+          page: { accountId: args.hubAccountId, throughSeq: 6, facts: rows, nextAfterSeq: 6, hasMore: false },
+        });
+      };
+      const { provider, callbacks, events, logs } = await started({ moneyFacts });
+      callbacks().onCaughtUp();
+      const catchUp = provider.moneyFactsCatchUp();
+      await catchUp.whenIdle();
+      expect(fetches).toEqual([]); // no page id known yet
+
+      // The first durable frame of the account names its Core page.
+      await runEvent(
+        callbacks(),
+        { type: 'presence', accountId: ACCT, chatId: '101', online: true },
+        liveMeta({ hubAccountId: PAGE_ID, accountSeq: 7 }),
+      );
+      await catchUp.whenIdle();
+      expect(fetches).toEqual([{ hubAccountId: PAGE_ID, afterSeq: 0 }]);
+      expect(data.messageFacts.has(ACCT, '101', 'caught-1')).toBe(true);
+      // History, never news: nothing about these facts reached the renderer.
+      expect(events.some((event) => event.type === 'ppvUnlocked' || event.type === 'tipReceived')).toBe(false);
+      expect(logs).toContainEqual(expect.objectContaining({
+        message: 'money facts caught up',
+        fields: expect.objectContaining({ reason: 'page-mapped', ppvNew: 1, tips: 1, localPpvFacts: 1 }),
+      }));
+
+      // A replay gap (409 → fresh cursor) re-reads from the watermark.
+      await callbacks().onV2GapRecovered();
+      await catchUp.whenIdle();
+      expect(fetches.at(-1)).toEqual({ hubAccountId: PAGE_ID, afterSeq: 6 });
+      provider.stop();
+    });
+
+    it('a v2 snapshot\'s page ids start the catch-up of an account without any frame', async () => {
+      const fetches: number[] = [];
+      const moneyFacts: MoneyFactsFetch = (args) => {
+        fetches.push(args.hubAccountId);
+        return Promise.resolve({
+          kind: 'page',
+          page: { accountId: args.hubAccountId, throughSeq: 0, facts: [], nextAfterSeq: 0, hasMore: false },
+        });
+      };
+      const { provider, callbacks } = await started({ moneyFacts });
+      callbacks().onAccountPages([
+        { accountRef: ACCT, hubAccountId: PAGE_ID },
+        { accountRef: 'acct_not_handled', hubAccountId: 12 },
+      ]);
+      await provider.moneyFactsCatchUp().whenIdle();
+      expect(fetches).toEqual([PAGE_ID]);
+      provider.stop();
+    });
   });
 });

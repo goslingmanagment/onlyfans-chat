@@ -651,6 +651,8 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
         key === 'hubSync.lastEventId'
         || key.startsWith('hubSync.v2Cursor')
         || key.startsWith('hubSync.snapshotProgress.')
+        // D39: facts watermarks name another Core's page ids and sequences.
+        || key.startsWith('hubSync.facts.')
       ))
       .map((key) => ({ kind: 'remove' as const, key }));
   }

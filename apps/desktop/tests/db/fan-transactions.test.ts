@@ -49,8 +49,8 @@ describe('fanTransactions queries', () => {
     ]);
     layer.fanTransactions.upsertMany([tx({ txId: 'a', amount: 99, createdAt: isoDaysAgo(5) })]);
 
-    expect(layer.fanTransactions.latestCreatedAt('acct_1')).toBe(isoDaysAgo(2));
-    expect(layer.fanTransactions.latestCreatedAt('acct_other')).toBeNull();
+    expect(layer.fanTransactions.sweepWatermark('acct_1')).toBe(isoDaysAgo(2));
+    expect(layer.fanTransactions.sweepWatermark('acct_other')).toBeNull();
   });
 
   it('publishes a chats-scope change (the visible artifact is the chat list)', () => {
@@ -67,8 +67,45 @@ describe('fanTransactions queries', () => {
     ]);
     layer.fanTransactions.pruneOlderThan('acct_1', isoDaysAgo(31));
 
-    expect(layer.fanTransactions.latestCreatedAt('acct_1')).toBe(isoDaysAgo(3));
-    expect(layer.fanTransactions.latestCreatedAt('acct_2')).toBe(isoDaysAgo(40));
+    expect(layer.fanTransactions.sweepWatermark('acct_1')).toBe(isoDaysAgo(3));
+    expect(layer.fanTransactions.sweepWatermark('acct_2')).toBe(isoDaysAgo(40));
+  });
+});
+
+describe('instant hub transactions (D39)', () => {
+  it('insertFromHub adds a transaction once and never double-counts the sweep\'s row', () => {
+    expect(layer.fanTransactions.insertFromHub(tx({ txId: 'hub-1', amount: 67, net: 53.6 }))).toBe(true);
+    expect(layer.fanTransactions.insertFromHub(tx({ txId: 'hub-1', amount: 67, net: 53.6 }))).toBe(false);
+    layer.fanTransactions.upsertMany([tx({ txId: 'sweep-1', amount: 10, net: 8 })]);
+    // Core's transaction.posted for a transaction the sweep already stored.
+    expect(layer.fanTransactions.insertFromHub(tx({ txId: 'sweep-1', amount: 999, net: 999 }))).toBe(false);
+    expect(layer.fanTransactions.statsByFanSince('acct_1', isoDaysAgo(30)).get('101'))
+      .toEqual({ total: 53.6 + 8, count: 2 });
+  });
+
+  it('publishes a chats-scope change only when something was inserted', () => {
+    layer.fanTransactions.insertFromHub(tx({ txId: 'hub-1' }));
+    layer.bus.flushNow();
+    expect(flushed).toContainEqual({ scope: 'chats', accountId: 'acct_1' });
+    flushed = [];
+    layer.fanTransactions.insertFromHub(tx({ txId: 'hub-1' }));
+    layer.bus.flushNow();
+    expect(flushed).toEqual([]);
+  });
+
+  it('the sweep watermark ignores instant hub rows until the sweep reads them itself', () => {
+    layer.fanTransactions.upsertMany([tx({ txId: 'old', createdAt: isoDaysAgo(3) })]);
+    layer.fanTransactions.insertFromHub(tx({ txId: 'hub-new', createdAt: isoDaysAgo(0.01) }));
+    // The sweep must still resume from what IT read, or the hub row would
+    // make it skip everything between the two.
+    expect(layer.fanTransactions.sweepWatermark('acct_1')).toBe(isoDaysAgo(3));
+
+    // The sweep reads the same transaction: same key, now its own (and the
+    // OFAPI list's values win) — still one row, one money change.
+    layer.fanTransactions.upsertMany([tx({ txId: 'hub-new', amount: 30, net: 24, createdAt: isoDaysAgo(0.01) })]);
+    expect(layer.fanTransactions.sweepWatermark('acct_1')).toBe(isoDaysAgo(0.01));
+    expect(layer.fanTransactions.statsByFanSince('acct_1', isoDaysAgo(30)).get('101'))
+      .toEqual({ total: 20 + 24, count: 2 });
   });
 });
 

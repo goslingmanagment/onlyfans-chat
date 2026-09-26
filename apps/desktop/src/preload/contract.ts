@@ -1170,9 +1170,20 @@ export interface SpendersRefreshEvent extends SpendersRefreshCountsVM {
   total: number;
 }
 
+/**
+ * Additive frame on the sync:event channel (D39): the chatter clicked a
+ * purchase OS notification — main already brought the window forward; the
+ * renderer opens that chat.
+ */
+export interface OpenChatEvent {
+  type: 'openChat';
+  accountId: string;
+  chatId: string;
+}
+
 export interface EventChannels {
   'followers:changed': { accountId: string };
-  'sync:event': SyncEvent | CreditBalanceEvent | SpendersRefreshEvent;
+  'sync:event': SyncEvent | CreditBalanceEvent | SpendersRefreshEvent | OpenChatEvent;
   'ai:event': OperationEvent;
   'db:changed': DbChangedEvent;
 }

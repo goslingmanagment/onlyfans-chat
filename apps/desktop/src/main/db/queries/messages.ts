@@ -15,6 +15,18 @@ import { chunked } from './fans';
 // messages yet (Stages 7/11), so the desktop must stop destroying them.
 export const MESSAGE_RETENTION_DEFAULT = 50000;
 
+/**
+ * D39: `is_opened` on every write — 1 whenever a purchase fact exists for the
+ * row (message_facts), whichever arrived first. A fact recorded before its row
+ * existed (a PPV bought in a chat that was never opened) is applied the moment
+ * any read inserts the row; a stale read re-writing an opened row keeps it
+ * opened (the monotonic merge below).
+ */
+const IS_OPENED_VALUE_SQL = `CASE WHEN EXISTS (
+    SELECT 1 FROM message_facts f
+    WHERE f.account_id = @account_id AND f.chat_id = @chat_id AND f.message_id = @message_id
+  ) THEN 1 ELSE @is_opened END`;
+
 const COLUMNS =
   'account_id, chat_id, message_id, created_at, is_sent_by_me, text_html, text_plain, ' +
   'price, is_opened, is_new, is_tip, tip_amount, tip_text, reply_to, media, deleted';
@@ -25,7 +37,7 @@ INSERT INTO messages (
   price, is_opened, is_new, is_tip, tip_amount, tip_text, reply_to, media, deleted, raw
 ) VALUES (
   @account_id, @chat_id, @message_id, @created_at, @is_sent_by_me, @text_html, @text_plain,
-  @price, @is_opened, @is_new, @is_tip, @tip_amount, @tip_text, @reply_to, @media, @deleted, @raw
+  @price, ${IS_OPENED_VALUE_SQL}, @is_new, @is_tip, @tip_amount, @tip_text, @reply_to, @media, @deleted, @raw
 )
 ON CONFLICT (account_id, chat_id, message_id) DO UPDATE SET
   created_at = excluded.created_at,
@@ -52,7 +64,7 @@ INSERT INTO messages (
   price, is_opened, is_new, is_tip, tip_amount, tip_text, reply_to, media, deleted, raw
 ) VALUES (
   @account_id, @chat_id, @message_id, @created_at, @is_sent_by_me, @text_html, @text_plain,
-  @price, @is_opened, @is_new, @is_tip, @tip_amount, @tip_text, @reply_to, @media, @deleted, @raw
+  @price, ${IS_OPENED_VALUE_SQL}, @is_new, @is_tip, @tip_amount, @tip_text, @reply_to, @media, @deleted, @raw
 )
 ON CONFLICT (account_id, chat_id, message_id) DO NOTHING`;
 
@@ -92,8 +104,6 @@ export interface MessagesQueries {
   deletedChatHeadIds(accountId: string, chatIds: readonly string[]): Set<string>;
   /** Tombstone: keeps the rows, flags them deleted (SPEC §6.3). */
   markDeleted(accountId: string, chatId: string, messageIds: readonly string[]): void;
-  /** Records the durable, monotonic fact that a cached PPV message was unlocked. */
-  markOpened(accountId: string, chatId: string, messageId: string): void;
   /** Deletes rows beyond the newest `keep` for the chat; returns rows removed. */
   prune(accountId: string, chatId: string, keep?: number): number;
   count(accountId: string, chatId: string): number;
@@ -344,19 +354,6 @@ export function createMessagesQueries(db: ChatGooseDb, bus: DbChangeBus): Messag
            WHERE account_id = @account_id AND chat_id = @chat_id AND message_id IN (${placeholders})`,
         )
         .run(params);
-      if (changes > 0) {
-        bus.publish({ scope: 'messages', accountId, chatId });
-      }
-    },
-
-    markOpened(accountId, chatId, messageId) {
-      const { changes } = db
-        .prepare(
-          `UPDATE messages SET is_opened = 1
-           WHERE account_id = @account_id AND chat_id = @chat_id
-             AND message_id = @message_id AND is_opened IS NOT 1`,
-        )
-        .run({ account_id: accountId, chat_id: chatId, message_id: messageId });
       if (changes > 0) {
         bus.publish({ scope: 'messages', accountId, chatId });
       }

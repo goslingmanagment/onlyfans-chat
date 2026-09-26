@@ -36,7 +36,8 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_message_guard_events_occurred');
       expect(indexes).toContain('idx_message_guard_events_hash');
       expect(indexes).toContain('idx_sync_intents_account'); // v24 (D38)
-      expect(SCHEMA_VERSION).toBe(24);
+      expect(indexes).toContain('idx_message_facts_message'); // v25 (D39)
+      expect(SCHEMA_VERSION).toBe(25);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       const guardCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('message_guard_events')")
@@ -208,6 +209,42 @@ describe('migration runner', () => {
       db.exec(
         "INSERT INTO sync_intents (kind, account_id, not_before_ms, reason, next_attempt_ms, created_ms) " +
           "VALUES ('bogus', 'acct_1', 2, 'x', 2, 2)",
+      )).toThrow(/CHECK/);
+    db.close();
+  });
+
+  it('v24 → v25 adds purchase facts and marks every existing transaction as read by the sweep (D39)', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 24));
+    expect(readSchemaVersion(db)).toBe(24);
+    db.exec(
+      "INSERT INTO fan_transactions (account_id, tx_id, fan_id, amount, net, type, created_at) " +
+        "VALUES ('acct_1', 'eb118196c33625aa23c4dda8de8e4501', '499106230', 67, 53.6, 'message', '2026-09-26T14:37:10.000Z')",
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 24, to: SCHEMA_VERSION });
+    expect(db.prepare('SELECT tx_id, source FROM fan_transactions').all()).toEqual([
+      { tx_id: 'eb118196c33625aa23c4dda8de8e4501', source: 'sweep' },
+    ]);
+    expect(() =>
+      db.exec(
+        "INSERT INTO fan_transactions (account_id, tx_id, fan_id, amount, net, created_at, source) " +
+          "VALUES ('acct_1', 't2', '1', 5, 4, '2026-09-26T14:37:10.000Z', 'bogus')",
+      )).toThrow(/CHECK/);
+    db.exec(
+      "INSERT INTO message_facts (account_id, chat_id, message_id, kind, provenance, source, recorded_at) " +
+        "VALUES ('acct_1', '15544628', '11365803781187', 'ppv_unlocked', 'live', 'catch-up', '2026-09-27T00:00:00.000Z')",
+    );
+    // Keyed by (account, chat, message).
+    expect(() =>
+      db.exec(
+        "INSERT INTO message_facts (account_id, chat_id, message_id, kind, provenance, source, recorded_at) " +
+          "VALUES ('acct_1', '15544628', '11365803781187', 'ppv_unlocked', 'live', 'stream', '2026-09-27T00:00:00.000Z')",
+      )).toThrow(/UNIQUE|PRIMARY/);
+    expect(() =>
+      db.exec(
+        "INSERT INTO message_facts (account_id, chat_id, message_id, kind, provenance, source, recorded_at) " +
+          "VALUES ('acct_1', '1', '2', 'tip', 'live', 'stream', '2026-09-27T00:00:00.000Z')",
       )).toThrow(/CHECK/);
     db.close();
   });

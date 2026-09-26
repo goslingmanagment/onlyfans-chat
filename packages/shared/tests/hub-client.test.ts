@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createHubClient,
   HUB_LIST_PAGES_TIMEOUT_MS,
+  HUB_MONEY_FACTS_TIMEOUT_MS,
   HUB_OFAPI_CREDITS_TIMEOUT_MS,
   HUB_PROFILE_GET_TIMEOUT_MS,
   HUB_PROFILE_MAX_CHARS,
@@ -236,6 +237,75 @@ describe('createHubClient', () => {
 
       const error = await captureHubError(client.listPages());
       expect(error.reason).toBe('invalid-response');
+    });
+  });
+
+  describe('listMoneyFacts (D39 catch-up)', () => {
+    const FACT = {
+      accountId: 9,
+      accountSeq: 246115,
+      type: 'message.ppv_unlocked',
+      occurredAt: '2026-09-26T14:37:00.000Z',
+      data: { amountText: '$67.00', amountUsd: 67 },
+      fanRef: '499106230',
+      conversationRef: '499106230',
+      messageRef: '11388202223077',
+      accountRef: 'acct_a571',
+      transactionRef: null,
+      provenance: 'live',
+      thread: { fanName: 'Neil/US', username: 'u499106230' },
+    };
+
+    it('issues the SDK eventsV2Facts GET with the page id, watermark and limit', async () => {
+      const page = { accountId: 9, throughSeq: 246116, facts: [FACT], nextAfterSeq: 246116, hasMore: false };
+      const { calls, fetchImpl } = stubFetch(jsonResponse(200, page));
+      const { client, timeouts } = makeClient(fetchImpl);
+
+      const result = await client.listMoneyFacts({ accountId: 9, afterSeq: 0, limit: 500 });
+
+      expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/events/v2/facts?accountId=9&afterSeq=0&limit=500');
+      expect(calls[0]?.init.method).toBe('GET');
+      expect(calls[0]?.init.headers['authorization']).toBe('Bearer agency_hub_core_testkey');
+      expect(timeouts).toEqual([HUB_MONEY_FACTS_TIMEOUT_MS]);
+      expect(result).toEqual({ kind: 'page', page });
+    });
+
+    it('keeps a fact with an unknown provenance (the SDK\'s closed enum would fail the page)', async () => {
+      const page = {
+        accountId: 9,
+        throughSeq: 10,
+        facts: [{ ...FACT, provenance: 'teleported' }],
+        nextAfterSeq: 10,
+        hasMore: false,
+      };
+      const { fetchImpl } = stubFetch(jsonResponse(200, page));
+      const { client } = makeClient(fetchImpl);
+      const result = await client.listMoneyFacts({ accountId: 9, afterSeq: 0, limit: 500 });
+      expect(result.kind === 'page' ? result.page.facts : null).toHaveLength(1);
+    });
+
+    it('maps 409 (watermark past the head) and 403 (outside the grants) to outcomes', async () => {
+      const { fetchImpl } = stubFetch(
+        jsonResponse(409, { error: 'conflict', message: 'afterSeq 9 is ahead of account 9 head 5; restart from 0', statusCode: 409 }),
+        jsonResponse(403, { error: 'forbidden', message: 'Requested account is outside the granted scope', statusCode: 403 }),
+      );
+      const { client } = makeClient(fetchImpl);
+      expect(await client.listMoneyFacts({ accountId: 9, afterSeq: 9, limit: 500 }))
+        .toMatchObject({ kind: 'ahead-of-head' });
+      expect(await client.listMoneyFacts({ accountId: 9, afterSeq: 0, limit: 500 }))
+        .toEqual({ kind: 'forbidden' });
+    });
+
+    it('throws for 5xx and for a drifted page shape', async () => {
+      const { fetchImpl } = stubFetch(
+        jsonResponse(503, { error: 'down' }),
+        jsonResponse(200, { facts: 'nope' }),
+      );
+      const { client } = makeClient(fetchImpl);
+      expect((await captureHubError(client.listMoneyFacts({ accountId: 9, afterSeq: 0, limit: 5 }))).reason)
+        .toBe('http');
+      expect((await captureHubError(client.listMoneyFacts({ accountId: 9, afterSeq: 0, limit: 5 }))).reason)
+        .toBe('invalid-response');
     });
   });
 

@@ -12,6 +12,8 @@ import { createChatsQueries } from './queries/chats';
 import type { ChatsQueries } from './queries/chats';
 import { createMessagesQueries } from './queries/messages';
 import type { MessagesQueries } from './queries/messages';
+import { createMessageFactsQueries } from './queries/message-facts';
+import type { MessageFactsQueries } from './queries/message-facts';
 import { createFansQueries } from './queries/fans';
 import type { FansQueries } from './queries/fans';
 import { createFanTransactionsQueries } from './queries/fan-transactions';
@@ -45,6 +47,8 @@ export interface DataLayer {
   accounts: AccountsQueries;
   chats: ChatsQueries;
   messages: MessagesQueries;
+  /** D39: purchase facts (message.ppv_unlocked), applied on every message write. */
+  messageFacts: MessageFactsQueries;
   fans: FansQueries;
   fanTransactions: FanTransactionsQueries;
   summaries: SummariesQueries;
@@ -76,6 +80,7 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     accounts: createAccountsQueries(db, bus),
     chats: createChatsQueries(db, bus),
     messages: createMessagesQueries(db, bus),
+    messageFacts: createMessageFactsQueries(db, bus),
     fans: createFansQueries(db, bus),
     fanTransactions: createFanTransactionsQueries(db, bus),
     summaries: createSummariesQueries(db, bus),
@@ -131,6 +136,13 @@ export { createChatsQueries } from './queries/chats';
 export type { ChatsQueries, ChatListPage } from './queries/chats';
 export { createMessagesQueries, MESSAGE_RETENTION_DEFAULT } from './queries/messages';
 export type { MessagesQueries, MessagePage } from './queries/messages';
+export { createMessageFactsQueries } from './queries/message-facts';
+export type {
+  MessageFactsQueries,
+  MessageFactSource,
+  PpvUnlockFact,
+  RecordPpvUnlockOutcome,
+} from './queries/message-facts';
 export { createFansQueries } from './queries/fans';
 export type { FansQueries } from './queries/fans';
 export { createFanTransactionsQueries } from './queries/fan-transactions';

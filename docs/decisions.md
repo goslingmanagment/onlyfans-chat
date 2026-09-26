@@ -58,6 +58,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D36 | 2026-09-16 | New followers: a delivered welcome is recognised by `queueId` equal to the welcome-template id and no longer blocks ready (amends D32) |
 | D37 | 2026-09-20 | SDK re-vendored from deployed core 82571f3c; New Followers asks for `variantCount: 1` and the deprecated `greetingMode` alias leaves this client (core #379) |
 | D38 | 2026-09-26 | Fresh list at launch: page 1 first and page by page, hub frames commit state + durable sync intents + the v2 cursor in one transaction and never await the network, `platform=onlyfans`, SYNCING + one list banner, toast age/provenance gate; SDK re-vendored from deployed core a51e687d (H3, core #265) |
+| D39 | 2026-09-27 | Purchases: Core's money facts apply locally (PPV unlock → `message_facts`, applied on every message write; `transaction.posted` → `fan_transactions` at once, the sweep keeps its own watermark), a free `/events/v2/facts` catch-up per account, quiet toasts for live PPV purchases and tips (no sound), tip messages stop alerting, no paid `refreshChat` on PPV/tip frames |
 
 ## Entries
 
@@ -1066,3 +1067,101 @@ started` / `list sync complete`, `[sync] sync intent opened` / `closed` /
 `transactionRef`, `thread`) and effect list; the detached PPV/tip
 `refreshChat` stays until D2 removes it. Not verified here: the p95 paint
 target and the credit rate on real OFAPI — both need the release and its logs.
+
+**D39 (2026-09-27).** Owner-approved plan «OF Desktop: PPV purchases and the
+stale startup list», stage D2 (`_docs/2026-09-26-of-desktop-purchases-and-startup-plan.md`
+§1 A, §2, «D2»). Core delivers `message.ppv_unlocked` on the v2 stream since
+H1 and serves every money fact through `GET /api/v1/events/v2/facts` since H3
+(core #265); until now a bought PPV stayed «не куплено» unless a cached row
+happened to be open, each PPV/tip frame paid for a `refreshChat`, and a tip
+rang through its chat message.
+
+1. **Purchase facts (schema v25 `message_facts`).** A `message.ppv_unlocked`
+   fact is stored keyed by (account, chat, message), with its Core page id,
+   `account_seq`, price, provenance and the lane that delivered it first.
+   Every message write consults it (`messages.ts`: the inserted `is_opened`
+   is 1 whenever a fact exists), so the fact wins whichever arrives first — a
+   fact before its row (auto-read off: most PPV rows are not cached) or a row
+   re-read later as "not opened". The old `markOpened` became
+   `messageFacts.recordPpvUnlock`, which also opens a row that is already
+   there and reports whether the fact is new to this device. A `repair` fact
+   (provenance) replaces an older fact for the same message under another
+   chat — the business key of a PPV fact is (account, message); that is how
+   the 70 July facts with the creator's id as the conversation (Core INC-001)
+   get corrected once Core's Repair runs.
+2. **`transaction.posted` → `fan_transactions` at once**, keyed by Core's
+   `transactionRef`, which is OFAPI's transaction id — the id the sweep's
+   `/transactions` list returns (production, pages 8/9, 2026-09-26: Core's
+   `transactions` table holds REST-read and webhook rows under ONE unique
+   (page, transaction id), their time ranges overlap June–September, and no
+   same-fan, same-amount, same-second pair exists under two ids).
+   The insert never overwrites (`source = 'hub'`); the hourly sweep's own
+   write claims the row (`source = 'sweep'`, OFAPI's list values win) and its
+   incremental watermark is the newest row IT read, so an instant row can
+   never make it skip unread history. One money change per transaction either
+   way. Existing rows migrate as `'sweep'`.
+3. **Catch-up through `/events/v2/facts`** (the SDK's `eventsV2Facts` via
+   `raw`, parsed with the desktop's tolerant frame schema: the SDK's closed
+   provenance enum would fail a whole page on one unknown value). Per
+   account, from a persisted watermark (`hubSync.facts.v1.<acct>`: Core page
+   id + `afterSeq`, wiped with the cursors on a hub switch): the first run
+   reads the whole history; later runs start where the last one ended. It
+   runs at every hub (re)configuration — session start, and a new credential,
+   whose stream starts without a cursor and skips history — and after every
+   gap recovery (409/snapshot, grant/scope drift). The watermark moves only
+   with the catch-up: after a gap the stream resumes from a fresh cursor past
+   it, so only the ledger read proves what was inside. Each page and its
+   watermark commit in one transaction; `hasMore`/`nextAfterSeq` page it; a
+   409 restarts once from 0 (every apply is idempotent); a 403 stops; other
+   failures retry after 30 s/1/2/5/10 min, then wait for the next trigger.
+   The page id comes from any durable frame (`HubFrameMeta.hubAccountId`) or
+   a v2 snapshot's account list; an account whose id is still unknown waits.
+   The catch-up costs no OFAPI credits and emits nothing — history, never news.
+4. **Quiet toasts** (in-app toast + OS notification, never a sound):
+   «<фан>» / «купил(а) PPV $89» and «<фан>» / «отправил(а) чаевые $5» (name
+   as the title, the approved phrase as the body; `notif.*` in the catalog,
+   RU + EN; dollars, never mills). Main alerts (`live: true` on the event)
+   only for a v2 stream frame with provenance `live`, delivered after THIS
+   connection's `replay_completed`, at most `NOTIFICATION_MAX_AGE_MS` (9 min,
+   D38) old on the hub clock — and, for a PPV, only when the fact is new to
+   this device (a fact the catch-up recorded first never alerts again).
+   Replay, repair, redelivery, unknown provenance, v1 and the catch-up never
+   alert; a tip alerts once per ledger row. The renderer adds the chatter's
+   context: no toast for the chat that is open in a focused window, none with
+   notifications off. The name: Core's `thread.fanName`, else the local chat
+   row, else the fans cache (custom name, name), else a handle
+   (`thread.username`, fans username), else neutral wording («Покупка PPV» /
+   «Фан купил(а) PPV $89», «Чаевые» / «Фан отправил(а) чаевые $5») — a
+   display name is preferred over a handle wherever it exists. A toast click
+   opens the chat (ToastHost); an OS-notification click brings the window
+   forward and opens it (`openChat` frame on `sync:event`).
+5. **Tips.** The tip alert comes from `tip.received` only (instant; no
+   message or transaction ref — Core checked 111/111). A chat message with
+   `isTip` no longer toasts or rings: `isAlertEligible` refuses it, and main's
+   attention gate stamps it `live: false` (from the frame body, else the
+   stored row for polling's id-only events). Polling's derived `tipReceived`
+   carries no `live` and so never alerts.
+6. **No paid reads.** PPV and tip frames no longer call `refreshChat` (D38
+   had moved it after the commit): the fact is applied locally in the frame
+   transaction. A failed apply never rejects the frame (the poison-frame rule
+   of incident 2026-07-15) — it is counted as `hub-money-fact-error` and the
+   catch-up re-applies it from the ledger.
+
+Acceptance instrumentation (desktop log, scope `sync`): `[sync] purchase
+applied` — one line per money fact applied from the stream: `type`,
+`accountId`, `hubAccountId` + `accountSeq` (join keys to Core's `v2 money
+frame written` log and `domain_events`), `chatId`/`messageId` or
+`fanId`/`transactionId`, `amountUsd`, `provenance`, `replay`, `outcome`
+(`newFact`/`rowOpened`/`superseded`, or `inserted`), `alert`/`alertVeto`,
+`occurredAt`, `appliedAt` on the hub clock and `sinceOccurredMs`; «hub
+receipt → local apply» = `appliedAt` − the webhook's `received_at` (target
+≤ 5 s). `[sync] money facts caught up` — per account and run: `reason`,
+`fromSeq`, `afterSeq`, `throughSeq`, `pages`, `facts`, `ppvNew`, `ppvOpened`,
+`ppvRepaired`, `txInserted`, `txKnown`, `tips`, `malformed`, `unmapped`,
+`foreign`, `ms` and `localPpvFacts` = this device's `message_facts` rows for
+the account, to compare with Core's non-superseded `message.ppv_unlocked`
+rows of page `hubAccountId` that name a conversation and a message.
+Also `[sync] money facts page mapped`, `… catch-up failed` / `gave up until
+the next trigger` / `refused: page outside the grants` / `watermark ahead of
+Core; restarting from 0`. Not verified here: the ≤ 5 s latency and the
+count match need the release and its logs.

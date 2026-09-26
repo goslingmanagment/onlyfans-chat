@@ -18,6 +18,7 @@ import {
   messageNotificationBody,
   messageNotificationTitle,
 } from '@chatgoose/shared/notifications/index';
+import { purchaseToast } from './purchaseToast';
 import { currentLocale } from '../lib/i18n';
 import {
   handleAiOperationEvent,
@@ -96,6 +97,12 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
 
   const creditBalanceSchema = z.object({ type: z.literal('creditBalance') });
   const syncStatusSchema = z.object({ type: z.literal('syncStatus') });
+  // D39: a purchase OS notification was clicked (main focused the window).
+  const openChatSchema = z.object({
+    type: z.literal('openChat'),
+    accountId: z.string().min(1),
+    chatId: z.string().min(1),
+  });
 
   // Additive frame (contract.ts SpendersRefreshEvent): scoped-refresh queue
   // progress. Live counts drive the spenders store (button N/M + hairline
@@ -124,6 +131,11 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
     if (syncStatusSchema.safeParse(payload).success) {
       queueInvalidate(qk.syncStatus);
       queueInvalidate(qk.activity);
+      return;
+    }
+    const openChat = openChatSchema.safeParse(payload);
+    if (openChat.success) {
+      useUiStore.getState().selectChat(openChat.data.accountId, openChat.data.chatId);
       return;
     }
     const refreshFrame = spendersRefreshSchema.safeParse(payload);
@@ -183,6 +195,8 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
           ui.selectedAccountId === event.accountId &&
           ui.selectedChatId === event.chatId &&
           document.hasFocus();
+        // D39: isAlertEligible also refuses tip messages — no toast, no ring;
+        // the tip's quiet toast comes from its tipReceived fact below.
         if (!isOpenChat && isAlertEligible(event)) {
           const settings = useSettingsCache.getState();
           if (settings.notificationsEnabled) {
@@ -206,11 +220,30 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
         break;
       }
       case 'messageSent':
-      case 'ppvUnlocked':
-      case 'tipReceived':
         queueInvalidate(qk.messages(event.accountId, event.chatId));
         invalidateChats(event.accountId);
         break;
+      case 'ppvUnlocked':
+      case 'tipReceived': {
+        queueInvalidate(qk.messages(event.accountId, event.chatId));
+        invalidateChats(event.accountId);
+        // D39 quiet purchase toast: only on main's explicit yes (live stream
+        // fact, after replay, inside the age gate), never for the chat the
+        // chatter has open and focused, and never with a sound.
+        const list = queryClient.getQueryData<{ items: ChatListItemVM[] }>(
+          qk.chats(event.accountId, 'all'),
+        );
+        const toast = purchaseToast(event, {
+          selectedAccountId: ui.selectedAccountId,
+          selectedChatId: ui.selectedChatId,
+          windowFocused: document.hasFocus(),
+          notificationsEnabled: useSettingsCache.getState().notificationsEnabled,
+          locale: currentLocale(),
+          chatFanName: list?.items.find((c) => c.chatId === event.chatId)?.fanName,
+        });
+        if (toast !== null) ui.pushToast(toast);
+        break;
+      }
       case 'readStateChanged':
         queueInvalidate(qk.messages(event.accountId, event.chatId));
         break;

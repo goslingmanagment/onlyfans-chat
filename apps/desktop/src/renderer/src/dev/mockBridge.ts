@@ -700,6 +700,13 @@ function mockListSyncScenario(): 'syncing' | 'stale' | null {
   return value === 'syncing' || value === 'stale' ? value : null;
 }
 
+/** D39 plain-vite demo switch (`?purchaseToasts=1`): the two quiet purchase
+ * toasts, as main would announce a live PPV purchase and a live tip. */
+function mockPurchaseToastsScenario(): boolean {
+  if (typeof location === 'undefined') return false;
+  return new URLSearchParams(location.search).get('purchaseToasts') === '1';
+}
+
 function previousThursdayAt1607(nowMs: number): string {
   const at = new Date(nowMs);
   at.setHours(16, 7, 0, 0);
@@ -1202,6 +1209,32 @@ export function createMockBridge(): ChatGooseBridge {
       if (row !== undefined) return { rows, row };
     }
     return null;
+  }
+
+  if (mockPurchaseToastsScenario()) {
+    setTimeout(() => {
+      const account = store.accounts[0];
+      const chats = account === undefined ? [] : (store.chats.get(account.id) ?? []);
+      const [buyer, tipper] = [chats[1], chats[2]];
+      if (account === undefined || buyer === undefined || tipper === undefined) return;
+      emit('sync:event', {
+        type: 'ppvUnlocked',
+        accountId: account.id,
+        chatId: buyer.chatId,
+        messageId: 'mock-ppv',
+        amountUsd: 89,
+        fanName: buyer.fanName,
+        live: true,
+      });
+      emit('sync:event', {
+        type: 'tipReceived',
+        accountId: account.id,
+        chatId: tipper.chatId,
+        amountUsd: 5,
+        fanName: tipper.fanName,
+        live: true,
+      });
+    }, 1_500);
   }
 
   // periodic liveness: freshness ticks + a fake incoming message every ~30s,

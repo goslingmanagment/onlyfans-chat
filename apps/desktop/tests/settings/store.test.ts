@@ -571,6 +571,8 @@ describe('settings store', () => {
     queries.set('hubSync.lastEventId', 41);
     queries.set('hubSync.v2Cursor.deadbeef', 'CUR_OLD');
     queries.set('hubSync.snapshotProgress.old-scope', { version: 1 });
+    // D39: facts watermarks name the old Core's page ids and sequences.
+    queries.set('hubSync.facts.v1.acct_1', { hubAccountId: 9, afterSeq: 246116, updatedAt: 'x' });
     queries.set('unrelated.runtime.row', { keep: true });
 
     await store.update({ hubBaseUrl: 'http://127.0.0.1:4000' });
@@ -578,6 +580,7 @@ describe('settings store', () => {
     expect(queries.get('hubSync.lastEventId')).toBeUndefined();
     expect(queries.get('hubSync.v2Cursor.deadbeef')).toBeUndefined();
     expect(queries.get('hubSync.snapshotProgress.old-scope')).toBeUndefined();
+    expect(queries.get('hubSync.facts.v1.acct_1')).toBeUndefined();
     expect(queries.get('unrelated.runtime.row')).toEqual({ keep: true });
   });
 

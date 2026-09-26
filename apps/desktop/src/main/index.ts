@@ -31,7 +31,7 @@ import {
   finishHarvestDeltaBeforePurge,
   type HarvestModule,
 } from './harvest/index';
-import { createHubClient } from '@chatgoose/shared/hub/index';
+import { createHubClient, type HubClient } from '@chatgoose/shared/hub/index';
 import { createLogger, type Logger } from './diagnostics/logger';
 import { buildDiagnosticsReport, settingsForDiagnosticsExport } from './diagnostics/report';
 import { runKeyTest } from './diagnostics/key-tests';
@@ -119,6 +119,7 @@ import {
 import {
   messageNotificationBody,
   messageNotificationTitle,
+  purchaseNotification,
   shouldShowOsNotification,
 } from './notifications';
 import { awaitRendererLoad } from './window-load';
@@ -149,10 +150,12 @@ import {
   subscribeSettingsScope,
 } from './runtime-activation';
 import type {
+  OpenChatEvent,
   UnreadReconcileSettingsVM,
   UpdateModeVM,
   UpdateStatusVM,
 } from '../preload/contract';
+import type { SyncEvent } from '@chatgoose/shared/protocol/index';
 
 protocol.registerSchemesAsPrivileged([MEDIA_SCHEME_PRIVILEGES]);
 
@@ -830,12 +833,39 @@ async function rebuildOfapiRuntime(
     sourceV2Cursor: z.string().min(1).nullable(),
     targetV2Cursor: z.string().min(1).nullable(),
   });
+  // D39: the money-facts catch-up reads Core's ledger through the SDK client
+  // with the stream's own credential, resolved per call (a key or URL change
+  // reconfigures the stream and gets a fresh client here).
+  let moneyFactsClient: { key: string; client: HubClient } | null = null;
+  async function currentMoneyFactsClient(): Promise<HubClient> {
+    const connection = await settingsStore.getHubConnection();
+    const baseUrl = connection.settings.hubBaseUrl;
+    const bearer = connection.bearer;
+    if (baseUrl === null || bearer === null || bearer.length === 0) {
+      throw new Error('hub is not configured');
+    }
+    const key = `${baseUrl}\n${bearer}`;
+    if (moneyFactsClient === null || moneyFactsClient.key !== key) {
+      moneyFactsClient = {
+        key,
+        client: createHubClient({
+          baseUrl,
+          apiKey: bearer,
+          clientVersion: app.getVersion(),
+          onAuthFailure: noteHubAuthFailure,
+        }),
+      };
+    }
+    return moneyFactsClient.client;
+  }
   const nextSync = createHubAwareSync({
     polling,
     data: dataLayer,
     onLog: (level, message, fields) => logger?.log(level, 'sync', message, fields),
     hubModeOverride: () => settingsCache?.hubModeOverride ?? 'auto',
     autoReadEnabled: () => settingsCache?.autoReadChats ?? false,
+    moneyFacts: async ({ hubAccountId, afterSeq, limit }) =>
+      (await currentMoneyFactsClient()).listMoneyFacts({ accountId: hubAccountId, afterSeq, limit }),
     // Resolved per (re)connect attempt so settings edits take effect on
     // reconfigureHub without re-running OFAPI init. Null = hub mode off.
     createHub: async (
@@ -847,6 +877,7 @@ async function rebuildOfapiRuntime(
         onSnapshotRequired,
         onV2GapRecovered,
         onServerDate,
+        onAccountPages,
       },
       accountIds,
     ) => {
@@ -890,6 +921,7 @@ async function rebuildOfapiRuntime(
         onSnapshot,
         onSnapshotRequired,
         onV2GapRecovered,
+        onAccountPages,
         onStatusChange,
         onWarn: (message, fields) => logger?.warn('hub-sse', message, fields),
         // v1 resume checkpoint is global per chatter key (core fanout_seq);
@@ -1175,9 +1207,55 @@ function reattachEventForwarding(): void {
           silent: true,
         }).show();
       }
+      if (
+        (event.type === 'ppvUnlocked' || event.type === 'tipReceived') &&
+        shouldShowOsNotification({
+          event,
+          windowBackgrounded: isWindowBackgrounded(mainWindow),
+          notificationsEnabled: notificationPrefs.notificationsEnabled,
+          notificationsSupported: Notification.isSupported(),
+        })
+      ) {
+        showPurchaseNotification(event, liveData.chats.get(event.accountId, event.chatId)?.fanName);
+      }
     },
   });
   emitSyncStatusFrame();
+}
+
+/** Purchase notifications stay referenced until they close: a collected
+ * Electron Notification loses its click handler. */
+const livePurchaseNotifications = new Set<Notification>();
+
+/**
+ * D39 quiet purchase alert, OS side: always silent (no sound, owner
+ * decision); a click brings the window forward and opens the fan's chat.
+ */
+function showPurchaseNotification(
+  event: Extract<SyncEvent, { type: 'ppvUnlocked' | 'tipReceived' }>,
+  chatFanName: string | undefined,
+): void {
+  const { title, body } = purchaseNotification(uiLocale, event, chatFanName);
+  const notification = new Notification({ title, body, silent: true });
+  const release = (): void => {
+    livePurchaseNotifications.delete(notification);
+  };
+  notification.on('click', () => {
+    release();
+    focusExistingWindow(mainWindow);
+    const win = mainWindow;
+    if (win !== null && !win.isDestroyed()) {
+      win.webContents.send('sync:event', {
+        type: 'openChat',
+        accountId: event.accountId,
+        chatId: event.chatId,
+      } satisfies OpenChatEvent);
+    }
+  });
+  notification.on('close', release);
+  notification.on('failed', release);
+  livePurchaseNotifications.add(notification);
+  notification.show();
 }
 
 async function boot(): Promise<void> {

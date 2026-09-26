@@ -173,7 +173,18 @@ describe('messages upsert', () => {
   it('keeps a durable PPV unlock monotonic across stale message upserts', () => {
     layer.messages.upsertMany([sampleMessage({ price: 25, isOpened: false })]);
 
-    layer.messages.markOpened('acct_1', '101', 'm1');
+    // D39: the old markOpened is a recorded purchase fact now.
+    layer.messageFacts.recordPpvUnlock({
+      accountId: 'acct_1',
+      chatId: '101',
+      messageId: 'm1',
+      hubAccountId: 9,
+      accountSeq: 1,
+      amountUsd: 25,
+      provenance: 'live',
+      occurredAt: '2026-06-01T10:00:00.000Z',
+      source: 'stream',
+    }, '2026-06-01T10:00:01.000Z');
     expect(layer.messages.get('acct_1', '101', 'm1')?.isOpened).toBe(true);
 
     layer.messages.upsertMany([sampleMessage({ price: 25, isOpened: false })]);
