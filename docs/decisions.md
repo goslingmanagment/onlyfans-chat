@@ -973,10 +973,22 @@ bar already said HUB LIVE on the stream's first byte.
    list-only mode, and closes when M arrives from any source or is deleted;
    `delete_head` asks for an authoritative read and then clears a cached head
    that still shows the deleted message. Failed reads back off 5/10/20 s and
-   close with a warning after three (the safety read covers them). T is the
-   frame's `occurredAt` for replayed frames — the startup read proves them for
-   free — and the local receipt time for live ones. Intents wait while their
-   account's verification is pending and survive restarts.
+   close with a warning after three. Nothing re-reads a given-up obligation on
+   a schedule for every account: the FOCUSED account gets its 5-minute safety
+   read; any other account catches up only with its next hub event, the next
+   re-verification (an outage over 60 s, a 409, a restart) or its next safety
+   read once the chatter focuses it — the paid-read budget is not widened for
+   it. T is the frame's `occurredAt` for replayed frames (converted to the
+   local clock through the hub clock offset) — the startup read proves them
+   for free — and the local receipt time for live ones. Intents wait while
+   their account's verification is pending and survive restarts; those of an
+   account the runtime no longer handles close as `account-gone` at start, on
+   a grant shrink and whenever the worker meets them. The worker cannot spin:
+   a chat intent is never re-read within 5 s of its previous read, an account
+   list never within 30 s, and every outcome without progress closes the
+   intent or moves its next attempt forward (review of #36: an intent for an
+   account without a polling loop looped in microtasks and froze the main
+   process on every launch).
 5. **Startup.** Each account's first poll IS its verification: page 1 is
    written, painted and reported the moment it arrives, in parallel with the
    replay; deeper pages and hydration are written page by page with the local
@@ -986,7 +998,10 @@ bar already said HUB LIVE on the stream's first byte.
    after the automatic body delta reached it (auto-read) or at once
    (list-only), so an unfinished delta is re-detected instead of lost. An
    authoritative page 1 still moves a head backwards (a missed deletion) but
-   keeps a newer head another writer stored while the read was in flight.
+   keeps a newer head written within 10 s before the read or during it
+   (`HEAD_WRITE_PROTECT_MS`): the list endpoint lags the webhook, and a safety
+   read one second after a hub message would otherwise put the old preview
+   back and clear its unread for up to five minutes.
 6. **Timeouts and retries.** Chat-list reads are `retry: 'none'` (every caller
    owns its schedule). Client timeouts follow the hub's (core #262): 25 s for
    chats, chat messages and transactions, 65 s for explicit deep history;
@@ -997,18 +1012,31 @@ bar already said HUB LIVE on the stream's first byte.
 8. **Safety net.** While the stream is live (hidden window included), page 1
    of the focused account every 5 minutes, skipped when any successful page-1
    read of it happened in the last 5 minutes; one check after the OS resumes
-   (Electron `powerMonitor` and the existing sleep detector), same skip rule.
+   (Electron `powerMonitor` and the existing sleep detector both signal a
+   wake; one check runs, the other joins it), same skip rule.
 9. **Toast gate.** A v2 frame alerts only with provenance `live`, an
-   `occurredAt` at most 3 minutes old (`NOTIFICATION_MAX_AGE_MS`; Core's
-   automatic redelivery only touches attempts older than 10 minutes) and the
-   existing replay_completed rule. `redelivery`, `repair` and unknown never
-   alert. v1 frames and polling keep their D24 rules.
+   `occurredAt` at most 9 minutes old (`NOTIFICATION_MAX_AGE_MS`) and the
+   existing replay_completed rule; `redelivery`, `repair` and unknown never
+   alert. 9 minutes sits below Core's 10-minute auto-redelivery quiet period
+   and above OFAPI's own delivery delays: on pages 8/9 over 30 days, 88
+   ordinary incoming messages arrived 3–10 minutes late (e.g. 2026-09-25
+   04:18–04:54 UTC, 181–277 s) and 0.1.56 notified them. The age is measured
+   on the hub's clock — the offset comes from the `Date` header of every
+   stream (re)connect and v2 snapshot, median of the last five, local clock as
+   the fallback — so a PC clock minutes off neither mutes nor admits alerts;
+   the D24 epoch rule uses the same offset. v1 frames and polling keep their
+   D24 rules. The first message of a chat the list does not have yet is
+   announced without waiting for the list read: with the fan's name from the
+   local fans cache, else as «Новый чат» (`notif.newChat`).
 10. **SYNCING and re-verification.** A verification epoch starts at session
     start, after a stream outage longer than 60 s and after a replay gap
     (409 / grant rebaseline); the planned 15-minute reconnect never leaves
     LIVE. Status `SYNCING` (amber, `sb.syncingTip` — the owner-approved text)
     lasts until Core's replay marker AND a page-1 read (or exhausted retries)
     of every account; without a marker for 60 s of live stream it fails open.
+    The word shows only while the stream is live: an unreachable hub cycles
+    connecting/degraded on every retry, and the polling state speaks then
+    (no SYNCING↔DEGRADED flicker).
     Re-verification is paid work started by a transition, so it is coalesced
     to at most one epoch per 5 minutes (incident 2026-07-15: a flapping stream
     must not scale reads). «ПУШ» counts only live frames (after the
@@ -1027,7 +1055,8 @@ verified` / `list verification retry scheduled` / `list verification gave up`,
 `[diag] safety read` / `safety read skipped`, `[sync] hub replay completed`
 (`framesByAccount` by Core page id, `offPlatformFrames`), `[sync] list sync
 started` / `list sync complete`, `[sync] sync intent opened` / `closed` /
-`gave up` / `read`. D2 builds on the same frame meta (`provenance`,
+`gave up` / `read`, `[sync] local clock differs from the hub` (once, with
+`offsetMs`). D2 builds on the same frame meta (`provenance`,
 `transactionRef`, `thread`) and effect list; the detached PPV/tip
 `refreshChat` stays until D2 removes it. Not verified here: the p95 paint
 target and the credit rate on real OFAPI — both need the release and its logs.

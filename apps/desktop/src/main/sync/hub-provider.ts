@@ -25,6 +25,7 @@ import type {
 import { createSyncIntentWorker, type SyncIntentWorker } from './intents';
 import { compareMessageIds } from './message-id';
 import type {
+  ChatTailReadOutcome,
   HubMessageApplyOutcome,
   ListReadOutcome,
   ListReadRecord,
@@ -86,7 +87,7 @@ type PollingLike = SyncProvider & {
     trigger: ListReadTrigger,
     options?: { preserveLocalHead?: boolean; bodyDeltas?: boolean },
   ): Promise<ListReadOutcome>;
-  readChatTailForIntent(accountId: string, chatId: string): Promise<ListReadOutcome>;
+  readChatTailForIntent(accountId: string, chatId: string): Promise<ChatTailReadOutcome>;
   verifyAccounts(accountIds: readonly string[], reason: ListVerificationReason): void;
   noteSystemResume(): void;
   listHeadReached(accountId: string, chatId: string, messageId: string): boolean;
@@ -105,6 +106,8 @@ export interface HubFactoryCallbacks {
   }) => void;
   /** Refresh current read-gateway grants before v2 state reconciliation. */
   onV2GapRecovered: () => Promise<readonly string[]>;
+  /** The hub's Date header (see HubSyncOptions.onServerDate). */
+  onServerDate: (serverDateMs: number, receivedAtLocalMs: number) => void;
 }
 
 export interface HubAwareSyncOptions {
@@ -235,10 +238,19 @@ export interface HubAwareSync extends SyncProvider {
 /**
  * D38 toast age gate: a hub frame whose fact is older than this never alerts,
  * whatever its provenance says. Core's automatic webhook redelivery (H2) only
- * redelivers attempts older than 10 minutes, and a redelivery that lost its
- * provenance header would otherwise ring as news.
+ * redelivers attempts older than 10 minutes, so anything younger is not an
+ * auto-redelivery; a redelivery carrying the header is excluded by provenance
+ * anyway. OFAPI itself delivers ordinary messages late in delay episodes
+ * (production, pages 8/9, 30 days: 88 incoming messages 3–10 min late, e.g.
+ * 2026-09-25 04:18–04:54 UTC) — those are news and must still alert, hence
+ * 9 minutes, measured on the hub's clock (see hubNowMs).
  */
-export const NOTIFICATION_MAX_AGE_MS = 3 * 60_000;
+export const NOTIFICATION_MAX_AGE_MS = 9 * 60_000;
+/** Log once when the PC clock differs from the hub by more than this. */
+const CLOCK_SKEW_WARN_MS = 60_000;
+/** The hub's Date header truncates to whole seconds: +0.5 s on average. */
+const DATE_HEADER_ROUNDING_MS = 500;
+const CLOCK_SAMPLES = 5;
 /** A stream outage longer than this re-verifies every account's list. */
 export const RECONNECT_VERIFY_AFTER_MS = 60_000;
 /**
@@ -493,6 +505,39 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     }
   }
 
+  // ── D38 hub clock ─────────────────────────────────────────────────────────
+  // Frame timestamps (occurredAt, message createdAt) are upstream/hub time.
+  // Comparing them with a skewed PC clock would silence every alert (PC fast)
+  // or let stale facts ring (PC slow). The hub's Date header on every stream
+  // (re)connect gives an offset; without a sample the local clock is used.
+  const clockSamples: number[] = [];
+  let hubClockOffsetMs = 0;
+  let clockSkewWarned = false;
+
+  function noteServerDate(serverDateMs: number, receivedAtLocalMs: number): void {
+    const offset = serverDateMs + DATE_HEADER_ROUNDING_MS - receivedAtLocalMs;
+    if (!Number.isFinite(offset)) {
+      return;
+    }
+    clockSamples.push(offset);
+    if (clockSamples.length > CLOCK_SAMPLES) {
+      clockSamples.shift();
+    }
+    const sorted = [...clockSamples].sort((left, right) => left - right);
+    hubClockOffsetMs = sorted[Math.floor(sorted.length / 2)] ?? 0;
+    if (Math.abs(hubClockOffsetMs) > CLOCK_SKEW_WARN_MS && !clockSkewWarned) {
+      clockSkewWarned = true;
+      onLog('warn', 'local clock differs from the hub; alerts use the hub clock', {
+        offsetMs: hubClockOffsetMs,
+      });
+    }
+  }
+
+  /** Now on the hub's clock (local clock plus the measured offset). */
+  function hubNowMs(): number {
+    return now() + hubClockOffsetMs;
+  }
+
   // Attention gate (see docs/plans/2026-07-22-startup-notification-flood.md):
   // replay restores state; only messages arriving while this session watches
   // may toast/beep. Epoch fallback covers cores without the v2 marker.
@@ -567,7 +612,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     if (!Number.isFinite(occurredMs)) {
       return 'age-unknown';
     }
-    if (now() - occurredMs > NOTIFICATION_MAX_AGE_MS) {
+    if (hubNowMs() - occurredMs > NOTIFICATION_MAX_AGE_MS) {
       return 'too-old';
     }
     return null;
@@ -609,7 +654,8 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         ?? data.messages.get(event.accountId, event.chatId, event.messageId)?.createdAt;
       const ms = ts === undefined ? Number.NaN : Date.parse(ts);
       if (Number.isFinite(ms)) {
-        eligible = ms >= notificationEpochMs - NOTIFICATION_EPOCH_GRACE_MS;
+        // Upstream time → local time through the hub clock offset (D38).
+        eligible = ms - hubClockOffsetMs >= notificationEpochMs - NOTIFICATION_EPOCH_GRACE_MS;
       } else if (source === 'polling') {
         // Polling only emits ids it just read back from the DB, so a missing
         // row means a synthetic caller — and its baseline sweep already
@@ -964,6 +1010,8 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       }
       maybeCompleteEpoch();
     }
+    // Intents of a revoked account can never be satisfied here.
+    intents.closeAccountsExcept(handledAccountIds);
     // D38: a replay gap (409) or grant rebaseline re-proves every list.
     reverifyLists('gap');
     return handledAccountIds;
@@ -987,6 +1035,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         polling.listHeadReached(accountId, chatId, messageId),
     },
     accountReady: (accountId) => epoch?.pending.has(accountId) !== true,
+    accountHandled: (accountId) => handledAccountIds.includes(accountId),
     clearTombstonedHeads: (accountId, messageIds) => {
       clearStillTombstonedCachedHeads(accountId, messageIds);
     },
@@ -1005,10 +1054,30 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     if (!meta.deliveredLive && meta.occurredAt !== null) {
       const occurredMs = Date.parse(meta.occurredAt);
       if (Number.isFinite(occurredMs)) {
-        return Math.min(occurredMs, receivedMs);
+        // Hub time → local time: list reads are stamped with the local clock.
+        return Math.min(occurredMs - hubClockOffsetMs, receivedMs);
       }
     }
     return receivedMs;
+  }
+
+  /**
+   * D38: the first message of a chat that is not in the local list yet
+   * arrives before the owed list read creates the row, so a notification
+   * could only say «Новое сообщение». Without awaiting the network: take the
+   * fan's name from the local fans cache, else mark the chat as new.
+   */
+  function withNewChatHint(
+    event: Extract<SyncEvent, { type: 'messageReceived' }>,
+  ): Extract<SyncEvent, { type: 'messageReceived' }> {
+    if (data.chats.get(event.accountId, event.chatId) !== null) {
+      return event;
+    }
+    const fan = data.fans.get(event.accountId, event.chatId);
+    const name = [fan?.customName, fan?.name, fan?.username].find(
+      (value): value is string => typeof value === 'string' && value.trim().length > 0,
+    );
+    return name !== undefined ? { ...event, fanName: name } : { ...event, newChat: true };
   }
 
   /**
@@ -1084,7 +1153,8 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
               'thin-frame',
             ) || kickIntents;
         }
-        effects.push(() => emitMessageEvent(event, meta));
+        const announced = event.type === 'messageReceived' ? withNewChatHint(event) : event;
+        effects.push(() => emitMessageEvent(announced, meta));
         recordApplied(event.type);
         break;
       }
@@ -1440,6 +1510,7 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
           reverifyLists('gap');
         },
         onV2GapRecovered: handleV2GapRecovered,
+        onServerDate: noteServerDate,
       },
       handledAccountIds,
     );
@@ -1504,6 +1575,9 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
       // verification (page 1 first) in parallel with the hub replay.
       notLiveSinceMs = null;
       beginEpoch('session-start', handledAccountIds);
+      // An intent persisted by an earlier session for an account this runtime
+      // no longer handles would otherwise stay open forever.
+      intents.closeAccountsExcept(handledAccountIds);
       intents.start();
       polling.start(accountIds);
       void startHub();

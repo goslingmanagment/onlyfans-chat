@@ -18,7 +18,8 @@ import {
   INTENT_LIST_LAG_MS,
   type SyncIntentWorker,
 } from '../../src/main/sync/intents';
-import type { ListReadOutcome } from '../../src/main/sync/polling-sync';
+import { createPollingSync, type ListReadOutcome } from '../../src/main/sync/polling-sync';
+import type { OfApiClient } from '../../src/main/ofapi/client';
 
 const TEST_DRIVER = 'bsqlite3-mc-node';
 const ACCT = 'acct_intents';
@@ -278,7 +279,7 @@ describe('sync intent worker (D38)', () => {
     expect(h.worker.openIntents()).toEqual([]);
     expect(h.logs).toContainEqual(expect.objectContaining({
       level: 'warn',
-      message: 'sync intent gave up; the safety read covers it',
+      message: 'sync intent gave up',
       fields: expect.objectContaining({ kind: 'chat_message', failedReads: 3 }),
     }));
     await advance(h, 60_000);
@@ -356,5 +357,196 @@ describe('sync intent worker (D38)', () => {
     await advance(h, INTENT_LIST_LAG_MS);
     expect(h.worker.openIntents()).toEqual([]);
     h.worker.stop();
+  });
+});
+
+// Review of PR #36, blocker 1: an open chat intent for an account without a
+// polling loop made the worker loop in microtasks forever (IPC, SSE and every
+// timer of the main process starved, on every launch). Real PollingSync +
+// real worker + REAL timers: a 0 ms timer must still run promptly.
+describe('sync intent worker never starves the event loop (review #36)', () => {
+  let data: DataLayer;
+
+  beforeEach(() => {
+    data = createDataLayer({ driverPath: TEST_DRIVER, filePath: ':memory:', encryptionKey: null });
+  });
+  afterEach(() => {
+    data.close();
+  });
+
+  function pollingWith(autoRead: () => boolean) {
+    const client = {
+      listChats: vi.fn(async () => ({ chats: [], nextPageUrl: null })),
+      listMessages: vi.fn(async () => ({ messages: [], nextPageUrl: null })),
+      listTransactions: vi.fn(async () => ({ transactions: [], nextMarker: null, hasMore: false })),
+    } as unknown as OfApiClient;
+    return createPollingSync({
+      client,
+      data,
+      toMediaUrl: (url) => url,
+      autoReadEnabled: autoRead,
+      sleep: async () => undefined,
+    });
+  }
+
+  function persistChatIntent(accountId: string): void {
+    const past = Date.now() - 60_000;
+    data.syncIntents.open({
+      kind: 'chat_message',
+      accountId,
+      chatId: '42',
+      messageId: '1001',
+      notBeforeMs: past,
+      reason: 'thin-frame',
+      nextAttemptMs: past,
+      nowMs: past,
+    });
+  }
+
+  /** Resolves with how many reads had started when a 0 ms timer got to run. */
+  async function readsWhenTimerRan(reads: () => number, windowMs = 100): Promise<number> {
+    let atTimer = -1;
+    setTimeout(() => {
+      atTimer = reads();
+    }, 0);
+    await new Promise((resolve) => setTimeout(resolve, windowMs));
+    return atTimer;
+  }
+
+  it('an account without a polling loop (auto-read on) closes its intents instead of spinning', async () => {
+    const polling = pollingWith(() => true);
+    polling.start(['acct_still_granted']);
+    persistChatIntent('acct_revoked');
+    let chatReads = 0;
+    const logs: Array<{ message: string; fields?: Record<string, unknown> | undefined }> = [];
+    const worker = createSyncIntentWorker({
+      data,
+      reads: {
+        accountHead: (accountId, options) =>
+          polling.readAccountHead(accountId, 'intent', { preserveLocalHead: !options.authoritative }),
+        chatTail: (accountId, chatId) => {
+          chatReads += 1;
+          return polling.readChatTailForIntent(accountId, chatId);
+        },
+        autoReadEnabled: () => true,
+        listHeadReached: (accountId, chatId, messageId) =>
+          polling.listHeadReached(accountId, chatId, messageId),
+      },
+      // Worst case: the provider still believes the account is handled.
+      accountReady: () => true,
+      accountHandled: () => true,
+      clearTombstonedHeads: () => undefined,
+      onLog: (_level, message, fields) => logs.push({ message, fields }),
+    });
+    worker.start();
+    const atTimer = await readsWhenTimerRan(() => chatReads);
+    worker.stop();
+    await polling.stop();
+
+    expect(atTimer).toBeGreaterThanOrEqual(0); // the timer ran at all
+    expect(atTimer).toBeLessThanOrEqual(1);
+    expect(chatReads).toBe(1);
+    expect(worker.openIntents()).toEqual([]);
+    expect(logs).toContainEqual(expect.objectContaining({
+      message: 'sync intent closed',
+      fields: expect.objectContaining({ accountId: 'acct_revoked', closeReason: 'account-gone' }),
+    }));
+  });
+
+  it('auto-read switched off under a running chat read defers instead of re-reading at once', async () => {
+    const polling = pollingWith(() => false); // PollingSync says list-only…
+    polling.start(['acct_live']);
+    persistChatIntent('acct_live');
+    let chatReads = 0;
+    const worker = createSyncIntentWorker({
+      data,
+      reads: {
+        accountHead: async () => 'ok',
+        chatTail: (accountId, chatId) => {
+          chatReads += 1;
+          return polling.readChatTailForIntent(accountId, chatId);
+        },
+        autoReadEnabled: () => true, // …while the worker still sees auto-read on
+        listHeadReached: () => false,
+      },
+      accountReady: () => true,
+      clearTombstonedHeads: () => undefined,
+    });
+    worker.start();
+    const atTimer = await readsWhenTimerRan(() => chatReads);
+    worker.stop();
+    await polling.stop();
+
+    expect(atTimer).toBeLessThanOrEqual(1);
+    expect(chatReads).toBe(1);
+    const [row] = worker.openIntents();
+    expect(row?.attempts).toBe(0); // deferred, not counted as a failure
+    expect(row!.nextAttemptMs).toBeGreaterThan(Date.now());
+  });
+
+  it('whatever a read reports, the same intent is never re-read within the backoff floor', async () => {
+    persistChatIntent('acct_live');
+    let chatReads = 0;
+    const worker = createSyncIntentWorker({
+      data,
+      reads: {
+        accountHead: async () => 'ok',
+        // A reader that reports success but never makes progress.
+        chatTail: async () => {
+          chatReads += 1;
+          return 'ok';
+        },
+        autoReadEnabled: () => true,
+        listHeadReached: () => false,
+      },
+      accountReady: () => true,
+      clearTombstonedHeads: () => undefined,
+    });
+    worker.start();
+    const atTimer = await readsWhenTimerRan(() => chatReads, 200);
+    worker.stop();
+    expect(atTimer).toBeLessThanOrEqual(1);
+    expect(chatReads).toBe(1);
+  });
+
+  it('closes intents of accounts the runtime no longer handles, without a read', async () => {
+    persistChatIntent('acct_revoked');
+    data.syncIntents.open({
+      kind: 'account_list',
+      accountId: 'acct_kept',
+      notBeforeMs: Date.now(),
+      reason: 'list-nudge',
+      nextAttemptMs: Date.now(),
+      nowMs: Date.now(),
+    });
+    let reads = 0;
+    const worker = createSyncIntentWorker({
+      data,
+      reads: {
+        accountHead: async () => {
+          reads += 1;
+          return 'ok';
+        },
+        chatTail: async () => {
+          reads += 1;
+          return 'ok';
+        },
+        autoReadEnabled: () => true,
+        listHeadReached: () => false,
+      },
+      accountReady: () => false,
+      accountHandled: (accountId) => accountId === 'acct_kept',
+      clearTombstonedHeads: () => undefined,
+    });
+    expect(worker.closeAccountsExcept(['acct_kept'])).toBe(1);
+    expect(worker.openIntents().map((row) => row.accountId)).toEqual(['acct_kept']);
+
+    // The process-time guard catches one left behind any other way, too.
+    persistChatIntent('acct_revoked');
+    worker.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    worker.stop();
+    expect(worker.openIntents().map((row) => row.accountId)).toEqual(['acct_kept']);
+    expect(reads).toBe(0);
   });
 });

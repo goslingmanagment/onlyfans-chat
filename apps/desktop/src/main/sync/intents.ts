@@ -17,12 +17,24 @@
 //                 after the next qualifying page-1 read.
 //
 // Failed reads back off exponentially (5, 10, 20 s); after three the intent
-// closes with a warning — the 5-minute safety read covers what is left. Open
-// intents survive restarts; the worker resumes them once the account's list
-// verification of the current session has settled.
+// closes with a warning. What is left is NOT re-read on a schedule for every
+// account: the focused account gets its 5-minute safety read; any other
+// account catches up with its next hub event, the next list re-verification
+// (an outage over 60 s, a 409, a restart) or its next safety read once it is
+// focused. Open intents survive restarts; the worker resumes them once the
+// account's list verification of the current session has settled, and closes
+// those of accounts this runtime no longer handles.
+//
+// The worker is structurally unable to spin: a read of the same chat intent
+// never starts within INTENT_BACKOFF_BASE_MS of its previous start, a list read
+// of the same account never within INTENT_ACCOUNT_READ_MIN_GAP_MS, and every
+// outcome that makes no progress either closes the intent or moves its next
+// attempt into the future. Re-evaluation after a read therefore arms a timer
+// instead of looping in microtasks (review of PR #36: an account without a
+// polling loop used to starve IPC, SSE and every timer of the main process).
 
 import type { DataLayer, SyncIntentKind, SyncIntentRow } from '../db/index';
-import type { ListReadOutcome } from './polling-sync';
+import type { ChatTailReadOutcome, ListReadOutcome } from './polling-sync';
 
 /** The list endpoint lags the webhook: a read must start this long after T. */
 export const INTENT_LIST_LAG_MS = 2_000;
@@ -44,8 +56,9 @@ export interface SyncIntentReads {
   /** Intent-driven page-1 read, body-free. `authoritative` may move a head
    * backwards (a deletion); otherwise a newer local head is kept. */
   accountHead(accountId: string, options: { authoritative: boolean }): Promise<ListReadOutcome>;
-  /** Auto-read body read of one chat; `gone` when auto-read is off. */
-  chatTail(accountId: string, chatId: string): Promise<ListReadOutcome>;
+  /** Auto-read body read of one chat: `gone` = the account has no polling
+   * loop (revoked / not handled), `list-only` = auto-read is off. */
+  chatTail(accountId: string, chatId: string): Promise<ChatTailReadOutcome>;
   autoReadEnabled(): boolean;
   /** List-only proof: the cached head is M or a newer numeric id. */
   listHeadReached(accountId: string, chatId: string, messageId: string): boolean;
@@ -57,6 +70,10 @@ export interface SyncIntentWorkerOptions {
   /** Intents of an account wait while its list verification is pending (the
    * verification read usually satisfies them for free). */
   accountReady(accountId: string): boolean;
+  /** Whether this runtime still handles the account (granted, polled). The
+   * intents of an account it does not handle close as `account-gone`.
+   * Default: every account is handled (isolated tests). */
+  accountHandled?(accountId: string): boolean;
   /** delete_head follow-up: clear a cached head that still shows M. */
   clearTombstonedHeads(accountId: string, messageIds: readonly string[]): void;
   now?: () => number;
@@ -91,6 +108,9 @@ export interface SyncIntentWorker {
   ): void;
   /** A successful page-1 read of the account started at `startedAtMs`. */
   noteListRead(accountId: string, startedAtMs: number): void;
+  /** Close the open intents of every account outside `accountIds` (runtime
+   * start, grant shrink). Returns how many were closed. */
+  closeAccountsExcept(accountIds: readonly string[]): number;
   /** Re-evaluate the schedule (after a commit or a readiness change). */
   kick(): void;
   start(): void;
@@ -107,6 +127,7 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
   const { data, reads } = options;
   const now = options.now ?? Date.now;
   const onLog = options.onLog ?? ((): void => undefined);
+  const accountHandled = options.accountHandled ?? ((): boolean => true);
 
   let running = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -115,6 +136,8 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
   const readsInFlight = new Set<string>();
   /** Start of the last intent-driven LIST read per account (30 s limiter). */
   const lastAccountReadAt = new Map<string, number>();
+  /** Start of the last CHAT read per intent id (anti-spin floor). */
+  const lastChatReadAt = new Map<number, number>();
 
   function describe(row: SyncIntentRow): Record<string, unknown> {
     return {
@@ -137,8 +160,11 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
       failedReads: row.attempts,
       ageMs: now() - row.createdMs,
     };
+    lastChatReadAt.delete(row.id);
     if (reason === 'gave-up') {
-      onLog('warn', 'sync intent gave up; the safety read covers it', fields);
+      // Not re-read on a schedule: the focused account's safety read, the
+      // account's next event or the next re-verification catches up (D38).
+      onLog('warn', 'sync intent gave up', fields);
     } else {
       onLog('info', 'sync intent closed', fields);
     }
@@ -192,6 +218,27 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
     return true;
   }
 
+  function closeAccount(accountId: string, reason: SyncIntentCloseReason): number {
+    const rows = data.syncIntents.listOpenForAccount(accountId);
+    for (const row of rows) {
+      close(row, reason);
+    }
+    return rows.length;
+  }
+
+  /** A read made no progress without being a failure (e.g. auto-read was
+   * switched off meanwhile): try again later, never immediately. */
+  function deferRead(row: SyncIntentRow): void {
+    const current = data.syncIntents.get(row.id);
+    if (current !== null) {
+      data.syncIntents.recordAttempt(
+        current.id,
+        current.attempts,
+        Math.max(current.nextAttemptMs, now() + INTENT_BACKOFF_BASE_MS),
+      );
+    }
+  }
+
   /** Record one failed (or non-satisfying) read; give up after the third. */
   function failedRead(row: SyncIntentRow): void {
     const current = data.syncIntents.get(row.id);
@@ -234,9 +281,7 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
         return;
       }
       if (outcome === 'gone') {
-        for (const row of data.syncIntents.listOpenForAccount(accountId)) {
-          close(row, 'account-gone');
-        }
+        closeAccount(accountId, 'account-gone');
         return;
       }
       for (const target of targets) {
@@ -266,6 +311,7 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
   async function runChatRead(row: SyncIntentRow): Promise<void> {
     readsInFlight.add(row.accountId);
     const startedAtMs = now();
+    lastChatReadAt.set(row.id, startedAtMs);
     try {
       const outcome = await reads.chatTail(row.accountId, row.chatId);
       onLog(outcome === 'ok' ? 'info' : 'warn', 'sync intent read', {
@@ -279,12 +325,20 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
       if (!running) {
         return;
       }
+      if (outcome === 'gone') {
+        // No polling loop for this account (revoked, or not handled by this
+        // runtime): nothing can ever satisfy its intents here.
+        closeAccount(row.accountId, 'account-gone');
+        return;
+      }
       const current = data.syncIntents.get(row.id);
       if (current === null || closeIfChatSatisfied(current)) {
         return;
       }
-      if (outcome === 'gone') {
-        // Auto-read was switched off meanwhile: the list path takes over.
+      if (outcome === 'list-only') {
+        // Auto-read was switched off meanwhile: the list path takes over at
+        // the next evaluation — later, never in the same microtask chain.
+        deferRead(current);
         return;
       }
       failedRead(current);
@@ -311,6 +365,10 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
       byAccount.set(row.accountId, list);
     }
     for (const [accountId, intents] of byAccount) {
+      if (!accountHandled(accountId)) {
+        closeAccount(accountId, 'account-gone');
+        continue;
+      }
       if (readsInFlight.has(accountId) || !options.accountReady(accountId)) {
         continue; // re-kicked when the read finishes / readiness changes
       }
@@ -330,13 +388,20 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
         (row) => row.kind === 'chat_message' && reads.autoReadEnabled(),
       );
       if (chatTargets.length > 0) {
+        // Anti-spin floor: whatever the last outcome recorded, the same
+        // intent is never read again within INTENT_BACKOFF_BASE_MS.
+        const chatDueAt = (row: SyncIntentRow): number => {
+          const last = lastChatReadAt.get(row.id);
+          return Math.max(row.nextAttemptMs, last === undefined ? 0 : last + INTENT_BACKOFF_BASE_MS);
+        };
         const next = chatTargets.reduce((earliest, row) =>
-          row.nextAttemptMs < earliest.nextAttemptMs ? row : earliest);
-        if (next.nextAttemptMs <= nowMs) {
+          chatDueAt(row) < chatDueAt(earliest) ? row : earliest);
+        const dueMs = chatDueAt(next);
+        if (dueMs <= nowMs) {
           void runChatRead(next);
           continue;
         }
-        nextWakeMs = Math.min(nextWakeMs, next.nextAttemptMs);
+        nextWakeMs = Math.min(nextWakeMs, dueMs);
       }
     }
     if (timer !== null) {
@@ -433,6 +498,17 @@ export function createSyncIntentWorker(options: SyncIntentWorkerOptions): SyncIn
         }
       }
       kick();
+    },
+    closeAccountsExcept(accountIds) {
+      const keep = new Set(accountIds);
+      let closed = 0;
+      for (const row of data.syncIntents.listOpen()) {
+        if (!keep.has(row.accountId)) {
+          close(row, 'account-gone');
+          closed += 1;
+        }
+      }
+      return closed;
     },
     kick,
     start() {

@@ -1793,6 +1793,36 @@ describe('HubSync v2 transport (D38)', () => {
     h.sync.stop();
   });
 
+  it('reports the hub Date header of the stream response (hub clock for the toast gate)', async () => {
+    const stream = makeStream();
+    const dates: Array<[number, number]> = [];
+    const sync = createHubSync({
+      protocol: 'v2',
+      baseUrl: 'https://hub.test',
+      apiKey: 'device-token',
+      fetchImpl: () => Promise.resolve({
+        status: 200,
+        body: stream.body,
+        headers: {
+          get: (name: string) => (name.toLowerCase() === 'date' ? 'Sat, 26 Sep 2026 16:07:00 GMT' : null),
+        },
+      }),
+      now: () => Date.parse('2026-09-26T16:12:00.000Z'), // PC clock 5 min fast
+      sleep: () => Promise.resolve(),
+      accountIds: [ACCT],
+      onEvent: () => undefined,
+      onServerDate: (serverMs, localMs) => dates.push([serverMs, localMs]),
+      getLastEventId: () => null,
+      setLastEventId: () => undefined,
+      getV2Cursor: () => null,
+      setV2Cursor: () => undefined,
+    });
+    sync.start();
+    await drainMicrotasks();
+    expect(dates).toEqual([[Date.parse('2026-09-26T16:07:00.000Z'), Date.parse('2026-09-26T16:12:00.000Z')]]);
+    sync.stop();
+  });
+
   it('refuses an async handler (it would escape the frame transaction)', async () => {
     const stream = makeStream();
     const warnings: string[] = [];

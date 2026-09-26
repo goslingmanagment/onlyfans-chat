@@ -118,6 +118,7 @@ import {
 } from './platform/navigation';
 import {
   messageNotificationBody,
+  messageNotificationTitle,
   shouldShowOsNotification,
 } from './notifications';
 import { awaitRendererLoad } from './window-load';
@@ -845,6 +846,7 @@ async function rebuildOfapiRuntime(
         onSnapshot,
         onSnapshotRequired,
         onV2GapRecovered,
+        onServerDate,
       },
       accountIds,
     ) => {
@@ -882,6 +884,7 @@ async function rebuildOfapiRuntime(
         // and the v2 cursor (a settings row of this same DB) commit together.
         runInTransaction: (fn) => dataLayer.db.transaction(fn),
         platform: 'onlyfans',
+        onServerDate,
         onEvent,
         onCaughtUp,
         onSnapshot,
@@ -1167,7 +1170,7 @@ function reattachEventForwarding(): void {
       ) {
         const chat = liveData.chats.get(event.accountId, event.chatId);
         new Notification({
-          title: chat?.fanName ?? uiMessage(uiLocale, 'notif.newMessage'),
+          title: messageNotificationTitle(uiLocale, event, chat?.fanName, 'os'),
           body: messageNotificationBody(uiLocale, event),
           silent: true,
         }).show();

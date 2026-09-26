@@ -276,6 +276,8 @@ export type HubSseFetch = (
   status: number;
   body: HubSseBody | null;
   json?: () => Promise<unknown>;
+  /** Real fetch responses carry headers; the hub's `Date` feeds the hub clock. */
+  headers?: { get(name: string): string | null };
 }>;
 
 export interface HubSyncOptions {
@@ -314,6 +316,12 @@ export interface HubSyncOptions {
   platform?: HubStreamPlatform;
   /** v2 replay/live boundary: core's stream.replay_completed marker. */
   onCaughtUp?: (summary: HubReplaySummary) => void;
+  /**
+   * D38: the hub's `Date` response header (epoch ms, 1 s resolution) and the
+   * local clock when the headers arrived — lets attention gates measure a
+   * frame's age on the hub's clock instead of a possibly skewed PC clock.
+   */
+  onServerDate?: (serverDateMs: number, receivedAtLocalMs: number) => void;
   /** Local OFAPI accounts this client is allowed to apply. Omit only in isolated tests. */
   accountIds?: readonly string[];
   /** Idempotently applies one validated snapshot page before its cursor is persisted. */
@@ -662,6 +670,22 @@ export function createHubSync(options: HubSyncOptions): HubSync {
     }
   }
 
+  function reportServerDate(response: Awaited<ReturnType<HubSseFetch>>): void {
+    if (options.onServerDate === undefined || response.headers === undefined) {
+      return;
+    }
+    let header: string | null;
+    try {
+      header = response.headers.get('date');
+    } catch {
+      return;
+    }
+    const serverDateMs = header === null ? Number.NaN : Date.parse(header);
+    if (Number.isFinite(serverDateMs)) {
+      options.onServerDate(serverDateMs, clock());
+    }
+  }
+
   function streamUrl(): string {
     if (protocol === 'v2') {
       const cursor = options.getV2Cursor!();
@@ -986,6 +1010,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         abort = null;
       }
     }
+    reportServerDate(response);
     if (response.status === 401 || response.status === 403) {
       throw new HubSnapshotAuthError('hub v2 snapshot', response.status);
     }
@@ -1395,6 +1420,7 @@ export function createHubSync(options: HubSyncOptions): HubSync {
         },
         signal,
       });
+      reportServerDate(response);
       if (response.status === 401 || response.status === 403) {
         return { kind: 'auth' };
       }

@@ -5,6 +5,7 @@ import { createDataLayer, type DataLayer } from '../../src/main/db/index';
 import {
   applyAccountGrantSnapshot,
   createPollingSync,
+  HEAD_WRITE_PROTECT_MS,
   type ListReadRecord,
 } from '../../src/main/sync/polling-sync';
 import { createBudgetGuard } from '../../src/main/sync/budget-guard';
@@ -2021,8 +2022,11 @@ describe('PollingSync', () => {
 
       // Model a deletion webhook that never arrived: the upstream chat head is
       // now the previous surviving message. Ordinary polling is the recovery
-      // surface and must not preserve the locally stale head forever.
+      // surface and must not preserve the locally stale head forever — only a
+      // head written within HEAD_WRITE_PROTECT_MS before the read is kept
+      // (D38), and the next poll comes 20-60 s later.
       stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      vi.setSystemTime(Date.now() + HEAD_WRITE_PROTECT_MS + 1_000);
       await sync.pollAccount(ACCT);
 
       expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('5');
@@ -2505,6 +2509,61 @@ describe('PollingSync list freshness (D38)', () => {
     expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('7');
     expect(data.chats.syncBaseline(ACCT, '101')).toBe('7');
     expect(stub.listMessagesCalls).toEqual([]);
+    await sync.stop();
+  });
+
+  it('a lagging safety read keeps a hub head applied just before it started (review #36)', async () => {
+    markHydrated();
+    vi.setSystemTime(Date.parse('2026-09-26T12:00:00Z'));
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5, unread: 0 })]);
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('5');
+
+    // Live enriched hub frame: fan message 6 → head 6, unread 1.
+    vi.setSystemTime(Date.parse('2026-09-26T12:00:30Z'));
+    expect(sync.applyHubMessage(ACCT, '101', makeHubMessage({
+      id: '6',
+      createdAt: '2026-09-26T12:00:30.000Z',
+    }))).toBe('applied');
+    expect(data.chats.get(ACCT, '101')).toMatchObject({ lastMessageId: '6', unreadCount: 1 });
+
+    // 1 s later the authoritative safety read starts; the list still lags (head 5).
+    vi.setSystemTime(Date.parse('2026-09-26T12:00:31Z'));
+    await expect(sync.readAccountHead(ACCT, 'safety', { bodyDeltas: true })).resolves.toBe('ok');
+    expect(data.chats.get(ACCT, '101')).toMatchObject({ lastMessageId: '6', unreadCount: 1 });
+
+    // Past the protection window the list is authoritative again (a missed
+    // deletion stays repairable).
+    vi.setSystemTime(Date.parse('2026-09-26T12:00:30Z') + HEAD_WRITE_PROTECT_MS + 1_000);
+    await expect(sync.readAccountHead(ACCT, 'safety', { bodyDeltas: true })).resolves.toBe('ok');
+    expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('5');
+    await sync.stop();
+  });
+
+  it('a wake fires resume twice (powerMonitor + sleep detector): one paid safety read', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    sync.setFocusedAccount(ACCT);
+    sync.setHubPollingSuspended(true);
+    const listCallsBefore = stub.listChatsCalls;
+
+    vi.setSystemTime(Date.now() + 40 * 60_000); // the machine slept 40 minutes
+    sync.noteSystemResume();
+    sync.noteSystemResume();
+    await drain();
+    sync.noteSystemResume(); // a late third signal after the read finished
+    await drain();
+
+    expect(reads.filter((read) => read.trigger === 'safety')).toHaveLength(1);
+    expect(stub.listChatsCalls - listCallsBefore).toBe(1);
+    expect(logs).toContainEqual(expect.objectContaining({
+      message: 'safety read skipped',
+      fields: expect.objectContaining({ reason: 'in-flight' }),
+    }));
     await sync.stop();
   });
 

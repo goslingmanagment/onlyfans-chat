@@ -116,6 +116,15 @@ function listVerifiedKey(accountId: string): string {
 /** The durable copy only has to survive a restart (the banner's minute
  * precision): persist at most this often per account; status() reads memory. */
 const LIST_VERIFIED_PERSIST_EVERY_MS = 60_000;
+/**
+ * An authoritative page-1 read may move a head backwards (the repair for a
+ * deletion that never arrived) — but not over a head written this recently.
+ * The list endpoint lags the webhook by seconds (D38 assumes 2 s for intents),
+ * so a hub head applied just before the read started would otherwise be
+ * reverted to the previous preview, its unread cleared, for up to one safety
+ * interval. A missed deletion stays repairable by the next read.
+ */
+export const HEAD_WRITE_PROTECT_MS = 10_000;
 const listVerifiedAtSchema = z.string().refine((value) => Number.isFinite(Date.parse(value)));
 
 /** Versioned coverage state makes existing installs perform one trustworthy
@@ -238,6 +247,9 @@ export interface ListReadRecord {
 /** Outcome of one list read attempt. `busy` = the account's single-flight
  * owner was already running a read and this caller skipped. */
 export type ListReadOutcome = 'ok' | 'failed' | 'busy' | 'gone';
+/** An intent's chat body read: `gone` = the account has no polling loop,
+ * `list-only` = auto-read is off (a body read would mark the chat read). */
+export type ChatTailReadOutcome = ListReadOutcome | 'list-only';
 
 /** Synchronous hub-message apply (D38: the frame transaction never awaits). */
 export type HubMessageApplyOutcome =
@@ -413,7 +425,7 @@ export type PollingSync = SyncProvider & {
     options?: { preserveLocalHead?: boolean; bodyDeltas?: boolean },
   ): Promise<ListReadOutcome>;
   /** D38: auto-read tail read for a chat intent; `gone` when auto-read is off. */
-  readChatTailForIntent(accountId: string, chatId: string): Promise<ListReadOutcome>;
+  readChatTailForIntent(accountId: string, chatId: string): Promise<ChatTailReadOutcome>;
   /** D38: verify page 1 of each account now (retries 5/10/20 s, then gives up). */
   verifyAccounts(accountIds: readonly string[], reason: ListVerificationReason): void;
   /** D38: one safety check after the OS resumed (skip rule applies). */
@@ -1262,7 +1274,8 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
    * detector for every chat that owes no automatic body read. `authoritative`
    * (ordinary polls, verification, safety) may move a head backwards — the
    * repair path for a deletion that never arrived — except over a newer head
-   * another writer stored WHILE this read was in flight. `preserve` (deeper
+   * stored within HEAD_WRITE_PROTECT_MS before the read or while it was in
+   * flight (the list lags the webhook). `preserve` (deeper
    * pages, hub-driven reads) keeps any newer local head.
    */
   function writeListPage(
@@ -1270,7 +1283,7 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
     chats: readonly OfApiChat[],
     options: {
       mode: 'authoritative' | 'preserve';
-      readStartedIso: string;
+      protectHeadsWrittenSinceIso: string;
       preserveEqualHeadMetadata?: boolean;
       owedDeltaChatIds: ReadonlySet<string>;
     },
@@ -1283,7 +1296,7 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
             preserveLocalHead: true,
             ...(options.preserveEqualHeadMetadata === true ? { preserveEqualHeadMetadata: true } : {}),
           }
-        : { preserveHeadsWrittenSince: options.readStartedIso },
+        : { preserveHeadsWrittenSince: options.protectHeadsWrittenSinceIso },
     );
     const detectors: Array<{ chatId: string; messageId: string | null }> = [];
     for (const chat of chats) {
@@ -1946,8 +1959,9 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
     const deltas: PollDelta[] = [];
     const startedAtMs = now();
     // Real clock on purpose: compared with chats.updated_at, which the chats
-    // upsert stamps with the real clock.
-    const readStartedIso = new Date().toISOString();
+    // upsert stamps with the real clock. Heads written within
+    // HEAD_WRITE_PROTECT_MS before this read are kept if newer.
+    const protectHeadsWrittenSinceIso = new Date(Date.now() - HEAD_WRITE_PROTECT_MS).toISOString();
     const walk = await walkChatPages(accountId, 0, options.pages, options.purpose, {
       onPage: (chats, pageIndex) => {
         const pageDeltas = collectDeltas(accountId, chats, options.prevSuccessAt);
@@ -1955,7 +1969,7 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
         writeListPage(accountId, chats, {
           mode: pageIndex === 0 && !options.preserveLocalHead ? 'authoritative' : 'preserve',
           ...(options.preserveLocalHead ? { preserveEqualHeadMetadata: true } : {}),
-          readStartedIso,
+          protectHeadsWrittenSinceIso,
           owedDeltaChatIds: owesBodyReads
             ? new Set(pageDeltas.map((delta) => delta.chatId))
             : new Set<string>(),
@@ -2224,7 +2238,25 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
 
   // ── D38 safety net: page 1 of the focused account while the hub is live ──
 
-  async function runSafetyRead(trigger: 'timer' | 'resume'): Promise<void> {
+  /** One safety check at a time: the OS resume event and the sleep detector
+   * both fire after a wake and must not buy two paid page-1 reads. */
+  let safetyInFlight: Promise<void> | null = null;
+
+  function runSafetyRead(trigger: 'timer' | 'resume'): Promise<void> {
+    if (safetyInFlight !== null) {
+      onLog('info', 'safety read skipped', { trigger, reason: 'in-flight' });
+      return safetyInFlight;
+    }
+    const task = runSafetyReadInner(trigger).finally(() => {
+      if (safetyInFlight === task) {
+        safetyInFlight = null;
+      }
+    });
+    safetyInFlight = task;
+    return task;
+  }
+
+  async function runSafetyReadInner(trigger: 'timer' | 'resume'): Promise<void> {
     const accountId = focusedAccount;
     if (!running || accountId === null) {
       return;
@@ -2740,12 +2772,12 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
     reconcileUnread,
     readAccountHead,
     readChatTailForIntent(accountId, chatId) {
-      return trackActive((async (): Promise<ListReadOutcome> => {
+      return trackActive((async (): Promise<ChatTailReadOutcome> => {
         if (!running || !loops.has(accountId)) {
           return 'gone';
         }
         if (!autoReadEnabled()) {
-          return 'gone'; // list-only: a body read would mark the chat read
+          return 'list-only'; // a body read would mark the chat read
         }
         try {
           await fetchChatTail(accountId, chatId, 'message-tail');

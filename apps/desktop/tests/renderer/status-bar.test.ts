@@ -100,9 +100,20 @@ describe('SYNCING (D38)', () => {
       tip: '',
       tipKey: 'sb.syncingTip',
     });
-    // The stream's first byte is not enough any more; neither is connecting.
-    expect(statusBarMode('live', 'connecting', 'auto', true)).toMatchObject({ word: 'SYNCING' });
     expect(statusBarMode('live', 'live', 'auto', false)).toMatchObject({ word: 'HUB LIVE' });
+  });
+
+  it('does not flicker while the hub is unreachable (connecting ↔ degraded)', () => {
+    // Every retry of an unreachable hub passes through connecting and degraded;
+    // both must render the same word as long as the stream is not live.
+    for (const state of ['live', 'degraded', 'offline'] as const) {
+      const connecting = statusBarMode(state, 'connecting', 'auto', true);
+      const degraded = statusBarMode(state, 'degraded', 'auto', true);
+      expect(connecting.word).not.toBe('SYNCING');
+      expect(degraded.word).toBe(connecting.word);
+    }
+    expect(statusBarMode('degraded', 'connecting', 'auto', true)).toMatchObject({ word: 'DEGRADED' });
+    expect(statusBarMode('offline', 'connecting', 'auto', true)).toMatchObject({ word: 'OFFLINE' });
   });
 
   it('never masks a broken stream or auth as syncing', () => {

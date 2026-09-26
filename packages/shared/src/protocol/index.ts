@@ -251,6 +251,11 @@ export const messageReceivedEventSchema = z.object({
   occurredAt: z.string().optional(),
   /** false = replayed catch-up: apply state, but suppress toast/sound/OS-notif. */
   live: z.boolean().optional(),
+  /** D38: the fan's display name when the chat row does not exist yet (first
+   * message of a new chat) but the local fans cache knows the fan. */
+  fanName: z.string().min(1).optional(),
+  /** D38: the chat is not in the local list yet and no name is known locally. */
+  newChat: z.boolean().optional(),
 });
 
 export const messageSentEventSchema = z.object({

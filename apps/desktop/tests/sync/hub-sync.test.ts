@@ -1194,6 +1194,11 @@ describe('createHubAwareSync (provider composition)', () => {
     data.messages.upsertMany([upsert]);
   }
 
+  /** The chat these frames target already exists locally. */
+  function knownChat(chatId = '101'): void {
+    seedChat(chatId, 'older-head', '2026-06-11T09:00:00.000Z');
+  }
+
   function seedChat(
     chatId: string,
     lastMessageId: string,
@@ -1477,6 +1482,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('keeps the replay_completed rule: a fresh live frame before the marker stays quiet when old', async () => {
     const { provider, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
     const oldMessage: SyncEvent = {
@@ -1563,6 +1569,189 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(provider.syncIntents().openIntents()).toEqual([
       expect.objectContaining({ kind: 'account_list', reason: 'unknown-chat' }),
     ]);
+    provider.stop();
+  });
+
+  it('a live message delivered 3-9 min late still alerts (OFAPI delay episodes, review #36)', async () => {
+    const { provider, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    knownChat();
+    callbacks().onCaughtUp();
+    // Production 2026-09-25 04:18–04:54 UTC: ordinary incoming messages on
+    // page 9 arrived 181–277 s after their createdAt; 0.1.56 notified them.
+    for (const [messageId, lateMs] of [['late-181', 181_000], ['late-277', 277_000], ['late-8m', 8 * 60_000]] as const) {
+      await runEvent(
+        callbacks(),
+        {
+          type: 'messageReceived',
+          accountId: ACCT,
+          chatId: '101',
+          messageId,
+          message: hubMessage({ id: messageId }),
+        },
+        liveMeta({ occurredAt: new Date(PROVIDER_NOW_MS - lateMs).toISOString() }),
+      );
+    }
+    expect(events.map((event) => (event.type === 'messageReceived' ? event.live !== false : null)))
+      .toEqual([true, true, true]);
+    expect(NOTIFICATION_MAX_AGE_MS).toBe(9 * 60_000); // below the hub's 10-min redelivery quiet period
+    provider.stop();
+  });
+
+  describe('age gate on the hub clock (PC clock skew ±5 min)', () => {
+    const FIVE_MIN = 5 * 60_000;
+
+    async function liveness(localSkewMs: number, trueAgeMs: number): Promise<boolean> {
+      const ctx = build();
+      const { provider, callbacks, events } = ctx;
+      // The PC clock reads true time + skew; the hub's Date header is true time.
+      const trueNowMs = PROVIDER_NOW_MS;
+      ctx.setNow(trueNowMs + localSkewMs);
+      provider.start([ACCT]);
+      await Promise.resolve();
+      await Promise.resolve();
+      knownChat();
+      callbacks().onServerDate(trueNowMs - 500, trueNowMs + localSkewMs); // whole-second Date header
+      callbacks().onCaughtUp();
+      await runEvent(
+        callbacks(),
+        {
+          type: 'messageReceived',
+          accountId: ACCT,
+          chatId: '101',
+          messageId: `skew-${localSkewMs}-${trueAgeMs}`,
+          message: hubMessage({ id: `skew-${localSkewMs}-${trueAgeMs}` }),
+        },
+        liveMeta({ occurredAt: new Date(trueNowMs - trueAgeMs).toISOString() }),
+      );
+      provider.stop();
+      const event = events.at(-1);
+      return event?.type === 'messageReceived' && event.live !== false;
+    }
+
+    it('PC clock 5 min fast: a 6-min-old live message still alerts', async () => {
+      await expect(liveness(+FIVE_MIN, 6 * 60_000)).resolves.toBe(true);
+      await expect(liveness(+FIVE_MIN, 0)).resolves.toBe(true);
+    });
+
+    it('PC clock 5 min slow: a 12-min-old fact stays quiet', async () => {
+      await expect(liveness(-FIVE_MIN, 12 * 60_000)).resolves.toBe(false);
+      await expect(liveness(-FIVE_MIN, 30_000)).resolves.toBe(true);
+    });
+
+    it('without a hub Date sample the local clock is the fallback', async () => {
+      const { provider, callbacks, events } = build();
+      provider.start([ACCT]);
+      await Promise.resolve();
+      await Promise.resolve();
+      knownChat();
+      callbacks().onCaughtUp();
+      await runEvent(
+        callbacks(),
+        { type: 'messageReceived', accountId: ACCT, chatId: '101', messageId: 'x', message: hubMessage({ id: 'x' }) },
+        liveMeta({ occurredAt: new Date(PROVIDER_NOW_MS - NOTIFICATION_MAX_AGE_MS - 1_000).toISOString() }),
+      );
+      expect(events.at(-1)).toMatchObject({ live: false });
+      provider.stop();
+    });
+
+    it('logs a large skew once', async () => {
+      const { provider, callbacks, logs } = build();
+      provider.start([ACCT]);
+      callbacks().onServerDate(PROVIDER_NOW_MS - FIVE_MIN, PROVIDER_NOW_MS);
+      callbacks().onServerDate(PROVIDER_NOW_MS - FIVE_MIN, PROVIDER_NOW_MS);
+      expect(logs.filter((log) => log.message.startsWith('local clock differs from the hub'))).toHaveLength(1);
+      provider.stop();
+    });
+  });
+
+  it('first message of a chat not listed yet: the fan name from the local cache, else «new chat»', async () => {
+    const { provider, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onCaughtUp();
+    data.fans.upsert({
+      accountId: ACCT,
+      fanId: '777',
+      username: 'kevin_k',
+      name: 'Kevin',
+      customName: null,
+      avatar: null,
+      about: null,
+      lastSeen: null,
+      spending: null,
+      subscription: null,
+      fetchedAt: '2026-06-11T11:00:00.000Z',
+    });
+
+    await runEvent(
+      callbacks(),
+      { type: 'messageReceived', accountId: ACCT, chatId: '777', messageId: 'k1', message: hubMessage({ id: 'k1' }) },
+      liveMeta(),
+    );
+    await runEvent(
+      callbacks(),
+      { type: 'messageReceived', accountId: ACCT, chatId: '888', messageId: 'n1', message: hubMessage({ id: 'n1' }) },
+      liveMeta(),
+    );
+    // Thin frames too, and still alerting — the notification is kept.
+    await runEvent(
+      callbacks(),
+      { type: 'messageReceived', accountId: ACCT, chatId: '999', messageId: 't1' },
+      liveMeta(),
+    );
+    expect(events).toEqual([
+      expect.objectContaining({ chatId: '777', fanName: 'Kevin' }),
+      expect.objectContaining({ chatId: '888', newChat: true }),
+      expect.objectContaining({ chatId: '999', newChat: true }),
+    ]);
+    expect(events.every((event) => event.type === 'messageReceived' && event.live !== false)).toBe(true);
+    // An existing chat carries no hint.
+    knownChat();
+    await runEvent(
+      callbacks(),
+      { type: 'messageReceived', accountId: ACCT, chatId: '101', messageId: 'e1', message: hubMessage({ id: 'e1' }) },
+      liveMeta(),
+    );
+    expect(events.at(-1)).not.toHaveProperty('newChat');
+    expect(events.at(-1)).not.toHaveProperty('fanName');
+    provider.stop();
+  });
+
+  it('start() closes intents persisted for accounts this runtime no longer handles', async () => {
+    const past = PROVIDER_NOW_MS - 60_000;
+    for (const accountId of ['acct_revoked', ACCT]) {
+      data.syncIntents.open({
+        kind: 'chat_message',
+        accountId,
+        chatId: '42',
+        messageId: '1001',
+        notBeforeMs: past,
+        reason: 'thin-frame',
+        nextAttemptMs: past,
+        nowMs: past,
+      });
+    }
+    const { provider } = build();
+    provider.start([ACCT]);
+    expect(provider.syncIntents().openIntents().map((row) => row.accountId)).toEqual([ACCT]);
+    provider.stop();
+  });
+
+  it('a grant shrink closes the revoked account\'s intents', async () => {
+    const ctx = build();
+    const { provider, polling, callbacks } = ctx;
+    provider.start([ACCT, NEW_ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    await runEvent(callbacks(), { type: 'chatListUpdated', accountId: NEW_ACCT }, liveMeta());
+    expect(provider.syncIntents().openIntents().map((row) => row.accountId)).toEqual([NEW_ACCT]);
+    polling.grantAccountIds = [ACCT];
+    await callbacks().onV2GapRecovered();
+    expect(provider.syncIntents().openIntents()).toEqual([]);
     provider.stop();
   });
 
@@ -1813,6 +2002,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('enriched messageReceived ingests locally and skips refreshChat', async () => {
     const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -1853,6 +2043,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('stamps an old enriched messageReceived as replay before the marker', async () => {
     const { provider, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -1875,6 +2066,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('uses occurredAt for a fresh id-only frame when the marker is unavailable', async () => {
     const { provider, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -1895,6 +2087,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('treats post-marker messages as live even when their timestamps are old', async () => {
     const { provider, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
     callbacks().onCaughtUp();
@@ -1919,6 +2112,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('suppresses a duplicate eligible message id after its first alert', async () => {
     const { provider, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -1977,6 +2171,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('stamps a polling duplicate of a hub-alerted id as replay', async () => {
     const { provider, callbacks, polling, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
     callbacks().onCaughtUp();
@@ -2533,6 +2728,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('id-only messageReceived opens a durable chat intent instead of awaiting a read (D38)', async () => {
     const { provider, polling, callbacks, events, logs } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -2605,6 +2801,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('mismatched enriched message falls back to refreshChat', async () => {
     const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -2637,6 +2834,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('bad enriched message bodies degrade to id-only fallback instead of dropping the frame', async () => {
     const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 

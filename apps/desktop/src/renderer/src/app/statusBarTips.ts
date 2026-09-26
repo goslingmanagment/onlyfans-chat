@@ -47,9 +47,11 @@ export interface StatusBarMode {
 
 /**
  * Live hub SSE is the primary signal; polling failures are secondary there.
- * D38: while the stream connects or is live, SYNCING (amber) replaces
- * HUB LIVE until replay_completed and every account's page-1 verification —
- * the first byte of the stream is no longer enough to claim LIVE.
+ * D38: while the stream is live, SYNCING (amber) replaces HUB LIVE until
+ * replay_completed and every account's page-1 verification — the first byte
+ * of the stream is no longer enough to claim LIVE. Only a live stream shows
+ * it: an unreachable hub alternates connecting/degraded on every retry, and
+ * the word must not flicker (the polling state speaks while not connected).
  */
 export function statusBarMode(
   state: SyncStatusVM['state'],
@@ -57,7 +59,7 @@ export function statusBarMode(
   override: SyncStatusVM['hubModeOverride'] = 'auto',
   syncing = false,
 ): StatusBarMode {
-  if (syncing && (hub === 'live' || hub === 'connecting')) {
+  if (syncing && hub === 'live') {
     return { word: 'SYNCING', tone: 'sync', tip: '', tipKey: 'sb.syncingTip' };
   }
   if (hub === 'live') {

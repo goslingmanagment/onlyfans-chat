@@ -1033,6 +1033,8 @@ export const UI_MESSAGES = {
     ru: 'В черновике {count} частей. Оставьте не больше {max} частей [NEXT].',
   },
   'notif.newMessage': { en: 'New message', ru: 'Новое сообщение' },
+  // D38: first message of a chat the app does not know yet (no name locally).
+  'notif.newChat': { en: 'New chat', ru: 'Новый чат' },
   'notif.sentYou': { en: 'sent you a message', ru: 'прислал(а) сообщение' },
   'notif.media': { en: 'Media', ru: 'Медиа' },
   'notif.tip': { en: 'Tip', ru: 'Чаевые' },
