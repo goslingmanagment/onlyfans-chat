@@ -121,6 +121,18 @@ export interface ChatsQueries {
   list(args: { accountId: string; filter: ChatFilter; limit?: number; offset?: number }): ChatListPage;
   /** Case-insensitive (ASCII) substring match on fan_name. */
   search(args: { accountId: string; query: string; limit?: number }): ChatListRow[];
+  /**
+   * D38 delta detector (`sync_baseline_message_id`): the upstream head the
+   * automatic body delta has provably reached. `undefined` = no such chat row;
+   * `null` = never established (a row written by a path that did not verify).
+   * Kept apart from ChatRow so ordinary upserts can never move it.
+   */
+  syncBaseline(accountId: string, chatId: string): string | null | undefined;
+  /** Advance the detector for rows that exist; missing rows are skipped. */
+  setSyncBaselines(
+    accountId: string,
+    entries: ReadonlyArray<{ chatId: string; messageId: string | null }>,
+  ): void;
 }
 
 export function createChatsQueries(db: ChatGooseDb, bus: DbChangeBus): ChatsQueries {
@@ -206,6 +218,33 @@ export function createChatsQueries(db: ChatGooseDb, bus: DbChangeBus): ChatsQuer
         items: rows.slice(0, limit).map(decodeChatListRow),
         hasMore,
       };
+    },
+
+    syncBaseline(accountId, chatId) {
+      const row: unknown = db
+        .prepare(
+          'SELECT sync_baseline_message_id AS baseline FROM chats WHERE account_id = @account_id AND chat_id = @chat_id',
+        )
+        .get({ account_id: accountId, chat_id: chatId });
+      if (row === undefined) {
+        return undefined;
+      }
+      const baseline = (row as { baseline?: unknown }).baseline;
+      return typeof baseline === 'string' ? baseline : null;
+    },
+
+    setSyncBaselines(accountId, entries) {
+      if (entries.length === 0) {
+        return;
+      }
+      const statement = db.prepare(
+        'UPDATE chats SET sync_baseline_message_id = @message_id WHERE account_id = @account_id AND chat_id = @chat_id',
+      );
+      db.transaction(() => {
+        for (const entry of entries) {
+          statement.run({ account_id: accountId, chat_id: entry.chatId, message_id: entry.messageId });
+        }
+      });
     },
 
     search({ accountId, query, limit = 50 }) {

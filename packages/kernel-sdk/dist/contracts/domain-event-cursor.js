@@ -2,13 +2,20 @@
 // base64url JSON `{v: 2, w: {<accountId>: <highSeq>, …}}` for legacy/subset
 // cursors, `{v: 3, w: {…}, s: "granted"}` for an exact-grant binding, or
 // v4 with `r: "snapshot"` while a completed state snapshot is authorizing one
-// bounded replay across erased ledger gaps. These v2/v3/v4 cursors are encoded
+// bounded replay across erased ledger gaps. H3 adds the platform binding
+// `p: "onlyfans" | "fansly"` (the stream/snapshot `platform=` filter): v5 is
+// v2/v3 plus `p`, v6 is v4 plus `p`. The binding gets its own versions so a
+// Core that predates it rejects the cursor instead of ignoring `p` and
+// widening the account set to every platform. These cursors are encoded
 // Base64URL JSON, not MAC-signed; their topology and server-side epoch are
 // validated before use. The recovery marker is removed before the connection
 // enters the live lane. Do not confuse them with the bounded OFAPI stateCursor,
 // which is separately HMAC-signed by the runtime.
 // Shared by the server (modules/events) and the SDK helper so both ends agree
 // byte-for-byte; clients never construct or inspect it.
+function isDomainEventCursorPlatform(value) {
+    return value === "onlyfans" || value === "fansly";
+}
 // Isomorphic base64url (no Buffer): this file ships to the browser through
 // the SDK (dashboard) as well as to node (server + desktop). btoa/atob are
 // global in both since node 16; TextEncoder/TextDecoder carry the UTF-8 leg.
@@ -50,15 +57,21 @@ function sortedRecord(values) {
 export function encodeDomainEventCursor(watermarks, options = {}) {
     // Sorted keys → deterministic encoding (cursor equality is comparable in tests).
     const w = sortedRecord(watermarks);
-    const version = options.recovery?.kind === "snapshot"
-        ? 4
-        : options.scope === undefined ? 2 : 3;
+    const recovering = options.recovery?.kind === "snapshot";
+    const platformBinding = options.platform;
+    const version = platformBinding !== undefined
+        ? recovering ? 6 : 5
+        : recovering
+            ? 4
+            : options.scope === undefined ? 2 : 3;
     return toBase64Url(JSON.stringify({
         // A distinct version makes rollback fail closed: old Core rejects a bound
-        // cursor instead of ignoring `s` and widening it at a new account's head.
+        // cursor instead of ignoring `s`/`p` and widening it (at a new account's
+        // head, or across platforms).
         v: version,
         w,
         ...(options.scope === undefined ? {} : { s: options.scope }),
+        ...(platformBinding === undefined ? {} : { p: platformBinding }),
         ...(options.recovery === undefined
             ? {}
             : {
@@ -86,7 +99,8 @@ export function decodeDomainEventCursor(text) {
         return { ok: false, reason: "not_object" };
     }
     const candidate = parsed;
-    if (candidate.v !== 2 && candidate.v !== 3 && candidate.v !== 4) {
+    if (candidate.v !== 2 && candidate.v !== 3 && candidate.v !== 4
+        && candidate.v !== 5 && candidate.v !== 6) {
         return { ok: false, reason: "unknown_version" };
     }
     if (typeof candidate.w !== "object" || candidate.w === null || Array.isArray(candidate.w)) {
@@ -94,16 +108,24 @@ export function decodeDomainEventCursor(text) {
     }
     if ((candidate.v === 2 && candidate.s !== undefined)
         || (candidate.v === 3 && candidate.s !== "granted")
-        || (candidate.v === 4 && candidate.s !== undefined && candidate.s !== "granted")) {
+        || ((candidate.v === 4 || candidate.v === 5 || candidate.v === 6)
+            && candidate.s !== undefined && candidate.s !== "granted")) {
         return { ok: false, reason: "invalid_scope" };
     }
-    if (((candidate.v === 2 || candidate.v === 3)
+    // v5/v6 carry exactly one known platform; v2-v4 never carry one (a `p` on
+    // an old version would be a cursor an old Core silently widens).
+    if (((candidate.v === 5 || candidate.v === 6) && !isDomainEventCursorPlatform(candidate.p))
+        || (candidate.v !== 5 && candidate.v !== 6 && candidate.p !== undefined)) {
+        return { ok: false, reason: "invalid_platform" };
+    }
+    const recoveryVersion = candidate.v === 4 || candidate.v === 6;
+    if (((candidate.v === 2 || candidate.v === 3 || candidate.v === 5)
         && (candidate.r !== undefined
             || candidate.e !== undefined
             || candidate.b !== undefined
             || candidate.t !== undefined
             || candidate.c !== undefined))
-        || (candidate.v === 4 && (candidate.r !== "snapshot"
+        || (recoveryVersion && (candidate.r !== "snapshot"
             || typeof candidate.e !== "number"
             || !Number.isInteger(candidate.e)
             || candidate.e < 0
@@ -142,7 +164,7 @@ export function decodeDomainEventCursor(text) {
         return result;
     };
     let recovery = null;
-    if (candidate.v === 4) {
+    if (recoveryVersion) {
         const base = parseRecoveryMap(candidate.b);
         const targets = parseRecoveryMap(candidate.t);
         const retainedCounts = parseRecoveryMap(candidate.c);
@@ -174,5 +196,6 @@ export function decodeDomainEventCursor(text) {
         watermarks,
         scope: candidate.s === "granted" ? "granted" : null,
         recovery,
+        platform: isDomainEventCursorPlatform(candidate.p) ? candidate.p : null,
     };
 }

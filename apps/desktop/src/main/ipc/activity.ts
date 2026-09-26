@@ -14,7 +14,7 @@ import {
 import type { DataLayer } from '../db/index';
 import type { SyncProvider } from '../sync/provider';
 import type { HubSyncStatus } from '../sync/hub-sync';
-import type { HubActivitySnapshot } from '../sync/hub-provider';
+import type { HubActivitySnapshot, ListSyncSnapshot } from '../sync/hub-provider';
 import type { CreditMeter } from '../ofapi/credit-meter';
 import type { ActivityVM, AiFeatureCostsVM, SyncStatusVM } from '../../preload/contract';
 
@@ -26,6 +26,8 @@ export type ActivitySync = SyncProvider & {
   hubMode?: () => 'live' | 'degraded' | 'off';
   hubModeOverride?: () => SyncStatusVM['hubModeOverride'];
   hubActivity?: () => HubActivitySnapshot;
+  /** D38 SYNCING state (hub-aware provider only). */
+  listSync?: () => ListSyncSnapshot;
 };
 
 export interface ActivityDeps {

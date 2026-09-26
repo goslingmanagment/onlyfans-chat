@@ -21,6 +21,7 @@ import { Kbd } from '../../design/Kbd';
 import { SkeletonRows } from '../../design/Skeleton';
 import { EmptyState } from '../../design/EmptyState';
 import { ChatRow } from './ChatRow';
+import { ListFreshnessBanner } from './ListFreshnessBanner';
 import { NavNumberOverlay } from './NavNumberOverlay';
 
 const FILTERS: Array<{ id: ChatFilter; labelKey: UiMessageKey }> = [
@@ -126,6 +127,7 @@ export function ChatListPane(): React.JSX.Element {
           </Chip>
         ))}
       </div>
+      <ListFreshnessBanner accountId={accountId} />
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
         {chats.isPending && <SkeletonRows />}
         {!chats.isPending && items.length === 0 && (

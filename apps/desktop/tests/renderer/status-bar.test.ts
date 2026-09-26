@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SyncStatusVM } from '../../src/preload/contract';
 import { selectStatusAge } from '../../src/renderer/src/app/statusAge';
+import { uiMessage } from '@chatgoose/shared/i18n/index';
 import { statusBarMode, STATUS_BAR_TIPS } from '../../src/renderer/src/app/statusBarTips';
 
 function mockupTips(): Map<string, string> {
@@ -91,6 +92,44 @@ describe('statusBarMode (mode word matches the panel badge)', () => {
   });
 });
 
+describe('SYNCING (D38)', () => {
+  it('replaces HUB LIVE until replay and page-1 verification finish', () => {
+    expect(statusBarMode('live', 'live', 'auto', true)).toEqual({
+      word: 'SYNCING',
+      tone: 'sync',
+      tip: '',
+      tipKey: 'sb.syncingTip',
+    });
+    expect(statusBarMode('live', 'live', 'auto', false)).toMatchObject({ word: 'HUB LIVE' });
+  });
+
+  it('does not flicker while the hub is unreachable (connecting ↔ degraded)', () => {
+    // Every retry of an unreachable hub passes through connecting and degraded;
+    // both must render the same word as long as the stream is not live.
+    for (const state of ['live', 'degraded', 'offline'] as const) {
+      const connecting = statusBarMode(state, 'connecting', 'auto', true);
+      const degraded = statusBarMode(state, 'degraded', 'auto', true);
+      expect(connecting.word).not.toBe('SYNCING');
+      expect(degraded.word).toBe(connecting.word);
+    }
+    expect(statusBarMode('degraded', 'connecting', 'auto', true)).toMatchObject({ word: 'DEGRADED' });
+    expect(statusBarMode('offline', 'connecting', 'auto', true)).toMatchObject({ word: 'OFFLINE' });
+  });
+
+  it('never masks a broken stream or auth as syncing', () => {
+    expect(statusBarMode('degraded', 'degraded', 'auto', true)).toMatchObject({ word: 'DEGRADED' });
+    expect(statusBarMode('offline', 'auth-failed', 'auto', true)).toMatchObject({ word: 'OFFLINE' });
+    expect(statusBarMode('live', 'off', 'auto', true)).toMatchObject({ word: 'POLLING' });
+  });
+
+  it('carries the owner-approved tooltip byte for byte', () => {
+    expect(uiMessage('ru', 'sb.syncingTip')).toBe(
+      'Приложение догоняет события, пропущенные пока оно было закрыто, и сверяет список чатов с OnlyFans. Обычно несколько секунд.',
+    );
+    expect(uiMessage('en', 'sb.syncingTip')).toContain('Usually a few seconds.');
+  });
+});
+
 describe('selectStatusAge', () => {
   const base: SyncStatusVM = {
     creditsBalance: null,
@@ -98,6 +137,9 @@ describe('selectStatusAge', () => {
     rpmRemaining: null,
     freshness: { acct_1: '2026-06-11T10:00:00.000Z' },
     listVerifiedAt: { acct_1: '2026-06-11T10:00:00.000Z' },
+    listSyncing: false,
+    listSyncingSince: null,
+    listEpochStartedAt: '2026-06-11T09:59:00.000Z',
     state: 'live',
     hub: 'live',
     hubMode: 'live',

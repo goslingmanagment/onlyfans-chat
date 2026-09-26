@@ -5,6 +5,8 @@ import { createDataLayer, type DataLayer } from '../../src/main/db/index';
 import {
   applyAccountGrantSnapshot,
   createPollingSync,
+  HEAD_WRITE_PROTECT_MS,
+  type ListReadRecord,
 } from '../../src/main/sync/polling-sync';
 import { createBudgetGuard } from '../../src/main/sync/budget-guard';
 import { prepareAndCommitRuntimeAccounts } from '../../src/main/runtime-activation';
@@ -136,6 +138,8 @@ interface StubClient {
     readIntent?: string;
   }[];
   listTransactionsCalls: { limit?: number; purpose?: string; startDate?: string }[];
+  /** D38: the retry policy of every listChats call, in order. */
+  listChatsRetries: Array<string | undefined>;
   setChats(chats: OfApiChat[]): void;
   setAccounts(accounts: OfApiAccount[]): void;
   setMessages(messages: OfApiMessage[]): void;
@@ -160,6 +164,7 @@ function makeStubClient(): StubClient {
     listChatsParams: [],
     listMessagesCalls: [],
     listTransactionsCalls: [],
+    listChatsRetries: [],
     setChats: (next) => {
       all = next;
     },
@@ -189,7 +194,9 @@ function makeStubClient(): StubClient {
           order?: string;
           skipUsers?: string;
           purpose?: string;
+          retry?: string;
         }) => {
+        state.listChatsRetries.push(params.retry);
         onListChats?.({
           ...(params.filter !== undefined ? { filter: params.filter } : {}),
           ...(params.purpose !== undefined ? { purpose: params.purpose } : {}),
@@ -873,7 +880,13 @@ describe('PollingSync', () => {
     expect(events.filter((event) => event.type === 'messageReceived')).toEqual([
       expect.objectContaining({ accountId: ACCT, chatId: '101', messageId: '6' }),
     ]);
-    expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('5');
+    // D38: the UI head is published with page 1 at once; the DELTA DETECTOR
+    // moves only for the chat whose body delta reached the head, so the failed
+    // chat is re-detected on the next read.
+    expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('6');
+    expect(data.chats.get(ACCT, '202')?.lastMessageId).toBe('6');
+    expect(data.chats.syncBaseline(ACCT, '101')).toBe('6');
+    expect(data.chats.syncBaseline(ACCT, '202')).toBe('5');
 
     failSecondChat = false;
     await sync.pollAccount(ACCT);
@@ -2009,8 +2022,11 @@ describe('PollingSync', () => {
 
       // Model a deletion webhook that never arrived: the upstream chat head is
       // now the previous surviving message. Ordinary polling is the recovery
-      // surface and must not preserve the locally stale head forever.
+      // surface and must not preserve the locally stale head forever — only a
+      // head written within HEAD_WRITE_PROTECT_MS before the read is kept
+      // (D38), and the next poll comes 20-60 s later.
       stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+      vi.setSystemTime(Date.now() + HEAD_WRITE_PROTECT_MS + 1_000);
       await sync.pollAccount(ACCT);
 
       expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('5');
@@ -2208,6 +2224,374 @@ describe('PollingSync', () => {
       expect(stub.listMessagesCalls).toHaveLength(0);
       sync.stop();
     });
+  });
+});
+
+describe('PollingSync list freshness (D38)', () => {
+  let data: DataLayer;
+  let stub: StubClient;
+  let events: SyncEvent[];
+  let logs: Array<{ level: string; message: string; fields?: Record<string, unknown> | undefined }>;
+  let reads: ListReadRecord[];
+  let failed: Array<{ accountId: string; reason: string }>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    data = createDataLayer({ driverPath: TEST_DRIVER, filePath: ':memory:', encryptionKey: null });
+    stub = makeStubClient();
+    events = [];
+    logs = [];
+    reads = [];
+    failed = [];
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    data.close();
+  });
+
+  async function drain(): Promise<void> {
+    for (let i = 0; i < 2000; i += 1) {
+      await Promise.resolve();
+    }
+  }
+
+  function makeD38Sync(options: { autoRead?: boolean } = {}) {
+    const sync = createPollingSync({
+      client: stub.client,
+      data,
+      toMediaUrl: (url) => `media://${Buffer.from(url).toString('base64url')}`,
+      autoReadEnabled: () => options.autoRead === true,
+      sleep: async () => undefined,
+      launchedAtMs: Date.now() - 1_500,
+      onLog: (level, message, fields) => logs.push({ level, message, fields }),
+      onListRead: (record) => reads.push(record),
+      onListVerificationFailed: (accountId, reason) => failed.push({ accountId, reason }),
+    });
+    sync.subscribe((event) => events.push(event));
+    return sync;
+  }
+
+  function markHydrated(): void {
+    data.settings.set(`sync.chatHydration.${ACCT}`, { nextOffset: 0, pagesWalked: 7, done: true });
+  }
+
+  it('startup: page 1 is written, painted and reported before the deeper pages arrive', async () => {
+    markHydrated(); // the first poll is a 5-page deep sweep
+    stub.setChats(makeChats(50));
+    const listChats = stub.client.listChats as ReturnType<typeof vi.fn>;
+    const original = listChats.getMockImplementation() as (params: unknown) => Promise<unknown>;
+    let releasePage2!: () => void;
+    const page2Gate = new Promise<void>((resolve) => {
+      releasePage2 = resolve;
+    });
+    listChats.mockImplementation(async (params: { offset?: number }) => {
+      if (params.offset === 10) {
+        await page2Gate; // a slow (hung) deeper page
+      }
+      return original(params);
+    });
+
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+
+    expect(data.chats.get(ACCT, '1000')).not.toBeNull(); // page 1 on disk
+    expect(data.chats.get(ACCT, '1010')).toBeNull(); // page 2 still in flight
+    expect(reads).toEqual([expect.objectContaining({ accountId: ACCT, trigger: 'startup' })]);
+    expect(events).toContainEqual({ type: 'chatListUpdated', accountId: ACCT });
+    const paint = logs.find((log) => log.message === 'list page1 painted');
+    expect(paint?.fields).toMatchObject({ accountId: ACCT, trigger: 'startup', chats: 10 });
+    expect(paint?.fields?.['sinceLaunchMs']).toBeGreaterThanOrEqual(1_500);
+    expect(logs).toContainEqual(expect.objectContaining({
+      message: 'list verified',
+      fields: expect.objectContaining({ accountId: ACCT, reason: 'session-start' }),
+    }));
+    expect(sync.status().listVerifiedAt?.[ACCT]).toBeDefined();
+
+    releasePage2();
+    await drain();
+    expect(data.chats.get(ACCT, '1049')).not.toBeNull();
+    await sync.stop();
+  });
+
+  it('deeper pages are written page by page: a failing page 4 keeps pages 2-3', async () => {
+    markHydrated();
+    stub.setChats(makeChats(50));
+    const listChats = stub.client.listChats as ReturnType<typeof vi.fn>;
+    const original = listChats.getMockImplementation() as (params: unknown) => Promise<unknown>;
+    listChats.mockImplementation(async (params: { offset?: number }) => {
+      if (params.offset === 30) {
+        throw new Error('page 4 timed out after 25 s');
+      }
+      return original(params);
+    });
+
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+
+    expect(data.chats.get(ACCT, '1000')).not.toBeNull();
+    expect(data.chats.get(ACCT, '1029')).not.toBeNull();
+    expect(data.chats.get(ACCT, '1030')).toBeNull();
+    // Page 1 verified the account even though the deep walk failed later.
+    expect(reads).toHaveLength(1);
+    expect(failed).toEqual([]);
+    await sync.stop();
+  });
+
+  it('every chat-list read is retry: none (callers own their retry schedule)', async () => {
+    stub.setChats(makeChats(25));
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    expect(stub.listChatsRetries.length).toBeGreaterThan(1);
+    expect(stub.listChatsRetries.every((retry) => retry === 'none')).toBe(true);
+    await sync.stop();
+  });
+
+  it('a failed startup page-1 read retries at 5, 10 and 20 s, then gives up', async () => {
+    const listChats = stub.client.listChats as ReturnType<typeof vi.fn>;
+    const attemptsAt: number[] = [];
+    const t0 = Date.now();
+    listChats.mockImplementation(async () => {
+      attemptsAt.push(Date.now() - t0);
+      throw new Error('OFAPI read timed out');
+    });
+
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    expect(attemptsAt).toEqual([0]);
+    for (const step of [5_000, 10_000, 20_000]) {
+      await vi.advanceTimersByTimeAsync(step);
+      await drain();
+    }
+    expect(attemptsAt).toEqual([0, 5_000, 15_000, 35_000]);
+    expect(failed).toEqual([{ accountId: ACCT, reason: 'session-start' }]);
+    expect(logs).toContainEqual(expect.objectContaining({
+      level: 'warn',
+      message: 'list verification gave up',
+      fields: { accountId: ACCT, reason: 'session-start', attempts: 4 },
+    }));
+    await sync.stop();
+  });
+
+  it('a retry that succeeds verifies the account (trigger verify)', async () => {
+    stub.setChats(makeChats(5));
+    const listChats = stub.client.listChats as ReturnType<typeof vi.fn>;
+    const original = listChats.getMockImplementation() as (params: unknown) => Promise<unknown>;
+    listChats.mockImplementationOnce(async () => {
+      throw new Error('hung');
+    });
+    listChats.mockImplementation(original);
+
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    expect(reads).toEqual([]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await drain();
+    expect(reads).toEqual([expect.objectContaining({ trigger: 'verify' })]);
+    expect(failed).toEqual([]);
+    await sync.stop();
+  });
+
+  it('verifyAccounts re-proves page 1 after an outage (page 1 only, no deep walk)', async () => {
+    markHydrated();
+    stub.setChats(makeChats(50));
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    const before = stub.listChatsParams.length;
+    reads = [];
+
+    sync.verifyAccounts([ACCT], 'reconnect');
+    await drain();
+    expect(stub.listChatsParams.slice(before).map((params) => params.offset)).toEqual([0]);
+    expect(reads).toEqual([expect.objectContaining({ trigger: 'verify' })]);
+    await sync.stop();
+  });
+
+  it('a replayed hub message the list already counted does not add unread twice', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 6, unread: 1 })]);
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    expect(data.chats.get(ACCT, '101')).toMatchObject({ lastMessageId: '6', unreadCount: 1 });
+
+    // Replay of the head itself and of an older message (no local rows).
+    expect(sync.applyHubMessage(ACCT, '101', makeHubMessage({
+      id: '6',
+      createdAt: '2026-06-10T12:00:00+00:00',
+    }))).toBe('applied');
+    expect(sync.applyHubMessage(ACCT, '101', makeHubMessage({
+      id: '5',
+      createdAt: '2026-06-10T11:00:00+00:00',
+    }))).toBe('applied');
+    expect(data.chats.get(ACCT, '101')?.unreadCount).toBe(1);
+
+    // A genuinely newer message still counts.
+    sync.applyHubMessage(ACCT, '101', makeHubMessage({ id: '7', createdAt: '2026-06-10T12:05:00+00:00' }));
+    expect(data.chats.get(ACCT, '101')).toMatchObject({ lastMessageId: '7', unreadCount: 2 });
+    await sync.stop();
+  });
+
+  it('applyHubMessage never touches the network and reports an unknown chat', async () => {
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    const listCallsBefore = stub.listChatsCalls;
+    expect(sync.applyHubMessage(ACCT, '404', makeHubMessage({ id: '1' }))).toBe('chat-missing');
+    await drain();
+    expect(stub.listChatsCalls).toBe(listCallsBefore);
+    expect(data.messages.get(ACCT, '404', '1')).not.toBeNull();
+    await sync.stop();
+  });
+
+  it('safety read: page 1 of the focused account every 5 min while live, skipped after a recent read', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    sync.setFocusedAccount(ACCT);
+    sync.setWindowVisible(false); // hidden window included
+    sync.setHubPollingSuspended(true);
+    const safetyReads = (): number => reads.filter((read) => read.trigger === 'safety').length;
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    await drain();
+    expect(safetyReads()).toBe(1);
+
+    // Any other successful read within the window makes the next tick a skip.
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    await expect(sync.readAccountHead(ACCT, 'intent', { preserveLocalHead: true })).resolves.toBe('ok');
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await drain();
+    expect(safetyReads()).toBe(1);
+    expect(logs).toContainEqual(expect.objectContaining({
+      message: 'safety read skipped',
+      fields: expect.objectContaining({ accountId: ACCT, trigger: 'timer' }),
+    }));
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    await drain();
+    expect(safetyReads()).toBe(2);
+    await sync.stop();
+  });
+
+  it('one safety check after resume, under the same skip rule', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    sync.setFocusedAccount(ACCT);
+    sync.setHubPollingSuspended(true);
+
+    sync.noteSystemResume(); // the startup read is seconds old
+    await drain();
+    expect(reads.filter((read) => read.trigger === 'safety')).toHaveLength(0);
+
+    vi.setSystemTime(Date.now() + 40 * 60_000); // the machine slept 40 minutes
+    sync.noteSystemResume();
+    await drain();
+    expect(reads.filter((read) => read.trigger === 'safety')).toHaveLength(1);
+    await sync.stop();
+  });
+
+  it('list-only: the delta detector follows the list head', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    expect(data.chats.syncBaseline(ACCT, '101')).toBe('5');
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 7, unread: 1 })]);
+    await sync.readAccountHead(ACCT, 'safety', { bodyDeltas: true });
+    expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('7');
+    expect(data.chats.syncBaseline(ACCT, '101')).toBe('7');
+    expect(stub.listMessagesCalls).toEqual([]);
+    await sync.stop();
+  });
+
+  it('a lagging safety read keeps a hub head applied just before it started (review #36)', async () => {
+    markHydrated();
+    vi.setSystemTime(Date.parse('2026-09-26T12:00:00Z'));
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5, unread: 0 })]);
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('5');
+
+    // Live enriched hub frame: fan message 6 → head 6, unread 1.
+    vi.setSystemTime(Date.parse('2026-09-26T12:00:30Z'));
+    expect(sync.applyHubMessage(ACCT, '101', makeHubMessage({
+      id: '6',
+      createdAt: '2026-09-26T12:00:30.000Z',
+    }))).toBe('applied');
+    expect(data.chats.get(ACCT, '101')).toMatchObject({ lastMessageId: '6', unreadCount: 1 });
+
+    // 1 s later the authoritative safety read starts; the list still lags (head 5).
+    vi.setSystemTime(Date.parse('2026-09-26T12:00:31Z'));
+    await expect(sync.readAccountHead(ACCT, 'safety', { bodyDeltas: true })).resolves.toBe('ok');
+    expect(data.chats.get(ACCT, '101')).toMatchObject({ lastMessageId: '6', unreadCount: 1 });
+
+    // Past the protection window the list is authoritative again (a missed
+    // deletion stays repairable).
+    vi.setSystemTime(Date.parse('2026-09-26T12:00:30Z') + HEAD_WRITE_PROTECT_MS + 1_000);
+    await expect(sync.readAccountHead(ACCT, 'safety', { bodyDeltas: true })).resolves.toBe('ok');
+    expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('5');
+    await sync.stop();
+  });
+
+  it('a wake fires resume twice (powerMonitor + sleep detector): one paid safety read', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+    sync.setFocusedAccount(ACCT);
+    sync.setHubPollingSuspended(true);
+    const listCallsBefore = stub.listChatsCalls;
+
+    vi.setSystemTime(Date.now() + 40 * 60_000); // the machine slept 40 minutes
+    sync.noteSystemResume();
+    sync.noteSystemResume();
+    await drain();
+    sync.noteSystemResume(); // a late third signal after the read finished
+    await drain();
+
+    expect(reads.filter((read) => read.trigger === 'safety')).toHaveLength(1);
+    expect(stub.listChatsCalls - listCallsBefore).toBe(1);
+    expect(logs).toContainEqual(expect.objectContaining({
+      message: 'safety read skipped',
+      fields: expect.objectContaining({ reason: 'in-flight' }),
+    }));
+    await sync.stop();
+  });
+
+  it('an authoritative page 1 keeps a newer head written while the read was in flight', async () => {
+    stub.setChats([makeChat({ fanId: 101, lastMessageId: 5 })]);
+    const sync = makeD38Sync();
+    sync.start([ACCT]);
+    await drain();
+
+    const listChats = stub.client.listChats as ReturnType<typeof vi.fn>;
+    const original = listChats.getMockImplementation() as (params: unknown) => Promise<unknown>;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    listChats.mockImplementationOnce(async (params: Record<string, unknown>) => {
+      await gate;
+      return original(params);
+    });
+    const read = sync.readAccountHead(ACCT, 'safety');
+    await drain();
+    // A live hub frame lands while the (stale) list read is in flight.
+    vi.setSystemTime(Date.now() + 1_000);
+    sync.applyHubMessage(ACCT, '101', makeHubMessage({ id: '6', createdAt: '2026-06-10T12:01:00+00:00' }));
+    release();
+    await read;
+    expect(data.chats.get(ACCT, '101')?.lastMessageId).toBe('6');
+    await sync.stop();
   });
 });
 

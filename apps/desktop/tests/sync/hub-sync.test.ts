@@ -18,12 +18,24 @@ import {
   HUB_V2_SSE_PATH,
   SseFrameParser,
   HUB_WATCHDOG_MS,
+  type HubFrameMeta,
   type HubSseBody,
   type HubSseFetch,
   type HubSyncStatus,
   type SseFrame,
 } from '../../src/main/sync/hub-sync';
-import { createHubAwareSync, type HubFactoryCallbacks } from '../../src/main/sync/hub-provider';
+import {
+  createHubAwareSync,
+  NOTIFICATION_MAX_AGE_MS,
+  REVERIFY_MIN_INTERVAL_MS,
+  type HubFactoryCallbacks,
+} from '../../src/main/sync/hub-provider';
+import type {
+  HubMessageApplyOutcome,
+  ListReadOutcome,
+  ListReadTrigger,
+  ListVerificationReason,
+} from '../../src/main/sync/polling-sync';
 import type { HubSync } from '../../src/main/sync/hub-sync';
 import type { SyncProvider } from '../../src/main/sync/provider';
 import { mapHubMessage } from '../../src/main/sync/mappers';
@@ -222,18 +234,19 @@ describe('createHubSync', () => {
     log: string[];
     sleeps: number[];
     lastEventId: () => number | null;
+    transactions: () => number;
   }
 
   function makeSync(
     responses: Array<{ status: number; stream: FakeStream | null; json?: unknown }>,
     options: {
       initialLastEventId?: number | null;
-      onEventDelay?: boolean;
       clientVersion?: string;
       accountIds?: readonly string[];
     } = {},
   ): SyncHarness {
     const { fetchImpl, calls } = makeHarness(responses);
+    let transactions = 0;
     const statuses: HubSyncStatus[] = [];
     const log: string[] = [];
     const sleeps: number[] = [];
@@ -248,11 +261,14 @@ describe('createHubSync', () => {
         sleeps.push(ms);
         return Promise.resolve();
       },
-      onEvent: async (event) => {
-        if (options.onEventDelay === true) {
-          await Promise.resolve(); // async handling must still precede persist
-        }
+      // D38: handling is synchronous and shares one transaction with the
+      // checkpoint; the log still proves handle-then-persist order.
+      onEvent: (event) => {
         log.push(`event:${event.type}`);
+      },
+      runInTransaction: (fn) => {
+        transactions += 1;
+        return fn();
       },
       accountIds: options.accountIds ?? [ACCT],
       onSnapshot: (snapshot) => {
@@ -268,12 +284,20 @@ describe('createHubSync', () => {
         log.push(`persist:${id}`);
       },
     });
-    return { sync, calls, statuses, log, sleeps, lastEventId: () => lastEventId };
+    return {
+      sync,
+      calls,
+      statuses,
+      log,
+      sleeps,
+      lastEventId: () => lastEventId,
+      transactions: () => transactions,
+    };
   }
 
   it('happy stream: bearer auth, events in order, lastEventId persisted AFTER handling', async () => {
     const stream = makeStream();
-    const h = makeSync([{ status: 200, stream }], { onEventDelay: true, clientVersion: '0.1.29' });
+    const h = makeSync([{ status: 200, stream }], { clientVersion: '0.1.29' });
     h.sync.start();
     await drainMicrotasks();
 
@@ -290,6 +314,8 @@ describe('createHubSync', () => {
     await drainMicrotasks();
 
     expect(h.log).toEqual(['event:typing', 'persist:41', 'event:typing', 'persist:42']);
+    // D38: each frame's handling and its checkpoint share ONE transaction.
+    expect(h.transactions()).toBe(2);
     expect(h.statuses).toEqual(['connecting', 'live']);
     expect(h.sync.status()).toBe('live');
     h.sync.stop();
@@ -862,6 +888,22 @@ describe('createHubSync', () => {
 
 // ─── provider composition ──────────────────────────────────────────────────
 
+/**
+ * What HubSync does with a frame (D38): apply synchronously inside the frame
+ * transaction, then run the returned post-commit effect. Async so a throwing
+ * handler surfaces as a rejection, like a rejected frame.
+ */
+async function runEvent(
+  callbacks: HubFactoryCallbacks,
+  event: SyncEvent,
+  meta?: HubFrameMeta,
+): Promise<void> {
+  const afterCommit = callbacks.onEvent(event, meta);
+  if (typeof afterCommit === 'function') {
+    afterCommit();
+  }
+}
+
 interface FakePolling extends SyncProvider {
   pollAccount(accountId: string): Promise<void>;
   setHubPollingSuspended(suspended: boolean): void;
@@ -877,10 +919,33 @@ interface FakePolling extends SyncProvider {
   grantAccountIds: string[];
   ingestCalls: Array<{ accountId: string; chatId: string; messageId: string }>;
   ingestResult: boolean;
+  /** D38: applyHubMessage outcome override ('chat-missing' etc.). */
+  applyOutcome: HubMessageApplyOutcome | null;
+  /** D38: intent/verify/safety page-1 reads. */
+  headReads: Array<{ accountId: string; trigger: string; preserveLocalHead: boolean; bodyDeltas: boolean }>;
+  headReadOutcome: ListReadOutcome;
+  chatTailReads: Array<{ accountId: string; chatId: string }>;
+  chatTailOutcome: ListReadOutcome;
+  verifyCalls: Array<{ accountIds: string[]; reason: string }>;
+  resumeCalls: number;
+  /** Test-side hook standing in for PollingSync's onListRead wiring. */
+  onListRead: ((accountId: string, startedAtMs: number) => void) | null;
+  /** List-only head proof used by intents (defaults to "never reached"). */
+  headReached: (accountId: string, chatId: string, messageId: string) => boolean;
   refreshAccountHead(accountId: string): Promise<void>;
   reconcileAccountHeadNow(accountId: string): Promise<void>;
   refreshAccountGrants(): Promise<string[]>;
   ingestHubMessage(accountId: string, chatId: string, message: NormalizedSyncMessage): Promise<boolean>;
+  applyHubMessage(accountId: string, chatId: string, message: NormalizedSyncMessage): HubMessageApplyOutcome;
+  readAccountHead(
+    accountId: string,
+    trigger: ListReadTrigger,
+    options?: { preserveLocalHead?: boolean; bodyDeltas?: boolean },
+  ): Promise<ListReadOutcome>;
+  readChatTailForIntent(accountId: string, chatId: string): Promise<ListReadOutcome>;
+  verifyAccounts(accountIds: readonly string[], reason: ListVerificationReason): void;
+  noteSystemResume(): void;
+  listHeadReached(accountId: string, chatId: string, messageId: string): boolean;
   emit(event: SyncEvent): void;
 }
 
@@ -898,6 +963,15 @@ function makeFakePolling(): FakePolling {
     grantAccountIds: [ACCT],
     ingestCalls: [],
     ingestResult: true,
+    applyOutcome: null,
+    headReads: [],
+    headReadOutcome: 'ok',
+    chatTailReads: [],
+    chatTailOutcome: 'ok',
+    verifyCalls: [],
+    resumeCalls: 0,
+    onListRead: null,
+    headReached: () => false,
     emit: (event) => {
       for (const listener of listeners) listener(event);
     },
@@ -941,6 +1015,39 @@ function makeFakePolling(): FakePolling {
       polling.ingestCalls.push({ accountId, chatId, messageId: message.id });
       return Promise.resolve(polling.ingestResult);
     },
+    applyHubMessage: (accountId, chatId, message) => {
+      polling.ingestCalls.push({ accountId, chatId, messageId: message.id });
+      if (polling.applyOutcome !== null) {
+        return polling.applyOutcome;
+      }
+      return polling.ingestResult ? 'applied' : 'unmapped';
+    },
+    readAccountHead: (accountId, trigger, options = {}) => {
+      polling.headReads.push({
+        accountId,
+        trigger,
+        preserveLocalHead: options.preserveLocalHead === true,
+        bodyDeltas: options.bodyDeltas === true,
+      });
+      const startedAtMs = Date.now();
+      if (polling.headReadOutcome === 'ok') {
+        polling.onListRead?.(accountId, startedAtMs);
+        polling.emit({ type: 'chatListUpdated', accountId });
+      }
+      return Promise.resolve(polling.headReadOutcome);
+    },
+    readChatTailForIntent: (accountId, chatId) => {
+      polling.chatTailReads.push({ accountId, chatId });
+      return Promise.resolve(polling.chatTailOutcome);
+    },
+    verifyAccounts: (accountIds, reason) => {
+      polling.verifyCalls.push({ accountIds: [...accountIds], reason });
+    },
+    noteSystemResume: () => {
+      polling.resumeCalls += 1;
+    },
+    listHeadReached: (accountId, chatId, messageId) =>
+      polling.headReached(accountId, chatId, messageId),
     readChatTailForUserOpen: () => Promise.resolve(),
     loadOlderMessagesForUserOpen: () =>
       Promise.resolve({ returned: 0, fresh: 0, hasOlder: false }),
@@ -994,7 +1101,7 @@ describe('createHubAwareSync (provider composition)', () => {
     data.close();
   });
 
-  function build(): {
+  function build(buildOptions: { autoRead?: boolean } = {}): {
     provider: ReturnType<typeof createHubAwareSync>;
     polling: FakePolling;
     hub: FakeHub;
@@ -1002,6 +1109,9 @@ describe('createHubAwareSync (provider composition)', () => {
     events: SyncEvent[];
     logs: Array<{ level: string; message: string; fields?: Record<string, unknown> | undefined }>;
     setNow: (ms: number) => void;
+    now: () => number;
+    /** Report a successful page-1 read of each account (settles verification). */
+    listRead: (...accountIds: string[]) => void;
   } {
     const polling = makeFakePolling();
     const hub = makeFakeHub();
@@ -1012,12 +1122,21 @@ describe('createHubAwareSync (provider composition)', () => {
       polling,
       data,
       now: () => nowMs,
+      autoReadEnabled: () => buildOptions.autoRead === true,
       createHub: (callbacks) => {
         captured = callbacks;
         return Promise.resolve(hub);
       },
       onLog: (level, message, fields) => logs.push({ level, message, fields }),
     });
+    // Stands in for PollingSync's onListRead → provider wiring (index.ts).
+    polling.onListRead = (accountId) =>
+      provider.handleListRead({
+        accountId,
+        startedAtMs: nowMs,
+        completedAtMs: nowMs,
+        trigger: 'intent',
+      });
     const events: SyncEvent[] = [];
     provider.subscribe((event) => events.push(event));
     return {
@@ -1028,6 +1147,17 @@ describe('createHubAwareSync (provider composition)', () => {
       logs,
       setNow: (ms: number) => {
         nowMs = ms;
+      },
+      now: () => nowMs,
+      listRead: (...accountIds: string[]) => {
+        for (const accountId of accountIds) {
+          provider.handleListRead({
+            accountId,
+            startedAtMs: nowMs,
+            completedAtMs: nowMs,
+            trigger: 'startup',
+          });
+        }
       },
       callbacks: () => {
         if (!captured) throw new Error('hub not created yet');
@@ -1062,6 +1192,11 @@ describe('createHubAwareSync (provider composition)', () => {
       ...overrides,
     };
     data.messages.upsertMany([upsert]);
+  }
+
+  /** The chat these frames target already exists locally. */
+  function knownChat(chatId = '101'): void {
+    seedChat(chatId, 'older-head', '2026-06-11T09:00:00.000Z');
   }
 
   function seedChat(
@@ -1142,6 +1277,518 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(hub.startCalls).toBe(1);
     provider.stop();
     expect(hub.stopCalls).toBe(1);
+  });
+
+  // ── D38: SYNCING, verification epochs, attention gate, push clock ──────
+
+  function liveMeta(overrides: Partial<HubFrameMeta> = {}): HubFrameMeta {
+    return {
+      lane: 'durable',
+      provenance: 'live',
+      occurredAt: new Date(PROVIDER_NOW_MS).toISOString(),
+      deliveredLive: true,
+      accountSeq: 1,
+      transactionRef: null,
+      thread: null,
+      ...overrides,
+    };
+  }
+
+  it('startup: SYNCING from the first moment, polling and the hub replay start together', async () => {
+    const { provider, hub, polling } = build();
+    let pollingStarted = false;
+    polling.start = () => {
+      pollingStarted = true;
+    };
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    // Neither waits for the other: the page-1 reads run in parallel with replay.
+    expect(pollingStarted).toBe(true);
+    expect(hub.startCalls).toBe(1);
+    expect(provider.listSync()).toEqual({
+      syncing: true,
+      syncingSinceMs: PROVIDER_NOW_MS,
+      epochStartedAtMs: PROVIDER_NOW_MS,
+      epochReason: 'session-start',
+    });
+    provider.stop();
+  });
+
+  it('SYNCING ends only after replay_completed AND the page-1 verification of every account', async () => {
+    const ctx = build();
+    const { provider, callbacks, logs } = ctx;
+    provider.start([ACCT, NEW_ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onStatusChange('live');
+
+    callbacks().onCaughtUp({ frames: 3, framesByAccount: { '8': 2, '9': 1 }, offPlatformFrames: 0, ms: 900 });
+    expect(provider.listSync().syncing).toBe(true); // replay alone is not enough
+    expect(logs).toContainEqual(expect.objectContaining({
+      message: 'hub replay completed',
+      fields: expect.objectContaining({ framesByAccount: { '8': 2, '9': 1 } }),
+    }));
+    ctx.listRead(ACCT);
+    expect(provider.listSync().syncing).toBe(true); // one account still unverified
+    ctx.listRead(NEW_ACCT);
+    expect(provider.listSync()).toMatchObject({ syncing: false, syncingSinceMs: null });
+    expect(logs).toContainEqual(expect.objectContaining({
+      message: 'list sync complete',
+      fields: expect.objectContaining({ reason: 'session-start', verified: 2, failed: [] }),
+    }));
+    provider.stop();
+  });
+
+  it('an exhausted verification ends SYNCING (the banner and safety read take over)', async () => {
+    const ctx = build();
+    const { provider, callbacks } = ctx;
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onCaughtUp();
+    provider.handleListVerificationFailed(ACCT, 'session-start');
+    expect(provider.listSync().syncing).toBe(false);
+    provider.stop();
+  });
+
+  it('only an outage longer than 60 s (or a replay gap) re-verifies the list', async () => {
+    const ctx = build();
+    const { provider, polling, callbacks } = ctx;
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onStatusChange('live');
+    callbacks().onCaughtUp();
+    ctx.listRead(ACCT);
+    expect(provider.listSync().syncing).toBe(false);
+    ctx.setNow(ctx.now() + REVERIFY_MIN_INTERVAL_MS); // outside the coalescing window
+
+    // A 30 s blip: stays LIVE, no reads.
+    callbacks().onStatusChange('degraded');
+    ctx.setNow(ctx.now() + 30_000);
+    callbacks().onStatusChange('live');
+    expect(provider.listSync().syncing).toBe(false);
+    expect(polling.verifyCalls).toEqual([]);
+
+    // The planned 15-min reconnect never leaves 'live': a new marker changes nothing.
+    callbacks().onCaughtUp();
+    expect(provider.listSync().syncing).toBe(false);
+
+    // 61 s down: SYNCING again, every account re-verified — and the polling
+    // cadence is suspended again exactly as after any return to live.
+    callbacks().onStatusChange('degraded');
+    ctx.setNow(ctx.now() + 61_000);
+    const suspensionsBefore = polling.suspensions.length;
+    callbacks().onStatusChange('live');
+    expect(provider.listSync()).toMatchObject({ syncing: true, epochReason: 'reconnect' });
+    expect(polling.verifyCalls).toEqual([{ accountIds: [ACCT], reason: 'reconnect' }]);
+    expect(polling.suspensions.slice(suspensionsBefore)).toEqual([true]);
+    callbacks().onCaughtUp();
+    ctx.listRead(ACCT);
+    expect(provider.listSync().syncing).toBe(false);
+
+    // A 409 right after: coalesced — never more than one paid re-verification
+    // per 5 minutes, however often the stream drops or Core answers 409.
+    await callbacks().onV2GapRecovered();
+    expect(polling.verifyCalls).toHaveLength(1);
+    expect(provider.listSync().syncing).toBe(false);
+
+    // Later, a 409 / grant rebaseline re-verifies.
+    ctx.setNow(ctx.now() + REVERIFY_MIN_INTERVAL_MS);
+    await callbacks().onV2GapRecovered();
+    expect(polling.verifyCalls.at(-1)).toEqual({ accountIds: [ACCT], reason: 'gap' });
+    expect(provider.listSync()).toMatchObject({ syncing: true, epochReason: 'gap' });
+    provider.stop();
+  });
+
+  it('a grant refresh that revokes a pending account does not pin SYNCING', async () => {
+    const ctx = build();
+    const { provider, polling, callbacks } = ctx;
+    provider.start([ACCT, NEW_ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onCaughtUp();
+    ctx.listRead(ACCT);
+    expect(provider.listSync().syncing).toBe(true); // NEW_ACCT pending
+
+    polling.grantAccountIds = [ACCT]; // NEW_ACCT revoked; re-verification coalesced
+    await callbacks().onV2GapRecovered();
+    expect(polling.verifyCalls).toEqual([]);
+    expect(provider.listSync().syncing).toBe(false);
+    provider.stop();
+  });
+
+  it('a read that started before the epoch cannot verify it', async () => {
+    const ctx = build();
+    const { provider, callbacks } = ctx;
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onCaughtUp();
+    provider.handleListRead({
+      accountId: ACCT,
+      startedAtMs: PROVIDER_NOW_MS - 1,
+      completedAtMs: PROVIDER_NOW_MS,
+      trigger: 'safety',
+    });
+    expect(provider.listSync().syncing).toBe(true);
+    provider.stop();
+  });
+
+  it('toast age gate: live provenance and a fresh fact are both required after the marker', async () => {
+    const { provider, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onCaughtUp();
+
+    const frame = (messageId: string): SyncEvent => ({
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId,
+      message: hubMessage({ id: messageId }),
+    });
+    await runEvent(callbacks(), frame('fresh'), liveMeta());
+    await runEvent(callbacks(), frame('redelivered'), liveMeta({ provenance: 'redelivery' }));
+    await runEvent(callbacks(), frame('repaired'), liveMeta({ provenance: 'repair' }));
+    await runEvent(callbacks(), frame('unknown'), liveMeta({ provenance: 'unknown' }));
+    await runEvent(
+      callbacks(),
+      frame('old-live'),
+      liveMeta({ occurredAt: new Date(PROVIDER_NOW_MS - NOTIFICATION_MAX_AGE_MS - 1_000).toISOString() }),
+    );
+    await runEvent(
+      callbacks(),
+      frame('recent-live'),
+      liveMeta({ occurredAt: new Date(PROVIDER_NOW_MS - NOTIFICATION_MAX_AGE_MS + 1_000).toISOString() }),
+    );
+
+    const liveness = events
+      .filter((event): event is Extract<SyncEvent, { type: 'messageReceived' }> => event.type === 'messageReceived')
+      .map((event) => [event.messageId, event.live !== false]);
+    expect(liveness).toEqual([
+      ['fresh', true],
+      ['redelivered', false],
+      ['repaired', false],
+      ['unknown', false],
+      ['old-live', false],
+      ['recent-live', true],
+    ]);
+    provider.stop();
+  });
+
+  it('keeps the replay_completed rule: a fresh live frame before the marker stays quiet when old', async () => {
+    const { provider, callbacks, events } = build();
+    provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
+    await Promise.resolve();
+    await Promise.resolve();
+    const oldMessage: SyncEvent = {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: 'replayed',
+      message: hubMessage({ id: 'replayed', createdAt: '2026-06-11T09:00:00.000Z' }),
+    };
+    await runEvent(callbacks(), oldMessage, liveMeta({
+      deliveredLive: false,
+      occurredAt: new Date(PROVIDER_NOW_MS - 1_000).toISOString(),
+    }));
+    expect(events).toEqual([{ ...oldMessage, live: false }]);
+    provider.stop();
+  });
+
+  it('«последний пуш» counts only live frames (not the replayed backlog)', async () => {
+    const ctx = build();
+    const { provider, callbacks } = ctx;
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await runEvent(callbacks(), { type: 'chatListUpdated', accountId: ACCT }, liveMeta({ deliveredLive: false }));
+    expect(provider.hubActivity()).toMatchObject({ eventsToday: 1, lastEventAt: null });
+    await runEvent(callbacks(), { type: 'chatListUpdated', accountId: ACCT }, liveMeta({ provenance: 'redelivery' }));
+    expect(provider.hubActivity().lastEventAt).toBeNull();
+
+    ctx.setNow(PROVIDER_NOW_MS + 5_000);
+    await runEvent(callbacks(), { type: 'chatListUpdated', accountId: ACCT }, liveMeta());
+    expect(provider.hubActivity()).toMatchObject({
+      eventsToday: 3,
+      lastEventAt: PROVIDER_NOW_MS + 5_000,
+      lastEventType: 'chatListUpdated',
+    });
+    provider.stop();
+  });
+
+  it('a replayed frame is proven by the startup read; a live one needs a later read', async () => {
+    const ctx = build();
+    const { provider, callbacks } = ctx;
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Replayed subscription from an hour ago: T = its occurredAt.
+    await runEvent(callbacks(), { type: 'chatListUpdated', accountId: ACCT }, liveMeta({
+      deliveredLive: false,
+      occurredAt: new Date(PROVIDER_NOW_MS - 60 * 60_000).toISOString(),
+    }));
+    expect(provider.syncIntents().openIntents()).toEqual([
+      expect.objectContaining({ notBeforeMs: PROVIDER_NOW_MS - 60 * 60_000 }),
+    ]);
+    ctx.listRead(ACCT); // the session's page-1 read, started now
+    expect(provider.syncIntents().openIntents()).toEqual([]);
+
+    // Live: T = local receipt, so only a read 2 s later qualifies.
+    await runEvent(callbacks(), { type: 'chatListUpdated', accountId: ACCT }, liveMeta());
+    ctx.listRead(ACCT);
+    expect(provider.syncIntents().openIntents()).toHaveLength(1);
+    provider.stop();
+  });
+
+  it('an enriched message for an unknown chat opens an account intent; the message arrival closes a thin intent', async () => {
+    const ctx = build();
+    const { provider, polling, callbacks } = ctx;
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await runEvent(callbacks(), { type: 'messageReceived', accountId: ACCT, chatId: '101', messageId: '9001' });
+    expect(provider.syncIntents().openIntents()).toEqual([
+      expect.objectContaining({ kind: 'chat_message', messageId: '9001' }),
+    ]);
+    polling.applyOutcome = 'chat-missing';
+    await runEvent(callbacks(), {
+      type: 'messageReceived',
+      accountId: ACCT,
+      chatId: '101',
+      messageId: '9001',
+      message: hubMessage({ id: '9001' }),
+    });
+    expect(provider.syncIntents().openIntents()).toEqual([
+      expect.objectContaining({ kind: 'account_list', reason: 'unknown-chat' }),
+    ]);
+    provider.stop();
+  });
+
+  it('a live message delivered 3-9 min late still alerts (OFAPI delay episodes, review #36)', async () => {
+    const { provider, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    knownChat();
+    callbacks().onCaughtUp();
+    // Production 2026-09-25 04:18–04:54 UTC: ordinary incoming messages on
+    // page 9 arrived 181–277 s after their createdAt; 0.1.56 notified them.
+    for (const [messageId, lateMs] of [['late-181', 181_000], ['late-277', 277_000], ['late-8m', 8 * 60_000]] as const) {
+      await runEvent(
+        callbacks(),
+        {
+          type: 'messageReceived',
+          accountId: ACCT,
+          chatId: '101',
+          messageId,
+          message: hubMessage({ id: messageId }),
+        },
+        liveMeta({ occurredAt: new Date(PROVIDER_NOW_MS - lateMs).toISOString() }),
+      );
+    }
+    expect(events.map((event) => (event.type === 'messageReceived' ? event.live !== false : null)))
+      .toEqual([true, true, true]);
+    expect(NOTIFICATION_MAX_AGE_MS).toBe(9 * 60_000); // below the hub's 10-min redelivery quiet period
+    provider.stop();
+  });
+
+  describe('age gate on the hub clock (PC clock skew ±5 min)', () => {
+    const FIVE_MIN = 5 * 60_000;
+
+    async function liveness(localSkewMs: number, trueAgeMs: number): Promise<boolean> {
+      const ctx = build();
+      const { provider, callbacks, events } = ctx;
+      // The PC clock reads true time + skew; the hub's Date header is true time.
+      const trueNowMs = PROVIDER_NOW_MS;
+      ctx.setNow(trueNowMs + localSkewMs);
+      provider.start([ACCT]);
+      await Promise.resolve();
+      await Promise.resolve();
+      knownChat();
+      // Two agreeing whole-second Date headers (connect + reconnect).
+      callbacks().onServerDate(trueNowMs - 500, trueNowMs + localSkewMs);
+      callbacks().onServerDate(trueNowMs - 500, trueNowMs + localSkewMs);
+      callbacks().onCaughtUp();
+      await runEvent(
+        callbacks(),
+        {
+          type: 'messageReceived',
+          accountId: ACCT,
+          chatId: '101',
+          messageId: `skew-${localSkewMs}-${trueAgeMs}`,
+          message: hubMessage({ id: `skew-${localSkewMs}-${trueAgeMs}` }),
+        },
+        liveMeta({ occurredAt: new Date(trueNowMs - trueAgeMs).toISOString() }),
+      );
+      provider.stop();
+      const event = events.at(-1);
+      return event?.type === 'messageReceived' && event.live !== false;
+    }
+
+    it('PC clock 5 min fast: a 6-min-old live message still alerts', async () => {
+      await expect(liveness(+FIVE_MIN, 6 * 60_000)).resolves.toBe(true);
+      await expect(liveness(+FIVE_MIN, 0)).resolves.toBe(true);
+    });
+
+    it('PC clock 5 min slow: a 12-min-old fact stays quiet', async () => {
+      await expect(liveness(-FIVE_MIN, 12 * 60_000)).resolves.toBe(false);
+      await expect(liveness(-FIVE_MIN, 30_000)).resolves.toBe(true);
+    });
+
+    it('without a hub Date sample the local clock is the fallback', async () => {
+      const { provider, callbacks, events } = build();
+      provider.start([ACCT]);
+      await Promise.resolve();
+      await Promise.resolve();
+      knownChat();
+      callbacks().onCaughtUp();
+      await runEvent(
+        callbacks(),
+        { type: 'messageReceived', accountId: ACCT, chatId: '101', messageId: 'x', message: hubMessage({ id: 'x' }) },
+        liveMeta({ occurredAt: new Date(PROVIDER_NOW_MS - NOTIFICATION_MAX_AGE_MS - 1_000).toISOString() }),
+      );
+      expect(events.at(-1)).toMatchObject({ live: false });
+      provider.stop();
+    });
+
+    it('one bogus Date header cannot mute alerts; two agreeing ones are trusted', async () => {
+      const { provider, callbacks, events, logs } = build();
+      provider.start([ACCT]);
+      await Promise.resolve();
+      await Promise.resolve();
+      knownChat();
+      callbacks().onCaughtUp();
+      const fresh = async (messageId: string): Promise<boolean> => {
+        await runEvent(
+          callbacks(),
+          { type: 'messageReceived', accountId: ACCT, chatId: '101', messageId, message: hubMessage({ id: messageId }) },
+          liveMeta({ occurredAt: new Date(PROVIDER_NOW_MS).toISOString() }),
+        );
+        const event = events.at(-1);
+        return event?.type === 'messageReceived' && event.live !== false;
+      };
+      // A proxy answering with a Date 1 hour ahead, once.
+      callbacks().onServerDate(PROVIDER_NOW_MS + 60 * 60_000, PROVIDER_NOW_MS);
+      await expect(fresh('after-bogus')).resolves.toBe(true);
+      expect(logs.some((log) => log.message.startsWith('local clock differs from the hub'))).toBe(false);
+      // The same skew seen twice is real.
+      callbacks().onServerDate(PROVIDER_NOW_MS + 60 * 60_000, PROVIDER_NOW_MS);
+      await expect(fresh('after-two')).resolves.toBe(false);
+      provider.stop();
+    });
+
+    it('logs a large skew once', async () => {
+      const { provider, callbacks, logs } = build();
+      provider.start([ACCT]);
+      callbacks().onServerDate(PROVIDER_NOW_MS - FIVE_MIN, PROVIDER_NOW_MS);
+      callbacks().onServerDate(PROVIDER_NOW_MS - FIVE_MIN, PROVIDER_NOW_MS);
+      expect(logs.filter((log) => log.message.startsWith('local clock differs from the hub'))).toHaveLength(1);
+      provider.stop();
+    });
+  });
+
+  it('first message of a chat not listed yet: the fan name from the local cache, else «new chat»', async () => {
+    const { provider, callbacks, events } = build();
+    provider.start([ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks().onCaughtUp();
+    data.fans.upsert({
+      accountId: ACCT,
+      fanId: '777',
+      username: 'kevin_k',
+      name: 'Kevin',
+      customName: null,
+      avatar: null,
+      about: null,
+      lastSeen: null,
+      spending: null,
+      subscription: null,
+      fetchedAt: '2026-06-11T11:00:00.000Z',
+    });
+
+    await runEvent(
+      callbacks(),
+      { type: 'messageReceived', accountId: ACCT, chatId: '777', messageId: 'k1', message: hubMessage({ id: 'k1' }) },
+      liveMeta(),
+    );
+    await runEvent(
+      callbacks(),
+      { type: 'messageReceived', accountId: ACCT, chatId: '888', messageId: 'n1', message: hubMessage({ id: 'n1' }) },
+      liveMeta(),
+    );
+    // Thin frames too, and still alerting — the notification is kept.
+    await runEvent(
+      callbacks(),
+      { type: 'messageReceived', accountId: ACCT, chatId: '999', messageId: 't1' },
+      liveMeta(),
+    );
+    expect(events).toEqual([
+      expect.objectContaining({ chatId: '777', fanName: 'Kevin' }),
+      expect.objectContaining({ chatId: '888', newChat: true }),
+      expect.objectContaining({ chatId: '999', newChat: true }),
+    ]);
+    expect(events.every((event) => event.type === 'messageReceived' && event.live !== false)).toBe(true);
+    // An existing chat carries no hint.
+    knownChat();
+    await runEvent(
+      callbacks(),
+      { type: 'messageReceived', accountId: ACCT, chatId: '101', messageId: 'e1', message: hubMessage({ id: 'e1' }) },
+      liveMeta(),
+    );
+    expect(events.at(-1)).not.toHaveProperty('newChat');
+    expect(events.at(-1)).not.toHaveProperty('fanName');
+    provider.stop();
+  });
+
+  it('start() closes intents persisted for accounts this runtime no longer handles', async () => {
+    const past = PROVIDER_NOW_MS - 60_000;
+    for (const accountId of ['acct_revoked', ACCT]) {
+      data.syncIntents.open({
+        kind: 'chat_message',
+        accountId,
+        chatId: '42',
+        messageId: '1001',
+        notBeforeMs: past,
+        reason: 'thin-frame',
+        nextAttemptMs: past,
+        nowMs: past,
+      });
+    }
+    const { provider } = build();
+    provider.start([ACCT]);
+    expect(provider.syncIntents().openIntents().map((row) => row.accountId)).toEqual([ACCT]);
+    provider.stop();
+  });
+
+  it('a grant shrink closes the revoked account\'s intents', async () => {
+    const ctx = build();
+    const { provider, polling, callbacks } = ctx;
+    provider.start([ACCT, NEW_ACCT]);
+    await Promise.resolve();
+    await Promise.resolve();
+    await runEvent(callbacks(), { type: 'chatListUpdated', accountId: NEW_ACCT }, liveMeta());
+    expect(provider.syncIntents().openIntents().map((row) => row.accountId)).toEqual([NEW_ACCT]);
+    polling.grantAccountIds = [ACCT];
+    await callbacks().onV2GapRecovered();
+    expect(provider.syncIntents().openIntents()).toEqual([]);
+    provider.stop();
+  });
+
+  it('resume forwards one safety check to polling', () => {
+    const { provider, polling } = build();
+    provider.start([ACCT]);
+    provider.noteSystemResume();
+    expect(polling.resumeCalls).toBe(1);
+    provider.stop();
   });
 
   it('hub live suspends polling; degraded restores the scheduler and NEVER force-sweeps', async () => {
@@ -1355,15 +2002,16 @@ describe('createHubAwareSync (provider composition)', () => {
     await drainMicrotasks();
 
     expect(calls.map((call) => call.url)).toEqual([
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_STALE&platform=onlyfans`,
       (() => {
         const url = new URL(`https://hub.test${HUB_V2_SNAPSHOT_PATH}`);
         url.searchParams.set('sourceCursor', 'CUR_STALE');
+        url.searchParams.set('platform', 'onlyfans');
         return url.toString();
       })(),
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=0&limit=1&pageMode=bounded_v1&messageLimit=100`,
       `https://hub.test${HUB_SNAPSHOT_PATH}?accountId=${ACCT}&afterSeq=0&pageCursor=5&limit=1&snapshotCursor=77`,
-      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH`,
+      `https://hub.test${HUB_V2_SSE_PATH}?cursor=CUR_FRESH&platform=onlyfans`,
     ]);
     expect(order).toEqual(['reconciled', 'apply:101', 'apply:202', 'persist:CUR_FRESH']);
     expect(data.messages.get(ACCT, '101', 'tip-1')).toMatchObject({
@@ -1382,6 +2030,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('enriched messageReceived ingests locally and skips refreshChat', async () => {
     const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -1392,7 +2041,7 @@ describe('createHubAwareSync (provider composition)', () => {
       messageId: '9001',
       message: hubMessage(),
     };
-    await callbacks().onEvent(frame);
+    await runEvent(callbacks(), frame);
 
     expect(polling.ingestCalls).toEqual([{ accountId: ACCT, chatId: '101', messageId: '9001' }]);
     expect(polling.refreshCalls).toEqual([]);
@@ -1422,6 +2071,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('stamps an old enriched messageReceived as replay before the marker', async () => {
     const { provider, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -1435,7 +2085,7 @@ describe('createHubAwareSync (provider composition)', () => {
         createdAt: '2026-06-11T10:00:00.000Z',
       }),
     };
-    await callbacks().onEvent(frame);
+    await runEvent(callbacks(), frame);
 
     expect(events).toEqual([{ ...frame, live: false }]);
     provider.stop();
@@ -1444,6 +2094,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('uses occurredAt for a fresh id-only frame when the marker is unavailable', async () => {
     const { provider, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -1454,16 +2105,17 @@ describe('createHubAwareSync (provider composition)', () => {
       messageId: 'fresh-thin-9001',
       occurredAt: '2026-06-11T12:00:00.000Z',
     };
-    await callbacks().onEvent(frame);
+    await runEvent(callbacks(), frame);
 
-    expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
-    expect(events[1]).not.toHaveProperty('live');
+    expect(events).toEqual([frame]);
+    expect(events[0]).not.toHaveProperty('live');
     provider.stop();
   });
 
   it('treats post-marker messages as live even when their timestamps are old', async () => {
     const { provider, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
     callbacks().onCaughtUp();
@@ -1478,7 +2130,7 @@ describe('createHubAwareSync (provider composition)', () => {
         createdAt: '2026-06-11T10:00:00.000Z',
       }),
     };
-    await callbacks().onEvent(frame);
+    await runEvent(callbacks(), frame);
 
     expect(events).toEqual([frame]);
     expect(events[0]).not.toHaveProperty('live');
@@ -1488,6 +2140,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('suppresses a duplicate eligible message id after its first alert', async () => {
     const { provider, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -1498,8 +2151,8 @@ describe('createHubAwareSync (provider composition)', () => {
       messageId: 'duplicate-9001',
       message: hubMessage({ id: 'duplicate-9001' }),
     };
-    await callbacks().onEvent(frame);
-    await callbacks().onEvent(frame);
+    await runEvent(callbacks(), frame);
+    await runEvent(callbacks(), frame);
 
     expect(events).toEqual([frame, { ...frame, live: false }]);
     provider.stop();
@@ -1536,7 +2189,7 @@ describe('createHubAwareSync (provider composition)', () => {
       messageId: 'shared-9001',
       message: hubMessage({ id: 'shared-9001' }),
     };
-    await callbacks().onEvent(frame);
+    await runEvent(callbacks(), frame);
 
     expect(events).toHaveLength(2);
     expect(events[1]).toMatchObject({ messageId: 'shared-9001', live: false });
@@ -1546,6 +2199,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('stamps a polling duplicate of a hub-alerted id as replay', async () => {
     const { provider, callbacks, polling, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
     callbacks().onCaughtUp();
@@ -1557,7 +2211,7 @@ describe('createHubAwareSync (provider composition)', () => {
       messageId: 'hub-first-9001',
       message: hubMessage({ id: 'hub-first-9001' }),
     };
-    await callbacks().onEvent(frame);
+    await runEvent(callbacks(), frame);
     expect(events).toEqual([frame]);
 
     polling.emit({
@@ -1597,7 +2251,7 @@ describe('createHubAwareSync (provider composition)', () => {
           createdAt: new Date(PROVIDER_NOW_MS + 4 * 3_600_000).toISOString(),
         }),
       };
-      await callbacks().onEvent(overnight);
+      await runEvent(callbacks(), overnight);
       expect(events).toHaveLength(1);
       expect(events[0]).toMatchObject({ messageId: 'overnight-9001', live: false });
 
@@ -1614,7 +2268,7 @@ describe('createHubAwareSync (provider composition)', () => {
           createdAt: new Date(wakeMs).toISOString(),
         }),
       };
-      await callbacks().onEvent(fresh);
+      await runEvent(callbacks(), fresh);
       expect(events).toHaveLength(2);
       expect(events[1]).not.toHaveProperty('live');
       await provider.stop();
@@ -1634,7 +2288,7 @@ describe('createHubAwareSync (provider composition)', () => {
     // the sleep interval ever fires after wake. The gate itself must notice
     // the wall-clock gap inline.
     setNow(PROVIDER_NOW_MS + 8 * 3_600_000);
-    await callbacks().onEvent({
+    await runEvent(callbacks(), {
       type: 'messageReceived',
       accountId: ACCT,
       chatId: '101',
@@ -1665,9 +2319,9 @@ describe('createHubAwareSync (provider composition)', () => {
       messageId,
     });
     setNow(PROVIDER_NOW_MS + 2 * 60_000);
-    await callbacks().onEvent(idOnly('v1-early-9001'));
+    await runEvent(callbacks(), idOnly('v1-early-9001'));
     setNow(PROVIDER_NOW_MS + 6 * 60_000);
-    await callbacks().onEvent(idOnly('v1-late-9001'));
+    await runEvent(callbacks(), idOnly('v1-late-9001'));
 
     const received = events.filter((event) => event.type === 'messageReceived');
     expect(received).toHaveLength(2);
@@ -1699,7 +2353,7 @@ describe('createHubAwareSync (provider composition)', () => {
       // the session was watching the whole time.
       for (const [index, minutesAgo] of [8, 5].entries()) {
         const createdMs = PROVIDER_NOW_MS + 20 * 30_000 - minutesAgo * 60_000;
-        await callbacks().onEvent({
+        await runEvent(callbacks(), {
           type: 'messageReceived',
           accountId: ACCT,
           chatId: '101',
@@ -1794,7 +2448,7 @@ describe('createHubAwareSync (provider composition)', () => {
       messageId: 'sent-9001',
       message: hubMessage({ id: 'sent-9001', isSentByMe: true }),
     };
-    await callbacks().onEvent(frame);
+    await runEvent(callbacks(), frame);
 
     expect(events).toEqual([frame]);
     expect(events[0]).not.toHaveProperty('live');
@@ -2099,9 +2753,10 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
-  it('id-only messageReceived preserves the refreshChat fallback before re-emitting', async () => {
+  it('id-only messageReceived opens a durable chat intent instead of awaiting a read (D38)', async () => {
     const { provider, polling, callbacks, events, logs } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -2111,18 +2766,22 @@ describe('createHubAwareSync (provider composition)', () => {
       chatId: '101',
       messageId: '9001',
     };
-    await callbacks().onEvent(frame);
+    await runEvent(callbacks(), frame);
 
     expect(polling.ingestCalls).toEqual([]);
-    expect(polling.refreshCalls).toEqual([{
-      accountId: ACCT,
-      chatId: '101',
-      expectedMessageId: '9001',
-    }]);
-    expect(events).toEqual([
-      { type: 'chatListUpdated', accountId: ACCT },
-      { ...frame, live: false },
+    // The frame no longer awaits the network: the fallback read is a durable
+    // obligation committed with the frame.
+    expect(polling.refreshCalls).toEqual([]);
+    expect(provider.syncIntents().openIntents()).toEqual([
+      expect.objectContaining({
+        kind: 'chat_message',
+        accountId: ACCT,
+        chatId: '101',
+        messageId: '9001',
+        reason: 'thin-frame',
+      }),
     ]);
+    expect(events).toEqual([{ ...frame, live: false }]);
     expect(provider.hubActivity()).toMatchObject({
       eventsToday: 1,
       appliedEventsToday: 1,
@@ -2145,7 +2804,7 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
-  it('rejects a thin Hub event when its fallback read fails', async () => {
+  it('a thin Hub event never depends on a network read (D38: no await, no rejection)', async () => {
     const { provider, polling, callbacks, events } = build();
     polling.refreshChat = async () => {
       throw new Error('fallback read failed');
@@ -2154,21 +2813,23 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    await expect(callbacks().onEvent({
+    await expect(runEvent(callbacks(), {
       type: 'messageReceived',
       accountId: ACCT,
       chatId: '101',
       messageId: '9001',
-    })).rejects.toThrow('fallback read failed');
+    })).resolves.toBeUndefined();
 
-    expect(events).toEqual([]);
-    expect(provider.hubActivity().appliedEventsToday).toBe(0);
+    expect(events).toHaveLength(1);
+    expect(provider.hubActivity().appliedEventsToday).toBe(1);
+    expect(provider.syncIntents().openIntents()).toHaveLength(1);
     provider.stop();
   });
 
   it('mismatched enriched message falls back to refreshChat', async () => {
     const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -2179,15 +2840,14 @@ describe('createHubAwareSync (provider composition)', () => {
       messageId: '9001',
       message: hubMessage({ id: 'other-message' }),
     };
-    await callbacks().onEvent(frame);
+    await runEvent(callbacks(), frame);
 
     expect(polling.ingestCalls).toEqual([]);
-    expect(polling.refreshCalls).toEqual([{
-      accountId: ACCT,
-      chatId: '101',
-      expectedMessageId: '9001',
-    }]);
-    expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }, frame]);
+    expect(polling.refreshCalls).toEqual([]);
+    expect(provider.syncIntents().openIntents()).toEqual([
+      expect.objectContaining({ kind: 'chat_message', chatId: '101', messageId: '9001' }),
+    ]);
+    expect(events).toEqual([frame]);
     expect(provider.hubActivity()).toMatchObject({
       fallbackByTypeToday: { messageReceived: 1 },
       fallbackByReasonToday: { 'hub-mismatched-message-fallback': 1 },
@@ -2202,6 +2862,7 @@ describe('createHubAwareSync (provider composition)', () => {
   it('bad enriched message bodies degrade to id-only fallback instead of dropping the frame', async () => {
     const { provider, polling, callbacks, events } = build();
     provider.start([ACCT]);
+    knownChat(); // an existing chat: no new-chat hint on the event
     await Promise.resolve();
     await Promise.resolve();
 
@@ -2223,18 +2884,14 @@ describe('createHubAwareSync (provider composition)', () => {
       throw new Error('Expected invalid message body to preserve the event envelope');
     }
 
-    await callbacks().onEvent(frame);
+    await runEvent(callbacks(), frame);
 
     expect(polling.ingestCalls).toEqual([]);
-    expect(polling.refreshCalls).toEqual([{
-      accountId: ACCT,
-      chatId: '101',
-      expectedMessageId: '9001',
-    }]);
-    expect(events).toEqual([
-      { type: 'chatListUpdated', accountId: ACCT },
-      { ...frame, live: false },
+    expect(polling.refreshCalls).toEqual([]);
+    expect(provider.syncIntents().openIntents()).toEqual([
+      expect.objectContaining({ kind: 'chat_message', chatId: '101', messageId: '9001' }),
     ]);
+    expect(events).toEqual([{ ...frame, live: false }]);
     expect(provider.hubActivity()).toMatchObject({
       fallbackByTypeToday: { messageReceived: 1 },
       fallbackByReasonToday: { 'hub-id-only-fallback': 1 },
@@ -2254,14 +2911,14 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    await callbacks().onEvent({
+    await runEvent(callbacks(), {
       type: 'tipReceived',
       accountId: ACCT,
       chatId: '5',
       messageId: '1',
       amountUsd: 5,
     });
-    await callbacks().onEvent({ type: 'ppvUnlocked', accountId: ACCT, chatId: '5', messageId: '2' });
+    await runEvent(callbacks(), { type: 'ppvUnlocked', accountId: ACCT, chatId: '5', messageId: '2' });
     // No expectedMessageId: notification-shaped events reference historical
     // messages that are legitimately absent from the cached window; demanding
     // them locally is what wedged the stream (incident 2026-07-15).
@@ -2304,7 +2961,7 @@ describe('createHubAwareSync (provider composition)', () => {
     // The unlock fact applies through the monotonic markOpened merge before
     // any refresh; the refresh itself is best-effort preview upkeep and never
     // carries an expectedMessageId (incident 2026-07-15).
-    await callbacks().onEvent({
+    await runEvent(callbacks(), {
       type: 'ppvUnlocked',
       accountId: ACCT,
       chatId: '5',
@@ -2323,7 +2980,7 @@ describe('createHubAwareSync (provider composition)', () => {
     // replays the same frame forever (incident 2026-07-15). The failure is
     // still visible in telemetry.
     polling.refreshError = new Error('refresh permanently failing');
-    await expect(callbacks().onEvent({
+    await expect(runEvent(callbacks(), {
       type: 'ppvUnlocked',
       accountId: ACCT,
       chatId: '5',
@@ -2356,31 +3013,50 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    await callbacks().onEvent({ type: 'typing', accountId: ACCT, chatId: '7' });
-    await callbacks().onEvent({ type: 'presence', accountId: ACCT, chatId: '7', online: true });
-    await callbacks().onEvent({ type: 'accountAuthChanged', accountId: ACCT, authenticated: false });
+    await runEvent(callbacks(), { type: 'typing', accountId: ACCT, chatId: '7' });
+    await runEvent(callbacks(), { type: 'presence', accountId: ACCT, chatId: '7', online: true });
+    await runEvent(callbacks(), { type: 'accountAuthChanged', accountId: ACCT, authenticated: false });
 
     expect(polling.refreshCalls).toHaveLength(0);
     expect(events.map((e) => e.type)).toEqual(['typing', 'presence', 'accountAuthChanged']);
     provider.stop();
   });
 
+  /** Let the intent worker run: past the 2 s list lag, then one evaluation. */
+  async function runIntents(ctx: { provider: ReturnType<typeof createHubAwareSync>; setNow: (ms: number) => void; now: () => number }, advanceMs = 2_000): Promise<void> {
+    ctx.setNow(ctx.now() + advanceMs);
+    ctx.provider.syncIntents().kick();
+    await drainMicrotasks();
+  }
+
   it('messageDeleted without chatId tombstones via DB lookup and re-emits enriched', async () => {
-    const { provider, polling, callbacks, events } = build();
+    const ctx = build();
+    const { provider, polling, callbacks, events } = ctx;
     seedMessage('1000001', '4471102');
     provider.start([ACCT]);
     await Promise.resolve();
     await Promise.resolve();
+    ctx.listRead(ACCT);
 
-    await callbacks().onEvent({ type: 'messageDeleted', accountId: ACCT, messageId: '1000001' });
+    await runEvent(callbacks(), { type: 'messageDeleted', accountId: ACCT, messageId: '1000001' });
 
     expect(data.messages.get(ACCT, '4471102', '1000001')?.deleted).toBe(true);
-    expect(polling.reconcileCalls).toEqual([ACCT]);
-    expect(polling.accountRefreshCalls).toEqual([]);
+    // D38: no awaited reconcile inside the frame — a durable obligation.
+    expect(polling.reconcileCalls).toEqual([]);
     expect(events).toEqual([
-      { type: 'chatListUpdated', accountId: ACCT },
       { type: 'messageDeleted', accountId: ACCT, messageId: '1000001', chatId: '4471102' },
     ]);
+    expect(provider.syncIntents().openIntents()).toEqual([
+      expect.objectContaining({ kind: 'delete_head', accountId: ACCT, messageId: '1000001' }),
+    ]);
+
+    await runIntents(ctx);
+    // A deletion needs an AUTHORITATIVE read (the survivor head moves back).
+    expect(polling.headReads).toEqual([
+      { accountId: ACCT, trigger: 'intent', preserveLocalHead: false, bodyDeltas: false },
+    ]);
+    expect(provider.syncIntents().openIntents()).toEqual([]);
+    expect(events.at(-1)).toEqual({ type: 'chatListUpdated', accountId: ACCT });
     provider.stop();
   });
 
@@ -2397,21 +3073,26 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    await callbacks().onEvent({ type: 'messageDeleted', accountId: ACCT, messageId: '1000002' });
+    await runEvent(callbacks(), { type: 'messageDeleted', accountId: ACCT, messageId: '1000002' });
     data.bus.flushNow();
     expect(scopes).toContainEqual({ scope: 'messages', chatId: '4471102' });
     provider.stop();
   });
 
   it('messageDeleted for an unknown message still refreshes the account head', async () => {
-    const { provider, polling, callbacks, events } = build();
+    const ctx = build();
+    const { provider, polling, callbacks, events } = ctx;
     provider.start([ACCT]);
     await Promise.resolve();
     await Promise.resolve();
+    ctx.listRead(ACCT);
 
-    await callbacks().onEvent({ type: 'messageDeleted', accountId: ACCT, messageId: 'nope' });
-    expect(polling.reconcileCalls).toEqual([ACCT]);
-    expect(polling.accountRefreshCalls).toEqual([]);
+    await runEvent(callbacks(), { type: 'messageDeleted', accountId: ACCT, messageId: 'nope' });
+    expect(events).toEqual([]);
+    await runIntents(ctx);
+    expect(polling.headReads).toEqual([
+      { accountId: ACCT, trigger: 'intent', preserveLocalHead: false, bodyDeltas: false },
+    ]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }]);
     expect(provider.hubActivity()).toMatchObject({
       eventsToday: 1,
@@ -2434,7 +3115,8 @@ describe('createHubAwareSync (provider composition)', () => {
   });
 
   it('clears a stale deleted outgoing head without consuming older unread tip state', async () => {
-    const { provider, polling, callbacks } = build();
+    const ctx = build();
+    const { provider, polling, callbacks } = ctx;
     seedChat('outgoing-head-chat', 'outgoing-head', '2026-06-11T12:00:00.000Z', {
       unreadCount: 1,
       hasUnreadTips: true,
@@ -2446,13 +3128,15 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    await callbacks().onEvent({
+    ctx.listRead(ACCT);
+    await runEvent(callbacks(), {
       type: 'messageDeleted',
       accountId: ACCT,
       messageId: 'outgoing-head',
     });
+    await runIntents(ctx);
 
-    expect(polling.reconcileCalls).toEqual([ACCT]);
+    expect(polling.headReads).toHaveLength(1);
     expect(data.chats.get(ACCT, 'outgoing-head-chat')).toMatchObject({
       lastMessageId: null,
       lastMessagePreview: '',
@@ -2469,7 +3153,7 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    await callbacks().onEvent({
+    await runEvent(callbacks(), {
       type: 'messageDeleted',
       accountId: ACCT,
       messageId: '1000003',
@@ -2477,23 +3161,32 @@ describe('createHubAwareSync (provider composition)', () => {
     });
     expect(data.messages.get(ACCT, '555', '1000003')?.deleted).toBe(true);
     expect(events).toEqual([
-      { type: 'chatListUpdated', accountId: ACCT },
       { type: 'messageDeleted', accountId: ACCT, messageId: '1000003', chatId: '555' },
     ]);
     provider.stop();
   });
 
-  it('chatListUpdated uses the lag-safe head refresh and avoids duplicate list events', async () => {
-    const { provider, polling, callbacks, events } = build();
+  it('chatListUpdated opens a lag-safe account intent and avoids duplicate list events', async () => {
+    const ctx = build();
+    const { provider, polling, callbacks, events } = ctx;
     provider.start([ACCT]);
     await Promise.resolve();
     await Promise.resolve();
+    ctx.listRead(ACCT);
 
-    await callbacks().onEvent({ type: 'chatListUpdated', accountId: ACCT });
+    await runEvent(callbacks(), { type: 'chatListUpdated', accountId: ACCT });
+    expect(events).toEqual([]);
+    expect(provider.syncIntents().openIntents()).toEqual([
+      expect.objectContaining({ kind: 'account_list', accountId: ACCT, reason: 'list-nudge' }),
+    ]);
 
-    expect(polling.accountRefreshCalls).toEqual([ACCT]);
-    expect(polling.reconcileCalls).toEqual([]);
+    await runIntents(ctx);
+    expect(polling.accountRefreshCalls).toEqual([]);
+    expect(polling.headReads).toEqual([
+      { accountId: ACCT, trigger: 'intent', preserveLocalHead: true, bodyDeltas: false },
+    ]);
     expect(events).toEqual([{ type: 'chatListUpdated', accountId: ACCT }]);
+    expect(provider.syncIntents().openIntents()).toEqual([]);
     provider.stop();
   });
 
@@ -2510,7 +3203,7 @@ describe('createHubAwareSync (provider composition)', () => {
     // polling-origin messageSent (P1 path)
     polling.emit({ type: 'messageSent', accountId: ACCT, chatId: '1', messageId: 'm1' });
     // hub-origin messageSent (SSE path)
-    await callbacks().onEvent({ type: 'messageSent', accountId: ACCT, chatId: '1', messageId: 'm2' });
+    await runEvent(callbacks(), { type: 'messageSent', accountId: ACCT, chatId: '1', messageId: 'm2' });
 
     expect(engineSeen.map((e) => (e.type === 'messageSent' ? e.messageId : null))).toEqual([
       'm1',
@@ -2694,9 +3387,9 @@ describe('createHubAwareSync (provider composition)', () => {
 
     expect(provider.hubActivity()).toMatchObject({ eventsToday: 0, lastEventAt: null });
 
-    await callbacks().onEvent({ type: 'typing', accountId: ACCT, chatId: '7' });
+    await runEvent(callbacks(), { type: 'typing', accountId: ACCT, chatId: '7' });
     tick(3_000);
-    await callbacks().onEvent({ type: 'chatListUpdated', accountId: ACCT });
+    await runEvent(callbacks(), { type: 'chatListUpdated', accountId: ACCT });
 
     const activity = provider.hubActivity();
     expect(activity.eventsToday).toBe(2);
@@ -2729,14 +3422,14 @@ describe('createHubAwareSync (provider composition)', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    await callbacks().onEvent({ type: 'typing', accountId: ACCT, chatId: '7' });
+    await runEvent(callbacks(), { type: 'typing', accountId: ACCT, chatId: '7' });
     expect(provider.hubActivity().eventsToday).toBe(1);
 
     tick(24 * 60 * 60_000);
     expect(provider.hubActivity().eventsToday).toBe(0);
     expect(provider.hubActivity().eventsByTypeToday).toEqual({});
     expect(provider.hubActivity().lifetime.received.total).toBe(1);
-    await callbacks().onEvent({ type: 'typing', accountId: ACCT, chatId: '7' });
+    await runEvent(callbacks(), { type: 'typing', accountId: ACCT, chatId: '7' });
     expect(provider.hubActivity().eventsToday).toBe(1);
     expect(provider.hubActivity().lifetime.received.total).toBe(2);
     provider.stop();

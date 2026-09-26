@@ -17,7 +17,7 @@
 /**
  * Exactly five. Adding a sixth is a contract change: it widens what a key can be
  * granted, so it travels with a migration for the `agent_keys` CHECK, an entry in
- * the per-operation requirement table, and a decisions.md line.
+ * the per-operation requirement table, and regression coverage.
  */
 export declare const AGENT_CAPABILITIES: readonly ["read:messages", "read:money", "read:observations_envelope", "read:datasets", "request:hydration"];
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number];

@@ -2590,6 +2590,7 @@ const deliveryKindEnum = z.enum([
     "incident_opened",
     "incident_resolved",
     "incident_manually_resolved",
+    "alert_digest_scheduled",
 ]);
 export const notificationsSettingsResponseSchema = z.object({
     configured: z.boolean(),
@@ -2943,6 +2944,29 @@ export const syncSnapshotRestartRequiredResponseSchema = z.object({
     snapshotPath: z.literal("/api/v1/events/snapshot"),
 });
 // --- Event stream v2 (kernel Stage 21): domain_events, per-account ordering ---
+/** H3: what Core knows about how a durable frame's fact reached the ledger.
+ * `redelivery` — its source OFAPI webhook receipt carries the provider's
+ * redelivery header (`x-ofapi-redelivery-of`); `repair` — a superseding
+ * correction (`data.supersedesEventId`); `live` — neither is KNOWN. `live` is
+ * NOT "fresh": old facts are labelled `live` on every replay before
+ * `replay_completed`, after re-canonicalization of old observations by a new
+ * parser version (e.g. formerly quarantined PPVs), on Fansly history pulls
+ * (no webhook lane, never looked up), on OFAPI's own automatic retries (no
+ * redelivery header) and on receipts past retention. A missing
+ * `provenance` means unknown (the lookup failed): treat it as not live.
+ * Business identity (refs, dedup) is the same in all three.
+ * Clients deciding on attention (toasts, sounds) must combine `live` with
+ * the stream's `replay_completed` boundary AND an age check on `occurredAt`
+ * — and even that is not proof: when the upstream payload has no timestamp
+ * of its own, `occurredAt` falls back to the receipt time. Never toast from
+ * `GET /api/v1/events/v2/facts` (catch-up of history, not news). */
+export const domainEventProvenanceEnum = z.enum(["live", "redelivery", "repair"]);
+/** H3: the money facts `GET /api/v1/events/v2/facts` serves. */
+export const domainEventFactTypes = [
+    "message.ppv_unlocked",
+    "tip.received",
+    "transaction.posted",
+];
 export const domainEventFrameSchema = z.object({
     accountId: z.number().int().positive(),
     accountSeq: z.number().int().positive(),
@@ -2967,6 +2991,20 @@ export const domainEventFrameSchema = z.object({
     // trip (decision #92's "payloads ride Stage 24"). Shape-tolerant clients
     // validate it themselves (it is upstream-derived, not a kernel contract).
     payload: z.unknown().optional(),
+    // H3 serve-time additions (optional; older consumers strip unknown keys):
+    // the ledger's transaction ref (transaction.posted), so money consumers
+    // apply one change per transaction...
+    transactionRef: z.string().nullable().optional(),
+    // ...what Core knows about how the fact reached the ledger — NOT a
+    // freshness signal (see domainEventProvenanceEnum). Absent = unknown,
+    // treat it as not live...
+    provenance: domainEventProvenanceEnum.optional(),
+    // ...and, on money-fact frames (domainEventFactTypes) whose conversationRef
+    // names a known DM thread, its fan labels for display without a chat read.
+    thread: z.object({
+        fanName: z.string().nullable(),
+        username: z.string().nullable(),
+    }).optional(),
 });
 // The v2 stream may interleave `event: ephemeral` frames (no id line — they
 // never advance the cursor): serve-time-only events that are deliberately
@@ -3009,6 +3047,18 @@ export const domainEventsSnapshotResponseSchema = z.object({
         accountRef: z.string().min(1).nullable(),
         currentSeq: z.number().int().nonnegative(),
     })),
+});
+/** H3: one page of an account's money facts, in account_seq order. */
+export const domainEventFactsResponseSchema = z.object({
+    accountId: z.number().int().positive(),
+    // The account's committed high-water when this page was read. Every fact
+    // at or below it is either in this page, in a later page, or superseded.
+    throughSeq: z.number().int().nonnegative(),
+    facts: z.array(domainEventFrameSchema),
+    // Pass back as afterSeq. The last fact's accountSeq while hasMore, else
+    // throughSeq (the next call then returns only newer facts).
+    nextAfterSeq: z.number().int().nonnegative(),
+    hasMore: z.boolean(),
 });
 export const syncSnapshotQuerySchema = z.object({
     accountId: syncEventIdSchema,
@@ -5046,9 +5096,14 @@ const baseRouteSchemas = {
             + "interleave `event: ephemeral` frames (serve-time-only, no id) and "
             + "`event: control` frames (connection signals — `{\"type\":"
             + "\"replay_completed\"}` marks the end of replay; frames after it are live "
-            + "delivery). Skip control types you don't recognize.",
+            + "delivery). Skip control types you don't recognize. Optional `platform` "
+            + "narrows the account universe to granted accounts on that platform (typing "
+            + "and grant revalidation too); cursors it emits are bound to it and must be "
+            + "resumed with the same `platform` (400 otherwise). A cursor minted without "
+            + "`platform` is narrowed once, never widened.",
         querystring: z.object({
             cursor: z.string().optional(),
+            platform: platformEnum.optional(),
         }),
         response: {
             200: z.string().describe("text/event-stream — `event: domain` frames (see domainEventFrameSchema); "
@@ -5073,18 +5128,45 @@ const baseRouteSchemas = {
             + "Gap-recovery callers pass the rejected opaque sourceCursor so already-applied "
             + "history is not replayed again; Core also advances past erased sequence holes. "
             + "State payloads ride the consumer stages (24/33) additively — v2's snapshot "
-            + "role here is the cursor-reset handshake.",
+            + "role here is the cursor-reset handshake. Optional `platform` limits the "
+            + "accounts to that platform (an explicit account on another platform is 400) "
+            + "and binds the cursor to it; a sourceCursor bound to a different platform is 400.",
         querystring: z.object({
             accounts: z.string().regex(/^\d+(,\d+)*$/).optional(),
             // Rejected resume cursor whose already-applied watermarks bound replay
             // after the caller completes the durable per-account state walk.
             sourceCursor: z.string().min(1).optional(),
+            platform: platformEnum.optional(),
         }),
         response: {
             200: domainEventsSnapshotResponseSchema,
             400: errorResponseSchema,
             401: errorResponseSchema,
             403: errorResponseSchema,
+        },
+    },
+    eventsV2Facts: {
+        auth: { kind: "any" },
+        tags: ["events"],
+        summary: "Money facts (PPV unlocks, tips, posted transactions) of one granted account",
+        description: "Pages one account's `message.ppv_unlocked`, `tip.received` and "
+            + "`transaction.posted` ledger events by account_seq (`afterSeq` exclusive), as "
+            + "DomainEventFrame rows without message payloads. Superseded events are "
+            + "excluded; their superseding repair is served with provenance `repair`. A "
+            + "read of existing ledger rows: no new sequence, cursor or OFAPI request. "
+            + "Same grants as the v2 stream (403 outside them). `afterSeq` above the "
+            + "account's head is 409.",
+        querystring: z.object({
+            accountId: z.coerce.number().int().positive(),
+            afterSeq: z.coerce.number().int().nonnegative().default(0),
+            limit: z.coerce.number().int().min(1).max(1000).default(500),
+        }),
+        response: {
+            200: domainEventFactsResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            409: errorResponseSchema,
         },
     },
     adminOfapiWebhookStatus: {

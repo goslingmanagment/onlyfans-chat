@@ -23,6 +23,30 @@ export function shouldShowOsNotification(input: {
     && input.notificationsSupported;
 }
 
+/**
+ * Notification title for an incoming message (D38): the cached chat's fan
+ * name, else the name the event carries for a chat not listed yet, else
+ * «Новый чат» for a first message from someone the app does not know yet,
+ * else the generic title. Never awaits a read — the notification is kept.
+ */
+export function messageNotificationTitle(
+  locale: UiLocale,
+  event: Extract<SyncEvent, { type: 'messageReceived' }>,
+  chatFanName: string | null | undefined,
+  surface: 'toast' | 'os',
+): string {
+  if (chatFanName !== null && chatFanName !== undefined && chatFanName !== '') {
+    return chatFanName;
+  }
+  if (event.fanName !== undefined) {
+    return event.fanName;
+  }
+  if (event.newChat === true) {
+    return uiMessage(locale, 'notif.newChat');
+  }
+  return uiMessage(locale, surface === 'toast' ? 'toast.newMessage' : 'notif.newMessage');
+}
+
 /** Canonical incoming-message copy shared by native and renderer notices. */
 export function messageNotificationBody(
   locale: UiLocale,

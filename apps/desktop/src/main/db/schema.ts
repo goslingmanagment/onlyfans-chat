@@ -518,6 +518,7 @@ export const ALL_TABLES = [
   'thread_fetch_log',
   'message_guard_events',
   'harvest_uploaded_revisions',
+  'sync_intents',
 ] as const;
 
 // Preserve the exact new send payload and every closed action's logical identity.
@@ -547,4 +548,39 @@ UPDATE chats SET locally_hidden_at = updated_at WHERE locally_hidden = 1 AND loc
 // v23: outreach custody is command metadata, independent of composer options.
 export const SCHEMA_V23 = `
 ALTER TABLE outbox ADD COLUMN outreach_purpose TEXT CHECK (outreach_purpose IS NULL OR outreach_purpose = 'new-follower');
+`;
+
+// v24 (D38) — the startup/list-freshness rework.
+//
+// `sync_baseline_message_id` is the chat-list DELTA DETECTOR, split from the UI
+// head (`last_message_id`). A page-1 read is now written the moment it arrives
+// so the inbox paints at once; the detector only advances after the automatic
+// body delta for that chat has really reached the advertised head (auto-read
+// on) or at once (list-only). Existing rows start with detector = head, which
+// is exactly what the previous single column meant.
+//
+// `sync_intents` holds the durable follow-up reads a hub frame obliges, written
+// in the SAME transaction as the frame's local state and its v2 cursor. A row
+// exists only while the obligation is open (closing deletes it); '' stands for
+// "not applicable" so the natural key stays UNIQUE (NULLs are distinct).
+//   account_list — «this account's list is not older than not_before_ms»;
+//   chat_message — «message message_id of chat chat_id is visible locally»;
+//   delete_head  — «re-check a cached head that may still show message_id».
+export const SCHEMA_V24 = `
+ALTER TABLE chats ADD COLUMN sync_baseline_message_id TEXT;
+UPDATE chats SET sync_baseline_message_id = last_message_id;
+CREATE TABLE sync_intents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL CHECK (kind IN ('account_list', 'chat_message', 'delete_head')),
+  account_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL DEFAULT '',
+  message_id TEXT NOT NULL DEFAULT '',
+  not_before_ms INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_ms INTEGER NOT NULL,
+  created_ms INTEGER NOT NULL,
+  UNIQUE (kind, account_id, chat_id, message_id)
+);
+CREATE INDEX idx_sync_intents_account ON sync_intents (account_id, kind);
 `;

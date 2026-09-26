@@ -13,10 +13,10 @@ import { useUiStore } from '../state/uiStore';
 import { useSettingsCache } from '../state/settingsCache';
 import { useSpendersStore } from '../features/spenders/spendersStore';
 import { playNotificationBlip } from '../lib/sound';
-import { uiMessage } from '@chatgoose/shared/i18n/index';
 import {
   isAlertEligible,
   messageNotificationBody,
+  messageNotificationTitle,
 } from '@chatgoose/shared/notifications/index';
 import { currentLocale } from '../lib/i18n';
 import {
@@ -192,7 +192,7 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
             const chat = list?.items.find((c) => c.chatId === event.chatId);
             const locale = currentLocale();
             ui.pushToast({
-              title: chat?.fanName ?? uiMessage(locale, 'toast.newMessage'),
+              title: messageNotificationTitle(locale, event, chat?.fanName, 'toast'),
               // The chat query is invalidated in a later batch, so its preview
               // is still the previous message here. Enriched frames already
               // carry the authoritative body; id-only frames use generic copy.

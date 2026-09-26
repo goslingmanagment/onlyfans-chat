@@ -172,8 +172,15 @@ export interface SyncStatusVM {
   rpmRemaining: number | null;
   /** Per-account ISO timestamp of last successful chat-list poll. */
   freshness: Record<string, string>;
-  /** Explicit list-verification clock; same data as `freshness` for older callers. */
+  /** D38: durable per-account «list verified» clock — the start of the last
+   * successful page-1 read, surviving restarts (the banner's «Список от …»). */
   listVerifiedAt: Record<string, string>;
+  /** D38 SYNCING: the app is catching up (replay + page-1 verification). */
+  listSyncing: boolean;
+  /** ISO start of the current SYNCING stretch; null while not syncing. */
+  listSyncingSince: string | null;
+  /** ISO start of the current verification epoch; null before the first. */
+  listEpochStartedAt: string | null;
   state: 'live' | 'degraded' | 'offline';
   /** Agency Hub SSE stream state (SPEC §6.2/§9); 'off' = hub not configured. */
   hub: 'off' | 'connecting' | 'live' | 'degraded' | 'auth-failed' | 'stopped';

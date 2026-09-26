@@ -102,6 +102,31 @@ const SPEND_INITIAL_WINDOW_MS = 30 * 24 * 60 * 60_000;
  */
 const SPEND_RETENTION_MS = 310 * 24 * 60 * 60_000;
 
+// ── D38: list freshness ──────────────────────────────────────────────────
+/** A session/epoch verification (page 1 of an account) that fails retries
+ * after these delays, then gives up; safety and intent reads cover it later. */
+export const LIST_VERIFY_RETRY_DELAYS_MS = [5_000, 10_000, 20_000] as const;
+/** Safety net while the hub stream is live: page 1 of the focused account
+ * this often, skipped when any successful page-1 read happened within it. */
+export const SAFETY_READ_INTERVAL_MS = 5 * 60_000;
+/** Durable per-account «list verified at» clock (the banner's «Список от …»). */
+function listVerifiedKey(accountId: string): string {
+  return `sync.listVerifiedAt.v1.${accountId}`;
+}
+/** The durable copy only has to survive a restart (the banner's minute
+ * precision): persist at most this often per account; status() reads memory. */
+const LIST_VERIFIED_PERSIST_EVERY_MS = 60_000;
+/**
+ * An authoritative page-1 read may move a head backwards (the repair for a
+ * deletion that never arrived) — but not over a head written this recently.
+ * The list endpoint lags the webhook by seconds (D38 assumes 2 s for intents),
+ * so a hub head applied just before the read started would otherwise be
+ * reverted to the previous preview, its unread cleared, for up to one safety
+ * interval. A missed deletion stays repairable by the next read.
+ */
+export const HEAD_WRITE_PROTECT_MS = 10_000;
+const listVerifiedAtSchema = z.string().refine((value) => Number.isFinite(Date.parse(value)));
+
 /** Versioned coverage state makes existing installs perform one trustworthy
  * full-window backfill after this fix, even when their old capped sweep already
  * left a newest row that would otherwise masquerade as complete coverage. */
@@ -190,7 +215,59 @@ export interface PollingSyncOptions {
   ) => void;
   /** DIAGNOSTIC (temporary, 2026-06-23): current OFAPI read transport label. */
   readTransport?: () => string | null | undefined;
+  /** D38 instrumentation: epoch ms the app launched (launch → page-1 paint). */
+  launchedAtMs?: number;
+  /** D38: every successful page-1 list read of an account, whatever triggered it. */
+  onListRead?: (read: ListReadRecord) => void;
+  /** D38: a list verification exhausted its retries (5/10/20 s) unverified. */
+  onListVerificationFailed?: (accountId: string, reason: ListVerificationReason) => void;
 }
+
+/** Why a page-1 list read ran (diagnostics and acceptance logs). */
+export type ListReadTrigger =
+  | 'startup'
+  | 'poll'
+  | 'deep-sweep'
+  | 'manual'
+  | 'verify'
+  | 'safety'
+  | 'intent'
+  | 'reconcile';
+
+export type ListVerificationReason = 'session-start' | 'reconnect' | 'gap';
+
+export interface ListReadRecord {
+  accountId: string;
+  /** Local clock when the page-1 request was issued. */
+  startedAtMs: number;
+  completedAtMs: number;
+  trigger: ListReadTrigger;
+}
+
+/** Outcome of one list read attempt. `busy` = the account's single-flight
+ * owner was already running a read and this caller skipped. */
+export type ListReadOutcome = 'ok' | 'failed' | 'busy' | 'gone';
+/** An intent's chat body read: `gone` = the account has no polling loop,
+ * `list-only` = auto-read is off (a body read would mark the chat read). */
+export type ChatTailReadOutcome = ListReadOutcome | 'list-only';
+
+export interface ReadAccountHeadOptions {
+  /** Keep a newer local head (hub-driven reads can lag the frame they serve). */
+  preserveLocalHead?: boolean;
+  /** Also fetch the automatic body delta of changed chats (auto-read only). */
+  bodyDeltas?: boolean;
+  /** Head ids a hub delete frame owes a re-check of: such a cached head is
+   * never kept over the list's survivor, however recently it was written. */
+  tombstonedHeadIds?: readonly string[];
+}
+
+/** Synchronous hub-message apply (D38: the frame transaction never awaits). */
+export type HubMessageApplyOutcome =
+  | 'applied'
+  | 'tombstoned'
+  | 'unmapped'
+  /** Row written, but the chat row does not exist yet: a list read owes it. */
+  | 'chat-missing';
 
 type PollDepth = 'hot' | 'deep';
 
@@ -206,6 +283,10 @@ interface AccountLoop {
   lastSpendSweepAt: number | null;
   lastUnreadReconcileAt: number | null;
   consecutiveFailures: number;
+  /** D38: completion time of the last successful page-1 read (safety skip rule). */
+  lastListReadAt: number | null;
+  /** D38: first page-1 paint of this session already logged. */
+  paintLogged: boolean;
 }
 
 function createAccountLoopState(): AccountLoop {
@@ -221,7 +302,24 @@ function createAccountLoopState(): AccountLoop {
     lastSpendSweepAt: null,
     lastUnreadReconcileAt: null,
     consecutiveFailures: 0,
+    lastListReadAt: null,
+    paintLogged: false,
   };
+}
+
+/** One pending list verification (session start, reconnect, or gap). */
+interface ListVerification {
+  reason: ListVerificationReason;
+  /** Reads that started before this moment cannot verify the epoch. */
+  startedAtMs: number;
+  /** Completed failed attempts (0 = the first attempt is running/queued). */
+  failures: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+interface PollDelta {
+  chatId: string;
+  upstreamHeadId: string | null;
 }
 
 interface PendingHubListRefresh {
@@ -296,7 +394,7 @@ function safeChatLastMessageId(data: DataLayer, accountId: string, chatId: strin
   }
 }
 
-export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
+export type PollingSync = SyncProvider & {
   /** Visible for the composition root: poll one account immediately. */
   pollAccount(accountId: string): Promise<void>;
   /** Hub-live automatic chat-list polling suspension; read-state sweeps unaffected. */
@@ -313,9 +411,40 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     chatId: string,
     message: NormalizedSyncMessage,
   ): Promise<boolean>;
+  /**
+   * D38: the synchronous core of ingestHubMessage for the hub frame
+   * transaction — it never touches the network. `chat-missing` means the row
+   * was written but the chat is unknown locally: the caller owes a list read.
+   */
+  applyHubMessage(
+    accountId: string,
+    chatId: string,
+    message: NormalizedSyncMessage,
+  ): HubMessageApplyOutcome;
   /** Body-free `filter=unread` read-state reconcile (no message bodies, no mark-read). */
   reconcileUnread(accountId?: string, trigger?: UnreadReconcileTrigger): Promise<void>;
-} {
+  /**
+   * D38: one page-1 read outside the ordinary cadence, sharing the account's
+   * single-flight guard. `bodyDeltas` also fetches the automatic body delta of
+   * changed chats (only when auto-read is on); `preserveLocalHead` keeps a
+   * newer local head (hub-driven reads can lag the frame they serve).
+   */
+  readAccountHead(
+    accountId: string,
+    trigger: ListReadTrigger,
+    options?: ReadAccountHeadOptions,
+  ): Promise<ListReadOutcome>;
+  /** D38: auto-read tail read for a chat intent; `gone` when auto-read is off. */
+  readChatTailForIntent(accountId: string, chatId: string): Promise<ChatTailReadOutcome>;
+  /** D38: verify page 1 of each account now (retries 5/10/20 s, then gives up). */
+  verifyAccounts(accountIds: readonly string[], reason: ListVerificationReason): void;
+  /** D38: one safety check after the OS resumed (skip rule applies). */
+  noteSystemResume(): void;
+  /** D38 list-only proof: the cached head is M or a newer numeric id. */
+  listHeadReached(accountId: string, chatId: string, messageId: string): boolean;
+};
+
+export function createPollingSync(options: PollingSyncOptions): PollingSync {
   const { client, data, toMediaUrl } = options;
   const now = options.now ?? Date.now;
   const isBudgetExhausted = options.isBudgetExhausted ?? ((): boolean => false);
@@ -334,6 +463,9 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const onLog = options.onLog ?? ((): void => undefined);
   const readTransport = options.readTransport ?? ((): string | null | undefined => undefined);
+  const launchedAtMs = options.launchedAtMs ?? now();
+  const onListRead = options.onListRead ?? ((): void => undefined);
+  const onListVerificationFailed = options.onListVerificationFailed ?? ((): void => undefined);
 
   const listeners = new Set<SyncListener>();
   const loops = new Map<string, AccountLoop>();
@@ -350,6 +482,11 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   const mediaPollers = new Map<string, { startedAt: number; timer: ReturnType<typeof setTimeout> }>();
   const hubListRefreshes = new Map<string, PendingHubListRefresh>();
   const historyCoverage = new Map<string, ThreadHistoryCoverage>();
+  const verifications = new Map<string, ListVerification>();
+  let safetyTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Latest page-1 read start per account (ms); the durable copy lags ≤ 60 s. */
+  const listVerifiedAtMs = new Map<string, number>();
+  const listVerifiedPersistedAtMs = new Map<string, number>();
 
   function trackActive<T>(task: Promise<T>): Promise<T> {
     activeTasks.add(task);
@@ -531,6 +668,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     if (!loop) {
       return;
     }
+    cancelVerification(accountId);
     // Delete first: completions from already-in-flight work may still apply
     // idempotent cache rows, but every finally/scheduler sees no active loop.
     loops.delete(accountId);
@@ -588,10 +726,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       scheduleSpendSweep(accountId, 0);
     }
     if (pollImmediately) {
-      void pollAccount(accountId).finally(() => {
-        schedule(accountId, intervalFor(accountId));
-        scheduleUnreadReconcile(accountId);
-      });
+      // D38: the session's first poll IS the account's list verification:
+      // page 1 is written the moment it arrives, a failure retries at
+      // 5/10/20 s, and the ordinary cadence is armed after the first attempt.
+      beginVerification(accountId, 'session-start');
     } else if (created) {
       schedule(accountId, intervalFor(accountId));
       scheduleUnreadReconcile(accountId);
@@ -1073,8 +1211,11 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
 
   /**
    * Delta rule (SPEC §6.1): message fetches only when the list shows change.
-   * Compares against the chat ROW's own last_message_id baseline — hydration is
-   * list-only, so the messages table says nothing about what we last saw.
+   * D38: the head is compared against the chat's DELTA DETECTOR
+   * (`sync_baseline_message_id`), not the UI head. Page 1 is now written the
+   * moment it arrives, so the UI head can be ahead of what the automatic body
+   * delta has provably reached; a null detector (a row written by a path that
+   * verified nothing) counts as changed.
    */
   function chatChanged(accountId: string, chat: OfApiChat): boolean {
     const fanId = chat.fan?.id;
@@ -1085,22 +1226,191 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     if (!cached) {
       return true;
     }
+    const detector = data.chats.syncBaseline(accountId, String(fanId)) ?? null;
     const lastId = chat.lastMessage?.id != null ? String(chat.lastMessage.id) : null;
     return (
-      (lastId !== null && lastId !== cached.lastMessageId) ||
+      (lastId !== null && lastId !== detector) ||
       (chat.unreadMessagesCount ?? 0) !== cached.unreadCount ||
       (chat.lastReadMessageId != null ? String(chat.lastReadMessageId) : null) !==
         cached.lastReadMessageId
     );
   }
 
-  /** Walk recency-ordered chat pages (limit/offset cursor; nextPageUrl presence = has-more). */
+  function upstreamHeadOf(chat: OfApiChat): string | null {
+    return chat.lastMessage?.id != null ? String(chat.lastMessage.id) : null;
+  }
+
+  /** Changed chats of one list page that owe an automatic body delta. */
+  function collectDeltas(
+    accountId: string,
+    chats: readonly OfApiChat[],
+    prevSuccessAt: number | null,
+  ): PollDelta[] {
+    const deltas: PollDelta[] = [];
+    for (const chat of chats) {
+      if (!chatChanged(accountId, chat)) {
+        continue;
+      }
+      const fanId = chat.fan?.id;
+      if (fanId == null) {
+        continue;
+      }
+      const chatId = String(fanId);
+      const cachedChat = data.chats.get(accountId, chatId);
+      const wasCached = cachedChat !== null;
+      const mappedChat = mapChat(accountId, chat, toMediaUrl);
+      // A Hub-enriched message can reach SQLite before the eventually
+      // consistent list endpoint exposes it. Never walk forward from that
+      // newer local cursor in search of an older advertised head: it cannot
+      // succeed and would turn normal REST lag into a permanent failed poll.
+      const upstreamHeadIsOlder =
+        cachedChat !== null &&
+        mappedChat !== null &&
+        cachedHeadIsNewer(cachedChat, mappedChat);
+      // Tail-fetch policy (the cost rule at 900+ chats):
+      //  - cached chat changed → always fetch, even at baseline (silently
+      //    swallows the downtime backlog so it never replays as live events);
+      //  - uncached chat → fetch only post-baseline (a fresh conversation
+      //    surfacing on the head pages); at baseline it is pure hydration.
+      if ((wasCached || prevSuccessAt !== null) && !upstreamHeadIsOlder) {
+        deltas.push({ chatId, upstreamHeadId: upstreamHeadOf(chat) });
+      }
+    }
+    return deltas;
+  }
+
+  /**
+   * D38: write one list page the moment it arrives and move the delta
+   * detector for every chat that owes no automatic body read. `authoritative`
+   * (ordinary polls, verification, safety) may move a head backwards — the
+   * repair path for a deletion that never arrived — except over a newer head
+   * stored within HEAD_WRITE_PROTECT_MS before the read or while it was in
+   * flight (the list lags the webhook). `preserve` (deeper
+   * pages, hub-driven reads) keeps any newer local head.
+   */
+  function writeListPage(
+    accountId: string,
+    chats: readonly OfApiChat[],
+    options: {
+      mode: 'authoritative' | 'preserve';
+      protectHeadsWrittenSinceIso: string;
+      preserveEqualHeadMetadata?: boolean;
+      owedDeltaChatIds: ReadonlySet<string>;
+      tombstonedHeadIds?: ReadonlySet<string>;
+    },
+  ): void {
+    const tombstones = options.tombstonedHeadIds !== undefined
+      ? { tombstonedHeadIds: options.tombstonedHeadIds }
+      : {};
+    upsertChatRows(
+      accountId,
+      chats,
+      options.mode === 'preserve'
+        ? {
+            preserveLocalHead: true,
+            ...(options.preserveEqualHeadMetadata === true ? { preserveEqualHeadMetadata: true } : {}),
+            ...tombstones,
+          }
+        : { preserveHeadsWrittenSince: options.protectHeadsWrittenSinceIso, ...tombstones },
+    );
+    const detectors: Array<{ chatId: string; messageId: string | null }> = [];
+    for (const chat of chats) {
+      const fanId = chat.fan?.id;
+      if (fanId == null || options.owedDeltaChatIds.has(String(fanId))) {
+        continue;
+      }
+      const chatId = String(fanId);
+      const upstreamHead = upstreamHeadOf(chat);
+      // A preserved newer local head keeps the old detector: the list has not
+      // caught up with it yet, and the next read decides.
+      if (data.chats.get(accountId, chatId)?.lastMessageId !== upstreamHead) {
+        continue;
+      }
+      detectors.push({ chatId, messageId: upstreamHead });
+    }
+    data.chats.setSyncBaselines(accountId, detectors);
+  }
+
+  function readListVerifiedAt(accountId: string): string | null {
+    const memo = listVerifiedAtMs.get(accountId);
+    if (memo !== undefined) {
+      return new Date(memo).toISOString();
+    }
+    return data.settings.getParsed(listVerifiedKey(accountId), listVerifiedAtSchema) ?? null;
+  }
+
+  /**
+   * D38: a page-1 read of `accountId` succeeded and is on disk. Records the
+   * durable «list verified» clock, logs the first paint of the session,
+   * resolves a pending verification the read qualifies for, and tells the
+   * composition root (SYNCING state, sync intents).
+   */
+  function notePage1Read(
+    accountId: string,
+    startedAtMs: number,
+    trigger: ListReadTrigger,
+    chats: number,
+  ): void {
+    const completedAtMs = now();
+    const loop = loops.get(accountId);
+    if (loop !== undefined) {
+      loop.lastListReadAt = completedAtMs;
+      if (!loop.paintLogged) {
+        loop.paintLogged = true;
+        // Acceptance metric (D38): launch → first page-1 paint per account.
+        onLog('info', 'list page1 painted', {
+          accountId,
+          trigger,
+          sinceLaunchMs: completedAtMs - launchedAtMs,
+          readMs: completedAtMs - startedAtMs,
+          chats,
+        });
+      }
+    }
+    listVerifiedAtMs.set(accountId, Math.max(listVerifiedAtMs.get(accountId) ?? 0, startedAtMs));
+    const persistedAt = listVerifiedPersistedAtMs.get(accountId);
+    if (persistedAt === undefined || completedAtMs - persistedAt >= LIST_VERIFIED_PERSIST_EVERY_MS) {
+      try {
+        data.settings.set(listVerifiedKey(accountId), new Date(startedAtMs).toISOString());
+        listVerifiedPersistedAtMs.set(accountId, completedAtMs);
+      } catch (error) {
+        onLog('warn', 'list verified clock not persisted', { accountId, ...safeErrorOutcome(error) });
+      }
+    }
+    const verification = verifications.get(accountId);
+    if (verification !== undefined && startedAtMs >= verification.startedAtMs) {
+      if (verification.timer !== null) {
+        clearTimeout(verification.timer);
+      }
+      verifications.delete(accountId);
+      onLog('info', 'list verified', {
+        accountId,
+        reason: verification.reason,
+        trigger,
+        failedAttempts: verification.failures,
+        ms: completedAtMs - verification.startedAtMs,
+      });
+    }
+    emit({ type: 'chatListUpdated', accountId });
+    onListRead({ accountId, startedAtMs, completedAtMs, trigger });
+  }
+
+  /**
+   * Walk recency-ordered chat pages (limit/offset cursor; nextPageUrl presence
+   * = has-more). D38: `onPage` receives each page (deduplicated) the moment it
+   * arrives, so callers write page by page instead of after the whole walk; a
+   * hung deeper page can no longer hold back rows already read. List reads are
+   * `retry: 'none'` — every caller owns its own retry schedule.
+   */
   async function walkChatPages(
     accountId: string,
     startOffset: number,
     maxPages: number,
     purpose: OfApiPurpose,
-    options: { filter?: ChatListFilter } = {},
+    options: {
+      filter?: ChatListFilter;
+      onPage?: (chats: OfApiChat[], pageIndex: number, nextOffset: number, exhausted: boolean) => void;
+    } = {},
   ): Promise<{ chats: OfApiChat[]; nextOffset: number; pages: number; exhausted: boolean }> {
     const collected: OfApiChat[] = [];
     const seenFanIds = new Set<string>();
@@ -1119,8 +1429,10 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         ...(options.filter !== undefined ? { filter: options.filter } : {}),
         skipUsers: 'none',
         purpose,
+        retry: 'none',
       });
       pages += 1;
+      const pageChats: OfApiChat[] = [];
       for (const chat of chats) {
         const fanId = chat.fan?.id;
         if (fanId != null) {
@@ -1130,9 +1442,12 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           seenFanIds.add(String(fanId));
         }
         collected.push(chat);
+        pageChats.push(chat);
       }
       offset += chats.length; // server-chosen page sizes vary — advance by what arrived
-      if (nextPageUrl === null || chats.length === 0) {
+      const lastPage = nextPageUrl === null || chats.length === 0;
+      options.onPage?.(pageChats, page, offset, lastPage);
+      if (lastPage) {
         exhausted = true;
         break;
       }
@@ -1158,10 +1473,31 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     return cached.lastMessageId !== null && next.lastMessageId === null;
   }
 
+  /**
+   * A cached head that is known to be deleted — its message row is a
+   * tombstone, or a hub delete frame owes a re-check of exactly that id — is
+   * never worth keeping over the list's survivor. Without this, a message
+   * sent and deleted within seconds stayed protected as a «recent head» and
+   * the delete follow-up then blanked the preview and sank the chat.
+   */
+  function cachedHeadIsTombstoned(
+    accountId: string,
+    cached: ChatRow,
+    tombstonedHeadIds: ReadonlySet<string> | undefined,
+  ): boolean {
+    const headId = cached.lastMessageId;
+    if (headId === null) {
+      return false;
+    }
+    return tombstonedHeadIds?.has(headId) === true
+      || data.messages.get(accountId, cached.chatId, headId)?.deleted === true;
+  }
+
   function applyLocalHeadGuard(
     accountId: string,
     next: ChatUpsert,
     preserveEqualHeadMetadata: boolean,
+    tombstonedHeadIds?: ReadonlySet<string>,
   ): ChatUpsert {
     const cached = data.chats.get(accountId, next.chatId);
     const sameHead =
@@ -1170,7 +1506,9 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       cached.lastMessageId === next.lastMessageId;
     if (
       cached === null ||
-      (!cachedHeadIsNewer(cached, next) && !(preserveEqualHeadMetadata && sameHead))
+      (!cachedHeadIsNewer(cached, next) && !(preserveEqualHeadMetadata && sameHead)) ||
+      (cached.lastMessageId !== next.lastMessageId
+        && cachedHeadIsTombstoned(accountId, cached, tombstonedHeadIds))
     ) {
       return next;
     }
@@ -1189,22 +1527,40 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
   function upsertChatRows(
     accountId: string,
     chats: readonly OfApiChat[],
-    options: { preserveLocalHead?: boolean; preserveEqualHeadMetadata?: boolean } = {},
+    options: {
+      preserveLocalHead?: boolean;
+      preserveEqualHeadMetadata?: boolean;
+      /** Authoritative write that still keeps a NEWER head stored after this
+       * ISO instant (a live frame that landed while the read was in flight). */
+      preserveHeadsWrittenSince?: string;
+      /** Head ids a hub delete frame owes a re-check of (never preserved). */
+      tombstonedHeadIds?: ReadonlySet<string>;
+    } = {},
   ): void {
     const chatUpserts = [];
     const fetchedAt = new Date(now()).toISOString();
     for (const chat of chats) {
       const mapped = mapChat(accountId, chat, toMediaUrl);
       if (mapped) {
-        chatUpserts.push(
-          options.preserveLocalHead === true
-            ? applyLocalHeadGuard(
-                accountId,
-                mapped,
-                options.preserveEqualHeadMetadata === true,
-              )
-            : mapped,
-        );
+        if (options.preserveLocalHead === true) {
+          chatUpserts.push(
+            applyLocalHeadGuard(
+              accountId,
+              mapped,
+              options.preserveEqualHeadMetadata === true,
+              options.tombstonedHeadIds,
+            ),
+          );
+        } else if (options.preserveHeadsWrittenSince !== undefined) {
+          const cached = data.chats.get(accountId, mapped.chatId);
+          chatUpserts.push(
+            cached !== null && cached.updatedAt > options.preserveHeadsWrittenSince
+              ? applyLocalHeadGuard(accountId, mapped, false, options.tombstonedHeadIds)
+              : mapped,
+          );
+        } else {
+          chatUpserts.push(mapped);
+        }
       }
       if (chat.fan != null) {
         data.fans.upsert(mapFan(accountId, chat.fan, toMediaUrl, fetchedAt));
@@ -1375,23 +1731,22 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     preserveLocalHead: boolean,
   ): Promise<void> {
     try {
-      const head = await walkChatPages(accountId, 0, 1, 'hot-poll');
       // Thin-message fallback reads can lag the event they are proving. Only
       // those callers (including chatListUpdated nudges projected from
       // subscription events) preserve a newer local Hub head. Authoritative
       // delete and ordinary polling reads must remain able to move a head
       // backwards to the previous surviving message (or null).
-      upsertChatRows(
-        accountId,
-        head.chats,
-        preserveLocalHead
-          ? { preserveLocalHead: true, preserveEqualHeadMetadata: true }
-          : {},
-      );
+      await readListPages(accountId, {
+        pages: 1,
+        purpose: 'hot-poll',
+        trigger: 'reconcile',
+        prevSuccessAt: loop.lastSuccessAt,
+        bodyDeltas: false,
+        preserveLocalHead,
+      });
       loop.lastSuccessAt = now();
       loop.consecutiveFailures = 0;
       armUnreadReconcile(accountId);
-      emit({ type: 'chatListUpdated', accountId });
     } catch (error) {
       loop.consecutiveFailures += 1;
       throw error;
@@ -1498,19 +1853,24 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     return promise;
   }
 
-  async function ingestHubMessage(
+  /**
+   * Synchronous local apply of an enriched hub message (D38: runs inside the
+   * frame's SQLite transaction and never awaits). `chat-missing` = the row is
+   * written but the chat row is unknown; the caller owes an account list read.
+   */
+  function applyHubMessage(
     accountId: string,
     chatId: string,
     message: NormalizedSyncMessage,
-  ): Promise<boolean> {
+  ): HubMessageApplyOutcome {
     const upsert = mapHubMessage(accountId, chatId, message);
     if (upsert === null) {
-      return false;
+      return 'unmapped';
     }
 
     const existing = data.messages.get(accountId, chatId, upsert.messageId);
     if (existing?.deleted === true) {
-      return true;
+      return 'tombstoned';
     }
 
     const existed = existing !== null;
@@ -1522,12 +1882,16 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
 
     const chat = data.chats.get(accountId, chatId);
     if (chat === null) {
-      await refreshAccountHead(accountId);
-      return true;
+      return 'chat-missing';
     }
 
     const advances = hubMessageAdvances(upsert, chat);
-    const newIncoming = !existed && !upsert.isSentByMe;
+    // D38 double-unread fix: only a message NEWER than the current head can
+    // be unread that the head's own count does not already include. On replay
+    // the startup page-1 read has usually written the authoritative count
+    // (and a head at or past this message) before the replayed frame lands;
+    // without `advances` every replayed incoming message counted twice.
+    const newIncoming = !existed && !upsert.isSentByMe && advances;
     const clearUnread = !existed && upsert.isSentByMe && advances;
     data.chats.upsert({
       accountId: chat.accountId,
@@ -1547,13 +1911,146 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       raw: { source: 'hub-message', messageId: upsert.messageId },
     });
     armUnreadReconcile(accountId);
+    return 'applied';
+  }
+
+  async function ingestHubMessage(
+    accountId: string,
+    chatId: string,
+    message: NormalizedSyncMessage,
+  ): Promise<boolean> {
+    const outcome = applyHubMessage(accountId, chatId, message);
+    if (outcome === 'unmapped') {
+      return false;
+    }
+    if (outcome === 'chat-missing') {
+      await refreshAccountHead(accountId);
+    }
     return true;
   }
 
-  async function pollAccountInner(accountId: string, depth: PollDepth = 'hot'): Promise<void> {
+  /**
+   * The automatic body delta of each owed chat (auto-read on). A chat's delta
+   * detector advances only after its delta provably reached the advertised
+   * head; a failure leaves the rest owed, so the next read retries them.
+   */
+  async function processDeltas(
+    accountId: string,
+    deltas: readonly PollDelta[],
+    prevSuccessAt: number | null,
+  ): Promise<void> {
+    for (const delta of deltas) {
+      const { freshIds, hadCachedMessages } = await fetchChatDeltaThroughHead(
+        accountId,
+        delta.chatId,
+        delta.upstreamHeadId,
+      );
+      data.chats.setSyncBaselines(accountId, [
+        { chatId: delta.chatId, messageId: delta.upstreamHeadId },
+      ]);
+      // Each fetch has already durably upserted its rows. Emit its live
+      // events before moving to the next chat, otherwise a later chat
+      // failure would make these rows non-fresh on retry and lose the
+      // events forever.
+      if (prevSuccessAt !== null) {
+        for (const messageId of freshIds) {
+          const row = data.messages.get(accountId, delta.chatId, messageId);
+          if (!row) {
+            continue;
+          }
+          // No cached boundary (chat never opened / just discovered): the tail
+          // is mostly backlog — only messages newer than the previous successful
+          // poll are live. With a boundary, fresh-by-id is exact.
+          if (!hadCachedMessages && Date.parse(row.createdAt) <= prevSuccessAt) {
+            continue;
+          }
+          emit(
+            row.isSentByMe
+              ? { type: 'messageSent', accountId, chatId: delta.chatId, messageId }
+              : { type: 'messageReceived', accountId, chatId: delta.chatId, messageId },
+          );
+          if (row.isTip) {
+            emit({
+              type: 'tipReceived',
+              accountId,
+              chatId: delta.chatId,
+              messageId,
+              ...(row.tipAmount != null ? { amountUsd: row.tipAmount } : {}),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * D38 list read: page 1 is written the moment it arrives (the inbox paints
+   * at once, whatever deeper pages or body deltas cost afterwards), deeper
+   * pages follow page by page. The delta detector keeps the upstream head of
+   * every chat whose automatic body read is still owed.
+   */
+  async function readListPages(
+    accountId: string,
+    options: {
+      pages: number;
+      purpose: OfApiPurpose;
+      trigger: ListReadTrigger;
+      prevSuccessAt: number | null;
+      bodyDeltas: boolean;
+      preserveLocalHead: boolean;
+      tombstonedHeadIds?: ReadonlySet<string>;
+    },
+  ): Promise<{ nextOffset: number }> {
+    const owesBodyReads = autoReadEnabled();
+    const deltas: PollDelta[] = [];
+    const startedAtMs = now();
+    // Real clock on purpose: compared with chats.updated_at, which the chats
+    // upsert stamps with the real clock. Heads written within
+    // HEAD_WRITE_PROTECT_MS before this read are kept if newer.
+    const protectHeadsWrittenSinceIso = new Date(Date.now() - HEAD_WRITE_PROTECT_MS).toISOString();
+    const walk = await walkChatPages(accountId, 0, options.pages, options.purpose, {
+      onPage: (chats, pageIndex) => {
+        const pageDeltas = collectDeltas(accountId, chats, options.prevSuccessAt);
+        deltas.push(...pageDeltas);
+        writeListPage(accountId, chats, {
+          mode: pageIndex === 0 && !options.preserveLocalHead ? 'authoritative' : 'preserve',
+          ...(options.preserveLocalHead ? { preserveEqualHeadMetadata: true } : {}),
+          protectHeadsWrittenSinceIso,
+          ...(options.tombstonedHeadIds !== undefined
+            ? { tombstonedHeadIds: options.tombstonedHeadIds }
+            : {}),
+          owedDeltaChatIds: owesBodyReads
+            ? new Set(pageDeltas.map((delta) => delta.chatId))
+            : new Set<string>(),
+        });
+        if (pageIndex === 0) {
+          notePage1Read(accountId, startedAtMs, options.trigger, chats.length);
+        } else {
+          emit({ type: 'chatListUpdated', accountId }); // progressive inbox paint
+        }
+      },
+    });
+    // Tail fetches are AUTOMATIC message-body reads → gated on autoReadChats.
+    // The chat list, unread counts and previews above came from listChats
+    // (no read marked) and update in BOTH modes; only the per-delta body
+    // fetch + the live message/tip events it drives are skipped when OFF.
+    if (options.bodyDeltas && owesBodyReads) {
+      await processDeltas(accountId, deltas, options.prevSuccessAt);
+    }
+    return { nextOffset: walk.nextOffset };
+  }
+
+  async function pollAccountInner(
+    accountId: string,
+    depth: PollDepth = 'hot',
+    trigger?: ListReadTrigger,
+  ): Promise<ListReadOutcome> {
     const loop = loops.get(accountId);
-    if (!loop || loop.inFlight) {
-      return; // overlap protection — Phase-0 measured p95 7.5 s on list-chats
+    if (!loop) {
+      return 'gone';
+    }
+    if (loop.inFlight) {
+      return 'busy'; // overlap protection — Phase-0 measured p95 7.5 s on list-chats
     }
     loop.inFlight = true;
     try {
@@ -1566,126 +2063,47 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
           now() - loop.lastDeepSweepAt >= DEEP_SWEEP_INTERVAL_MS);
       // Head walk: the delta detector. Page 1 suffices on hot ticks (recency
       // invariant, see CHATS_PAGE_LIMIT); deep sweeps cover read-state drift.
-      const head = await walkChatPages(
-        accountId,
-        0,
-        deepDue ? DEEP_SWEEP_PAGES : 1,
-        deepDue ? 'deep-sweep' : 'hot-poll',
-      );
-
-      const deltas: { chatId: string; upstreamHeadId: string | null }[] = [];
-      for (const chat of head.chats) {
-        if (!chatChanged(accountId, chat)) {
-          continue;
-        }
-        const fanId = chat.fan?.id;
-        if (fanId == null) {
-          continue;
-        }
-        const chatId = String(fanId);
-        const cachedChat = data.chats.get(accountId, chatId);
-        const wasCached = cachedChat !== null;
-        const mappedChat = mapChat(accountId, chat, toMediaUrl);
-        // A Hub-enriched message can reach SQLite before the eventually
-        // consistent list endpoint exposes it. Never walk forward from that
-        // newer local cursor in search of an older advertised head: it cannot
-        // succeed and would turn normal REST lag into a permanent failed poll.
-        const upstreamHeadIsOlder =
-          cachedChat !== null &&
-          mappedChat !== null &&
-          cachedHeadIsNewer(cachedChat, mappedChat);
-        // Tail-fetch policy (the cost rule at 900+ chats):
-        //  - cached chat changed → always fetch, even at baseline (silently
-        //    swallows the downtime backlog so it never replays as live events);
-        //  - uncached chat → fetch only post-baseline (a fresh conversation
-        //    surfacing on the head pages); at baseline it is pure hydration.
-        if ((wasCached || prevSuccessAt !== null) && !upstreamHeadIsOlder) {
-          deltas.push({
-            chatId,
-            upstreamHeadId: chat.lastMessage?.id != null ? String(chat.lastMessage.id) : null,
-          });
-        }
-      }
-
-      // Tail fetches are AUTOMATIC message-body reads → gated on autoReadChats.
-      // The chat list, unread counts and previews above came from listChats
-      // (no read marked) and update in BOTH modes; only the per-delta body
-      // fetch + the live message/tip events it drives are skipped when OFF.
-      if (autoReadEnabled()) {
-        for (const delta of deltas) {
-          const { freshIds, hadCachedMessages } = await fetchChatDeltaThroughHead(
-            accountId,
-            delta.chatId,
-            delta.upstreamHeadId,
-          );
-          // Each fetch has already durably upserted its rows. Emit its live
-          // events before moving to the next chat, otherwise a later chat
-          // failure would make these rows non-fresh on retry and lose the
-          // events forever.
-          if (prevSuccessAt !== null) {
-            for (const messageId of freshIds) {
-              const row = data.messages.get(accountId, delta.chatId, messageId);
-              if (!row) {
-                continue;
-              }
-              // No cached boundary (chat never opened / just discovered): the tail
-              // is mostly backlog — only messages newer than the previous successful
-              // poll are live. With a boundary, fresh-by-id is exact.
-              if (!hadCachedMessages && Date.parse(row.createdAt) <= prevSuccessAt) {
-                continue;
-              }
-              emit(
-                row.isSentByMe
-                  ? { type: 'messageSent', accountId, chatId: delta.chatId, messageId }
-                  : { type: 'messageReceived', accountId, chatId: delta.chatId, messageId },
-              );
-              if (row.isTip) {
-                emit({
-                  type: 'tipReceived',
-                  accountId,
-                  chatId: delta.chatId,
-                  messageId,
-                  ...(row.tipAmount != null ? { amountUsd: row.tipAmount } : {}),
-                });
-              }
-            }
-          }
-        }
-      }
-
-      // Do not publish the upstream head until every automatic body delta has
-      // reached it. On a capped/failed tail the old head remains the detector,
-      // so the next poll retries instead of converting a transient gap into a
-      // permanent one.
-      // Ordinary polling is an authoritative reconciliation surface when a
-      // deletion webhook never arrived. Unlike a thin-event fallback, it must
-      // be allowed to publish a real backward/null head.
-      upsertChatRows(accountId, head.chats);
-
-      emit({ type: 'chatListUpdated', accountId });
+      const head = await readListPages(accountId, {
+        pages: deepDue ? DEEP_SWEEP_PAGES : 1,
+        purpose: deepDue ? 'deep-sweep' : 'hot-poll',
+        trigger: trigger ?? (depth === 'deep' ? 'manual' : deepDue ? 'deep-sweep' : 'poll'),
+        prevSuccessAt,
+        bodyDeltas: true,
+        preserveLocalHead: false,
+      });
 
       // Hydration chunk: list-only, no delta processing — message history loads
       // on conversation open. Runs after the fresh-delta work so live messages
       // never wait behind a deep walk; resumes past the head across ticks and
-      // restarts (progress persisted).
+      // restarts (progress persisted page by page).
       if (!hydration.done) {
         await sleep(OFAPI_INTER_PAGE_DELAY_MS);
-        const chunk = await walkChatPages(
+        let pagesWalked = hydration.pagesWalked;
+        let done = false;
+        await walkChatPages(
           accountId,
           Math.max(hydration.nextOffset, head.nextOffset),
           HYDRATION_PAGES_PER_TICK,
           'hydration',
+          {
+            onPage: (chats, _pageIndex, nextOffset, lastPage) => {
+              upsertChatRows(accountId, chats, { preserveLocalHead: true });
+              if (!autoReadEnabled()) {
+                // List-only: nothing is owed, the detector follows the list.
+                writeDetectorsForListOnly(accountId, chats);
+              }
+              pagesWalked += 1;
+              done = lastPage || pagesWalked >= HYDRATION_MAX_PAGES;
+              data.settings.set(hydrationKey(accountId), {
+                nextOffset,
+                pagesWalked,
+                done,
+              } satisfies HydrationState);
+              emit({ type: 'chatListUpdated', accountId }); // progressive inbox paint
+            },
+          },
         );
-        upsertChatRows(accountId, chunk.chats, { preserveLocalHead: true });
-        const pagesWalked = hydration.pagesWalked + chunk.pages;
-        const nextHydration = {
-          nextOffset: chunk.nextOffset,
-          pagesWalked,
-          done: chunk.exhausted || pagesWalked >= HYDRATION_MAX_PAGES,
-        } satisfies HydrationState;
-        data.settings.set(hydrationKey(accountId), nextHydration);
-        emit({ type: 'chatListUpdated', accountId }); // progressive inbox paint
-        if (nextHydration.done && loop.spendTimer === null && !loop.spendInFlight) {
+        if (done && loop.spendTimer === null && !loop.spendInFlight) {
           scheduleSpendSweep(accountId, 0);
         }
       }
@@ -1696,15 +2114,246 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       }
       loop.consecutiveFailures = 0;
       armUnreadReconcile(accountId);
-    } catch {
+      return 'ok';
+    } catch (error) {
       loop.consecutiveFailures += 1;
+      onLog('warn', 'list read failed', {
+        accountId,
+        trigger: trigger ?? 'poll',
+        consecutiveFailures: loop.consecutiveFailures,
+        ...safeErrorOutcome(error),
+      });
+      return 'failed';
     } finally {
       loop.inFlight = false;
     }
   }
 
-  function pollAccount(accountId: string, depth: PollDepth = 'hot'): Promise<void> {
-    return trackActive(pollAccountInner(accountId, depth));
+  /** Hydration pages carry no delta: in list-only mode their heads are the
+   * detector at once (auto-read on: the next head read decides per chat). */
+  function writeDetectorsForListOnly(accountId: string, chats: readonly OfApiChat[]): void {
+    const detectors: Array<{ chatId: string; messageId: string | null }> = [];
+    for (const chat of chats) {
+      const fanId = chat.fan?.id;
+      if (fanId == null) {
+        continue;
+      }
+      const upstreamHead = upstreamHeadOf(chat);
+      if (data.chats.get(accountId, String(fanId))?.lastMessageId === upstreamHead) {
+        detectors.push({ chatId: String(fanId), messageId: upstreamHead });
+      }
+    }
+    data.chats.setSyncBaselines(accountId, detectors);
+  }
+
+  /**
+   * D38: one page-1 read outside the ordinary cadence (verification, safety,
+   * sync intents). Waits for the account's single-flight owner instead of
+   * skipping, so a queued obligation is never mistaken for success.
+   */
+  async function readAccountHeadInner(
+    accountId: string,
+    trigger: ListReadTrigger,
+    options: ReadAccountHeadOptions,
+  ): Promise<ListReadOutcome> {
+    const loop = loops.get(accountId);
+    if (!loop) {
+      return 'gone';
+    }
+    while (true) {
+      if (!running || loops.get(accountId) !== loop) {
+        return 'gone';
+      }
+      if (!loop.inFlight) {
+        loop.inFlight = true;
+        break;
+      }
+      await sleep(RECONCILE_INFLIGHT_WAIT_MS);
+    }
+    try {
+      if (!running || loops.get(accountId) !== loop) {
+        return 'gone';
+      }
+      await readListPages(accountId, {
+        pages: 1,
+        purpose: 'hot-poll',
+        trigger,
+        prevSuccessAt: loop.lastSuccessAt,
+        bodyDeltas: options.bodyDeltas === true,
+        preserveLocalHead: options.preserveLocalHead === true,
+        ...(options.tombstonedHeadIds !== undefined && options.tombstonedHeadIds.length > 0
+          ? { tombstonedHeadIds: new Set(options.tombstonedHeadIds) }
+          : {}),
+      });
+      loop.lastSuccessAt = now();
+      loop.consecutiveFailures = 0;
+      armUnreadReconcile(accountId);
+      return 'ok';
+    } catch (error) {
+      loop.consecutiveFailures += 1;
+      onLog('warn', 'list read failed', {
+        accountId,
+        trigger,
+        consecutiveFailures: loop.consecutiveFailures,
+        ...safeErrorOutcome(error),
+      });
+      return 'failed';
+    } finally {
+      loop.inFlight = false;
+    }
+  }
+
+  function readAccountHead(
+    accountId: string,
+    trigger: ListReadTrigger,
+    options: ReadAccountHeadOptions = {},
+  ): Promise<ListReadOutcome> {
+    return trackActive(readAccountHeadInner(accountId, trigger, options));
+  }
+
+  // ── D38 list verification (session start, reconnect > 60 s, replay gap) ──
+
+  function cancelVerification(accountId: string): void {
+    const verification = verifications.get(accountId);
+    if (verification?.timer) {
+      clearTimeout(verification.timer);
+    }
+    verifications.delete(accountId);
+  }
+
+  function runVerificationAttempt(accountId: string, verification: ListVerification): void {
+    if (!running || verifications.get(accountId) !== verification) {
+      return;
+    }
+    verification.timer = null;
+    const firstSessionPoll = verification.reason === 'session-start' && verification.failures === 0;
+    const attempt: Promise<ListReadOutcome> = firstSessionPoll
+      // The session's first read is the ordinary first poll (deep pages,
+      // hydration chunk, body deltas) — page 1 is still written first.
+      ? pollAccount(accountId, 'hot', 'startup')
+      : readAccountHead(accountId, 'verify', { bodyDeltas: true });
+    void attempt.then((outcome) => {
+      if (firstSessionPoll && running && loops.has(accountId)) {
+        schedule(accountId, intervalFor(accountId));
+        scheduleUnreadReconcile(accountId);
+      }
+      if (verifications.get(accountId) !== verification) {
+        return; // verified by this (or another) read, or superseded
+      }
+      if (outcome === 'gone') {
+        verifications.delete(accountId);
+        return;
+      }
+      if (outcome === 'ok') {
+        // Succeeded but page 1 was not qualifying (cannot happen for a read
+        // that started after the verification) — treat as verified.
+        verifications.delete(accountId);
+        return;
+      }
+      verification.failures += 1;
+      const delayMs = LIST_VERIFY_RETRY_DELAYS_MS[verification.failures - 1];
+      if (delayMs === undefined) {
+        verifications.delete(accountId);
+        onLog('warn', 'list verification gave up', {
+          accountId,
+          reason: verification.reason,
+          attempts: verification.failures,
+        });
+        onListVerificationFailed(accountId, verification.reason);
+        return;
+      }
+      onLog('info', 'list verification retry scheduled', {
+        accountId,
+        reason: verification.reason,
+        attempt: verification.failures + 1,
+        delayMs,
+        busy: outcome === 'busy',
+      });
+      verification.timer = setTimeout(() => runVerificationAttempt(accountId, verification), delayMs);
+    });
+  }
+
+  function beginVerification(accountId: string, reason: ListVerificationReason): void {
+    cancelVerification(accountId);
+    if (!running || !loops.has(accountId)) {
+      return;
+    }
+    const verification: ListVerification = {
+      reason,
+      startedAtMs: now(),
+      failures: 0,
+      timer: null,
+    };
+    verifications.set(accountId, verification);
+    runVerificationAttempt(accountId, verification);
+  }
+
+  // ── D38 safety net: page 1 of the focused account while the hub is live ──
+
+  /** One safety check at a time: the OS resume event and the sleep detector
+   * both fire after a wake and must not buy two paid page-1 reads. */
+  let safetyInFlight: Promise<void> | null = null;
+
+  function runSafetyRead(trigger: 'timer' | 'resume'): Promise<void> {
+    if (safetyInFlight !== null) {
+      onLog('info', 'safety read skipped', { trigger, reason: 'in-flight' });
+      return safetyInFlight;
+    }
+    const task = runSafetyReadInner(trigger).finally(() => {
+      if (safetyInFlight === task) {
+        safetyInFlight = null;
+      }
+    });
+    safetyInFlight = task;
+    return task;
+  }
+
+  async function runSafetyReadInner(trigger: 'timer' | 'resume'): Promise<void> {
+    const accountId = focusedAccount;
+    if (!running || accountId === null) {
+      return;
+    }
+    const loop = loops.get(accountId);
+    if (loop === undefined) {
+      return;
+    }
+    const sinceLastReadMs = loop.lastListReadAt === null ? null : now() - loop.lastListReadAt;
+    if (sinceLastReadMs !== null && sinceLastReadMs < SAFETY_READ_INTERVAL_MS) {
+      onLog('info', 'safety read skipped', { accountId, trigger, sinceLastReadMs });
+      return;
+    }
+    const startedAtMs = now();
+    const outcome = await readAccountHead(accountId, 'safety', { bodyDeltas: true });
+    onLog(outcome === 'ok' ? 'info' : 'warn', 'safety read', {
+      accountId,
+      trigger,
+      outcome,
+      ms: now() - startedAtMs,
+    });
+  }
+
+  function scheduleSafetyRead(): void {
+    if (safetyTimer !== null) {
+      clearTimeout(safetyTimer);
+      safetyTimer = null;
+    }
+    // "While live": the hub suspends automatic polling exactly while its
+    // stream carries the account. Hidden windows keep the cadence.
+    if (!running || !hubPollingSuspended) {
+      return;
+    }
+    safetyTimer = setTimeout(() => {
+      safetyTimer = null;
+      void trackActive(runSafetyRead('timer')).finally(scheduleSafetyRead);
+    }, SAFETY_READ_INTERVAL_MS);
+  }
+
+  function pollAccount(
+    accountId: string,
+    depth: PollDepth = 'hot',
+    trigger?: ListReadTrigger,
+  ): Promise<ListReadOutcome> {
+    return trackActive(pollAccountInner(accountId, depth, trigger));
   }
 
   // ── Conditional read-state sweep (SPEC §6.1/§6.2 policy) ────────────────
@@ -1999,6 +2648,13 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
         clearTimeout(sweepTimer);
         sweepTimer = null;
       }
+      if (safetyTimer) {
+        clearTimeout(safetyTimer);
+        safetyTimer = null;
+      }
+      for (const accountId of [...verifications.keys()]) {
+        cancelVerification(accountId);
+      }
       for (const poller of mediaPollers.values()) {
         clearTimeout(poller.timer);
       }
@@ -2144,6 +2800,7 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
       if (!running || suspended === wasSuspended) {
         return;
       }
+      scheduleSafetyRead();
       for (const accountId of loops.keys()) {
         if (suspended && shouldSuspendLoop(accountId)) {
           schedule(accountId, null);
@@ -2163,7 +2820,40 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     refreshAccountGrants: () => trackActive(refreshAccountGrants()),
     ingestHubMessage: (accountId, chatId, message) =>
       trackActive(ingestHubMessage(accountId, chatId, message)),
+    applyHubMessage,
     reconcileUnread,
+    readAccountHead,
+    readChatTailForIntent(accountId, chatId) {
+      return trackActive((async (): Promise<ChatTailReadOutcome> => {
+        if (!running || !loops.has(accountId)) {
+          return 'gone';
+        }
+        if (!autoReadEnabled()) {
+          return 'list-only'; // a body read would mark the chat read
+        }
+        try {
+          await fetchChatTail(accountId, chatId, 'message-tail');
+          emit({ type: 'chatListUpdated', accountId });
+          return 'ok';
+        } catch (error) {
+          onLog('warn', 'intent chat read failed', { accountId, chatId, ...safeErrorOutcome(error) });
+          return 'failed';
+        }
+      })());
+    },
+    verifyAccounts(accountIds, reason) {
+      for (const accountId of accountIds) {
+        beginVerification(accountId, reason);
+      }
+    },
+    noteSystemResume() {
+      if (!running || !hubPollingSuspended) {
+        return;
+      }
+      void trackActive(runSafetyRead('resume'));
+    },
+    listHeadReached: (accountId, chatId, messageId) =>
+      listHeadReachedExpectedMessage(accountId, chatId, messageId),
     async forceRefresh(accountId) {
       const targets = accountId ? [accountId] : [...loops.keys()];
       // Manual refresh = deep sweep: pull DEEP_SWEEP_PAGES, not just page 1.
@@ -2171,11 +2861,17 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
     },
     status(): SyncStatusSnapshot {
       const freshness: Record<string, string> = {};
+      const listVerifiedAt: Record<string, string> = {};
       const pollIntervalsMs: Record<string, number | null> = {};
       let worstFailures = 0;
       for (const [accountId, loop] of loops) {
         if (loop.lastSuccessAt != null) {
           freshness[accountId] = new Date(loop.lastSuccessAt).toISOString();
+        }
+        // D38: the durable clock survives restarts — the banner's «Список от …».
+        const verifiedAt = readListVerifiedAt(accountId);
+        if (verifiedAt !== null) {
+          listVerifiedAt[accountId] = verifiedAt;
         }
         pollIntervalsMs[accountId] = intervalFor(accountId);
         worstFailures = Math.max(worstFailures, loop.consecutiveFailures);
@@ -2188,13 +2884,13 @@ export function createPollingSync(options: PollingSyncOptions): SyncProvider & {
             : 'live';
       return {
         freshness,
-        listVerifiedAt: freshness,
+        listVerifiedAt,
         state,
         pollIntervalsMs,
         deepSweepEveryMs: DEEP_SWEEP_INTERVAL_MS,
       };
     },
-    pollAccount,
+    pollAccount: (accountId) => pollAccount(accountId).then(() => undefined),
   };
 }
 
