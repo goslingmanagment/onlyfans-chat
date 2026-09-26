@@ -256,16 +256,17 @@ export interface HubAwareSync extends SyncProvider {
 }
 
 /**
- * D38 toast age gate: a hub frame whose fact is older than this never alerts,
- * whatever its provenance says. Core's automatic webhook redelivery (H2) only
- * redelivers attempts older than 10 minutes, so anything younger is not an
- * auto-redelivery; a redelivery carrying the header is excluded by provenance
- * anyway. OFAPI itself delivers ordinary messages late in delay episodes
- * (production, pages 8/9, 30 days: 88 incoming messages 3–10 min late, e.g.
- * 2026-09-25 04:18–04:54 UTC) — those are news and must still alert, hence
- * 9 minutes, measured on the hub's clock (see hubNowMs).
+ * D38 toast age gate, widened by D40: a hub frame whose fact is older than
+ * this never alerts, whatever its provenance says. Redeliveries are excluded
+ * by provenance, not by age: every redelivered receipt carries the provider's
+ * header (production 2026-09-26: 14 of 14 in the manual redelivery), and
+ * replay and the facts catch-up are silent anyway. What remains late but live
+ * is OFAPI's own delay — incoming messages 3–10 min late in delay episodes,
+ * and 4% of purchases / 7% of tips reaching Core after 9 min (D38's 9-min gate
+ * muted those). Up to an hour late is still news to the chatter; anything
+ * older is history. Measured on the hub's clock (see hubNowMs).
  */
-export const NOTIFICATION_MAX_AGE_MS = 9 * 60_000;
+export const NOTIFICATION_MAX_AGE_MS = 60 * 60_000;
 /** Log once when the PC clock differs from the hub by more than this. */
 const CLOCK_SKEW_WARN_MS = 60_000;
 /** The hub's Date header truncates to whole seconds: +0.5 s on average. */
