@@ -59,6 +59,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D37 | 2026-09-20 | SDK re-vendored from deployed core 82571f3c; New Followers asks for `variantCount: 1` and the deprecated `greetingMode` alias leaves this client (core #379) |
 | D38 | 2026-09-26 | Fresh list at launch: page 1 first and page by page, hub frames commit state + durable sync intents + the v2 cursor in one transaction and never await the network, `platform=onlyfans`, SYNCING + one list banner, toast age/provenance gate; SDK re-vendored from deployed core a51e687d (H3, core #265) |
 | D39 | 2026-09-27 | Purchases: Core's money facts apply locally (PPV unlock → `message_facts`, applied on every message write; `transaction.posted` → `fan_transactions` at once, the sweep keeps its own watermark), a free `/events/v2/facts` catch-up per account, quiet toasts for live PPV purchases and tips (no sound), tip messages stop alerting, no paid `refreshChat` on PPV/tip frames |
+| D40 | 2026-09-27 | Toast age gate widened from 9 to 60 min: redeliveries are excluded by provenance, so the gate only has to separate history from OFAPI's late-but-live deliveries (amends D38/D39) |
 
 ## Entries
 
@@ -1165,3 +1166,15 @@ Also `[sync] money facts page mapped`, `… catch-up failed` / `gave up until
 the next trigger` / `refused: page outside the grants` / `watermark ahead of
 Core; restarting from 0`. Not verified here: the ≤ 5 s latency and the
 count match need the release and its logs.
+
+**D40 (2026-09-27).** The toast age gate (`NOTIFICATION_MAX_AGE_MS`, D38/D39)
+is 60 minutes instead of 9. D38 kept it under Core's 10-minute auto-redelivery
+quiet period so an auto-redelivered frame could never alert even without
+provenance. Provenance does that job: every redelivered receipt carries the
+provider's header (production 2026-09-26: 14 of 14 in the manual redelivery),
+and redelivery, repair, replay and the facts catch-up stay silent regardless
+of age. What the age gate still separates is history from OFAPI's own late
+deliveries: at 9 minutes it muted ~4% of purchases and ~7% of tips (measured
+by the D39 session), which the owner wants shown — a fan who paid 20–40
+minutes ago is still worth a thank-you. State (purchase badges, money) was
+never gated and is unchanged. Owner request, 2026-09-27.

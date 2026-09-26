@@ -1575,7 +1575,7 @@ describe('createHubAwareSync (provider composition)', () => {
     provider.stop();
   });
 
-  it('a live message delivered 3-9 min late still alerts (OFAPI delay episodes, review #36)', async () => {
+  it('a live message delivered 3-45 min late still alerts (OFAPI delay episodes, review #36, D40)', async () => {
     const { provider, callbacks, events } = build();
     provider.start([ACCT]);
     await Promise.resolve();
@@ -1584,7 +1584,7 @@ describe('createHubAwareSync (provider composition)', () => {
     callbacks().onCaughtUp();
     // Production 2026-09-25 04:18–04:54 UTC: ordinary incoming messages on
     // page 9 arrived 181–277 s after their createdAt; 0.1.56 notified them.
-    for (const [messageId, lateMs] of [['late-181', 181_000], ['late-277', 277_000], ['late-8m', 8 * 60_000]] as const) {
+    for (const [messageId, lateMs] of [['late-181', 181_000], ['late-277', 277_000], ['late-8m', 8 * 60_000], ['late-45m', 45 * 60_000]] as const) {
       await runEvent(
         callbacks(),
         {
@@ -1598,8 +1598,8 @@ describe('createHubAwareSync (provider composition)', () => {
       );
     }
     expect(events.map((event) => (event.type === 'messageReceived' ? event.live !== false : null)))
-      .toEqual([true, true, true]);
-    expect(NOTIFICATION_MAX_AGE_MS).toBe(9 * 60_000); // below the hub's 10-min redelivery quiet period
+      .toEqual([true, true, true, true]);
+    expect(NOTIFICATION_MAX_AGE_MS).toBe(60 * 60_000); // D40: up to an hour late is still news
     provider.stop();
   });
 
@@ -1636,13 +1636,15 @@ describe('createHubAwareSync (provider composition)', () => {
       return event?.type === 'messageReceived' && event.live !== false;
     }
 
-    it('PC clock 5 min fast: a 6-min-old live message still alerts', async () => {
-      await expect(liveness(+FIVE_MIN, 6 * 60_000)).resolves.toBe(true);
+    // Ages sit 3 min inside / outside the gate: the 5-min skew would flip each
+    // verdict if the PC clock were used instead of the hub's.
+    it('PC clock 5 min fast: a live message 3 min inside the gate still alerts', async () => {
+      await expect(liveness(+FIVE_MIN, NOTIFICATION_MAX_AGE_MS - 3 * 60_000)).resolves.toBe(true);
       await expect(liveness(+FIVE_MIN, 0)).resolves.toBe(true);
     });
 
-    it('PC clock 5 min slow: a 12-min-old fact stays quiet', async () => {
-      await expect(liveness(-FIVE_MIN, 12 * 60_000)).resolves.toBe(false);
+    it('PC clock 5 min slow: a fact 3 min past the gate stays quiet', async () => {
+      await expect(liveness(-FIVE_MIN, NOTIFICATION_MAX_AGE_MS + 3 * 60_000)).resolves.toBe(false);
       await expect(liveness(-FIVE_MIN, 30_000)).resolves.toBe(true);
     });
 
