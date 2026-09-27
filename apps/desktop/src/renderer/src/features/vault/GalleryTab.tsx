@@ -1,6 +1,9 @@
 // Chat media gallery (PRD F7): every media message of the conversation as a
 // virtualized grid with PPV badges (money green = purchased, amber = unopened
 // — DESIGN §4). Replaces the thread pane while the Gallery tab is active.
+// D42: the cover is the shared MediaCell (loads only while visible, Core
+// decides the cost); a click opens the lightbox over ALL of the message's
+// attachments, not only the cover.
 
 import { useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -10,6 +13,8 @@ import { EmptyState } from '../../design/EmptyState';
 import { cx } from '../../lib/cx';
 import { useT } from '../../lib/i18n';
 import { formatClock } from '../../lib/time';
+import { MediaCell } from '../media/MediaCell';
+import { useLightboxStore } from '../media/lightboxStore';
 import { chunkRows, galleryBadge, mergeGalleryPages } from './vaultLogic';
 
 const GRID_COLUMNS = 4;
@@ -22,32 +27,37 @@ interface GalleryCellData {
 
 function GalleryCell({ cell }: { cell: GalleryCellData }): React.JSX.Element {
   const t = useT();
+  const show = useLightboxStore((s) => s.show);
   const { item, media } = cell;
   const badge = galleryBadge(item);
-  const showImage = media !== null && media.isReady && !media.locked && media.thumbUrl !== null;
+  const open = (): void => {
+    if (item.media.length > 0) show(item.media, 0, 'gallery');
+  };
   return (
     <div className="flex h-[160px] flex-col overflow-hidden rounded-[10px] border border-line bg-bg1">
-      <div className="relative min-h-0 flex-1">
-        {showImage ? (
-          <img src={media.thumbUrl ?? ''} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+      <div
+        role="button"
+        tabIndex={media === null ? -1 : 0}
+        title={item.media.length > 1 ? t('media.moreTip', { n: item.media.length }) : t('media.openTip')}
+        onClick={open}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            open();
+          }
+        }}
+        className="relative min-h-0 flex-1 cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-clay"
+      >
+        {media !== null ? (
+          <MediaCell item={media} surface="gallery" />
         ) : (
           <div className="media-stripes flex h-full w-full flex-col items-center justify-center gap-1">
-            <span className="text-[15px] opacity-50">
-              {media !== null && media.locked ? '🔒' : media !== null && !media.isReady ? '⏳' : '∅'}
-            </span>
-            <span className="num text-micro tracking-[0.08em] text-ink-mid">
-              {media === null ? 'NO MEDIA' : media.locked ? 'LOCKED' : media.isReady ? 'MEDIA' : 'PROCESSING'}
-            </span>
+            <span className="text-[15px] opacity-50">∅</span>
           </div>
         )}
         {item.mediaCount > 1 && (
-          <span className="num absolute top-1.5 left-1.5 rounded-[4px] bg-bg1/90 px-1.5 text-micro font-semibold text-ink-mid">
+          <span className="num pointer-events-none absolute top-1.5 left-1.5 rounded-[4px] bg-bg1/90 px-1.5 text-micro font-semibold text-ink-mid">
             ×{item.mediaCount}
-          </span>
-        )}
-        {media?.type === 'video' && media.durationSeconds !== null && (
-          <span className="num absolute right-1.5 bottom-1.5 rounded-[4px] bg-bg1/90 px-1 text-micro text-ink-mid">
-            ▶ {Math.floor(media.durationSeconds / 60)}:{String(media.durationSeconds % 60).padStart(2, '0')}
           </span>
         )}
       </div>

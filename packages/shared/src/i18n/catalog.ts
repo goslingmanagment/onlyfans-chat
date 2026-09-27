@@ -1507,6 +1507,42 @@ export const UI_MESSAGES = {
   'vault.galEmptyTitle': { en: 'No media in this chat', ru: 'В этом чате нет медиа' },
   'vault.galEmptyHint': { en: 'Sent and received media will appear here.', ru: 'Отправленные и полученные медиа появятся здесь.' },
   'vault.loadingMore': { en: 'LOADING MORE…', ru: 'ЗАГРУЗКА…' },
+
+  // ── Media images (D42) ────────────────────────────────────────────────────
+  // The cell states the owner named: «загрузить» (an explicit click, may cost),
+  // «недоступно» (quiet), «обрабатывается».
+  'media.load': { en: 'Load', ru: 'Загрузить' },
+  'media.loadTip.budget': {
+    en: "Today's picture budget is used up — click to load this one anyway",
+    ru: 'Дневной лимит на картинки исчерпан — нажмите, чтобы загрузить эту',
+  },
+  'media.loadTip.size': {
+    en: 'Size unknown — loads only on click',
+    ru: 'Размер неизвестен — загрузка только по клику',
+  },
+  'media.loadTip.expired': {
+    en: 'The link expired — click to refresh it and load',
+    ru: 'Ссылка устарела — нажмите, чтобы обновить её и загрузить',
+  },
+  'media.loadTip.failed': {
+    en: 'Did not load — click to try again',
+    ru: 'Не загрузилось — нажмите, чтобы попробовать ещё раз',
+  },
+  'media.loadTip.click': { en: 'Full size loads on click', ru: 'Полный размер загружается по клику' },
+  'media.unavailable': { en: 'Unavailable', ru: 'Недоступно' },
+  'media.processing': { en: 'Processing', ru: 'Обрабатывается' },
+  'media.locked': { en: 'Locked', ru: 'Закрыто' },
+  'media.audio': { en: 'Audio', ru: 'Аудио' },
+  'media.videoPreview': { en: 'Video — preview frame only', ru: 'Видео — только кадр-превью' },
+  'media.gifPreview': { en: 'GIF — preview frame only', ru: 'GIF — только кадр-превью' },
+  'media.more': { en: '+{n}', ru: '+{n}' },
+  'media.moreTip': { en: 'Open all {n} attachments', ru: 'Открыть все вложения ({n})' },
+  'media.openTip': { en: 'Open', ru: 'Открыть' },
+  'media.close': { en: 'Close', ru: 'Закрыть' },
+  'media.counter': { en: '{i} of {n}', ru: '{i} из {n}' },
+  'media.prev': { en: 'Previous', ru: 'Предыдущее' },
+  'media.next': { en: 'Next', ru: 'Следующее' },
+  'media.loading': { en: 'Loading…', ru: 'Загрузка…' },
   'vault.priceErrWhole': { en: 'Enter dollars with up to two decimal places', ru: 'Введите доллары, до двух знаков после точки' },
   'vault.priceErrInteger': { en: 'Use at most two decimal places', ru: 'Не больше двух знаков после точки' },
   'vault.priceErrMin': { en: 'Minimum PPV price is ${min} (or 0 = free)', ru: 'Минимальная цена PPV — ${min} (или 0 = бесплатно)' },

@@ -8,10 +8,11 @@ import type { MessageVM } from '../../../../preload/contract';
 import { cx } from '../../lib/cx';
 import { formatClock } from '../../lib/time';
 import { formatLedgerAmount } from '../../lib/money';
-import { canUnsend, mediaCountLabel, ppvChip, sendState } from '../../lib/messages';
+import { canUnsend, ppvChip, sendState } from '../../lib/messages';
+import { MediaThumb } from './MediaThumb';
 import { Badge } from '../../design/Badge';
 import { getBridge } from '../../bridge/bridge';
-import { useLocale, useT } from '../../lib/i18n';
+import { useT } from '../../lib/i18n';
 import { useUiStore } from '../../state/uiStore';
 
 export const DayDivider = memo(function DayDivider({ label }: { label: string }): React.JSX.Element {
@@ -57,7 +58,6 @@ export const MessageRow = memo(function MessageRow({
   accountId: string;
 }): React.JSX.Element {
   const t = useT();
-  const locale = useLocale();
   // two-step inline confirm for unsend — no modal in the shift loop (DESIGN §4)
   const [confirmUnsend, setConfirmUnsend] = useState(false);
   const me = message.isSentByMe;
@@ -101,6 +101,8 @@ export const MessageRow = memo(function MessageRow({
             isPpv
               ? 'w-[312px] overflow-hidden p-0'
               : 'px-[var(--cv-bubble-px)] py-[var(--cv-bubble-py)]',
+            // D42: a bubble with tiles hugs them; the caption wraps below.
+            hasMedia && !isPpv && !message.deleted && 'w-min',
           )}
         >
           {message.deleted ? (
@@ -114,17 +116,10 @@ export const MessageRow = memo(function MessageRow({
                     <span className="min-w-0 truncate">{message.replyTo.textPreview}</span>
                   </div>
                 )}
+                {/* D42: tiles (≤4 + «+N») replace the old count badge. */}
                 {hasMedia && (
-                  <div
-                    className={cx(
-                      'flex w-fit max-w-full items-center rounded-chip border border-line bg-bg2 px-2.5 py-1',
-                      message.text !== '' && 'mb-2',
-                    )}
-                    aria-label={mediaCountLabel(message.media, locale)}
-                  >
-                    <span className="num truncate text-micro tracking-[0.08em] text-ink-mid">
-                      {mediaCountLabel(message.media, locale)}
-                    </span>
+                  <div className={cx(message.text !== '' && 'mb-2')}>
+                    <MediaThumb media={message.media} />
                   </div>
                 )}
                 {message.text !== '' && <span className="break-words whitespace-pre-wrap">{message.text}</span>}

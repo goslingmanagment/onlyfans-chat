@@ -18,6 +18,7 @@ import { mergeOutboxRows } from './sendLogic';
 import { SkeletonThread } from '../../design/Skeleton';
 import { EmptyState } from '../../design/EmptyState';
 import { DayDivider, MessageRow, TipLedgerRow } from './ThreadRows';
+import { mediaTilesHeight } from './MediaThumb';
 import { OutboxRow } from './OutboxRows';
 import { cx } from '../../lib/cx';
 import { useT } from '../../lib/i18n';
@@ -50,7 +51,8 @@ function estimateRow(row: ThreadRow | undefined, m: RowMetrics): number {
   if (row.kind === 'outbox') return m.outbox;
   const msg = row.message;
   let h = m.base + Math.ceil(msg.text.length / m.chars) * m.perLine;
-  if (msg.media.length > 0) h += 30;
+  // D42: fixed-size media tiles (plus the gap under them when text follows).
+  if (msg.media.length > 0) h += mediaTilesHeight(msg.media.length) + (msg.text !== '' ? 8 : 0);
   if (msg.price > 0) h += 32;
   return h;
 }

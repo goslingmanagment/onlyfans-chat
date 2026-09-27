@@ -1,48 +1,78 @@
-import { memo, useState } from 'react';
+// D42: a message's attachments as tiles inside its bubble (they replaced the
+// "{n} media" count badge). Up to four tiles; when there are more, the fourth
+// carries «+N» and, like every tile, opens the lightbox over ALL attachments
+// of the message. Fixed tile sizes keep the virtualized thread's row heights
+// stable while images load. Images load only while visible (MediaCell gate).
+
+import { memo } from 'react';
 import type { MessageMediaVM } from '../../../../preload/contract';
 import { cx } from '../../lib/cx';
+import { useT } from '../../lib/i18n';
+import { MediaCell } from '../media/MediaCell';
+import { useLightboxStore } from '../media/lightboxStore';
 
-/** Lazy media thumb with skeleton while decoding and honest not-ready state. */
+export const MEDIA_TILES_MAX = 4;
+
+/** Tile block height (px) for the thread's row estimate. */
+export function mediaTilesHeight(count: number): number {
+  if (count <= 0) return 0;
+  if (count === 1) return 180;
+  if (count === 2) return 150;
+  return 118 * 2 + 4;
+}
+
 export const MediaThumb = memo(function MediaThumb({
   media,
 }: {
-  media: MessageMediaVM;
-}): React.JSX.Element {
-  const [loaded, setLoaded] = useState(false);
+  media: readonly MessageMediaVM[];
+}): React.JSX.Element | null {
+  const t = useT();
+  const show = useLightboxStore((s) => s.show);
+  if (media.length === 0) return null;
+  const tiles = media.slice(0, MEDIA_TILES_MAX);
+  const hidden = media.length - tiles.length;
+  const single = tiles.length === 1;
+  const pair = tiles.length === 2;
 
-  if (!media.isReady || media.thumbUrl === null) {
-    return (
-      <div className="media-stripes flex h-[124px] w-[280px] max-w-full flex-col items-center justify-center gap-1.5 rounded-[10px] border border-line">
-        <span className="text-[15px] opacity-50">{media.locked ? '🔒' : '⏳'}</span>
-        <span className="num text-micro tracking-[0.08em] text-ink-mid">
-          {media.locked ? 'LOCKED' : 'PROCESSING'}
-        </span>
-      </div>
-    );
-  }
+  const open = (index: number): void => show([...media], index, 'thread');
 
   return (
-    <div className="relative h-[124px] w-[280px] max-w-full overflow-hidden rounded-[10px] border border-line">
-      {!loaded && <div className="absolute inset-0 animate-pulse bg-bg3" />}
-      <img
-        src={media.thumbUrl}
-        alt=""
-        loading="lazy"
-        decoding="async"
-        onLoad={() => setLoaded(true)}
-        className={cx('h-full w-full object-cover', !loaded && 'opacity-0')}
-      />
-      {media.type === 'video' && (
-        <span className="num absolute right-2 bottom-2 rounded-[5px] border border-line bg-bg1/90 px-[7px] py-[2px] text-micro text-ink-mid">
-          ▶ {media.durationSeconds !== null ? formatDuration(media.durationSeconds) : 'video'}
-        </span>
+    <div
+      className={cx(
+        'grid gap-1',
+        single ? 'w-[240px] max-w-full grid-cols-1' : pair ? 'w-[304px] max-w-full grid-cols-2' : 'w-[240px] max-w-full grid-cols-2',
       )}
+    >
+      {tiles.map((item, index) => {
+        const last = index === tiles.length - 1 && hidden > 0;
+        const more = last ? hidden + 1 : 0;
+        return (
+          <div
+            key={item.id}
+            role="button"
+            tabIndex={0}
+            title={more > 0 ? t('media.moreTip', { n: media.length }) : t('media.openTip')}
+            onClick={() => open(index)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                open(index);
+              }
+            }}
+            className={cx(
+              'relative cursor-pointer overflow-hidden rounded-[8px] border border-line focus-visible:outline focus-visible:outline-2 focus-visible:outline-clay',
+              single ? 'h-[180px]' : pair ? 'h-[150px]' : 'h-[118px]',
+            )}
+          >
+            <MediaCell item={item} surface="thread" />
+            {more > 0 && (
+              <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-veil/60 text-[20px] font-semibold text-veil-ink">
+                {t('media.more', { n: more })}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 });
-
-function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${s < 10 ? '0' : ''}${s}`;
-}

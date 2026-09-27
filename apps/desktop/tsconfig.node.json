@@ -18,6 +18,7 @@
   ],
   "exclude": [
     "tests/renderer-ai/*.test.ts",
-    "tests/renderer/sound.test.ts"
+    "tests/renderer/sound.test.ts",
+    "tests/renderer/media-gate.test.ts"
   ]
 }

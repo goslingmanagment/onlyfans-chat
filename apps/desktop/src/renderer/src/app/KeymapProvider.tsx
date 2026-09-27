@@ -10,6 +10,7 @@ import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { createKeymap, type KeyEventLike } from '../lib/keymap';
 import { nextChatId, nextUnreadChatId, nthChatId } from '../lib/filters';
 import { KEY_BINDINGS } from './keymapBindings';
+import { useLightboxStore } from '../features/media/lightboxStore';
 import { useUiStore } from '../state/uiStore';
 import { createNavOverlayController } from '../state/navOverlayStore';
 import { createDesktopHotkeyEngine, resolveDesktopKey, schemePlatform } from '../lib/hotkeyScheme';
@@ -113,7 +114,8 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
       if (resolved.kind === 'scheme') e.preventDefault();
       const action = resolved.action;
       const ui = useUiStore.getState();
-      const overlayOpen = ui.paletteOpen || ui.cheatsheetOpen;
+      const lightboxOpen = useLightboxStore.getState().open;
+      const overlayOpen = ui.paletteOpen || ui.cheatsheetOpen || lightboxOpen;
 
       if (overlayOpen && action !== 'palette' && action !== 'cheatsheet' && action !== 'dismiss') {
         return; // overlays own the rest of the keys
@@ -141,7 +143,8 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
           toggleSplitFromKeyboard();
           return;
         case 'dismiss': {
-          if (ui.paletteOpen) ui.setPaletteOpen(false);
+          if (lightboxOpen) useLightboxStore.getState().close();
+          else if (ui.paletteOpen) ui.setPaletteOpen(false);
           else if (ui.cheatsheetOpen) ui.setCheatsheetOpen(false);
           else if (isBoardView(ui.view) && (boardStoreForView(ui.view)?.getState().previewFanId ?? null) !== null) {
             // mockup: ESC closes the quick look; AI keeps running unless explicitly cancelled
