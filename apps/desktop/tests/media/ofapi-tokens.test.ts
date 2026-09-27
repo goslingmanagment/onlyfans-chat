@@ -59,7 +59,9 @@ describe('media rule (shared with Core)', () => {
     ['video', true, false, true, false],
     ['gif', true, false, true, false],
     ['audio', true, false, false, false],
-    ['photo', false, false, false, false],
+    // Still processing: the thumb token exists (refresh on an explicit click only), never full.
+    ['photo', false, false, true, false],
+    ['video', false, false, true, false],
     ['photo', true, true, false, false],
   ] as const)('%s ready=%s locked=%s → thumb=%s full=%s', (type, isReady, locked, thumb, full) => {
     const tokens = mintOfapiMediaTokens(mint, ACCT, { id: '7', type, isReady, locked });
@@ -100,7 +102,9 @@ describe('media rule (shared with Core)', () => {
     // Id path: the thumb token; Core picks thumb → squarePreview → preview, never full.
     expect(mapVaultItem(base, toMediaUrl, ACCT).thumbUrl).toBe(`media://${hashOfapiMediaKey(ACCT, '3866342509', 'thumb')}`);
     expect(mapVaultItem({ ...base, type: 'audio' } as OfApiVaultMedia, toMediaUrl, ACCT).thumbUrl).toBeNull();
-    expect(mapVaultItem({ ...base, isReady: false } as OfApiVaultMedia, toMediaUrl, ACCT).thumbUrl).toBeNull();
+    // A processing vault item keeps its thumb token: its cell offers «Проверить», never an automatic load.
+    const processing = mapVaultItem({ ...base, isReady: false } as OfApiVaultMedia, toMediaUrl, ACCT);
+    expect(processing).toMatchObject({ isReady: false, thumbUrl: `media://${hashOfapiMediaKey(ACCT, '3866342509', 'thumb')}` });
   });
 });
 
@@ -130,6 +134,15 @@ describe('message view models re-mint from ids', () => {
     const again = messageToVM(stale, mint);
     const token = parseMediaToken(again.media[0]?.thumbUrl ?? '');
     expect(registry.lookupEntry(token ?? '')).toMatchObject({ kind: 'ofapi', mediaId: '3000001' });
+  });
+
+  it('a processing file keeps its thumb token in the VM, never a full one', () => {
+    const vm = messageToVM(row([
+      { id: '3000011', type: 'photo', thumbUrl: null, fullUrl: null, isReady: false, locked: false, durationSeconds: null },
+      { id: '3000012', type: 'photo', thumbUrl: null, fullUrl: null, isReady: false, locked: true, durationSeconds: null },
+    ]), createOfapiMediaMinter(createInMemoryMediaUrlRegistry()));
+    expect(vm.media[0]).toMatchObject({ isReady: false, thumbUrl: `media://${hashOfapiMediaKey(ACCT, '3000011', 'thumb')}`, fullUrl: null });
+    expect(vm.media[1]).toMatchObject({ thumbUrl: null, fullUrl: null });
   });
 
   it('never hands the renderer a remote URL', () => {

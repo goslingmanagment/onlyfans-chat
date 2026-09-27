@@ -28,6 +28,22 @@ describe('media_fetch_reports queue', () => {
     }
   });
 
+  it('D6: drops rows Core refused N times; fresh rows stay', () => {
+    const layer = memoryDataLayer();
+    try {
+      const reports = layer.mediaFetchReports;
+      reports.enqueue({ resolveId: ID(7), result: 'ok', bytesReceived: 1, httpStatus: 200 });
+      reports.enqueue({ resolveId: ID(8), result: 'ok', bytesReceived: 1, httpStatus: 200 });
+      for (let i = 0; i < 3; i += 1) reports.noteAttempt([ID(7)]);
+      expect(reports.dropExhausted(4)).toBe(0);
+      reports.noteAttempt([ID(7)]);
+      expect(reports.dropExhausted(4)).toBe(1);
+      expect(reports.next(10).map((report) => report.resolveId)).toEqual([ID(8)]);
+    } finally {
+      layer.close();
+    }
+  });
+
   it('drops a malformed row instead of wedging the queue', () => {
     const layer = memoryDataLayer();
     try {

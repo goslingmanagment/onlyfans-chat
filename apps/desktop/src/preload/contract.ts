@@ -102,9 +102,13 @@ export type MediaSurfaceVM = 'thread' | 'gallery' | 'vault' | 'lightbox';
 
 /**
  * D42: what one media:// token can show right now — never a URL. `load` waits
- * for an explicit click (daily budget reached, size unknown, link expired, or
- * an earlier attempt failed); `unavailable` is quiet (locked by policy, gone,
- * Core without media support); `processing` is a file OnlyFans still converts.
+ * for an explicit click (daily budget reached, size unknown, link expired, an
+ * earlier attempt failed, or a full-size photo); `unavailable` is quiet
+ * (locked by policy, gone, Core without media support); `processing` is a file
+ * OnlyFans still converts — `refresh` says an explicit click may ask again
+ * (Core named a message or vault item to re-read); `wait` is quiet too: Core
+ * is busy or rate-limited this device, the cell tries again by itself after
+ * `retryAfterMs` and never offers a click for it.
  */
 export type MediaStateVM =
   | { state: 'ready' }
@@ -112,7 +116,11 @@ export type MediaStateVM =
   | { state: 'loading' }
   | { state: 'load'; reason: 'budget' | 'size' | 'expired' | 'failed' | 'click' }
   | { state: 'unavailable' }
-  | { state: 'processing' };
+  | { state: 'processing'; refresh?: boolean }
+  | { state: 'wait'; retryAfterMs: number };
+
+/** D42: `click` may spend credits (Core decides); `auto` is budgeted and cancellable. */
+export type MediaTriggerVM = 'auto' | 'click';
 
 export interface MessageVM {
   id: string;
@@ -1142,8 +1150,17 @@ export interface InvokeChannels extends FollowersChannels {
   // ── Media images (D42) ──
   /** State of one media:// token (after an <img> error, or before showing). No network. */
   'query:media.state': { args: { url: string }; result: MediaStateVM };
-  /** Explicit click: fetch this file now (may spend credits; Core decides). */
-  'cmd:media.load': { args: { url: string; surface: MediaSurfaceVM }; result: MediaStateVM };
+  /**
+   * Fetch this file now. `click` (the default) is the explicit action and may
+   * spend credits (Core decides); `auto` is the lightbox's navigation load —
+   * budgeted, and for a full-size photo Core answers «load on click».
+   */
+  'cmd:media.load': {
+    args: { url: string; surface: MediaSurfaceVM; trigger?: MediaTriggerVM };
+    result: MediaStateVM;
+  };
+  /** A cell left the viewport (or unmounted): drop its automatic load if it has not started. */
+  'cmd:media.cancel': { args: { url: string }; result: { cancelled: boolean } };
   /**
    * PPV / media send: single outbox row (sequences never apply). Price 0 =
    * free media message; otherwise whole dollars 3–200. previews ⊆ mediaFiles.
@@ -1324,6 +1341,7 @@ const INVOKE_CHANNEL_REGISTRY: Record<InvokeChannelName, true> = {
   'query:chat.gallery': true,
   'query:media.state': true,
   'cmd:media.load': true,
+  'cmd:media.cancel': true,
   'cmd:send.ppv': true,
 };
 

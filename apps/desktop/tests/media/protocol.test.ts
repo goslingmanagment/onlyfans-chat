@@ -504,7 +504,7 @@ describe('media request handler — OFAPI id tokens (D42)', () => {
     cache.entries.clear();
     const res = await handler({ url: `${thumb}?s=gallery` });
     expect(res.status).toBe(200);
-    expect(load).toHaveBeenCalledWith(token, expect.objectContaining({ kind: 'ofapi', mediaId: '3000001', variant: 'thumb' }), { trigger: 'auto', surface: 'gallery' });
+    expect(load).toHaveBeenCalledWith(token, expect.objectContaining({ kind: 'ofapi', mediaId: '3000001', variant: 'thumb' }), { trigger: 'auto', surface: 'gallery', signal: undefined });
   });
 
   it('never loads a full-size file automatically (only an explicit click does)', async () => {
@@ -515,11 +515,20 @@ describe('media request handler — OFAPI id tokens (D42)', () => {
     expect(load).not.toHaveBeenCalled();
   });
 
+  it('hands the <img> request\'s abort signal to the automatic load (D5)', async () => {
+    const { thumb, load, handler } = setupOfapi();
+    const controller = new AbortController();
+    await handler({ url: thumb, signal: controller.signal });
+    expect(load).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.objectContaining({ signal: controller.signal }));
+  });
+
   it.each([
     [{ state: 'load', reason: 'budget' }, 402, 'load:budget'],
     [{ state: 'unavailable' }, 404, 'unavailable'],
     [{ state: 'processing' }, 409, 'processing'],
+    [{ state: 'processing', refresh: true }, 409, 'processing:refresh'],
     [{ state: 'loading' }, 503, 'loading'],
+    [{ state: 'wait', retryAfterMs: 42_000 }, 503, 'wait:42000'],
   ] as const)('answers %o with %i and names the state', async (state, status, header) => {
     const { thumb, handler } = setupOfapi({ loadResult: { kind: 'state', state } });
     const res = await handler({ url: thumb });

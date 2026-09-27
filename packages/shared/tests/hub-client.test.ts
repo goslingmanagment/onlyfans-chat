@@ -4,6 +4,7 @@ import {
   HUB_LIST_PAGES_TIMEOUT_MS,
   HUB_MEDIA_REPORTS_TIMEOUT_MS,
   HUB_MEDIA_RESOLVE_TIMEOUT_MS,
+  parseRetryAfterMs,
   HUB_MONEY_FACTS_TIMEOUT_MS,
   HUB_OFAPI_CREDITS_TIMEOUT_MS,
   HUB_PROFILE_GET_TIMEOUT_MS,
@@ -352,6 +353,24 @@ describe('createHubClient', () => {
       const { fetchImpl } = stubFetch(jsonResponse(404, { error: 'not_found', message: 'Route not found', statusCode: 404 }));
       const { client } = makeClient(fetchImpl);
       expect(await client.resolveMedia({ request: REQUEST })).toEqual({ kind: 'unsupported' });
+    });
+
+    it('reports a rate-limited device (429) as throttled with its Retry-After, never as a failure', async () => {
+      const { fetchImpl } = stubFetch(
+        jsonResponse(429, { error: 'Too Many Requests' }, { 'retry-after': '42' }),
+        jsonResponse(429, { error: 'Too Many Requests' }),
+      );
+      const { client } = makeClient(fetchImpl);
+      expect(await client.resolveMedia({ request: REQUEST })).toEqual({ kind: 'throttled', retryAfterMs: 42_000 });
+      expect(await client.resolveMedia({ request: REQUEST })).toEqual({ kind: 'throttled', retryAfterMs: null });
+    });
+
+    it('gives a resolve at least 45 s — above Core\'s worst-case media path', () => {
+      expect(HUB_MEDIA_RESOLVE_TIMEOUT_MS).toBeGreaterThanOrEqual(45_000);
+      expect(parseRetryAfterMs('7')).toBe(7_000);
+      expect(parseRetryAfterMs('Sat, 27 Sep 2026 20:00:30 GMT', Date.parse('2026-09-27T20:00:00Z'))).toBe(30_000);
+      expect(parseRetryAfterMs('soon')).toBeNull();
+      expect(parseRetryAfterMs(null)).toBeNull();
     });
 
     it('refuses a client-supplied URL before the wire and a drifted answer after it', async () => {

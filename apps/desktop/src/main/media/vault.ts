@@ -57,7 +57,9 @@ export function mapVaultItem(media: OfApiVaultMedia, toMediaUrl: ToMediaUrl, acc
   // the file by id and Core picks thumb → squarePreview → preview.
   let thumbUrl: string | null;
   if (accountId !== undefined && toMediaUrl.ofapiMedia !== undefined) {
-    thumbUrl = isReady && type !== 'audio' ? toMediaUrl.ofapiMedia(accountId, String(media.id), 'thumb') : null;
+    // A processing item keeps its thumb token too: its cell offers an
+    // explicit refresh, never an automatic load (D42/H3).
+    thumbUrl = type !== 'audio' ? toMediaUrl.ofapiMedia(accountId, String(media.id), 'thumb') : null;
   } else {
     const previewRemote = files?.thumb?.url ?? files?.squarePreview?.url ?? files?.preview?.url ?? null;
     thumbUrl = previewRemote !== null && type !== 'audio' ? toMediaUrl(previewRemote) : null;

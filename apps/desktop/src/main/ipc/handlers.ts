@@ -58,6 +58,7 @@ import type {
   LocalDataStatsVM,
   MediaStateVM,
   MediaSurfaceVM,
+  MediaTriggerVM,
   OutboxItemVM,
   HubTelemetryVM,
   SyncStatusVM,
@@ -298,7 +299,10 @@ const mediaStateSchema = z.strictObject({ url: mediaUrlSchema });
 const mediaLoadSchema = z.strictObject({
   url: mediaUrlSchema,
   surface: z.enum(['thread', 'gallery', 'vault', 'lightbox']),
+  // `click` is the explicit action; the lightbox's navigation loads are `auto`.
+  trigger: z.enum(['auto', 'click']).default('click'),
 });
+const mediaCancelSchema = z.strictObject({ url: mediaUrlSchema });
 
 // ── Vault & PPV (PRD F7) ──
 const vaultListSchema = z.object({
@@ -412,7 +416,9 @@ export interface IpcDeps {
   /** D42: media id-token state and explicit loads; absent = media images off. */
   media?: {
     state(url: string): MediaStateVM;
-    load(url: string, surface: MediaSurfaceVM): Promise<MediaStateVM>;
+    load(url: string, surface: MediaSurfaceVM, trigger: MediaTriggerVM): Promise<MediaStateVM>;
+    /** D5: drop an automatic load that has not started (the cell left the viewport). */
+    cancel(url: string): boolean;
   } | null;
   /** Spenders freshness: hydrate TTL guard + scoped refresh queue (PLAN item 13). */
   spendersRefresh?: SpendersRefreshService | null;
@@ -1435,7 +1441,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle('cmd:media.load', async (_event, rawArgs: unknown): Promise<MediaStateVM> => {
     const args = mediaLoadSchema.parse(rawArgs);
     const media = deps.media ?? null;
-    return media === null ? { state: 'unavailable' } : media.load(args.url, args.surface);
+    return media === null ? { state: 'unavailable' } : media.load(args.url, args.surface, args.trigger);
+  });
+
+  ipcMain.handle('cmd:media.cancel', (_event, rawArgs: unknown): { cancelled: boolean } => {
+    const args = mediaCancelSchema.parse(rawArgs);
+    return { cancelled: deps.media?.cancel(args.url) ?? false };
   });
 
   ipcMain.handle('cmd:send.ppv', (_event, rawArgs: unknown) => {

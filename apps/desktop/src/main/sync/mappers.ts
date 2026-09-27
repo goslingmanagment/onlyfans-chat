@@ -41,10 +41,12 @@ export function mintOfapiMediaTokens(
   accountId: string,
   media: { id: string; type: MessageMediaItem['type']; isReady: boolean; locked: boolean },
 ): { thumbUrl: string | null; fullUrl: string | null } {
-  if (!media.isReady || media.locked) return { thumbUrl: null, fullUrl: null };
+  if (media.locked) return { thumbUrl: null, fullUrl: null };
   return {
+    // A file still processing keeps its thumb token: the cell shows
+    // «Обрабатывается» and only an explicit click asks Core again (D42/H3).
     thumbUrl: media.type === 'audio' ? null : mint(accountId, media.id, 'thumb'),
-    fullUrl: media.type === 'photo' ? mint(accountId, media.id, 'full') : null,
+    fullUrl: media.isReady && media.type === 'photo' ? mint(accountId, media.id, 'full') : null,
   };
 }
 

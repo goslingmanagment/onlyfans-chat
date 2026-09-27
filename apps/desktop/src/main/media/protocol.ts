@@ -10,7 +10,7 @@
 
 import { createMediaCache, hashOfapiMediaKey, hashRemoteUrl, MEDIA_CACHE_MAX_BYTES } from './cache';
 import type { MediaBlob, MediaCacheQueries } from './cache';
-import type { MediaSurfaceVM, MediaStateVM } from '../../preload/contract';
+import type { MediaSurfaceVM, MediaStateVM, MediaTriggerVM } from '../../preload/contract';
 
 export const MEDIA_SCHEME = 'media';
 
@@ -164,7 +164,12 @@ export interface OfapiMediaSource {
   load(
     token: string,
     entry: Extract<MediaUrlEntry, { kind: 'ofapi' }>,
-    options: { trigger: 'auto' | 'click'; surface: MediaSurfaceVM },
+    options: {
+      trigger: MediaTriggerVM;
+      surface: MediaSurfaceVM;
+      /** D5: an automatic load not started yet is dropped when this aborts. */
+      signal?: AbortSignal | undefined;
+    },
   ): Promise<OfapiMediaLoadResult>;
   state(token: string): MediaStateVM;
 }
@@ -184,16 +189,25 @@ const STATE_STATUS: Record<MediaStateVM['state'], number> = {
   load: 402,
   unavailable: 404,
   processing: 409,
+  wait: 503,
 };
+
+function stateHeader(state: MediaStateVM): string {
+  if (state.state === 'load') return `load:${state.reason}`;
+  if (state.state === 'wait') return `wait:${state.retryAfterMs}`;
+  if (state.state === 'processing' && state.refresh === true) return 'processing:refresh';
+  return state.state;
+}
 
 function stateResponse(state: MediaStateVM): Response {
   return new Response(null, {
     status: STATE_STATUS[state.state],
-    headers: { 'x-chatgoose-media': state.state === 'load' ? `load:${state.reason}` : state.state },
+    headers: { 'x-chatgoose-media': stateHeader(state) },
   });
 }
 
-export type MediaRequestHandler = (request: { url: string }) => Promise<Response>;
+/** Electron hands the handler a fetch Request; its signal (when present) aborts with the <img>. */
+export type MediaRequestHandler = (request: { url: string; signal?: AbortSignal | undefined }) => Promise<Response>;
 
 const FALLBACK_CONTENT_TYPE = 'application/octet-stream';
 
@@ -230,6 +244,7 @@ export function createMediaRequestHandler(deps: MediaRequestHandlerDeps): MediaR
         result = await source.load(token, entry, {
           trigger: 'auto',
           surface: parseMediaSurface(request.url) ?? 'thread',
+          signal: request.signal,
         });
       } catch {
         return stateResponse({ state: 'load', reason: 'failed' });

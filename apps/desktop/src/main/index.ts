@@ -47,7 +47,8 @@ import {
 } from './media/protocol';
 import { createSqliteMediaCacheQueries } from './media/cache';
 import { createMediaResolver, type MediaHubClient, type MediaResolver } from './media/resolver';
-import { grantsBelongToCurrentIdentity, readGrantOwner } from './db/grant-owner';
+import { createMediaServePolicy } from './media/serve-policy';
+import { mapMessage } from './sync/mappers';
 import {
   createOfApiClient,
   type OfApiClient,
@@ -92,7 +93,7 @@ import {
 } from './hub/acceptance-reporter';
 import { summarizeUsageSpool } from './hub/usage-store';
 import { hostname, tmpdir } from 'node:os';
-import { deviceTokenDigest, readHubDeviceIdentity } from './hub/credential-journal';
+import { deviceTokenDigest } from './hub/credential-journal';
 import { hubAuthReasonOf, recoverFromHubAuthFailure } from './hub/auth-recovery';
 import {
   abandonHubDeviceTokenCustody,
@@ -157,6 +158,7 @@ import type {
   UnreadReconcileSettingsVM,
   UpdateModeVM,
   MediaSurfaceVM,
+  MediaTriggerVM,
   UpdateStatusVM,
 } from '../preload/contract';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
@@ -1553,31 +1555,34 @@ async function boot(): Promise<void> {
     return mediaHubClient.client;
   };
   // D35 rule 5: a file is served only for an account granted to the
-  // identity that is signed in now.
-  const canServeMediaAccount = (accountId: string): boolean => {
-    if (!grantsBelongToCurrentIdentity(
-      readGrantOwner(mediaData.settings),
-      readHubDeviceIdentity(mediaData.settings)?.username ?? null,
-    )) {
-      return false;
-    }
-    return mediaData.accounts.listGranted().some((row) => row.id === accountId);
-  };
+  // identity that is signed in now (media/serve-policy.ts).
+  const canServeMediaAccount = createMediaServePolicy(mediaData);
+  const mediaToMediaUrl = createToMediaUrl(mediaData.mediaUrls);
   mediaResolver = createMediaResolver({
     cache: media.cache,
     hub: currentMediaHubClient,
     canServe: canServeMediaAccount,
     reports: mediaData.mediaFetchReports,
-    // Explicit click on an expired file: one re-read of what Core named,
-    // marked as media context so Core's ledger tells it apart.
+    // Explicit click on an expired or still-processing file: one re-read of
+    // what Core named, marked as media context so Core's ledger tells it
+    // apart. A re-read message is written back, so its row (ready flag, id
+    // tokens) catches up with what the click just saw.
     reread: async (accountId, target) => {
       const runtimeClient = client;
       if (runtimeClient === null) return false;
       if (target.kind === 'message') {
-        await runtimeClient.getMessage({
+        const fresh = await runtimeClient.getMessage({
           purpose: 'media', accountId, chatId: target.chatId, messageId: target.messageId,
           readIntent: 'media-context-v1',
         });
+        try {
+          const known = mediaData.messages.get(accountId, target.chatId, target.messageId);
+          if (known !== null) mediaData.messages.upsertMany([mapMessage(accountId, target.chatId, fresh, mediaToMediaUrl)]);
+        } catch (error) {
+          logger?.log('warn', 'media', 'media re-read could not be stored', {
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
       } else {
         await runtimeClient.getVaultMedia({
           purpose: 'media', accountId, mediaId: target.mediaId, readIntent: 'media-context-v1',
@@ -2049,11 +2054,15 @@ async function boot(): Promise<void> {
           if (found === null || !resolver.canServe(found.entry.accountId)) return { state: 'unavailable' as const };
           return resolver.state(found.token);
         },
-        load: async (url: string, surface: MediaSurfaceVM) => {
+        load: async (url: string, surface: MediaSurfaceVM, trigger: MediaTriggerVM) => {
           const found = ofapiEntry(url);
           if (found === null) return { state: 'unavailable' as const };
-          const result = await resolver.load(found.token, found.entry, { trigger: 'click', surface });
+          const result = await resolver.load(found.token, found.entry, { trigger, surface });
           return result.kind === 'bytes' ? { state: 'ready' as const } : result.state;
+        },
+        cancel: (url: string) => {
+          const found = ofapiEntry(url);
+          return found === null ? false : resolver.cancel(found.token);
         },
       };
     },

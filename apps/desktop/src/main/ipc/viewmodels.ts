@@ -48,11 +48,14 @@ export type OfapiMediaTokenMinter = (accountId: string, mediaId: string, variant
  */
 export function mediaItemToVM(item: MessageMediaVM, accountId?: string, mint?: OfapiMediaTokenMinter): MessageMediaVM {
   if (accountId !== undefined && mint !== undefined) {
-    const viewable = item.isReady && !item.locked;
+    // Same rule as sync/mappers.ts mintOfapiMediaTokens: a processing file
+    // keeps its thumb token (refresh on click only), never a full one.
     return {
       ...item,
-      thumbUrl: viewable && item.type !== 'audio' ? toRendererMediaUrl(mint(accountId, item.id, 'thumb')) : null,
-      fullUrl: viewable && item.type === 'photo' ? toRendererMediaUrl(mint(accountId, item.id, 'full')) : null,
+      thumbUrl: !item.locked && item.type !== 'audio' ? toRendererMediaUrl(mint(accountId, item.id, 'thumb')) : null,
+      fullUrl: item.isReady && !item.locked && item.type === 'photo'
+        ? toRendererMediaUrl(mint(accountId, item.id, 'full'))
+        : null,
     };
   }
   return {

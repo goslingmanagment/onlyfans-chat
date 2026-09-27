@@ -110,6 +110,8 @@ function makeMedia(kind: 'photo' | 'video', opts: { locked?: boolean; ready?: bo
 // this map answers — exactly the path a real blocked token takes.
 
 const mockMediaStates = new Map<string, MediaStateVM>();
+/** Full-size data: URIs — a navigation (`auto`) load answers Core's «load on click» (H7). */
+const mockFullUrls = new Set<string>();
 
 function mockToken(seed: number, state: MediaStateVM): string {
   const hex = seed.toString(16).padStart(8, '0').repeat(8);
@@ -118,8 +120,10 @@ function mockToken(seed: number, state: MediaStateVM): string {
 }
 
 function showcasePhoto(id: string, tone: string, tone2: string, w = 280, h = 280): MessageMediaVM {
+  const fullUrl = svgThumb(900, 1200, tone, tone2);
+  mockFullUrls.add(fullUrl);
   return {
-    id, type: 'photo', thumbUrl: svgThumb(w, h, tone, tone2), fullUrl: svgThumb(900, 1200, tone, tone2),
+    id, type: 'photo', thumbUrl: svgThumb(w, h, tone, tone2), fullUrl,
     isReady: true, locked: false, durationSeconds: null,
   };
 }
@@ -144,7 +148,9 @@ function mediaShowcase(chatId: string, endMs: number): MessageVM[] {
     base('990004', true, 30, 'States: budget reached, unavailable, processing, video', [
       { id: '7700010', type: 'photo', thumbUrl: mockToken(0x7700010, { state: 'load', reason: 'budget' }), fullUrl: null, isReady: true, locked: false, durationSeconds: null },
       { id: '7700011', type: 'photo', thumbUrl: mockToken(0x7700011, { state: 'unavailable' }), fullUrl: null, isReady: true, locked: false, durationSeconds: null },
-      { id: '7700012', type: 'photo', thumbUrl: null, fullUrl: null, isReady: false, locked: false, durationSeconds: null },
+      // Still processing: the thumb token exists, «Проверить» asks Core once (the
+      // mock's data: thumb comes back ready, like a file that finished meanwhile).
+      { id: '7700012', type: 'photo', thumbUrl: svgThumb(280, 280, '#d5c8b6', '#94775d'), fullUrl: null, isReady: false, locked: false, durationSeconds: null },
       { id: '7700013', type: 'video', thumbUrl: svgThumb(280, 280, '#cdbfae', '#8d6f58'), fullUrl: null, isReady: true, locked: false, durationSeconds: 83 },
     ]),
     {
@@ -2069,11 +2075,14 @@ export function createMockBridge(): ChatGooseBridge {
       const hex = url.replace(/^media:\/\//, '').slice(0, 64);
       return mockMediaStates.get(hex) ?? { state: 'unavailable' };
     },
-    'cmd:media.load': ({ url }) => {
+    'cmd:media.load': ({ url, trigger }) => {
+      // H7: Core answers «load on click» to a navigation (`auto`) load of a full photo.
+      if (trigger === 'auto' && mockFullUrls.has(url)) return { state: 'load', reason: 'click' };
       if (url.startsWith('data:')) return { state: 'ready' };
       const hex = url.replace(/^media:\/\//, '').slice(0, 64);
       return mockMediaStates.get(hex) ?? { state: 'unavailable' };
     },
+    'cmd:media.cancel': () => ({ cancelled: false }),
     'cmd:send.ppv': ({ accountId, chatId, text, price, mediaFiles }) => {
       assertMockGuardAllowed(text);
       const key = `${accountId}/${chatId}`;

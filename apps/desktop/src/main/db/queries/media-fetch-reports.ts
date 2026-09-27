@@ -28,6 +28,8 @@ export interface MediaFetchReportsQueries {
   next(limit: number): MediaFetchReport[];
   remove(resolveIds: readonly string[]): void;
   noteAttempt(resolveIds: readonly string[]): void;
+  /** D6: drops rows Core refused `maxAttempts` times (Core counts a missing report "unknown"). */
+  dropExhausted(maxAttempts: number): number;
   count(): number;
 }
 
@@ -73,6 +75,11 @@ export function createMediaFetchReportsQueries(
         db.prepare('UPDATE media_fetch_reports SET attempts = attempts + 1 WHERE resolve_id = @resolve_id')
           .run({ resolve_id: resolveId });
       }
+    },
+    dropExhausted(maxAttempts) {
+      return db
+        .prepare('DELETE FROM media_fetch_reports WHERE attempts >= @max')
+        .run({ max: Math.max(1, Math.trunc(maxAttempts)) }).changes;
     },
     count() {
       const raw: unknown = db.prepare('SELECT COUNT(*) AS n FROM media_fetch_reports').get();

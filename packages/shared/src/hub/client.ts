@@ -50,8 +50,10 @@ export const HUB_OFAPI_COMMAND_TIMEOUT_MS = 10_000;
 /** D39: one money-facts page is a DB-only ledger read (H3: page 8 from seq 0
  * cold ≈ 0.6 s); the H2 gateway budget is plenty. */
 export const HUB_MONEY_FACTS_TIMEOUT_MS = 20_000;
-/** D42: a media resolve may make up to three paced OFAPI hops server-side. */
-export const HUB_MEDIA_RESOLVE_TIMEOUT_MS = 30_000;
+/** D42: a media resolve may queue for Core's media transport and make up to
+ * three OFAPI/CDN hops server-side (Core's worst case ≈ 35 s); a timeout is
+ * retried once with the same requestId, which Core joins or replays. */
+export const HUB_MEDIA_RESOLVE_TIMEOUT_MS = 45_000;
 /** D42: transfer reports are a DB-only write. */
 export const HUB_MEDIA_REPORTS_TIMEOUT_MS = 10_000;
 
@@ -353,7 +355,18 @@ export type HubMediaReportsResult = KernelOperationResponse<'ofapiMediaReports'>
  */
 export type HubMediaResolveResult =
   | { kind: 'resolved'; response: HubMediaResolveResponse }
-  | { kind: 'unsupported' };
+  | { kind: 'unsupported' }
+  /** Core rate-limited this device (429): wait `retryAfterMs` (null = unknown). */
+  | { kind: 'throttled'; retryAfterMs: number | null };
+
+/** `Retry-After` in seconds or as an HTTP date → milliseconds (null if absent/garbled). */
+export function parseRetryAfterMs(value: string | null, nowMs: number = Date.now()): number | null {
+  if (value === null) return null;
+  const trimmed = value.trim();
+  if (/^\d{1,7}$/.test(trimmed)) return Number(trimmed) * 1000;
+  const at = Date.parse(trimmed);
+  return Number.isFinite(at) ? Math.max(0, at - nowMs) : null;
+}
 
 export type HubMoneyFactsResult =
   | { kind: 'page'; page: DomainEventFactsPage }
@@ -848,6 +861,9 @@ export function createHubClient(options: HubClientOptions): HubClient {
       // An older Core (or a rollback) has no route; an ungranted account is 404 too.
       if (response.status === 404 || response.status === 405) {
         return { kind: 'unsupported' };
+      }
+      if (response.status === 429) {
+        return { kind: 'throttled', retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')) };
       }
       if (response.status === 401) {
         throw new HubError('auth', { message: 'media resolve: hub rejected the credential', detail: { status: 401 } });

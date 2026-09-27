@@ -321,7 +321,6 @@ export interface ListChatMediaParams extends PurposeTagged {
   type?: VaultMediaType;
   limit?: number;
   offset?: number;
-  readIntent?: OfApiMediaReadIntent;
 }
 
 export interface UploadVaultMediaParams extends PurposeTagged {
@@ -974,7 +973,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         offset: params.offset,
         // Gallery cells need no fan profile rows (consistent with listMessages).
         skip_users: 'all',
-      }, undefined, 'idempotent', params.readIntent);
+      }, undefined, 'idempotent');
       const { data } = unwrapEnvelope(payload, path);
       const parsed = parseWith(ofapiChatMediaDataSchema, data, path);
       return {
