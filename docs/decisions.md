@@ -62,7 +62,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D40 | 2026-09-27 | Toast age gate widened from 9 to 60 min: redeliveries are excluded by provenance, so the gate only has to separate history from OFAPI's late-but-live deliveries (amends D38/D39) |
 | D41 | 2026-09-27 | One hotkey scheme with the Fansly extension, vendored from the hub (`@chatgoose/hotkeys`): text actions on ⌘/Ctrl + key (E Reply, I Improve, G Hi, P Ping, . Cancel), panels on ⌘⇧ / Ctrl+Alt + key (H, S, O, B, L, M; C reserved), physical-key matching, fresh-press roll-over guard; navigation unchanged |
 | D42 | 2026-09-27 | Split on Improve Draft: the ⫶ toggle appears in the Improve dock too and the one sticky Split flag (and ⌘⇧L / Ctrl+Alt+L) now covers Reply and Improve; the hub splits the rewrite into 2–3 [NEXT] parts only when asked (0.1.61) |
-| D43 | 2026-09-27 | Media images: message, gallery and vault files are id tokens that Core resolves (free webhook/OFAPI-cache URL or a budgeted paid download, 100 credits/UTC day for automatic loads, clicks always pass); bytes only on this machine, encrypted; tiles replace the count badge, full photos on click, video/GIF preview frame only; SDK re-vendored from core feature commit 85bc7328 — re-vendor from the deployed commit before release (core #267) |
+| D43 | 2026-09-27 | Media images: message, gallery and vault files are id tokens that Core resolves (free webhook/OFAPI-cache URL or a budgeted paid download, 100 credits/UTC day for automatic loads, clicks always pass); bytes only on this machine, encrypted; tiles replace the count badge, full photos on click, video/GIF preview frame only; SDK vendored from the deployed core commit 89134bb2 (core #267) |
 
 ## Entries
 
@@ -1352,10 +1352,10 @@ download had no budget. Now:
   takes focus and gives it back; ⌘K and the cheatsheet close it before they
   open. Fast Reply and every AI transcript still carry text labels only
   («Photo», «Media Bundle: …») — no image or token reaches the kernel.
-- **SDK.** Re-vendored from core feature commit `85bc7328` (contract hash
-  `abf87a65…`, after review round 2). The publish gate compares production's contract hash with
-  the vendored one, so the SDK MUST be re-vendored from the deployed core
-  commit (D37/D38 practice) before this ships.
+- **SDK.** Vendored from core `89134bb2` — the merged core #267, the
+  commit that is deployed (contract hash `abf87a65…`). The publish gate
+  compares production's contract hash with the vendored one (D37/D38
+  practice).
 
 Not verified here: a live fetch of any kind (no OFAPI or CDN call was made
 while building this; the resolver and protocol are proved against fakes),
