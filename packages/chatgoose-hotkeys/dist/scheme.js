@@ -91,6 +91,12 @@ export function hotkeysForClient(client) {
 export function hotkeyName(def, client, locale = "ru") {
     return def.clientName?.[client] ?? def.name[locale];
 }
+/** True for the macOS key scheme. The parameter is deliberately not called
+ * `platform`: the hub's platform-branch ratchet (scripts/check-platform-branches.mjs)
+ * counts Fansly/OnlyFans branches by that name, and an OS check is not one. */
+export function isMacKeys(os) {
+    return os === "mac";
+}
 /** "mac" for Apple platforms, "win" for everything else (Ctrl is the command key). */
 export function detectHotkeyPlatform(platform) {
     return /mac|darwin|iphone|ipad|ipod/i.test(platform ?? "") ? "mac" : "win";

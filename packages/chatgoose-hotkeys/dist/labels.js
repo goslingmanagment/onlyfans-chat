@@ -1,4 +1,4 @@
-import { hotkeyDef } from "./scheme";
+import { hotkeyDef, isMacKeys } from "./scheme";
 /** Modifier prefixes as printed, per platform and level. */
 export const HOTKEY_MODIFIER_LABELS = {
     mac: { text: "⌘", panel: "⌘⇧" },
@@ -15,12 +15,12 @@ export function hotkeyChip(action, platform) {
     const def = hotkeyDef(action);
     if (def.level === "text")
         return def.key;
-    return platform === "mac" ? `⇧${def.key}` : `Alt+${def.key}`;
+    return isMacKeys(platform) ? `⇧${def.key}` : `Alt+${def.key}`;
 }
 /** The value for the aria-keyshortcuts attribute (WAI-ARIA key names). */
 export function hotkeyAriaShortcut(action, platform) {
     const def = hotkeyDef(action);
-    const modifiers = platform === "mac"
+    const modifiers = isMacKeys(platform)
         ? (def.level === "text" ? ["Meta"] : ["Meta", "Shift"])
         : (def.level === "text" ? ["Control"] : ["Control", "Alt"]);
     return [...modifiers, def.key].join("+");

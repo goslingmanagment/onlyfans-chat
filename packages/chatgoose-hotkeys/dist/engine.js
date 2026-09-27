@@ -1,4 +1,4 @@
-import { HOTKEYS, MAC_SHIFT_ALIASES, MAC_SHIFT_SWALLOWED } from "./scheme";
+import { HOTKEYS, MAC_SHIFT_ALIASES, MAC_SHIFT_SWALLOWED, isMacKeys } from "./scheme";
 const META_CODES = new Set(["MetaLeft", "MetaRight", "OSLeft", "OSRight"]);
 const CONTROL_CODES = new Set(["ControlLeft", "ControlRight"]);
 const SHIFT_CODES = new Set(["ShiftLeft", "ShiftRight"]);
@@ -19,7 +19,7 @@ function isModifier(event) {
 /** Which modifier chord the event carries, strictly (extra modifiers → null). */
 function chordOf(event, platform) {
     const { metaKey: meta, ctrlKey: ctrl, altKey: alt, shiftKey: shift } = event;
-    if (platform === "mac") {
+    if (isMacKeys(platform)) {
         if (!meta || ctrl || alt)
             return null;
         return shift ? "shifted" : "text";
@@ -47,10 +47,10 @@ class FreshPressGuard {
         this.platform = platform;
     }
     isPrimary(event) {
-        return this.platform === "mac" ? isMeta(event) : isControl(event);
+        return isMacKeys(this.platform) ? isMeta(event) : isControl(event);
     }
     primaryFlag(event) {
-        return this.platform === "mac" ? event.metaKey : event.ctrlKey;
+        return isMacKeys(this.platform) ? event.metaKey : event.ctrlKey;
     }
     /** Update state for a keydown; returns whether a non-modifier key on this
      * event may count as a fresh press (read BEFORE the key spoils freshness). */

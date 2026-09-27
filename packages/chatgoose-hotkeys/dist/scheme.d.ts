@@ -55,5 +55,9 @@ export declare function hotkeyDef(action: HotkeyAction): HotkeyDef;
 export declare function hotkeysForClient(client: HotkeyClient): readonly HotkeyDef[];
 /** The feature name shown in the given client. */
 export declare function hotkeyName(def: HotkeyDef, client: HotkeyClient, locale?: "ru" | "en"): string;
+/** True for the macOS key scheme. The parameter is deliberately not called
+ * `platform`: the hub's platform-branch ratchet (scripts/check-platform-branches.mjs)
+ * counts Fansly/OnlyFans branches by that name, and an OS check is not one. */
+export declare function isMacKeys(os: HotkeyPlatform): boolean;
 /** "mac" for Apple platforms, "win" for everything else (Ctrl is the command key). */
 export declare function detectHotkeyPlatform(platform: string | null | undefined): HotkeyPlatform;
