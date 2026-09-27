@@ -115,6 +115,15 @@ export function parseMediaSurface(requestUrl: string): MediaSurfaceVM | null {
 }
 
 /**
+ * D42: the cell a renderer tagged on the URL (`&c=c1f`). Two cells showing one
+ * file share its load; one cell leaving drops only its own interest.
+ */
+export function parseMediaRequester(requestUrl: string): string | null {
+  const match = /[?&]c=([A-Za-z0-9_-]{1,32})(?:&|#|$)/.exec(requestUrl);
+  return match ? match[1]! : null;
+}
+
+/**
  * media://<token> → 64-hex sha256 token, or null for anything else. Legacy
  * reversible base64url-of-URL payloads never match (an encoded http(s) URL
  * always contains base64 bytes outside lowercase hex). Renderer-controlled
@@ -167,7 +176,9 @@ export interface OfapiMediaSource {
     options: {
       trigger: MediaTriggerVM;
       surface: MediaSurfaceVM;
-      /** D5: an automatic load not started yet is dropped when this aborts. */
+      /** D5: the asking cell (`c=` on the URL); an unstarted load goes when every cell left. */
+      requester?: string | undefined;
+      /** D5: this request's abort signal leaves its cell, like `cmd:media.cancel`. */
       signal?: AbortSignal | undefined;
     },
   ): Promise<OfapiMediaLoadResult>;
@@ -244,6 +255,7 @@ export function createMediaRequestHandler(deps: MediaRequestHandlerDeps): MediaR
         result = await source.load(token, entry, {
           trigger: 'auto',
           surface: parseMediaSurface(request.url) ?? 'thread',
+          requester: parseMediaRequester(request.url) ?? undefined,
           signal: request.signal,
         });
       } catch {

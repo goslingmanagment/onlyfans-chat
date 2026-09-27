@@ -13,10 +13,15 @@ export interface MediaFetchReport {
   httpStatus: number | null;
 }
 
+/** Core's contract ceiling for a reported byte count (30 MB). */
+export const MEDIA_REPORT_BYTES_CEILING = 30_000_000;
+
+// Mirrors Core's report contract, so no row written here can fail its
+// check before the wire (and a malformed row is dropped, never retried).
 const reportSchema: z.ZodType<MediaFetchReport> = z.strictObject({
   resolveId: z.uuid(),
   result: z.enum(['ok', 'failed', 'aborted_size', 'timeout', 'http_error']),
-  bytesReceived: z.number().int().nonnegative().nullable(),
+  bytesReceived: z.number().int().nonnegative().max(MEDIA_REPORT_BYTES_CEILING).nullable(),
   httpStatus: z.number().int().min(100).max(599).nullable(),
 });
 
@@ -27,6 +32,7 @@ export interface MediaFetchReportsQueries {
   /** Oldest first. Malformed rows are dropped (poison never blocks the queue). */
   next(limit: number): MediaFetchReport[];
   remove(resolveIds: readonly string[]): void;
+  /** Counts one refusal by Core (a 4xx, or the contract check before the wire) — never an outage. */
   noteAttempt(resolveIds: readonly string[]): void;
   /** D6: drops rows Core refused `maxAttempts` times (Core counts a missing report "unknown"). */
   dropExhausted(maxAttempts: number): number;

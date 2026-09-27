@@ -6,26 +6,29 @@
 // module enforces the client half of that contract:
 //   • a URL is fetched only on an allowlisted https host, every redirect hop
 //     re-checked; a transfer stops past the priced size (unknown size: a 5 MB
-//     memory guard, which protects memory, not money); only image/* bytes are
-//     kept and cached; 30 s timeout; at most four downloads at once, clicks
-//     first; an automatic load that has not started yet can be cancelled;
+//     memory guard, which protects memory, not money); only JPEG, PNG, WebP
+//     and GIF bytes (checked by their magic bytes) are kept and cached; 30 s
+//     timeout; at most four downloads at once, clicks first; an automatic load
+//     that has not started yet is dropped once no cell wants it any more;
 //   • a paid transfer is never retried automatically: after any failed paid
-//     transfer (or a paid answer without a URL) the token waits for an
-//     explicit click or the next UTC midnight;
+//     transfer (or a paid answer without a URL) the token waits for the next
+//     UTC midnight or an explicit click that gets Core's decision — a click
+//     that never reached one (timeout, throttled, busy) leaves the latch;
 //   • `cap_blocked` latches the token for automatic loads (daily budget until
 //     Core's retryAt, full size until midnight — it is click-only); an
 //     explicit click still asks;
 //   • quiet answers are remembered for automatic loads (refused, unavailable,
 //     link expired, size unknown, exhausted pending: 12 min; still processing:
 //     1 min); a Core without the media routes is remembered per account for
-//     the session; a rate-limited device waits Core's Retry-After, quietly;
+//     15 min; a rate-limited device waits Core's Retry-After, quietly;
 //   • `pending` waits Core's retryAfter (capped) and asks again, at most 3×,
 //     each time with a new requestId (a pending answer is final for its id);
 //     a timeout or transport error is retried once with the SAME requestId
 //     (Core joins or replays it, never charges twice);
 //   • failed automatic attempts back off after 3 per hour per token;
-//   • every hand-out is reported (batched, durable, idempotent by resolveId);
-//     a report that never arrives stays "unknown" at Core, never "free";
+//   • every hand-out is reported (batched, durable, idempotent by resolveId),
+//     never with more bytes than the transfer was allowed; a report that
+//     never arrives stays "unknown" at Core, never "free";
 //   • an explicit click on `source_expired`, or on a file Core still calls
 //     processing, re-reads the named message or vault item once (read intent
 //     media-context-v1) and asks again. Never automatically.
@@ -40,6 +43,7 @@ import {
 } from '@chatgoose/shared/hub/index';
 import type { MediaStateVM, MediaSurfaceVM, MediaTriggerVM } from '../../preload/contract';
 import type { MediaFetchReport, MediaFetchReportsQueries } from '../db/index';
+import { MEDIA_REPORT_BYTES_CEILING } from '../db/queries/media-fetch-reports';
 import type { MediaBlob } from './cache';
 import { isAllowedMediaUrl, type MediaUrlEntry, type OfapiMediaLoadResult, type OfapiMediaSource } from './protocol';
 
@@ -50,6 +54,8 @@ export const MEDIA_UNKNOWN_SIZE_GUARD_BYTES = 5_000_000;
 /** Free URLs carry no price; these only bound memory. */
 export const MEDIA_THUMB_GUARD_BYTES = 5_000_000;
 export const MEDIA_FULL_GUARD_BYTES = 30_000_000;
+/** Core's contract ceiling for one transfer and for a reported byte count. */
+export const MEDIA_REPORT_MAX_BYTES = MEDIA_REPORT_BYTES_CEILING;
 export const MEDIA_PENDING_RETRIES = 3;
 export const MEDIA_PENDING_WAIT_CAP_MS = 5_000;
 export const MEDIA_AUTO_FAILURES_PER_HOUR = 3;
@@ -57,19 +63,23 @@ export const MEDIA_AUTO_FAILURES_PER_HOUR = 3;
 export const MEDIA_NEGATIVE_TTL_MS = 12 * 60_000;
 /** D4: a file OnlyFans still processes may be ready soon — a short pause only. */
 export const MEDIA_NOT_READY_TTL_MS = 60_000;
+/** D4/R8: a Core without the media routes (older, rolled back) is asked again after this. */
+export const MEDIA_UNSUPPORTED_TTL_MS = 15 * 60_000;
 /** D4: Core rate-limited this device without a Retry-After. */
 export const MEDIA_THROTTLE_DEFAULT_MS = 60_000;
 /** D4: Core's media transport was busy after every pending retry. */
 export const MEDIA_BUSY_WAIT_MS = 30_000;
 const MEDIA_WAIT_MIN_MS = 1_000;
 const MEDIA_WAIT_MAX_MS = 15 * 60_000;
-/** D6: a report Core has refused this many times is dropped (Core keeps its charge "unknown"). */
+/** D6: a batch Core has refused this many times is dropped (Core keeps its charge "unknown"). */
 export const MEDIA_REPORT_MAX_ATTEMPTS = 30;
 const MEDIA_REDIRECT_HOPS = 2;
 const REPORT_BATCH = 100;
 const REPORT_ROUNDS = 10;
 const REPORT_FLUSH_DELAY_MS = 2_000;
 const REPORT_RETRY_DELAY_MS = 60_000;
+/** A Core without the reports route keeps the queue; asked again this much later. */
+const REPORT_NO_ROUTE_DELAY_MS = 15 * 60_000;
 
 export type MediaReread =
   | { kind: 'message'; chatId: string; messageId: string }
@@ -77,6 +87,7 @@ export type MediaReread =
 
 export interface MediaHubClient {
   resolveMedia(args: { request: HubMediaResolveRequest }): Promise<HubMediaResolveResult>;
+  /** `null`: this Core has no reports route (an older deploy, a rollback). */
   reportMediaFetches(args: { reports: HubMediaReport[] }): Promise<unknown>;
 }
 
@@ -112,8 +123,12 @@ export interface MediaResolverDeps {
 }
 
 export interface MediaResolver extends OfapiMediaSource {
-  /** D5: drop the token's automatic load if it has not started yet. */
-  cancel(token: string): boolean;
+  /**
+   * D5: `requester` (a cell) no longer wants the token. Its automatic load is
+   * dropped if it has not started and no other cell still wants it; without a
+   * requester the unstarted load is dropped outright. True when it was.
+   */
+  cancel(token: string, requester?: string): boolean;
   /** Send queued transfer reports (after downloads, and once at startup). */
   flushReports(): Promise<void>;
   dispose(): void;
@@ -134,17 +149,23 @@ interface TokenMemo {
   /**
    * Automatic loads get this answer without asking Core until `until`: a
    * cap_blocked latch, a failed paid transfer (D1), or a quiet "no" (D4).
-   * An explicit click clears it.
+   * Only Core's next decision about the file replaces it (R7).
    */
   autoBlock: { until: number; state: MediaStateVM } | null;
   failures: number[];
   inflight: Promise<OfapiMediaLoadResult> | null;
+  /** Bumped per new run: a late cancellation of an older run is ignored. */
+  run: number;
   /** D5: the automatic run still waiting for a download slot. */
   queued: SlotWaiter | null;
+  /** N3: the cells that want the current run; it is dropped when the last one leaves. */
+  requesters: Set<string>;
 }
 
+type ImageType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+
 type DownloadOutcome =
-  | { ok: true; data: Uint8Array; contentType: string; status: number }
+  | { ok: true; data: Uint8Array; contentType: ImageType; status: number }
   | { ok: false; result: MediaFetchReport['result']; status: number | null; bytes: number; gone: boolean };
 
 export function nextUtcMidnight(nowMs: number): number {
@@ -152,16 +173,58 @@ export function nextUtcMidnight(nowMs: number): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
 }
 
-/** H2: Core settles an unknown-size paid transfer by the bytes it moved. */
-export function settledUnknownSizeCredits(bytes: number): number {
-  return Math.max(1, Math.ceil((3 * Math.max(0, bytes)) / 1_000_000));
+/**
+ * H2: Core reserves an unknown-size paid click at its guard price and settles
+ * it on the report to min(reserved, max(1, ⌈3 × min(bytes, 5 MB) ÷ 10⁶⌉)) —
+ * the settlement can only keep or lower the reserve.
+ */
+export function settledUnknownSizeCredits(bytes: number, reserved: number): number {
+  const counted = Math.min(Math.max(0, bytes), MEDIA_UNKNOWN_SIZE_GUARD_BYTES);
+  return Math.min(Math.max(0, Math.trunc(reserved)), Math.max(1, Math.ceil((3 * counted) / 1_000_000)));
 }
 
-/** D8: only image bytes are ever kept (an HTML error page with a 200 is not). */
-export function isImageContentType(value: string | null): value is string {
-  if (value === null) return false;
-  const type = value.split(';')[0]?.trim().toLowerCase() ?? '';
+const OPAQUE_CONTENT_TYPES: ReadonlySet<string> = new Set(['', 'application/octet-stream', 'binary/octet-stream']);
+
+/** D8: a declared image type (never SVG), or an opaque one the bytes must settle (R10). */
+export function mayBeImageContentType(value: string | null): boolean {
+  const type = (value ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+  if (OPAQUE_CONTENT_TYPES.has(type)) return true;
   return /^image\/[a-z0-9.+-]+$/.test(type) && type !== 'image/svg+xml';
+}
+
+function startsWith(data: Uint8Array, signature: readonly number[], offset = 0): boolean {
+  if (data.byteLength < offset + signature.length) return false;
+  return signature.every((byte, index) => data[offset + index] === byte);
+}
+
+/** D8/R10: JPEG, PNG, WebP or GIF by their magic bytes — the only formats ever kept. */
+export function sniffImageType(data: Uint8Array): ImageType | null {
+  if (startsWith(data, [0xff, 0xd8, 0xff])) return 'image/jpeg';
+  if (startsWith(data, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png';
+  if (startsWith(data, [0x47, 0x49, 0x46, 0x38]) && (data[4] === 0x37 || data[4] === 0x39) && data[5] === 0x61) {
+    return 'image/gif';
+  }
+  if (startsWith(data, [0x52, 0x49, 0x46, 0x46]) && startsWith(data, [0x57, 0x45, 0x42, 0x50], 8)) return 'image/webp';
+  return null;
+}
+
+/**
+ * R9: only Core refusing the batch itself — a 4xx, or the contract check
+ * before the wire — counts toward dropping it. A network outage, a timeout,
+ * a 5xx, a rate limit or a rejected sign-in never discards a report.
+ */
+export function isReportRefusal(error: unknown): boolean {
+  if (!(error instanceof HubError)) return false;
+  if (error.reason === 'bad-request') return true;
+  if (error.reason !== 'http') return false;
+  const status = error.detail?.status;
+  return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
+function rejectedCount(answer: unknown): number {
+  if (typeof answer !== 'object' || answer === null) return 0;
+  const rejected = (answer as { rejected?: unknown }).rejected;
+  return typeof rejected === 'number' && Number.isFinite(rejected) ? rejected : 0;
 }
 
 function stateResult(state: MediaStateVM): OfapiMediaLoadResult {
@@ -230,10 +293,11 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
   const fetchImpl: MediaFetchLike = deps.fetchImpl ?? ((url, init) => fetch(url, init) as unknown as Promise<ResponseLike>);
   const slots = createSlots(deps.maxConcurrent ?? MEDIA_MAX_CONCURRENT_DOWNLOADS);
   const memos = new Map<string, TokenMemo>();
-  /** D4: accounts whose Core answered 404/405 — a missing route, or no grant. */
-  const unsupportedAccounts = new Set<string>();
+  /** D4/R8: accounts whose Core answered 404/405 (a missing route, or no grant) → until when. */
+  const unsupportedAccounts = new Map<string, number>();
   /** D4: Core rate-limited this device (the limit is per device, not per file). */
   let throttledUntil = 0;
+  let anonymousRequesters = 0;
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let flushDueAt = Number.POSITIVE_INFINITY;
   let flushing: Promise<void> | null = null;
@@ -242,7 +306,10 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
   function memoFor(token: string): TokenMemo {
     let memo = memos.get(token);
     if (memo === undefined) {
-      memo = { state: { state: 'idle' }, waitUntil: null, autoBlock: null, failures: [], inflight: null, queued: null };
+      memo = {
+        state: { state: 'idle' }, waitUntil: null, autoBlock: null, failures: [], inflight: null,
+        run: 0, queued: null, requesters: new Set(),
+      };
       memos.set(token, memo);
     }
     return memo;
@@ -255,6 +322,13 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
   /** Remember `state` for automatic loads until `until`, and answer it. */
   function blockAuto(memo: TokenMemo, until: number, state: MediaStateVM): OfapiMediaLoadResult {
     memo.autoBlock = { until, state };
+    return stateResult(state);
+  }
+
+  /** A non-decision (in flight elsewhere, Core busy): never shortens a latch already in place. */
+  function holdAuto(memo: TokenMemo, until: number, state: MediaStateVM): OfapiMediaLoadResult {
+    const current = memo.autoBlock;
+    if (current === null || now() >= current.until || current.until <= until) memo.autoBlock = { until, state };
     return stateResult(state);
   }
 
@@ -279,6 +353,14 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
     memo.failures = memo.failures.filter((at) => t - at < 3_600_000);
     if (memo.failures.length >= MEDIA_AUTO_FAILURES_PER_HOUR) return { state: 'load', reason: 'failed' };
     return null;
+  }
+
+  function isUnsupported(accountId: string): boolean {
+    const until = unsupportedAccounts.get(accountId);
+    if (until === undefined) return false;
+    if (now() < until) return true;
+    unsupportedAccounts.delete(accountId);
+    return false;
   }
 
   async function download(url: string, maxBytes: number): Promise<DownloadOutcome> {
@@ -309,8 +391,7 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
             gone: response.status === 404 || response.status === 410,
           };
         }
-        const contentType = response.headers.get('content-type');
-        if (!isImageContentType(contentType)) {
+        if (!mayBeImageContentType(response.headers.get('content-type'))) {
           // An error page served with 200 must never become a cached "image".
           await response.body?.getReader().cancel().catch(() => undefined);
           return { ok: false, result: 'failed', status: response.status, bytes: 0, gone: false };
@@ -342,6 +423,10 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
           data.set(chunk, offset);
           offset += chunk.byteLength;
         }
+        // The bytes decide, not the header: an opaque or mislabelled body is
+        // kept only as one of the four raster formats, under that type.
+        const contentType = sniffImageType(data);
+        if (contentType === null) return { ok: false, result: 'failed', status: response.status, bytes, gone: false };
         return { ok: true, data, contentType, status: response.status };
       } catch {
         return {
@@ -356,7 +441,7 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
 
   // ─── Reports (D6) ───────────────────────────────────────────────────────
 
-  /** An earlier flush always wins: a pending 60 s retry never delays new reports' 2 s flush. */
+  /** An earlier flush always wins: a pending retry never delays new reports' 2 s flush. */
   function scheduleFlush(delayMs: number): void {
     if (disposed) return;
     const due = Date.now() + delayMs;
@@ -395,21 +480,30 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
         const batch = deps.reports.next(REPORT_BATCH);
         if (batch.length === 0) return;
         const ids = batch.map((report) => report.resolveId);
+        let answer: unknown;
         try {
-          // `null` = this Core has no media routes: nothing can take them.
-          await hub.reportMediaFetches({ reports: batch });
-          deps.reports.remove(ids);
-        } catch {
-          deps.reports.noteAttempt(ids);
-          // A batch Core keeps refusing must not wedge the queue: Core already
-          // counts a report that never arrives as "unknown", never "free".
-          const dropped = deps.reports.dropExhausted(MEDIA_REPORT_MAX_ATTEMPTS);
-          if (dropped > 0) {
-            deps.onLog?.('warn', 'media reports dropped after repeated refusals', { dropped, attempts: MEDIA_REPORT_MAX_ATTEMPTS });
+          answer = await hub.reportMediaFetches({ reports: batch });
+        } catch (error) {
+          if (isReportRefusal(error)) {
+            // A batch Core keeps refusing must not wedge the queue: Core
+            // already counts a report that never arrives as "unknown".
+            deps.reports.noteAttempt(ids);
+            const dropped = deps.reports.dropExhausted(MEDIA_REPORT_MAX_ATTEMPTS);
+            if (dropped > 0) {
+              deps.onLog?.('warn', 'media reports dropped after repeated refusals', { dropped, attempts: MEDIA_REPORT_MAX_ATTEMPTS });
+            }
           }
           scheduleFlush(REPORT_RETRY_DELAY_MS);
           return;
         }
+        if (answer === null) {
+          // No reports route (an older Core, a rollback): keep them for the next deploy.
+          scheduleFlush(REPORT_NO_ROUTE_DELAY_MS);
+          return;
+        }
+        deps.reports.remove(ids);
+        const rejected = rejectedCount(answer);
+        if (rejected > 0) deps.onLog?.('warn', 'media reports rejected by Core', { rejected });
       }
       scheduleFlush(REPORT_FLUSH_DELAY_MS);
     })().finally(() => {
@@ -468,9 +562,9 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
         noteFailure(memo);
         return stateResult({ state: 'load', reason: 'failed' });
       }
-      // No media routes (an older Core, a rollback) or no grant: quietly unavailable, all session.
+      // No media routes (an older Core, a rollback) or no grant: quietly unavailable for a while.
       if (answer.kind === 'unsupported') {
-        unsupportedAccounts.add(entry.accountId);
+        unsupportedAccounts.set(entry.accountId, now() + MEDIA_UNSUPPORTED_TTL_MS);
         return stateResult({ state: 'unavailable' });
       }
       if (answer.kind === 'throttled') {
@@ -479,6 +573,10 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
         return stateResult(waitState(throttledUntil));
       }
       const response = answer.response;
+      // R7: Core's decision about this file replaces any latch automatic loads
+      // had; a non-decision (pending, error) and every failure before an answer
+      // (above) leave it in place.
+      if (response.outcome !== 'pending' && response.outcome !== 'error') memo.autoBlock = null;
       const paidUnknownSize = response.outcome === 'paid' && response.contentLength === null;
       if (response.credits > 0 && !paidUnknownSize) deps.recordCredits?.(response.resolveId, response.credits);
       switch (response.outcome) {
@@ -487,18 +585,27 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
         case 'paid': {
           const paid = response.outcome === 'paid';
           if (response.url === null) {
-            // A replayed answer whose hand-out Core no longer holds.
+            // A replayed answer whose hand-out Core no longer holds: nothing to
+            // settle it, so an unknown-size reserve stands as charged.
+            if (paidUnknownSize && response.credits > 0) deps.recordCredits?.(response.resolveId, response.credits);
             if (paid) return latchPaid(memo);
             noteFailure(memo);
             return stateResult({ state: 'load', reason: 'failed' });
           }
-          const maxBytes = response.maxBytes
-            ?? (paid ? MEDIA_UNKNOWN_SIZE_GUARD_BYTES
-              : entry.variant === 'full' ? MEDIA_FULL_GUARD_BYTES : MEDIA_THUMB_GUARD_BYTES);
+          const maxBytes = Math.min(
+            response.maxBytes
+              ?? (paid ? MEDIA_UNKNOWN_SIZE_GUARD_BYTES
+                : entry.variant === 'full' ? MEDIA_FULL_GUARD_BYTES : MEDIA_THUMB_GUARD_BYTES),
+            MEDIA_REPORT_MAX_BYTES,
+          );
           const fetched = await download(response.url, maxBytes);
-          const bytesReceived = fetched.ok ? fetched.data.byteLength : fetched.bytes;
-          // H2: Core reserved the guard price and settles by the bytes moved.
-          if (paidUnknownSize) deps.recordCredits?.(response.resolveId, settledUnknownSizeCredits(bytesReceived));
+          // Never report more than the transfer was allowed: a stream stopped
+          // mid-chunk past its ceiling counts as exactly the ceiling.
+          const bytesReceived = Math.min(fetched.ok ? fetched.data.byteLength : fetched.bytes, maxBytes);
+          if (paidUnknownSize) {
+            const settled = settledUnknownSizeCredits(bytesReceived, response.credits);
+            if (settled > 0) deps.recordCredits?.(response.resolveId, settled);
+          }
           enqueueReport({
             resolveId: response.resolveId,
             result: fetched.ok ? 'ok' : fetched.result,
@@ -551,9 +658,9 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
             // Core's media transport is saturated: try again later, quietly.
             const until = now() + clampWait(Math.max(response.retryAfterMs ?? 0, MEDIA_BUSY_WAIT_MS));
             memo.waitUntil = until;
-            return blockAuto(memo, until, waitState(until));
+            return holdAuto(memo, until, waitState(until));
           }
-          return blockAuto(memo, now() + MEDIA_NEGATIVE_TTL_MS, { state: 'load', reason: 'failed' });
+          return holdAuto(memo, now() + MEDIA_NEGATIVE_TTL_MS, { state: 'load', reason: 'failed' });
         }
         case 'refused': {
           if (response.reason === 'not_ready') {
@@ -564,6 +671,7 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
             }
             return blockAuto(memo, now() + MEDIA_NOT_READY_TTL_MS, { state: 'processing', refresh: response.reread !== null });
           }
+          // Policy off, ceiling reached, locked, deleted, too large (> 30 MB): quiet.
           return blockAuto(memo, now() + MEDIA_NEGATIVE_TTL_MS, { state: 'unavailable' });
         }
         case 'unavailable':
@@ -582,6 +690,23 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
     return slots.cancel(waiter);
   }
 
+  /** N3: one cell gave up on `run`; the run goes only once nobody wants it. */
+  function leave(memo: TokenMemo, requester: string, run: number): boolean {
+    if (memo.run !== run || !memo.requesters.delete(requester)) return false;
+    return memo.requesters.size === 0 ? cancelQueued(memo) : false;
+  }
+
+  /** An automatic requester of the current run; its abort signal (if any) leaves it. */
+  function join(memo: TokenMemo, options: { requester?: string | undefined; signal?: AbortSignal | undefined }): void {
+    const requester = options.requester ?? `anonymous-${(anonymousRequesters += 1)}`;
+    const run = memo.run;
+    memo.requesters.add(requester);
+    const signal = options.signal;
+    if (signal === undefined) return;
+    if (signal.aborted) leave(memo, requester, run);
+    else signal.addEventListener('abort', () => leave(memo, requester, run), { once: true });
+  }
+
   return {
     canServe: (accountId) => deps.canServe(accountId),
 
@@ -592,9 +717,14 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
       return memo.state;
     },
 
-    cancel(token) {
+    cancel(token, requester) {
       const memo = memos.get(token);
-      return memo === undefined ? false : cancelQueued(memo);
+      if (memo === undefined) return false;
+      if (requester === undefined) {
+        memo.requesters.clear();
+        return cancelQueued(memo);
+      }
+      return leave(memo, requester, memo.run);
     },
 
     async load(token, entry, options) {
@@ -604,41 +734,37 @@ export function createMediaResolver(deps: MediaResolverDeps): MediaResolver {
       if (options.trigger === 'click') cancelQueued(memo);
       const running = memo.inflight;
       if (running !== null) {
+        // Another cell asking for the same token joins the run in flight.
+        if (options.trigger === 'auto') join(memo, options);
         const shared = await running.catch(() => null);
         // An automatic load shares whatever is in flight; a click retries
         // only if that did not produce the file.
         if (shared !== null && (shared.kind === 'bytes' || options.trigger === 'auto')) return shared;
       }
+      memo.run += 1;
+      memo.requesters = new Set();
+      if (options.trigger === 'auto') join(memo, options);
       const run = (async (): Promise<OfapiMediaLoadResult> => {
         const cached = await deps.cache.getByKey(token).catch(() => null);
         if (cached !== null) return { kind: 'bytes', data: cached.data, contentType: cached.contentType };
-        if (unsupportedAccounts.has(entry.accountId)) return stateResult({ state: 'unavailable' });
+        if (isUnsupported(entry.accountId)) return stateResult({ state: 'unavailable' });
         if (options.trigger === 'auto') {
           const answer = autoAnswer(memo);
           if (answer !== null) return stateResult(answer);
-        } else {
-          // The explicit click is what every automatic latch waits for.
-          memo.autoBlock = null;
+          // Every cell that asked left before this run queued: nothing to do.
+          if (memo.requesters.size === 0) return stateResult({ state: 'idle' });
         }
         const { waiter, granted } = slots.waiter(options.trigger);
-        const signal = options.signal;
-        const onAbort = (): void => {
-          if (memo.queued === waiter) cancelQueued(memo);
-        };
-        if (options.trigger === 'auto') {
-          memo.queued = waiter;
-          if (signal?.aborted === true) onAbort();
-          else signal?.addEventListener('abort', onAbort, { once: true });
-        }
+        if (options.trigger === 'auto') memo.queued = waiter;
         let started: boolean;
         try {
           started = await granted;
         } finally {
           if (memo.queued === waiter) memo.queued = null;
-          signal?.removeEventListener('abort', onAbort);
         }
-        // Cancelled before it started (the cell left the viewport): nothing asked, nothing spent.
+        // Cancelled before it started (its cells left the viewport): nothing asked, nothing spent.
         if (!started) return stateResult({ state: 'idle' });
+        memo.requesters.clear();
         try {
           return await resolveAndFetch(token, entry, options.trigger, options.surface, memo);
         } finally {

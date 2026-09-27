@@ -44,6 +44,22 @@ describe('media_fetch_reports queue', () => {
     }
   });
 
+  it('mirrors Core\'s 30 MB report ceiling: such a row is never written, and an old one is dropped', () => {
+    const layer = memoryDataLayer();
+    try {
+      expect(() => layer.mediaFetchReports.enqueue({ resolveId: ID(9), result: 'ok', bytesReceived: 30_000_001, httpStatus: 200 })).toThrow();
+      layer.mediaFetchReports.enqueue({ resolveId: ID(10), result: 'ok', bytesReceived: 30_000_000, httpStatus: 200 });
+      layer.db.prepare('INSERT INTO media_fetch_reports (resolve_id, payload, created_at) VALUES (@id, @payload, @at)').run({
+        id: ID(11), at: '2026-01-01T00:00:00.000Z',
+        payload: JSON.stringify({ resolveId: ID(11), result: 'aborted_size', bytesReceived: 40_000_000, httpStatus: 200 }),
+      });
+      expect(layer.mediaFetchReports.next(10).map((report) => report.resolveId)).toEqual([ID(10)]);
+      expect(layer.mediaFetchReports.count()).toBe(1);
+    } finally {
+      layer.close();
+    }
+  });
+
   it('drops a malformed row instead of wedging the queue', () => {
     const layer = memoryDataLayer();
     try {

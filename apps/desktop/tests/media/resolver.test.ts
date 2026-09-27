@@ -12,7 +12,10 @@ import {
   MEDIA_NEGATIVE_TTL_MS,
   MEDIA_NOT_READY_TTL_MS,
   MEDIA_REPORT_MAX_ATTEMPTS,
+  MEDIA_UNSUPPORTED_TTL_MS,
+  isReportRefusal,
   nextUtcMidnight,
+  sniffImageType,
   settledUnknownSizeCredits,
   type MediaFetchLike,
   type MediaHubClient,
@@ -33,8 +36,17 @@ function answer(overrides: Partial<HubMediaResolveResponse>): HubMediaResolveRes
   } as HubMediaResolveResponse;
 }
 
-function bytesResponse(size: number, init: { status?: number; declared?: number | null; contentType?: string } = {}) {
+const JPEG_MAGIC = [0xff, 0xd8, 0xff, 0xe0];
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+const HTML_BYTES = [...'<!doctype html>'].map((char) => char.charCodeAt(0));
+
+function bytesResponse(size: number, init: {
+  status?: number; declared?: number | null; contentType?: string | null;
+  /** The body's first bytes (default: a JPEG signature). */
+  magic?: readonly number[];
+} = {}) {
   const chunk = new Uint8Array(size).fill(7);
+  chunk.set((init.magic ?? JPEG_MAGIC).slice(0, size));
   let sent = false;
   return {
     status: init.status ?? 200,
@@ -42,7 +54,7 @@ function bytesResponse(size: number, init: { status?: number; declared?: number 
     headers: {
       get: (name: string) => name === 'content-length'
         ? (init.declared === null ? null : String(init.declared ?? size))
-        : name === 'content-type' ? (init.contentType ?? 'image/jpeg') : null,
+        : name === 'content-type' ? (init.contentType === undefined ? 'image/jpeg' : init.contentType) : null,
     },
     body: {
       getReader: () => ({
@@ -80,7 +92,10 @@ function harness(options: {
   /** Resolve calls wait for this before answering (to keep loads in flight). */
   gate?: Promise<void>;
   hubNull?: boolean;
-  reportFails?: boolean;
+  /** What reportMediaFetches throws (a fresh error per call). */
+  reportError?: () => unknown;
+  /** What reportMediaFetches answers (default: every report accepted). */
+  reportAnswer?: (batch: MediaFetchReport[]) => unknown;
   maxConcurrent?: number;
 } = {}) {
   const requests: HubMediaResolveRequest[] = [];
@@ -105,9 +120,9 @@ function harness(options: {
       return { kind: 'resolved' as const, response: next };
     }),
     reportMediaFetches: vi.fn(async ({ reports: batch }) => {
-      if (options.reportFails) throw new Error('reports down');
+      if (options.reportError) throw options.reportError();
       reportBatches.push(batch as MediaFetchReport[]);
-      return { accepted: batch.length, duplicate: 0, unknown: 0 };
+      return options.reportAnswer ? options.reportAnswer(batch as MediaFetchReport[]) : { accepted: batch.length, duplicate: 0, unknown: 0 };
     }),
   };
   const fetchImpl = vi.fn(options.fetchImpl ?? (async () => bytesResponse(1000)));
@@ -310,7 +325,8 @@ describe('media resolver — the download', () => {
       fetchImpl: async () => bytesResponse(1000, { declared: null }),
     });
     expect(await h.resolver.load(TOKEN, ENTRY, click)).toEqual({ kind: 'state', state: { state: 'load', reason: 'failed' } });
-    expect(h.reports[0]).toMatchObject({ resolveId: '00000000-0000-4000-8000-0000000000d1', result: 'aborted_size' });
+    // Never more than the transfer was allowed: the chunk that crossed 500 counts as 500.
+    expect(h.reports[0]).toMatchObject({ resolveId: '00000000-0000-4000-8000-0000000000d1', result: 'aborted_size', bytesReceived: 500 });
     expect(h.cache.has(TOKEN)).toBe(false);
 
     const declared = harness({
@@ -459,14 +475,18 @@ describe('media resolver — review round 1 (D1, D3–D6, D8, H2)', () => {
     expect(h.requests).toHaveLength(5);
   });
 
-  it('D4: a Core without the media routes is remembered for the session (per account), clicks included', async () => {
+  it('R8: a Core without the media routes is remembered per account for 15 min, clicks included, then asked again', async () => {
     const h = harness({ answers: [{ unsupported: true }, answer({})] });
     expect(await h.resolver.load(TOKEN, ENTRY, auto)).toEqual({ kind: 'state', state: { state: 'unavailable' } });
     expect(await h.resolver.load('b'.repeat(64), { ...ENTRY, mediaId: '3000002' }, auto)).toEqual({ kind: 'state', state: { state: 'unavailable' } });
     expect(await h.resolver.load(TOKEN, ENTRY, click)).toEqual({ kind: 'state', state: { state: 'unavailable' } });
-    h.clock.now += 24 * 3_600_000;
+    h.clock.now += MEDIA_UNSUPPORTED_TTL_MS - 1;
     await h.resolver.load(TOKEN, ENTRY, auto);
     expect(h.requests).toHaveLength(1);
+    // The hub was deployed meanwhile: no restart needed.
+    h.clock.now += 2;
+    expect((await h.resolver.load(TOKEN, ENTRY, auto)).kind).toBe('bytes');
+    expect(h.requests).toHaveLength(2);
   });
 
   it('D4: a rate-limited device waits quietly (never «Загрузить») — every token, until Retry-After', async () => {
@@ -550,9 +570,14 @@ describe('media resolver — review round 1 (D1, D3–D6, D8, H2)', () => {
       fetchImpl: async () => bytesResponse(1_200_000, { declared: null }),
     });
     expect((await unknown.resolver.load(TOKEN, ENTRY, click)).kind).toBe('bytes');
-    expect(unknown.credits).toEqual([['00000000-0000-4000-8000-0000000000c2', settledUnknownSizeCredits(1_200_000)]]);
-    expect(settledUnknownSizeCredits(1_200_000)).toBe(4);
-    expect(settledUnknownSizeCredits(0)).toBe(1);
+    expect(unknown.credits).toEqual([['00000000-0000-4000-8000-0000000000c2', 4]]);
+    // Core's settlement: min(reserved, max(1, ⌈3 × min(bytes, 5 MB) ÷ 10⁶⌉)).
+    expect(settledUnknownSizeCredits(1_200_000, 15)).toBe(4);
+    expect(settledUnknownSizeCredits(0, 15)).toBe(1);
+    expect(settledUnknownSizeCredits(5_000_000, 15)).toBe(15);
+    expect(settledUnknownSizeCredits(9_000_000, 15)).toBe(15); // bytes past the guard never count
+    expect(settledUnknownSizeCredits(3_000_000, 1)).toBe(1); // never above what the resolve reserved
+    expect(settledUnknownSizeCredits(3_000_000, 0)).toBe(0);
 
     const priced = harness({
       answers: [answer({ outcome: 'paid', url: PAID_URL, contentLength: 1000, maxBytes: 1000, credits: 1, resolveId: '00000000-0000-4000-8000-0000000000c3' })],
@@ -576,7 +601,10 @@ describe('media resolver — review round 1 (D1, D3–D6, D8, H2)', () => {
 
   it('D6: a pending 60 s retry never delays the 2 s flush of new reports; a refused batch is dropped after N attempts', async () => {
     vi.useFakeTimers();
-    const h = harness({ reportFails: true, answers: [answer({ resolveId: '00000000-0000-4000-8000-0000000000f7' })] });
+    const h = harness({
+      reportError: () => new HubError('http', { detail: { status: 400 } }),
+      answers: [answer({ resolveId: '00000000-0000-4000-8000-0000000000f7' })],
+    });
     h.reports.push({ resolveId: '00000000-0000-4000-8000-0000000000f6', result: 'ok', bytesReceived: 1, httpStatus: 200, attempts: 0 });
     await h.resolver.flushReports(); // fails → 60 s retry scheduled
     expect(h.hub.reportMediaFetches).toHaveBeenCalledTimes(1);
@@ -587,5 +615,214 @@ describe('media resolver — review round 1 (D1, D3–D6, D8, H2)', () => {
     expect(h.reports).toHaveLength(0);
     expect(h.logs).toContain('media reports dropped after repeated refusals');
     h.resolver.dispose();
+  });
+});
+
+describe('media resolver — review round 2 (R7–R10, N3, contract a–c)', () => {
+  const PAID_URL = 'https://dl.fansapi.com/d/synthetic/300x300_paid.jpg';
+  const failedPaid = () => answer({ outcome: 'paid', url: PAID_URL, maxBytes: 1000, contentLength: 1000, credits: 1 });
+
+  /** A token whose paid transfer failed: automatic loads are latched until midnight. */
+  async function latched(extra: QueuedAnswer[], options: { fetchOkAfter?: number } = {}) {
+    let fetches = 0;
+    const h = harness({
+      answers: [failedPaid(), ...extra],
+      fetchImpl: async () => {
+        fetches += 1;
+        return fetches > (options.fetchOkAfter ?? 1) ? bytesResponse(100) : bytesResponse(10, { status: 503 });
+      },
+    });
+    expect(await h.resolver.load(TOKEN, ENTRY, auto)).toEqual({ kind: 'state', state: { state: 'load', reason: 'failed' } });
+    return h;
+  }
+
+  it('R7: a click that fails before Core decides (timeout twice) keeps the paid latch', async () => {
+    const h = await latched([new HubError('timeout'), new HubError('timeout')]);
+    expect(await h.resolver.load(TOKEN, ENTRY, click)).toEqual({ kind: 'state', state: { state: 'load', reason: 'failed' } });
+    expect(h.requests).toHaveLength(3);
+    h.clock.now += 3_600_000;
+    expect(await h.resolver.load(TOKEN, ENTRY, auto)).toEqual({ kind: 'state', state: { state: 'load', reason: 'failed' } });
+    expect(h.requests).toHaveLength(3); // still latched: no automatic resolve
+  });
+
+  it('R7: a throttled click keeps the latch after the throttle ends', async () => {
+    const h = await latched([{ throttled: 5_000 }]);
+    expect(await h.resolver.load(TOKEN, ENTRY, click)).toEqual({ kind: 'state', state: { state: 'wait', retryAfterMs: 5_000 } });
+    h.clock.now += 6_000;
+    expect(await h.resolver.load(TOKEN, ENTRY, auto)).toEqual({ kind: 'state', state: { state: 'load', reason: 'failed' } });
+    expect(h.requests).toHaveLength(2);
+  });
+
+  it('R7: a click answered pending (in flight, busy) or error keeps the latch; the pause never shortens it', async () => {
+    const inFlight = () => answer({ outcome: 'pending', url: null, reason: 'in_flight', retryAfterMs: 1_000 });
+    const h = await latched([inFlight(), inFlight(), inFlight(), inFlight(), answer({ outcome: 'error', url: null, reason: 'upstream_error' })]);
+    expect(await h.resolver.load(TOKEN, ENTRY, click)).toEqual({ kind: 'state', state: { state: 'load', reason: 'failed' } });
+    expect(await h.resolver.load(TOKEN, ENTRY, click)).toEqual({ kind: 'state', state: { state: 'load', reason: 'failed' } });
+    h.clock.now += MEDIA_NEGATIVE_TTL_MS + 1; // the 12 min pending pause is over, the day is not
+    await h.resolver.load(TOKEN, ENTRY, auto);
+    expect(h.requests).toHaveLength(6);
+  });
+
+  it('R7: Core\'s decision on a click replaces the latch (refused → the usual 12 min, then asked again)', async () => {
+    const h = await latched([answer({ outcome: 'refused', url: null, reason: 'collection_off' }), answer({})]);
+    expect(await h.resolver.load(TOKEN, ENTRY, click)).toEqual({ kind: 'state', state: { state: 'unavailable' } });
+    h.clock.now += MEDIA_NEGATIVE_TTL_MS + 1;
+    expect((await h.resolver.load(TOKEN, ENTRY, auto)).kind).toBe('bytes');
+    expect(h.requests).toHaveLength(3);
+  });
+
+  it('R7: a click that gets the file clears the latch (the file is cached)', async () => {
+    const h = await latched([failedPaid()], { fetchOkAfter: 1 });
+    expect((await h.resolver.load(TOKEN, ENTRY, click)).kind).toBe('bytes');
+    expect((await h.resolver.load(TOKEN, ENTRY, auto)).kind).toBe('bytes');
+    expect(h.requests).toHaveLength(2);
+  });
+
+  it('R9: an outage, a timeout, a 5xx, a rate limit or a rejected sign-in never discards a report', async () => {
+    for (const error of [
+      new HubError('network'), new HubError('timeout'), new HubError('http', { detail: { status: 503 } }),
+      new HubError('http', { detail: { status: 429 } }), new HubError('http', { detail: { status: 408 } }),
+      new HubError('auth', { detail: { status: 401 } }), new HubError('invalid-response', { detail: { status: 200 } }),
+      new Error('socket hang up'),
+    ]) {
+      expect(isReportRefusal(error)).toBe(false);
+      const h = harness({ reportError: () => error });
+      h.reports.push({ resolveId: '00000000-0000-4000-8000-0000000000e9', result: 'ok', bytesReceived: 1, httpStatus: 200, attempts: 0 });
+      for (let i = 0; i < MEDIA_REPORT_MAX_ATTEMPTS + 10; i += 1) await h.resolver.flushReports();
+      expect(h.reports).toEqual([expect.objectContaining({ resolveId: '00000000-0000-4000-8000-0000000000e9', attempts: 0 })]);
+      h.resolver.dispose();
+    }
+  });
+
+  it('R9: a 4xx or the contract check before the wire counts; the batch goes after 30 refusals', async () => {
+    for (const error of [
+      new HubError('bad-request', { detail: { providerMessage: 'bytesReceived: too big' } }),
+      new HubError('http', { detail: { status: 400 } }), new HubError('http', { detail: { status: 403 } }),
+      new HubError('http', { detail: { status: 422 } }),
+    ]) {
+      expect(isReportRefusal(error)).toBe(true);
+      const h = harness({ reportError: () => error });
+      h.reports.push({ resolveId: '00000000-0000-4000-8000-0000000000ea', result: 'ok', bytesReceived: 1, httpStatus: 200, attempts: 0 });
+      for (let i = 0; i < MEDIA_REPORT_MAX_ATTEMPTS - 1; i += 1) await h.resolver.flushReports();
+      expect(h.reports).toHaveLength(1);
+      await h.resolver.flushReports();
+      expect(h.reports).toHaveLength(0);
+      h.resolver.dispose();
+    }
+  });
+
+  it('R9: a Core without the reports route keeps the queue for the next deploy; Core\'s rejections are logged', async () => {
+    const noRoute = harness({ reportAnswer: () => null });
+    noRoute.reports.push({ resolveId: '00000000-0000-4000-8000-0000000000eb', result: 'ok', bytesReceived: 1, httpStatus: 200, attempts: 0 });
+    for (let i = 0; i < MEDIA_REPORT_MAX_ATTEMPTS + 10; i += 1) await noRoute.resolver.flushReports();
+    expect(noRoute.reports).toHaveLength(1);
+    noRoute.resolver.dispose();
+
+    const rejecting = harness({ reportAnswer: (batch) => ({ accepted: batch.length - 1, duplicate: 0, unknown: 0, rejected: 1 }) });
+    rejecting.reports.push({ resolveId: '00000000-0000-4000-8000-0000000000ec', result: 'ok', bytesReceived: 1, httpStatus: 200, attempts: 0 });
+    await rejecting.resolver.flushReports();
+    expect(rejecting.reports).toHaveLength(0); // answered: a rejected report would be rejected again
+    expect(rejecting.logs).toContain('media reports rejected by Core');
+    rejecting.resolver.dispose();
+  });
+
+  it('R10: an opaque or untyped body whose bytes are an image is kept under the sniffed type', async () => {
+    for (const [contentType, magic, expected] of [
+      ['application/octet-stream', JPEG_MAGIC, 'image/jpeg'],
+      [null, PNG_MAGIC, 'image/png'],
+      ['binary/octet-stream', [0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x45, 0x42, 0x50], 'image/webp'],
+      ['application/octet-stream', [0x47, 0x49, 0x46, 0x38, 0x39, 0x61], 'image/gif'],
+      ['image/jpeg', PNG_MAGIC, 'image/png'], // a mislabelled image is kept as what it is
+    ] as const) {
+      const h = harness({ answers: [answer({})], fetchImpl: async () => bytesResponse(400, { contentType, magic }) });
+      const result = await h.resolver.load(TOKEN, ENTRY, auto);
+      expect(result).toMatchObject({ kind: 'bytes', contentType: expected });
+      expect(h.cache.get(TOKEN)?.contentType).toBe(expected);
+    }
+  });
+
+  it('R10: anything that is not JPEG/PNG/WebP/GIF by its bytes is never cached — SVG never at all', async () => {
+    for (const [contentType, magic] of [
+      ['application/octet-stream', HTML_BYTES],
+      [null, [0x00, 0x00, 0x00, 0x1c, 0x66, 0x74, 0x79, 0x70]], // an MP4/HEIF box
+      ['image/jpeg', HTML_BYTES], // an error page labelled as an image
+      ['image/svg+xml', JPEG_MAGIC],
+      ['text/html', JPEG_MAGIC],
+    ] as const) {
+      const h = harness({
+        answers: [answer({ resolveId: '00000000-0000-4000-8000-0000000000ed' })],
+        fetchImpl: async () => bytesResponse(400, { contentType, magic }),
+      });
+      expect(await h.resolver.load(TOKEN, ENTRY, auto)).toEqual({ kind: 'state', state: { state: 'load', reason: 'failed' } });
+      expect(h.cache.has(TOKEN)).toBe(false);
+      expect(h.reports[0]).toMatchObject({ result: 'failed', httpStatus: 200 });
+    }
+    expect(sniffImageType(new Uint8Array([0xff, 0xd8]))).toBeNull(); // too short to be anything
+  });
+
+  it('contract (a): a free transfer stopped at its memory guard reports the guard, never above 30 MB', async () => {
+    const h = harness({
+      answers: [answer({ resolveId: '00000000-0000-4000-8000-0000000000ee', maxBytes: 80_000_000 })],
+      fetchImpl: async () => bytesResponse(31_000_000, { declared: null }),
+    });
+    await h.resolver.load(TOKEN, { ...ENTRY, variant: 'full' }, click);
+    expect(h.reports[0]).toMatchObject({ result: 'aborted_size', bytesReceived: 30_000_000 });
+  });
+
+  it('contract (b): a paid file over 30 MB is refused as too_large — quietly unavailable', async () => {
+    const h = harness({ answers: [answer({ outcome: 'refused', url: null, reason: 'too_large' })] });
+    expect(await h.resolver.load(TOKEN, { ...ENTRY, variant: 'full' }, click)).toEqual({ kind: 'state', state: { state: 'unavailable' } });
+    expect(await h.resolver.load(TOKEN, { ...ENTRY, variant: 'full' }, auto)).toEqual({ kind: 'state', state: { state: 'unavailable' } });
+    expect(h.requests).toHaveLength(1);
+  });
+
+  it('contract (c): a replayed unknown-size paid answer without a URL keeps its reserve on the meter', async () => {
+    const h = harness({
+      answers: [answer({ outcome: 'paid', url: null, contentLength: null, maxBytes: 5_000_000, credits: 15, replayed: true, resolveId: '00000000-0000-4000-8000-0000000000ef' })],
+    });
+    await h.resolver.load(TOKEN, ENTRY, click);
+    expect(h.credits).toEqual([['00000000-0000-4000-8000-0000000000ef', 15]]);
+  });
+
+  it('N3: two cells share one unstarted load — it goes only when the last one leaves', async () => {
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const h = harness({ gate, maxConcurrent: 1, answers: [answer({}), answer({})] });
+    const busy = h.resolver.load('1'.repeat(64), { ...ENTRY, mediaId: '1' }, auto);
+    const shared = '2'.repeat(64);
+    const cellA = h.resolver.load(shared, { ...ENTRY, mediaId: '2' }, { ...auto, requester: 'cA' });
+    const cellB = h.resolver.load(shared, { ...ENTRY, mediaId: '2' }, { ...auto, requester: 'cB' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.resolver.cancel(shared, 'cA')).toBe(false); // cB still wants it
+    expect(h.resolver.cancel(shared, 'cA')).toBe(false); // idempotent per cell
+    open();
+    await busy;
+    expect((await cellA).kind).toBe('bytes');
+    expect((await cellB).kind).toBe('bytes');
+    expect(h.requests.map((request) => request.mediaId)).toEqual(['1', '2']);
+  });
+
+  it('N3: the last cell leaving drops the unstarted load; a signal and an IPC cancel of one cell count once', async () => {
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const h = harness({ gate, maxConcurrent: 1, answers: [answer({}), answer({})] });
+    const busy = h.resolver.load('1'.repeat(64), { ...ENTRY, mediaId: '1' }, auto);
+    const shared = '2'.repeat(64);
+    const controller = new AbortController();
+    const cellA = h.resolver.load(shared, { ...ENTRY, mediaId: '2' }, { ...auto, requester: 'cA', signal: controller.signal });
+    const cellB = h.resolver.load(shared, { ...ENTRY, mediaId: '2' }, { ...auto, requester: 'cB' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+    expect(h.resolver.cancel(shared, 'cA')).toBe(false); // the same cell: already gone
+    expect(h.resolver.cancel(shared, 'cB')).toBe(true);
+    expect(await cellA).toEqual({ kind: 'state', state: { state: 'idle' } });
+    expect(await cellB).toEqual({ kind: 'state', state: { state: 'idle' } });
+    open();
+    await busy;
+    expect(h.requests).toHaveLength(1);
   });
 });

@@ -10,6 +10,7 @@ import {
   MEDIA_SCHEME,
   parseMediaToken,
   registerMediaProtocol,
+  parseMediaRequester,
 } from '@main/media/protocol';
 import { hashRemoteUrl } from '@main/media/cache';
 import type { MediaRequestHandler, OfapiMediaLoadResult } from '@main/media/protocol';
@@ -520,6 +521,16 @@ describe('media request handler — OFAPI id tokens (D42)', () => {
     const controller = new AbortController();
     await handler({ url: thumb, signal: controller.signal });
     expect(load).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.objectContaining({ signal: controller.signal }));
+  });
+
+  it('names the asking cell (N3: one cell leaving drops only its own interest)', async () => {
+    const { thumb, load, handler } = setupOfapi();
+    await handler({ url: `${thumb}?s=vault&r=2&c=c1f` });
+    expect(load).toHaveBeenCalledWith(expect.any(String), expect.anything(), expect.objectContaining({ surface: 'vault', requester: 'c1f' }));
+    expect(parseMediaRequester(`${thumb}?c=c9&s=thread`)).toBe('c9');
+    expect(parseMediaRequester(thumb)).toBeNull();
+    expect(parseMediaRequester(`${thumb}?c=${'x'.repeat(40)}`)).toBeNull(); // bounded
+    expect(parseMediaRequester(`${thumb}?c=a%20b`)).toBeNull();
   });
 
   it.each([

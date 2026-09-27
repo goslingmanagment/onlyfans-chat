@@ -41,6 +41,7 @@ import {
   createToMediaUrl,
   isAllowedMediaUrl,
   MEDIA_SCHEME_PRIVILEGES,
+  parseMediaRequester,
   parseMediaToken,
   registerMediaProtocol,
   type FetchRemote,
@@ -2057,12 +2058,14 @@ async function boot(): Promise<void> {
         load: async (url: string, surface: MediaSurfaceVM, trigger: MediaTriggerVM) => {
           const found = ofapiEntry(url);
           if (found === null) return { state: 'unavailable' as const };
-          const result = await resolver.load(found.token, found.entry, { trigger, surface });
+          const result = await resolver.load(found.token, found.entry, {
+            trigger, surface, requester: parseMediaRequester(url) ?? undefined,
+          });
           return result.kind === 'bytes' ? { state: 'ready' as const } : result.state;
         },
         cancel: (url: string) => {
           const found = ofapiEntry(url);
-          return found === null ? false : resolver.cancel(found.token);
+          return found === null ? false : resolver.cancel(found.token, parseMediaRequester(url) ?? undefined);
         },
       };
     },
