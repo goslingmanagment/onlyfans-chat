@@ -405,8 +405,8 @@ export function startAiFeature(
   lastDefaultTone = ctx.defaultTone;
   const operationId = crypto.randomUUID();
   const params: AiStartRequest['params'] = {};
-  if (feature === 'fast-reply') {
-    params.tone = state.toneOverride ?? ctx.defaultTone;
+  if (feature === 'fast-reply') params.tone = state.toneOverride ?? ctx.defaultTone;
+  if (getFeaturePolicy(feature).supportsReplyMode) {
     params.mode = state.preferSplit ? 'preferSplit' : 'default';
   }
   if (feature === 'improve-draft') params.draftText = draft;

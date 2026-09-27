@@ -68,7 +68,7 @@ describe('feature policy registry', () => {
       includesEarnings: true,
       minMessages: 0,
       rerunAction: 'regenerate',
-      supportsReplyMode: false,
+      supportsReplyMode: true,
       supportsReplyTone: false,
       requiresDraft: true,
       usesPingSegment: false,
@@ -155,11 +155,11 @@ describe('feature policy registry', () => {
     });
   });
 
-  it('only fast-reply has tone and split-mode controls', () => {
+  it('only fast-reply has tone; fast-reply and improve-draft have split mode', () => {
     for (const feature of OPERATION_FEATURES) {
       const policy = getFeaturePolicy(feature);
       expect(policy.supportsReplyTone).toBe(feature === 'fast-reply');
-      expect(policy.supportsReplyMode).toBe(feature === 'fast-reply');
+      expect(policy.supportsReplyMode).toBe(feature === 'fast-reply' || feature === 'improve-draft');
     }
   });
 

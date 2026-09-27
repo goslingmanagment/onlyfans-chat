@@ -628,9 +628,10 @@ const HELP_ME_XML = `<coaching>He's price-anchoring on payday — don't push the
 
 const HELP_ME_MALFORMED = `He's price-anchoring on payday — don't push the PPV now. Mirror his week first, then plant a soft Friday hook. (model skipped the xml tags — renderer must fall back to raw)`;
 
-function improveText(draft: string): string {
+function improveText(draft: string, split: boolean): string {
   const trimmed = draft.trim().replace(/[.\s]+$/, '');
-  return `${trimmed}… and before you say anything — yes, I was already thinking about you 😏`;
+  const tail = 'and before you say anything — yes, I was already thinking about you 😏';
+  return split ? `${trimmed}…[NEXT]${tail}` : `${trimmed}… ${tail}`;
 }
 
 function chunkify(text: string): string[] {
@@ -888,7 +889,7 @@ export function createMockBridge(): ChatGooseBridge {
           ? HELP_ME_MALFORMED
           : HELP_ME_XML
         : feature === 'improve-draft'
-          ? improveText(req.params.draftText ?? 'miss you')
+          ? improveText(req.params.draftText ?? 'miss you', req.params.mode === 'preferSplit')
           : `${FAST_REPLY_TEXT[req.params.tone ?? 'none'] || FAST_REPLY_TEXT.none}${
               req.params.mode === 'preferSplit' ? FAST_REPLY_SPLIT_TAIL : ''
             }`;
@@ -902,7 +903,7 @@ export function createMockBridge(): ChatGooseBridge {
       const result =
         feature === 'help-me'
           ? { rawText: fullText }
-          : feature === 'improve-draft'
+          : feature === 'improve-draft' && req.params.mode !== 'preferSplit'
             ? { rawText: fullText, parts: normalizeSingleReplyPart(fullText) }
             : {
                 rawText: fullText,
