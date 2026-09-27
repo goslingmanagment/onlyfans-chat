@@ -520,6 +520,7 @@ export const ALL_TABLES = [
   'harvest_uploaded_revisions',
   'sync_intents',
   'message_facts',
+  'media_fetch_reports',
 ] as const;
 
 // Preserve the exact new send payload and every closed action's logical identity.
@@ -625,4 +626,29 @@ CREATE TABLE message_facts (
 CREATE INDEX idx_message_facts_message ON message_facts (account_id, message_id);
 ALTER TABLE fan_transactions ADD COLUMN source TEXT NOT NULL DEFAULT 'sweep'
   CHECK (source IN ('sweep', 'hub'));
+`;
+
+// v26 (D42) — media images.
+//
+// `media_urls` gains the id-token kind: a message, gallery or vault file is
+// named by (OFAPI account, media id, variant) and Core decides how to fetch it
+// (free webhook URL, OFAPI cache, budgeted paid download). Its token is
+// sha256('ofapi|acct|mediaId|variant'); `url` keeps a non-URL label for such
+// rows (never fetched: the handler dispatches on `kind`), so an older build
+// reading one returns a quiet 404. Avatars stay `kind='url'` tokens.
+//
+// `media_fetch_reports` is the durable queue of transfer results Core asked
+// for (idempotent by resolve id). The database is encrypted at rest; a report
+// that never reaches Core stays "unknown" there, never "free".
+export const SCHEMA_V26 = `
+ALTER TABLE media_urls ADD COLUMN kind TEXT NOT NULL DEFAULT 'url' CHECK (kind IN ('url', 'ofapi'));
+ALTER TABLE media_urls ADD COLUMN account_id TEXT;
+ALTER TABLE media_urls ADD COLUMN media_id TEXT;
+ALTER TABLE media_urls ADD COLUMN variant TEXT CHECK (variant IS NULL OR variant IN ('thumb', 'full'));
+CREATE TABLE media_fetch_reports (
+  resolve_id TEXT PRIMARY KEY,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0
+);
 `;

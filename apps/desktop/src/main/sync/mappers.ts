@@ -23,8 +23,30 @@ import type {
 } from '../ofapi/schemas';
 
 /** Mints an opaque media:// token; null when the remote URL is not an
- *  allowlisted OF media URL (such URLs must never reach the renderer). */
-export type ToMediaUrl = (remoteUrl: string) => string | null;
+ *  allowlisted OF media URL (such URLs must never reach the renderer).
+ *  D42: `ofapiMedia` mints the id token of an OFAPI file (message, gallery,
+ *  vault) — Core decides how that file is fetched; avatars stay URL tokens. */
+export type ToMediaUrl = ((remoteUrl: string) => string | null) & {
+  ofapiMedia?: (accountId: string, mediaId: string, variant: 'thumb' | 'full') => string | null;
+};
+
+/**
+ * D42: the media rule shared with Core. A file that is ready and viewable
+ * gets a `thumb` id token (Core picks thumb → squarePreview → preview, never
+ * the full file) unless it is audio; only a photo gets `full`. Locked and
+ * processing files get none.
+ */
+export function mintOfapiMediaTokens(
+  mint: NonNullable<ToMediaUrl['ofapiMedia']>,
+  accountId: string,
+  media: { id: string; type: MessageMediaItem['type']; isReady: boolean; locked: boolean },
+): { thumbUrl: string | null; fullUrl: string | null } {
+  if (!media.isReady || media.locked) return { thumbUrl: null, fullUrl: null };
+  return {
+    thumbUrl: media.type === 'audio' ? null : mint(accountId, media.id, 'thumb'),
+    fullUrl: media.type === 'photo' ? mint(accountId, media.id, 'full') : null,
+  };
+}
 
 // media[].files.{full,thumb,preview}.url — live-verified shape (tmp/golden probes).
 const mediaFilesSchema = z.looseObject({
@@ -45,25 +67,34 @@ const richMediaSchema = z.looseObject({
 
 const MEDIA_TYPES = new Set(['photo', 'video', 'audio', 'gif']);
 
-/** Message-media item → VM-ready shape (also reused by the chat gallery). */
-export function mapMediaItem(raw: unknown, toMediaUrl: ToMediaUrl): MessageMediaItem | null {
+/** Message-media item → VM-ready shape (also reused by the chat gallery).
+ *  D42: with an account and an id-token minter the tokens name the file by
+ *  id; the legacy URL tokens (IP-bound gateway URLs) remain only for callers
+ *  without a minter. */
+export function mapMediaItem(raw: unknown, toMediaUrl: ToMediaUrl, accountId?: string): MessageMediaItem | null {
   const parsed = richMediaSchema.safeParse(raw);
   if (!parsed.success || parsed.data.id == null) {
     return null;
   }
   const media = parsed.data;
-  const files = media.files ?? null;
-  const thumbRemote = files?.thumb?.url ?? files?.squarePreview?.url ?? files?.preview?.url ?? null;
-  const fullRemote = files?.full?.url ?? files?.preview?.url ?? null;
-  const type = media.type != null && MEDIA_TYPES.has(media.type) ? media.type : 'other';
-  return {
+  const type = (media.type != null && MEDIA_TYPES.has(media.type) ? media.type : 'other') as MessageMediaItem['type'];
+  const base = {
     id: String(media.id),
-    type: type as MessageMediaItem['type'],
-    thumbUrl: thumbRemote ? toMediaUrl(thumbRemote) : null,
-    fullUrl: fullRemote ? toMediaUrl(fullRemote) : null,
+    type,
     isReady: media.isReady !== false,
     locked: media.canView === false,
     durationSeconds: media.duration != null && media.duration > 0 ? media.duration : null,
+  };
+  if (accountId !== undefined && toMediaUrl.ofapiMedia !== undefined) {
+    return { ...base, ...mintOfapiMediaTokens(toMediaUrl.ofapiMedia, accountId, base) };
+  }
+  const files = media.files ?? null;
+  const thumbRemote = files?.thumb?.url ?? files?.squarePreview?.url ?? files?.preview?.url ?? null;
+  const fullRemote = type === 'photo' ? files?.full?.url ?? null : null;
+  return {
+    ...base,
+    thumbUrl: thumbRemote ? toMediaUrl(thumbRemote) : null,
+    fullUrl: fullRemote ? toMediaUrl(fullRemote) : null,
   };
 }
 
@@ -171,7 +202,7 @@ export function mapMessage(
     tipText: message.tipText != null ? htmlToPlainText(message.tipText) : null,
     replyTo,
     media: (message.media ?? [])
-      .map((item) => mapMediaItem(item, toMediaUrl))
+      .map((item) => mapMediaItem(item, toMediaUrl, accountId))
       .filter((item): item is MessageMediaItem => item !== null),
     deleted: false,
     raw: message,
@@ -182,6 +213,7 @@ export function mapHubMessage(
   accountId: string,
   chatId: string,
   message: NormalizedSyncMessage,
+  mintOfapiMedia?: ToMediaUrl['ofapiMedia'],
 ): MessageUpsert | null {
   if (message.id.length === 0 || Number.isNaN(Date.parse(message.createdAt))) {
     return null;
@@ -208,15 +240,23 @@ export function mapHubMessage(
             textPreview: message.replyTo.textPreview,
           }
         : null,
-    media: (message.media ?? []).map((item) => ({
-      id: item.id,
-      type: item.type,
-      thumbUrl: null,
-      fullUrl: null,
-      isReady: item.isReady,
-      locked: item.locked,
-      durationSeconds: item.durationSeconds ?? null,
-    })),
+    // D42: hub frames carry no file URLs — the id tokens name the files and
+    // Core resolves them on demand (message VMs re-mint them anyway).
+    media: (message.media ?? []).map((item) => {
+      const base = {
+        id: item.id,
+        type: item.type,
+        isReady: item.isReady,
+        locked: item.locked,
+        durationSeconds: item.durationSeconds ?? null,
+      };
+      return {
+        ...base,
+        ...(mintOfapiMedia !== undefined
+          ? mintOfapiMediaTokens(mintOfapiMedia, accountId, base)
+          : { thumbUrl: null, fullUrl: null }),
+      };
+    }),
     deleted: false,
     raw: message,
   };

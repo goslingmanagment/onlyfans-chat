@@ -41,10 +41,13 @@ import {
   createToMediaUrl,
   isAllowedMediaUrl,
   MEDIA_SCHEME_PRIVILEGES,
+  parseMediaToken,
   registerMediaProtocol,
   type FetchRemote,
 } from './media/protocol';
 import { createSqliteMediaCacheQueries } from './media/cache';
+import { createMediaResolver, type MediaHubClient, type MediaResolver } from './media/resolver';
+import { grantsBelongToCurrentIdentity, readGrantOwner } from './db/grant-owner';
 import {
   createOfApiClient,
   type OfApiClient,
@@ -89,7 +92,7 @@ import {
 } from './hub/acceptance-reporter';
 import { summarizeUsageSpool } from './hub/usage-store';
 import { hostname, tmpdir } from 'node:os';
-import { deviceTokenDigest } from './hub/credential-journal';
+import { deviceTokenDigest, readHubDeviceIdentity } from './hub/credential-journal';
 import { hubAuthReasonOf, recoverFromHubAuthFailure } from './hub/auth-recovery';
 import {
   abandonHubDeviceTokenCustody,
@@ -153,6 +156,7 @@ import type {
   OpenChatEvent,
   UnreadReconcileSettingsVM,
   UpdateModeVM,
+  MediaSurfaceVM,
   UpdateStatusVM,
 } from '../preload/contract';
 import type { SyncEvent } from '@chatgoose/shared/protocol/index';
@@ -188,6 +192,8 @@ let onlineService: OnlineService | null = null;
 let followersService: FollowersService | null = null;
 let spendersRefresh: SpendersRefreshService | null = null;
 let hub: HubModule | null = null;
+/** D42: media id tokens → Core resolve → desktop download (boot-scoped). */
+let mediaResolver: MediaResolver | null = null;
 /** Process-scoped so inserted→sent correlation survives runtime rebuilds for
  * the same destination actor. Credential/principal swaps clear it at commit. */
 let acceptanceTracker: AcceptanceTracker | null = null;
@@ -1517,7 +1523,73 @@ async function boot(): Promise<void> {
     queries: createSqliteMediaCacheQueries(data.db),
     registry: data.mediaUrls,
     fetchRemote,
+    ofapi: () => mediaResolver,
   });
+
+  // D42: message, gallery and vault files are id tokens; Core decides how
+  // each is fetched (free webhook URL, OFAPI cache, budgeted paid download)
+  // and main downloads the bytes itself. The resolver is boot-scoped: it
+  // reads the live credential, runtime client and grants through getters.
+  const mediaData = data;
+  let mediaHubClient: { key: string; client: HubClient } | null = null;
+  const currentMediaHubClient = async (): Promise<MediaHubClient | null> => {
+    const connection = await settingsStore.getHubConnection();
+    const baseUrl = connection.settings.hubBaseUrl;
+    const bearer = connection.bearer;
+    if (baseUrl === null || bearer === null || bearer.length === 0) return null;
+    const key = `${baseUrl}\n${bearer}`;
+    if (mediaHubClient === null || mediaHubClient.key !== key) {
+      const digest = deviceTokenDigest(bearer);
+      mediaHubClient = {
+        key,
+        client: createHubClient({
+          baseUrl,
+          apiKey: bearer,
+          clientVersion: app.getVersion(),
+          onAuthFailure: (error) => hubAuthSelfHeal?.(error, digest),
+        }),
+      };
+    }
+    return mediaHubClient.client;
+  };
+  // D35 rule 5: a file is served only for an account granted to the
+  // identity that is signed in now.
+  const canServeMediaAccount = (accountId: string): boolean => {
+    if (!grantsBelongToCurrentIdentity(
+      readGrantOwner(mediaData.settings),
+      readHubDeviceIdentity(mediaData.settings)?.username ?? null,
+    )) {
+      return false;
+    }
+    return mediaData.accounts.listGranted().some((row) => row.id === accountId);
+  };
+  mediaResolver = createMediaResolver({
+    cache: media.cache,
+    hub: currentMediaHubClient,
+    canServe: canServeMediaAccount,
+    reports: mediaData.mediaFetchReports,
+    // Explicit click on an expired file: one re-read of what Core named,
+    // marked as media context so Core's ledger tells it apart.
+    reread: async (accountId, target) => {
+      const runtimeClient = client;
+      if (runtimeClient === null) return false;
+      if (target.kind === 'message') {
+        await runtimeClient.getMessage({
+          purpose: 'media', accountId, chatId: target.chatId, messageId: target.messageId,
+          readIntent: 'media-context-v1',
+        });
+      } else {
+        await runtimeClient.getVaultMedia({
+          purpose: 'media', accountId, mediaId: target.mediaId, readIntent: 'media-context-v1',
+        });
+      }
+      return true;
+    },
+    recordCredits: (resolveId, credits) =>
+      client?.creditMeter.recordCharge({ purpose: 'media', credits, key: resolveId }),
+    onLog: (level, message, fields) => logger?.log(level, 'media', message, fields),
+  });
+  void mediaResolver.flushReports();
 
   const bootData = data;
   const onBootRuntimeActivationFailure = (error: unknown): void => {
@@ -1960,6 +2032,30 @@ async function boot(): Promise<void> {
     },
     get spenders() {
       return spendersService;
+    },
+    // D42: token state + explicit click loads of media id tokens.
+    get media() {
+      const resolver = mediaResolver;
+      if (resolver === null) return null;
+      const ofapiEntry = (url: string) => {
+        const token = parseMediaToken(url);
+        if (token === null) return null;
+        const entry = bootData.mediaUrls.lookupEntry(token);
+        return entry?.kind === 'ofapi' ? { token, entry } : null;
+      };
+      return {
+        state: (url: string) => {
+          const found = ofapiEntry(url);
+          if (found === null || !resolver.canServe(found.entry.accountId)) return { state: 'unavailable' as const };
+          return resolver.state(found.token);
+        },
+        load: async (url: string, surface: MediaSurfaceVM) => {
+          const found = ofapiEntry(url);
+          if (found === null) return { state: 'unavailable' as const };
+          const result = await resolver.load(found.token, found.entry, { trigger: 'click', surface });
+          return result.kind === 'bytes' ? { state: 'ready' as const } : result.state;
+        },
+      };
     },
     get followers() { return followersService; },
     get online() {

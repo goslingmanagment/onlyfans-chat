@@ -26,6 +26,7 @@ function account(id: string, displayName: string): AccountUpsert {
 function fakeMeter(balance: number | null, rpmRemaining: number | null): CreditMeter {
   return {
     record: () => undefined,
+    recordCharge: () => undefined,
     hydrate: () => undefined,
     subscribe: () => () => undefined,
     snapshot: () => ({

@@ -50,6 +50,10 @@ export const HUB_OFAPI_COMMAND_TIMEOUT_MS = 10_000;
 /** D39: one money-facts page is a DB-only ledger read (H3: page 8 from seq 0
  * cold ≈ 0.6 s); the H2 gateway budget is plenty. */
 export const HUB_MONEY_FACTS_TIMEOUT_MS = 20_000;
+/** D42: a media resolve may make up to three paced OFAPI hops server-side. */
+export const HUB_MEDIA_RESOLVE_TIMEOUT_MS = 30_000;
+/** D42: transfer reports are a DB-only write. */
+export const HUB_MEDIA_REPORTS_TIMEOUT_MS = 10_000;
 
 /**
  * Core's zod cap on PUT profile body (string length, matching core's check).
@@ -337,6 +341,20 @@ export type HubIngestObservationEvent = z.infer<typeof routeSchemas.ingestObserv
  * `forbidden` is its 403 (the page is outside this credential's grants).
  * Facts stay unparsed rows: the caller reads each one tolerantly.
  */
+/** D42: request/answer of Core's media resolve (never a client URL in). */
+export type HubMediaResolveRequest = z.input<(typeof routeSchemas)['ofapiMediaResolve']['body']>;
+export type HubMediaResolveResponse = KernelOperationResponse<'ofapiMediaResolve'>;
+export type HubMediaReport = z.input<(typeof routeSchemas)['ofapiMediaReports']['body']>['reports'][number];
+export type HubMediaReportsResult = KernelOperationResponse<'ofapiMediaReports'>;
+/**
+ * `unsupported`: this Core has no media routes (an older deploy, or a
+ * rollback) or does not grant the account — the desktop shows the file as
+ * unavailable, quietly. Everything else is a typed answer or a HubError.
+ */
+export type HubMediaResolveResult =
+  | { kind: 'resolved'; response: HubMediaResolveResponse }
+  | { kind: 'unsupported' };
+
 export type HubMoneyFactsResult =
   | { kind: 'page'; page: DomainEventFactsPage }
   | { kind: 'ahead-of-head'; message: string }
@@ -458,6 +476,10 @@ export interface HubClient {
     limit: number;
     timeoutMs?: number;
   }): Promise<HubMoneyFactsResult>;
+  /** D42: how to fetch one media file (Core decides; may spend credits on a click). */
+  resolveMedia(args: { request: HubMediaResolveRequest; timeoutMs?: number }): Promise<HubMediaResolveResult>;
+  /** D42: batched transfer results, idempotent by resolveId. */
+  reportMediaFetches(args: { reports: HubMediaReport[]; timeoutMs?: number }): Promise<HubMediaReportsResult | null>;
   /** Stage 31: stream a KERNEL-ASSEMBLED feature generation (Stage 30 route).
    *  Same SSE frames as streamAiGateway; the kernel loads context and builds
    *  the prompt — the desktop sends refs only. */
@@ -814,6 +836,64 @@ export function createHubClient(options: HubClientOptions): HubClient {
         });
       }
       return { kind: 'page', page: parsed.data };
+    },
+
+    async resolveMedia({ request: mediaRequest, timeoutMs }) {
+      const requestBody = routeSchemas.ofapiMediaResolve.body.safeParse(mediaRequest);
+      if (!requestBody.success) {
+        throw badRequestBeforeWire('media resolve request failed contract validation', requestBody.error.message);
+      }
+      const response = await delegate(() =>
+        clientFor(timeoutMs ?? HUB_MEDIA_RESOLVE_TIMEOUT_MS).raw('ofapiMediaResolve', { body: requestBody.data }));
+      // An older Core (or a rollback) has no route; an ungranted account is 404 too.
+      if (response.status === 404 || response.status === 405) {
+        return { kind: 'unsupported' };
+      }
+      if (response.status === 401) {
+        throw new HubError('auth', { message: 'media resolve: hub rejected the credential', detail: { status: 401 } });
+      }
+      if (response.status !== 200) {
+        throw new HubError('http', {
+          message: `media resolve failed (${response.status})`,
+          detail: { status: response.status },
+        });
+      }
+      const payload: unknown = await delegate(() => response.json() as Promise<unknown>);
+      const parsed = routeSchemas.ofapiMediaResolve.response[200].safeParse(payload);
+      if (!parsed.success) {
+        throw new HubError('invalid-response', {
+          message: 'media resolve answer failed validation',
+          detail: { providerMessage: parsed.error.message.slice(0, 400), status: 200 },
+        });
+      }
+      return { kind: 'resolved', response: parsed.data };
+    },
+
+    async reportMediaFetches({ reports, timeoutMs }) {
+      const requestBody = routeSchemas.ofapiMediaReports.body.safeParse({ reports });
+      if (!requestBody.success) {
+        throw badRequestBeforeWire('media reports failed contract validation', requestBody.error.message);
+      }
+      const response = await delegate(() =>
+        clientFor(timeoutMs ?? HUB_MEDIA_REPORTS_TIMEOUT_MS).raw('ofapiMediaReports', { body: requestBody.data }));
+      if (response.status === 404 || response.status === 405) {
+        return null; // no media routes: nothing to report to
+      }
+      if (response.status === 401) {
+        throw new HubError('auth', { message: 'media reports: hub rejected the credential', detail: { status: 401 } });
+      }
+      if (response.status !== 200) {
+        throw new HubError('http', { message: `media reports failed (${response.status})`, detail: { status: response.status } });
+      }
+      const payload: unknown = await delegate(() => response.json() as Promise<unknown>);
+      const parsed = routeSchemas.ofapiMediaReports.response[200].safeParse(payload);
+      if (!parsed.success) {
+        throw new HubError('invalid-response', {
+          message: 'media reports answer failed validation',
+          detail: { providerMessage: parsed.error.message.slice(0, 400), status: 200 },
+        });
+      }
+      return parsed.data;
     },
 
     async streamAiFeature({ feature, request: streamRequest, signal, debugPromptEcho }, callbacks) {

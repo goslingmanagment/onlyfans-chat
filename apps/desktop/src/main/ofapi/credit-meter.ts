@@ -47,6 +47,13 @@ export type CreditMeterListener = (snapshot: CreditMeterSnapshot) => void;
 export interface CreditMeter {
   /** Feed headers and/or the parsed body `_meta` of any OFAPI response. */
   record(input: { headers?: HeadersLike; meta?: unknown; purpose?: string }): void;
+  /**
+   * D42: credits Core charged for a request the desktop did not make itself
+   * (a media resolve that handed out a paid download). Taken from Core's
+   * answer — never synthesized as provider headers — and idempotent by `key`
+   * (the resolve id), so a replayed answer is not counted twice.
+   */
+  recordCharge(input: { purpose: string; credits: number; key: string }): void;
   snapshot(): CreditMeterSnapshot;
   /** Restore persisted daily counters; ignored when the persisted day is stale. */
   hydrate(state: {
@@ -70,6 +77,9 @@ export function createCreditMeter(
 
   let balance: number | null = null;
   let rpmRemaining: number | null = null;
+  // Bounded: a day of media charges fits comfortably; older keys cannot recur.
+  const chargedKeys = new Set<string>();
+  const CHARGED_KEYS_MAX = 5_000;
   let usedToday = 0;
   let byPurpose = new Map<string, PurposeTally>();
   let utcDay = utcDayOf(now());
@@ -134,6 +144,18 @@ export function createCreditMeter(
       if (used !== null) usedToday += used;
       if (newBalance !== null) balance = newBalance;
       if (newRpmRemaining !== null) rpmRemaining = newRpmRemaining;
+      emit();
+    },
+    recordCharge(input): void {
+      if (!Number.isFinite(input.credits) || input.credits <= 0 || chargedKeys.has(input.key)) return;
+      if (chargedKeys.size >= CHARGED_KEYS_MAX) chargedKeys.clear();
+      chargedKeys.add(input.key);
+      rollDay();
+      const tally = byPurpose.get(input.purpose) ?? { requests: 0, credits: 0 };
+      tally.requests += 1;
+      tally.credits += input.credits;
+      byPurpose.set(input.purpose, tally);
+      usedToday += input.credits;
       emit();
     },
     snapshot,

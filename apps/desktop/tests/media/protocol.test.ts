@@ -12,7 +12,7 @@ import {
   registerMediaProtocol,
 } from '@main/media/protocol';
 import { hashRemoteUrl } from '@main/media/cache';
-import type { MediaRequestHandler } from '@main/media/protocol';
+import type { MediaRequestHandler, OfapiMediaLoadResult } from '@main/media/protocol';
 import { createInMemoryMediaCacheQueries, createInMemoryMediaUrlRegistry } from './helpers';
 
 const ALLOWED_URLS = [
@@ -134,6 +134,11 @@ function createFakeCache() {
     get: (remoteUrl: string) => Promise.resolve(entries.get(remoteUrl) ?? null),
     put: (remoteUrl: string, data: Uint8Array, contentType: string | null) => {
       entries.set(remoteUrl, { data: Buffer.from(data), contentType });
+      return Promise.resolve();
+    },
+    getByKey: (key: string) => Promise.resolve(entries.get(key) ?? null),
+    putByKey: (key: string, data: Uint8Array, contentType: string | null) => {
+      entries.set(key, { data: Buffer.from(data), contentType });
       return Promise.resolve();
     },
   };
@@ -459,5 +464,66 @@ describe('registerMediaProtocol (end-to-end with the real encrypted cache)', () 
     }
     expect(fetchRemote).not.toHaveBeenCalled();
     expect(registry.rows.size).toBe(0);
+  });
+});
+
+describe('media request handler — OFAPI id tokens (D42)', () => {
+  const ACCT = 'acct_05000000000000000000000000000000';
+
+  function setupOfapi(options: { canServe?: boolean; loadResult?: OfapiMediaLoadResult } = {}) {
+    const registry = createInMemoryMediaUrlRegistry();
+    const mint = createToMediaUrl(registry).ofapiMedia;
+    if (mint === undefined) throw new Error('unreachable');
+    const thumb = mint(ACCT, '3000001', 'thumb') ?? '';
+    const full = mint(ACCT, '3000001', 'full') ?? '';
+    const cache = createFakeCache();
+    const load = vi.fn(async () => options.loadResult ?? { kind: 'bytes' as const, data: Buffer.from('jpeg'), contentType: 'image/jpeg' });
+    const fetchRemote = vi.fn();
+    const handler = createMediaRequestHandler({
+      registry,
+      cache,
+      fetchRemote,
+      ofapi: { canServe: () => options.canServe ?? true, load, state: () => ({ state: 'idle' }) },
+    });
+    return { thumb, full, cache, load, fetchRemote, handler };
+  }
+
+  it('refuses an account the signed-in identity is not granted, before cache or network', async () => {
+    const { thumb, load, fetchRemote, handler } = setupOfapi({ canServe: false });
+    expect((await handler({ url: thumb })).status).toBe(404);
+    expect(load).not.toHaveBeenCalled();
+    expect(fetchRemote).not.toHaveBeenCalled();
+  });
+
+  it('serves the id-keyed cache first, then an automatic load with the tagged surface', async () => {
+    const { thumb, cache, load, handler } = setupOfapi();
+    const token = parseMediaToken(thumb) ?? '';
+    cache.entries.set(token, { data: Buffer.from('cached'), contentType: 'image/jpeg' });
+    expect((await handler({ url: thumb })).headers.get('x-chatgoose-cache')).toBe('hit');
+    expect(load).not.toHaveBeenCalled();
+    cache.entries.clear();
+    const res = await handler({ url: `${thumb}?s=gallery` });
+    expect(res.status).toBe(200);
+    expect(load).toHaveBeenCalledWith(token, expect.objectContaining({ kind: 'ofapi', mediaId: '3000001', variant: 'thumb' }), { trigger: 'auto', surface: 'gallery' });
+  });
+
+  it('never loads a full-size file automatically (only an explicit click does)', async () => {
+    const { full, load, handler } = setupOfapi();
+    const res = await handler({ url: full });
+    expect(res.status).toBe(402);
+    expect(res.headers.get('x-chatgoose-media')).toBe('load:click');
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ state: 'load', reason: 'budget' }, 402, 'load:budget'],
+    [{ state: 'unavailable' }, 404, 'unavailable'],
+    [{ state: 'processing' }, 409, 'processing'],
+    [{ state: 'loading' }, 503, 'loading'],
+  ] as const)('answers %o with %i and names the state', async (state, status, header) => {
+    const { thumb, handler } = setupOfapi({ loadResult: { kind: 'state', state } });
+    const res = await handler({ url: thumb });
+    expect(res.status).toBe(status);
+    expect(res.headers.get('x-chatgoose-media')).toBe(header);
   });
 });

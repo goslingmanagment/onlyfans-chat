@@ -37,7 +37,7 @@ describe('migration runner', () => {
       expect(indexes).toContain('idx_message_guard_events_hash');
       expect(indexes).toContain('idx_sync_intents_account'); // v24 (D38)
       expect(indexes).toContain('idx_message_facts_message'); // v25 (D39)
-      expect(SCHEMA_VERSION).toBe(25);
+      expect(SCHEMA_VERSION).toBe(26);
       expect(layer.db.schemaVersion()).toBe(SCHEMA_VERSION);
       const guardCols = layer.db
         .prepare("SELECT name FROM pragma_table_info('message_guard_events')")
@@ -210,6 +210,44 @@ describe('migration runner', () => {
         "INSERT INTO sync_intents (kind, account_id, not_before_ms, reason, next_attempt_ms, created_ms) " +
           "VALUES ('bogus', 'acct_1', 2, 'x', 2, 2)",
       )).toThrow(/CHECK/);
+    db.close();
+  });
+
+  it('v25 → v26 keeps every URL token and adds OFAPI id tokens plus the report queue (D42)', () => {
+    const db = rawDb();
+    runMigrations(db, MIGRATIONS.slice(0, 25));
+    expect(readSchemaVersion(db)).toBe(25);
+    db.exec(
+      "INSERT INTO media_urls (url_hash, url, created_at) " +
+        "VALUES ('" + 'a'.repeat(64) + "', 'https://public.onlyfans.com/files/avatar.jpg', '2026-09-27T00:00:00.000Z')",
+    );
+
+    expect(runMigrations(db, MIGRATIONS)).toEqual({ from: 25, to: SCHEMA_VERSION });
+    // Existing avatars stay URL tokens.
+    expect(db.prepare('SELECT url_hash, kind, account_id, media_id, variant FROM media_urls').all()).toEqual([
+      { url_hash: 'a'.repeat(64), kind: 'url', account_id: null, media_id: null, variant: null },
+    ]);
+    db.exec(
+      "INSERT INTO media_urls (url_hash, url, created_at, kind, account_id, media_id, variant) " +
+        "VALUES ('" + 'b'.repeat(64) + "', 'ofapi:acct_1/1/thumb', '2026-09-27T00:00:00.000Z', 'ofapi', 'acct_1', '1', 'thumb')",
+    );
+    expect(() =>
+      db.exec(
+        "INSERT INTO media_urls (url_hash, url, created_at, kind) VALUES ('" + 'c'.repeat(64) + "', 'x', 'y', 'bogus')",
+      )).toThrow(/CHECK/);
+    expect(() =>
+      db.exec(
+        "INSERT INTO media_urls (url_hash, url, created_at, kind, variant) VALUES ('" + 'd'.repeat(64) + "', 'x', 'y', 'ofapi', 'huge')",
+      )).toThrow(/CHECK/);
+    db.exec(
+      "INSERT INTO media_fetch_reports (resolve_id, payload, created_at) " +
+        "VALUES ('00000000-0000-4000-8000-000000000001', '{}', '2026-09-27T00:00:00.000Z')",
+    );
+    expect(() =>
+      db.exec(
+        "INSERT INTO media_fetch_reports (resolve_id, payload, created_at) " +
+          "VALUES ('00000000-0000-4000-8000-000000000001', '{}', '2026-09-27T00:00:00.000Z')",
+      )).toThrow(/UNIQUE|PRIMARY/);
     db.close();
   });
 

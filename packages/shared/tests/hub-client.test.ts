@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   createHubClient,
   HUB_LIST_PAGES_TIMEOUT_MS,
+  HUB_MEDIA_REPORTS_TIMEOUT_MS,
+  HUB_MEDIA_RESOLVE_TIMEOUT_MS,
   HUB_MONEY_FACTS_TIMEOUT_MS,
   HUB_OFAPI_CREDITS_TIMEOUT_MS,
   HUB_PROFILE_GET_TIMEOUT_MS,
@@ -306,6 +308,74 @@ describe('createHubClient', () => {
         .toBe('http');
       expect((await captureHubError(client.listMoneyFacts({ accountId: 9, afterSeq: 0, limit: 5 }))).reason)
         .toBe('invalid-response');
+    });
+  });
+
+  describe('media images (D42)', () => {
+    const REQUEST = {
+      requestId: '00000000-0000-4000-8000-000000000001',
+      accountId: 'acct_1',
+      mediaId: '3000001',
+      variant: 'thumb' as const,
+      surface: 'thread' as const,
+      trigger: 'auto' as const,
+    };
+    const ANSWER = {
+      resolveId: '00000000-0000-4000-8000-0000000000a1',
+      outcome: 'paid',
+      url: 'https://dl.fansapi.com/d/synthetic/300x300_x.jpg',
+      urlExpiresAt: null,
+      contentLength: 21821,
+      maxBytes: 21821,
+      credits: 1,
+      overCap: false,
+      reason: null,
+      retryAfterMs: null,
+      retryAt: null,
+      mediaType: 'photo',
+      reread: null,
+      replayed: false,
+    };
+
+    it('POSTs the resolve body (never a URL) and returns the validated answer', async () => {
+      const { calls, fetchImpl } = stubFetch(jsonResponse(200, ANSWER));
+      const { client, timeouts } = makeClient(fetchImpl);
+      const result = await client.resolveMedia({ request: REQUEST });
+      expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/ofapi/media/resolve');
+      expect(calls[0]?.init.method).toBe('POST');
+      expect(JSON.parse(calls[0]?.init.body ?? '{}')).toEqual(REQUEST);
+      expect(timeouts).toEqual([HUB_MEDIA_RESOLVE_TIMEOUT_MS]);
+      expect(result).toEqual({ kind: 'resolved', response: ANSWER });
+    });
+
+    it('treats a Core without media routes (404) as unsupported, quietly', async () => {
+      const { fetchImpl } = stubFetch(jsonResponse(404, { error: 'not_found', message: 'Route not found', statusCode: 404 }));
+      const { client } = makeClient(fetchImpl);
+      expect(await client.resolveMedia({ request: REQUEST })).toEqual({ kind: 'unsupported' });
+    });
+
+    it('refuses a client-supplied URL before the wire and a drifted answer after it', async () => {
+      const { calls, fetchImpl } = stubFetch(jsonResponse(200, { ...ANSWER, outcome: 'teleported' }), jsonResponse(503, {}));
+      const { client } = makeClient(fetchImpl);
+      const withUrl = { ...REQUEST, url: 'https://cdn2.onlyfans.com/files/x.jpg' } as unknown as typeof REQUEST;
+      expect((await captureHubError(client.resolveMedia({ request: withUrl }))).reason).toBe('bad-request');
+      expect(calls).toHaveLength(0);
+      expect((await captureHubError(client.resolveMedia({ request: REQUEST }))).reason).toBe('invalid-response');
+      expect((await captureHubError(client.resolveMedia({ request: REQUEST }))).reason).toBe('http');
+    });
+
+    it('batches transfer reports and tolerates a Core without the route', async () => {
+      const report = { resolveId: ANSWER.resolveId, result: 'ok' as const, bytesReceived: 21821, httpStatus: 200 };
+      const { calls, fetchImpl } = stubFetch(
+        jsonResponse(200, { accepted: 1, duplicate: 0, unknown: 0 }),
+        jsonResponse(404, { error: 'not_found' }),
+      );
+      const { client, timeouts } = makeClient(fetchImpl);
+      expect(await client.reportMediaFetches({ reports: [report] })).toEqual({ accepted: 1, duplicate: 0, unknown: 0 });
+      expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/ofapi/media/reports');
+      expect(JSON.parse(calls[0]?.init.body ?? '{}')).toEqual({ reports: [report] });
+      expect(timeouts[0]).toBe(HUB_MEDIA_REPORTS_TIMEOUT_MS);
+      expect(await client.reportMediaFetches({ reports: [report] })).toBeNull();
     });
   });
 

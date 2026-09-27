@@ -321,6 +321,8 @@ export function makeFakeHubClient(
     ),
     getServerTimeOffsetMs: () => null,
     listMoneyFacts: vi.fn(() => Promise.resolve({ kind: 'forbidden' as const })),
+    resolveMedia: vi.fn(() => Promise.resolve({ kind: 'unsupported' as const })),
+    reportMediaFetches: vi.fn(() => Promise.resolve(null)),
     listPagesMock,
     getFanProfileMock,
     putFanProfileMock,
