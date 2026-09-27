@@ -1084,10 +1084,10 @@ export declare const ofapiActionIntentSchema: z.ZodObject<{
     state: z.ZodEnum<{
         cancelled: "cancelled";
         partial: "partial";
+        rejected: "rejected";
         prepared: "prepared";
         dispatching: "dispatching";
         confirmed: "confirmed";
-        rejected: "rejected";
         indeterminate: "indeterminate";
     }>;
     estimatedCredits: z.ZodNumber;

@@ -37051,8 +37051,8 @@ declare const baseRouteSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
-                        dispatching: "dispatching";
                         rejected: "rejected";
+                        dispatching: "dispatching";
                         requested: "requested";
                         approved: "approved";
                         partially_completed: "partially_completed";
@@ -37724,8 +37724,8 @@ declare const baseRouteSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
-                        dispatching: "dispatching";
                         rejected: "rejected";
+                        dispatching: "dispatching";
                         requested: "requested";
                         approved: "approved";
                         partially_completed: "partially_completed";
@@ -38403,8 +38403,8 @@ declare const baseRouteSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
-                        dispatching: "dispatching";
                         rejected: "rejected";
+                        dispatching: "dispatching";
                         requested: "requested";
                         approved: "approved";
                         partially_completed: "partially_completed";
@@ -39071,8 +39071,8 @@ declare const baseRouteSchemas: {
             state: z.ZodOptional<z.ZodEnum<{
                 failed: "failed";
                 expired: "expired";
-                dispatching: "dispatching";
                 rejected: "rejected";
+                dispatching: "dispatching";
                 requested: "requested";
                 approved: "approved";
                 partially_completed: "partially_completed";
@@ -39087,8 +39087,8 @@ declare const baseRouteSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
-                        dispatching: "dispatching";
                         rejected: "rejected";
+                        dispatching: "dispatching";
                         requested: "requested";
                         approved: "approved";
                         partially_completed: "partially_completed";
@@ -40323,7 +40323,7 @@ declare const baseRouteSchemas: {
         };
         readonly tags: readonly ["ofapi"];
         readonly summary: "Report desktop media transfer results (batched, idempotent by resolveId)";
-        readonly description: "At most 100 reports per call. A lost report leaves a paid charge unknown, never zero.";
+        readonly description: string;
         readonly body: z.ZodObject<{
             reports: z.ZodArray<z.ZodObject<{
                 resolveId: z.ZodUUID;
@@ -40385,6 +40385,7 @@ declare const baseRouteSchemas: {
                 accepted: z.ZodNumber;
                 duplicate: z.ZodNumber;
                 unknown: z.ZodNumber;
+                rejected: z.ZodNumber;
             }, z.core.$strip>;
         };
     };

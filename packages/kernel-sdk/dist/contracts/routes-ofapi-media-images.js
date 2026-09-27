@@ -4,6 +4,11 @@ import { errorResponseSchema } from "./primitives";
 // decides per file how the desktop may fetch it and hands out a URL; the
 // desktop downloads the bytes itself and reports the result. No client URL is
 // ever accepted: a file is named by (account, media id, variant) only.
+/**
+ * The largest single file the desktop may take (its full-photo guard). A paid
+ * hand-out is never priced above it and no transfer report may exceed it.
+ */
+export const OFAPI_MEDIA_MAX_TRANSFER_BYTES = 30_000_000;
 const errors = {
     400: errorResponseSchema,
     401: errorResponseSchema,
@@ -61,7 +66,8 @@ export const ofapiMediaResolveResponseSchema = z.object({
     /**
      * Estimated credits charged by this resolve; non-zero only for `paid`. A
      * click of unknown size (`contentLength` null) is reserved at the guard's
-     * price and settled on its report to max(1, ceil(3·bytesReceived/1e6)).
+     * price and settled on its report to max(1, ceil(3·bytesReceived/1e6)) —
+     * a report can only lower or keep that debit, never raise it.
      */
     credits: z.number().int().nonnegative(),
     overCap: z.boolean(),
@@ -79,7 +85,12 @@ export const ofapiMediaResolveResponseSchema = z.object({
 export const ofapiMediaReportSchema = z.object({
     resolveId: z.uuid(),
     result: z.enum(["ok", "failed", "aborted_size", "timeout", "http_error"]),
-    bytesReceived: z.number().int().nonnegative().max(1_000_000_000_000).nullable(),
+    /**
+     * Bytes the desktop kept, never more than the hand-out allowed: a paid
+     * report above its `maxBytes` (the priced size, or the 5 MB guard of a
+     * click of unknown size) is rejected, not applied.
+     */
+    bytesReceived: z.number().int().nonnegative().max(OFAPI_MEDIA_MAX_TRANSFER_BYTES).nullable(),
     httpStatus: z.number().int().min(100).max(599).nullable(),
 }).strict();
 export const ofapiMediaReportsRequestSchema = z.object({
@@ -89,6 +100,8 @@ export const ofapiMediaReportsResponseSchema = z.object({
     accepted: z.number().int().nonnegative(),
     duplicate: z.number().int().nonnegative(),
     unknown: z.number().int().nonnegative(),
+    /** Reports of more bytes than their hand-out allowed: ignored, the charge stays as issued. */
+    rejected: z.number().int().nonnegative(),
 });
 export const ofapiMediaImageRouteSchemas = {
     ofapiMediaResolve: {
@@ -107,7 +120,8 @@ export const ofapiMediaImageRouteSchemas = {
         auth: { kind: "apiKey" },
         tags: ["ofapi"],
         summary: "Report desktop media transfer results (batched, idempotent by resolveId)",
-        description: "At most 100 reports per call. A lost report leaves a paid charge unknown, never zero.",
+        description: "At most 100 reports per call. A lost report leaves a paid charge unknown, never zero; a report "
+            + "of more bytes than its hand-out allowed is rejected and changes nothing.",
         body: ofapiMediaReportsRequestSchema,
         response: { 200: ofapiMediaReportsResponseSchema, ...errors },
     },

@@ -1,5 +1,10 @@
 import { z } from "zod";
 /**
+ * The largest single file the desktop may take (its full-photo guard). A paid
+ * hand-out is never priced above it and no transfer report may exceed it.
+ */
+export declare const OFAPI_MEDIA_MAX_TRANSFER_BYTES = 30000000;
+/**
  * Closed outcome set. `free_url` / `ofapi_cache` / `paid` carry a URL; every
  * other outcome carries none. `refused` and `unavailable` render "unavailable"
  * (a click does not bypass them) — except `refused` with reason `not_ready`,
@@ -113,6 +118,7 @@ export declare const ofapiMediaReportsResponseSchema: z.ZodObject<{
     accepted: z.ZodNumber;
     duplicate: z.ZodNumber;
     unknown: z.ZodNumber;
+    rejected: z.ZodNumber;
 }, z.core.$strip>;
 export declare const ofapiMediaImageRouteSchemas: {
     readonly ofapiMediaResolve: {
@@ -226,7 +232,7 @@ export declare const ofapiMediaImageRouteSchemas: {
         };
         readonly tags: readonly ["ofapi"];
         readonly summary: "Report desktop media transfer results (batched, idempotent by resolveId)";
-        readonly description: "At most 100 reports per call. A lost report leaves a paid charge unknown, never zero.";
+        readonly description: string;
         readonly body: z.ZodObject<{
             reports: z.ZodArray<z.ZodObject<{
                 resolveId: z.ZodUUID;
@@ -288,6 +294,7 @@ export declare const ofapiMediaImageRouteSchemas: {
                 accepted: z.ZodNumber;
                 duplicate: z.ZodNumber;
                 unknown: z.ZodNumber;
+                rejected: z.ZodNumber;
             }, z.core.$strip>;
         };
     };

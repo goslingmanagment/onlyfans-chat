@@ -14104,8 +14104,8 @@ export declare const agentHydrationLaneEnum: z.ZodEnum<{
 export declare const agentHydrationStateEnum: z.ZodEnum<{
     failed: "failed";
     expired: "expired";
-    dispatching: "dispatching";
     rejected: "rejected";
+    dispatching: "dispatching";
     requested: "requested";
     approved: "approved";
     partially_completed: "partially_completed";
@@ -14241,8 +14241,8 @@ export declare const agentHydrationRequestSchema: z.ZodObject<{
     state: z.ZodEnum<{
         failed: "failed";
         expired: "expired";
-        dispatching: "dispatching";
         rejected: "rejected";
+        dispatching: "dispatching";
         requested: "requested";
         approved: "approved";
         partially_completed: "partially_completed";
@@ -14335,8 +14335,8 @@ export declare const agentHydrationRequestResponseSchema: z.ZodObject<{
         state: z.ZodEnum<{
             failed: "failed";
             expired: "expired";
-            dispatching: "dispatching";
             rejected: "rejected";
+            dispatching: "dispatching";
             requested: "requested";
             approved: "approved";
             partially_completed: "partially_completed";
@@ -14954,8 +14954,8 @@ export declare const agentHydrationRequestGetResponseSchema: z.ZodObject<{
         state: z.ZodEnum<{
             failed: "failed";
             expired: "expired";
-            dispatching: "dispatching";
             rejected: "rejected";
+            dispatching: "dispatching";
             requested: "requested";
             approved: "approved";
             partially_completed: "partially_completed";
@@ -15585,8 +15585,8 @@ export declare const agentHydrationRequestDecideResponseSchema: z.ZodObject<{
         state: z.ZodEnum<{
             failed: "failed";
             expired: "expired";
-            dispatching: "dispatching";
             rejected: "rejected";
+            dispatching: "dispatching";
             requested: "requested";
             approved: "approved";
             partially_completed: "partially_completed";
@@ -16212,8 +16212,8 @@ export declare const agentHydrationRequestListQuerySchema: z.ZodObject<{
     state: z.ZodOptional<z.ZodEnum<{
         failed: "failed";
         expired: "expired";
-        dispatching: "dispatching";
         rejected: "rejected";
+        dispatching: "dispatching";
         requested: "requested";
         approved: "approved";
         partially_completed: "partially_completed";
@@ -16227,8 +16227,8 @@ export declare const agentHydrationRequestListResponseSchema: z.ZodObject<{
         state: z.ZodEnum<{
             failed: "failed";
             expired: "expired";
-            dispatching: "dispatching";
             rejected: "rejected";
+            dispatching: "dispatching";
             requested: "requested";
             approved: "approved";
             partially_completed: "partially_completed";
@@ -27502,8 +27502,8 @@ export declare const agentRouteSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
-                        dispatching: "dispatching";
                         rejected: "rejected";
+                        dispatching: "dispatching";
                         requested: "requested";
                         approved: "approved";
                         partially_completed: "partially_completed";
@@ -28175,8 +28175,8 @@ export declare const agentRouteSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
-                        dispatching: "dispatching";
                         rejected: "rejected";
+                        dispatching: "dispatching";
                         requested: "requested";
                         approved: "approved";
                         partially_completed: "partially_completed";
@@ -28854,8 +28854,8 @@ export declare const agentRouteSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
-                        dispatching: "dispatching";
                         rejected: "rejected";
+                        dispatching: "dispatching";
                         requested: "requested";
                         approved: "approved";
                         partially_completed: "partially_completed";
@@ -29522,8 +29522,8 @@ export declare const agentRouteSchemas: {
             state: z.ZodOptional<z.ZodEnum<{
                 failed: "failed";
                 expired: "expired";
-                dispatching: "dispatching";
                 rejected: "rejected";
+                dispatching: "dispatching";
                 requested: "requested";
                 approved: "approved";
                 partially_completed: "partially_completed";
@@ -29538,8 +29538,8 @@ export declare const agentRouteSchemas: {
                     state: z.ZodEnum<{
                         failed: "failed";
                         expired: "expired";
-                        dispatching: "dispatching";
                         rejected: "rejected";
+                        dispatching: "dispatching";
                         requested: "requested";
                         approved: "approved";
                         partially_completed: "partially_completed";

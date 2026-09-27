@@ -386,11 +386,11 @@ describe('createHubClient', () => {
     it('batches transfer reports and tolerates a Core without the route', async () => {
       const report = { resolveId: ANSWER.resolveId, result: 'ok' as const, bytesReceived: 21821, httpStatus: 200 };
       const { calls, fetchImpl } = stubFetch(
-        jsonResponse(200, { accepted: 1, duplicate: 0, unknown: 0 }),
+        jsonResponse(200, { accepted: 1, duplicate: 0, unknown: 0, rejected: 0 }),
         jsonResponse(404, { error: 'not_found' }),
       );
       const { client, timeouts } = makeClient(fetchImpl);
-      expect(await client.reportMediaFetches({ reports: [report] })).toEqual({ accepted: 1, duplicate: 0, unknown: 0 });
+      expect(await client.reportMediaFetches({ reports: [report] })).toEqual({ accepted: 1, duplicate: 0, unknown: 0, rejected: 0 });
       expect(calls[0]?.url).toBe('https://hub.example.com/api/v1/ofapi/media/reports');
       expect(JSON.parse(calls[0]?.init.body ?? '{}')).toEqual({ reports: [report] });
       expect(timeouts[0]).toBe(HUB_MEDIA_REPORTS_TIMEOUT_MS);
