@@ -4,6 +4,9 @@
 // with rootMargin 0 tracks visibility; a small FIFO grants at most
 // MEDIA_GATE_MAX_ACTIVE loads at once and re-checks visibility right before
 // it hands a slot out, so a cell scrolled away while it waited never starts.
+// A cell that got its slot and scrolls away before its image arrived is told
+// (`onHide`): it drops its src and asks main to cancel the load if main has
+// not started it yet (D5); the slot goes to the next visible cell.
 
 export const MEDIA_GATE_MAX_ACTIVE = 4;
 
@@ -25,16 +28,20 @@ export type IntersectionObserverFactory = (
 interface Waiter {
   element: Element;
   onGrant: (ticket: MediaGateTicket) => void;
+  onHide: (() => void) | undefined;
   granted: boolean;
   cancelled: boolean;
+  ticket: MediaGateTicket | null;
 }
 
 export interface MediaGate {
   /**
-   * Watch `element`; `onGrant` fires once, when the element is visible AND a
-   * slot is free. The returned function stops watching (and frees a held slot).
+   * Watch `element`; `onGrant` fires when the element is visible AND a slot is
+   * free. `onHide` fires when a granted element leaves the viewport: its slot
+   * is freed, and it is granted again when it comes back. The returned
+   * function stops watching (and frees a held slot).
    */
-  watch(element: Element, onGrant: (ticket: MediaGateTicket) => void): () => void;
+  watch(element: Element, onGrant: (ticket: MediaGateTicket) => void, onHide?: () => void): () => void;
   /** Test/diagnostic view. */
   activeCount(): number;
 }
@@ -58,14 +65,16 @@ export function createMediaGate(
       next.granted = true;
       active += 1;
       let released = false;
-      next.onGrant({
+      const ticket: MediaGateTicket = {
         release() {
           if (released) return;
           released = true;
           active -= 1;
           pump();
         },
-      });
+      };
+      next.ticket = ticket;
+      next.onGrant(ticket);
     }
   }
 
@@ -73,16 +82,24 @@ export function createMediaGate(
     for (const entry of entries) {
       visible.set(entry.target, entry.isIntersecting);
       const waiter = waiters.get(entry.target);
-      if (entry.isIntersecting && waiter !== undefined && !waiter.granted && !waiter.cancelled && !queue.includes(waiter)) {
+      if (waiter === undefined || waiter.cancelled) continue;
+      if (entry.isIntersecting && !waiter.granted && !queue.includes(waiter)) {
         queue.push(waiter);
+      } else if (!entry.isIntersecting && waiter.granted && waiter.onHide !== undefined) {
+        // D5: scrolled away while loading — tell the cell, then free its slot.
+        const ticket = waiter.ticket;
+        waiter.granted = false;
+        waiter.ticket = null;
+        waiter.onHide();
+        ticket?.release();
       }
     }
     pump();
   });
 
   return {
-    watch(element, onGrant) {
-      const waiter: Waiter = { element, onGrant, granted: false, cancelled: false };
+    watch(element, onGrant, onHide) {
+      const waiter: Waiter = { element, onGrant, onHide, granted: false, cancelled: false, ticket: null };
       waiters.set(element, waiter);
       observer.observe(element);
       return () => {

@@ -81,4 +81,39 @@ describe('media visibility gate', () => {
     expect(granted).toEqual(['x']);
     expect(gate.activeCount()).toBe(0);
   });
+
+  it('D5: a granted cell that scrolls away is told, frees its slot, and is granted again when back', () => {
+    const io = fakeIo();
+    const gate = createMediaGate(io.factory, 1);
+    const events: string[] = [];
+    const a = el('a');
+    const b = el('b');
+    gate.watch(a, () => events.push('grant a'), () => events.push('hide a'));
+    gate.watch(b, () => events.push('grant b'), () => events.push('hide b'));
+    io.show(a);
+    io.show(b); // waits: one slot
+    expect(events).toEqual(['grant a']);
+    io.show(a, false); // a left the viewport before its image arrived
+    expect(events).toEqual(['grant a', 'hide a', 'grant b']);
+    expect(gate.activeCount()).toBe(1);
+    io.show(a, true); // back: queued behind b
+    expect(events).toEqual(['grant a', 'hide a', 'grant b']);
+    io.show(b, false);
+    expect(events).toEqual(['grant a', 'hide a', 'grant b', 'hide b', 'grant a']);
+  });
+
+  it('a cell without onHide keeps its slot while hidden (the old contract)', () => {
+    const io = fakeIo();
+    const gate = createMediaGate(io.factory, 1);
+    const a = el('a');
+    let granted = 0;
+    gate.watch(a, () => {
+      granted += 1;
+    });
+    io.show(a);
+    io.show(a, false);
+    io.show(a, true);
+    expect(granted).toBe(1);
+    expect(gate.activeCount()).toBe(1);
+  });
 });

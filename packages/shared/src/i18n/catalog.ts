@@ -1531,6 +1531,11 @@ export const UI_MESSAGES = {
   'media.loadTip.click': { en: 'Full size loads on click', ru: 'Полный размер загружается по клику' },
   'media.unavailable': { en: 'Unavailable', ru: 'Недоступно' },
   'media.processing': { en: 'Processing', ru: 'Обрабатывается' },
+  'media.refresh': { en: 'Check', ru: 'Проверить' },
+  'media.refreshTip': {
+    en: 'Ask OnlyFans whether the file is ready and load it',
+    ru: 'Спросить у OnlyFans, готов ли файл, и загрузить его',
+  },
   'media.locked': { en: 'Locked', ru: 'Закрыто' },
   'media.audio': { en: 'Audio', ru: 'Аудио' },
   'media.videoPreview': { en: 'Video — preview frame only', ru: 'Видео — только кадр-превью' },

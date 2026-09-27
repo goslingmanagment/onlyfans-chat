@@ -1,20 +1,27 @@
-// D42: one gated media image. The cell asks the visibility gate for a slot,
-// only then sets `src` (media://<token>?s=<surface>); main resolves the token
-// through Core and answers with the image or a status. After an error the
-// cell asks main what the token can show (`query:media.state`) — «загрузить»,
-// «недоступно», «обрабатывается» — and a click on «загрузить» is the explicit
-// action that may spend credits (`cmd:media.load`).
+// D42: one gated media image — the React adapter of mediaImageMachine.ts.
+// The cell asks the visibility gate for a slot, only then sets `src`
+// (media://<token>?s=<surface>); main resolves the token through Core and
+// answers with the image or a status. After an error the cell asks main what
+// the token can show (`query:media.state`) — «загрузить», «недоступно»,
+// «обрабатывается», or a quiet wait — and a click is the explicit action that
+// may spend credits (`cmd:media.load`). A cell that leaves the viewport (or
+// unmounts) before its image arrived drops its src and asks main to cancel
+// the load if it has not started (`cmd:media.cancel`).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { MediaStateVM, MediaSurfaceVM } from '../../../../preload/contract';
+import type { MediaSurfaceVM } from '../../../../preload/contract';
 import { getBridge } from '../../bridge/bridge';
 import { getMediaGate, type MediaGateTicket } from './mediaGate';
+import {
+  initialMediaImageState,
+  mediaImageWantsSlot,
+  reduceMediaImage,
+  type MediaImageEvent,
+  type MediaImagePhase,
+  type MediaImageState,
+} from './mediaImageMachine';
 
-export type MediaImagePhase =
-  | { phase: 'waiting' }
-  | { phase: 'loading' }
-  | { phase: 'ready' }
-  | { phase: 'blocked'; state: MediaStateVM };
+export type { MediaImagePhase } from './mediaImageMachine';
 
 /** `media://` tokens carry the surface (Core's log) and a reload counter. */
 export function mediaSrc(url: string, surface: MediaSurfaceVM, reload: number): string {
@@ -22,21 +29,14 @@ export function mediaSrc(url: string, surface: MediaSurfaceVM, reload: number): 
   return `${url}?s=${surface}${reload > 0 ? `&r=${reload}` : ''}`;
 }
 
-const PENDING_RECHECKS = 3;
-const PENDING_RECHECK_MS = 2_000;
-
-interface ImageState {
-  url: string | null;
-  granted: boolean;
-  reload: number;
-  phase: MediaImagePhase;
-}
-
-function freshState(url: string | null): ImageState {
-  return { url, granted: false, reload: 0, phase: { phase: 'waiting' } };
-}
-
-export function useMediaImage(url: string | null, surface: MediaSurfaceVM): {
+export function useMediaImage(
+  url: string | null,
+  surface: MediaSurfaceVM,
+  options: {
+    /** false: never load by itself (a file still processing) — only `loadNow`. */
+    autoLoad?: boolean;
+  } = {},
+): {
   /** Callback ref for the cell element the gate watches. */
   attach: (element: HTMLElement | null) => void;
   src: string | null;
@@ -46,16 +46,16 @@ export function useMediaImage(url: string | null, surface: MediaSurfaceVM): {
   /** Explicit click: fetch now (may spend credits). */
   loadNow: () => void;
 } {
+  const autoLoad = options.autoLoad ?? true;
   const [element, setElement] = useState<HTMLElement | null>(null);
-  const [stored, setStored] = useState<ImageState>(() => freshState(url));
+  const [stored, setStored] = useState<MediaImageState>(() => initialMediaImageState(url));
   // A new token starts over (render-time adjustment, no effect round-trip).
-  if (stored.url !== url) setStored(freshState(url));
-  const current = stored.url === url ? stored : freshState(url);
+  if (stored.url !== url) setStored(initialMediaImageState(url));
+  const current = stored.url === url ? stored : initialMediaImageState(url);
   const ticketRef = useRef<MediaGateTicket | null>(null);
-  const rechecksRef = useRef(0);
 
-  const patch = useCallback((next: Partial<ImageState> | ((prev: ImageState) => Partial<ImageState>)) => {
-    setStored((prev) => (prev.url !== url ? prev : { ...prev, ...(typeof next === 'function' ? next(prev) : next) }));
+  const dispatch = useCallback((event: MediaImageEvent) => {
+    setStored((prev) => (prev.url !== url ? prev : reduceMediaImage(prev, event)));
   }, [url]);
 
   const release = useCallback(() => {
@@ -63,71 +63,79 @@ export function useMediaImage(url: string | null, surface: MediaSurfaceVM): {
     ticketRef.current = null;
   }, []);
 
+  const wantsSlot = autoLoad && url !== null && element !== null && mediaImageWantsSlot(current);
   useEffect(() => {
-    rechecksRef.current = 0;
-  }, [url]);
+    if (!wantsSlot || url === null || element === null) return undefined;
+    const cancelInMain = (): void => {
+      void getBridge().invoke('cmd:media.cancel', { url }).catch(() => undefined);
+    };
+    const unwatch = getMediaGate().watch(
+      element,
+      (ticket) => {
+        ticketRef.current = ticket;
+        dispatch({ type: 'granted' });
+      },
+      () => {
+        // The gate already freed the slot.
+        ticketRef.current = null;
+        dispatch({ type: 'hidden' });
+        cancelInMain();
+      },
+    );
+    return () => {
+      unwatch();
+      if (ticketRef.current !== null) {
+        // Unmounted (or the token changed) while still loading.
+        release();
+        cancelInMain();
+      }
+    };
+  }, [wantsSlot, url, element, dispatch, release]);
 
+  // Timers are driven by the phase: a bounded recheck, or a quiet park.
+  const phase = current.phase;
+  const recheckDelay = phase.phase === 'recheck' ? phase.delayMs : null;
   useEffect(() => {
-    if (url === null || element === null || current.granted) return undefined;
-    return getMediaGate().watch(element, (ticket) => {
-      ticketRef.current = ticket;
-      patch({ granted: true, phase: { phase: 'loading' } });
-    });
-  }, [url, element, current.granted, patch]);
-
-  useEffect(() => release, [release]);
+    if (recheckDelay === null) return undefined;
+    const timer = window.setTimeout(() => dispatch({ type: 'recheckDue' }), recheckDelay);
+    return () => window.clearTimeout(timer);
+  }, [recheckDelay, dispatch]);
+  const parkedFor = phase.phase === 'parked' ? phase.retryAfterMs : null;
+  useEffect(() => {
+    if (parkedFor === null) return undefined;
+    const timer = window.setTimeout(() => dispatch({ type: 'rearm' }), parkedFor);
+    return () => window.clearTimeout(timer);
+  }, [parkedFor, dispatch]);
 
   const onLoad = useCallback(() => {
     release();
-    patch({ phase: { phase: 'ready' } });
-  }, [patch, release]);
+    dispatch({ type: 'loaded' });
+  }, [dispatch, release]);
 
   const onError = useCallback(() => {
     release();
     if (url === null) return;
     void getBridge()
       .invoke('query:media.state', { url })
-      .then((state) => {
-        const transient = state.state === 'loading' || state.state === 'idle' || state.state === 'ready';
-        if (transient && rechecksRef.current < PENDING_RECHECKS) {
-          // In flight elsewhere (another cell, another device) or just
-          // cached: look again shortly — bounded, never a loop.
-          rechecksRef.current += 1;
-          patch({ phase: { phase: 'loading' } });
-          window.setTimeout(
-            () => patch((prev) => ({ reload: prev.reload + 1 })),
-            state.state === 'ready' ? 0 : PENDING_RECHECK_MS,
-          );
-          return;
-        }
-        patch({ phase: { phase: 'blocked', state: transient ? { state: 'load', reason: 'failed' } : state } });
-      })
-      .catch(() => patch({ phase: { phase: 'blocked', state: { state: 'unavailable' } } }));
-  }, [patch, release, url]);
+      .then((state) => dispatch({ type: 'stateAnswer', state }))
+      .catch(() => dispatch({ type: 'stateFailed' }));
+  }, [dispatch, release, url]);
 
   const loadNow = useCallback(() => {
     if (url === null) return;
-    patch({ phase: { phase: 'loading' } });
+    dispatch({ type: 'clickStarted' });
     void getBridge()
-      .invoke('cmd:media.load', { url, surface })
-      .then((state) => {
-        if (state.state === 'ready') {
-          // The file is in the local cache now: show it (no gate slot needed —
-          // this was an explicit click).
-          patch((prev) => ({ granted: true, reload: prev.reload + 1, phase: { phase: 'loading' } }));
-          return;
-        }
-        patch({ phase: { phase: 'blocked', state } });
-      })
-      .catch(() => patch({ phase: { phase: 'blocked', state: { state: 'load', reason: 'failed' } } }));
-  }, [patch, surface, url]);
+      .invoke('cmd:media.load', { url, surface, trigger: 'click' })
+      .then((state) => dispatch({ type: 'clickAnswer', state }))
+      .catch(() => dispatch({ type: 'clickFailed' }));
+  }, [dispatch, surface, url]);
 
   const attach = useCallback((next: HTMLElement | null) => setElement(next), []);
-  const blocked = current.phase.phase === 'blocked';
+  const showing = current.granted && (phase.phase === 'loading' || phase.phase === 'ready');
   return {
     attach,
-    src: url !== null && current.granted && !blocked ? mediaSrc(url, surface, current.reload) : null,
-    phase: current.phase,
+    src: url !== null && showing ? mediaSrc(url, surface, current.reload) : null,
+    phase,
     onLoad,
     onError,
     loadNow,

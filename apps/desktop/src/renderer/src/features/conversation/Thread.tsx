@@ -18,7 +18,7 @@ import { mergeOutboxRows } from './sendLogic';
 import { SkeletonThread } from '../../design/Skeleton';
 import { EmptyState } from '../../design/EmptyState';
 import { DayDivider, MessageRow, TipLedgerRow } from './ThreadRows';
-import { mediaTilesHeight } from './MediaThumb';
+import { mediaTilesHeight, mediaTilesWidth } from './MediaThumb';
 import { OutboxRow } from './OutboxRows';
 import { cx } from '../../lib/cx';
 import { useT } from '../../lib/i18n';
@@ -44,15 +44,26 @@ const ROW_METRICS: Record<ThreadDensity, RowMetrics> = {
   compact: { base: 50, perLine: 20, chars: 58, day: 34, tip: 42, outbox: 84, fallback: 60 },
 };
 
+/** Text width inside a PPV bubble (w-[312px] minus its padding). */
+const PPV_BUBBLE_TEXT_PX = 288;
+/** ~7.4 px per character at the 14.5 px message size. */
+function captionChars(widthPx: number): number {
+  return Math.max(20, Math.floor(widthPx / 7.4));
+}
+
 function estimateRow(row: ThreadRow | undefined, m: RowMetrics): number {
   if (row === undefined) return m.fallback;
   if (row.kind === 'day') return m.day;
   if (row.kind === 'tip') return m.tip;
   if (row.kind === 'outbox') return m.outbox;
   const msg = row.message;
-  let h = m.base + Math.ceil(msg.text.length / m.chars) * m.perLine;
-  // D42: fixed-size media tiles (plus the gap under them when text follows).
-  if (msg.media.length > 0) h += mediaTilesHeight(msg.media.length) + (msg.text !== '' ? 8 : 0);
+  const media = msg.media.length;
+  // D42: a bubble with tiles hugs them (a PPV bubble is 312 px), so its
+  // caption wraps at that width, not at the bubble's usual maximum.
+  const chars = media === 0 ? m.chars : captionChars(msg.price > 0 ? PPV_BUBBLE_TEXT_PX : mediaTilesWidth(media));
+  let h = m.base + Math.ceil(msg.text.length / chars) * m.perLine;
+  // Fixed-size media tiles (plus the gap under them when text follows).
+  if (media > 0) h += mediaTilesHeight(media) + (msg.text !== '' ? 8 : 0);
   if (msg.price > 0) h += 32;
   return h;
 }

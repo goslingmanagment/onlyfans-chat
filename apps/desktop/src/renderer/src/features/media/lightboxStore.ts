@@ -16,6 +16,11 @@ interface LightboxState {
   /** Where the lightbox was opened from (thumb loads keep that surface). */
   origin: MediaSurfaceVM;
   open: boolean;
+  /**
+   * False on the frame the opening click showed; true after the first step —
+   * a frame reached by navigation loads its full photo as `auto` (D42).
+   */
+  navigated: boolean;
   show: (items: LightboxItem[], index: number, origin: MediaSurfaceVM) => void;
   step: (delta: number) => void;
   close: () => void;
@@ -26,13 +31,16 @@ export const useLightboxStore = create<LightboxState>((set) => ({
   index: 0,
   origin: 'thread',
   open: false,
+  navigated: false,
   show: (items, index, origin) =>
-    set(items.length === 0 ? { open: false } : { items, index: Math.min(Math.max(0, index), items.length - 1), origin, open: true }),
+    set(items.length === 0
+      ? { open: false }
+      : { items, index: Math.min(Math.max(0, index), items.length - 1), origin, open: true, navigated: false }),
   step: (delta) =>
     set((state) => {
-      if (state.items.length === 0) return state;
+      if (state.items.length < 2) return state;
       const next = (state.index + delta + state.items.length) % state.items.length;
-      return { index: next };
+      return { index: next, navigated: true };
     }),
-  close: () => set({ open: false, items: [], index: 0 }),
+  close: () => set({ open: false, items: [], index: 0, navigated: false }),
 }));

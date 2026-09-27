@@ -21,6 +21,11 @@ export function mediaTilesHeight(count: number): number {
   return 118 * 2 + 4;
 }
 
+/** Tile block width (px): a bubble with tiles hugs it, so its caption wraps here. */
+export function mediaTilesWidth(count: number): number {
+  return count === 2 ? 304 : 240;
+}
+
 export const MediaThumb = memo(function MediaThumb({
   media,
 }: {

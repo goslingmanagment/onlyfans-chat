@@ -1,18 +1,21 @@
-// D42: full-size photos on click. Opening (or stepping to) a photo is the
-// explicit action, so the full file is requested with `cmd:media.load`
-// (trigger click — Core may spend credits on it, over the daily budget if
-// needed). Video and GIF never load in full: the lightbox shows their
-// preview frame only (a blocked preview offers «Загрузить»). Locked files
-// stay locked. The thumbnail stands in while the full photo loads; a preview
-// that cannot load is a quiet box, never a broken image; nothing here ever
-// sees a URL other than media://.
+// D42: full-size photos on click. The opening click and «Загрузить» are the
+// explicit action (`cmd:media.load`, trigger click — Core may spend credits,
+// past the daily budget if needed). A frame reached with ‹ › or the arrows
+// asks only after it stayed on screen (lightboxLoader.ts) and as `auto`:
+// budgeted, and for a full-size photo Core answers «load on click», so the
+// thumbnail stays with «Загрузить» — unless the full photo is already in the
+// local cache. Video and GIF never load in full: the preview frame only.
+// Locked files stay locked. A preview that cannot load is a quiet box, never
+// a broken image; nothing here ever sees a URL other than media://.
+// The lightbox takes focus while open and gives it back when it closes.
 
-import { useEffect, useState } from 'react';
-import type { MediaStateVM, MediaSurfaceVM } from '../../../../preload/contract';
+import { useEffect, useRef, useState } from 'react';
+import type { MediaStateVM, MediaSurfaceVM, MediaTriggerVM } from '../../../../preload/contract';
 import { getBridge } from '../../bridge/bridge';
 import { cx } from '../../lib/cx';
 import { useT } from '../../lib/i18n';
 import { MEDIA_LOAD_TIP, formatMediaDuration } from './MediaCell';
+import { createFullPhotoLoader, lightboxFrameTrigger, lightboxKeyAction, type FullPhotoLoader } from './lightboxLoader';
 import { useLightboxStore, type LightboxItem } from './lightboxStore';
 import { mediaSrc, useMediaImage } from './useMediaImage';
 
@@ -23,37 +26,54 @@ type FullState =
   | { phase: 'blocked'; state: MediaStateVM };
 
 let reloadSeq = 0;
+let sharedLoader: FullPhotoLoader | null = null;
 
-function useFullPhoto(item: LightboxItem | null): { state: FullState; retry: () => void } {
-  const [attempt, setAttempt] = useState(0);
+function fullPhotoLoader(): FullPhotoLoader {
+  sharedLoader ??= createFullPhotoLoader({
+    load: (url, trigger) => getBridge().invoke('cmd:media.load', { url, surface: 'lightbox', trigger }),
+    cancel: (url) => {
+      void getBridge().invoke('cmd:media.cancel', { url }).catch(() => undefined);
+    },
+    setTimer: (run, ms) => window.setTimeout(run, ms),
+    clearTimer: (handle) => window.clearTimeout(handle as number),
+  });
+  return sharedLoader;
+}
+
+function useFullPhoto(item: LightboxItem | null, navigated: boolean): { state: FullState; retry: () => void } {
   const fullUrl = item !== null && item.type === 'photo' && item.isReady && !item.locked ? item.fullUrl : null;
-  const key = fullUrl === null ? null : `${fullUrl}#${attempt}`;
+  // «Загрузить» (a retry) is always a click; it belongs to this frame only.
+  const [retries, setRetries] = useState<{ url: string | null; n: number }>({ url: null, n: 0 });
+  // A quiet `wait` (Core busy or rate-limited) asks again by itself, same trigger.
+  const [waits, setWaits] = useState<{ url: string | null; n: number }>({ url: null, n: 0 });
+  const attempt = retries.url === fullUrl ? retries.n : 0;
+  const waited = waits.url === fullUrl ? waits.n : 0;
+  const trigger: MediaTriggerVM = lightboxFrameTrigger(navigated, attempt > 0);
+  const key = fullUrl === null ? null : `${fullUrl}#${attempt}#${waited}#${trigger}`;
   const [result, setResult] = useState<{ key: string | null; state: FullState }>({ key: null, state: { phase: 'none' } });
 
   useEffect(() => {
     if (key === null || fullUrl === null) return undefined;
-    let live = true;
-    void getBridge()
-      .invoke('cmd:media.load', { url: fullUrl, surface: 'lightbox' })
-      .then((answer) => {
-        if (!live) return;
-        if (answer.state === 'ready') {
-          reloadSeq += 1;
-          setResult({ key, state: { phase: 'ready', src: mediaSrc(fullUrl, 'lightbox', reloadSeq) } });
-        } else {
-          setResult({ key, state: { phase: 'blocked', state: answer } });
-        }
-      })
-      .catch(() => {
-        if (live) setResult({ key, state: { phase: 'blocked', state: { state: 'load', reason: 'failed' } } });
-      });
-    return () => {
-      live = false;
-    };
-  }, [key, fullUrl]);
+    // Dropped on frame change or close: a dwell timer is cleared, an
+    // unstarted automatic load is cancelled in main.
+    return fullPhotoLoader().request(fullUrl, trigger, (answer) => {
+      if (answer.state === 'ready') {
+        reloadSeq += 1;
+        setResult({ key, state: { phase: 'ready', src: mediaSrc(fullUrl, 'lightbox', reloadSeq) } });
+      } else {
+        setResult({ key, state: { phase: 'blocked', state: answer } });
+      }
+    });
+  }, [key, fullUrl, trigger]);
 
   const state: FullState = key === null ? { phase: 'none' } : result.key === key ? result.state : { phase: 'loading' };
-  return { state, retry: () => setAttempt((n) => n + 1) };
+  const waitMs = state.phase === 'blocked' && state.state.state === 'wait' ? state.state.retryAfterMs : null;
+  useEffect(() => {
+    if (waitMs === null) return undefined;
+    const timer = window.setTimeout(() => setWaits({ url: fullUrl, n: waited + 1 }), Math.max(1_000, waitMs));
+    return () => window.clearTimeout(timer);
+  }, [waitMs, fullUrl, waited]);
+  return { state, retry: () => setRetries({ url: fullUrl, n: attempt + 1 }) };
 }
 
 const STAGE_BOX = 'flex h-[240px] w-[320px] flex-col items-center justify-center gap-2 rounded-[12px] border border-veil-ink/15';
@@ -84,7 +104,7 @@ function LightboxPreview({
   standIn: boolean;
 }): React.JSX.Element {
   const t = useT();
-  const { attach, src, phase, onLoad, onError, loadNow } = useMediaImage(item.thumbUrl, origin);
+  const { attach, src, phase, onLoad, onError, loadNow } = useMediaImage(item.thumbUrl, origin, { autoLoad: item.isReady });
   const isMotion = item.type === 'video' || item.type === 'gif';
 
   if (item.thumbUrl === null) {
@@ -138,30 +158,62 @@ function LightboxPreview({
   );
 }
 
+const FOCUSABLE = 'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+
 export function MediaLightbox(): React.JSX.Element | null {
   const t = useT();
   const open = useLightboxStore((s) => s.open);
   const items = useLightboxStore((s) => s.items);
   const index = useLightboxStore((s) => s.index);
   const origin = useLightboxStore((s) => s.origin);
+  const navigated = useLightboxStore((s) => s.navigated);
   const step = useLightboxStore((s) => s.step);
   const close = useLightboxStore((s) => s.close);
   const item = open ? items[index] ?? null : null;
-  const full = useFullPhoto(item);
+  const full = useFullPhoto(item, navigated);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  // Focus moves into the lightbox while it is open and back where it was after.
+  useEffect(() => {
+    if (!open) return undefined;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialogRef.current?.focus();
+    return () => previous?.focus();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return undefined;
     // Capture phase: the lightbox owns these keys while it is open.
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        close();
-      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-        event.preventDefault();
-        event.stopPropagation();
-        step(event.key === 'ArrowLeft' ? -1 : 1);
+      if (event.key === 'Tab') {
+        // Keep focus inside the dialog.
+        const dialog = dialogRef.current;
+        if (dialog === null) return;
+        const focusable = [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)];
+        if (focusable.length === 0) {
+          event.preventDefault();
+          dialog.focus();
+          return;
+        }
+        const first = focusable[0]!;
+        const last = focusable[focusable.length - 1]!;
+        const active = document.activeElement;
+        if (event.shiftKey && (active === first || active === dialog)) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
       }
+      const action = lightboxKeyAction(event);
+      if (action === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (action === 'close') close();
+      else if (action === 'prev') step(-1);
+      else if (action === 'next') step(1);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -203,10 +255,12 @@ export function MediaLightbox(): React.JSX.Element | null {
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
+      tabIndex={-1}
       aria-label={t('media.counter', { i: index + 1, n: items.length })}
-      className="absolute inset-0 z-50 flex flex-col bg-veil text-veil-ink"
+      className="absolute inset-0 z-50 flex flex-col bg-veil text-veil-ink outline-none"
       onMouseDown={close}
     >
       <div className="flex flex-none items-center justify-between px-4 pt-3" onMouseDown={(e) => e.stopPropagation()}>
@@ -250,7 +304,8 @@ export function MediaLightbox(): React.JSX.Element | null {
                 {t('media.load')}
               </button>
             )}
-            {blocked !== null && blocked.state !== 'load' && (
+            {blocked !== null && blocked.state === 'wait' && <span className="opacity-80">{t('media.loading')}</span>}
+            {blocked !== null && blocked.state !== 'load' && blocked.state !== 'wait' && (
               <span>{t(blocked.state === 'processing' ? 'media.processing' : 'media.unavailable')}</span>
             )}
           </figcaption>
