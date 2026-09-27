@@ -1,5 +1,5 @@
 // ✳ AI menu in the conversation header (DESIGN §1 tier 2): rare/deep actions
-// only — Scan ⌘S (fan-summary → panel's Scan tab) and Chat review ⌘E are live;
+// only — Scan (fan-summary → panel's Scan tab) and Chat review are live;
 // Compare stays gated (P4-stretch, lowest priority — PRD F6.8). The deep
 // minimum-history gate (CG-FLOW-03) is the coordinator's: errors land in the
 // dock as coded cards.
@@ -9,7 +9,7 @@ import { useAccounts, useMessages, useSettings } from '../../bridge/queries';
 import { useUiStore } from '../../state/uiStore';
 import { Kbd } from '../../design/Kbd';
 import { cx } from '../../lib/cx';
-import { modCombo } from '../../lib/modKey';
+import { schemeLabel } from '../../lib/hotkeyScheme';
 import { startAiFeature, type LiveAiFeature } from './aiStore';
 import { evaluateAiGate, hasConfiguredAiTransport } from './dockLogic';
 import { gateText } from './gateText';
@@ -136,7 +136,7 @@ export function AiHeaderMenu(): React.JSX.Element {
             glyph="◎"
             title="Scan"
             sub={t('aidock.menuScanSub')}
-            kbd={modCombo('S')}
+            kbd={schemeLabel('recap')}
             disabledReason={blockedReason}
             onRun={() => run('fan-summary')}
           />
@@ -144,7 +144,7 @@ export function AiHeaderMenu(): React.JSX.Element {
             glyph="▤"
             title="Chat review"
             sub={t('aidock.menuReviewSub')}
-            kbd={modCombo('E')}
+            kbd={schemeLabel('review')}
             disabledReason={blockedReason}
             onRun={() => run('chat-review')}
           />

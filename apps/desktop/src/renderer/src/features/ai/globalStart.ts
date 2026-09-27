@@ -1,5 +1,5 @@
 // Single gated entry point for AI starts that originate outside the pill
-// row/menu (keymap ⌘R/⌘I/⌘H/⌘P/⌘G/⌘E/⌘S, ⌘K palette) — same gates as the
+// row/menu (the family hotkey scheme, the palette) — same gates as the
 // visible buttons, evaluated from the query cache. Feature-specific gates fall
 // open when their data is not cached: the coordinator's CG-FLOW-* checks stay
 // authoritative and surface as dock error cards.

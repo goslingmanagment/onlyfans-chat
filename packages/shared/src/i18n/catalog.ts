@@ -1028,6 +1028,14 @@ export const UI_MESSAGES = {
   'toast.sentYou': { en: 'sent you a message', ru: 'прислал(а) сообщение' },
   'toast.dismiss': { en: 'Dismiss', ru: 'Закрыть' },
   'toast.sendTooManyPartsTitle': { en: 'Too many message parts', ru: 'Слишком много частей сообщения' },
+  'toast.splitOn': {
+    en: 'On — the next reply comes as 2–3 messages',
+    ru: 'Включено — следующий ответ придёт 2–3 сообщениями',
+  },
+  'toast.splitOff': {
+    en: 'Off — the next reply comes as one message',
+    ru: 'Выключено — следующий ответ придёт одним сообщением',
+  },
   'toast.sendTooManyPartsBody': {
     en: 'Draft has {count} parts. Keep it to {max} or fewer [NEXT] parts.',
     ru: 'В черновике {count} частей. Оставьте не больше {max} частей [NEXT].',
@@ -1130,6 +1138,18 @@ export const UI_MESSAGES = {
   'cheat.upcoming': { en: 'Coming with later phases', ru: 'Появится в следующих фазах' },
   'cheat.extraJump': { en: 'Jump to chat N (hold the mod key to number the list)', ru: 'Перейти к чату N (зажмите клавишу-модификатор, чтобы пронумеровать список)' },
   'cheat.extraSpenders': { en: 'Spenders page: preview / open chat / back / stats', ru: 'Страница Спендеров: превью / открыть чат / назад / статистика' },
+  'cheat.sameEverywhere': {
+    en: 'Same shortcuts as the Fansly browser extension',
+    ru: 'Те же клавиши, что в расширении для Fansly',
+  },
+  'cheat.groupText': { en: 'Write text', ru: 'Пишут текст' },
+  'cheat.groupPanels': { en: 'Analysis and panels', ru: 'Разборы и панели' },
+  'cheat.groupDiffers': { en: 'Only in this app', ru: 'Только в приложении' },
+  'cheat.coachBrowserOnly': { en: 'Coach — browser extension only', ru: 'Coach — только в браузере' },
+  'cheat.macLegacy': {
+    en: '{long} work like {short}',
+    ru: '{long} работают как {short}',
+  },
   'cmd.palette': { en: 'Command palette — jump to chat, fan or action', ru: 'Палитра команд — перейти к чату, фану или действию' },
   'cmd.nextUnread': { en: 'Next unread chat', ru: 'Следующий непрочитанный чат' },
   'cmd.nextChat': { en: 'Next chat', ru: 'Следующий чат' },
@@ -1150,6 +1170,8 @@ export const UI_MESSAGES = {
   'cmd.aiScan': { en: 'Scan — deep fan profile → panel (AI)', ru: 'Scan — глубокий профиль фана → в панель (ИИ)' },
   'cmd.aiTone': { en: 'Cycle tone (casual / flirty / upsell / spicy)', ru: 'Сменить тон (casual / flirty / upsell / spicy)' },
   'cmd.aiCancel': { en: 'Cancel running AI operation', ru: 'Отменить текущую операцию ИИ' },
+  'cmd.aiSplit': { en: 'Split — prefer the reply as 2–3 messages', ru: 'Split — предпочитать ответ 2–3 сообщениями' },
+  'cmd.spenders': { en: 'Spenders — open / close the board', ru: 'Спендеры — открыть / закрыть борд' },
   'cmd.aiPart0': { en: 'Insert all AI draft parts as a [NEXT] sequence', ru: 'Вставить все части черновика ИИ как последовательность [NEXT]' },
   'cmd.boardPreview': { en: 'Spenders: quick-look preview', ru: 'Спендеры: быстрый просмотр' },
   'cmd.boardOpenChat': { en: 'Spenders: open the full chat', ru: 'Спендеры: открыть полный чат' },
@@ -1381,8 +1403,8 @@ export const UI_MESSAGES = {
   'aidock.toneDeselectTip': { en: 'Click to deselect (no tone)', ru: 'Нажмите, чтобы снять выбор (без тона)' },
   'aidock.toneUseTip': { en: 'Use {tone} tone on the next generation', ru: 'Использовать тон {tone} для следующей генерации' },
   'aidock.splitTip': {
-    en: 'Prefer splitting the reply into multiple messages (applies to the next generation)',
-    ru: 'Предпочитать разбивку ответа на несколько сообщений (применится к следующей генерации)',
+    en: 'Prefer splitting the reply into multiple messages (applies to the next generation) · {combo}',
+    ru: 'Предпочитать разбивку ответа на несколько сообщений (применится к следующей генерации) · {combo}',
   },
   'aidock.split': { en: '⫶ split', ru: '⫶ разбить' },
   'aidock.menuScanSub': { en: 'deep fan profile → panel · Scan tab', ru: 'глубокий профиль фана → панель · вкладка Scan' },

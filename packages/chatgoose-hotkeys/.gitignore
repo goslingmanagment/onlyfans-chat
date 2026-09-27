@@ -1,0 +1,3 @@
+# Generated package: the compiled bundle IS the artifact — un-ignore it here
+# (the repo-root ignore hides dist/ everywhere else).
+!dist/

@@ -28,7 +28,7 @@ import { usePingGate } from './pingGate';
 import { gateText } from './gateText';
 import { Kbd } from '../../design/Kbd';
 import { cx } from '../../lib/cx';
-import { modCombo } from '../../lib/modKey';
+import { schemeLabel } from '../../lib/hotkeyScheme';
 import { useT } from '../../lib/i18n';
 import type { AiPill } from '../conversation/conversationFeatures';
 
@@ -88,10 +88,10 @@ const SPLIT_PILL_BASE =
 
 /**
  * Variant C: Reply is a split control. The body generates a fast-reply in the
- * ACTIVE tone (same as ⌘R — unchanged); the ▾ caret opens the upward TonePopover
+ * ACTIVE tone (same as the Reply hotkey — unchanged); the ▾ caret opens the upward TonePopover
  * where picking a tone immediately generates in it (one click = one generation).
  * The menu mark reflects the effective active tone (toneOverride ?? default), so
- * it stays in sync with ⌘T cycling and the dock footer pills. Outside-click
+ * it stays in sync with the tone hotkey's cycling and the dock footer pills. Outside-click
  * closes via a ref that wraps the WHOLE control (body + caret), so toggling the
  * caret never self-closes.
  */
@@ -146,7 +146,7 @@ function ReplySplitPill({
         }}
         className={cx(SPLIT_PILL_BASE, 'gap-[7px] rounded-l-full py-1 pr-2.5 pl-[13px]')}
       >
-        <i className="not-italic">✳</i> Reply <Kbd>{modCombo('R')}</Kbd>
+        <i className="not-italic">✳</i> Reply <Kbd>{schemeLabel('reply')}</Kbd>
       </button>
       <button
         type="button"
@@ -233,7 +233,7 @@ export function AiPillRow({
   // One renderer per pill, keyed by AiPill. <ConversationView> chooses which to
   // show (and their order) via `pills`; the full chat passes the default set so
   // this renders byte-for-byte as before. Reply swaps its split-menu (tone caret)
-  // for a plain ⌘R fast-reply when `replyTone` is false (e.g. the preview).
+  // for a plain fast-reply when `replyTone` is false (e.g. the preview).
   const pillNodes: Record<AiPill, React.JSX.Element> = {
     reply: replyTone ? (
       <ReplySplitPill
@@ -253,7 +253,7 @@ export function AiPillRow({
           if (!rowDisabled) start('fast-reply');
         }}
       >
-        <i className="not-italic">✳</i> Reply <Kbd>{modCombo('R')}</Kbd>
+        <i className="not-italic">✳</i> Reply <Kbd>{schemeLabel('reply')}</Kbd>
       </PillButton>
     ),
     improve: (
@@ -265,7 +265,7 @@ export function AiPillRow({
           if (!rowDisabled) start('improve-draft');
         }}
       >
-        Improve <Kbd>{modCombo('I')}</Kbd>
+        Improve <Kbd>{schemeLabel('fix')}</Kbd>
       </PillButton>
     ),
     help: (
@@ -277,7 +277,7 @@ export function AiPillRow({
           if (!rowDisabled) start('help-me');
         }}
       >
-        Help <Kbd>{modCombo('H')}</Kbd>
+        Help <Kbd>{schemeLabel('help')}</Kbd>
       </PillButton>
     ),
     ping: (
@@ -290,7 +290,7 @@ export function AiPillRow({
           if (!rowDisabled && pingPill.enabled) start('ping');
         }}
       >
-        Ping <Kbd>{modCombo('P')}</Kbd>
+        Ping <Kbd>{schemeLabel('ping')}</Kbd>
       </PillButton>
     ),
     hi: (
@@ -303,7 +303,7 @@ export function AiPillRow({
           if (!rowDisabled && hiPill.enabled) start('hi-greeting');
         }}
       >
-        Hi <Kbd>{modCombo('G')}</Kbd>
+        Hi <Kbd>{schemeLabel('hi')}</Kbd>
       </PillButton>
     ),
   };
