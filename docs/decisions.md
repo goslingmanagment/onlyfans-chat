@@ -1246,20 +1246,26 @@ download had no budget. Now:
 - **This client's half.** Only accounts granted to the current identity are
   served (D35, `media/serve-policy.ts`). The cache answers first.
   Downloads: https on an allowlisted host with every redirect hop
-  re-checked, only `image/*` bytes kept and cached (an HTML page served
-  with 200 is a failure), 30 s timeout, at most four at once with clicks
-  served first, stop past Core's priced size (unknown size — a click only —
-  has a 5 MB guard). A paid transfer is never retried automatically: after
-  any failed paid transfer, or a paid answer without a URL, the token waits
-  for an explicit click or the next UTC midnight. `cap_blocked` latches the
+  re-checked, only JPEG, PNG, WebP and GIF bytes kept and cached — decided
+  by their magic bytes and cached under that type, so an
+  `application/octet-stream` body qualifies by its bytes while SVG and an
+  HTML page served with 200 never do — 30 s timeout, at most four at once
+  with clicks served first, stop past Core's priced size (unknown size — a
+  click only — has a 5 MB guard; nothing above Core's 30 MB ceiling). A
+  paid transfer is never retried automatically: after any failed paid
+  transfer, or a paid answer without a URL, the token waits for the next
+  UTC midnight or an explicit click that gets Core's decision — a click
+  that times out, is rate-limited or finds the file in flight elsewhere
+  leaves the latch in place. `cap_blocked` latches the
   token for automatic loads (the daily budget until Core's `retryAt`; a
   full-size photo — Core answers «click only» to an automatic ask — until
   midnight). Quiet answers are remembered for automatic loads so nothing
   storms: refused, unavailable, link expired, size unknown and an exhausted
   `pending` for 12 min, a file still processing for 1 min; a Core without
-  the routes (404/405) for the rest of the session, per account (Core also
-  answers 404 for an account it no longer grants, so one stale grant cannot
-  switch media off for every account); a rate-limited device (429) waits
+  the routes (404/405) for 15 min, per account, so a desktop updated before
+  the hub deploy recovers without a restart (Core also answers 404 for an
+  account it no longer grants, so one stale grant cannot switch media off
+  for every account); a rate-limited device (429) waits
   Core's `Retry-After` (default 60 s) as a quiet placeholder that tries
   again by itself — never «Загрузить». An explicit click bypasses all of
   that. `pending` waits Core's `retryAfterMs` (≤5 s) and asks again at most
@@ -1270,40 +1276,54 @@ download had no budget. Now:
   `source_expired`, or on a file Core still calls processing and names a
   message or vault item for, re-reads it once (read intent
   `media-context-v1`, so Core files the read under media) and asks again; a
-  re-read message is written back, so its row catches up. An automatic load
-  that has not started is cancelled when its cell leaves the viewport or
-  unmounts (`cmd:media.cancel`, and the `<img>` request's abort signal).
-  Every hand-out is reported (`ofapiMediaReports`: batched ≤100,
-  idempotent by `resolveId`, durable in the encrypted `media_fetch_reports`
-  table, flushed 2 s after a download — a pending 60 s retry never delays
-  that — at startup, and again later when no hub was there); a batch Core
-  refused 30 times is dropped, which Core already counts as `unknown`, the
-  same as a report that never arrives. Credits land in Activity under
-  purpose `media`, idempotent by `resolveId`: Core's answer for a priced
-  file, and for an unknown-size paid click the amount Core settles on the
-  report, max(1, ⌈3 × bytes ÷ 10⁶⌉); no provider headers are invented. A
-  refusal (the owner's `media_previews` policy off or its ceiling reached)
-  shows «Недоступно», quietly.
+  re-read message is written back, so its row catches up. Every cell names
+  itself on its requests (`c=`); an automatic load that has not started is
+  dropped once no cell wants it any more — a cell leaving the viewport or
+  unmounting says so (`cmd:media.cancel` with its `c=`, and the `<img>`
+  request's abort signal), and one cell leaving never cancels another's
+  load of the same file. Every hand-out is reported (`ofapiMediaReports`:
+  batched ≤100, idempotent by `resolveId`, durable in the encrypted
+  `media_fetch_reports` table, flushed 2 s after a download — a pending
+  retry never delays that — at startup, and again later when no hub was
+  there), never with more bytes than the transfer was allowed (Core rejects
+  such a report; the local queue mirrors its 30 MB ceiling). Only Core
+  refusing a batch — a 4xx, or the contract check before the wire — counts:
+  after 30 refusals the batch is dropped, which Core already counts as
+  `unknown`, the same as a report that never arrives; an outage, a timeout,
+  a 5xx, a rate limit or a rejected sign-in never discards one, and a Core
+  without the reports route keeps the queue (asked again every 15 min).
+  Reports Core answers as rejected are logged. Credits land in Activity
+  under purpose `media`, idempotent by `resolveId`: Core's answer for a
+  priced file, and for an unknown-size paid click the amount Core settles on
+  the report, min(reserved, max(1, ⌈3 × min(bytes, 5 MB) ÷ 10⁶⌉)); no
+  provider headers are invented. A refusal (the owner's `media_previews`
+  policy off or its ceiling reached, or a paid file over 30 MB) shows
+  «Недоступно», quietly.
 - **UI.** Tiles in the bubble replace the count badge: up to four, the
   fourth carries «+N», every tile opens the lightbox over all of the
   message's attachments; fixed tile heights keep the virtualized thread's
   row estimates stable. The chat gallery and the vault grid in the PPV
   composer share `MediaCell`; a vault click still only attaches, and the
-  cell's «Загрузить» never attaches. Images load only when visible (a gate
+  cell's «Загрузить» never attaches; a vault file still processing is no
+  button at all (a disabled button would swallow its «Проверить»), so it
+  cannot be attached by accident. Images load only when visible (a gate
   with `rootMargin: 0`, ≤4 in flight, visibility re-checked before a queued
-  cell goes; a cell that scrolls away before its image arrived gives its
-  slot back), so scrolling past history spends nothing. States: skeleton
+  cell goes, every automatic reload and recheck through the same gate; a
+  cell that scrolls away before its image arrived gives its slot back), so
+  scrolling past history spends nothing. States: skeleton
   (also, quietly, while Core is busy or rate-limited), «Загрузить» (budget
   reached, size unknown, link expired, a failed try — the click is the
   explicit action), «Недоступно», «Обрабатывается» (with «Проверить» —
   an explicit re-read — when Core names what to re-read; a processing file
   never loads by itself), 🔒 locked PPV, ▶ duration / GIF on previews.
   Full-size photos only on click (lightbox); video and GIF show the preview
-  frame only. In the lightbox the opening click and «Загрузить» are clicks;
-  a frame reached with ‹ › or the arrows (a held key never steps) asks only
-  after 400 ms on screen and as `auto`, so Core answers «click only» and
-  the thumbnail stays with «Загрузить» unless the full photo is already in
-  the local cache; leaving a frame drops its unstarted load. The lightbox
+  frame only. In the lightbox the opening click and «Загрузить» are clicks,
+  each press one click on that visit of the frame; a frame reached with ‹ ›
+  or the arrows (a held key never steps) — a frame pressed on an earlier
+  visit included — asks only after 400 ms on screen and as `auto`, so Core
+  answers «click only» and the thumbnail stays with «Загрузить» unless the
+  full photo is already in the local cache (then it shows, free); leaving a
+  frame drops its unstarted load. The lightbox
   takes focus and gives it back; ⌘K and the cheatsheet close it before they
   open. Fast Reply and every AI transcript still carry text labels only
   («Photo», «Media Bundle: …») — no image or token reaches the kernel.
