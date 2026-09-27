@@ -2,7 +2,7 @@
 // (SPEC §4). Minting a renderer-facing media URL registers its source here;
 // the protocol handler resolves only registered hashes, so the renderer can
 // never make main fetch something the sync/mapping layer did not mint.
-// Two kinds (v26, D42): `url` (a remote URL — avatars) and `ofapi` (a file
+// Two kinds (v26, D43): `url` (a remote URL — avatars) and `ofapi` (a file
 // named by OFAPI account + media id + variant; Core decides how it is fetched).
 // No DbChangedEvent scope: rows are protocol plumbing, nothing renders them.
 

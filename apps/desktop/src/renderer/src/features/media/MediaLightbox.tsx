@@ -1,4 +1,4 @@
-// D42: full-size photos on click. The opening click and «Загрузить» are the
+// D43: full-size photos on click. The opening click and «Загрузить» are the
 // explicit action (`cmd:media.load`, trigger click — Core may spend credits,
 // past the daily budget if needed); each press is one click on that visit of
 // the frame only. A frame reached with ‹ › or the arrows — including one

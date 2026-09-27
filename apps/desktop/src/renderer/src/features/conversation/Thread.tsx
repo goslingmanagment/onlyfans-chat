@@ -58,7 +58,7 @@ function estimateRow(row: ThreadRow | undefined, m: RowMetrics): number {
   if (row.kind === 'outbox') return m.outbox;
   const msg = row.message;
   const media = msg.media.length;
-  // D42: a bubble with tiles hugs them (a PPV bubble is 312 px), so its
+  // D43: a bubble with tiles hugs them (a PPV bubble is 312 px), so its
   // caption wraps at that width, not at the bubble's usual maximum.
   const chars = media === 0 ? m.chars : captionChars(msg.price > 0 ? PPV_BUBBLE_TEXT_PX : mediaTilesWidth(media));
   let h = m.base + Math.ceil(msg.text.length / chars) * m.perLine;

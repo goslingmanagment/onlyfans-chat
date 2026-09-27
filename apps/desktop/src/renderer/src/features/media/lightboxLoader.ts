@@ -1,4 +1,4 @@
-// D42: how the lightbox asks for full-size photos (pure, timer-injectable —
+// D43: how the lightbox asks for full-size photos (pure, timer-injectable —
 // MediaLightbox is its React adapter). The coordinator's rules:
 //   • the opening click and «Загрузить» are explicit (`click`, may spend,
 //     may pass the daily budget) and load at once;

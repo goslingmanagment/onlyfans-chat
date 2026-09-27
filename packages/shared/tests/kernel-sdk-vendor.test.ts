@@ -30,7 +30,7 @@ describe("vendored @kernel/sdk", () => {
       "getOfapiCommand",
       "cancelOfapiCommand",
       "aiPersonaCatalog",
-      // D42: media images (called through raw(), but they must exist here).
+      // D43: media images (called through raw(), but they must exist here).
       "ofapiMediaResolve",
       "ofapiMediaReports",
     ] as const;

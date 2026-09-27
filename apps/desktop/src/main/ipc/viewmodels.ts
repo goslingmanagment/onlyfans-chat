@@ -37,11 +37,11 @@ export function toRendererMediaUrl(url: string | null): string | null {
   return parseMediaToken(url) !== null ? url : null;
 }
 
-/** D42: mints the id token of an OFAPI file (registers it; see media/protocol). */
+/** D43: mints the id token of an OFAPI file (registers it; see media/protocol). */
 export type OfapiMediaTokenMinter = (accountId: string, mediaId: string, variant: 'thumb' | 'full') => string | null;
 
 /**
- * With a minter (D42) a message file's tokens are re-minted from (account,
+ * With a minter (D43) a message file's tokens are re-minted from (account,
  * media id, variant) and whatever the row stored is ignored: rows written
  * before this release hold IP-bound URL tokens or none, and a registry wiped
  * together with the blob cache must not turn into a permanent 404.

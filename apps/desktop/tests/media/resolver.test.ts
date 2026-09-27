@@ -1,4 +1,4 @@
-// D42: the desktop half of the media contract — order of sources (local cache
+// D43: the desktop half of the media contract — order of sources (local cache
 // → Core resolve → the desktop's own download), the per-token budget latch,
 // pending retries with fresh requestIds, the click-only re-read, the priced
 // size limit, the host allowlist on every hop, no automatic retry of a paid

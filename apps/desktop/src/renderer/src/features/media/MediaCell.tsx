@@ -1,4 +1,4 @@
-// D42: the one media cell — thread tiles, the chat gallery and the vault grid.
+// D43: the one media cell — thread tiles, the chat gallery and the vault grid.
 // It never decides cost: it shows what main answers for the token. States:
 //   ready image · skeleton while waiting/loading (and, quietly, while Core is
 //   busy or rate-limited) · «загрузить» (budget reached, size unknown, link

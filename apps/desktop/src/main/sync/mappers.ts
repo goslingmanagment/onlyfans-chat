@@ -24,14 +24,14 @@ import type {
 
 /** Mints an opaque media:// token; null when the remote URL is not an
  *  allowlisted OF media URL (such URLs must never reach the renderer).
- *  D42: `ofapiMedia` mints the id token of an OFAPI file (message, gallery,
+ *  D43: `ofapiMedia` mints the id token of an OFAPI file (message, gallery,
  *  vault) — Core decides how that file is fetched; avatars stay URL tokens. */
 export type ToMediaUrl = ((remoteUrl: string) => string | null) & {
   ofapiMedia?: (accountId: string, mediaId: string, variant: 'thumb' | 'full') => string | null;
 };
 
 /**
- * D42: the media rule shared with Core. A file that is ready and viewable
+ * D43: the media rule shared with Core. A file that is ready and viewable
  * gets a `thumb` id token (Core picks thumb → squarePreview → preview, never
  * the full file) unless it is audio; only a photo gets `full`. Locked and
  * processing files get none.
@@ -44,7 +44,7 @@ export function mintOfapiMediaTokens(
   if (media.locked) return { thumbUrl: null, fullUrl: null };
   return {
     // A file still processing keeps its thumb token: the cell shows
-    // «Обрабатывается» and only an explicit click asks Core again (D42/H3).
+    // «Обрабатывается» and only an explicit click asks Core again (D43/H3).
     thumbUrl: media.type === 'audio' ? null : mint(accountId, media.id, 'thumb'),
     fullUrl: media.isReady && media.type === 'photo' ? mint(accountId, media.id, 'full') : null,
   };
@@ -70,7 +70,7 @@ const richMediaSchema = z.looseObject({
 const MEDIA_TYPES = new Set(['photo', 'video', 'audio', 'gif']);
 
 /** Message-media item → VM-ready shape (also reused by the chat gallery).
- *  D42: with an account and an id-token minter the tokens name the file by
+ *  D43: with an account and an id-token minter the tokens name the file by
  *  id; the legacy URL tokens (IP-bound gateway URLs) remain only for callers
  *  without a minter. */
 export function mapMediaItem(raw: unknown, toMediaUrl: ToMediaUrl, accountId?: string): MessageMediaItem | null {
@@ -242,7 +242,7 @@ export function mapHubMessage(
             textPreview: message.replyTo.textPreview,
           }
         : null,
-    // D42: hub frames carry no file URLs — the id tokens name the files and
+    // D43: hub frames carry no file URLs — the id tokens name the files and
     // Core resolves them on demand (message VMs re-mint them anyway).
     media: (message.media ?? []).map((item) => {
       const base = {

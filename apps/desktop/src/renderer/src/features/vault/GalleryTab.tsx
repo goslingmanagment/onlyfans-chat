@@ -1,7 +1,7 @@
 // Chat media gallery (PRD F7): every media message of the conversation as a
 // virtualized grid with PPV badges (money green = purchased, amber = unopened
 // — DESIGN §4). Replaces the thread pane while the Gallery tab is active.
-// D42: the cover is the shared MediaCell (loads only while visible, Core
+// D43: the cover is the shared MediaCell (loads only while visible, Core
 // decides the cost); a click opens the lightbox over ALL of the message's
 // attachments, not only the cover.
 

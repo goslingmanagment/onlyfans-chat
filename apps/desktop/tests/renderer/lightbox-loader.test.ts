@@ -1,4 +1,4 @@
-// D42 (review D2): lightbox navigation. The opening click and «Загрузить» load
+// D43 (review D2): lightbox navigation. The opening click and «Загрузить» load
 // the full photo at once as `click`; a frame reached by navigation asks only
 // after it stayed 400 ms, as `auto`; leaving a frame drops its load (a dwell
 // timer is cleared, a started automatic load is cancelled in main); a held

@@ -397,11 +397,14 @@ export function buildFeatureResult(
       return { rawText, parts, splitModeRequested: params.mode === 'preferSplit' };
     }
     case 'single-reply': {
-      const parts = normalizeSingleReplyPart(rawText);
+      // Split on Improve asks the kernel for [NEXT] parts; without it the
+      // result stays one message.
+      const splitModeRequested = policy.supportsReplyMode && params.mode === 'preferSplit';
+      const parts = splitModeRequested ? normalizeReplyParts(rawText) : normalizeSingleReplyPart(rawText);
       if (parts.length === 0) {
         throw new CgError('CG-API-06');
       }
-      return { rawText, parts };
+      return splitModeRequested ? { rawText, parts, splitModeRequested } : { rawText, parts };
     }
     case 'xml': {
       if (rawText.trim() === '') {

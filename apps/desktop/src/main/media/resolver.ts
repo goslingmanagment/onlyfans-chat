@@ -1,4 +1,4 @@
-// Media resolver (D42). A message, gallery or vault file is a media:// id
+// Media resolver (D43). A message, gallery or vault file is a media:// id
 // token (account, media id, variant); on a cache miss the desktop asks Core
 // how to fetch it (POST /api/v1/ofapi/media/resolve) and downloads the bytes
 // itself — Core never relays them. Core decides free (webhook URL, OFAPI

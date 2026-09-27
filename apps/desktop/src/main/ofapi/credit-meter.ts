@@ -48,7 +48,7 @@ export interface CreditMeter {
   /** Feed headers and/or the parsed body `_meta` of any OFAPI response. */
   record(input: { headers?: HeadersLike; meta?: unknown; purpose?: string }): void;
   /**
-   * D42: credits Core charged for a request the desktop did not make itself
+   * D43: credits Core charged for a request the desktop did not make itself
    * (a media resolve that handed out a paid download). Taken from Core's
    * answer — never synthesized as provider headers — and idempotent by `key`
    * (the resolve id), so a replayed answer is not counted twice.

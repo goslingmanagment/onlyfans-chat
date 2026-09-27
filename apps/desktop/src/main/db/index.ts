@@ -60,7 +60,7 @@ export interface DataLayer {
   aiSpendLog: AiSpendLogQueries;
   aiAcceptance: AiAcceptanceQueries;
   mediaUrls: MediaUrlsQueries;
-  /** D42: durable media transfer reports awaiting Core. */
+  /** D43: durable media transfer reports awaiting Core. */
   mediaFetchReports: MediaFetchReportsQueries;
   threadFetchLog: ThreadFetchLogQueries;
   messageGuardEvents: MessageGuardEventsQueries;

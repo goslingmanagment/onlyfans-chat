@@ -124,7 +124,7 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
       switch (action) {
         case 'palette':
           e.preventDefault();
-          // D42: the palette never opens underneath the lightbox — it closes first.
+          // D43: the palette never opens underneath the lightbox — it closes first.
           if (lightboxOpen) useLightboxStore.getState().close();
           ui.setPaletteOpen(!ui.paletteOpen);
           return;

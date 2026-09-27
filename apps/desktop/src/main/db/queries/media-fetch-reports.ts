@@ -1,4 +1,4 @@
-// media_fetch_reports (v26, D42) — durable queue of media transfer results
+// media_fetch_reports (v26, D43) — durable queue of media transfer results
 // Core asked for (POST /api/v1/ofapi/media/reports, idempotent by resolve id).
 // A row leaves only after Core accepted (or already had) it; a report that
 // never arrives stays "unknown" on Core's side, never "free".

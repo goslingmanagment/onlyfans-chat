@@ -50,11 +50,11 @@ export const HUB_OFAPI_COMMAND_TIMEOUT_MS = 10_000;
 /** D39: one money-facts page is a DB-only ledger read (H3: page 8 from seq 0
  * cold ≈ 0.6 s); the H2 gateway budget is plenty. */
 export const HUB_MONEY_FACTS_TIMEOUT_MS = 20_000;
-/** D42: a media resolve may queue for Core's media transport and make up to
+/** D43: a media resolve may queue for Core's media transport and make up to
  * three OFAPI/CDN hops server-side (Core's worst case ≈ 35 s); a timeout is
  * retried once with the same requestId, which Core joins or replays. */
 export const HUB_MEDIA_RESOLVE_TIMEOUT_MS = 45_000;
-/** D42: transfer reports are a DB-only write. */
+/** D43: transfer reports are a DB-only write. */
 export const HUB_MEDIA_REPORTS_TIMEOUT_MS = 10_000;
 
 /**
@@ -343,7 +343,7 @@ export type HubIngestObservationEvent = z.infer<typeof routeSchemas.ingestObserv
  * `forbidden` is its 403 (the page is outside this credential's grants).
  * Facts stay unparsed rows: the caller reads each one tolerantly.
  */
-/** D42: request/answer of Core's media resolve (never a client URL in). */
+/** D43: request/answer of Core's media resolve (never a client URL in). */
 export type HubMediaResolveRequest = z.input<(typeof routeSchemas)['ofapiMediaResolve']['body']>;
 export type HubMediaResolveResponse = KernelOperationResponse<'ofapiMediaResolve'>;
 export type HubMediaReport = z.input<(typeof routeSchemas)['ofapiMediaReports']['body']>['reports'][number];
@@ -489,9 +489,9 @@ export interface HubClient {
     limit: number;
     timeoutMs?: number;
   }): Promise<HubMoneyFactsResult>;
-  /** D42: how to fetch one media file (Core decides; may spend credits on a click). */
+  /** D43: how to fetch one media file (Core decides; may spend credits on a click). */
   resolveMedia(args: { request: HubMediaResolveRequest; timeoutMs?: number }): Promise<HubMediaResolveResult>;
-  /** D42: batched transfer results, idempotent by resolveId. */
+  /** D43: batched transfer results, idempotent by resolveId. */
   reportMediaFetches(args: { reports: HubMediaReport[]; timeoutMs?: number }): Promise<HubMediaReportsResult | null>;
   /** Stage 31: stream a KERNEL-ASSEMBLED feature generation (Stage 30 route).
    *  Same SSE frames as streamAiGateway; the kernel loads context and builds

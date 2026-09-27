@@ -293,7 +293,7 @@ const spendersScopeSchema = z.object({ accountId: idSchema, scope: idSchema });
 
 // ── Online surface (variant C, flat) ──
 const onlineSnapshotSchema = z.object({ accountId: idSchema, spendersOnly: z.boolean() });
-// D42: a renderer-supplied media:// URL (the token is re-parsed in main).
+// D43: a renderer-supplied media:// URL (the token is re-parsed in main).
 const mediaUrlSchema = z.string().max(200).regex(/^media:\/\/[0-9a-f]{64}(?:[/?#][\w=&.-]*)?$/);
 const mediaStateSchema = z.strictObject({ url: mediaUrlSchema });
 const mediaLoadSchema = z.strictObject({
@@ -413,7 +413,7 @@ export interface IpcDeps {
   vault?: VaultService | null;
   /** Spenders board (PLAN item 12); null/absent until an OFAPI read transport exists. */
   spenders?: SpendersService | null;
-  /** D42: media id-token state and explicit loads; absent = media images off. */
+  /** D43: media id-token state and explicit loads; absent = media images off. */
   media?: {
     state(url: string): MediaStateVM;
     load(url: string, surface: MediaSurfaceVM, trigger: MediaTriggerVM): Promise<MediaStateVM>;
@@ -487,7 +487,7 @@ export interface IpcDeps {
 
 export function registerIpcHandlers(deps: IpcDeps): void {
   const { data, settingsStore } = deps;
-  // D42: message VMs re-mint media id tokens (registering them) at read time.
+  // D43: message VMs re-mint media id tokens (registering them) at read time.
   const mintOfapiMedia = createOfapiMediaMinter(data.mediaUrls);
   registerFollowersIpc(() => deps.followers ?? null);
   const resolvePersonaContext = (): {

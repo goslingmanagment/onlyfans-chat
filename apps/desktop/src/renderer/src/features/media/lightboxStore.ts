@@ -1,4 +1,4 @@
-// D42: the one media lightbox (full-size photos on click; video/GIF preview
+// D43: the one media lightbox (full-size photos on click; video/GIF preview
 // frames). Opened from a thread tile, the «+N» tile (all attachments of the
 // message) or a gallery cell.
 
@@ -18,7 +18,7 @@ interface LightboxState {
   open: boolean;
   /**
    * False on the frame the opening click showed; true after the first step —
-   * a frame reached by navigation loads its full photo as `auto` (D42).
+   * a frame reached by navigation loads its full photo as `auto` (D43).
    */
   navigated: boolean;
   /**

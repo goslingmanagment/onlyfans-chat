@@ -97,11 +97,11 @@ export interface MessageMediaVM {
 
 export type PpvStateVM = 'purchased' | 'not_purchased' | 'unknown';
 
-/** D42: where a media file is shown (Core logs it per resolve). */
+/** D43: where a media file is shown (Core logs it per resolve). */
 export type MediaSurfaceVM = 'thread' | 'gallery' | 'vault' | 'lightbox';
 
 /**
- * D42: what one media:// token can show right now — never a URL. `load` waits
+ * D43: what one media:// token can show right now — never a URL. `load` waits
  * for an explicit click (daily budget reached, size unknown, link expired, an
  * earlier attempt failed, or a full-size photo); `unavailable` is quiet
  * (locked by policy, gone, Core without media support); `processing` is a file
@@ -119,7 +119,7 @@ export type MediaStateVM =
   | { state: 'processing'; refresh?: boolean }
   | { state: 'wait'; retryAfterMs: number };
 
-/** D42: `click` may spend credits (Core decides); `auto` is budgeted and cancellable. */
+/** D43: `click` may spend credits (Core decides); `auto` is budgeted and cancellable. */
 export type MediaTriggerVM = 'auto' | 'click';
 
 export interface MessageVM {
@@ -1147,7 +1147,7 @@ export interface InvokeChannels extends FollowersChannels {
     args: { accountId: string; chatId: string; offset?: number };
     result: { items: GalleryItemVM[]; hasMore: boolean; nextOffset: number | null };
   };
-  // ── Media images (D42) ──
+  // ── Media images (D43) ──
   /** State of one media:// token (after an <img> error, or before showing). No network. */
   'query:media.state': { args: { url: string }; result: MediaStateVM };
   /**

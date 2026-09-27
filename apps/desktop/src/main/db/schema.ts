@@ -628,7 +628,7 @@ ALTER TABLE fan_transactions ADD COLUMN source TEXT NOT NULL DEFAULT 'sweep'
   CHECK (source IN ('sweep', 'hub'));
 `;
 
-// v26 (D42) — media images.
+// v26 (D43) — media images.
 //
 // `media_urls` gains the id-token kind: a message, gallery or vault file is
 // named by (OFAPI account, media id, variant) and Core decides how to fetch it

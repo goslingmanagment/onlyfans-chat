@@ -101,7 +101,7 @@ export const MessageRow = memo(function MessageRow({
             isPpv
               ? 'w-[312px] overflow-hidden p-0'
               : 'px-[var(--cv-bubble-px)] py-[var(--cv-bubble-py)]',
-            // D42: a bubble with tiles hugs them; the caption wraps below.
+            // D43: a bubble with tiles hugs them; the caption wraps below.
             hasMedia && !isPpv && !message.deleted && 'w-min',
           )}
         >
@@ -116,7 +116,7 @@ export const MessageRow = memo(function MessageRow({
                     <span className="min-w-0 truncate">{message.replyTo.textPreview}</span>
                   </div>
                 )}
-                {/* D42: tiles (≤4 + «+N») replace the old count badge. */}
+                {/* D43: tiles (≤4 + «+N») replace the old count badge. */}
                 {hasMedia && (
                   <div className={cx(message.text !== '' && 'mb-2')}>
                     <MediaThumb media={message.media} />

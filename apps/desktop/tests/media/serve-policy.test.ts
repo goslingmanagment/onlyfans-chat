@@ -1,4 +1,4 @@
-// D42 × D35 rule 5 (review D11): a media id token is served only for an OFAPI
+// D43 × D35 rule 5 (review D11): a media id token is served only for an OFAPI
 // account granted to the identity that is signed in now. The grant cache is
 // stamped with the identity that produced it; a provably different identity
 // gets nothing. Unknown (pre-D19) identities are not treated as foreign.

@@ -57,7 +57,7 @@ export function hashRemoteUrl(remoteUrl: string): string {
 }
 
 /**
- * D42: the id token of an OFAPI media file — one stable key per (account,
+ * D43: the id token of an OFAPI media file — one stable key per (account,
  * media id, variant), whatever URL Core later hands out for it. A separate
  * function on purpose: hashRemoteUrl parses a URL, this is not one.
  */
@@ -100,7 +100,7 @@ export interface MediaBlob {
 export interface MediaCache {
   get(remoteUrl: string): Promise<MediaBlob | null>;
   put(remoteUrl: string, data: Uint8Array, contentType: string | null): Promise<void>;
-  /** D42: id-token entries are keyed by the token itself (hashOfapiMediaKey). */
+  /** D43: id-token entries are keyed by the token itself (hashOfapiMediaKey). */
   getByKey(urlHash: string): Promise<MediaBlob | null>;
   putByKey(urlHash: string, data: Uint8Array, contentType: string | null): Promise<void>;
   clear(): Promise<void>;

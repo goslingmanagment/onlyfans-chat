@@ -164,7 +164,7 @@ describe('createCreditMeter', () => {
     expect(meter.snapshot().usedTodayByPurpose['media']).toEqual({ requests: 1, credits: 1 });
   });
 
-  it('D42: records Core-charged media credits once per resolve id, never as provider headers', () => {
+  it('D43: records Core-charged media credits once per resolve id, never as provider headers', () => {
     const meter = createCreditMeter({ now: () => T0 });
     meter.recordCharge({ purpose: 'media', credits: 2, key: 'resolve-1' });
     meter.recordCharge({ purpose: 'media', credits: 2, key: 'resolve-1' }); // a replayed answer

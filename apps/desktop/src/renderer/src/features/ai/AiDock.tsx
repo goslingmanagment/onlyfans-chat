@@ -148,7 +148,7 @@ function FullDock(): React.JSX.Element | null {
       {/* footer */}
       <div className="flex items-center gap-[5px] px-3.5 pt-[7px] pb-[11px]">
         {op.feature === 'fast-reply' && <TonePills running={running} />}
-        {op.feature === 'fast-reply' && <SplitToggle running={running} />}
+        {getFeaturePolicy(op.feature).supportsReplyMode && <SplitToggle running={running} />}
         {running ? (
           <button
             type="button"

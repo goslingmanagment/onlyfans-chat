@@ -468,7 +468,7 @@ describe('registerMediaProtocol (end-to-end with the real encrypted cache)', () 
   });
 });
 
-describe('media request handler — OFAPI id tokens (D42)', () => {
+describe('media request handler — OFAPI id tokens (D43)', () => {
   const ACCT = 'acct_05000000000000000000000000000000';
 
   function setupOfapi(options: { canServe?: boolean; loadResult?: OfapiMediaLoadResult } = {}) {

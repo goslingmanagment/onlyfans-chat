@@ -1029,12 +1029,12 @@ export const UI_MESSAGES = {
   'toast.dismiss': { en: 'Dismiss', ru: 'Закрыть' },
   'toast.sendTooManyPartsTitle': { en: 'Too many message parts', ru: 'Слишком много частей сообщения' },
   'toast.splitOn': {
-    en: 'On — the next reply comes as 2–3 messages',
-    ru: 'Включено — следующий ответ придёт 2–3 сообщениями',
+    en: 'On — the next Reply or Improve comes as 2–3 messages',
+    ru: 'Включено — следующий Reply или Improve придёт 2–3 сообщениями',
   },
   'toast.splitOff': {
-    en: 'Off — the next reply comes as one message',
-    ru: 'Выключено — следующий ответ придёт одним сообщением',
+    en: 'Off — the next Reply or Improve comes as one message',
+    ru: 'Выключено — следующий Reply или Improve придёт одним сообщением',
   },
   'toast.sendTooManyPartsBody': {
     en: 'Draft has {count} parts. Keep it to {max} or fewer [NEXT] parts.',
@@ -1403,8 +1403,8 @@ export const UI_MESSAGES = {
   'aidock.toneDeselectTip': { en: 'Click to deselect (no tone)', ru: 'Нажмите, чтобы снять выбор (без тона)' },
   'aidock.toneUseTip': { en: 'Use {tone} tone on the next generation', ru: 'Использовать тон {tone} для следующей генерации' },
   'aidock.splitTip': {
-    en: 'Prefer splitting the reply into multiple messages (applies to the next generation) · {combo}',
-    ru: 'Предпочитать разбивку ответа на несколько сообщений (применится к следующей генерации) · {combo}',
+    en: 'Split Reply and Improve into 2–3 messages (applies to the next generation) · {combo}',
+    ru: 'Разбивать Reply и Improve на 2–3 сообщения (применится к следующей генерации) · {combo}',
   },
   'aidock.split': { en: '⫶ split', ru: '⫶ разбить' },
   'aidock.menuScanSub': { en: 'deep fan profile → panel · Scan tab', ru: 'глубокий профиль фана → панель · вкладка Scan' },
@@ -1508,7 +1508,7 @@ export const UI_MESSAGES = {
   'vault.galEmptyHint': { en: 'Sent and received media will appear here.', ru: 'Отправленные и полученные медиа появятся здесь.' },
   'vault.loadingMore': { en: 'LOADING MORE…', ru: 'ЗАГРУЗКА…' },
 
-  // ── Media images (D42) ────────────────────────────────────────────────────
+  // ── Media images (D43) ────────────────────────────────────────────────────
   // The cell states the owner named: «загрузить» (an explicit click, may cost),
   // «недоступно» (quiet), «обрабатывается».
   'media.load': { en: 'Load', ru: 'Загрузить' },

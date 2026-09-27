@@ -1,4 +1,4 @@
-// D42: one gated media image — the React adapter of mediaImageMachine.ts.
+// D43: one gated media image — the React adapter of mediaImageMachine.ts.
 // The cell asks the visibility gate for a slot, only then sets `src`
 // (media://<token>?s=<surface>); main resolves the token through Core and
 // answers with the image or a status. After an error the cell asks main what

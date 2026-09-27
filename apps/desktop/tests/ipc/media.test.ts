@@ -1,4 +1,4 @@
-// D42 IPC trust boundary for media images: only a media://<64 hex> URL
+// D43 IPC trust boundary for media images: only a media://<64 hex> URL
 // crosses (never a remote URL), `cmd:media.load` is a click unless the
 // lightbox's navigation says `auto`, and `cmd:media.cancel` drops an
 // unstarted automatic load. Without a media source every answer is quiet.

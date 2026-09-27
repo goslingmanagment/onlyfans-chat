@@ -42,7 +42,7 @@ function VaultCell({ item }: { item: VaultItemVM }): React.JSX.Element {
   const togglePreviewItem = useVaultStore((s) => s.togglePreviewItem);
   const order = selectionOrder(selection, item.id);
   const isPreview = selection.previews.includes(item.id);
-  // D42: the shared cell (loads only while visible; its «Загрузить» /
+  // D43: the shared cell (loads only while visible; its «Загрузить» /
   // «Проверить» control never toggles attachment — only the button does).
   const cell = (
     <MediaCell

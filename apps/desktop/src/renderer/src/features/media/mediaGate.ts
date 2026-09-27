@@ -1,4 +1,4 @@
-// D42: images load only while really visible. `loading="lazy"` is not enough
+// D43: images load only while really visible. `loading="lazy"` is not enough
 // here — Chromium starts lazy images 1250–2500 px before the viewport, and on
 // this app a started image can be a paid download. One IntersectionObserver
 // with rootMargin 0 tracks visibility; a small FIFO grants at most

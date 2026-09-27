@@ -1,4 +1,4 @@
-// D42: the durable media report queue — idempotent by resolve id, oldest
+// D43: the durable media report queue — idempotent by resolve id, oldest
 // first, poison rows dropped, a row leaves only when Core took it.
 
 import { describe, expect, it } from 'vitest';

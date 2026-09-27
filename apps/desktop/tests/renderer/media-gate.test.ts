@@ -1,4 +1,4 @@
-// D42: images load only while really visible (IntersectionObserver, rootMargin
+// D43: images load only while really visible (IntersectionObserver, rootMargin
 // 0 — not `loading="lazy"`, which starts 1250–2500 px early). At most four at
 // once, and visibility is re-checked right before a waiting cell gets a slot.
 

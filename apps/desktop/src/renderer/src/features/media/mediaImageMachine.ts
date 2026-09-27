@@ -1,4 +1,4 @@
-// D42: the state machine behind one gated media image (useMediaImage is its
+// D43: the state machine behind one gated media image (useMediaImage is its
 // thin React adapter). Pure: every transition is a function of the previous
 // state and one event, so the rules are testable without a DOM.
 //

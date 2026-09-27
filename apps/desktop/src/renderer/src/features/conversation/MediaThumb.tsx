@@ -1,4 +1,4 @@
-// D42: a message's attachments as tiles inside its bubble (they replaced the
+// D43: a message's attachments as tiles inside its bubble (they replaced the
 // "{n} media" count badge). Up to four tiles; when there are more, the fourth
 // carries «+N» and, like every tile, opens the lightbox over ALL attachments
 // of the message. Fixed tile sizes keep the virtualized thread's row heights

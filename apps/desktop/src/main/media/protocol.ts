@@ -44,7 +44,7 @@ export function isAllowedMediaUrl(remoteUrl: string): boolean {
 
 export type MediaVariant = 'thumb' | 'full';
 
-/** One registered token's source (D42 adds the OFAPI id kind). */
+/** One registered token's source (D43 adds the OFAPI id kind). */
 export type MediaUrlEntry =
   | { kind: 'url'; url: string }
   | { kind: 'ofapi'; accountId: string; mediaId: string; variant: MediaVariant };
@@ -53,7 +53,7 @@ export type MediaUrlEntry =
 export interface MediaUrlRegistry {
   /** Latest signed URL wins for a stable media hash. */
   register(urlHash: string, url: string): void;
-  /** D42: an OFAPI file's id token (idempotent). */
+  /** D43: an OFAPI file's id token (idempotent). */
   registerOfapi(urlHash: string, entry: { accountId: string; mediaId: string; variant: MediaVariant }): void;
   lookup(urlHash: string): string | undefined;
   lookupEntry(urlHash: string): MediaUrlEntry | undefined;
@@ -64,7 +64,7 @@ export interface MediaUrlRegistry {
 const OFAPI_ACCOUNT_PATTERN = /^acct_[A-Za-z0-9]+$/;
 const OFAPI_MEDIA_ID_PATTERN = /^\d{1,30}$/;
 
-/** D42: mints the media:// id token of an OFAPI file; null for a malformed ref. */
+/** D43: mints the media:// id token of an OFAPI file; null for a malformed ref. */
 export type OfapiMediaMinter = (accountId: string, mediaId: string, variant: MediaVariant) => string | null;
 
 /**
@@ -99,7 +99,7 @@ export function createToMediaUrl(
     registry.register(urlHash, remoteUrl);
     return `${MEDIA_SCHEME}://${urlHash}`;
   };
-  // D42: the same seam also mints id tokens when the registry supports them.
+  // D43: the same seam also mints id tokens when the registry supports them.
   const registerOfapi = registry.registerOfapi?.bind(registry);
   return registerOfapi === undefined
     ? toMediaUrl
@@ -108,14 +108,14 @@ export function createToMediaUrl(
 
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/;
 
-/** D42: the surface a renderer tagged on the URL (`?s=gallery`), for Core's log. */
+/** D43: the surface a renderer tagged on the URL (`?s=gallery`), for Core's log. */
 export function parseMediaSurface(requestUrl: string): MediaSurfaceVM | null {
   const match = /[?&]s=(thread|gallery|vault|lightbox)(?:&|#|$)/.exec(requestUrl);
   return match ? (match[1] as MediaSurfaceVM) : null;
 }
 
 /**
- * D42: the cell a renderer tagged on the URL (`&c=c1f`). Two cells showing one
+ * D43: the cell a renderer tagged on the URL (`&c=c1f`). Two cells showing one
  * file share its load; one cell leaving drops only its own interest.
  */
 export function parseMediaRequester(requestUrl: string): string | null {
@@ -161,12 +161,12 @@ interface MediaCacheLike {
   putByKey(urlHash: string, data: Uint8Array, contentType: string | null): Promise<void>;
 }
 
-/** D42: what an OFAPI id-token load produced (bytes are already cached). */
+/** D43: what an OFAPI id-token load produced (bytes are already cached). */
 export type OfapiMediaLoadResult =
   | { kind: 'bytes'; data: Uint8Array; contentType: string | null }
   | { kind: 'state'; state: MediaStateVM };
 
-/** D42: the id-token source — Core resolve + desktop download (media/resolver.ts). */
+/** D43: the id-token source — Core resolve + desktop download (media/resolver.ts). */
 export interface OfapiMediaSource {
   /** Only an account granted to the current identity is served (D35 rule 5). */
   canServe(accountId: string): boolean;
@@ -311,7 +311,7 @@ export interface RegisterMediaProtocolOptions {
   queries: MediaCacheQueries;
   registry: Pick<MediaUrlRegistry, 'lookup' | 'clear'> & Partial<Pick<MediaUrlRegistry, 'lookupEntry'>>;
   fetchRemote: FetchRemote;
-  /** D42: late-bound, because the source needs the cache this call creates. */
+  /** D43: late-bound, because the source needs the cache this call creates. */
   ofapi?: () => OfapiMediaSource | null;
   maxCacheBytes?: number;
 }

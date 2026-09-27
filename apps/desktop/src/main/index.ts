@@ -195,7 +195,7 @@ let onlineService: OnlineService | null = null;
 let followersService: FollowersService | null = null;
 let spendersRefresh: SpendersRefreshService | null = null;
 let hub: HubModule | null = null;
-/** D42: media id tokens → Core resolve → desktop download (boot-scoped). */
+/** D43: media id tokens → Core resolve → desktop download (boot-scoped). */
 let mediaResolver: MediaResolver | null = null;
 /** Process-scoped so inserted→sent correlation survives runtime rebuilds for
  * the same destination actor. Credential/principal swaps clear it at commit. */
@@ -1529,7 +1529,7 @@ async function boot(): Promise<void> {
     ofapi: () => mediaResolver,
   });
 
-  // D42: message, gallery and vault files are id tokens; Core decides how
+  // D43: message, gallery and vault files are id tokens; Core decides how
   // each is fetched (free webhook URL, OFAPI cache, budgeted paid download)
   // and main downloads the bytes itself. The resolver is boot-scoped: it
   // reads the live credential, runtime client and grants through getters.
@@ -2039,7 +2039,7 @@ async function boot(): Promise<void> {
     get spenders() {
       return spendersService;
     },
-    // D42: token state + explicit click loads of media id tokens.
+    // D43: token state + explicit click loads of media id tokens.
     get media() {
       const resolver = mediaResolver;
       if (resolver === null) return null;

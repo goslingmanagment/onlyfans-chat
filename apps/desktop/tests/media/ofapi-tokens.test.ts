@@ -1,4 +1,4 @@
-// D42: message, gallery and vault files are id tokens — sha256('ofapi|acct|
+// D43: message, gallery and vault files are id tokens — sha256('ofapi|acct|
 // mediaId|variant') — and Core decides how each is fetched. Pins: the hash is
 // independent of any URL, minting registers, `full` exists only for photos,
 // no automatic thumbnail falls back to the full file, message VMs re-mint

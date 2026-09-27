@@ -312,7 +312,7 @@ describe('createHubClient', () => {
     });
   });
 
-  describe('media images (D42)', () => {
+  describe('media images (D43)', () => {
     const REQUEST = {
       requestId: '00000000-0000-4000-8000-000000000001',
       accountId: 'acct_1',

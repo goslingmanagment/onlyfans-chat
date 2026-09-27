@@ -51,14 +51,14 @@ export function mapVaultItem(media: OfApiVaultMedia, toMediaUrl: ToMediaUrl, acc
       ? (media.type as VaultItemVM['type'])
       : 'other';
   const isReady = media.isReady !== false && media.hasError !== true;
-  // D42: no automatic thumbnail ever falls back to the full file (a video
+  // D43: no automatic thumbnail ever falls back to the full file (a video
   // without a preview used to download the whole video as its "thumbnail",
   // and a full MP3 is not an image). With an id-token minter the cell names
   // the file by id and Core picks thumb → squarePreview → preview.
   let thumbUrl: string | null;
   if (accountId !== undefined && toMediaUrl.ofapiMedia !== undefined) {
     // A processing item keeps its thumb token too: its cell offers an
-    // explicit refresh, never an automatic load (D42/H3).
+    // explicit refresh, never an automatic load (D43/H3).
     thumbUrl = type !== 'audio' ? toMediaUrl.ofapiMedia(accountId, String(media.id), 'thumb') : null;
   } else {
     const previewRemote = files?.thumb?.url ?? files?.squarePreview?.url ?? files?.preview?.url ?? null;

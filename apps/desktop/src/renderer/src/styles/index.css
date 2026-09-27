@@ -53,7 +53,7 @@
 
   /* modal/overlay scrim — alpha baked in; stays dark in BOTH themes */
   --color-scrim: rgb(31 30 29 / 0.2);
-  /* D42 photo lightbox veil: heavy enough that a photo reads on its own */
+  /* D43 photo lightbox veil: heavy enough that a photo reads on its own */
   --color-veil: rgb(31 30 29 / 0.82);
   --color-veil-ink: #f4f1ea;
 

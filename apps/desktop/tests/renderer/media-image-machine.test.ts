@@ -1,4 +1,4 @@
-// D42 (review D4/D5/D9/D11): the state machine behind one gated media image.
+// D43 (review D4/D5/D9/D11): the state machine behind one gated media image.
 // Pins: a throttled or busy token parks quietly and tries again by itself —
 // it never becomes «Загрузить»; the transient recheck loop is bounded and
 // ends parked, not blocked; a cell that leaves the viewport while loading

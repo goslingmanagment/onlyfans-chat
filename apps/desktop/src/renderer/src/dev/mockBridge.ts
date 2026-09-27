@@ -103,7 +103,7 @@ function makeMedia(kind: 'photo' | 'video', opts: { locked?: boolean; ready?: bo
   };
 }
 
-// ─── D42 media showcase ──────────────────────────────────────────────────
+// ─── D43 media showcase ──────────────────────────────────────────────────
 // Deterministic media for the first chat so the tiles, «+N», the lightbox
 // and every cell state render in plain-vite dev. `media://` tokens cannot load
 // in a browser: their <img> errors and the cell asks query:media.state, which
@@ -471,7 +471,7 @@ function buildStore(): MockStore {
       const msgCount = i === 0 ? 220 : 18 + Math.floor(rng() * 45);
       const endMs = Date.now() - Math.floor(rng() * (i === 0 ? 1 : 36)) * 3_600_000;
       const msgs = noHistory ? [] : buildMessages(fanId, msgCount, endMs);
-      // D42: the first chat of the first account ends with the media showcase.
+      // D43: the first chat of the first account ends with the media showcase.
       if (i === 0 && account === accounts[0]) msgs.push(...mediaShowcase(fanId, endMs + 60 * 60_000));
       const contactDays = MOCK_CONTACT_DAYS[fanId];
       if (contactDays !== undefined) {
@@ -700,9 +700,10 @@ const HELP_ME_XML = `<coaching>He's price-anchoring on payday — don't push the
 
 const HELP_ME_MALFORMED = `He's price-anchoring on payday — don't push the PPV now. Mirror his week first, then plant a soft Friday hook. (model skipped the xml tags — renderer must fall back to raw)`;
 
-function improveText(draft: string): string {
+function improveText(draft: string, split: boolean): string {
   const trimmed = draft.trim().replace(/[.\s]+$/, '');
-  return `${trimmed}… and before you say anything — yes, I was already thinking about you 😏`;
+  const tail = 'and before you say anything — yes, I was already thinking about you 😏';
+  return split ? `${trimmed}…[NEXT]${tail}` : `${trimmed}… ${tail}`;
 }
 
 function chunkify(text: string): string[] {
@@ -960,7 +961,7 @@ export function createMockBridge(): ChatGooseBridge {
           ? HELP_ME_MALFORMED
           : HELP_ME_XML
         : feature === 'improve-draft'
-          ? improveText(req.params.draftText ?? 'miss you')
+          ? improveText(req.params.draftText ?? 'miss you', req.params.mode === 'preferSplit')
           : `${FAST_REPLY_TEXT[req.params.tone ?? 'none'] || FAST_REPLY_TEXT.none}${
               req.params.mode === 'preferSplit' ? FAST_REPLY_SPLIT_TAIL : ''
             }`;
@@ -974,7 +975,7 @@ export function createMockBridge(): ChatGooseBridge {
       const result =
         feature === 'help-me'
           ? { rawText: fullText }
-          : feature === 'improve-draft'
+          : feature === 'improve-draft' && req.params.mode !== 'preferSplit'
             ? { rawText: fullText, parts: normalizeSingleReplyPart(fullText) }
             : {
                 rawText: fullText,
@@ -2079,7 +2080,7 @@ export function createMockBridge(): ChatGooseBridge {
       const hasMore = start + page.length < all.length;
       return { items: page, hasMore, nextOffset: hasMore ? start + page.length : null };
     },
-    // D42: media token state + explicit load. data: URIs are always ready.
+    // D43: media token state + explicit load. data: URIs are always ready.
     'query:media.state': ({ url }) => {
       const hex = url.replace(/^media:\/\//, '').slice(0, 64);
       return mockMediaStates.get(hex) ?? { state: 'unavailable' };

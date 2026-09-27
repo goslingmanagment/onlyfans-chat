@@ -213,7 +213,7 @@ describe('migration runner', () => {
     db.close();
   });
 
-  it('v25 → v26 keeps every URL token and adds OFAPI id tokens plus the report queue (D42)', () => {
+  it('v25 → v26 keeps every URL token and adds OFAPI id tokens plus the report queue (D43)', () => {
     const db = rawDb();
     runMigrations(db, MIGRATIONS.slice(0, 25));
     expect(readSchemaVersion(db)).toBe(25);

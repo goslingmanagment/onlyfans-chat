@@ -1,4 +1,4 @@
-// D42 × D35 rule 5: a media id token is served only for an OFAPI account
+// D43 × D35 rule 5: a media id token is served only for an OFAPI account
 // granted to the identity that is signed in NOW. The grant cache is stamped
 // with the identity that produced it (db/grant-owner.ts); a provably different
 // identity gets nothing — not from the network, not from the local cache.

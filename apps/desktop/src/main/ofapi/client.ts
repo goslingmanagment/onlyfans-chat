@@ -101,7 +101,7 @@ export type ChatListOrder = Exclude<ListChatsQuery['order'], undefined>;
 export type SkipUsers = Exclude<ListChatsQuery['skip_users'], undefined>;
 export type MessageListOrder = 'desc' | 'asc';
 export type OfApiReadIntent = 'deep-history-v1';
-/** D42: a re-read made only to refresh media file URLs after an explicit
+/** D43: a re-read made only to refresh media file URLs after an explicit
  * click; Core marks its credit ledger row as media spend. */
 export type OfApiMediaReadIntent = 'media-context-v1';
 export type TransactionType = 'subscribes' | 'tips' | 'post' | 'chat_messages' | 'stream';

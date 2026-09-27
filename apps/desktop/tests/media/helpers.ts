@@ -6,7 +6,7 @@ export interface InMemoryMediaUrlRegistry extends MediaUrlRegistry {
   entries: Map<string, MediaUrlEntry>;
 }
 
-/** Latest URL wins, like the media_urls table; D42 id tokens alongside. */
+/** Latest URL wins, like the media_urls table; D43 id tokens alongside. */
 export function createInMemoryMediaUrlRegistry(): InMemoryMediaUrlRegistry {
   const rows = new Map<string, string>();
   const entries = new Map<string, MediaUrlEntry>();
