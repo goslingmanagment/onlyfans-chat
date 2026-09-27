@@ -110,8 +110,13 @@ function makeMedia(kind: 'photo' | 'video', opts: { locked?: boolean; ready?: bo
 // this map answers — exactly the path a real blocked token takes.
 
 const mockMediaStates = new Map<string, MediaStateVM>();
-/** Full-size data: URIs — a navigation (`auto`) load answers Core's «load on click» (H7). */
-const mockFullUrls = new Set<string>();
+/**
+ * Full-size data: URIs → their media id. A navigation (`auto`) load answers
+ * Core's «load on click» (H7) — unless a click already loaded the photo, which
+ * then sits in the local cache like in the real app (R6).
+ */
+const mockFullUrls = new Map<string, string>();
+const mockCachedFullUrls = new Set<string>();
 
 function mockToken(seed: number, state: MediaStateVM): string {
   const hex = seed.toString(16).padStart(8, '0').repeat(8);
@@ -121,7 +126,7 @@ function mockToken(seed: number, state: MediaStateVM): string {
 
 function showcasePhoto(id: string, tone: string, tone2: string, w = 280, h = 280): MessageMediaVM {
   const fullUrl = svgThumb(900, 1200, tone, tone2);
-  mockFullUrls.add(fullUrl);
+  mockFullUrls.set(fullUrl, id);
   return {
     id, type: 'photo', thumbUrl: svgThumb(w, h, tone, tone2), fullUrl,
     isReady: true, locked: false, durationSeconds: null,
@@ -1261,8 +1266,12 @@ export function createMockBridge(): ChatGooseBridge {
         ? mockToken(0x3866000 + i, { state: 'load', reason: 'budget' })
         : i === 7
           ? mockToken(0x3866000 + i, { state: 'unavailable' })
-          : svgThumb(200, 200, pick(THUMB_TONES), pick(THUMB_TONES)),
-      isReady: i % 17 !== 3, // a few processing cells exercise the spinner state
+          : ((tone: string, tone2: string) => (i % 17 === 3
+            // Processing: «Проверить» brings a clearly visible picture back
+            // (the random tones are still drawn, so later fixtures stay put).
+            ? svgThumb(200, 200, '#d5c8b6', '#94775d')
+            : svgThumb(200, 200, tone, tone2)))(pick(THUMB_TONES), pick(THUMB_TONES)),
+      isReady: i % 17 !== 3, // a few processing cells exercise «Обрабатывается» + «Проверить»
       durationSeconds: video ? 15 + Math.floor(rng() * 200) : null,
       createdAt: new Date(Date.now() - i * 86_400_000).toISOString(),
       likesCount: Math.floor(rng() * 40),
@@ -2075,9 +2084,15 @@ export function createMockBridge(): ChatGooseBridge {
       const hex = url.replace(/^media:\/\//, '').slice(0, 64);
       return mockMediaStates.get(hex) ?? { state: 'unavailable' };
     },
-    'cmd:media.load': ({ url, trigger }) => {
-      // H7: Core answers «load on click» to a navigation (`auto`) load of a full photo.
-      if (trigger === 'auto' && mockFullUrls.has(url)) return { state: 'load', reason: 'click' };
+    'cmd:media.load': ({ url, surface, trigger }) => {
+      const fullId = mockFullUrls.get(url);
+      // What crossed the bridge, for the screenshots' evidence (dev only).
+      console.info(`[mock-media] load ${trigger ?? 'click'} ${surface} ${fullId !== undefined ? `full ${fullId}` : 'thumb'}`);
+      if (fullId !== undefined) {
+        if (trigger === 'auto' && !mockCachedFullUrls.has(url)) return { state: 'load', reason: 'click' };
+        mockCachedFullUrls.add(url);
+        return { state: 'ready' };
+      }
       if (url.startsWith('data:')) return { state: 'ready' };
       const hex = url.replace(/^media:\/\//, '').slice(0, 64);
       return mockMediaStates.get(hex) ?? { state: 'unavailable' };

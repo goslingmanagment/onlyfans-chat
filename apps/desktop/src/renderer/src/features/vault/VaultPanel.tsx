@@ -42,33 +42,48 @@ function VaultCell({ item }: { item: VaultItemVM }): React.JSX.Element {
   const togglePreviewItem = useVaultStore((s) => s.togglePreviewItem);
   const order = selectionOrder(selection, item.id);
   const isPreview = selection.previews.includes(item.id);
+  // D42: the shared cell (loads only while visible; its «Загрузить» /
+  // «Проверить» control never toggles attachment — only the button does).
+  const cell = (
+    <MediaCell
+      item={{
+        id: item.id,
+        type: item.type,
+        thumbUrl: item.thumbUrl,
+        isReady: item.isReady,
+        locked: false,
+        durationSeconds: item.durationSeconds,
+      }}
+      surface="vault"
+      compact
+    />
+  );
+
+  if (!item.isReady) {
+    // A file OnlyFans still processes cannot be attached, so its cell is not a
+    // button at all: a disabled <button> swallows the clicks of everything
+    // inside it, «Проверить» included, and nothing here may attach.
+    return (
+      <div
+        title={t('vault.cellProcessingTip')}
+        className="relative h-[88px] overflow-hidden rounded-[8px] border border-line"
+      >
+        {cell}
+      </div>
+    );
+  }
 
   return (
     <button
       type="button"
-      disabled={!item.isReady}
       onClick={() => toggleItem(item.id)}
-      title={item.isReady ? t('vault.cellAttachTip') : t('vault.cellProcessingTip')}
+      title={t('vault.cellAttachTip')}
       className={cx(
-        'relative h-[88px] overflow-hidden rounded-[8px] border text-left',
+        'relative h-[88px] cursor-pointer overflow-hidden rounded-[8px] border text-left',
         order !== null ? 'border-clay ring-2 ring-clay/50' : 'border-line',
-        item.isReady ? 'cursor-pointer' : 'cursor-default opacity-70',
       )}
     >
-      {/* D42: the shared cell (loads only while visible; its «Загрузить»
-          control never toggles attachment — only this button does). */}
-      <MediaCell
-        item={{
-          id: item.id,
-          type: item.type,
-          thumbUrl: item.thumbUrl,
-          isReady: item.isReady,
-          locked: false,
-          durationSeconds: item.durationSeconds,
-        }}
-        surface="vault"
-        compact
-      />
+      {cell}
       {order !== null && (
         <span className="num absolute top-1 left-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-clay px-1 text-micro font-bold text-white">
           {order}

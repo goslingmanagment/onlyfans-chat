@@ -1,10 +1,12 @@
 // D42: full-size photos on click. The opening click and «Загрузить» are the
 // explicit action (`cmd:media.load`, trigger click — Core may spend credits,
-// past the daily budget if needed). A frame reached with ‹ › or the arrows
-// asks only after it stayed on screen (lightboxLoader.ts) and as `auto`:
-// budgeted, and for a full-size photo Core answers «load on click», so the
-// thumbnail stays with «Загрузить» — unless the full photo is already in the
-// local cache. Video and GIF never load in full: the preview frame only.
+// past the daily budget if needed); each press is one click on that visit of
+// the frame only. A frame reached with ‹ › or the arrows — including one
+// pressed on an earlier visit — asks only after it stayed on screen
+// (lightboxLoader.ts) and as `auto`: budgeted, and for a full-size photo Core
+// answers «load on click», so the thumbnail stays with «Загрузить» — unless
+// the full photo is already in the local cache (then it shows, free).
+// Video and GIF never load in full: the preview frame only.
 // Locked files stay locked. A preview that cannot load is a quiet box, never
 // a broken image; nothing here ever sees a URL other than media://.
 // The lightbox takes focus while open and gives it back when it closes.
@@ -15,7 +17,13 @@ import { getBridge } from '../../bridge/bridge';
 import { cx } from '../../lib/cx';
 import { useT } from '../../lib/i18n';
 import { MEDIA_LOAD_TIP, formatMediaDuration } from './MediaCell';
-import { createFullPhotoLoader, lightboxFrameTrigger, lightboxKeyAction, type FullPhotoLoader } from './lightboxLoader';
+import {
+  createFullPhotoLoader,
+  lightboxFullRequest,
+  lightboxKeyAction,
+  type FullPhotoLoader,
+  type LightboxFrame,
+} from './lightboxLoader';
 import { useLightboxStore, type LightboxItem } from './lightboxStore';
 import { mediaSrc, useMediaImage } from './useMediaImage';
 
@@ -40,16 +48,15 @@ function fullPhotoLoader(): FullPhotoLoader {
   return sharedLoader;
 }
 
-function useFullPhoto(item: LightboxItem | null, navigated: boolean): { state: FullState; retry: () => void } {
+function useFullPhoto(item: LightboxItem | null, frame: LightboxFrame): FullState {
   const fullUrl = item !== null && item.type === 'photo' && item.isReady && !item.locked ? item.fullUrl : null;
-  // «Загрузить» (a retry) is always a click; it belongs to this frame only.
-  const [retries, setRetries] = useState<{ url: string | null; n: number }>({ url: null, n: 0 });
-  // A quiet `wait` (Core busy or rate-limited) asks again by itself, same trigger.
-  const [waits, setWaits] = useState<{ url: string | null; n: number }>({ url: null, n: 0 });
-  const attempt = retries.url === fullUrl ? retries.n : 0;
-  const waited = waits.url === fullUrl ? waits.n : 0;
-  const trigger: MediaTriggerVM = lightboxFrameTrigger(navigated, attempt > 0);
-  const key = fullUrl === null ? null : `${fullUrl}#${attempt}#${waited}#${trigger}`;
+  // A quiet `wait` (Core busy or rate-limited) asks again by itself, same
+  // trigger — on this visit only.
+  const [waits, setWaits] = useState<{ visit: number; n: number }>({ visit: -1, n: 0 });
+  const waited = waits.visit === frame.visit ? waits.n : 0;
+  const request = lightboxFullRequest(frame, fullUrl, waited);
+  const key = request?.key ?? null;
+  const trigger: MediaTriggerVM = request?.trigger ?? 'auto';
   const [result, setResult] = useState<{ key: string | null; state: FullState }>({ key: null, state: { phase: 'none' } });
 
   useEffect(() => {
@@ -68,12 +75,13 @@ function useFullPhoto(item: LightboxItem | null, navigated: boolean): { state: F
 
   const state: FullState = key === null ? { phase: 'none' } : result.key === key ? result.state : { phase: 'loading' };
   const waitMs = state.phase === 'blocked' && state.state.state === 'wait' ? state.state.retryAfterMs : null;
+  const visit = frame.visit;
   useEffect(() => {
     if (waitMs === null) return undefined;
-    const timer = window.setTimeout(() => setWaits({ url: fullUrl, n: waited + 1 }), Math.max(1_000, waitMs));
+    const timer = window.setTimeout(() => setWaits({ visit, n: waited + 1 }), Math.max(1_000, waitMs));
     return () => window.clearTimeout(timer);
-  }, [waitMs, fullUrl, waited]);
-  return { state, retry: () => setRetries({ url: fullUrl, n: attempt + 1 }) };
+  }, [waitMs, visit, waited]);
+  return state;
 }
 
 const STAGE_BOX = 'flex h-[240px] w-[320px] flex-col items-center justify-center gap-2 rounded-[12px] border border-veil-ink/15';
@@ -167,10 +175,13 @@ export function MediaLightbox(): React.JSX.Element | null {
   const index = useLightboxStore((s) => s.index);
   const origin = useLightboxStore((s) => s.origin);
   const navigated = useLightboxStore((s) => s.navigated);
+  const visit = useLightboxStore((s) => s.visit);
+  const presses = useLightboxStore((s) => s.presses);
   const step = useLightboxStore((s) => s.step);
+  const press = useLightboxStore((s) => s.press);
   const close = useLightboxStore((s) => s.close);
   const item = open ? items[index] ?? null : null;
-  const full = useFullPhoto(item, navigated);
+  const fullState = useFullPhoto(item, { visit, navigated, presses });
   const dialogRef = useRef<HTMLDivElement | null>(null);
 
   // Focus moves into the lightbox while it is open and back where it was after.
@@ -223,7 +234,7 @@ export function MediaLightbox(): React.JSX.Element | null {
 
   const many = items.length > 1;
   const isMotion = item.type === 'video' || item.type === 'gif';
-  const blocked = full.state.phase === 'blocked' ? full.state.state : null;
+  const blocked = fullState.phase === 'blocked' ? fullState.state : null;
 
   let stage: React.JSX.Element;
   if (item.locked) {
@@ -240,8 +251,8 @@ export function MediaLightbox(): React.JSX.Element | null {
         <span className="text-[13px] opacity-80">{t('media.processing')}</span>
       </div>
     );
-  } else if (full.state.phase === 'ready') {
-    stage = <img key={full.state.src} src={full.state.src} alt="" draggable={false} className={cx(IMAGE_BOUNDS, 'shadow-pop')} />;
+  } else if (fullState.phase === 'ready') {
+    stage = <img key={fullState.src} src={fullState.src} alt="" draggable={false} className={cx(IMAGE_BOUNDS, 'shadow-pop')} />;
   } else {
     stage = (
       <LightboxPreview
@@ -298,9 +309,9 @@ export function MediaLightbox(): React.JSX.Element | null {
             {isMotion && item.isReady && !item.locked && (
               <span>{t(item.type === 'gif' ? 'media.gifPreview' : 'media.videoPreview')}</span>
             )}
-            {full.state.phase === 'loading' && <span className="num opacity-80">{t('media.loading')}</span>}
+            {fullState.phase === 'loading' && <span className="num opacity-80">{t('media.loading')}</span>}
             {blocked !== null && blocked.state === 'load' && (
-              <button type="button" onClick={full.retry} title={t(MEDIA_LOAD_TIP[blocked.reason])} className={LOAD_BUTTON}>
+              <button type="button" onClick={press} title={t(MEDIA_LOAD_TIP[blocked.reason])} className={LOAD_BUTTON}>
                 {t('media.load')}
               </button>
             )}

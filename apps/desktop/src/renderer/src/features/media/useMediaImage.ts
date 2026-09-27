@@ -5,8 +5,9 @@
 // the token can show (`query:media.state`) — «загрузить», «недоступно»,
 // «обрабатывается», or a quiet wait — and a click is the explicit action that
 // may spend credits (`cmd:media.load`). A cell that leaves the viewport (or
-// unmounts) before its image arrived drops its src and asks main to cancel
-// the load if it has not started (`cmd:media.cancel`).
+// unmounts) before its image arrived drops its src and tells main it no
+// longer wants the file (`cmd:media.cancel`); main drops the load if it has
+// not started and no other cell wants it.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MediaSurfaceVM } from '../../../../preload/contract';
@@ -23,11 +24,18 @@ import {
 
 export type { MediaImagePhase } from './mediaImageMachine';
 
-/** `media://` tokens carry the surface (Core's log) and a reload counter. */
-export function mediaSrc(url: string, surface: MediaSurfaceVM, reload: number): string {
+/**
+ * `media://` tokens carry the surface (Core's log), a reload counter and the
+ * asking cell: two cells showing one file share its load in main, and one
+ * cell leaving drops only its own interest (`cmd:media.cancel` with the same
+ * `c=`).
+ */
+export function mediaSrc(url: string, surface: MediaSurfaceVM, reload: number, cell?: string): string {
   if (!url.startsWith('media://')) return url; // dev mock data: URIs
-  return `${url}?s=${surface}${reload > 0 ? `&r=${reload}` : ''}`;
+  return `${url}?s=${surface}${reload > 0 ? `&r=${reload}` : ''}${cell !== undefined ? `&c=${cell}` : ''}`;
 }
+
+let cellSeq = 0;
 
 export function useMediaImage(
   url: string | null,
@@ -47,6 +55,7 @@ export function useMediaImage(
   loadNow: () => void;
 } {
   const autoLoad = options.autoLoad ?? true;
+  const [cell] = useState(() => `c${(cellSeq += 1).toString(36)}`);
   const [element, setElement] = useState<HTMLElement | null>(null);
   const [stored, setStored] = useState<MediaImageState>(() => initialMediaImageState(url));
   // A new token starts over (render-time adjustment, no effect round-trip).
@@ -67,7 +76,7 @@ export function useMediaImage(
   useEffect(() => {
     if (!wantsSlot || url === null || element === null) return undefined;
     const cancelInMain = (): void => {
-      void getBridge().invoke('cmd:media.cancel', { url }).catch(() => undefined);
+      void getBridge().invoke('cmd:media.cancel', { url: mediaSrc(url, surface, 0, cell) }).catch(() => undefined);
     };
     const unwatch = getMediaGate().watch(
       element,
@@ -90,7 +99,7 @@ export function useMediaImage(
         cancelInMain();
       }
     };
-  }, [wantsSlot, url, element, dispatch, release]);
+  }, [wantsSlot, url, element, dispatch, release, surface, cell]);
 
   // Timers are driven by the phase: a bounded recheck, or a quiet park.
   const phase = current.phase;
@@ -134,7 +143,7 @@ export function useMediaImage(
   const showing = current.granted && (phase.phase === 'loading' || phase.phase === 'ready');
   return {
     attach,
-    src: url !== null && showing ? mediaSrc(url, surface, current.reload) : null,
+    src: url !== null && showing ? mediaSrc(url, surface, current.reload, cell) : null,
     phase,
     onLoad,
     onError,

@@ -56,7 +56,11 @@ describe('media image state machine', () => {
       state = reduceMediaImage(state, { type: 'stateAnswer', state: { state: 'loading' } });
       expect(state.phase).toEqual({ phase: 'recheck', delayMs: 2_000 });
       state = reduceMediaImage(state, { type: 'recheckDue' });
-      expect(state).toMatchObject({ granted: true, phase: { phase: 'loading' } });
+      // N4: a recheck waits for a gate slot again — no src until it is granted.
+      expect(state).toMatchObject({ granted: false, phase: { phase: 'waiting' }, reload: i + 1 });
+      expect(mediaImageWantsSlot(state)).toBe(true);
+      state = reduceMediaImage(state, { type: 'granted' });
+      expect(state).toMatchObject({ granted: true, phase: { phase: 'loading' }, reload: i + 1 });
     }
     state = reduceMediaImage(state, { type: 'stateAnswer', state: { state: 'idle' } });
     expect(state.phase).toEqual({ phase: 'parked', retryAfterMs: MEDIA_IMAGE_PARK_MS });

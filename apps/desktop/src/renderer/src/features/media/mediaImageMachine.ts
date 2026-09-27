@@ -5,9 +5,13 @@
 //   waiting ──granted──▶ loading ──loaded──▶ ready
 //      ▲                   │  └──hidden──▶ waiting (the unstarted load is cancelled in main)
 //      │                   └──error──▶ (ask main what the token can show)
-//      │                          transient ─▶ recheck ─(delay)─▶ loading   (bounded, 3×)
+//      │                          transient ─▶ recheck ─(delay)─▶ waiting   (bounded, 3×)
 //      │                          wait      ─▶ parked  ─(retryAfter)─▶ waiting
 //      └──────── rearm ───────────  load/unavailable/processing ─▶ blocked
+//
+// Every automatic (re)load goes back through `waiting`, i.e. through the
+// visibility gate and its four slots; only an explicit click that main
+// answered «ready» (the file is in the local cache) shows without a slot.
 //
 // Nothing here ever turns a throttled or busy token into «Загрузить»: `wait`
 // (and a transient answer that never settles) parks the cell as a quiet
@@ -96,8 +100,9 @@ export function reduceMediaImage(state: MediaImageState, event: MediaImageEvent)
     case 'stateFailed':
       return { ...state, granted: false, phase: { phase: 'blocked', state: { state: 'unavailable' } } };
     case 'recheckDue':
+      // N4: a recheck is a fresh load — it asks the gate for a slot like any other.
       return state.phase.phase === 'recheck'
-        ? { ...state, granted: true, reload: state.reload + 1, phase: { phase: 'loading' } }
+        ? { ...state, granted: false, reload: state.reload + 1, phase: { phase: 'waiting' } }
         : state;
     case 'rearm':
       return state.phase.phase === 'parked'

@@ -85,3 +85,26 @@ export function lightboxKeyAction(event: { key: string; repeat: boolean }): Ligh
 export function lightboxFrameTrigger(navigated: boolean, retried: boolean): MediaTriggerVM {
   return retried || !navigated ? 'click' : 'auto';
 }
+
+export interface LightboxFrame {
+  visit: number;
+  navigated: boolean;
+  presses: number;
+}
+
+/**
+ * The full-photo request for the frame on screen. A new key is a new request:
+ * the opening frame and each «Загрузить» press ask as a click, once; a frame
+ * reached by navigation — including one pressed on an earlier visit — asks as
+ * `auto` (a full photo already cached still shows, nothing is spent). `waited`
+ * counts the quiet waits (Core busy or rate-limited) this visit sat out.
+ */
+export function lightboxFullRequest(
+  frame: LightboxFrame,
+  fullUrl: string | null,
+  waited: number,
+): { key: string; url: string; trigger: MediaTriggerVM } | null {
+  if (fullUrl === null) return null;
+  const trigger = lightboxFrameTrigger(frame.navigated, frame.presses > 0);
+  return { key: `${fullUrl}#${frame.visit}#${frame.presses}#${waited}#${trigger}`, url: fullUrl, trigger };
+}

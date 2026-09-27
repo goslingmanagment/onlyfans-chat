@@ -10,8 +10,10 @@ import {
   createFullPhotoLoader,
   LIGHTBOX_DWELL_MS,
   lightboxFrameTrigger,
+  lightboxFullRequest,
   lightboxKeyAction,
 } from '../../src/renderer/src/features/media/lightboxLoader';
+import { useLightboxStore, type LightboxItem } from '../../src/renderer/src/features/media/lightboxStore';
 
 function fakeTimers() {
   let seq = 0;
@@ -141,5 +143,68 @@ describe('lightbox keys and triggers', () => {
     expect(lightboxFrameTrigger(false, false)).toBe('click');
     expect(lightboxFrameTrigger(true, false)).toBe('auto');
     expect(lightboxFrameTrigger(true, true)).toBe('click');
+  });
+});
+
+describe('lightbox full-photo requests across frames (R6)', () => {
+  const photo = (id: string): LightboxItem => ({
+    id, type: 'photo', thumbUrl: `media://thumb-${id}`, fullUrl: `media://full-${id}`,
+    isReady: true, locked: false, durationSeconds: null,
+  });
+
+  /**
+   * Mirrors MediaLightbox: a request goes out whenever the frame's request key
+   * changes. Returns [frame, trigger] for every request the actions caused.
+   */
+  function requestsDuring(actions: Array<() => void>): Array<[string, MediaTriggerVM]> {
+    const made: Array<[string, MediaTriggerVM]> = [];
+    let lastKey: string | null = null;
+    const observe = (): void => {
+      const state = useLightboxStore.getState();
+      const item = state.open ? state.items[state.index] ?? null : null;
+      const request = lightboxFullRequest(state, item?.fullUrl ?? null, 0);
+      if (request !== null && request.key !== lastKey && item !== null) made.push([item.id, request.trigger]);
+      lastKey = request?.key ?? null;
+    };
+    for (const action of actions) {
+      action();
+      observe();
+    }
+    return made;
+  }
+
+  it('returning to a frame after «Загрузить» sends no click — only the free automatic ask', () => {
+    const lightbox = useLightboxStore.getState();
+    const made = requestsDuring([
+      () => lightbox.show([photo('A'), photo('B')], 0, 'thread'),
+      () => useLightboxStore.getState().press(), // «Загрузить» on A
+      () => useLightboxStore.getState().step(1),
+      () => useLightboxStore.getState().step(-1), // back on A
+    ]);
+    expect(made).toEqual([['A', 'click'], ['A', 'click'], ['B', 'auto'], ['A', 'auto']]);
+    useLightboxStore.getState().close();
+  });
+
+  it('a press belongs to the frame it was made on, and each press is one click', () => {
+    const made = requestsDuring([
+      () => useLightboxStore.getState().show([photo('A'), photo('B'), photo('C')], 0, 'gallery'),
+      () => useLightboxStore.getState().step(1),
+      () => useLightboxStore.getState().press(), // B
+      () => useLightboxStore.getState().press(), // B again, after a failure
+      () => useLightboxStore.getState().step(1), // C
+      () => useLightboxStore.getState().step(-1), // B again: a new visit
+      () => useLightboxStore.getState().close(),
+      () => useLightboxStore.getState().show([photo('A'), photo('B')], 1, 'thread'), // reopened on B by a click
+    ]);
+    expect(made).toEqual([
+      ['A', 'click'], ['B', 'auto'], ['B', 'click'], ['B', 'click'], ['C', 'auto'], ['B', 'auto'], ['B', 'click'],
+    ]);
+    useLightboxStore.getState().close();
+  });
+
+  it('a press on a closed lightbox does nothing', () => {
+    useLightboxStore.getState().close();
+    useLightboxStore.getState().press();
+    expect(useLightboxStore.getState().presses).toBe(0);
   });
 });
