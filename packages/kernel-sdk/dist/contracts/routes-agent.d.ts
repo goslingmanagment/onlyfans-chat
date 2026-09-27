@@ -1937,8 +1937,8 @@ export declare const agentCapabilitiesResponseSchema: z.ZodObject<{
         contractHash: z.ZodString;
         planeMode: z.ZodEnum<{
             off: "off";
-            read_only: "read_only";
             full: "full";
+            read_only: "read_only";
         }>;
         searchBackend: z.ZodEnum<{
             off: "off";
@@ -16861,8 +16861,8 @@ export declare const agentRouteSchemas: {
                     contractHash: z.ZodString;
                     planeMode: z.ZodEnum<{
                         off: "off";
-                        read_only: "read_only";
                         full: "full";
+                        read_only: "read_only";
                     }>;
                     searchBackend: z.ZodEnum<{
                         off: "off";

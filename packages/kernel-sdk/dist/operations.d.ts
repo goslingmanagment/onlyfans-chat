@@ -775,6 +775,14 @@ export declare const kernelOperations: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/ofapi/media/handoff";
     };
+    readonly ofapiMediaReports: {
+        readonly method: "POST";
+        readonly path: "/api/v1/ofapi/media/reports";
+    };
+    readonly ofapiMediaResolve: {
+        readonly method: "POST";
+        readonly path: "/api/v1/ofapi/media/resolve";
+    };
     readonly ofapiMediaSourceCreate: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/ofapi/media/sources";
