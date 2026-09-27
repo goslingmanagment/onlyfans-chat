@@ -2,9 +2,14 @@ import { z } from "zod";
 /**
  * Closed outcome set. `free_url` / `ofapi_cache` / `paid` carry a URL; every
  * other outcome carries none. `refused` and `unavailable` render "unavailable"
- * (a click does not bypass them); `cap_blocked` and `source_expired` wait for
- * an explicit click; `pending` retries after `retryAfterMs` with a NEW
- * requestId; `error` is a failure with no charge left behind.
+ * (a click does not bypass them) — except `refused` with reason `not_ready`,
+ * which renders "processing" and, when `reread` names where the media
+ * appeared, may be refreshed by an explicit click (one media-context re-read,
+ * then resolve with `afterReread`). `cap_blocked` (reasons `daily_cap`,
+ * `size_unknown`, `click_only` — `full` is never loaded automatically) and
+ * `source_expired` wait for an explicit click; `pending` (reasons `in_flight`,
+ * `busy`) retries after `retryAfterMs` with a NEW requestId; `error` is a
+ * failure with no charge left behind.
  */
 export declare const ofapiMediaOutcomeSchema: z.ZodEnum<{
     pending: "pending";
@@ -162,6 +167,12 @@ export declare const ofapiMediaImageRouteSchemas: {
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
             readonly 429: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
@@ -250,6 +261,12 @@ export declare const ofapiMediaImageRouteSchemas: {
                 reason: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;

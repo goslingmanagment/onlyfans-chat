@@ -9,15 +9,23 @@ const errors = {
     401: errorResponseSchema,
     403: errorResponseSchema,
     404: errorResponseSchema,
+    // A requestId already used for another file (reason request_id_reused).
+    409: errorResponseSchema,
+    // Per device token: resolve 300/min, reports 120/min; `retry-after` in seconds.
     429: errorResponseSchema,
     503: errorResponseSchema,
 };
 /**
  * Closed outcome set. `free_url` / `ofapi_cache` / `paid` carry a URL; every
  * other outcome carries none. `refused` and `unavailable` render "unavailable"
- * (a click does not bypass them); `cap_blocked` and `source_expired` wait for
- * an explicit click; `pending` retries after `retryAfterMs` with a NEW
- * requestId; `error` is a failure with no charge left behind.
+ * (a click does not bypass them) — except `refused` with reason `not_ready`,
+ * which renders "processing" and, when `reread` names where the media
+ * appeared, may be refreshed by an explicit click (one media-context re-read,
+ * then resolve with `afterReread`). `cap_blocked` (reasons `daily_cap`,
+ * `size_unknown`, `click_only` — `full` is never loaded automatically) and
+ * `source_expired` wait for an explicit click; `pending` (reasons `in_flight`,
+ * `busy`) retries after `retryAfterMs` with a NEW requestId; `error` is a
+ * failure with no charge left behind.
  */
 export const ofapiMediaOutcomeSchema = z.enum([
     "free_url", "ofapi_cache", "paid", "cap_blocked", "source_expired",
@@ -50,7 +58,11 @@ export const ofapiMediaResolveResponseSchema = z.object({
     contentLength: z.number().int().nonnegative().nullable(),
     /** Hard byte ceiling for this transfer (paid: the priced size, or a 5 MB guard when unknown). */
     maxBytes: z.number().int().positive().nullable(),
-    /** Estimated credits charged by this resolve; non-zero only for `paid`. */
+    /**
+     * Estimated credits charged by this resolve; non-zero only for `paid`. A
+     * click of unknown size (`contentLength` null) is reserved at the guard's
+     * price and settled on its report to max(1, ceil(3·bytesReceived/1e6)).
+     */
     credits: z.number().int().nonnegative(),
     overCap: z.boolean(),
     /** Machine reason (e.g. daily_cap, size_unknown, collection_off, locked, not_found, in_flight). */
@@ -59,7 +71,7 @@ export const ofapiMediaResolveResponseSchema = z.object({
     /** `cap_blocked` by the daily budget: the next UTC midnight. */
     retryAt: z.string().nullable(),
     mediaType: z.string().nullable(),
-    /** `source_expired`: what a click-triggered re-read should refresh. */
+    /** `source_expired` and `refused`/`not_ready`: what a click-triggered re-read should refresh. */
     reread: ofapiMediaRereadSchema.nullable(),
     /** A repeated requestId; `url` may be null when the hand-out is no longer retained. */
     replayed: z.boolean(),
@@ -85,7 +97,9 @@ export const ofapiMediaImageRouteSchemas = {
         summary: "Decide how the desktop may fetch one media file (free URL, OFAPI cache or a budgeted paid download)",
         description: "Chatter-key-only, page-scoped like the read gateway. The hub never relays bytes: it returns "
             + "a URL (or none) and a closed outcome. Paid downloads count against the agency's UTC-day budget; "
-            + "`auto` passes only within it, `click` always passes and is flagged over_cap. Idempotent by requestId.",
+            + "`auto` passes only within it, `click` always passes and is flagged over_cap; `full` is click-only. "
+            + "Idempotent by requestId: a repeat or a concurrent twin gets the same answer, a requestId reused for "
+            + "another file is a 409. Worst case about 35 s.",
         body: ofapiMediaResolveRequestSchema,
         response: { 200: ofapiMediaResolveResponseSchema, ...errors },
     },
