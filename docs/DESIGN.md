@@ -92,7 +92,7 @@ This section is review-blocking for renderer PRs, same weight as SPEC §15 invar
 2. **Virtualize both long lists** (`@tanstack/react-virtual`): chat list and message history. Memoized rows, stable keys, measured-height cache; scrollback fetches pages of ≤100 from main.
 3. **IPC discipline:** renderer receives narrow typed view-models, never raw OFAPI JSON blobs; queries are paginated; DB-change notifications batched (≤1 flush / 50 ms — the legacy stream-batching lesson). No polling loops in the renderer; main pushes.
 4. **AI streaming without re-render storms:** stream chunks append via direct text-node updates inside the dock (legacy overlay technique) with 50 ms batching — the React tree around the streaming card must not re-render per chunk.
-5. **Media pipeline:** thumbnails through the `media://` handler with disk LRU (SPEC §10); `loading=lazy`, `decoding=async`; dominant-color/blurhash placeholders; full-size media only on click; image decode must never block scroll.
+5. **Media pipeline:** thumbnails through the `media://` handler with the encrypted disk LRU (SPEC §10); message, gallery and vault files are id tokens that Core resolves (D42). A cell sets `src` only after the visibility gate (`features/media/mediaGate.ts`: IntersectionObserver, `rootMargin: 0`, at most 4 images in flight, visibility re-checked before a queued cell is let through) grants it a slot — not `loading=lazy`, which prefetches off-screen and would spend credits on rows the chatter never sees; `decoding=async`; fixed tile sizes and a neutral skeleton instead of blurhash (no placeholder data exists before the first fetch); full-size photos only on click (lightbox), video/GIF as the preview frame only; image decode must never block scroll.
 6. **State discipline:** Zustand with per-slice selectors (no whole-store subscriptions); TanStack Query structural sharing for IPC reads; no app-wide context providers that re-render the tree; React StrictMode + Profiler pass per feature.
 7. **Main-thread budget:** any renderer task >16 ms is a defect; JSON parsing, diffing, search indexes live in main (or a worker if ever needed). Long-task monitoring on in debug builds.
 8. **Animations:** transform/opacity only, 150–200 ms, reduced-motion respected; none during streaming or fling-scroll.
@@ -111,6 +111,19 @@ This section is review-blocking for renderer PRs, same weight as SPEC §15 invar
 - Anti-goals: no modal dialogs inside the shift loop; no avatar noise in dense lists beyond the chat row. (Dark theme is no longer an anti-goal — it shipped as an optional CSS-variable swap, owner 2026-06-13; the discipline is that it stays a pure token re-skin, never per-component dark styling.)
 
 ## 5. Visual reference mockup
+
+**Media images update, 2026-09-27 — D42.** A message's attachments are tiles
+inside its bubble (they replaced the «N медиа» count badge): one tile
+240×180, two tiles 150 high side by side, three or more a 2×2 grid of
+118-px tiles; past four, the fourth carries «+N» and every tile opens the
+lightbox over all of the message's attachments. The chat gallery and the
+vault grid share the same cell (`features/media/MediaCell.tsx`). States are
+quiet and never red: skeleton while waiting, «Загрузить» when Core needs an
+explicit click (budget reached, size unknown, link expired, a failed try),
+«Недоступно», «Обрабатывается», 🔒 for locked PPV, a ▶ duration / GIF mark
+on previews. The lightbox is a dark veil (`--color-veil`, `--color-veil-ink`
+tokens) with the photo centred, ‹ › and a counter; Esc closes. No mockup —
+the implementation is the reference.
 
 **Spenders update, 2026-09-11 — D29.** The current Spenders reference is
 [`mockups/spenders-contact-columns.html`](mockups/spenders-contact-columns.html),

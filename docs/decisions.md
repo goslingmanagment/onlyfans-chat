@@ -61,6 +61,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D39 | 2026-09-27 | Purchases: Core's money facts apply locally (PPV unlock → `message_facts`, applied on every message write; `transaction.posted` → `fan_transactions` at once, the sweep keeps its own watermark), a free `/events/v2/facts` catch-up per account, quiet toasts for live PPV purchases and tips (no sound), tip messages stop alerting, no paid `refreshChat` on PPV/tip frames |
 | D40 | 2026-09-27 | Toast age gate widened from 9 to 60 min: redeliveries are excluded by provenance, so the gate only has to separate history from OFAPI's late-but-live deliveries (amends D38/D39) |
 | D41 | 2026-09-27 | One hotkey scheme with the Fansly extension, vendored from the hub (`@chatgoose/hotkeys`): text actions on ⌘/Ctrl + key (E Reply, I Improve, G Hi, P Ping, . Cancel), panels on ⌘⇧ / Ctrl+Alt + key (H, S, O, B, L, M; C reserved), physical-key matching, fresh-press roll-over guard; navigation unchanged |
+| D42 | 2026-09-27 | Media images: message, gallery and vault files are id tokens that Core resolves (free webhook/OFAPI-cache URL or a budgeted paid download, 100 credits/UTC day for automatic loads, clicks always pass); bytes only on this machine, encrypted; tiles replace the count badge, full photos on click, video/GIF preview frame only; SDK re-vendored from core feature commit 08ca788a — re-vendor from the deployed commit before release (core #267) |
 
 ## Entries
 
@@ -1217,3 +1218,68 @@ extension's. The owner chose the letters after three model rounds (plan v3):
 Not verified here: real key delivery on Windows with EN/RU and each language
 switch, and Firefox-side behaviour — the live acceptance matrix of plan v3.
 
+**D42 (2026-09-27).** Owner-approved plan «ChatGoose Desktop: media images»
+(owner decisions of 2026-09-27; the hub side is core #267 and its
+runbook `docs/runbooks/ofapi-media.md` → «Desktop media images»). The chat
+showed «N медиа» because OFAPI's signed CDN links expire and a paid OFAPI
+download had no budget. Now:
+
+- **Id tokens.** A message, gallery or vault file is `media://<sha256('ofapi|
+  acct|mediaId|variant')>` (`hashOfapiMediaKey`, a separate function from the
+  URL hash), `variant` ∈ `thumb | full`; `media_urls` rows gain `kind`
+  (`url | ofapi`), `account_id`, `media_id`, `variant` (schema v26). No
+  signed URL reaches the renderer or the DB row that names the token.
+  `full` exists only for photos; automatic thumbnails never fall back to the
+  full file; message VMs re-mint from `(accountId, media.id, variant)` and
+  ignore whatever URL token an older build stored, so a media-cache clear
+  (which wipes the registry) heals on the next read. Avatars stay URL tokens
+  fetched by `fetchRemote`.
+- **Core decides the cost.** On a cache miss main calls `POST
+  /api/v1/ofapi/media/resolve` (SDK `ofapiMediaResolve`, client requestId,
+  surface, trigger `auto | click`). Core answers `free_url | ofapi_cache |
+  paid | pending | cap_blocked | refused | unavailable` and logs every
+  decision; free sources are the webhook's Expires URL and OFAPI's cache,
+  paid is OFAPI's download (at least 1 credit, 3 per decimal MB) inside the
+  `media_previews` collection category and an agency cap of 100 credits per
+  UTC day for automatic loads — an explicit click always passes and is
+  flagged over the cap. Core never relays or stores bytes.
+- **This client's half.** Only accounts granted to the current identity are
+  served (D35). The cache answers first. Downloads: https on an allowlisted
+  host with every redirect hop re-checked, 30 s timeout, at most four at
+  once, stop past Core's priced size (unknown size — a click only — has a
+  5 MB guard), never an automatic retry of a paid transfer. `cap_blocked`
+  latches the token for automatic loads until Core's `retryAt`; `pending`
+  waits Core's `retryAfterMs` (≤5 s) and asks again at most 3×; failed
+  automatic attempts stop after 3 per hour per token; `source_expired` on a
+  click re-reads the message or vault item once (read intent
+  `media-context-v1`, so Core files the read under media) and asks again.
+  Every hand-out is reported (`ofapiMediaReports`: batched ≤100,
+  idempotent by `resolveId`, durable in the encrypted `media_fetch_reports`
+  table, flushed after fetches and at startup); a report that never arrives
+  stays `unknown` at Core. Credits land in Activity under purpose `media`
+  from the resolve answer (idempotent by `resolveId`); no provider headers
+  are invented. A hub without these routes (404/405) and a refusal (the
+  owner's `media_previews` policy off or its ceiling reached) show
+  «Недоступно», quietly.
+- **UI.** Tiles in the bubble replace the count badge: up to four, the
+  fourth carries «+N», every tile opens the lightbox over all of the
+  message's attachments; fixed tile heights keep the virtualized thread's
+  row estimates stable. The chat gallery and the vault grid in the PPV
+  composer share `MediaCell`; a vault click still only attaches, and the
+  cell's «Загрузить» never attaches. Images load only when visible (a gate
+  with `rootMargin: 0`, ≤4 in flight, visibility re-checked before a queued
+  cell goes), so scrolling past history spends nothing. States: skeleton,
+  «Загрузить» (budget reached, size unknown, link expired, a failed try —
+  the click is the explicit action), «Недоступно», «Обрабатывается», 🔒
+  locked PPV, ▶ duration / GIF on previews. Full-size photos only on click
+  (lightbox); video and GIF show the preview frame only. Fast Reply and every
+  AI transcript still carry text labels only («Photo», «Media Bundle: …») —
+  no image or token reaches the kernel.
+- **SDK.** Re-vendored from core feature commit `08ca788a` (contract hash
+  `9ac5debe…`). The publish gate compares production's contract hash with
+  the vendored one, so the SDK MUST be re-vendored from the deployed core
+  commit (D37/D38 practice) before this ships.
+
+Not verified here: a live fetch of any kind (no OFAPI or CDN call was made
+while building this; the resolver and protocol are proved against fakes),
+the packaged app on Windows, and real throughput against the cap.
