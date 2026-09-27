@@ -118,12 +118,16 @@ inside its bubble (they replaced the «N медиа» count badge): one tile
 118-px tiles; past four, the fourth carries «+N» and every tile opens the
 lightbox over all of the message's attachments. The chat gallery and the
 vault grid share the same cell (`features/media/MediaCell.tsx`). States are
-quiet and never red: skeleton while waiting, «Загрузить» when Core needs an
+quiet and never red: skeleton while waiting (and while Core is busy or
+rate-limited — the cell retries by itself), «Загрузить» when Core needs an
 explicit click (budget reached, size unknown, link expired, a failed try),
-«Недоступно», «Обрабатывается», 🔒 for locked PPV, a ▶ duration / GIF mark
-on previews. The lightbox is a dark veil (`--color-veil`, `--color-veil-ink`
-tokens) with the photo centred, ‹ › and a counter; Esc closes. No mockup —
-the implementation is the reference.
+«Недоступно», «Обрабатывается» (with a small «Проверить» when an explicit
+re-read can help), 🔒 for locked PPV, a ▶ duration / GIF mark on previews.
+The lightbox is a dark veil (`--color-veil`, `--color-veil-ink` tokens) with
+the photo centred, ‹ › and a counter; Esc closes; it holds focus while open.
+A frame reached by navigation shows the thumbnail with «Загрузить» for the
+full photo (full size is click-only). No mockup — the implementation is the
+reference.
 
 **Spenders update, 2026-09-11 — D29.** The current Spenders reference is
 [`mockups/spenders-contact-columns.html`](mockups/spenders-contact-columns.html),
