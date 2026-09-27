@@ -1,7 +1,7 @@
 {
   "name": "@chatgoose/desktop",
   "private": true,
-  "version": "0.1.59",
+  "version": "0.1.60",
   "description": "ChatGoose Desktop — Electron app",
   "author": "ChatGoose",
   "type": "module",
@@ -41,6 +41,7 @@
     "zustand": "^5.0.14"
   },
   "dependencies": {
+    "@chatgoose/hotkeys": "workspace:*",
     "@kernel/sdk": "workspace:*",
     "better-sqlite3-multiple-ciphers": "^12.10.0",
     "electron-updater": "^6.8.9",

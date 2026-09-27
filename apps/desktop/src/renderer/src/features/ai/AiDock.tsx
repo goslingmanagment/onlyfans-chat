@@ -15,6 +15,7 @@ import { useSettingsCache } from '../../state/settingsCache';
 import { useChatSendability, useSettings } from '../../bridge/queries';
 import { cx } from '../../lib/cx';
 import { modCombo } from '../../lib/modKey';
+import { schemeAria, schemeLabel } from '../../lib/hotkeyScheme';
 import { localeTag, useLocale, useT } from '../../lib/i18n';
 import { Kbd } from '../../design/Kbd';
 import { AiDockSlot } from '../conversation/AiDockSlot';
@@ -154,7 +155,7 @@ function FullDock(): React.JSX.Element | null {
             onClick={cancelActiveOperation}
             className="ml-3 flex cursor-pointer items-center gap-1.5 text-[12px] font-medium text-ink-mid hover:text-bad"
           >
-            {t('common.cancel')} <Kbd>{modCombo('.')}</Kbd>
+            {t('common.cancel')} <Kbd>{schemeLabel('cancel')}</Kbd>
           </button>
         ) : (
           <button
@@ -570,7 +571,8 @@ function SplitToggle({ running }: { running: boolean }): React.JSX.Element {
       onClick={() => {
         if (!running) togglePreferSplit();
       }}
-      title={t('aidock.splitTip')}
+      title={t('aidock.splitTip', { combo: schemeLabel('split') })}
+      aria-keyshortcuts={schemeAria('split')}
       className={cx(
         'ml-1.5 cursor-pointer rounded-full border px-[11px] py-[3px] text-[12px] font-medium transition-colors duration-150',
         'disabled:cursor-default disabled:opacity-60',

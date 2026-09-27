@@ -60,6 +60,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D38 | 2026-09-26 | Fresh list at launch: page 1 first and page by page, hub frames commit state + durable sync intents + the v2 cursor in one transaction and never await the network, `platform=onlyfans`, SYNCING + one list banner, toast age/provenance gate; SDK re-vendored from deployed core a51e687d (H3, core #265) |
 | D39 | 2026-09-27 | Purchases: Core's money facts apply locally (PPV unlock → `message_facts`, applied on every message write; `transaction.posted` → `fan_transactions` at once, the sweep keeps its own watermark), a free `/events/v2/facts` catch-up per account, quiet toasts for live PPV purchases and tips (no sound), tip messages stop alerting, no paid `refreshChat` on PPV/tip frames |
 | D40 | 2026-09-27 | Toast age gate widened from 9 to 60 min: redeliveries are excluded by provenance, so the gate only has to separate history from OFAPI's late-but-live deliveries (amends D38/D39) |
+| D41 | 2026-09-27 | One hotkey scheme with the Fansly extension, vendored from the hub (`@chatgoose/hotkeys`): text actions on ⌘/Ctrl + key (E Reply, I Improve, G Hi, P Ping, . Cancel), panels on ⌘⇧ / Ctrl+Alt + key (H, S, O, B, L, M; C reserved), physical-key matching, fresh-press roll-over guard; navigation unchanged |
 
 ## Entries
 
@@ -1178,3 +1179,41 @@ deliveries: at 9 minutes it muted ~4% of purchases and ~7% of tips (measured
 by the D39 session), which the owner wants shown — a fan who paid 20–40
 minutes ago is still worth a thank-you. State (purchase badges, money) was
 never gated and is unchanged. Owner request, 2026-09-27.
+
+**D41 (2026-09-27).** The AI and panel hotkeys are the family scheme shared
+with the Fansly extension, not this repo's own table. Chatters work both
+clients and complained that the same action had different keys (owner,
+2026-09-26). The scheme lives in the hub as `packages/chatgoose-hotkeys` —
+its README is the spec, with the table, the platform constraints behind each
+letter and the engine rules; the hub no longer keeps a decision log, so this
+entry and the extension's are the family record — and it is vendored here as
+`packages/chatgoose-hotkeys` (`@chatgoose/hotkeys`) by the hub's
+`scripts/vendor-hotkeys.mjs`; the manifest's sha256 must equal the
+extension's. The owner chose the letters after three model rounds (plan v3):
+
+- Everything that writes into the reply field, plus Cancel, is ⌘ + key on
+  macOS and Ctrl + key on Windows: **E** Reply (was ⌘R), **I** Improve,
+  **G** Hi, **P** Ping, **.** Cancel. R stays unbound (in Firefox a missed
+  ⌘R reloads Fansly and loses the draft), F stays Find (chatters use it).
+- Analysis, panels and toggles are ⌘⇧ + key on macOS and Ctrl+Alt + key on
+  Windows (Ctrl+Shift and Alt+Shift switch the input language on the team's
+  machines): **H** Help, **S** Scan, **O** tone (was ⌘T), **B** Review (was
+  ⌘E; V is paste-as-plain-text), **L** Split and **M** Spenders (new here),
+  **C** reserved for the extension's Coach.
+- Keys match by `event.code`, so the Russian layout works. Modifiers are
+  strict; a fresh-press roll-over guard stops a language switch rolled into
+  a letter from firing Reply/Improve/Hi/Ping; auto-repeat is swallowed, never
+  re-run. On macOS the extension's old ⌘⇧E/⌘⇧I/⌘⇧G also work, ⌘⇧X cancels,
+  ⌘⇧D/⌘⇧F do nothing.
+- Navigation, send, ⌘0, ⌘1–9, the palette and the board keys are unchanged
+  (`app/keymapBindings.ts`); the vendored engine decides first. The chat
+  number badges now appear only when the bare mod key is held alone for
+  350 ms, so ⌘E never flashes them. The Electron menu is unchanged (Hide on
+  ⌃⌘H, ⌘M minimise).
+- One-shot switch (owner): the old ⌘R/⌘T/⌘H/⌘S/⌘E-as-Review are simply gone,
+  no aliases, no transition hints. A non-updated desktop would read the new
+  ⌘E as the old Review, so every desktop is updated before the announcement.
+
+Not verified here: real key delivery on Windows with EN/RU and each language
+switch, and Firefox-side behaviour — the live acceptance matrix of plan v3.
+

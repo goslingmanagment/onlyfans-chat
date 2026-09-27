@@ -1,6 +1,9 @@
 // One window-level keydown listener for the whole app (DESIGN §2: single
 // registry, no scattered listeners). Overlay-local keys (palette arrows) stay
-// inside their components; everything global routes through here.
+// inside their components; everything global routes through here. AI and panel
+// combos come from the family scheme shared with the Fansly extension
+// (lib/hotkeyScheme.ts, vendored @chatgoose/hotkeys); navigation, send and the
+// board keys from keymapBindings.ts.
 
 import { useEffect, useMemo } from 'react';
 import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
@@ -8,7 +11,10 @@ import { createKeymap, type KeyEventLike } from '../lib/keymap';
 import { nextChatId, nextUnreadChatId, nthChatId } from '../lib/filters';
 import { KEY_BINDINGS } from './keymapBindings';
 import { useUiStore } from '../state/uiStore';
-import { useNavOverlayStore } from '../state/navOverlayStore';
+import { createNavOverlayController } from '../state/navOverlayStore';
+import { createDesktopHotkeyEngine, resolveDesktopKey, schemePlatform } from '../lib/hotkeyScheme';
+import { currentLocale } from '../lib/i18n';
+import { uiMessage } from '@chatgoose/shared/i18n/index';
 import { qk, type ChatListPage } from '../bridge/queries';
 import type { ChatListItemVM, SettingsVM } from '../../../preload/contract';
 import {
@@ -17,6 +23,7 @@ import {
   cancelActiveOperation,
   cycleDockTone,
   dismissDock,
+  togglePreferSplit,
 } from '../features/ai/aiStore';
 import { startAiFromGlobal } from '../features/ai/globalStart';
 import { sendCurrentDraft } from '../features/conversation/sendController';
@@ -47,9 +54,27 @@ function toEventLike(e: KeyboardEvent): KeyEventLike {
   };
 }
 
+/** Split from the keyboard: the same toggle as the dock's ⫶ pill, disabled
+ *  while a run is streaming (the pill is too); the toast is the only feedback
+ *  when the dock is closed. */
+function toggleSplitFromKeyboard(): void {
+  // `status` is the visible dock job's; it can read 'running' with no job on
+  // screen (after a cancel), so only a visible running job blocks, like the pill.
+  const dock = useAiStore.getState();
+  if (dock.op !== null && dock.status === 'running') return;
+  togglePreferSplit();
+  const locale = currentLocale();
+  useUiStore.getState().pushToast({
+    title: uiMessage(locale, 'aidock.split'),
+    body: uiMessage(locale, useAiStore.getState().preferSplit ? 'toast.splitOn' : 'toast.splitOff'),
+  });
+}
+
 export function KeymapProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
   const queryClient = useQueryClient();
   const keymap = useMemo(() => createKeymap(KEY_BINDINGS), []);
+  const engine = useMemo(() => createDesktopHotkeyEngine(), []);
+  const navOverlay = useMemo(() => createNavOverlayController({ platform: schemePlatform() }), []);
 
   useEffect(() => {
     function chatItems(accountId: string, filter: 'all' | 'unread' | 'with_tips'): ChatListItemVM[] {
@@ -69,18 +94,24 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
       );
     }
 
-    // P2 number overlay: hold ⌘/Ctrl → badge the chat list (NavNumberOverlay).
-    // Driven off the LIVE modifier flags so a missed up/down self-heals on the
-    // next key event; keyup/blur/visibility (below) clear it when the modifier
-    // or window focus drops — the OS eating a keyup (⌘Tab) never sticks badges.
-    function setModHeld(held: boolean): void {
-      useNavOverlayStore.getState().setModHeld(held);
-    }
-
+    // P2 number overlay: hold ⌘/Ctrl ALONE → badge the chat list after a short
+    // delay (NavNumberOverlay); any other key cancels it, so ⌘E never flashes
+    // the badges. keyup/blur/visibility (below) clear it — the OS eating a
+    // keyup (⌘Tab) never sticks badges.
     function onKeyDown(e: KeyboardEvent): void {
-      setModHeld(e.metaKey || e.ctrlKey);
-      const action = keymap.resolve(toEventLike(e));
-      if (action === null) return;
+      navOverlay.keydown(e);
+      const resolved = resolveDesktopKey(engine.keydown(e), keymap, toEventLike(e));
+      if (resolved.kind === 'none') return;
+      if (resolved.kind === 'swallow') {
+        // auto-repeat, a retired habit, a roll-over after a language switch,
+        // or reserved Coach: ChatGoose owns the combo but does nothing now
+        e.preventDefault();
+        return;
+      }
+      // Scheme combos belong to ChatGoose in every view: swallow them even
+      // where the view has nothing to run.
+      if (resolved.kind === 'scheme') e.preventDefault();
+      const action = resolved.action;
       const ui = useUiStore.getState();
       const overlayOpen = ui.paletteOpen || ui.cheatsheetOpen;
 
@@ -101,6 +132,13 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
           // Before the line-104 workspace guard: ⌘, works from any view.
           e.preventDefault();
           ui.setView('settings');
+          return;
+        case 'spenders':
+          // Same toggle as the rail's $ button, from any view.
+          ui.setView(ui.view === 'spenders' ? 'workspace' : 'spenders');
+          return;
+        case 'ai-split':
+          toggleSplitFromKeyboard();
           return;
         case 'dismiss': {
           if (ui.paletteOpen) ui.setPaletteOpen(false);
@@ -202,7 +240,7 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
             e.preventDefault();
             startAiFromPreview('hi-greeting', queryClient);
             return;
-          // ⌘I — Improve rewrites the shared composer draft (preview gained the
+          // Fix/Improve rewrites the shared composer draft (preview gained the
           // Improve pill); routes through the same gated path as the other pills.
           case 'ai-improve':
             e.preventDefault();
@@ -340,13 +378,18 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
     }
 
     function onKeyUp(e: KeyboardEvent): void {
-      setModHeld(e.metaKey || e.ctrlKey);
+      navOverlay.keyup(e);
+      engine.keyup(e);
     }
     function onWindowBlur(): void {
-      setModHeld(false);
+      navOverlay.reset();
+      engine.reset();
     }
     function onVisibilityChange(): void {
-      if (document.hidden) setModHeld(false);
+      if (document.hidden) {
+        navOverlay.reset();
+        engine.reset();
+      }
     }
 
     window.addEventListener('keydown', onKeyDown);
@@ -359,7 +402,7 @@ export function KeymapProvider({ children }: { children: React.ReactNode }): Rea
       window.removeEventListener('blur', onWindowBlur);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [keymap, queryClient]);
+  }, [engine, keymap, navOverlay, queryClient]);
 
   return <>{children}</>;
 }

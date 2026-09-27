@@ -15,7 +15,7 @@ import { useAccounts, useOnlineSnapshot, useRefreshOnline, useSettings, useUpdat
 import { useUiStore } from '../../state/uiStore';
 import { useT } from '../../lib/i18n';
 import { cx } from '../../lib/cx';
-import { modCombo } from '../../lib/modKey';
+import { schemeLabel } from '../../lib/hotkeyScheme';
 import { formatAgeShort, onlineMinutes } from '../../lib/time';
 import { Kbd } from '../../design/Kbd';
 import { EmptyState } from '../../design/EmptyState';
@@ -225,7 +225,7 @@ export function OnlineSurface(): React.JSX.Element {
       {/* ── foot ── */}
       <div className="flex flex-none items-center gap-2 border-t border-line bg-bg1 px-[26px] py-2 text-[11px] text-ink-low">
         <Kbd>J</Kbd>
-        <Kbd>K</Kbd> {t('sp.footNav')} · <Kbd>SPACE</Kbd> {t('sp.footPreview')} · <Kbd>O</Kbd> {t('sp.footChat')} · <Kbd>{modCombo('P')}</Kbd> {t('online.footPing')}
+        <Kbd>K</Kbd> {t('sp.footNav')} · <Kbd>SPACE</Kbd> {t('sp.footPreview')} · <Kbd>O</Kbd> {t('sp.footChat')} · <Kbd>{schemeLabel('ping')}</Kbd> {t('online.footPing')}
         <span className="flex-1" />
         <span>{t('online.footSnapshot')}</span>
       </div>

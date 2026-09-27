@@ -29,7 +29,7 @@ export const DOCK_TONES = ['casual', 'flirty', 'upsell', 'spicy'] as const satis
 /** Selectable tone — the Reply split-menu and the dock pills never offer 'none'. */
 export type DockTone = (typeof DOCK_TONES)[number];
 
-/** ⌘T order: none → casual → flirty → upsell → spicy → none (deselect closes the loop). */
+/** Tone-hotkey order: none → casual → flirty → upsell → spicy → none (deselect closes the loop). */
 export function cycleTone(current: ReplyTone): ReplyTone {
   const idx = DOCK_TONES.findIndex((tone) => tone === current);
   if (idx === -1) return DOCK_TONES[0];
@@ -42,11 +42,11 @@ export function toggleTone(current: ReplyTone, clicked: ReplyTone): ReplyTone {
 }
 
 /**
- * Effective tone the Reply body / ⌘R generate in: the override when set,
+ * Effective tone the Reply body / the Reply hotkey generate in: the override when set,
  * otherwise settings.defaultReplyTone — falling back to the first dock tone
  * when neither resolves to a real tone ('none' is never an active dock tone).
  * The Reply split-menu mark and the dock footer pills both read through this so
- * the two UIs (and ⌘T cycling) stay in sync.
+ * the two UIs (and tone-hotkey cycling) stay in sync.
  */
 export function effectiveReplyTone(
   override: ReplyTone | null,

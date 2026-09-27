@@ -43,7 +43,28 @@ reviewed greeting surface (D32), including its explicit read-state consent.
 
 ## 2. Interaction model & hotkeys
 
-Goal: **a full shift without touching the mouse.** Core triage loop: `⌘U` (next unread) → read → `⌘R` (fast reply) → review/edit → `⌘↵` (send) → `⌘U` …
+Goal: **a full shift without touching the mouse.** Core triage loop: `⌘U` (next unread) → read → `⌘E` (fast reply) → review/edit → `⌘↵` (send) → `⌘U` …
+
+**AI and panel keys are the family scheme (D41)** — the same keys as the Fansly extension, vendored as `@chatgoose/hotkeys` from the hub (`packages/chatgoose-hotkeys`, whose README is the spec). Everything that writes into the reply field, plus Cancel, is **⌘ + key** (Windows **Ctrl + key**); analysis, panels and toggles are **⌘⇧ + key** (Windows **Ctrl+Alt + key** — Ctrl+Shift and Alt+Shift switch the input language on the team's machines). Keys match by physical position (`event.code`), so the Russian layout works without switching.
+
+| Key (macOS / Windows) | Action |
+|---|---|
+| `⌘E` / `Ctrl+E` | Fast Reply (in the active tone) |
+| `⌘I` / `Ctrl+I` | Improve draft |
+| `⌘G` / `Ctrl+G` | Hi greeting |
+| `⌘P` / `Ctrl+P` | Ping |
+| `⌘.` / `Ctrl+.` | Cancel running AI operation |
+| `⌘⇧H` / `Ctrl+Alt+H` | Help me |
+| `⌘⇧S` / `Ctrl+Alt+S` | Scan (fan summary) |
+| `⌘⇧O` / `Ctrl+Alt+O` | Cycle tone (casual/flirty/upsell/spicy) — or pick directly from the Reply ▾ split-menu |
+| `⌘⇧B` / `Ctrl+Alt+B` | Chat review |
+| `⌘⇧L` / `Ctrl+Alt+L` | Split — prefer the next reply as 2–3 messages (off while a run streams) |
+| `⌘⇧M` / `Ctrl+Alt+M` | Spenders board open/close (same as the rail's `$`) |
+| `⌘⇧C` / `Ctrl+Alt+C` | reserved (Coach exists only in the extension) |
+
+On macOS the extension's former habits `⌘⇧E` / `⌘⇧I` / `⌘⇧G` also work, `⌘⇧X` is Cancel, `⌘⇧D` / `⌘⇧F` do nothing. The engine applies strict modifiers, a fresh-press roll-over guard (a Reply/Fix/Hi/Ping needs the command key pressed fresh — a language switch rolled into a letter never fires) and never re-runs an action on auto-repeat.
+
+**Navigation, send and panels (desktop only)** — `app/keymapBindings.ts`, labels through `lib/modKey.ts`:
 
 | Key | Action |
 |---|---|
@@ -51,19 +72,17 @@ Goal: **a full shift without touching the mouse.** Core triage loop: `⌘U` (nex
 | `J / K` (list focused) / `⌘U` | Next/prev chat / next unread |
 | `Enter` / `Esc` | Focus composer / blur·dismiss dock |
 | `⌘↵` | Send |
-| `⌘R` / `⌘I` / `⌘H` | Fast Reply / Improve Draft / Help Me |
-| `⌘P` / `⌘G` / `⌘E` / `⌘S` | Ping / Hi greeting / Chat review / Fan summary (when applicable) |
-| `⌘1..9` | Jump to chat N — first nine of the current filtered list (hold the mod key to number the list) |
-| `⌘0` | Insert all AI draft parts as a `[NEXT]` sequence — individual parts are click-only (companion phase: copy) |
-| `⌘.` | Cancel running AI operation |
-| `⌘T` | Cycle tone (casual/flirty/upsell/spicy) — or pick directly from the Reply ▾ split-menu (which also generates); `⌘R` always replies in the active tone |
+| `⌘1..9` | Jump to chat N — first nine of the current filtered list (hold the mod key alone to number the list) |
+| `⌘0` | Insert all AI draft parts as a `[NEXT]` sequence — individual parts are click-only |
 | `]` / `[` | Toggle fan panel / chat list |
-| `?` | Hotkey cheatsheet overlay |
+| `?` | Hotkey cheatsheet overlay (scheme | only-in-this-app columns) |
 | `⌘,` | Open settings (any view) |
 
-All hotkeys also reachable via the palette; keymap centralized (single registry, no scattered listeners). The app sets a custom application menu (main): Electron's default menu would shadow `⌘R`/`⌘H`/`⌘0` with Reload/Hide/Actual-Size accelerators before the renderer keymap sees them — Hide lives on `⌃⌘H`, Reload exists only unpackaged on `⇧⌘R`, zoom roles are dropped (UI scale is a setting), Edit clipboard roles stay.
+All hotkeys also reachable via the palette; one window-level listener (no scattered listeners): the vendored engine decides scheme combos first, the navigation table second. The app sets a custom application menu (main): Electron's default menu would shadow product keys with Reload/Hide/Actual-Size accelerators before the renderer sees them — Hide lives on `⌃⌘H`, Reload exists only unpackaged on `⇧⌘R`, zoom roles are dropped (UI scale is a setting), Edit clipboard roles stay; none of them meets a scheme combo.
 
-Hotkey **labels** are platform-aware (PLAN item 11, 2026-06-13): every rendered mod-key label flows through the `lib/modKey.ts` seam — `⌘K` on macOS, `Ctrl+K` on Windows/Linux; never hardcode the ⌘ glyph in a component. Matching was always platform-agnostic (`mod` = metaKey || ctrlKey), so combos and behavior are identical everywhere. This doc and the mockups keep writing `⌘` as shorthand for the mod key.
+The chat-number badges appear only when the bare mod key is held alone for a moment, so the frequent `⌘E`/`⌘I`/`⌘G` never flash them.
+
+Hotkey **labels** are platform-aware: scheme combos print through `lib/hotkeyScheme.ts` (`⌘E` / `Ctrl+E`, `⌘⇧H` / `Ctrl+Alt+H`), navigation through `lib/modKey.ts` (`⌘K` on macOS, `Ctrl+K` elsewhere); never hardcode the ⌘ glyph in a component. This doc and the mockups keep writing `⌘` as shorthand for the mod key.
 
 ## 3. Performance engineering — how the SPEC §13 budgets are met
 

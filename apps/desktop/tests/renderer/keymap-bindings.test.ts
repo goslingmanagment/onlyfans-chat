@@ -1,6 +1,7 @@
-// The hotkey table itself (DESIGN §2): the P4 deep-AI keys are registered,
-// resolve through the central keymap (including from the composer textarea),
-// and no combo is double-bound.
+// The navigation/send/panel hotkey table (DESIGN §2). The AI and panel combos
+// left this table for the family scheme (vendored @chatgoose/hotkeys, see
+// hotkey-scheme.test.ts): the old bare ⌘R/⌘E/⌘S/⌘T/⌘H rows must be gone so
+// nothing here can shadow or duplicate the scheme.
 
 import { describe, expect, it } from 'vitest';
 import { createKeymap, parseCombo, type KeyEventLike } from '../../src/renderer/src/lib/keymap';
@@ -12,23 +13,16 @@ function mod(key: string, inEditable = false): KeyEventLike {
   return { key, metaKey: true, ctrlKey: false, altKey: false, shiftKey: false, inEditable };
 }
 
-describe('deep-AI key bindings (⌘P / ⌘G / ⌘E / ⌘S)', () => {
-  it.each([
-    ['p', 'ai-ping'],
-    ['g', 'ai-hi'],
-    ['e', 'ai-review'],
-    ['s', 'ai-scan'],
-  ] as const)('⌘%s resolves to %s', (key, action) => {
-    expect(keymap.resolve(mod(key))).toBe(action);
+describe('AI rows moved to the family scheme', () => {
+  it('no AI or scheme action is registered in the navigation table', () => {
+    const actions = KEY_BINDINGS.map((b) => b.action as string);
+    for (const moved of ['ai-reply', 'ai-improve', 'ai-help', 'ai-ping', 'ai-hi', 'ai-review', 'ai-scan', 'ai-tone', 'ai-cancel', 'ai-split', 'spenders']) {
+      expect(actions).not.toContain(moved);
+    }
   });
 
-  it('fires from inside the composer (mod combos pass the editable gate)', () => {
-    expect(keymap.resolve(mod('p', true))).toBe('ai-ping');
-    expect(keymap.resolve(mod('s', true))).toBe('ai-scan');
-  });
-
-  it('bare keys do not trigger the AI actions', () => {
-    expect(keymap.resolve({ key: 'p', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, inEditable: false })).toBeNull();
+  it.each(['r', 'i', 'h', 'p', 'g', 'e', 's', 't', '.'])('bare ⌘%s resolves to nothing in the navigation table', (key) => {
+    expect(keymap.resolve(mod(key))).toBeNull();
   });
 });
 
@@ -57,6 +51,17 @@ describe('chat-jump chord (⌘1..⌘9 reclaimed from ai-part-1..9)', () => {
   });
 });
 
+describe('navigation stays as it was', () => {
+  it.each([
+    ['k', 'palette'],
+    ['u', 'next-unread'],
+    ['enter', 'send'],
+    [',', 'settings'],
+  ] as const)('⌘%s resolves to %s', (key, action) => {
+    expect(keymap.resolve(mod(key === 'enter' ? 'Enter' : key))).toBe(action);
+  });
+});
+
 describe('binding table hygiene', () => {
   it('no combo is bound twice', () => {
     const combos = KEY_BINDINGS.map((b) => {
@@ -66,11 +71,7 @@ describe('binding table hygiene', () => {
     expect(new Set(combos).size).toBe(combos.length);
   });
 
-  it('the former P4 upcoming entries are now live bindings', () => {
+  it('nothing is left as upcoming', () => {
     expect(UPCOMING_BINDINGS).toHaveLength(0);
-    const actions = KEY_BINDINGS.map((b) => b.action);
-    expect(actions).toEqual(
-      expect.arrayContaining(['ai-ping', 'ai-hi', 'ai-review', 'ai-scan']),
-    );
   });
 });

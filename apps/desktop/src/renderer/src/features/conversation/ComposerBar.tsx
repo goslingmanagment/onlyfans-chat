@@ -11,6 +11,7 @@ import type { GuardCategory, GuardVerdict } from '@chatgoose/shared/message-guar
 import { Button } from '../../design/Button';
 import { Kbd } from '../../design/Kbd';
 import { modCombo } from '../../lib/modKey';
+import { schemeLabel } from '../../lib/hotkeyScheme';
 import { getBridge } from '../../bridge/bridge';
 import { useGuardConfig, useOutbox } from '../../bridge/queries';
 import { DraftTextarea } from './DraftTextarea';
@@ -147,7 +148,7 @@ export function ComposerBar({
         guardSegments={guardSegments}
         placeholder={
           canSend
-            ? t('conv.composerPlaceholder', { persona: personaName, r: modCombo('R'), i: modCombo('I') })
+            ? t('conv.composerPlaceholder', { persona: personaName, r: schemeLabel('reply'), i: schemeLabel('fix') })
             : cannotReason
         }
       />

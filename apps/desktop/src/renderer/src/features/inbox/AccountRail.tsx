@@ -8,6 +8,7 @@ import { cx } from '../../lib/cx';
 import { useT } from '../../lib/i18n';
 import { useFollowersCopy } from '../followers/copy';
 import { Skeleton } from '../../design/Skeleton';
+import { schemeAria, schemeLabel } from '../../lib/hotkeyScheme';
 
 type DropPos = 'before' | 'after';
 interface DropTarget {
@@ -149,10 +150,11 @@ export function AccountRail(): React.JSX.Element {
           </span>
         )}
       </button>
-      {/* Spenders page entry (owner 2026-06-13: a visible button, not just ⌘K) */}
+      {/* Spenders page entry (owner 2026-06-13: a visible button, not just the palette); ⌘⇧M / Ctrl+Alt+M */}
       <button
         type="button"
-        title={t('sp.title')}
+        title={`${t('sp.title')} · ${schemeLabel('spenders')}`}
+        aria-keyshortcuts={schemeAria('spenders')}
         onClick={() => setView(view === 'spenders' ? 'workspace' : 'spenders')}
         className={cx(
           'flex h-9 w-9 cursor-pointer items-center justify-center rounded-[10px] text-[15px] font-bold',

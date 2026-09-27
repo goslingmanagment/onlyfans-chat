@@ -7,7 +7,7 @@ import { useUiStore } from '../state/uiStore';
 import { useAccounts, useChatSearch, useChats, useForceRefresh } from '../bridge/queries';
 import { startAiFromGlobal } from '../features/ai/globalStart';
 import { fuzzyFilter } from '../lib/fuzzy';
-import { modCombo } from '../lib/modKey';
+import { schemeLabel } from '../lib/hotkeyScheme';
 import { Avatar } from '../design/Avatar';
 import { ListRow } from '../design/ListRow';
 import { Kbd } from '../design/Kbd';
@@ -100,13 +100,13 @@ function PaletteBody(): React.JSX.Element {
     // pill row and ✳ menu; gated/contextless invocations are silent no-ops.
     // 'compare' stays out of the palette (P4-stretch, hidden while gated).
     const actions: Array<{ id: string; title: string; run: () => void }> = [
-      { id: 'act:ai-reply', title: t('palette.aiFastReply', { combo: modCombo('R') }), run: () => startAiFromGlobal('fast-reply', queryClient) },
-      { id: 'act:ai-improve', title: t('palette.aiImprove', { combo: modCombo('I') }), run: () => startAiFromGlobal('improve-draft', queryClient) },
-      { id: 'act:ai-help', title: t('palette.aiHelp', { combo: modCombo('H') }), run: () => startAiFromGlobal('help-me', queryClient) },
-      { id: 'act:ai-ping', title: t('palette.aiPing', { combo: modCombo('P') }), run: () => startAiFromGlobal('ping', queryClient) },
-      { id: 'act:ai-hi', title: t('palette.aiHi', { combo: modCombo('G') }), run: () => startAiFromGlobal('hi-greeting', queryClient) },
-      { id: 'act:ai-scan', title: t('palette.aiScan', { combo: modCombo('S') }), run: () => startAiFromGlobal('fan-summary', queryClient) },
-      { id: 'act:ai-review', title: t('palette.aiReview', { combo: modCombo('E') }), run: () => startAiFromGlobal('chat-review', queryClient) },
+      { id: 'act:ai-reply', title: t('palette.aiFastReply', { combo: schemeLabel('reply') }), run: () => startAiFromGlobal('fast-reply', queryClient) },
+      { id: 'act:ai-improve', title: t('palette.aiImprove', { combo: schemeLabel('fix') }), run: () => startAiFromGlobal('improve-draft', queryClient) },
+      { id: 'act:ai-help', title: t('palette.aiHelp', { combo: schemeLabel('help') }), run: () => startAiFromGlobal('help-me', queryClient) },
+      { id: 'act:ai-ping', title: t('palette.aiPing', { combo: schemeLabel('ping') }), run: () => startAiFromGlobal('ping', queryClient) },
+      { id: 'act:ai-hi', title: t('palette.aiHi', { combo: schemeLabel('hi') }), run: () => startAiFromGlobal('hi-greeting', queryClient) },
+      { id: 'act:ai-scan', title: t('palette.aiScan', { combo: schemeLabel('recap') }), run: () => startAiFromGlobal('fan-summary', queryClient) },
+      { id: 'act:ai-review', title: t('palette.aiReview', { combo: schemeLabel('review') }), run: () => startAiFromGlobal('chat-review', queryClient) },
       // Entry point for the Spenders board (PLAN item 12; recorded in DESIGN §1)
       { id: 'act:spenders', title: t('palette.spenders'), run: () => setView('spenders') },
       { id: 'act:followers', title: followersCopy.title, run: () => setView('followers') },

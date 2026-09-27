@@ -1,11 +1,18 @@
-// The single hotkey table (DESIGN §2). Later-phase entries appear in the
-// cheatsheet as upcoming but are not registered here. Labels are built per
+// The navigation/send/panel hotkey table (DESIGN §2). The AI and panel combos
+// (Reply, Fix, Hi, Ping, Cancel on Cmd/Ctrl + key; Help, Scan, Tone, Review,
+// Split, Spenders on Cmd+Shift / Ctrl+Alt + key) are NOT here: they come from
+// the family scheme shared with the Fansly extension (vendored
+// @chatgoose/hotkeys, see lib/hotkeyScheme.ts). Later-phase entries appear in
+// the cheatsheet as upcoming but are not registered here. Labels are built per
 // platform through lib/modKey (⌘K on darwin, Ctrl+K elsewhere); combos and
 // matching are identical everywhere.
 
 import type { KeyBinding } from '../lib/keymap';
 import { appPlatform, modCombo, type LabelPlatform } from '../lib/modKey';
 import type { UiMessageKey } from '@chatgoose/shared/i18n/index';
+// The scheme's dispatch ids — resolved by the vendored engine (lib/hotkeyScheme),
+// never by this table.
+import type { SchemeKeyAction } from '../lib/hotkeyScheme';
 
 /** ⌘0 — insert all dock parts as a [NEXT] sequence (SPEC §7.0). Individual
  *  parts 1..9 are click-only now that ⌘1..9 jump chats (see ChatJumpAction). */
@@ -34,15 +41,7 @@ export type KeyAction =
   | 'toggle-panel'
   | 'toggle-list'
   | 'cheatsheet'
-  | 'ai-reply'
-  | 'ai-improve'
-  | 'ai-help'
-  | 'ai-ping'
-  | 'ai-hi'
-  | 'ai-review'
-  | 'ai-scan'
-  | 'ai-tone'
-  | 'ai-cancel'
+  | SchemeKeyAction
   | 'settings'
   | 'board-preview'
   | 'board-open-chat'
@@ -88,15 +87,6 @@ export function buildKeyBindings(platform: LabelPlatform): KeyBinding<KeyAction>
     { action: 'toggle-list', combo: '[', label: '[', description: 'Toggle chat list' },
     { action: 'cheatsheet', combo: '?', label: '?', description: 'Hotkey cheatsheet' },
     { action: 'settings', combo: 'mod+,', label: mod(','), description: 'Open settings' },
-    { action: 'ai-reply', combo: 'mod+r', label: mod('R'), description: 'Fast Reply (AI suggestion)' },
-    { action: 'ai-improve', combo: 'mod+i', label: mod('I'), description: 'Improve draft (AI)' },
-    { action: 'ai-help', combo: 'mod+h', label: mod('H'), description: 'Help me (AI coaching)' },
-    { action: 'ai-ping', combo: 'mod+p', label: mod('P'), description: 'Ping — reactivation message (AI, silent fans)' },
-    { action: 'ai-hi', combo: 'mod+g', label: mod('G'), description: 'Hi greeting — 3 opener variants (AI, fresh chats)' },
-    { action: 'ai-review', combo: 'mod+e', label: mod('E'), description: 'Chat review — rate this conversation (AI)' },
-    { action: 'ai-scan', combo: 'mod+s', label: mod('S'), description: 'Scan — deep fan profile → panel (AI)' },
-    { action: 'ai-tone', combo: 'mod+t', label: mod('T'), description: 'Cycle tone (casual / flirty / upsell / spicy)' },
-    { action: 'ai-cancel', combo: 'mod+.', label: mod('.'), description: 'Cancel running AI operation' },
     { action: 'ai-part-0', combo: 'mod+0', label: mod('0'), description: 'Insert all AI draft parts as a [NEXT] sequence' },
     // Spenders board (PLAN item 12) — active only in the spenders view.
     { action: 'board-preview', combo: ' ', label: 'SPACE', description: 'Spenders: quick-look preview', hideFromCheatsheet: true },
@@ -151,6 +141,8 @@ export const CMD_DESC_KEY: Partial<Record<KeyAction, UiMessageKey>> = {
   'ai-scan': 'cmd.aiScan',
   'ai-tone': 'cmd.aiTone',
   'ai-cancel': 'cmd.aiCancel',
+  'ai-split': 'cmd.aiSplit',
+  spenders: 'cmd.spenders',
   'ai-part-0': 'cmd.aiPart0',
   'board-preview': 'cmd.boardPreview',
   'board-open-chat': 'cmd.boardOpenChat',

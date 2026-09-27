@@ -13,8 +13,10 @@ Sibling for Fansly: `~/code/goose/fansly-ext`.
 
 ## Where the truth is
 
-- `docs/decisions.md` — decision log (quick-ref table + entries);
-  cross-repo rulings live in the hub's log and are referenced by number.
+- `docs/decisions.md` — decision log (quick-ref table + entries). The hub
+  keeps no decision log (`hub/AGENTS.md`); a cross-repo ruling is recorded
+  here and in the sibling client's log, pointing at the hub doc or package
+  that carries it.
 - Hub `docs/error-handling.md` — family-wide error taxonomy.
 - `docs/followers.md`, `docs/spenders.md`, `docs/ofapi-composer.md` —
   current operator docs for those surfaces (composer partly reverted, D33).
@@ -38,7 +40,11 @@ pnpm monorepo: `apps/desktop` (Electron + React + TS strict + Tailwind),
 `packages/shared` (pure TS, densest tests), `packages/kernel-sdk` (vendored:
 never hand-edit; re-vendor from the hub with its `scripts/vendor-sdk.mjs`
 when new operations are needed; the vendor test + typecheck pin the
-contract hash).
+contract hash), `packages/chatgoose-hotkeys` (vendored `@chatgoose/hotkeys`:
+the AI/panel hotkey scheme shared with the Fansly extension, D41 — never
+hand-edit; the spec is the hub's `packages/chatgoose-hotkeys/README.md`;
+re-vendor with the hub's `scripts/vendor-hotkeys.mjs` into BOTH clients
+from one clean hub commit, the manifest sha256 must match).
 
 - `pnpm check` = typecheck + lint + test + build, green before a commit; CI
   runs it on Linux and Windows.

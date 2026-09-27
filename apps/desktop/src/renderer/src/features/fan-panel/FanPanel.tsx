@@ -19,7 +19,7 @@ import { Kbd } from '../../design/Kbd';
 import { Skeleton } from '../../design/Skeleton';
 import { cx } from '../../lib/cx';
 import { useT, useLocale } from '../../lib/i18n';
-import { modCombo } from '../../lib/modKey';
+import { schemeLabel } from '../../lib/hotkeyScheme';
 import { formatDollars } from '../../lib/money';
 import { formatLastSeen, isOnline } from '../../lib/time';
 
@@ -324,7 +324,7 @@ function ScanTab({
                   onClick={() => runScan(false)}
                   className="flex cursor-pointer items-center gap-[7px] rounded-full border border-clay-line bg-clay-bg px-[13px] py-1 text-[12.5px] font-semibold text-clay-deep hover:border-clay hover:text-clay disabled:cursor-default disabled:opacity-45"
                 >
-                  ◎ {t('fan.runScanBtn')} <Kbd>{modCombo('S')}</Kbd>
+                  ◎ {t('fan.runScanBtn')} <Kbd>{schemeLabel('recap')}</Kbd>
                 </button>
               </span>
             )

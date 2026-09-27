@@ -1,2 +1,5 @@
 tests/fixtures/golden/**/context-blocks.txt text eol=lf
 *.sh text eol=lf
+# Vendored hotkey scheme: the manifest pins exact bytes, so git must never
+# rewrite line endings in it (the Windows CI checkout broke the sha256 gate).
+packages/chatgoose-hotkeys/** -text
