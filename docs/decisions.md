@@ -61,6 +61,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D39 | 2026-09-27 | Purchases: Core's money facts apply locally (PPV unlock → `message_facts`, applied on every message write; `transaction.posted` → `fan_transactions` at once, the sweep keeps its own watermark), a free `/events/v2/facts` catch-up per account, quiet toasts for live PPV purchases and tips (no sound), tip messages stop alerting, no paid `refreshChat` on PPV/tip frames |
 | D40 | 2026-09-27 | Toast age gate widened from 9 to 60 min: redeliveries are excluded by provenance, so the gate only has to separate history from OFAPI's late-but-live deliveries (amends D38/D39) |
 | D41 | 2026-09-27 | One hotkey scheme with the Fansly extension, vendored from the hub (`@chatgoose/hotkeys`): text actions on ⌘/Ctrl + key (E Reply, I Improve, G Hi, P Ping, . Cancel), panels on ⌘⇧ / Ctrl+Alt + key (H, S, O, B, L, M; C reserved), physical-key matching, fresh-press roll-over guard; navigation unchanged |
+| D42 | 2026-09-27 | Split on Improve Draft: the ⫶ toggle appears in the Improve dock too and the one sticky Split flag (and ⌘⇧L / Ctrl+Alt+L) now covers Reply and Improve; the hub splits the rewrite into 2–3 [NEXT] parts only when asked (0.1.61) |
 
 ## Entries
 
@@ -1217,3 +1218,26 @@ extension's. The owner chose the letters after three model rounds (plan v3):
 Not verified here: real key delivery on Windows with EN/RU and each language
 switch, and Firefox-side behaviour — the live acceptance matrix of plan v3.
 
+**D42 (2026-09-27).** Split works on Improve Draft. A chatter asked for it
+(Гриша, «есть возможность добавить сплит на импрув?», owner «можно»):
+Improve keeps the meaning of the draft well, but a two-paragraph draft came
+back as one two-paragraph message.
+
+- The ⫶ Split toggle shows in the dock footer of Improve as well as Reply.
+  It is the same sticky `preferSplit` flag, so Split on means the next Reply
+  or Improve comes as 2–3 messages; ⌘⇧L / Ctrl+Alt+L toggles it for both.
+  One flag, because the hotkey and its toast already speak of a mode, not of
+  a button.
+- `improve-draft` gains `supportsReplyMode`; the store sends `mode` for every
+  feature whose policy has it. `buildFeatureResult` splits the Improve text
+  on [NEXT] only when Split was requested and marks `splitModeRequested`;
+  without Split it stays one message.
+- The prompt is the hub's (`{improveOutputRules}` and `{improveLengthRule}`
+  in the improve-draft template): without Split the prompt is byte-identical
+  to before; with it the draft is cut at its natural seams into 2–3 parts,
+  never shortened, and "a one-liner stays a one-liner" is swapped out.
+  An old hub ignores `replyMode` for Improve, so this client against it
+  simply gets one message.
+
+The extension's Fix is unchanged: its Split square belongs to the Reply
+cluster (E24).

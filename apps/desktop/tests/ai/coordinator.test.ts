@@ -733,3 +733,26 @@ describe('buildFeatureResult — hi-greeting variants', () => {
     expect(result.parts).toEqual(['hey, glad you found me']);
   });
 });
+
+// Split on Improve: the kernel returns [NEXT] parts only when the request asked
+// for them; without Split the rewrite stays one message even if a marker slips in.
+describe('buildFeatureResult — improve-draft split', () => {
+  const raw = 'haha my bad, just wanted you to see the video[NEXT]guess me playing along made it seem live lol';
+
+  it('splits the rewrite into parts when Split was requested', () => {
+    const result = buildFeatureResult('improve-draft', raw, { mode: 'preferSplit' });
+    expect(result.parts).toEqual([
+      'haha my bad, just wanted you to see the video',
+      'guess me playing along made it seem live lol',
+    ]);
+    expect(result.splitModeRequested).toBe(true);
+  });
+
+  it('keeps one message without Split', () => {
+    for (const params of [{}, { mode: 'default' as const }]) {
+      const result = buildFeatureResult('improve-draft', raw, params);
+      expect(result.parts).toHaveLength(1);
+      expect(result.splitModeRequested).toBeUndefined();
+    }
+  });
+});

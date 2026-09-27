@@ -106,6 +106,31 @@ describe('setToneMenuOpen (bare state flip)', () => {
   });
 });
 
+describe('Split on Improve (the shared ⫶ flag)', () => {
+  it('asks for split parts on improve-draft when Split is armed', () => {
+    useAiStore.setState({ draftText: 'my bad, wanted you to see the video', preferSplit: true });
+    startAiFeature('improve-draft', CTX);
+
+    const req = lastAiStart();
+    expect(req.feature).toBe('improve-draft');
+    expect(req.params.mode).toBe('preferSplit');
+    expect(req.params.draftText).toBe('my bad, wanted you to see the video');
+    expect(req.params.tone).toBeUndefined();
+  });
+
+  it('sends the default mode on improve-draft when Split is off', () => {
+    useAiStore.setState({ draftText: 'my bad', preferSplit: false });
+    startAiFeature('improve-draft', CTX);
+    expect(lastAiStart().params.mode).toBe('default');
+  });
+
+  it('leaves features without split mode untouched', () => {
+    useAiStore.setState({ preferSplit: true });
+    startAiFeature('ping', CTX);
+    expect(lastAiStart().params.mode).toBeUndefined();
+  });
+});
+
 describe('activateToneFromMenu (one click = set tone + close + toned fast-reply)', () => {
   it('sets the tone override, closes the menu, and starts a fast-reply in that tone', () => {
     setToneMenuOpen(true);
