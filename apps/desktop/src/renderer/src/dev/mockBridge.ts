@@ -14,6 +14,7 @@ import type {
   GalleryItemVM,
   InvokeChannelName,
   InvokeChannels,
+  MediaStateVM,
   MessageMediaVM,
   MessageVM,
   OutboxItemVM,
@@ -100,6 +101,75 @@ function makeMedia(kind: 'photo' | 'video', opts: { locked?: boolean; ready?: bo
     locked,
     durationSeconds: kind === 'video' ? 10 + Math.floor(rng() * 110) : null,
   };
+}
+
+// ─── D43 media showcase ──────────────────────────────────────────────────
+// Deterministic media for the first chat so the tiles, «+N», the lightbox
+// and every cell state render in plain-vite dev. `media://` tokens cannot load
+// in a browser: their <img> errors and the cell asks query:media.state, which
+// this map answers — exactly the path a real blocked token takes.
+
+const mockMediaStates = new Map<string, MediaStateVM>();
+/**
+ * Full-size data: URIs → their media id. A navigation (`auto`) load answers
+ * Core's «load on click» (H7) — unless a click already loaded the photo, which
+ * then sits in the local cache like in the real app (R6).
+ */
+const mockFullUrls = new Map<string, string>();
+const mockCachedFullUrls = new Set<string>();
+
+function mockToken(seed: number, state: MediaStateVM): string {
+  const hex = seed.toString(16).padStart(8, '0').repeat(8);
+  mockMediaStates.set(hex, state);
+  return `media://${hex}`;
+}
+
+function showcasePhoto(id: string, tone: string, tone2: string, w = 280, h = 280): MessageMediaVM {
+  const fullUrl = svgThumb(900, 1200, tone, tone2);
+  mockFullUrls.set(fullUrl, id);
+  return {
+    id, type: 'photo', thumbUrl: svgThumb(w, h, tone, tone2), fullUrl,
+    isReady: true, locked: false, durationSeconds: null,
+  };
+}
+
+function mediaShowcase(chatId: string, endMs: number): MessageVM[] {
+  const at = (minutesAgo: number): string => new Date(endMs - minutesAgo * 60_000).toISOString();
+  const base = (id: string, isMe: boolean, minutesAgo: number, text: string, media: MessageMediaVM[]): MessageVM => ({
+    id, chatId, createdAt: at(minutesAgo), isSentByMe: isMe, text, media, price: 0, ppvState: null,
+    isTip: false, tipAmount: null, tipText: null, isNew: false, replyTo: null, deleted: false,
+  });
+  const tones = THUMB_TONES;
+  return [
+    base('990001', false, 50, 'Do you have an outfit like this one?', [showcasePhoto('7700001', '#d9c6ad', '#b98f6e', 320, 240)]),
+    base('990002', true, 46, 'Something close — two options:', [
+      showcasePhoto('7700002', '#e3d2c0', '#a8836a'), showcasePhoto('7700003', '#cfd6cf', '#7f9384'),
+    ]),
+    base('990003', false, 40, 'and a few more from the weekend', [
+      showcasePhoto('7700004', '#dccbb6', '#9e7b5e'), showcasePhoto('7700005', '#c9cfd8', '#6f7f95'),
+      showcasePhoto('7700006', '#e6d4c3', '#b0826c'), showcasePhoto('7700007', '#d6d0c2', '#8a7f68'),
+      showcasePhoto('7700008', tones[0], tones[3]), showcasePhoto('7700009', tones[1], tones[4]),
+    ]),
+    base('990004', true, 30, 'States: budget reached, unavailable, processing, video', [
+      { id: '7700010', type: 'photo', thumbUrl: mockToken(0x7700010, { state: 'load', reason: 'budget' }), fullUrl: null, isReady: true, locked: false, durationSeconds: null },
+      { id: '7700011', type: 'photo', thumbUrl: mockToken(0x7700011, { state: 'unavailable' }), fullUrl: null, isReady: true, locked: false, durationSeconds: null },
+      // Still processing: the thumb token exists, «Проверить» asks Core once (the
+      // mock's data: thumb comes back ready, like a file that finished meanwhile).
+      { id: '7700012', type: 'photo', thumbUrl: svgThumb(280, 280, '#d5c8b6', '#94775d'), fullUrl: null, isReady: false, locked: false, durationSeconds: null },
+      { id: '7700013', type: 'video', thumbUrl: svgThumb(280, 280, '#cdbfae', '#8d6f58'), fullUrl: null, isReady: true, locked: false, durationSeconds: 83 },
+    ]),
+    {
+      ...base('990005', true, 20, 'Unlock the full set 💋', [
+        { id: '7700014', type: 'photo', thumbUrl: null, fullUrl: null, isReady: true, locked: true, durationSeconds: null },
+        { id: '7700015', type: 'video', thumbUrl: null, fullUrl: null, isReady: true, locked: true, durationSeconds: 45 },
+      ]),
+      price: 25,
+      ppvState: 'not_purchased',
+    },
+    base('990006', false, 12, 'gif for you', [
+      { id: '7700016', type: 'gif', thumbUrl: svgThumb(280, 280, '#d8cbb9', '#a07a5d'), fullUrl: null, isReady: true, locked: false, durationSeconds: null },
+    ]),
+  ];
 }
 
 // ─── fixture corpus ──────────────────────────────────────────────────────
@@ -401,6 +471,8 @@ function buildStore(): MockStore {
       const msgCount = i === 0 ? 220 : 18 + Math.floor(rng() * 45);
       const endMs = Date.now() - Math.floor(rng() * (i === 0 ? 1 : 36)) * 3_600_000;
       const msgs = noHistory ? [] : buildMessages(fanId, msgCount, endMs);
+      // D43: the first chat of the first account ends with the media showcase.
+      if (i === 0 && account === accounts[0]) msgs.push(...mediaShowcase(fanId, endMs + 60 * 60_000));
       const contactDays = MOCK_CONTACT_DAYS[fanId];
       if (contactDays !== undefined) {
         // Shift each sender's existing timeline as a whole, so the thread,
@@ -1191,8 +1263,16 @@ export function createMockBridge(): ChatGooseBridge {
     vaultItems.push({
       id: String(3_866_000_000 + i),
       type: video ? 'video' : 'photo',
-      thumbUrl: svgThumb(200, 200, pick(THUMB_TONES), pick(THUMB_TONES)),
-      isReady: i % 17 !== 3, // a few processing cells exercise the spinner state
+      thumbUrl: i === 5 || i === 9
+        ? mockToken(0x3866000 + i, { state: 'load', reason: 'budget' })
+        : i === 7
+          ? mockToken(0x3866000 + i, { state: 'unavailable' })
+          : ((tone: string, tone2: string) => (i % 17 === 3
+            // Processing: «Проверить» brings a clearly visible picture back
+            // (the random tones are still drawn, so later fixtures stay put).
+            ? svgThumb(200, 200, '#d5c8b6', '#94775d')
+            : svgThumb(200, 200, tone, tone2)))(pick(THUMB_TONES), pick(THUMB_TONES)),
+      isReady: i % 17 !== 3, // a few processing cells exercise «Обрабатывается» + «Проверить»
       durationSeconds: video ? 15 + Math.floor(rng() * 200) : null,
       createdAt: new Date(Date.now() - i * 86_400_000).toISOString(),
       likesCount: Math.floor(rng() * 40),
@@ -2000,6 +2080,25 @@ export function createMockBridge(): ChatGooseBridge {
       const hasMore = start + page.length < all.length;
       return { items: page, hasMore, nextOffset: hasMore ? start + page.length : null };
     },
+    // D43: media token state + explicit load. data: URIs are always ready.
+    'query:media.state': ({ url }) => {
+      const hex = url.replace(/^media:\/\//, '').slice(0, 64);
+      return mockMediaStates.get(hex) ?? { state: 'unavailable' };
+    },
+    'cmd:media.load': ({ url, surface, trigger }) => {
+      const fullId = mockFullUrls.get(url);
+      // What crossed the bridge, for the screenshots' evidence (dev only).
+      console.info(`[mock-media] load ${trigger ?? 'click'} ${surface} ${fullId !== undefined ? `full ${fullId}` : 'thumb'}`);
+      if (fullId !== undefined) {
+        if (trigger === 'auto' && !mockCachedFullUrls.has(url)) return { state: 'load', reason: 'click' };
+        mockCachedFullUrls.add(url);
+        return { state: 'ready' };
+      }
+      if (url.startsWith('data:')) return { state: 'ready' };
+      const hex = url.replace(/^media:\/\//, '').slice(0, 64);
+      return mockMediaStates.get(hex) ?? { state: 'unavailable' };
+    },
+    'cmd:media.cancel': () => ({ cancelled: false }),
     'cmd:send.ppv': ({ accountId, chatId, text, price, mediaFiles }) => {
       assertMockGuardAllowed(text);
       const key = `${accountId}/${chatId}`;

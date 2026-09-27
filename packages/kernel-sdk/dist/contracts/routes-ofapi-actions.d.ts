@@ -1129,10 +1129,10 @@ export declare const ofapiActionRouteSchemas: {
                 state: z.ZodEnum<{
                     cancelled: "cancelled";
                     partial: "partial";
+                    rejected: "rejected";
                     prepared: "prepared";
                     dispatching: "dispatching";
                     confirmed: "confirmed";
-                    rejected: "rejected";
                     indeterminate: "indeterminate";
                 }>;
                 estimatedCredits: z.ZodNumber;
@@ -1743,10 +1743,10 @@ export declare const ofapiActionRouteSchemas: {
                 state: z.ZodEnum<{
                     cancelled: "cancelled";
                     partial: "partial";
+                    rejected: "rejected";
                     prepared: "prepared";
                     dispatching: "dispatching";
                     confirmed: "confirmed";
-                    rejected: "rejected";
                     indeterminate: "indeterminate";
                 }>;
                 estimatedCredits: z.ZodNumber;
@@ -2357,10 +2357,10 @@ export declare const ofapiActionRouteSchemas: {
                 state: z.ZodEnum<{
                     cancelled: "cancelled";
                     partial: "partial";
+                    rejected: "rejected";
                     prepared: "prepared";
                     dispatching: "dispatching";
                     confirmed: "confirmed";
-                    rejected: "rejected";
                     indeterminate: "indeterminate";
                 }>;
                 estimatedCredits: z.ZodNumber;
@@ -2970,10 +2970,10 @@ export declare const ofapiActionRouteSchemas: {
                 state: z.ZodEnum<{
                     cancelled: "cancelled";
                     partial: "partial";
+                    rejected: "rejected";
                     prepared: "prepared";
                     dispatching: "dispatching";
                     confirmed: "confirmed";
-                    rejected: "rejected";
                     indeterminate: "indeterminate";
                 }>;
                 estimatedCredits: z.ZodNumber;
@@ -3584,10 +3584,10 @@ export declare const ofapiActionRouteSchemas: {
                     state: z.ZodEnum<{
                         cancelled: "cancelled";
                         partial: "partial";
+                        rejected: "rejected";
                         prepared: "prepared";
                         dispatching: "dispatching";
                         confirmed: "confirmed";
-                        rejected: "rejected";
                         indeterminate: "indeterminate";
                     }>;
                     estimatedCredits: z.ZodNumber;
@@ -4199,10 +4199,10 @@ export declare const ofapiActionRouteSchemas: {
                 state: z.ZodEnum<{
                     cancelled: "cancelled";
                     partial: "partial";
+                    rejected: "rejected";
                     prepared: "prepared";
                     dispatching: "dispatching";
                     confirmed: "confirmed";
-                    rejected: "rejected";
                     indeterminate: "indeterminate";
                 }>;
                 estimatedCredits: z.ZodNumber;

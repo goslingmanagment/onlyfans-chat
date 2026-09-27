@@ -101,6 +101,9 @@ export type ChatListOrder = Exclude<ListChatsQuery['order'], undefined>;
 export type SkipUsers = Exclude<ListChatsQuery['skip_users'], undefined>;
 export type MessageListOrder = 'desc' | 'asc';
 export type OfApiReadIntent = 'deep-history-v1';
+/** D43: a re-read made only to refresh media file URLs after an explicit
+ * click; Core marks its credit ledger row as media spend. */
+export type OfApiMediaReadIntent = 'media-context-v1';
 export type TransactionType = 'subscribes' | 'tips' | 'post' | 'chat_messages' | 'stream';
 
 export interface OfApiClientOptions {
@@ -350,7 +353,7 @@ export interface OfApiClient {
   listMessages(
     params: ListMessagesParams,
   ): Promise<{ messages: OfApiMessage[]; nextPageUrl: string | null }>;
-  getMessage(params: PurposeTagged & { accountId: string; chatId: string; messageId: string }): Promise<OfApiMessage>;
+  getMessage(params: PurposeTagged & { accountId: string; chatId: string; messageId: string; readIntent?: OfApiMediaReadIntent }): Promise<OfApiMessage>;
   getUserByUsername(params: PurposeTagged & { accountId: string; username: string }): Promise<OfApiUser>;
   /** Mass-list, credit saver: up to 10 ids per call. */
   getUsersByIds(params: PurposeTagged & {
@@ -377,7 +380,7 @@ export interface OfApiClient {
   listVaultMedia(params: ListVaultMediaParams): Promise<{ items: OfApiVaultMedia[]; hasMore: boolean }>;
   /** Vault lists = albums. Listing a list's media uses listVaultMedia({listId}). */
   listVaultLists(params: ListVaultListsParams): Promise<{ lists: OfApiVaultList[]; hasMore: boolean }>;
-  getVaultMedia(params: PurposeTagged & { accountId: string; mediaId: string | number }): Promise<OfApiVaultMedia>;
+  getVaultMedia(params: PurposeTagged & { accountId: string; mediaId: string | number; readIntent?: OfApiMediaReadIntent }): Promise<OfApiVaultMedia>;
   /** Chat media gallery: message objects carrying their media. */
   listChatMedia(params: ListChatMediaParams): Promise<{
     messages: OfApiChatMediaMessage[];
@@ -466,7 +469,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     /** Call-site purpose — drives the per-purpose credit/request tallies. */
     purpose: OfApiPurpose;
     priority?: QueuePriority;
-    readIntent?: OfApiReadIntent;
+    readIntent?: OfApiReadIntent | OfApiMediaReadIntent;
     signal?: AbortSignal;
   }
 
@@ -627,7 +630,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
     query: Record<string, QueryValue> = {},
     priority?: QueuePriority,
     retry: RetryPolicy = 'idempotent',
-    readIntent?: OfApiReadIntent,
+    readIntent?: OfApiReadIntent | OfApiMediaReadIntent,
     signal?: AbortSignal,
     timeoutMs?: number,
   ): Promise<unknown> {
@@ -807,7 +810,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         params.accountId,
         `/chats/${encodeURIComponent(params.chatId)}/messages/${encodeURIComponent(params.messageId)}`,
       );
-      const payload = await getJson(params.accountId, params.purpose, path);
+      const payload = await getJson(params.accountId, params.purpose, path, {}, undefined, 'idempotent', params.readIntent);
       const { data } = unwrapEnvelope(payload, path);
       return parseWith(ofapiMessageSchema, data, path);
     },
@@ -953,7 +956,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         params.accountId,
         `/media/vault/${encodeURIComponent(String(params.mediaId))}`,
       );
-      const payload = await getJson(params.accountId, params.purpose, path);
+      const payload = await getJson(params.accountId, params.purpose, path, {}, undefined, 'idempotent', params.readIntent);
       const { data } = unwrapEnvelope(payload, path);
       return parseWith(ofapiVaultMediaSchema, data, path);
     },
@@ -970,7 +973,7 @@ export function createOfApiClient(options: OfApiClientOptions): OfApiClient {
         offset: params.offset,
         // Gallery cells need no fan profile rows (consistent with listMessages).
         skip_users: 'all',
-      });
+      }, undefined, 'idempotent');
       const { data } = unwrapEnvelope(payload, path);
       const parsed = parseWith(ofapiChatMediaDataSchema, data, path);
       return {

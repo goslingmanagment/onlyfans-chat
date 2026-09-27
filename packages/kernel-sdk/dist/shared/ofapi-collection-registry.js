@@ -2,7 +2,7 @@
 export const OFAPI_COLLECTION_CATEGORIES = [
     "core_messages", "core_payments", "core_audience", "posts_comments", "visitors",
     "tracking_links", "smart_links", "vault_catalog", "vault_files", "balances",
-    "profile_notifications", "content_history",
+    "profile_notifications", "content_history", "media_previews",
 ];
 /** Closed periodic GET executors; uploads, exports and baseline sync use other lifecycles. */
 export const OFAPI_SCHEDULED_READ_COLLECTION_CATEGORIES = [
@@ -36,12 +36,15 @@ export const OFAPI_COLLECTION_REGISTRY = OFAPI_COLLECTION_CATEGORIES.map(id => (
         posts_comments: "Posts and comments", visitors: "Profile visitors", tracking_links: "Tracking links",
         smart_links: "Smart links", vault_catalog: "Vault catalog", vault_files: "Owned media uploads",
         balances: "Balances and payouts", profile_notifications: "Profile and notifications",
-        content_history: "Stories, highlights and queue history" })[id],
-    modes: id === "vault_files" ? ["off"] : ["off", "on_demand", "scheduled"],
+        content_history: "Stories, highlights and queue history",
+        media_previews: "Desktop media previews" })[id],
+    // media_previews has no background executor: on_demand admits only explicit
+    // interactive desktop resolves (docs/runbooks/ofapi-media.md).
+    modes: id === "vault_files" ? ["off"] : id === "media_previews" ? ["off", "on_demand"] : ["off", "on_demand", "scheduled"],
     baseline: ["core_messages", "core_payments", "core_audience"].includes(id),
-    consumers: id === "core_messages" ? ["chatters", "Agent Read"] : ["dashboard", "Agent Read"],
-    supportsOneOff: !["core_messages", "core_payments", "core_audience"].includes(id),
-    priceUnit: id === "vault_files" ? "calls_and_bytes" : "physical_calls",
+    consumers: id === "core_messages" ? ["chatters", "Agent Read"] : id === "media_previews" ? ["chatters"] : ["dashboard", "Agent Read"],
+    supportsOneOff: !["core_messages", "core_payments", "core_audience", "media_previews"].includes(id),
+    priceUnit: id === "vault_files" || id === "media_previews" ? "calls_and_bytes" : "physical_calls",
     prerequisites: id === "vault_files" ? ["owned source and explicit upload approval"] : ["active OFAPI page binding"],
     scope: "page",
     legacyOperations: OFAPI_COLLECTION_LEGACY_OPERATIONS.filter(operation => classifyOfapiCollectionOperation(operation) === id),
@@ -54,6 +57,9 @@ export function classifyOfapiCollectionOperation(operation) {
         return "diagnostic";
     if (["ofapi_upload_vault", "ofapi_upload_cdn", "ofapi_upload_status"].includes(operation))
         return "vault_files";
+    // Desktop media previews: the free redirect probe and the paid download.
+    if (["ofapi_media_probe", "ofapi_media_download"].includes(operation))
+        return "media_previews";
     if (/^ofapi_command_/.test(operation))
         return "command";
     if (["ofapi_balance_ping", "ofapi_credential_preflight", "ofapi_admin_accounts", "ofapi_webhook_crud", "ofapi_webhook_inventory", "ofapi_webhook_event_catalog",

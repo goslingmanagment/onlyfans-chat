@@ -18,6 +18,7 @@ import type { CreditMeter } from '../ofapi/credit-meter';
 import type { SendEngine } from '../send/engine';
 import { auditOutbox } from '../send/audit';
 import type { VaultService } from '../media/vault';
+import { createOfapiMediaMinter } from '../media/protocol';
 import type { SpendersService } from '../spenders/service';
 import type { SpendersRefreshService } from '../spenders/refresh';
 import type { OnlineService } from '../online/service';
@@ -55,6 +56,9 @@ import type {
   HubSignInResultVM,
   KeyTestResultVM,
   LocalDataStatsVM,
+  MediaStateVM,
+  MediaSurfaceVM,
+  MediaTriggerVM,
   OutboxItemVM,
   HubTelemetryVM,
   SyncStatusVM,
@@ -289,6 +293,16 @@ const spendersScopeSchema = z.object({ accountId: idSchema, scope: idSchema });
 
 // ── Online surface (variant C, flat) ──
 const onlineSnapshotSchema = z.object({ accountId: idSchema, spendersOnly: z.boolean() });
+// D43: a renderer-supplied media:// URL (the token is re-parsed in main).
+const mediaUrlSchema = z.string().max(200).regex(/^media:\/\/[0-9a-f]{64}(?:[/?#][\w=&.-]*)?$/);
+const mediaStateSchema = z.strictObject({ url: mediaUrlSchema });
+const mediaLoadSchema = z.strictObject({
+  url: mediaUrlSchema,
+  surface: z.enum(['thread', 'gallery', 'vault', 'lightbox']),
+  // `click` is the explicit action; the lightbox's navigation loads are `auto`.
+  trigger: z.enum(['auto', 'click']).default('click'),
+});
+const mediaCancelSchema = z.strictObject({ url: mediaUrlSchema });
 
 // ── Vault & PPV (PRD F7) ──
 const vaultListSchema = z.object({
@@ -399,6 +413,13 @@ export interface IpcDeps {
   vault?: VaultService | null;
   /** Spenders board (PLAN item 12); null/absent until an OFAPI read transport exists. */
   spenders?: SpendersService | null;
+  /** D43: media id-token state and explicit loads; absent = media images off. */
+  media?: {
+    state(url: string): MediaStateVM;
+    load(url: string, surface: MediaSurfaceVM, trigger: MediaTriggerVM): Promise<MediaStateVM>;
+    /** D5: drop an automatic load that has not started (the cell left the viewport). */
+    cancel(url: string): boolean;
+  } | null;
   /** Spenders freshness: hydrate TTL guard + scoped refresh queue (PLAN item 13). */
   spendersRefresh?: SpendersRefreshService | null;
   /** Online-now surface (variant C); null/absent until an OFAPI read transport exists. */
@@ -466,6 +487,8 @@ export interface IpcDeps {
 
 export function registerIpcHandlers(deps: IpcDeps): void {
   const { data, settingsStore } = deps;
+  // D43: message VMs re-mint media id tokens (registering them) at read time.
+  const mintOfapiMedia = createOfapiMediaMinter(data.mediaUrls);
   registerFollowersIpc(() => deps.followers ?? null);
   const resolvePersonaContext = (): {
     scope: PersonaStorageScope | null;
@@ -538,7 +561,7 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       ...(args.beforeId !== undefined ? { beforeId: args.beforeId } : {}),
       ...(args.limit !== undefined ? { limit: args.limit } : {}),
     });
-    return { items: page.items.map(messageToVM), hasMore: page.hasMore };
+    return { items: page.items.map((row) => messageToVM(row, mintOfapiMedia)), hasMore: page.hasMore };
   });
 
   ipcMain.handle('query:fan.get', (_event, rawArgs: unknown) => {
@@ -1408,6 +1431,22 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       chatId: args.chatId,
       ...(args.offset !== undefined ? { offset: args.offset } : {}),
     });
+  });
+
+  ipcMain.handle('query:media.state', (_event, rawArgs: unknown): MediaStateVM => {
+    const args = mediaStateSchema.parse(rawArgs);
+    return deps.media?.state(args.url) ?? { state: 'unavailable' };
+  });
+
+  ipcMain.handle('cmd:media.load', async (_event, rawArgs: unknown): Promise<MediaStateVM> => {
+    const args = mediaLoadSchema.parse(rawArgs);
+    const media = deps.media ?? null;
+    return media === null ? { state: 'unavailable' } : media.load(args.url, args.surface, args.trigger);
+  });
+
+  ipcMain.handle('cmd:media.cancel', (_event, rawArgs: unknown): { cancelled: boolean } => {
+    const args = mediaCancelSchema.parse(rawArgs);
+    return { cancelled: deps.media?.cancel(args.url) ?? false };
   });
 
   ipcMain.handle('cmd:send.ppv', (_event, rawArgs: unknown) => {

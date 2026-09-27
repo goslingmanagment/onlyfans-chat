@@ -45,8 +45,8 @@ export declare const ofapiProfileVisitorDaySchema: z.ZodObject<{
     availability: z.ZodEnum<{
         complete: "complete";
         partial: "partial";
-        missing: "missing";
         unavailable: "unavailable";
+        missing: "missing";
         ineligible: "ineligible";
     }>;
     observedAt: z.ZodNullable<z.ZodString>;
@@ -750,8 +750,8 @@ export declare const ofapiExportRouteSchemas: {
                     availability: z.ZodEnum<{
                         complete: "complete";
                         partial: "partial";
-                        missing: "missing";
                         unavailable: "unavailable";
+                        missing: "missing";
                         ineligible: "ineligible";
                     }>;
                     observedAt: z.ZodNullable<z.ZodString>;

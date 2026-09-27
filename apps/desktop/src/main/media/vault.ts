@@ -44,22 +44,31 @@ export interface VaultService {
 
 const VAULT_TYPES = new Set(['photo', 'video', 'audio', 'gif']);
 
-export function mapVaultItem(media: OfApiVaultMedia, toMediaUrl: ToMediaUrl): VaultItemVM {
+export function mapVaultItem(media: OfApiVaultMedia, toMediaUrl: ToMediaUrl, accountId?: string): VaultItemVM {
   const files = media.files ?? null;
   const type =
     media.type != null && VAULT_TYPES.has(media.type)
       ? (media.type as VaultItemVM['type'])
       : 'other';
-  const previewRemote = files?.thumb?.url ?? files?.squarePreview?.url ?? files?.preview?.url ?? null;
-  // OFAPI legitimately returns ready, full-only audio rows. A full MP3 is not
-  // an image thumbnail: minting it makes <img> download and buffer the complete
-  // audio file only to fail decoding. Keep the existing note placeholder.
-  const thumbRemote = previewRemote ?? (type === 'audio' ? null : (files?.full?.url ?? null));
+  const isReady = media.isReady !== false && media.hasError !== true;
+  // D43: no automatic thumbnail ever falls back to the full file (a video
+  // without a preview used to download the whole video as its "thumbnail",
+  // and a full MP3 is not an image). With an id-token minter the cell names
+  // the file by id and Core picks thumb → squarePreview → preview.
+  let thumbUrl: string | null;
+  if (accountId !== undefined && toMediaUrl.ofapiMedia !== undefined) {
+    // A processing item keeps its thumb token too: its cell offers an
+    // explicit refresh, never an automatic load (D43/H3).
+    thumbUrl = type !== 'audio' ? toMediaUrl.ofapiMedia(accountId, String(media.id), 'thumb') : null;
+  } else {
+    const previewRemote = files?.thumb?.url ?? files?.squarePreview?.url ?? files?.preview?.url ?? null;
+    thumbUrl = previewRemote !== null && type !== 'audio' ? toMediaUrl(previewRemote) : null;
+  }
   return {
     id: String(media.id),
     type,
-    thumbUrl: thumbRemote !== null ? toMediaUrl(thumbRemote) : null,
-    isReady: media.isReady !== false && media.hasError !== true,
+    thumbUrl,
+    isReady,
     durationSeconds: media.duration != null && media.duration > 0 ? media.duration : null,
     createdAt: media.createdAt ?? null,
     likesCount: media.counters?.likesCount ?? 0,
@@ -82,7 +91,7 @@ export function createVaultService(options: VaultServiceOptions): VaultService {
         ...(query !== undefined && query !== '' ? { query } : {}),
       });
       return {
-        items: items.map((item) => mapVaultItem(item, toMediaUrl)),
+        items: items.map((item) => mapVaultItem(item, toMediaUrl, accountId)),
         hasMore,
         nextOffset: hasMore ? from + items.length : null,
       };
@@ -115,7 +124,7 @@ export function createVaultService(options: VaultServiceOptions): VaultService {
       const fanId = Number(chatId); // chat_id === fan.id (two-namespace rule)
       const items = messages.map((message): GalleryItemVM => {
         const media = (message.media ?? [])
-          .map((raw) => mapMediaItem(raw, toMediaUrl))
+          .map((raw) => mapMediaItem(raw, toMediaUrl, accountId))
           .filter((item): item is MessageMediaItem => item !== null);
         return {
           messageId: String(message.id),

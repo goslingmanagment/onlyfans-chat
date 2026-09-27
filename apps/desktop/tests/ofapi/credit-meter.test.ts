@@ -163,4 +163,18 @@ describe('createCreditMeter', () => {
     snap.usedTodayByPurpose['media']!.credits = 999;
     expect(meter.snapshot().usedTodayByPurpose['media']).toEqual({ requests: 1, credits: 1 });
   });
+
+  it('D43: records Core-charged media credits once per resolve id, never as provider headers', () => {
+    const meter = createCreditMeter({ now: () => T0 });
+    meter.recordCharge({ purpose: 'media', credits: 2, key: 'resolve-1' });
+    meter.recordCharge({ purpose: 'media', credits: 2, key: 'resolve-1' }); // a replayed answer
+    meter.recordCharge({ purpose: 'media', credits: 0, key: 'resolve-2' }); // free: nothing to count
+    meter.recordCharge({ purpose: 'media', credits: 1, key: 'resolve-3' });
+    const snap = meter.snapshot();
+    expect(snap.usedTodayByPurpose['media']).toEqual({ requests: 2, credits: 3 });
+    expect(snap.usedToday).toBe(3);
+    // No balance or rate headers are invented.
+    expect(snap.balance).toBeNull();
+    expect(snap.rpmRemaining).toBeNull();
+  });
 });

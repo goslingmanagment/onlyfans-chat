@@ -32,6 +32,8 @@ import { createAiAcceptanceQueries } from './queries/ai-acceptance';
 import type { AiAcceptanceQueries } from './queries/ai-acceptance';
 import { createMediaUrlsQueries } from './queries/media-urls';
 import type { MediaUrlsQueries } from './queries/media-urls';
+import { createMediaFetchReportsQueries } from './queries/media-fetch-reports';
+import type { MediaFetchReportsQueries } from './queries/media-fetch-reports';
 import { createThreadFetchLogQueries } from './queries/thread-fetch-log';
 import type { ThreadFetchLogQueries } from './queries/thread-fetch-log';
 import { createMessageGuardEventsQueries } from './queries/message-guard-events';
@@ -58,6 +60,8 @@ export interface DataLayer {
   aiSpendLog: AiSpendLogQueries;
   aiAcceptance: AiAcceptanceQueries;
   mediaUrls: MediaUrlsQueries;
+  /** D43: durable media transfer reports awaiting Core. */
+  mediaFetchReports: MediaFetchReportsQueries;
   threadFetchLog: ThreadFetchLogQueries;
   messageGuardEvents: MessageGuardEventsQueries;
   unsendCommands: UnsendCommandQueries;
@@ -90,6 +94,7 @@ export function createDataLayer(options: OpenDatabaseOptions & { bus?: DbChangeB
     aiSpendLog,
     aiAcceptance,
     mediaUrls: createMediaUrlsQueries(db),
+    mediaFetchReports: createMediaFetchReportsQueries(db),
     threadFetchLog: createThreadFetchLogQueries(db),
     messageGuardEvents: createMessageGuardEventsQueries(db, bus),
     unsendCommands: createUnsendCommandQueries(db),
@@ -176,7 +181,9 @@ export type {
   AiAcceptanceResult,
 } from './queries/ai-acceptance';
 export { createMediaUrlsQueries } from './queries/media-urls';
-export type { MediaUrlsQueries } from './queries/media-urls';
+export type { MediaUrlEntry, MediaUrlsQueries, MediaVariant } from './queries/media-urls';
+export { createMediaFetchReportsQueries } from './queries/media-fetch-reports';
+export type { MediaFetchReport, MediaFetchReportsQueries } from './queries/media-fetch-reports';
 export { createMessageGuardEventsQueries } from './queries/message-guard-events';
 export type {
   MessageGuardBlocksReport,

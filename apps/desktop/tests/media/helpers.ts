@@ -1,26 +1,38 @@
 import type { MediaCacheQueries, MediaCacheRow } from '@main/media/cache';
-import type { MediaUrlRegistry } from '@main/media/protocol';
+import type { MediaUrlEntry, MediaUrlRegistry } from '@main/media/protocol';
 
 export interface InMemoryMediaUrlRegistry extends MediaUrlRegistry {
   rows: Map<string, string>;
+  entries: Map<string, MediaUrlEntry>;
 }
 
-/** Latest URL wins, like the media_urls table. */
+/** Latest URL wins, like the media_urls table; D43 id tokens alongside. */
 export function createInMemoryMediaUrlRegistry(): InMemoryMediaUrlRegistry {
   const rows = new Map<string, string>();
+  const entries = new Map<string, MediaUrlEntry>();
   return {
     rows,
+    entries,
     register(urlHash, url) {
       rows.set(urlHash, url);
+      entries.set(urlHash, { kind: 'url', url });
+    },
+    registerOfapi(urlHash, entry) {
+      if (!entries.has(urlHash)) entries.set(urlHash, { kind: 'ofapi', ...entry });
     },
     lookup(urlHash) {
       return rows.get(urlHash);
     },
+    lookupEntry(urlHash) {
+      return entries.get(urlHash);
+    },
     delete(urlHash) {
       rows.delete(urlHash);
+      entries.delete(urlHash);
     },
     clear() {
       rows.clear();
+      entries.clear();
     },
   };
 }

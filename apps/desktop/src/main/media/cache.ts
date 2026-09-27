@@ -56,6 +56,15 @@ export function hashRemoteUrl(remoteUrl: string): string {
   return createHash('sha256').update(stableRemoteUrlKey(remoteUrl), 'utf8').digest('hex');
 }
 
+/**
+ * D43: the id token of an OFAPI media file — one stable key per (account,
+ * media id, variant), whatever URL Core later hands out for it. A separate
+ * function on purpose: hashRemoteUrl parses a URL, this is not one.
+ */
+export function hashOfapiMediaKey(accountId: string, mediaId: string, variant: 'thumb' | 'full'): string {
+  return createHash('sha256').update(`ofapi|${accountId}|${mediaId}|${variant}`, 'utf8').digest('hex');
+}
+
 // ─── media_cache rows ────────────────────────────────────────────────────
 
 export interface MediaCacheRow {
@@ -91,6 +100,9 @@ export interface MediaBlob {
 export interface MediaCache {
   get(remoteUrl: string): Promise<MediaBlob | null>;
   put(remoteUrl: string, data: Uint8Array, contentType: string | null): Promise<void>;
+  /** D43: id-token entries are keyed by the token itself (hashOfapiMediaKey). */
+  getByKey(urlHash: string): Promise<MediaBlob | null>;
+  putByKey(urlHash: string, data: Uint8Array, contentType: string | null): Promise<void>;
   clear(): Promise<void>;
 }
 
@@ -143,50 +155,53 @@ export function createMediaCache(options: MediaCacheOptions): MediaCache {
     }
   }
 
+  async function getByKey(urlHash: string): Promise<MediaBlob | null> {
+    const row = queries.get(urlHash);
+    if (row === undefined) return null;
+
+    const filePath = fileFor(row); // throws on path-like row paths
+    let encrypted: Buffer;
+    try {
+      encrypted = await readFile(filePath);
+    } catch {
+      await dropEntry(row);
+      return null;
+    }
+
+    let data: Buffer;
+    try {
+      data = decryptBlob(encryptionKey, encrypted);
+    } catch {
+      await dropEntry(row); // tampered or key-rotated entry: refetch
+      return null;
+    }
+
+    queries.touch(urlHash, now().toISOString());
+    return { data, contentType: row.contentType };
+  }
+
+  async function putByKey(urlHash: string, data: Uint8Array, contentType: string | null): Promise<void> {
+    const encrypted = encryptBlob(encryptionKey, data);
+    const fileName = `${urlHash}.bin`;
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(join(cacheDir, fileName), encrypted, { mode: 0o600 });
+    const ts = now().toISOString();
+    queries.upsert({
+      urlHash,
+      path: fileName,
+      contentType,
+      bytes: encrypted.byteLength,
+      fetchedAt: ts,
+      lastAccessedAt: ts,
+    });
+    await evict(urlHash);
+  }
+
   return {
-    async get(remoteUrl) {
-      const urlHash = hashRemoteUrl(remoteUrl);
-      const row = queries.get(urlHash);
-      if (row === undefined) return null;
-
-      const filePath = fileFor(row); // throws on path-like row paths
-      let encrypted: Buffer;
-      try {
-        encrypted = await readFile(filePath);
-      } catch {
-        await dropEntry(row);
-        return null;
-      }
-
-      let data: Buffer;
-      try {
-        data = decryptBlob(encryptionKey, encrypted);
-      } catch {
-        await dropEntry(row); // tampered or key-rotated entry: refetch
-        return null;
-      }
-
-      queries.touch(urlHash, now().toISOString());
-      return { data, contentType: row.contentType };
-    },
-
-    async put(remoteUrl, data, contentType) {
-      const urlHash = hashRemoteUrl(remoteUrl);
-      const encrypted = encryptBlob(encryptionKey, data);
-      const fileName = `${urlHash}.bin`;
-      await mkdir(cacheDir, { recursive: true });
-      await writeFile(join(cacheDir, fileName), encrypted, { mode: 0o600 });
-      const ts = now().toISOString();
-      queries.upsert({
-        urlHash,
-        path: fileName,
-        contentType,
-        bytes: encrypted.byteLength,
-        fetchedAt: ts,
-        lastAccessedAt: ts,
-      });
-      await evict(urlHash);
-    },
+    get: (remoteUrl) => getByKey(hashRemoteUrl(remoteUrl)),
+    put: (remoteUrl, data, contentType) => putByKey(hashRemoteUrl(remoteUrl), data, contentType),
+    getByKey,
+    putByKey,
 
     async clear() {
       queries.clear();

@@ -23,6 +23,7 @@ import {
   selectionOrder,
 } from './vaultLogic';
 import { sendPpvCompose } from './ppvSendController';
+import { MediaCell } from '../media/MediaCell';
 import {
   compileRendererGuardPolicy,
   scanDraftForDisplay,
@@ -41,36 +42,48 @@ function VaultCell({ item }: { item: VaultItemVM }): React.JSX.Element {
   const togglePreviewItem = useVaultStore((s) => s.togglePreviewItem);
   const order = selectionOrder(selection, item.id);
   const isPreview = selection.previews.includes(item.id);
+  // D43: the shared cell (loads only while visible; its «Загрузить» /
+  // «Проверить» control never toggles attachment — only the button does).
+  const cell = (
+    <MediaCell
+      item={{
+        id: item.id,
+        type: item.type,
+        thumbUrl: item.thumbUrl,
+        isReady: item.isReady,
+        locked: false,
+        durationSeconds: item.durationSeconds,
+      }}
+      surface="vault"
+      compact
+    />
+  );
+
+  if (!item.isReady) {
+    // A file OnlyFans still processes cannot be attached, so its cell is not a
+    // button at all: a disabled <button> swallows the clicks of everything
+    // inside it, «Проверить» included, and nothing here may attach.
+    return (
+      <div
+        title={t('vault.cellProcessingTip')}
+        className="relative h-[88px] overflow-hidden rounded-[8px] border border-line"
+      >
+        {cell}
+      </div>
+    );
+  }
 
   return (
     <button
       type="button"
-      disabled={!item.isReady}
       onClick={() => toggleItem(item.id)}
-      title={item.isReady ? t('vault.cellAttachTip') : t('vault.cellProcessingTip')}
+      title={t('vault.cellAttachTip')}
       className={cx(
-        'relative h-[88px] overflow-hidden rounded-[8px] border text-left',
+        'relative h-[88px] cursor-pointer overflow-hidden rounded-[8px] border text-left',
         order !== null ? 'border-clay ring-2 ring-clay/50' : 'border-line',
-        item.isReady ? 'cursor-pointer' : 'cursor-default opacity-70',
       )}
     >
-      {item.thumbUrl !== null && item.isReady ? (
-        <img src={item.thumbUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
-      ) : (
-        <span className="flex h-full w-full flex-col items-center justify-center gap-1 bg-bg3">
-          <span className={cx('text-[13px] opacity-60', !item.isReady && 'animate-pulse')}>
-            {item.isReady ? (item.type === 'audio' ? '♪' : '∅') : '⏳'}
-          </span>
-          {!item.isReady && (
-            <span className="num text-micro tracking-[0.08em] text-ink-mid">PROCESSING</span>
-          )}
-        </span>
-      )}
-      {item.type === 'video' && item.durationSeconds !== null && (
-        <span className="num absolute right-1 bottom-1 rounded-[4px] bg-bg1/90 px-1 text-micro text-ink-mid">
-          ▶ {Math.floor(item.durationSeconds / 60)}:{String(item.durationSeconds % 60).padStart(2, '0')}
-        </span>
-      )}
+      {cell}
       {order !== null && (
         <span className="num absolute top-1 left-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-clay px-1 text-micro font-bold text-white">
           {order}

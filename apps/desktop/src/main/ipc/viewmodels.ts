@@ -37,7 +37,27 @@ export function toRendererMediaUrl(url: string | null): string | null {
   return parseMediaToken(url) !== null ? url : null;
 }
 
-export function mediaItemToVM(item: MessageMediaVM): MessageMediaVM {
+/** D43: mints the id token of an OFAPI file (registers it; see media/protocol). */
+export type OfapiMediaTokenMinter = (accountId: string, mediaId: string, variant: 'thumb' | 'full') => string | null;
+
+/**
+ * With a minter (D43) a message file's tokens are re-minted from (account,
+ * media id, variant) and whatever the row stored is ignored: rows written
+ * before this release hold IP-bound URL tokens or none, and a registry wiped
+ * together with the blob cache must not turn into a permanent 404.
+ */
+export function mediaItemToVM(item: MessageMediaVM, accountId?: string, mint?: OfapiMediaTokenMinter): MessageMediaVM {
+  if (accountId !== undefined && mint !== undefined) {
+    // Same rule as sync/mappers.ts mintOfapiMediaTokens: a processing file
+    // keeps its thumb token (refresh on click only), never a full one.
+    return {
+      ...item,
+      thumbUrl: !item.locked && item.type !== 'audio' ? toRendererMediaUrl(mint(accountId, item.id, 'thumb')) : null,
+      fullUrl: item.isReady && !item.locked && item.type === 'photo'
+        ? toRendererMediaUrl(mint(accountId, item.id, 'full'))
+        : null,
+    };
+  }
   return {
     ...item,
     thumbUrl: toRendererMediaUrl(item.thumbUrl),
@@ -65,14 +85,14 @@ export function derivePpvState(
 
 // ─── Row → VM ─────────────────────────────────────────────────────────────
 
-export function messageToVM(row: MessageRow): MessageVM {
+export function messageToVM(row: MessageRow, mint?: OfapiMediaTokenMinter): MessageVM {
   return {
     id: row.messageId,
     chatId: row.chatId,
     createdAt: row.createdAt,
     isSentByMe: row.isSentByMe,
     text: row.textPlain, // already plain — sync strips OF HTML before persisting
-    media: row.media.map(mediaItemToVM),
+    media: row.media.map((item) => mediaItemToVM(item, row.accountId, mint)),
     price: row.price,
     ppvState: derivePpvState(row.price, row.isOpened, row.isSentByMe),
     isTip: row.isTip,

@@ -1863,7 +1863,7 @@ export function createPollingSync(options: PollingSyncOptions): PollingSync {
     chatId: string,
     message: NormalizedSyncMessage,
   ): HubMessageApplyOutcome {
-    const upsert = mapHubMessage(accountId, chatId, message);
+    const upsert = mapHubMessage(accountId, chatId, message, toMediaUrl.ofapiMedia);
     if (upsert === null) {
       return 'unmapped';
     }

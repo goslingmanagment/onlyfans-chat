@@ -11,6 +11,7 @@ import { StatusBar } from './StatusBar';
 import { CommandPalette } from './CommandPalette';
 import { HotkeyCheatsheet } from './HotkeyCheatsheet';
 import { ToastHost } from './ToastHost';
+import { MediaLightbox } from '../features/media/MediaLightbox';
 import { AccountRail } from '../features/inbox/AccountRail';
 import { ChatListPane } from '../features/inbox/ChatListPane';
 import { ConversationPane } from '../features/conversation/ConversationPane';
@@ -136,6 +137,7 @@ export function AppShell(): React.JSX.Element {
       <StatusBar />
       <CommandPalette />
       <HotkeyCheatsheet />
+      <MediaLightbox />
       <ToastHost />
     </div>
   );

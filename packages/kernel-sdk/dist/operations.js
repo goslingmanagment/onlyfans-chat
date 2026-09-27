@@ -194,6 +194,8 @@ export const kernelOperations = {
     ofapiMarketingRebuild: { method: "POST", path: "/api/v1/admin/ofapi/marketing/rebuild" },
     ofapiMediaGet: { method: "GET", path: "/api/v1/admin/ofapi/media" },
     ofapiMediaHandoff: { method: "POST", path: "/api/v1/admin/ofapi/media/handoff" },
+    ofapiMediaReports: { method: "POST", path: "/api/v1/ofapi/media/reports" },
+    ofapiMediaResolve: { method: "POST", path: "/api/v1/ofapi/media/resolve" },
     ofapiMediaSourceCreate: { method: "POST", path: "/api/v1/admin/ofapi/media/sources" },
     ofapiMediaUploadCreate: { method: "POST", path: "/api/v1/admin/ofapi/media/uploads" },
     ofapiMediaUploadResume: { method: "POST", path: "/api/v1/admin/ofapi/media/uploads/:jobId/resume" },

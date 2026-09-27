@@ -62,6 +62,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D40 | 2026-09-27 | Toast age gate widened from 9 to 60 min: redeliveries are excluded by provenance, so the gate only has to separate history from OFAPI's late-but-live deliveries (amends D38/D39) |
 | D41 | 2026-09-27 | One hotkey scheme with the Fansly extension, vendored from the hub (`@chatgoose/hotkeys`): text actions on ⌘/Ctrl + key (E Reply, I Improve, G Hi, P Ping, . Cancel), panels on ⌘⇧ / Ctrl+Alt + key (H, S, O, B, L, M; C reserved), physical-key matching, fresh-press roll-over guard; navigation unchanged |
 | D42 | 2026-09-27 | Split on Improve Draft: the ⫶ toggle appears in the Improve dock too and the one sticky Split flag (and ⌘⇧L / Ctrl+Alt+L) now covers Reply and Improve; the hub splits the rewrite into 2–3 [NEXT] parts only when asked (0.1.61) |
+| D43 | 2026-09-27 | Media images: message, gallery and vault files are id tokens that Core resolves (free webhook/OFAPI-cache URL or a budgeted paid download, 100 credits/UTC day for automatic loads, clicks always pass); bytes only on this machine, encrypted; tiles replace the count badge, full photos on click, video/GIF preview frame only; SDK vendored from the deployed core commit 89134bb2 (core #267) |
 
 ## Entries
 
@@ -1241,3 +1242,121 @@ back as one two-paragraph message.
 
 The extension's Fix is unchanged: its Split square belongs to the Reply
 cluster (E24).
+
+**D43 (2026-09-27).** Owner-approved plan «ChatGoose Desktop: media images»
+(owner decisions of 2026-09-27; the hub side is core #267 and its
+runbook `docs/runbooks/ofapi-media.md` → «Desktop media images»). The chat
+showed «N медиа» because OFAPI's signed CDN links expire and a paid OFAPI
+download had no budget. Now:
+
+- **Id tokens.** A message, gallery or vault file is `media://<sha256('ofapi|
+  acct|mediaId|variant')>` (`hashOfapiMediaKey`, a separate function from the
+  URL hash), `variant` ∈ `thumb | full`; `media_urls` rows gain `kind`
+  (`url | ofapi`), `account_id`, `media_id`, `variant` (schema v26). No
+  signed URL reaches the renderer or the DB row that names the token.
+  `full` exists only for photos; automatic thumbnails never fall back to the
+  full file; message VMs re-mint from `(accountId, media.id, variant)` and
+  ignore whatever URL token an older build stored, so a media-cache clear
+  (which wipes the registry) heals on the next read. Avatars stay URL tokens
+  fetched by `fetchRemote`.
+- **Core decides the cost.** On a cache miss main calls `POST
+  /api/v1/ofapi/media/resolve` (SDK `ofapiMediaResolve`, client requestId,
+  surface, trigger `auto | click`). Core answers `free_url | ofapi_cache |
+  paid | pending | cap_blocked | refused | unavailable` and logs every
+  decision; free sources are the webhook's Expires URL and OFAPI's cache,
+  paid is OFAPI's download (at least 1 credit, 3 per decimal MB) inside the
+  `media_previews` collection category and an agency cap of 100 credits per
+  UTC day for automatic loads — an explicit click always passes and is
+  flagged over the cap. Core never relays or stores bytes.
+- **This client's half.** Only accounts granted to the current identity are
+  served (D35, `media/serve-policy.ts`). The cache answers first.
+  Downloads: https on an allowlisted host with every redirect hop
+  re-checked, only JPEG, PNG, WebP and GIF bytes kept and cached — decided
+  by their magic bytes and cached under that type, so an
+  `application/octet-stream` body qualifies by its bytes while SVG and an
+  HTML page served with 200 never do — 30 s timeout, at most four at once
+  with clicks served first, stop past Core's priced size (unknown size — a
+  click only — has a 5 MB guard; nothing above Core's 30 MB ceiling). A
+  paid transfer is never retried automatically: after any failed paid
+  transfer, or a paid answer without a URL, the token waits for the next
+  UTC midnight or an explicit click that gets Core's decision — a click
+  that times out, is rate-limited or finds the file in flight elsewhere
+  leaves the latch in place. `cap_blocked` latches the
+  token for automatic loads (the daily budget until Core's `retryAt`; a
+  full-size photo — Core answers «click only» to an automatic ask — until
+  midnight). Quiet answers are remembered for automatic loads so nothing
+  storms: refused, unavailable, link expired, size unknown and an exhausted
+  `pending` for 12 min, a file still processing for 1 min; a Core without
+  the routes (404/405) for 15 min, per account, so a desktop updated before
+  the hub deploy recovers without a restart (Core also answers 404 for an
+  account it no longer grants, so one stale grant cannot switch media off
+  for every account); a rate-limited device (429) waits
+  Core's `Retry-After` (default 60 s) as a quiet placeholder that tries
+  again by itself — never «Загрузить». An explicit click bypasses all of
+  that. `pending` waits Core's `retryAfterMs` (≤5 s) and asks again at most
+  3× with new requestIds; a timeout or a dropped connection is asked again
+  once with the SAME requestId (Core joins or replays it), and the resolve
+  timeout (45 s) is above Core's worst-case media path. Failed automatic
+  attempts stop after 3 per hour per token. An explicit click on
+  `source_expired`, or on a file Core still calls processing and names a
+  message or vault item for, re-reads it once (read intent
+  `media-context-v1`, so Core files the read under media) and asks again; a
+  re-read message is written back, so its row catches up. Every cell names
+  itself on its requests (`c=`); an automatic load that has not started is
+  dropped once no cell wants it any more — a cell leaving the viewport or
+  unmounting says so (`cmd:media.cancel` with its `c=`, and the `<img>`
+  request's abort signal), and one cell leaving never cancels another's
+  load of the same file. Every hand-out is reported (`ofapiMediaReports`:
+  batched ≤100, idempotent by `resolveId`, durable in the encrypted
+  `media_fetch_reports` table, flushed 2 s after a download — a pending
+  retry never delays that — at startup, and again later when no hub was
+  there), never with more bytes than the transfer was allowed (Core rejects
+  such a report; the local queue mirrors its 30 MB ceiling). Only Core
+  refusing a batch — a 4xx, or the contract check before the wire — counts:
+  after 30 refusals the batch is dropped, which Core already counts as
+  `unknown`, the same as a report that never arrives; an outage, a timeout,
+  a 5xx, a rate limit or a rejected sign-in never discards one, and a Core
+  without the reports route keeps the queue (asked again every 15 min).
+  Reports Core answers as rejected are logged. Credits land in Activity
+  under purpose `media`, idempotent by `resolveId`: Core's answer for a
+  priced file, and for an unknown-size paid click the amount Core settles on
+  the report, min(reserved, max(1, ⌈3 × min(bytes, 5 MB) ÷ 10⁶⌉)); no
+  provider headers are invented. A refusal (the owner's `media_previews`
+  policy off or its ceiling reached, or a paid file over 30 MB) shows
+  «Недоступно», quietly.
+- **UI.** Tiles in the bubble replace the count badge: up to four, the
+  fourth carries «+N», every tile opens the lightbox over all of the
+  message's attachments; fixed tile heights keep the virtualized thread's
+  row estimates stable. The chat gallery and the vault grid in the PPV
+  composer share `MediaCell`; a vault click still only attaches, and the
+  cell's «Загрузить» never attaches; a vault file still processing is no
+  button at all (a disabled button would swallow its «Проверить»), so it
+  cannot be attached by accident. Images load only when visible (a gate
+  with `rootMargin: 0`, ≤4 in flight, visibility re-checked before a queued
+  cell goes, every automatic reload and recheck through the same gate; a
+  cell that scrolls away before its image arrived gives its slot back), so
+  scrolling past history spends nothing. States: skeleton
+  (also, quietly, while Core is busy or rate-limited), «Загрузить» (budget
+  reached, size unknown, link expired, a failed try — the click is the
+  explicit action), «Недоступно», «Обрабатывается» (with «Проверить» —
+  an explicit re-read — when Core names what to re-read; a processing file
+  never loads by itself), 🔒 locked PPV, ▶ duration / GIF on previews.
+  Full-size photos only on click (lightbox); video and GIF show the preview
+  frame only. In the lightbox the opening click and «Загрузить» are clicks,
+  each press one click on that visit of the frame; a frame reached with ‹ ›
+  or the arrows (a held key never steps) — a frame pressed on an earlier
+  visit included — asks only after 400 ms on screen and as `auto`, so Core
+  answers «click only» and the thumbnail stays with «Загрузить» unless the
+  full photo is already in the local cache (then it shows, free); leaving a
+  frame drops its unstarted load. The lightbox
+  takes focus and gives it back; ⌘K and the cheatsheet close it before they
+  open. Fast Reply and every AI transcript still carry text labels only
+  («Photo», «Media Bundle: …») — no image or token reaches the kernel.
+- **SDK.** Vendored from core `89134bb2` — the merged core #267, the
+  commit that is deployed (contract hash `abf87a65…`). The publish gate
+  compares production's contract hash with the vendored one (D37/D38
+  practice).
+
+Not verified here: a live fetch of any kind (no OFAPI or CDN call was made
+while building this; the resolver and protocol are proved against fakes),
+the packaged app on Windows, and real throughput against the cap.
