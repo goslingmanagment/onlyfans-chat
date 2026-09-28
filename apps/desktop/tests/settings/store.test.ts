@@ -137,6 +137,11 @@ describe('settings store', () => {
     expect(vm.featureReasoning).toEqual(DEFAULT_FEATURE_REASONING);
     expect(vm.notificationsEnabled).toBe(true);
     expect(vm.soundEnabled).toBe(true);
+    // D44: the classic blip at the classic loudness; the subscriber sound on.
+    expect(vm.soundTone).toBe('blip');
+    expect(vm.soundVolume).toBe(50);
+    expect(vm.subscriberSoundEnabled).toBe(true);
+    expect(vm.subscriberSoundTone).toBe('arpeggio');
     expect(vm.markAsReadOnOpen).toBe(false);
     expect(vm.autoReadChats).toBe(false);
     expect(vm.creditBudgetPerShift).toBeNull();
@@ -221,6 +226,12 @@ describe('settings store', () => {
     await expect(store.update({ uiScale: 2 })).rejects.toThrow();
     await expect(store.update({ uiScale: 0.95 })).rejects.toThrow();
     await expect(store.update({ uiTheme: 'sepia' })).rejects.toThrow();
+    // D44: only a known tone and a stepped volume in range.
+    await expect(store.update({ soundTone: 'siren' })).rejects.toThrow();
+    await expect(store.update({ subscriberSoundTone: 'siren' })).rejects.toThrow();
+    await expect(store.update({ soundVolume: 0 })).rejects.toThrow();
+    await expect(store.update({ soundVolume: 101 })).rejects.toThrow();
+    await expect(store.update({ soundVolume: 62 })).rejects.toThrow();
     await expect(store.update({ ofapiReadTransport: 'proxy' })).rejects.toThrow();
     await expect(store.update({ ofapiWriteTransport: 'direct' })).rejects.toThrow();
     await expect(store.update({ ofapiWriteTransport: 'proxy' })).rejects.toThrow();
@@ -850,4 +861,16 @@ describe('backfillHubDeviceIdentity (D19, pre-D19 fleet)', () => {
     expect(queries.get(HUB_DEVICE_IDENTITY_KEY)).toBeUndefined();
   });
 
+
+  it('D44: saves and reads back the sound choices', async () => {
+    const { store } = createStore();
+    const vm = await store.update({
+      soundTone: 'chime',
+      soundVolume: 80,
+      subscriberSoundEnabled: false,
+      subscriberSoundTone: 'bell',
+    });
+    expect(vm).toMatchObject({ soundTone: 'chime', soundVolume: 80, subscriberSoundEnabled: false, subscriberSoundTone: 'bell' });
+    expect(await store.get()).toMatchObject({ soundTone: 'chime', soundVolume: 80, subscriberSoundEnabled: false, subscriberSoundTone: 'bell' });
+  });
 });

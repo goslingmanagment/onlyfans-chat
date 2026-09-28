@@ -3455,6 +3455,47 @@ describe('createHubAwareSync (provider composition)', () => {
     expect(after.statusChangedAtMs).toBe(Date.parse('2026-06-11T12:02:00Z'));
     provider.stop();
   });
+  // ── D44: new subscribers ─────────────────────────────────────────────
+  describe('D44 subscribers', () => {
+    it('rings only a live-provenance frame after replay_completed within the age gate, once', async () => {
+      const ctx = build();
+      ctx.provider.start([ACCT]);
+      await Promise.resolve();
+      await Promise.resolve();
+      const matrix: Array<{ provenance: string; deliveredLive: boolean; ageMs: number; alert: boolean }> = [];
+      let seq = 5000;
+      for (const provenance of ['live', 'redelivery'] as const) {
+        for (const deliveredLive of [false, true]) {
+          for (const ageMs of [60_000, NOTIFICATION_MAX_AGE_MS + 60_000]) {
+            seq += 1;
+            await runEvent(
+              ctx.callbacks(),
+              { type: 'subscriberStarted', accountId: ACCT, fanId: String(seq) },
+              liveMeta({
+                provenance,
+                deliveredLive,
+                accountSeq: seq,
+                occurredAt: new Date(PROVIDER_NOW_MS - ageMs).toISOString(),
+              }),
+            );
+            const event = ctx.events.filter((candidate) => candidate.type === 'subscriberStarted').at(-1);
+            matrix.push({ provenance, deliveredLive, ageMs, alert: event?.type === 'subscriberStarted' && event.live === true });
+          }
+        }
+      }
+      expect(matrix.filter((cell) => cell.alert)).toEqual([
+        { provenance: 'live', deliveredLive: true, ageMs: 60_000, alert: true },
+      ]);
+      // The same frame redelivered on the same connection rings once.
+      const again = liveMeta({ accountSeq: 9001, occurredAt: new Date(PROVIDER_NOW_MS - 60_000).toISOString() });
+      await runEvent(ctx.callbacks(), { type: 'subscriberStarted', accountId: ACCT, fanId: 'x' }, again);
+      await runEvent(ctx.callbacks(), { type: 'subscriberStarted', accountId: ACCT, fanId: 'x' }, again);
+      const tail = ctx.events.filter((candidate) => candidate.type === 'subscriberStarted').slice(-2);
+      expect(tail.map((event) => event.type === 'subscriberStarted' && event.live)).toEqual([true, false]);
+      ctx.provider.stop();
+    });
+  });
+
   // ── D39: purchases ─────────────────────────────────────────────────────
 
   describe('D39 purchases', () => {

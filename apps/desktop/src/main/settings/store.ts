@@ -39,6 +39,15 @@ import {
   personaStorageScopeForHub,
 } from '../personas/pending';
 import type { SecretName } from '../secrets/keychain';
+import {
+  MESSAGE_SOUND_TONE_DEFAULT,
+  SOUND_TONES,
+  SOUND_VOLUME_DEFAULT,
+  SOUND_VOLUME_MAX,
+  SOUND_VOLUME_MIN,
+  SOUND_VOLUME_STEP,
+  SUBSCRIBER_SOUND_TONE_DEFAULT,
+} from '@chatgoose/shared/sound/index';
 import { grantsBelongToCurrentIdentity, readGrantOwner } from '../db/grant-owner';
 import {
   HUB_DEVICE_IDENTITY_KEY,
@@ -106,6 +115,10 @@ export const PERSISTED_SETTINGS_KEYS = [
   'debugMode',
   'notificationsEnabled',
   'soundEnabled',
+  'soundTone',
+  'soundVolume',
+  'subscriberSoundEnabled',
+  'subscriberSoundTone',
   'markAsReadOnOpen',
   'autoReadChats',
   'defaultReplyTone',
@@ -201,6 +214,10 @@ const persistedFieldSchemas = {
   debugMode: z.boolean(),
   notificationsEnabled: z.boolean(),
   soundEnabled: z.boolean(),
+  soundTone: z.enum(SOUND_TONES),
+  soundVolume: z.number().int().min(SOUND_VOLUME_MIN).max(SOUND_VOLUME_MAX).multipleOf(SOUND_VOLUME_STEP),
+  subscriberSoundEnabled: z.boolean(),
+  subscriberSoundTone: z.enum(SOUND_TONES),
   markAsReadOnOpen: z.boolean(),
   autoReadChats: z.boolean(),
   defaultReplyTone: z.enum(REPLY_TONE_VALUES),
@@ -277,6 +294,10 @@ export const PERSISTED_DEFAULTS: PersistedSettings = {
   debugMode: DEFAULT_SETTINGS.debugMode,
   notificationsEnabled: true,
   soundEnabled: true,
+  soundTone: MESSAGE_SOUND_TONE_DEFAULT,
+  soundVolume: SOUND_VOLUME_DEFAULT,
+  subscriberSoundEnabled: true,
+  subscriberSoundTone: SUBSCRIBER_SOUND_TONE_DEFAULT,
   // P3 is strictly read-only toward OFAPI — mark-as-read stays off by default.
   markAsReadOnOpen: false,
   // Default OFF = no automatic OFAPI message-body reads (every such GET marks
@@ -333,6 +354,10 @@ export const settingsPatchSchema = z.strictObject({
   debugMode: persistedFieldSchemas.debugMode.optional(),
   notificationsEnabled: persistedFieldSchemas.notificationsEnabled.optional(),
   soundEnabled: persistedFieldSchemas.soundEnabled.optional(),
+  soundTone: persistedFieldSchemas.soundTone.optional(),
+  soundVolume: persistedFieldSchemas.soundVolume.optional(),
+  subscriberSoundEnabled: persistedFieldSchemas.subscriberSoundEnabled.optional(),
+  subscriberSoundTone: persistedFieldSchemas.subscriberSoundTone.optional(),
   markAsReadOnOpen: persistedFieldSchemas.markAsReadOnOpen.optional(),
   autoReadChats: persistedFieldSchemas.autoReadChats.optional(),
   defaultReplyTone: persistedFieldSchemas.defaultReplyTone.optional(),
@@ -465,6 +490,10 @@ export function createSettingsStore(options: SettingsStoreOptions): SettingsStor
       debugMode: readField('debugMode'),
       notificationsEnabled: readField('notificationsEnabled'),
       soundEnabled: readField('soundEnabled'),
+      soundTone: readField('soundTone'),
+      soundVolume: readField('soundVolume'),
+      subscriberSoundEnabled: readField('subscriberSoundEnabled'),
+      subscriberSoundTone: readField('subscriberSoundTone'),
       markAsReadOnOpen: readField('markAsReadOnOpen'),
       autoReadChats: readField('autoReadChats'),
       defaultReplyTone: readField('defaultReplyTone'),

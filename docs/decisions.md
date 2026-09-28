@@ -63,6 +63,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D41 | 2026-09-27 | One hotkey scheme with the Fansly extension, vendored from the hub (`@chatgoose/hotkeys`): text actions on ⌘/Ctrl + key (E Reply, I Improve, G Hi, P Ping, . Cancel), panels on ⌘⇧ / Ctrl+Alt + key (H, S, O, B, L, M; C reserved), physical-key matching, fresh-press roll-over guard; navigation unchanged |
 | D42 | 2026-09-27 | Split on Improve Draft: the ⫶ toggle appears in the Improve dock too and the one sticky Split flag (and ⌘⇧L / Ctrl+Alt+L) now covers Reply and Improve; the hub splits the rewrite into 2–3 [NEXT] parts only when asked (0.1.61) |
 | D43 | 2026-09-27 | Media images: message, gallery and vault files are id tokens that Core resolves (free webhook/OFAPI-cache URL or a budgeted paid download, 100 credits/UTC day for automatic loads, clicks always pass); bytes only on this machine, encrypted; tiles replace the count badge, full photos on click, video/GIF preview frame only; SDK vendored from the deployed core commit 89134bb2 (core #267) |
+| D44 | 2026-09-28 | Notification sounds: eight synthesized tones shared with the Fansly extension (defaults differ: here the classic blip / arpeggio, there chime / double), one volume, and a new-subscriber sound — `subscription.started` becomes `subscriberStarted`, still a list nudge, ringing only on main's explicit yes (live v2 frame, after replay, inside the age gate, once); its own switch and tone; a subscriber never takes a message's ring; 0.1.63 |
 
 ## Entries
 
@@ -1360,3 +1361,42 @@ download had no budget. Now:
 Not verified here: a live fetch of any kind (no OFAPI or CDN call was made
 while building this; the resolver and protocol are proved against fakes),
 the packaged app on Windows, and real throughput against the cap.
+
+**D44 (2026-09-28).** Notification sounds — the owner asked, after the Fansly
+extension got its sounds (fansly-chat E145/E146), for the same choice here:
+«выбор звуков и настройку на фолоу и меседж», and noted that identical sounds
+on both clients mislead a chatter working both.
+
+- **Eight tones, one family.** `packages/shared/src/sound` carries the same
+  eight synthesized tones as the extension (`blip`, `chime`, `drop`, `bell`,
+  `arpeggio`, `knock`, `double`, `soft`), a quadratic volume (5–100 %, 50 % =
+  the classic peak 0.06) and `scheduleTone` over a minimal Web Audio surface
+  (the package stays platform-pure). Defaults differ from the extension on
+  purpose: messages keep the app's classic `blip` and a new subscriber is
+  `arpeggio`, while the extension defaults to `chime` / `double`.
+- **New subscriber.** OnlyFans has no follow; the fan subscribes. Core's
+  `subscription.started` (live on both OnlyFans pages: 79 in the week to
+  2026-09-28, about 35 s after the fact in the median) now maps to its own
+  `subscriberStarted` event (fanId when Core names one). Main applies it like
+  the old chat-list nudge and stamps `live` with the purchase rules (D39): a v2
+  durable frame, delivered live after `replay_completed`, `provenance: live`,
+  inside the age gate, once per `hubAccountId:accountSeq`. The renderer rings
+  only on `live === true`. Renewals stay a plain nudge.
+- **Pauses.** A message answers only to the last message sound (2 s, as
+  before); a subscriber sound waits out a recent message and its own 10 s, so a
+  promo wave never rings non-stop and never takes a message's ring. A preview
+  plays whenever its button is pressed.
+- **Settings** (key-value rows, zod at the boundary): `soundTone` (`blip`),
+  `soundVolume` (50), `subscriberSoundEnabled` (on), `subscriberSoundTone`
+  (`arpeggio`); the existing `soundEnabled` stays the message switch, now
+  labelled «Звук сообщений». Behavior gains a «Звуки» block: message tone,
+  subscriber switch and tone, each with «Проверить», and the shared volume
+  (saved when the slider is let go).
+- No toast or OS notification for a subscriber (not asked for); no per-model
+  switch (the extension has one because a chatter there works several model
+  tabs; not asked for here). Released as 0.1.63.
+
+Verified: `pnpm check`; the Behavior block on the standalone mock renderer in
+light and dark. Not verified: a live `subscription.started` ringing in the
+packaged app (it needs a real subscriber), and the packaged app on Windows.
+

@@ -1179,6 +1179,29 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
     return null;
   }
 
+  /** D44: the purchase-alert rules for a new subscriber (null = rings). */
+  function subscriberAlertVeto(
+    event: Extract<SyncEvent, { type: 'subscriberStarted' }>,
+    meta: HubFrameMeta,
+  ): string | null {
+    if (meta.lane !== 'durable' || meta.provenance === null) {
+      return 'not-v2-stream';
+    }
+    if (!meta.deliveredLive) {
+      return 'replay';
+    }
+    const frameVeto = frameAttentionVeto(meta);
+    if (frameVeto !== null) {
+      return frameVeto;
+    }
+    const key = `subscriber/${event.accountId}/${meta.hubAccountId ?? '?'}:${meta.accountSeq ?? '?'}`;
+    if (alertedIds.has(key)) {
+      return 'already-alerted';
+    }
+    markAlerted(key);
+    return null;
+  }
+
   /**
    * Acceptance (D39): one line per money fact applied from the stream. Joins
    * Core's `v2 money frame written` log and `domain_events` on
@@ -1411,6 +1434,22 @@ export function createHubAwareSync(options: HubAwareSyncOptions): HubAwareSync {
         data.messages.markDeleted(event.accountId, chatId, [event.messageId]);
         intents.closeChatMessage(event.accountId, chatId, event.messageId, 'message-deleted');
         effects.push(() => emit({ ...event, chatId }));
+        recordApplied(event.type);
+        break;
+      }
+      case 'subscriberStarted': {
+        // D44: the same list nudge as before (a new subscriber is a new chat
+        // row), plus an alert on main's explicit yes.
+        intents.openAccountList(event.accountId, frameNotBeforeMs(meta), 'list-nudge');
+        kickIntents = true;
+        const veto = subscriberAlertVeto(event, meta);
+        onLog('debug', 'subscriber started', {
+          accountId: event.accountId,
+          accountSeq: meta.accountSeq,
+          veto,
+        });
+        const announced = { ...event, live: veto === null };
+        effects.push(() => emit(announced));
         recordApplied(event.type);
         break;
       }

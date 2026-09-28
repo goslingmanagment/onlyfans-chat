@@ -1,19 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetBlipThrottleForTests,
-  playNotificationBlip,
+  playNotificationSound,
 } from '../../src/renderer/src/lib/sound';
 
 let oscillatorStarts: number;
+let frequencies: number[];
 
-class FakeGainParam {
-  setValueAtTime(): void {}
+class FakeParam {
+  constructor(private readonly record?: number[]) {}
+  setValueAtTime(value: number): void {
+    this.record?.push(value);
+  }
   exponentialRampToValueAtTime(): void {}
 }
 
 class FakeNode {
-  gain = new FakeGainParam();
-  frequency = new FakeGainParam();
+  gain = new FakeParam();
+  frequency = new FakeParam(frequencies);
   type = '';
 
   connect(next: unknown): unknown {
@@ -40,9 +44,10 @@ class FakeAudioContext {
   }
 }
 
-describe('playNotificationBlip throttle', () => {
+describe('playNotificationSound (D44)', () => {
   beforeEach(() => {
     oscillatorStarts = 0;
+    frequencies = [];
     vi.stubGlobal('AudioContext', FakeAudioContext);
     __resetBlipThrottleForTests();
   });
@@ -51,16 +56,35 @@ describe('playNotificationBlip throttle', () => {
     vi.unstubAllGlobals();
   });
 
-  it('plays at most one blip per 2s window', () => {
-    playNotificationBlip(1_000);
-    playNotificationBlip(1_100);
-    playNotificationBlip(2_900);
+  it('plays at most one message sound per 2s window', () => {
+    expect(playNotificationSound('message', 'blip', 50, 1_000)).toBe(true);
+    expect(playNotificationSound('message', 'blip', 50, 1_100)).toBe(false);
+    expect(playNotificationSound('message', 'blip', 50, 2_900)).toBe(false);
     expect(oscillatorStarts).toBe(1);
+    expect(playNotificationSound('message', 'blip', 50, 3_100)).toBe(true);
+    expect(oscillatorStarts).toBe(2);
   });
 
-  it('plays again once the window elapsed', () => {
-    playNotificationBlip(1_000);
-    playNotificationBlip(3_100);
-    expect(oscillatorStarts).toBe(2);
+  it('plays the chosen tone — the classic blip starts at 880 Hz', () => {
+    playNotificationSound('message', 'blip', 50, 1_000);
+    expect(frequencies[0]).toBe(880);
+    frequencies = [];
+    playNotificationSound('message', 'chime', 50, 4_000);
+    expect(frequencies[0]).toBe(1047);
+  });
+
+  it('never lets a subscriber sound take a message\'s ring', () => {
+    expect(playNotificationSound('subscriber', 'arpeggio', 50, 1_000)).toBe(true);
+    expect(playNotificationSound('message', 'blip', 50, 1_100)).toBe(true);
+    // A subscriber waits out a recent message and its own 10 s pause.
+    expect(playNotificationSound('subscriber', 'arpeggio', 50, 2_000)).toBe(false);
+    expect(playNotificationSound('subscriber', 'arpeggio', 50, 5_000)).toBe(false);
+    expect(playNotificationSound('subscriber', 'arpeggio', 50, 11_000)).toBe(true);
+  });
+
+  it('plays a preview whenever it is pressed', () => {
+    playNotificationSound('message', 'blip', 50, 1_000);
+    expect(playNotificationSound('preview', 'bell', 100, 1_050)).toBe(true);
+    expect(playNotificationSound('preview', 'bell', 100, 1_060)).toBe(true);
   });
 });

@@ -12,7 +12,7 @@ import { resetFollowerDraftWriters } from '../features/followers/draftWriter';
 import { useUiStore } from '../state/uiStore';
 import { useSettingsCache } from '../state/settingsCache';
 import { useSpendersStore } from '../features/spenders/spendersStore';
-import { playNotificationBlip } from '../lib/sound';
+import { playNotificationSound } from '../lib/sound';
 import {
   isAlertEligible,
   messageNotificationBody,
@@ -185,6 +185,18 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
         queueInvalidate(['chat', event.accountId]);
         queueInvalidate(qk.accounts);
         break;
+      case 'subscriberStarted': {
+        // D44: the same list refresh as chatListUpdated; the sound only on
+        // main's explicit yes (live frame, after replay, once).
+        invalidateChats(event.accountId);
+        queueInvalidate(['chat', event.accountId]);
+        queueInvalidate(qk.accounts);
+        const settings = useSettingsCache.getState();
+        if (event.live === true && settings.subscriberSoundEnabled) {
+          playNotificationSound('subscriber', settings.subscriberSoundTone, settings.soundVolume);
+        }
+        break;
+      }
       case 'messageReceived': {
         queueInvalidate(qk.messages(event.accountId, event.chatId));
         invalidateChats(event.accountId);
@@ -215,7 +227,9 @@ export function attachBridgeEvents(queryClient: QueryClient): () => void {
               chatId: event.chatId,
             });
           }
-          if (settings.soundEnabled) playNotificationBlip();
+          if (settings.soundEnabled) {
+            playNotificationSound('message', settings.soundTone, settings.soundVolume);
+          }
         }
         break;
       }

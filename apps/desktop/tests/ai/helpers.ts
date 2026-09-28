@@ -94,6 +94,10 @@ export function makeSettingsVM(overrides: Partial<SettingsVM> = {}): SettingsVM 
     debugMode: false,
     notificationsEnabled: true,
     soundEnabled: true,
+    soundTone: 'blip',
+    soundVolume: 50,
+    subscriberSoundEnabled: true,
+    subscriberSoundTone: 'arpeggio',
     markAsReadOnOpen: false,
     // AI coordinator tests rely on fetch-through (coordinator passes
     // allowFetchThrough: settings.autoReadChats); default ON here so the deep

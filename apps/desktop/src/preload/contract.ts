@@ -18,6 +18,7 @@ import type { LogLevel } from '@chatgoose/shared/diagnostics/log';
 import type { HubModeOverrideSetting } from '@chatgoose/shared/hub/mode';
 import type { UiLocaleSetting } from '@chatgoose/shared/i18n/index';
 import type { UiThemeSetting } from '@chatgoose/shared/theme';
+import type { SoundTone } from '@chatgoose/shared/sound/index';
 import type { UserFacingError } from '@chatgoose/shared/errors/index';
 import type {
   GuardCategory,
@@ -408,6 +409,13 @@ export interface SettingsVM {
   debugMode: boolean;
   notificationsEnabled: boolean;
   soundEnabled: boolean;
+  /** D44: the message sound's tone (default: the classic blip). */
+  soundTone: SoundTone;
+  /** D44: 5–100 in steps of 5; 50 is the classic loudness. Shared by both sounds. */
+  soundVolume: number;
+  /** D44: a sound for a new subscriber (Core `subscription.started`). */
+  subscriberSoundEnabled: boolean;
+  subscriberSoundTone: SoundTone;
   markAsReadOnOpen: boolean;
   /**
    * When on, the app may issue automatic OFAPI message-body reads (background
