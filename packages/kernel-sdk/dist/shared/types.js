@@ -110,6 +110,13 @@ export const aiUsageFeatures = [
     // Voice notes: the ElevenLabs TTS lane's script-generation feature.
     "voice-script",
 ];
+/** Ledger-only features: rows the hub writes for its own system lanes
+ * (`user_id` NULL). They live in the DB enum `ai_usage_feature` but never on
+ * the wire — client usage batches, the gateway and the feature routes accept
+ * only {@link aiUsageFeatures}. `media-describe` is the AI media describer
+ * (one background call per chat image, docs/runbooks/ai-media-describe.md). */
+export const aiUsageLedgerOnlyFeatures = ["media-describe"];
+export const aiUsageLedgerFeatures = [...aiUsageFeatures, ...aiUsageLedgerOnlyFeatures];
 export const FANSLY_CLIENT_CHECK_ROUTES = [
     "message",
     "group",

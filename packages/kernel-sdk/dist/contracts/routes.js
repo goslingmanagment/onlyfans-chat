@@ -1502,6 +1502,26 @@ export const aiGatewayPromptBlockSchema = z.object({
 // fetches the platform URL: providers receive it as image input through the
 // existing gateway. Reject credentials, custom ports and non-platform hosts.
 export const fanslyAvatarUrlSchema = z.string().max(4096).regex(/^https:\/\/[a-z0-9-]+\.fansly\.com\//);
+const fanslyNumericIdSchema = z.string().regex(/^[0-9]{1,32}$/);
+export const AI_FEATURE_CLIENT_MEDIA_MAX_ITEMS = 1000;
+export const aiFeatureClientMediaSchema = z.object({
+    /** The canonical Fansly conversation (groupId) the window belongs to. */
+    groupRef: fanslyNumericIdSchema,
+    items: z.array(z.object({
+        /** The number in the transcript token. Unique and increasing. */
+        n: z.number().int().min(1).max(100_000),
+        placement: z.enum(["inline", "appended", "preview"]),
+        messageId: fanslyNumericIdSchema,
+        /** Message send time, epoch milliseconds. */
+        sentAt: z.number().int().min(0).max(8_640_000_000_000_000),
+        sender: z.enum(["fan", "model"]),
+        kind: z.enum(["photo", "video", "gif"]),
+        /** Fansly accountMedia id (for a preview: the paid item it teases). */
+        mediaId: fanslyNumericIdSchema,
+        /** The item is the body of a paid PPV (never described). */
+        paid: z.boolean(),
+    }).strict()).max(AI_FEATURE_CLIENT_MEDIA_MAX_ITEMS),
+}).strict();
 export const aiGatewayImagesSchema = z.array(z.object({ url: fanslyAvatarUrlSchema }).strict()).max(1);
 // Feature-lane-only debug echo. Deliberately separate from the raw gateway
 // prompt-block schema (100k): an assembled block is much larger than the wire
@@ -1828,6 +1848,14 @@ export const aiFeatureStreamBodySchema = z.object({
         // compatibility with clients released before Decision #127.
         fanSilenceDays: z.number().int().min(0).max(FAN_SILENCE_DAYS_MAX).optional(),
         transcriptCoverage: z.enum(["full-history", "window"]).optional(),
+        // AI media describer (hub docs/runbooks/ai-media-describe.md): the
+        // describable media of the KEPT window, numbered as they appear in the
+        // transcript — inline `[Photo #3]` (legacy `[Photo]`), appended
+        // ` [Photo #4]` after a bundle label, ` (preview #8)` after a PPV label.
+        // The hub fills ready descriptions into exactly these tokens, or restores
+        // the legacy labels byte-for-byte while the feature is off. Ids only: the
+        // client never sends a URL or bytes. Optional; older clients omit it.
+        media: aiFeatureClientMediaSchema.optional(),
     }).strict().superRefine((value, ctx) => {
         if (value.personalMessageCount !== undefined && value.personalMessageCount > value.messageCount) {
             ctx.addIssue({
