@@ -4,12 +4,12 @@ Electron desktop chat client for OnlyFans agency chatters with built-in AI
 (replies, coaching, fan summaries, pings, supporters board). OnlyFans can't
 be injected into, so the app renders its own chat UI over the third-party
 OnlyFans API (onlyfansapi.com, "OFAPI"). It is a client of the Agency Hub
-(`~/code/goose/hub`, "core" / "the kernel"): every platform read goes
+(`~/code/1-platform/hub`, "core" / "the kernel"): every platform read goes
 through the hub read gateway and every write (text, typing, unsend,
 mark-read, media) through its command outbox, via the vendored
 `@kernel/sdk`; AI is kernel-only (no vendor SDKs, keys or prompts here).
 Sign-in: one account per chatter, login + password, device token (D35).
-Sibling for Fansly: `~/code/goose/fansly-ext`.
+Sibling for Fansly: `~/code/1-platform/fansly-chat`.
 
 ## Where the truth is
 
