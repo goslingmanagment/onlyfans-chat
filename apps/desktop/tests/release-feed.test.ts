@@ -767,11 +767,28 @@ fi
     expect(workflow).toContain('--max-time 120');
     expect(workflow).toContain('assert-ci-success.mjs');
     expect(workflow).not.toMatch(/curl[^\n]*\s-k/);
+    // PR runs of ci.yml skip the Windows job, so only a main push run may
+    // prove the exact release SHA passed cross-platform CI.
+    expect(workflowRunScript('Assert exact commit passed cross-platform CI')).toContain(
+      '/actions/workflows/ci.yml/runs?head_sha=$release_sha&status=success&per_page=10&event=push&branch=main"',
+    );
+    // A hung upload must fail fast (normal uploads take 62-94 s).
+    expect(workflow).toMatch(
+      /- name: Upload to the update feed\n\s+id: publish\n\s+if: [^\n]+\n(?:\s+#[^\n]*\n)*\s+timeout-minutes: 8\n/,
+    );
 
-    // Keep the existing Linux required-check identity while adding the same
-    // cross-platform gate that must pass before a release tag is published.
-    expect(ci).toMatch(/check:\n\s+name: pnpm check\n\s+runs-on: ubuntu-latest/);
-    expect(ci).toMatch(/windows-check:\n\s+name: pnpm check \(Windows\)\n\s+runs-on: windows-latest/);
+    // Keep the existing required-check identities. The Linux job runs on the
+    // CI_POOL-selected runner (owner's PC on first attempt, else GitHub-hosted
+    // ubuntu-24.04); the Windows job runs only on pushes to main, which is the
+    // run the release guard above accepts.
+    expect(ci).toMatch(
+      /check:\n\s+name: pnpm check\n\s+runs-on: \$\{\{ vars\.CI_POOL == 'pc' && github\.run_attempt == '1' && fromJSON\('\["self-hosted","ci-pc"\]'\) \|\| 'ubuntu-24\.04' \}\}\n/,
+    );
+    expect(ci).toMatch(
+      /windows-check:\n\s+name: pnpm check \(Windows\)\n(?:\s+#[^\n]*\n)*\s+if: github\.event_name == 'push'\n\s+runs-on: windows-latest\n/,
+    );
+    expect(ci).toMatch(/push:\n\s+branches:\n\s+- main\n/);
+    expect(ci).toMatch(/cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
     expect(ci.match(/run: pnpm check/g)).toHaveLength(2);
 
     const release = readNormalized(resolve(repoRoot, 'docs/RELEASE.md'));

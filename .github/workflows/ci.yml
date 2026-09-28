@@ -2,6 +2,12 @@
 # Runs the same `pnpm check` a dev runs locally: typecheck + lint + vitest
 # (node-env) + electron-vite build — all linux-safe, no display or Windows
 # toolchain needed (installers are windows-build.yml's job).
+#
+# Cost policy: PRs run the Linux gate only; pushes to main run Linux + Windows
+# (windows-build.yml's release guard requires a successful main push run of
+# this workflow for the exact tag SHA). The Linux job runs on the owner's PC
+# pool when the repository variable CI_POOL is 'pc' (first attempt only —
+# re-runs always go to GitHub-hosted in case the PC died mid-run).
 
 name: CI
 
@@ -11,10 +17,17 @@ on:
     branches:
       - main
 
+# Superseded PR runs are cancelled. Each push to main gets its own group
+# (run_id): a shared group would let GitHub cancel a *pending* main run when a
+# newer one queues, leaving that SHA without the CI run the release guard needs.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     name: pnpm check
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_POOL == 'pc' && github.run_attempt == '1' && fromJSON('["self-hosted","ci-pc"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
 
     steps:
@@ -28,7 +41,9 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: pnpm
+          # Self-hosted runners keep the pnpm store in $HOME; the Actions cache
+          # would only add upload/download time there.
+          cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -38,6 +53,11 @@ jobs:
 
   windows-check:
     name: pnpm check (Windows)
+    # Push-only (main). A job skipped by `if` reports Success to required
+    # checks, so PR merges are not blocked. PRs touching native modules, paths,
+    # the installer or the updater: dispatch windows-build (publishFeed=false)
+    # before merging.
+    if: github.event_name == 'push'
     runs-on: windows-latest
     timeout-minutes: 35
 
