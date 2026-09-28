@@ -767,11 +767,36 @@ fi
     expect(workflow).toContain('--max-time 120');
     expect(workflow).toContain('assert-ci-success.mjs');
     expect(workflow).not.toMatch(/curl[^\n]*\s-k/);
+    // PR runs of ci.yml skip the Windows job, so only a main push run may
+    // prove the exact release SHA passed cross-platform CI.
+    expect(workflowRunScript('Assert exact commit passed cross-platform CI')).toContain(
+      '/actions/workflows/ci.yml/runs?head_sha=$release_sha&status=success&per_page=10&event=push&branch=main"',
+    );
+    // A real release has spent ~10 min in scp: the upload keeps a 20-minute budget.
+    expect(workflow).toMatch(
+      /- name: Upload to the update feed\n\s+id: publish\n\s+if: [^\n]+\n(?:\s+#[^\n]*\n)*\s+timeout-minutes: 20\n/,
+    );
+    // Only publishing runs share the feed lock, so a validation dispatch can
+    // neither delay a release nor get it cancelled as a superseded pending run.
+    expect(workflow).toContain(
+      "group: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed) && 'chatgoose-windows-update-feed' || format('windows-build-{0}', github.run_id) }}",
+    );
 
-    // Keep the existing Linux required-check identity while adding the same
-    // cross-platform gate that must pass before a release tag is published.
-    expect(ci).toMatch(/check:\n\s+name: pnpm check\n\s+runs-on: ubuntu-latest/);
-    expect(ci).toMatch(/windows-check:\n\s+name: pnpm check \(Windows\)\n\s+runs-on: windows-latest/);
+    // Keep the existing required-check identities. The Linux job runs on the
+    // CI_POOL-selected runner (owner's PC on first attempt, else GitHub-hosted
+    // ubuntu-24.04); the Windows job runs only on pushes to main, which is the
+    // run the release guard above accepts.
+    expect(ci).toMatch(
+      /check:\n\s+name: pnpm check\n\s+runs-on: \$\{\{ vars\.CI_POOL == 'pc' && github\.run_attempt == '1' && fromJSON\('\["self-hosted","ci-pc"\]'\) \|\| 'ubuntu-24\.04' \}\}\n/,
+    );
+    expect(ci).toMatch(
+      /windows-check:\n\s+name: pnpm check \(Windows\)\n(?:\s+#[^\n]*\n)*\s+if: github\.event_name == 'push'\n\s+runs-on: windows-latest\n/,
+    );
+    expect(ci).toMatch(/push:\n\s+branches:\n\s+- main\n/);
+    expect(ci).toMatch(/cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
+    // Pushes get a per-run group: a shared group would let GitHub cancel a
+    // pending main run, leaving the release guard without an exact-SHA run.
+    expect(ci).toContain("group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}");
     expect(ci.match(/run: pnpm check/g)).toHaveLength(2);
 
     const release = readNormalized(resolve(repoRoot, 'docs/RELEASE.md'));

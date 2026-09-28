@@ -46,8 +46,12 @@ hand-edit; the spec is the hub's `packages/chatgoose-hotkeys/README.md`;
 re-vendor with the hub's `scripts/vendor-hotkeys.mjs` into BOTH clients
 from one clean hub commit, the manifest sha256 must match).
 
-- `pnpm check` = typecheck + lint + test + build, green before a commit; CI
-  runs it on Linux and Windows.
+- `pnpm check` = typecheck + lint + test + build, green before a commit. CI
+  (`ci.yml`): PRs run it on Linux only; pushes to `main` run Linux + Windows;
+  a `v*` tag re-checks and builds on Windows (`windows-build.yml`). For a PR
+  touching native modules, paths, the installer or the updater, run
+  `windows-build` manually (workflow_dispatch, `publishFeed=false`) before
+  merging.
 - Running the app for real: skill `run-desktop`
   (`.claude/skills/run-desktop`), isolated keyless profile.
 - Hub-side changes may be made in the same session: keep the contract in
