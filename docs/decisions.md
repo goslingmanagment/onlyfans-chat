@@ -63,7 +63,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D41 | 2026-09-27 | One hotkey scheme with the Fansly extension, vendored from the hub (`@chatgoose/hotkeys`): text actions on ⌘/Ctrl + key (E Reply, I Improve, G Hi, P Ping, . Cancel), panels on ⌘⇧ / Ctrl+Alt + key (H, S, O, B, L, M; C reserved), physical-key matching, fresh-press roll-over guard; navigation unchanged |
 | D42 | 2026-09-27 | Split on Improve Draft: the ⫶ toggle appears in the Improve dock too and the one sticky Split flag (and ⌘⇧L / Ctrl+Alt+L) now covers Reply and Improve; the hub splits the rewrite into 2–3 [NEXT] parts only when asked (0.1.61) |
 | D43 | 2026-09-27 | Media images: message, gallery and vault files are id tokens that Core resolves (free webhook/OFAPI-cache URL or a budgeted paid download, 100 credits/UTC day for automatic loads, clicks always pass); bytes only on this machine, encrypted; tiles replace the count badge, full photos on click, video/GIF preview frame only; SDK vendored from the deployed core commit 89134bb2 (core #267) |
-| D44 | 2026-09-28 | Notification sounds: eight synthesized tones shared with the Fansly extension (defaults differ: here the classic blip / arpeggio, there chime / double), one volume, and a new-subscriber sound — `subscription.started` becomes `subscriberStarted`, still a list nudge, ringing only on main's explicit yes (live v2 frame, after replay, inside the age gate, once); its own switch and tone; a subscriber never takes a message's ring; 0.1.63 |
+| D44 | 2026-09-28 | Notification sounds: eight synthesized tones shared with the Fansly extension (defaults differ: here the classic blip / arpeggio, there chime / double), one volume, and a new-subscriber sound — `subscription.started` becomes `subscriberStarted`, still a list nudge, ringing only on main's explicit yes (live v2 frame, after replay, inside the age gate, once); its own switch and tone; a subscriber never takes a message's ring; shipped as 0.1.64 with the SDK re-vendored from deployed Core `e033e3ec` (the 0.1.63 tag failed the contract gate) |
 
 ## Entries
 
@@ -1394,7 +1394,12 @@ on both clients mislead a chatter working both.
   (saved when the slider is let go).
 - No toast or OS notification for a subscriber (not asked for); no per-model
   switch (the extension has one because a chatter there works several model
-  tabs; not asked for here). Released as 0.1.63.
+  tabs; not asked for here). Released as 0.1.64: the `v0.1.63` tag stopped at
+  the release gate — production Core had moved to the media-notes contract
+  (`e033e3ec`, hash `b95b765c…`, deployed after 0.1.62) while this repo still
+  vendored `89134bb2`. The SDK is re-vendored from the deployed commit (no
+  client behaviour change; the new `clientContext.media` field is unused here)
+  and the version rolls forward — a tag is never reused.
 
 Verified: `pnpm check`; the Behavior block on the standalone mock renderer in
 light and dark. Not verified: a live `subscription.started` ringing in the

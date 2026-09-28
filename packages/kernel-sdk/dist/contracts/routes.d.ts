@@ -3402,6 +3402,31 @@ export declare const aiGatewayPromptBlockSchema: z.ZodObject<{
     }>;
 }, z.core.$strict>;
 export declare const fanslyAvatarUrlSchema: z.ZodString;
+export declare const AI_FEATURE_CLIENT_MEDIA_MAX_ITEMS = 1000;
+export declare const aiFeatureClientMediaSchema: z.ZodObject<{
+    groupRef: z.ZodString;
+    items: z.ZodArray<z.ZodObject<{
+        n: z.ZodNumber;
+        placement: z.ZodEnum<{
+            preview: "preview";
+            inline: "inline";
+            appended: "appended";
+        }>;
+        messageId: z.ZodString;
+        sentAt: z.ZodNumber;
+        sender: z.ZodEnum<{
+            fan: "fan";
+            model: "model";
+        }>;
+        kind: z.ZodEnum<{
+            photo: "photo";
+            video: "video";
+            gif: "gif";
+        }>;
+        mediaId: z.ZodString;
+        paid: z.ZodBoolean;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
 export declare const aiGatewayImagesSchema: z.ZodArray<z.ZodObject<{
     url: z.ZodString;
 }, z.core.$strict>>;
@@ -3856,6 +3881,30 @@ export declare const aiFeatureStreamBodySchema: z.ZodObject<{
             window: "window";
             "full-history": "full-history";
         }>>;
+        media: z.ZodOptional<z.ZodObject<{
+            groupRef: z.ZodString;
+            items: z.ZodArray<z.ZodObject<{
+                n: z.ZodNumber;
+                placement: z.ZodEnum<{
+                    preview: "preview";
+                    inline: "inline";
+                    appended: "appended";
+                }>;
+                messageId: z.ZodString;
+                sentAt: z.ZodNumber;
+                sender: z.ZodEnum<{
+                    fan: "fan";
+                    model: "model";
+                }>;
+                kind: z.ZodEnum<{
+                    photo: "photo";
+                    video: "video";
+                    gif: "gif";
+                }>;
+                mediaId: z.ZodString;
+                paid: z.ZodBoolean;
+            }, z.core.$strict>>;
+        }, z.core.$strict>>;
     }, z.core.$strict>>;
 }, z.core.$strict>;
 export declare const aiRestrictedGenerationSchema: z.ZodObject<{
@@ -8540,8 +8589,8 @@ export declare const normalizedSyncMessageMediaSchema: z.ZodObject<{
         other: "other";
         photo: "photo";
         video: "video";
-        audio: "audio";
         gif: "gif";
+        audio: "audio";
     }>;
     isReady: z.ZodBoolean;
     locked: z.ZodBoolean;
@@ -8573,8 +8622,8 @@ export declare const normalizedSyncMessageSchema: z.ZodObject<{
             other: "other";
             photo: "photo";
             video: "video";
-            audio: "audio";
             gif: "gif";
+            audio: "audio";
         }>;
         isReady: z.ZodBoolean;
         locked: z.ZodBoolean;
@@ -8616,8 +8665,8 @@ export declare const messageReceivedEventSchema: z.ZodObject<{
                 other: "other";
                 photo: "photo";
                 video: "video";
-                audio: "audio";
                 gif: "gif";
+                audio: "audio";
             }>;
             isReady: z.ZodBoolean;
             locked: z.ZodBoolean;
@@ -8656,8 +8705,8 @@ export declare const messageSentEventSchema: z.ZodObject<{
                 other: "other";
                 photo: "photo";
                 video: "video";
-                audio: "audio";
                 gif: "gif";
+                audio: "audio";
             }>;
             isReady: z.ZodBoolean;
             locked: z.ZodBoolean;
@@ -8734,8 +8783,8 @@ export declare const syncEventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
                 other: "other";
                 photo: "photo";
                 video: "video";
-                audio: "audio";
                 gif: "gif";
+                audio: "audio";
             }>;
             isReady: z.ZodBoolean;
             locked: z.ZodBoolean;
@@ -8773,8 +8822,8 @@ export declare const syncEventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
                 other: "other";
                 photo: "photo";
                 video: "video";
-                audio: "audio";
                 gif: "gif";
+                audio: "audio";
             }>;
             isReady: z.ZodBoolean;
             locked: z.ZodBoolean;
@@ -8972,8 +9021,8 @@ export declare const syncSnapshotMessageSchema: z.ZodObject<{
                 other: "other";
                 photo: "photo";
                 video: "video";
-                audio: "audio";
                 gif: "gif";
+                audio: "audio";
             }>;
             isReady: z.ZodBoolean;
             locked: z.ZodBoolean;
@@ -9024,8 +9073,8 @@ export declare const syncSnapshotThreadSchema: z.ZodObject<{
                     other: "other";
                     photo: "photo";
                     video: "video";
-                    audio: "audio";
                     gif: "gif";
+                    audio: "audio";
                 }>;
                 isReady: z.ZodBoolean;
                 locked: z.ZodBoolean;
@@ -9111,8 +9160,8 @@ export declare const syncSnapshotResponseSchema: z.ZodObject<{
                         other: "other";
                         photo: "photo";
                         video: "video";
-                        audio: "audio";
                         gif: "gif";
+                        audio: "audio";
                     }>;
                     isReady: z.ZodBoolean;
                     locked: z.ZodBoolean;
@@ -12014,8 +12063,8 @@ declare const baseRouteSchemas: {
                                     other: "other";
                                     photo: "photo";
                                     video: "video";
-                                    audio: "audio";
                                     gif: "gif";
+                                    audio: "audio";
                                 }>;
                                 isReady: z.ZodBoolean;
                                 locked: z.ZodBoolean;
@@ -21463,6 +21512,30 @@ declare const baseRouteSchemas: {
                     window: "window";
                     "full-history": "full-history";
                 }>>;
+                media: z.ZodOptional<z.ZodObject<{
+                    groupRef: z.ZodString;
+                    items: z.ZodArray<z.ZodObject<{
+                        n: z.ZodNumber;
+                        placement: z.ZodEnum<{
+                            preview: "preview";
+                            inline: "inline";
+                            appended: "appended";
+                        }>;
+                        messageId: z.ZodString;
+                        sentAt: z.ZodNumber;
+                        sender: z.ZodEnum<{
+                            fan: "fan";
+                            model: "model";
+                        }>;
+                        kind: z.ZodEnum<{
+                            photo: "photo";
+                            video: "video";
+                            gif: "gif";
+                        }>;
+                        mediaId: z.ZodString;
+                        paid: z.ZodBoolean;
+                    }, z.core.$strict>>;
+                }, z.core.$strict>>;
             }, z.core.$strict>>;
         }, z.core.$strict>;
         readonly response: {
