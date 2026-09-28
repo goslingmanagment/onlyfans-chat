@@ -19,7 +19,9 @@ permissions:
 # Only one run may mutate the shared update feed at a time. The remote publisher
 # additionally takes a server-side lock and rejects non-increasing versions.
 concurrency:
-  group: chatgoose-windows-update-feed
+  # Only publishing runs hold the feed lock; a validation dispatch
+  # (publishFeed=false) must never queue a release behind it or cancel it.
+  group: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed) && 'chatgoose-windows-update-feed' || format('windows-build-{0}', github.run_id) }}
   cancel-in-progress: false
 
 on:
@@ -236,9 +238,8 @@ jobs:
       - name: Upload to the update feed
         id: publish
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
-        # Uploads normally take 62-94 s; a hung SSH/scp must fail fast instead
-        # of holding the feed lock and a Windows runner for 20 minutes.
-        timeout-minutes: 8
+        # A successful release has spent ~10 min in scp; keep room for it.
+        timeout-minutes: 20
         shell: bash
         env:
           SSH_KEY: ${{ secrets.UPDATES_SSH_KEY }}

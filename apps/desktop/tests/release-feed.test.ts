@@ -772,9 +772,14 @@ fi
     expect(workflowRunScript('Assert exact commit passed cross-platform CI')).toContain(
       '/actions/workflows/ci.yml/runs?head_sha=$release_sha&status=success&per_page=10&event=push&branch=main"',
     );
-    // A hung upload must fail fast (normal uploads take 62-94 s).
+    // A real release has spent ~10 min in scp: the upload keeps a 20-minute budget.
     expect(workflow).toMatch(
-      /- name: Upload to the update feed\n\s+id: publish\n\s+if: [^\n]+\n(?:\s+#[^\n]*\n)*\s+timeout-minutes: 8\n/,
+      /- name: Upload to the update feed\n\s+id: publish\n\s+if: [^\n]+\n(?:\s+#[^\n]*\n)*\s+timeout-minutes: 20\n/,
+    );
+    // Only publishing runs share the feed lock, so a validation dispatch can
+    // neither delay a release nor get it cancelled as a superseded pending run.
+    expect(workflow).toContain(
+      "group: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed) && 'chatgoose-windows-update-feed' || format('windows-build-{0}', github.run_id) }}",
     );
 
     // Keep the existing required-check identities. The Linux job runs on the
@@ -789,6 +794,9 @@ fi
     );
     expect(ci).toMatch(/push:\n\s+branches:\n\s+- main\n/);
     expect(ci).toMatch(/cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
+    // Pushes get a per-run group: a shared group would let GitHub cancel a
+    // pending main run, leaving the release guard without an exact-SHA run.
+    expect(ci).toContain("group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}");
     expect(ci.match(/run: pnpm check/g)).toHaveLength(2);
 
     const release = readNormalized(resolve(repoRoot, 'docs/RELEASE.md'));

@@ -36,17 +36,28 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
+        with:
+          # The action wipes its install folder first; PC runners share one
+          # $HOME, so each job installs pnpm under its own runner temp.
+          dest: ${{ runner.temp }}/setup-pnpm
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          # Self-hosted runners keep the pnpm store in $HOME; the Actions cache
-          # would only add upload/download time there.
+          # The Actions cache only pays off on GitHub-hosted runners; the PC
+          # uses its persistent pnpm store (see Install dependencies).
           cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # pnpm keeps its store inside the (per-job) setup folder; on the PC
+        # point it at a persistent store shared by all runners (safe for
+        # concurrent installs, same filesystem as the work dirs).
+        env:
+          PNPM_PC_STORE: ${{ runner.environment == 'self-hosted' && '1' || '' }}
+        run: |
+          if [ -n "$PNPM_PC_STORE" ]; then export npm_config_store_dir="$HOME/.local/share/pnpm/store"; fi
+          pnpm install --frozen-lockfile
 
       - name: Check (typecheck + lint + test + build)
         run: pnpm check
