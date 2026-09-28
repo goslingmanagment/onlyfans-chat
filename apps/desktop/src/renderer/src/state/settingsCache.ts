@@ -4,15 +4,22 @@
 
 import { create } from 'zustand';
 import type { UiLocaleSetting } from '@chatgoose/shared/i18n/index';
+import type { SoundTone } from '@chatgoose/shared/sound/index';
 
-interface SettingsCacheState {
-  notificationsEnabled: boolean;
+interface SoundPrefs {
   soundEnabled: boolean;
+  soundTone: SoundTone;
+  soundVolume: number;
+  subscriberSoundEnabled: boolean;
+  subscriberSoundTone: SoundTone;
+}
+
+interface SettingsCacheState extends SoundPrefs {
+  notificationsEnabled: boolean;
   debugMode: boolean;
   uiLocale: UiLocaleSetting;
-  setFromSettings: (s: {
+  setFromSettings: (s: SoundPrefs & {
     notificationsEnabled: boolean;
-    soundEnabled: boolean;
     debugMode: boolean;
     uiLocale: UiLocaleSetting;
   }) => void;
@@ -21,12 +28,20 @@ interface SettingsCacheState {
 export const useSettingsCache = create<SettingsCacheState>((set) => ({
   notificationsEnabled: true,
   soundEnabled: true,
+  soundTone: 'blip',
+  soundVolume: 50,
+  subscriberSoundEnabled: true,
+  subscriberSoundTone: 'arpeggio',
   debugMode: false,
   uiLocale: 'system',
   setFromSettings: (s) =>
     set({
       notificationsEnabled: s.notificationsEnabled,
       soundEnabled: s.soundEnabled,
+      soundTone: s.soundTone,
+      soundVolume: s.soundVolume,
+      subscriberSoundEnabled: s.subscriberSoundEnabled,
+      subscriberSoundTone: s.subscriberSoundTone,
       debugMode: s.debugMode,
       uiLocale: s.uiLocale,
     }),

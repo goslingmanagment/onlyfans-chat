@@ -315,6 +315,19 @@ export const transactionPostedEventSchema = z.object({
   createdAt: z.string(),
 });
 
+/**
+ * D44: a new subscriber (Core `subscription.started`). Main applies it like a
+ * chat-list nudge and stamps `live` only on its explicit yes (live v2 frame,
+ * after replay, inside the age gate, once) — the renderer rings on true only.
+ */
+export const subscriberStartedEventSchema = z.object({
+  type: z.literal('subscriberStarted'),
+  accountId: idSchema,
+  /** The new subscriber (raw OnlyFans user id = chat id), when Core names one. */
+  fanId: idSchema.optional(),
+  live: z.boolean().optional(),
+});
+
 export const presenceEventSchema = z.object({
   type: z.literal('presence'),
   accountId: idSchema,
@@ -359,6 +372,7 @@ export const syncEventSchema = z.discriminatedUnion('type', [
   ppvUnlockedEventSchema,
   tipReceivedEventSchema,
   transactionPostedEventSchema,
+  subscriberStartedEventSchema,
   presenceEventSchema,
   typingEventSchema,
   accountAuthChangedEventSchema,
@@ -746,7 +760,12 @@ export function mapDomainFrame(frame: DomainEventFrame): SyncEvent | null {
         ...(Number.isFinite(lastSeenRaw) ? { lastSeenAt: lastSeenRaw } : {}),
       };
     }
-    case 'subscription.started':
+    case 'subscription.started': {
+      // D44: its own event so a new subscriber can ring; main still applies it
+      // as the chat-list nudge it used to be.
+      const fanId = nonEmptyString(frame.fanRef);
+      return { type: 'subscriberStarted', accountId, ...(fanId !== undefined ? { fanId } : {}) };
+    }
     case 'subscription.renewed':
       return { type: 'chatListUpdated', accountId };
     case 'account.auth_changed': {

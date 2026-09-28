@@ -23,11 +23,11 @@ vi.mock('../../src/renderer/src/bridge/bridge', () => ({
 }));
 
 vi.mock('../../src/renderer/src/lib/sound', () => ({
-  playNotificationBlip: vi.fn(),
+  playNotificationSound: vi.fn(),
 }));
 
 import { attachBridgeEvents } from '../../src/renderer/src/bridge/events';
-import { playNotificationBlip } from '../../src/renderer/src/lib/sound';
+import { playNotificationSound } from '../../src/renderer/src/lib/sound';
 import { qk } from '../../src/renderer/src/bridge/queries';
 import { useSettingsCache } from '../../src/renderer/src/state/settingsCache';
 import { useUiStore } from '../../src/renderer/src/state/uiStore';
@@ -40,7 +40,7 @@ describe('attachBridgeEvents', () => {
     bridgeMock.bridge.on.mockClear();
     useSettingsCache.setState({ notificationsEnabled: true, soundEnabled: false, uiLocale: 'en' });
     useUiStore.setState({ selectedAccountId: null, selectedChatId: null, toasts: [] });
-    vi.mocked(playNotificationBlip).mockClear();
+    vi.mocked(playNotificationSound).mockClear();
     vi.stubGlobal('document', { hasFocus: () => false });
   });
 
@@ -174,7 +174,7 @@ describe('attachBridgeEvents', () => {
       listener(replayed);
     }
     expect(useUiStore.getState().toasts).toHaveLength(0);
-    expect(playNotificationBlip).not.toHaveBeenCalled();
+    expect(playNotificationSound).not.toHaveBeenCalled();
 
     // The identical frame WITHOUT the flag is live delivery: exactly one
     // toast and one blip.
@@ -183,7 +183,29 @@ describe('attachBridgeEvents', () => {
       listener({ ...liveFrame, messageId: 'm-live' });
     }
     expect(useUiStore.getState().toasts).toHaveLength(1);
-    expect(playNotificationBlip).toHaveBeenCalledTimes(1);
+    expect(playNotificationSound).toHaveBeenCalledTimes(1);
+    expect(playNotificationSound).toHaveBeenCalledWith('message', 'blip', 50);
+    detach();
+  });
+
+  it('D44: rings a new subscriber only on main\'s explicit yes, with its own switch and tone', () => {
+    useSettingsCache.setState({
+      soundEnabled: true, subscriberSoundEnabled: true, subscriberSoundTone: 'bell', soundVolume: 70,
+    });
+    const queryClient = new QueryClient();
+    const detach = attachBridgeEvents(queryClient);
+    const emit = (event: unknown): void => {
+      for (const listener of bridgeMock.listeners.get('sync:event') ?? []) listener(event);
+    };
+    emit({ type: 'subscriberStarted', accountId: 'acct_1', fanId: '42' });
+    emit({ type: 'subscriberStarted', accountId: 'acct_1', fanId: '43', live: false });
+    expect(playNotificationSound).not.toHaveBeenCalled();
+    emit({ type: 'subscriberStarted', accountId: 'acct_1', fanId: '44', live: true });
+    expect(playNotificationSound).toHaveBeenCalledTimes(1);
+    expect(playNotificationSound).toHaveBeenCalledWith('subscriber', 'bell', 70);
+    useSettingsCache.setState({ subscriberSoundEnabled: false });
+    emit({ type: 'subscriberStarted', accountId: 'acct_1', fanId: '45', live: true });
+    expect(playNotificationSound).toHaveBeenCalledTimes(1);
     detach();
   });
 });

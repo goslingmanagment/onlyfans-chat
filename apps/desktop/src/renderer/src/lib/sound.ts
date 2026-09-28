@@ -1,35 +1,54 @@
-// Tiny synthesized notification blip — no audio assets, no network.
+// Synthesized notification sounds — no audio assets, no network (D44: eight
+// tones, a volume, a message and a new-subscriber sound).
 
-/** Even a legitimate live burst must not machine-gun the speaker. */
-const BLIP_MIN_INTERVAL_MS = 2_000;
+import {
+  MESSAGE_SOUND_MIN_INTERVAL_MS,
+  SUBSCRIBER_SOUND_MIN_INTERVAL_MS,
+  scheduleTone,
+  volumeToGain,
+  type AudioContextLike,
+  type SoundTone,
+} from '@chatgoose/shared/sound/index';
+
+export type NotificationSoundKind = 'message' | 'subscriber' | 'preview';
 
 let ctx: AudioContext | null = null;
-let lastBlipAtMs = Number.NEGATIVE_INFINITY;
+let lastMessageAtMs = Number.NEGATIVE_INFINITY;
+let lastSubscriberAtMs = Number.NEGATIVE_INFINITY;
 
 export function __resetBlipThrottleForTests(): void {
-  lastBlipAtMs = Number.NEGATIVE_INFINITY;
+  lastMessageAtMs = Number.NEGATIVE_INFINITY;
+  lastSubscriberAtMs = Number.NEGATIVE_INFINITY;
 }
 
-export function playNotificationBlip(nowMs: number = Date.now()): void {
-  if (nowMs - lastBlipAtMs < BLIP_MIN_INTERVAL_MS) {
-    return;
+/**
+ * A message answers only to the last message sound — a subscriber sound never
+ * takes a message's ring. A subscriber waits out a recent message and its own
+ * longer pause. A preview (the settings button) plays whenever it is pressed.
+ * Returns whether a sound was started.
+ */
+export function playNotificationSound(
+  kind: NotificationSoundKind,
+  tone: SoundTone,
+  volume: number,
+  nowMs: number = Date.now(),
+): boolean {
+  if (kind === 'message' && nowMs - lastMessageAtMs < MESSAGE_SOUND_MIN_INTERVAL_MS) return false;
+  if (
+    kind === 'subscriber' &&
+    (nowMs - lastMessageAtMs < MESSAGE_SOUND_MIN_INTERVAL_MS ||
+      nowMs - lastSubscriberAtMs < SUBSCRIBER_SOUND_MIN_INTERVAL_MS)
+  ) {
+    return false;
   }
-  lastBlipAtMs = nowMs;
   try {
     ctx ??= new AudioContext();
-    const t0 = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, t0);
-    osc.frequency.exponentialRampToValueAtTime(1320, t0 + 0.08);
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(0.06, t0 + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(t0);
-    osc.stop(t0 + 0.2);
+    if (ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
+    scheduleTone(ctx as unknown as AudioContextLike, tone, volumeToGain(volume));
   } catch {
-    // audio unavailable — stay silent
+    return false; // audio unavailable — stay silent
   }
+  if (kind === 'message') lastMessageAtMs = nowMs;
+  else if (kind === 'subscriber') lastSubscriberAtMs = nowMs;
+  return true;
 }

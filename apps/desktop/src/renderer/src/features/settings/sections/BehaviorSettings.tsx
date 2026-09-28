@@ -2,7 +2,16 @@
 // chat-list spend-style picker (real mini-previews of the ChatRow markup), and
 // an Advanced block for dev-facing switches.
 
+import { useState } from 'react';
 import type { SettingsVM } from '../../../../../preload/contract';
+import {
+  SOUND_TONES,
+  SOUND_VOLUME_MAX,
+  SOUND_VOLUME_MIN,
+  SOUND_VOLUME_STEP,
+  type SoundTone,
+} from '@chatgoose/shared/sound/index';
+import { playNotificationSound } from '../../../lib/sound';
 import { UI_LOCALE_SETTINGS, type UiLocaleSetting } from '@chatgoose/shared/i18n/index';
 import { UI_THEME_SETTINGS } from '@chatgoose/shared/theme';
 import { cx } from '../../../lib/cx';
@@ -108,6 +117,110 @@ function NumberRow({
   );
 }
 
+const SELECT_CLASS =
+  'h-[30px] rounded-chip border border-line bg-bg1 px-2 text-[12.5px] text-ink outline-none focus:border-clay-line';
+const PREVIEW_CLASS =
+  'h-[30px] cursor-pointer rounded-chip border border-line bg-bg1 px-3 text-[12px] font-semibold text-ink-mid transition-colors duration-150 hover:bg-bg2';
+
+/** D44: the tone picker + its «Проверить» button (plays at the current volume). */
+function ToneRow({
+  label,
+  hint,
+  role,
+  tone,
+  volume,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  role: string;
+  tone: SoundTone;
+  volume: number;
+  onChange: (next: SoundTone) => void;
+}): React.JSX.Element {
+  const t = useT();
+  return (
+    <OptionRow label={label} hint={hint}>
+      <select
+        aria-label={label}
+        data-role={role}
+        value={tone}
+        onChange={(event) => onChange(event.currentTarget.value as SoundTone)}
+        className={SELECT_CLASS}
+      >
+        {SOUND_TONES.map((option) => (
+          <option key={option} value={option}>
+            {t(`behavior.tone.${option}`)}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        data-role={`${role}-preview`}
+        onClick={() => playNotificationSound('preview', tone, volume)}
+        className={PREVIEW_CLASS}
+      >
+        {t('behavior.soundPreview')}
+      </button>
+    </OptionRow>
+  );
+}
+
+/** D44: tones, the shared volume, and the new-subscriber switch. */
+function SoundSettings({ settings, patch }: { settings: SettingsVM; patch: PatchFn }): React.JSX.Element {
+  const t = useT();
+  // The slider moves a local draft and saves once it is let go.
+  const [draftVolume, setDraftVolume] = useState<number | null>(null);
+  const volume = draftVolume ?? settings.soundVolume;
+  const commitVolume = (): void => {
+    if (draftVolume !== null && draftVolume !== settings.soundVolume) patch({ soundVolume: draftVolume });
+  };
+  return (
+    <div className="mt-2 border-t border-line pt-2" data-role="sound-settings">
+      <div className="cap text-ink-low">{t('behavior.sounds')}</div>
+      <ToneRow
+        label={t('behavior.messageTone')}
+        hint={t('behavior.messageToneHint')}
+        role="message-tone"
+        tone={settings.soundTone}
+        volume={volume}
+        onChange={(next) => patch({ soundTone: next })}
+      />
+      <Toggle
+        label={t('behavior.subscriberSound')}
+        hint={t('behavior.subscriberSoundHint')}
+        on={settings.subscriberSoundEnabled}
+        onChange={(v) => patch({ subscriberSoundEnabled: v })}
+      />
+      <ToneRow
+        label={t('behavior.subscriberTone')}
+        hint={t('behavior.subscriberToneHint')}
+        role="subscriber-tone"
+        tone={settings.subscriberSoundTone}
+        volume={volume}
+        onChange={(next) => patch({ subscriberSoundTone: next })}
+      />
+      <OptionRow label={t('behavior.soundVolume')} hint={t('behavior.soundVolumeHint')}>
+        <input
+          type="range"
+          aria-label={t('behavior.soundVolume')}
+          data-role="sound-volume"
+          min={SOUND_VOLUME_MIN}
+          max={SOUND_VOLUME_MAX}
+          step={SOUND_VOLUME_STEP}
+          value={volume}
+          onChange={(event) => setDraftVolume(Number(event.currentTarget.value))}
+          onPointerUp={commitVolume}
+          onKeyUp={commitVolume}
+          onBlur={commitVolume}
+          className="w-[140px] cursor-pointer accent-clay"
+        />
+        <span className="num w-[38px] text-right text-[11.5px] text-ink-low">{`${volume}%`}</span>
+      </OptionRow>
+    </div>
+  );
+}
+
 export function BehaviorSettings({
   settings,
   patch,
@@ -153,6 +266,8 @@ export function BehaviorSettings({
           onChange={(v) => patch({ promptCachingEnabled: v })}
         />
       </div>
+
+      <SoundSettings settings={settings} patch={patch} />
 
       <OptionRow label={t('behavior.language')} hint={t('behavior.languageHint')}>
         {UI_LOCALE_SETTINGS.map((option) => (

@@ -7,7 +7,8 @@
 //   ppvUnlocked                 ← message.ppv_unlocked
 //   tipReceived                 ← tip.received (amountGross → amountUsd)
 //   presence                    ← presence.online/offline
-//   chatListUpdated             ← subscription.started/renewed
+//   chatListUpdated             ← subscription.renewed
+//   subscriberStarted           ← subscription.started (D44)
 //   accountAuthChanged          ← account.auth_changed (status grouping)
 //   typing                      ← the ephemeral serve-time lane (not mapped here)
 //   readStateChanged            ← local-only synthesis (the server never sent it)
@@ -104,11 +105,13 @@ describe('mapDomainFrame', () => {
       .toEqual({ type: 'presence', accountId: ACCT, chatId: '777', online: false });
   });
 
-  it('maps subscription starts and renewals to the chat-list nudge', () => {
-    for (const type of ['subscription.started', 'subscription.renewed']) {
-      expect(mapDomainFrame(frame({ type })))
-        .toEqual({ type: 'chatListUpdated', accountId: ACCT });
-    }
+  it('maps a renewal to the chat-list nudge and a start to its own event (D44)', () => {
+    expect(mapDomainFrame(frame({ type: 'subscription.renewed' })))
+      .toEqual({ type: 'chatListUpdated', accountId: ACCT });
+    expect(mapDomainFrame(frame({ type: 'subscription.started', fanRef: '777' })))
+      .toEqual({ type: 'subscriberStarted', accountId: ACCT, fanId: '777' });
+    expect(mapDomainFrame(frame({ type: 'subscription.started', fanRef: null })))
+      .toEqual({ type: 'subscriberStarted', accountId: ACCT });
   });
 
   it('groups account.auth_changed statuses like the v1 fanout did', () => {
