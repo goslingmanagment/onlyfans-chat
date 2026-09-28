@@ -55,6 +55,9 @@ jobs:
         # concurrent installs, same filesystem as the work dirs).
         env:
           PNPM_PC_STORE: ${{ runner.environment == 'self-hosted' && '1' || '' }}
+          # pnpm check runs Node tests and electron-vite build; the Electron
+          # binary (~130 s on a cold install) is only needed by windows-build.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: |
           if [ -n "$PNPM_PC_STORE" ]; then export npm_config_store_dir="$HOME/.local/share/pnpm/store"; fi
           pnpm install --frozen-lockfile
