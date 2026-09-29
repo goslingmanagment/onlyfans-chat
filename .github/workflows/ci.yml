@@ -34,11 +34,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      # Hosted runners: pnpm version from package.json "packageManager". The
+      # action wipes its install folder first, so it stays in runner temp.
       - name: Setup pnpm
+        if: runner.environment != 'self-hosted'
         uses: pnpm/action-setup@v6
         with:
-          # The action wipes its install folder first; PC runners share one
-          # $HOME, so each job installs pnpm under its own runner temp.
           dest: ${{ runner.temp }}/setup-pnpm
 
       - name: Setup Node.js
@@ -49,10 +50,29 @@ jobs:
           # uses its persistent pnpm store (see Install dependencies).
           cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
 
+      # PC runners: pnpm from the corepack bundled with Node 22, at the exact
+      # version package.json pins. Corepack downloads and verifies a version
+      # once into a cache shared by the runners, so a job neither downloads
+      # pnpm nor waits on the npm registry's signature check (which timed out
+      # from the home network). The shims go in this job's runner temp.
+      - name: Setup pnpm (corepack)
+        if: runner.environment == 'self-hosted'
+        env:
+          # Never rewrite corepack's shared lastKnownGood.json after a download.
+          COREPACK_DEFAULT_TO_LATEST: "0"
+        run: |
+          bin="$RUNNER_TEMP/corepack-bin"
+          mkdir -p "$bin"
+          corepack enable pnpm --install-directory "$bin"
+          pinned="$(node -p 'require("./package.json").packageManager')"
+          running="$("$bin/pnpm" --version)"
+          echo "corepack $(corepack --version) runs pnpm $running; package.json pins $pinned"
+          [ "pnpm@$running" = "${pinned%%+*}" ] || { echo "::error::corepack runs pnpm $running but package.json pins $pinned"; exit 1; }
+          echo "$bin" >> "$GITHUB_PATH"
+
       - name: Install dependencies
-        # pnpm keeps its store inside the (per-job) setup folder; on the PC
-        # point it at a persistent store shared by all runners (safe for
-        # concurrent installs, same filesystem as the work dirs).
+        # On the PC point pnpm at a persistent store shared by all runners
+        # (safe for concurrent installs, same filesystem as the work dirs).
         env:
           PNPM_PC_STORE: ${{ runner.environment == 'self-hosted' && '1' || '' }}
           # pnpm check runs Node tests and electron-vite build; the Electron
