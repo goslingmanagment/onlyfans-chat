@@ -51,7 +51,10 @@ from one clean hub commit, the manifest sha256 must match).
   a `v*` tag re-checks and builds on Windows (`windows-build.yml`). For a PR
   touching native modules, paths, the installer or the updater, run
   `windows-build` manually (workflow_dispatch, `publishFeed=false`) before
-  merging.
+  merging. On the PC runners the Linux job runs the same parts through
+  `scripts/ci-parallel-check.mjs`: typecheck, lint and test side by side
+  (so tests write only to temp dirs), then build; a new part runs alone
+  until the script lists it as read-only.
 - Running the app for real: skill `run-desktop`
   (`.claude/skills/run-desktop`), isolated keyless profile.
 - Hub-side changes may be made in the same session: keep the contract in
