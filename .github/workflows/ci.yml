@@ -83,7 +83,15 @@ jobs:
           pnpm install --frozen-lockfile
 
       - name: Check (typecheck + lint + test + build)
+        if: runner.environment != 'self-hosted'
         run: pnpm check
+
+      # PC runners: the same parts of `pnpm check`, read from package.json at
+      # run time, with the read-only ones side by side and the rest alone in
+      # chain order (scripts/ci-parallel-check.mjs).
+      - name: Check (parts in parallel)
+        if: runner.environment == 'self-hosted'
+        run: node scripts/ci-parallel-check.mjs
 
   windows-check:
     name: pnpm check (Windows)
