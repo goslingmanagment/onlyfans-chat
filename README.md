@@ -27,7 +27,7 @@ from prose.
 
 ## Documentation
 
-- [CLAUDE.md](CLAUDE.md) — binding engineering and safety rules;
+- [AGENTS.md](AGENTS.md) — binding engineering and safety rules;
 - [docs/decisions.md](docs/decisions.md) — append-only decisions and tombstones;
 - [docs/RELEASE.md](docs/RELEASE.md) — current Windows build/release procedure;
 - [docs/WINDOWS-VERIFICATION.md](docs/WINDOWS-VERIFICATION.md) — helper checklist
