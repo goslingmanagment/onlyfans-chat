@@ -767,6 +767,14 @@ fi
     expect(workflow).toContain('--max-time 120');
     expect(workflow).toContain('assert-ci-success.mjs');
     expect(workflow).not.toMatch(/curl[^\n]*\s-k/);
+    // pwsh `exit $null` exits 0: the smoke gate fails when the launch reports
+    // no exit code, before it exits with that code.
+    const smoke = workflowRunScript('Smoke-launch the packaged app');
+    expect(smoke).toContain("Start-Process -FilePath $exe -ArgumentList '--smoke' -Wait -PassThru");
+    expect(smoke).toMatch(
+      /if \(\$null -eq \$p -or -not \$p\.HasExited -or \$null -eq \$p\.ExitCode\) \{\n[^\n]*\n\s+exit 1\n\s*\}\n/,
+    );
+    expect(smoke.indexOf('$null -eq $p.ExitCode')).toBeLessThan(smoke.indexOf('exit $p.ExitCode'));
     // PR runs of ci.yml skip the Windows job, so only a main push run may
     // prove the exact release SHA passed cross-platform CI.
     expect(workflowRunScript('Assert exact commit passed cross-platform CI')).toContain(
