@@ -232,6 +232,11 @@ jobs:
           $exe = "apps/desktop/release/win-unpacked/ChatGoose.exe"
           if (-not (Test-Path $exe)) { Write-Error "win-unpacked binary not found at $exe"; exit 1 }
           $p = Start-Process -FilePath $exe -ArgumentList '--smoke' -Wait -PassThru
+          # `exit $null` exits 0, so a launch without an exit code fails here.
+          if ($null -eq $p -or -not $p.HasExited -or $null -eq $p.ExitCode) {
+            Write-Error "smoke launch reported no exit code"
+            exit 1
+          }
           Write-Host "smoke exit code: $($p.ExitCode)"
           exit $p.ExitCode
 
