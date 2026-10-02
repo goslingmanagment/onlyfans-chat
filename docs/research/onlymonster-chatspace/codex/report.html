@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OnlyMonster ChatSpace — исследование для ChatGoose</title>
+<style>
+:root{color-scheme:light;--ink:#172b36;--muted:#536875;--line:#dce5e7;--accent:#087b72;--paper:#fff;--bg:#f2f6f5}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 system-ui,-apple-system,sans-serif}a{color:#086d85;text-underline-offset:3px}main{max-width:1160px;margin:auto;padding:42px 44px 80px;background:var(--paper)}header{border-bottom:2px solid var(--accent);padding-bottom:26px}h1{font-size:40px;line-height:1.15;letter-spacing:-1.3px;margin:10px 0 18px;max-width:880px}h2{font-size:26px;line-height:1.3;margin:42px 0 15px}h3{font-size:19px;margin:25px 0 10px}p{margin:12px 0}.eyebrow{font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--accent);font-weight:750}.lead{font-size:20px;max-width:950px}.muted,small{color:var(--muted)}.meta{font-size:13px;color:var(--muted)}nav{display:flex;flex-wrap:wrap;gap:8px 22px;padding:20px 0;border-bottom:1px solid var(--line);font-size:14px}.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:25px 0}.card{background:#eef7f5;border:1px solid #cce4dd;border-radius:12px;padding:20px}.card strong{display:block;font-size:18px;margin-bottom:8px}.card p{margin:0;font-size:15px}.callout{border-left:4px solid var(--accent);background:#edf7f5;padding:15px 20px;margin:22px 0}.caution{border-left-color:#bf891f;background:#fff8e9}.table-wrap{overflow:auto;margin:16px 0}table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.55}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:13px 12px}th{background:#eaf1f2;font-weight:700}td:first-child{font-weight:600}tr:last-child td{border-bottom:0}code{font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;background:#edf1f3;border-radius:4px;padding:2px 4px;overflow-wrap:anywhere}pre{overflow:auto;padding:18px;border:1px solid var(--line);border-radius:10px;background:#f7f9fa;font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}pre code{padding:0;background:transparent}.tag{font-size:11px;letter-spacing:.3px;text-transform:uppercase;font-weight:700;display:inline-block;border-radius:5px;padding:2px 6px;background:#e7f5ef;color:#166249}.source{background:#eaf0fc;color:#415b99}.proposal{background:#fff1d8;color:#85600d}ul,ol{padding-left:24px}li{margin:8px 0}.flow{display:grid;grid-template-columns:1fr 32px 1fr 32px 1fr;align-items:center;gap:8px;margin:22px 0}.node{padding:17px;border:1px solid #bedbd3;background:#f1f8f5;border-radius:10px;line-height:1.45;font-size:14px;min-height:120px}.node strong{display:block;margin-bottom:7px}.arrow{font-size:26px;text-align:center;color:var(--accent)}details{border:1px solid var(--line);border-radius:10px;margin:15px 0;padding:15px 18px}summary{font-weight:650;cursor:pointer}.sources{font-size:14px;overflow-wrap:anywhere}.foot{margin-top:42px;padding-top:22px;border-top:1px solid var(--line);font-size:13px;color:var(--muted)}@media(max-width:760px){main{padding:25px 19px 55px}h1{font-size:31px}.lead{font-size:18px}.cards{grid-template-columns:1fr}.flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.node{min-height:0}th,td{padding:10px 9px}table{min-width:650px}}@media print{body{background:white}main{padding:0;max-width:none}nav{display:none}h2,h3{break-after:avoid}tr,.card,.callout,.node{break-inside:avoid}a{color:inherit}.table-wrap{overflow:visible}details{break-inside:avoid}}
+</style>
+</head>
+<body><main>
+<header>
+<div class="eyebrow">ChatGoose · техническое исследование · 2 октября 2026</div>
+<h1>OnlyMonster ChatSpace как основа нового расширения</h1>
+<p class="lead">Техническая основа для аналога нашего Fansly-расширения есть. Рекомендую новый клиент поверх ChatSpace с общим ядром функций и отдельными адаптерами платформ. Полный отказ от собственного Electron-клиента возможен после проверки отправки, медиа, фоновой работы и жизненного цикла аккаунтов.</p>
+<p class="meta">Снимок ChatSpace: v0.167.0 · Chrome на macOS · изучены 42 JS-ресурса приложения, живая сеть и текущие репозитории ChatGoose/Hub/Fansly · <a href="evidence.json">обезличенные доказательства JSON</a></p>
+</header>
+<nav aria-label="Содержание"><a href="#answer">Решение</a><a href="#observed">Что проверено</a><a href="#api">API и события</a><a href="#parity">Паритет функций</a><a href="#tradeoffs">Сравнение</a><a href="#architecture">Архитектура</a><a href="#hub">Изменения Hub</a><a href="#performance">Производительность</a><a href="#acceptance">Проверки и запуск</a><a href="#sources">Источники</a></nav>
+
+<section id="answer"><h2>Ответы на три вопроса</h2>
+<div class="cards"><div class="card"><strong>1. Аналог Fansly — реализуем</strong><p>Reply, Fix, Coach, Recap, Review, Ping, Spenders и настройки переносятся на общий продуктовый слой. Голос, загрузчик и «Новые» требуют отдельных адаптеров и испытаний. Стоп-фактора в устройстве веб-клиента не найдено.</p></div><div class="card"><strong>2. Собственный десктоп можно заменить</strong><p>OnlyMonster уже даёт чат, редактор, PPV и медиа. Мы избавляемся от поддержки своего полного интерфейса и Electron-дистрибутива. Взамен зависим от чужого UI, авторизации, прав и ограничений браузера.</p></div><div class="card"><strong>3. Новое ядро — разумный выбор</strong><p>Новую клиентскую реализацию писать с нуля; сохранить Hub, его SDK, общие хоткеи и проверенные правила поведения. Fansly подключить вторым адаптером. Сам переписанный код ещё не гарантирует быстродействие.</p></div></div>
+<div class="callout caution"><strong>Три разных решения:</strong> заменить наш Electron; перестать использовать OnlyMonster Browser; отказаться от OFAPI в Hub. Первое выглядит реалистично. Второе не подтверждено для первоначального подключения и повторного входа аккаунтов. Третье требует самостоятельной миграции серверных данных и контрактов.</div>
+<p>Практичный первый продукт: чаттер работает в <code>chat.onlymonster.ai</code>, наше расширение читает контекст, показывает AI-инструменты и вставляет проверенный человеком черновик. Сообщение отправляет штатный ChatSpace. Hub продолжает отвечать за AI, доступ к моделям и финансовые данные.</p>
+</section>
+
+<section id="observed"><h2>Что проверено непосредственно</h2>
+<p><span class="tag">Браузер</span> Исследована авторизованная вкладка через Chrome DevTools Protocol. Сохранены только схемы данных, метаданные и результаты измерений. Содержимое переписок, имена, реальные идентификаторы, токены и подписанные ссылки в этот отчёт не включены.</p>
+<div class="table-wrap"><table><thead><tr><th>Проверка</th><th>Результат</th><th>Что это доказывает</th></tr></thead><tbody>
+<tr><td>История: GET с limit=60</td><td>HTTP 200, 58 сообщений, has_more=true; 5,058 с.</td><td>Доступен структурированный контекст. Неполная страница не означает конец истории.</td></tr>
+<tr><td>Следующая страница по курсору</td><td>HTTP 200, 60 сообщений; 11,783 с. Между двумя страницами нет пересечений ID.</td><td>Пагинация работает; для глубокого Recap нужна загрузка с ограничениями и кешем.</td></tr>
+<tr><td>Дополнительная проверка limit=10</td><td>HTTP 200, 10 сообщений; 4,310 с. next_cursor — строка, совпала с ID последнего сообщения.</td><td>В ответе используется next_cursor; поля cursor нет. Исходный клиент также строит курсор по последнему ID.</td></tr>
+<tr><td>WebSocket</td><td>Получены account_new_message (5), account_fan_typing (72), сводки сообщений и уведомлений, authenticated.</td><td>Живые события действительно приходят в браузер. Числа — наблюдение одной сессии, не нагрузочный тест.</td></tr>
+<tr><td>Редактор</td><td>Tiptap/ProseMirror; доступны команды insertContent и setContent. Редактор editable, вне iframe.</td><td>Есть техническая точка вставки черновика. Реальную вставку и отправку в чужой разговор не выполнял.</td></tr>
+<tr><td>Аккаунты</td><td>API вернул OnlyFans и Fansly; активный список ChatSpace оставил OnlyFans.</td><td>Наличие Fansly в аккаунтах организации ещё не означает поддержку Fansly в этом интерфейсе.</td></tr>
+<tr><td>Связь с десктопом</td><td>window.OM_WINDOW отсутствует; в просмотренных ресурсах нет localhost-моста или прямых запросов onlyfans.com.</td><td>Изученные чат-функции работают через облачный транспорт. Полная независимость от десктопа пока не доказана.</td></tr>
+</tbody></table></div>
+<p>Задержки включают браузерную среду и получение токена; это три пробы, а не p50/p95 API. В одной точке измерено около 49 МиБ JS heap страницы. Это не полная память процесса и не сравнение с Electron. Суммарно скачано 5,41 МБ исходного JS в 42 ресурсах: это набор найденных чанков, а не размер первоначальной загрузки страницы.</p>
+<p><span class="tag source">Исходники</span> Стек: Vue 3.5.30, Vite, Pinia, Pinia Colada, Tiptap/ProseMirror, Clerk, Unleash и клиент HTTP на ky. В сборке есть отдельные ленивые редакторы фото/видео, загрузчики и медиакомпоненты. Часть возможностей зависит от прав и feature flags.</p>
+<p>OnlyMonster Browser был запущен на компьютере во время исследования. Его не закрывал и не переподключал аккаунты. Текст/PPV/голос не отправлял, загрузки не запускал, права и настройки не менял, платный AI не вызывал. Публичный API изучен по официальному контракту без создания или использования нового ключа.</p>
+</section>
+
+<section id="api"><h2>Как проходят данные: два разных API</h2>
+<div class="flow" aria-label="Путь работы ChatSpace"><div class="node"><strong>Chrome · ChatSpace</strong>Vue-приложение<br>Сессия оператора в Clerk<br>Редактор и локальные черновики</div><div class="arrow">↔</div><div class="node"><strong>Серверы OnlyMonster</strong>HTTP: onlymonster.ai/api<br>WS: /api/chat-space/ws<br>Авторизация и права</div><div class="arrow">↔</div><div class="node"><strong>Платформа OnlyFans</strong>Доступ аккаунта обслуживает OnlyMonster.<br>Внутренняя серверная реализация из браузера не видна.</div></div>
+<p>Ниже — сравнение клиентского протокола, подтверждённого трафиком и бандлами, с опубликованным серверным API. Похожие пути не делают контракты взаимозаменяемыми.</p>
+<div class="table-wrap"><table><thead><tr><th>Свойство</th><th>Приватный API ChatSpace</th><th>Публичный API OnlyMonster</th></tr></thead><tbody>
+<tr><td>База</td><td><code>https://onlymonster.ai/api</code></td><td><code>https://omapi.onlymonster.ai</code></td></tr>
+<tr><td>Авторизация</td><td>Bearer из сессии Clerk текущего оператора</td><td>Организационный <code>x-om-auth-token</code>; использовать на сервере</td></tr>
+<tr><td>История</td><td><code>limit, cursor</code>; ответ <code>items, has_more, next_cursor</code></td><td><code>limit, message_id, order</code>; <code>items, has_more</code></td></tr>
+<tr><td>Форма сообщения</td><td>HTTP: <code>content, sent_at, is_from_fan, platform_metadata</code></td><td><code>text, created_at, is_sent_by_me, sender</code></td></tr>
+<tr><td>Отправка</td><td>Клиент ожидает ID сообщения</td><td>HTTP 202 и <code>send_id</code>; результат асинхронный</td></tr>
+<tr><td>Авторство</td><td>Сессия чаттера; точное отражение в метриках требует теста</td><td>Есть тип <code>api</code>, персональный sender может отсутствовать</td></tr>
+<tr><td>Ограничения</td><td>Публичного контракта лимитов не найдено; не проверял нагрузкой</td><td>25 запросов/с на токен; для истории и отправки указан 1 запрос/с, область этого лимита требует уточнения</td></tr>
+<tr><td>Стабильность</td><td>Внутренний контракт веб-приложения, гарантия совместимости не найдена</td><td>Опубликованный OpenAPI 0.52.0: 30 путей, 33 операции</td></tr>
+</tbody></table></div>
+<p>Публичный контракт покрывает сообщения, часть данных фанатов, подписки, транзакции, vault и кампании. Полного эквивалента внутреннего UI, общего списка чатов, typing, mark-read и единичного unsend в опубликованной спецификации не найдено. Это отсутствие в документации, а не доказательство невозможности. <a href="https://docs.onlymonster.ai/integrations-and-api/openapi">Официальный OpenAPI</a>.</p>
+
+<details open><summary>Карта внутреннего протокола, полезная для реализации</summary>
+<div class="table-wrap"><table><thead><tr><th>Область</th><th>Маршрут / механизм</th><th>Особенность</th></tr></thead><tbody>
+<tr><td>Аккаунты и права</td><td><code>GET /api/v0/accounts</code><br><code>GET /api/user/permissions</code></td><td>OM account ID и raw platform account ID — разные идентификаторы; доступ проверяется и на сервере.</td></tr>
+<tr><td>История / отправка</td><td><code>/api/v0/accounts/{account}/chats/{fan}/messages</code></td><td>GET и POST; в POST есть text, is_copied, is_ai_generated, internal_template_id, previous_message, platformMetadata.</td></tr>
+<tr><td>Realtime</td><td><code>wss://onlymonster.ai/api/chat-space/ws</code></td><td>JSON-действия auth, subscribe_account, unsubscribe_account, ping. Токен прикладывается к исходящим действиям.</td></tr>
+<tr><td>Загрузка</td><td><code>/api/v0/accounts/{account}/vault/uploads/start</code><br><code>.../vault/uploads/finish</code></td><td>Подписанные URL, прямая загрузка в объектное хранилище, включая multipart.</td></tr>
+<tr><td>Медиа OnlyFans</td><td><code>.../platforms/onlyfans/medias/upload</code><br><code>.../platforms/onlyfans/medias/hash</code></td><td>Отдельное завершение платформенного импорта и проверка по хешу. Upload finished ещё не всегда означает готовность медиа.</td></tr>
+<tr><td>Шаблоны и дополнительные действия</td><td>Семейства message-hub, scheduled-messages, fan insights, mute/hide/restrict, pinned messages.</td><td>Есть в коде; полный набор не испытан. Не превращать частичную regex-инвентаризацию бандла в «официальную спецификацию».</td></tr>
+</tbody></table></div>
+<p>HTTP-клиент получает токен через Clerk; на 401 пытается обновить его. В конфигурации есть timeout 40 с и политика повторов, но из этого нельзя выводить автоматический повтор любого POST. Для отправки действует отдельная очередь и timeout 30 с.</p>
+</details>
+
+<h3>Realtime, переподключение и фон</h3>
+<p>WebSocket работает с подписками на открытые внутри ChatSpace аккаунты. Код снимает подписку при закрытии аккаунта. Расширение не должно считать, что одна открытая вкладка гарантированно наблюдает все модели организации. HTTP и WebSocket имеют разные схемы: например, <code>sent_at</code> против <code>sentAt</code>, <code>platform_metadata</code> против <code>platformMetadata</code>; нужны отдельные нормализаторы.</p>
+<p>Клиент переподключается с экспоненциальной задержкой до 30 с и jitter, учитывает offline/online и видимость. При восстановлении инвалидирует HTTP-кеши. Протокола гарантированного replay с последовательным offset в изученном коде не найдено. После обрыва нужно дочитывать историю и удалять дубли по ID.</p>
+<div class="callout caution"><strong>Уведомления не равны постоянной доставке.</strong> Веб-клиент регистрирует <code>notifications-sw.js</code>, но текущий файл содержит только обработчик клика. Web Push указан как TODO. Новое событие обрабатывается живой страницей и затем показывается уведомление. Закрытие/выгрузку вкладки и сон системы нужно считать отдельными режимами отказа. В текущем Chrome разрешение на уведомления было default. <a href="https://chat.onlymonster.ai/notifications-sw.js">Проверенный service worker</a>.</div>
+
+<h3>Отправка, редактор и медиа</h3>
+<p>Штатная очередь отправки последовательна для аккаунта, ограничивает число pending-сообщений в чате и поддерживает ручной повтор. Локальный UUID не передаётся как серверный idempotency key в изученном POST. Подтверждение через WS может сопоставляться по нормализованному тексту. Поэтому поверх неё нельзя добавлять собственные «на всякий случай» повторы: timeout не доказывает, что сообщение не ушло.</p>
+<p>Для первого релиза расширение должно вставлять черновик через корректную транзакцию редактора, сохраняя переносы, selection, undo и IME. Прямая запись в innerHTML может рассинхронизировать DOM и состояние Tiptap. Доступная сейчас ссылка <code>.editor</code> — внутренняя деталь, её существование нужно проверять, а при несовместимости отключать вставку с понятной ошибкой.</p>
+<p>У нативного клиента есть флаги copied/AI/template и сведения о предыдущем сообщении. Вставка нашей AI-строки сама по себе не гарантирует корректную нативную атрибуцию. В организации активирована настройка Mimic; это не доказывает его работу в конкретном чате, но код запрещает отправку там, где Mimic взял управление. Нужна совместимость с Mimic, переводчиком, шаблонами и хоткеями.</p>
+<p>В проверенном uploader ограничение файла — 4 ГиБ; поддерживаются изображения, видео и аудиоформаты. Есть подписанные ссылки, дедупликация и несколько стадий готовности. В отдельном публичном API другой upload/export-процесс; его нельзя подменить внутренним набором вызовов. Для Voice нужна реальная проверка MP3 → штатное вложение → ручная отправка. Для DRM-медиа найдены пути сертификата/лицензии, но воспроизведение защищённого контента не проверялось. <a href="https://docs.onlymonster.ai/integrations-and-api/vault-media-upload-via-onlymonster-api">Документированный публичный upload-процесс</a>.</p>
+
+<h3>Вебхуки: серверная интеграция с оговорками</h3>
+<p>Документированы сообщения и результаты отправки, события загрузок, Message Guard, новые подписчики, PPV и tips. Подпись — HMAC-SHA256 по timestamp и сырому телу. Повторы ограничены; при устойчивых таймаутах доставка временно приостанавливается, события в паузе теряются. Нужна периодическая сверка с API.</p>
+<p><code>x-om-webhook-id</code> меняется при повторной доставке. Дедупликация должна использовать бизнес-ключ события: ID сообщения/отправки/типса и аккаунт; для upload — ID и updated_at. Обработчик сначала надёжно сохраняет событие, затем быстро отвечает. Событие new_subscriber означает первую подписку и не заменяет учёт продлений/возвратов. PPV/tip timestamps имеют минутную точность и не задают строгий порядок. <a href="https://docs.onlymonster.ai/integrations-and-api/webhook-integration">Официальные правила доставки</a>.</p>
+</section>
+
+<section id="parity"><h2>Паритет с нашим Fansly-расширением</h2>
+<p>Матрица сопоставлена с текущим исходным кодом Fansly-клиента, а не только с названиями кнопок. «Реализуемо» ниже — инженерная оценка; расширение пока не написано и сквозные сценарии не пройдены.</p>
+<div class="table-wrap"><table><thead><tr><th>Функция</th><th>Оценка</th><th>Условие полноценного переноса</th></tr></thead><tbody>
+<tr><td>Reply / Fix / tone / split</td><td>Хорошая техническая основа</td><td>Hub AI, правильный контекст и Tiptap-вставка. Каждая часть split требует осознанной отправки, без второго транспортного контура.</td></tr>
+<tr><td>Coach / Help / Review</td><td>Хорошая техническая основа</td><td>Общее состояние AI-сессии, единые feature-контракты и привязка ответа к исходному чату.</td></tr>
+<tr><td>Recap short / full</td><td>Реализуемо; загрузка существенна</td><td>До 300 / 3000 сообщений по правилам нашего продукта. Кеш, пагинация и указание реально покрытого окна. Недочитанную историю нельзя выдавать за полную.</td></tr>
+<tr><td>Ping / Hi</td><td>Реализуемо с новой классификацией</td><td>Отличать персональные сообщения от массовых, welcome, scheduled, Mimic. Отсутствующее авторство — unknown, а не «личных сообщений нет».</td></tr>
+<tr><td>Новые подписчики / фаны</td><td>Требует отдельной спецификации</td><td>У OnlyFans не та же модель, что у Fansly followers. Зафиксировать free/paid, renew/resub, историю контакта, исключения. Recent-chat fans не являются полным реестром подписчиков.</td></tr>
+<tr><td>Spenders</td><td>Небольшая клиентская часть</td><td>Использовать рейтинг и freshness из Hub. Связать платформенные ID; не пересчитывать финансовую истину по UI OnlyMonster.</td></tr>
+<tr><td>Voice</td><td>Вероятно реализуемо</td><td>Сохранить Hub capability и preview/download; отдельно доказать загрузку и штатное вложение аудио. Сценарий пока не испытан.</td></tr>
+<tr><td>Vault folder uploader</td><td>Реализуемо, отдельный модуль</td><td>Новые состояния upload/processing/export, ограниченная очередь, checkpoint и подтверждение каждого файла. Не копировать Fansly DOM-автоматизацию.</td></tr>
+<tr><td>Звуки входящих и новых фанов</td><td>Входящие подтверждены WS; остальное проверить</td><td>Дедупликация между вкладками, focus/mute/throttle, исключение own/automated/tips. Для закрытых аккаунтов и спящей страницы нужен отдельный серверный сигнал.</td></tr>
+<tr><td>Хоткеи, personas, настройки, login</td><td>Переиспользовать контракты</td><td>Общий hotkeys SDK и Hub auth. Учесть две независимые сессии: ChatGoose и OnlyMonster, отзыв доступа и выход.</td></tr>
+<tr><td>PPV, replies, GIF, templates, unsend</td><td>Оставить нативному ChatSpace</td><td>Проверить совместимость нашего черновика с ценой, locked text, выбранными media/reply и состояниями Message Guard.</td></tr>
+</tbody></table></div>
+<p>Fansly сейчас не является рабочим ChatSpace-адаптером: в коде разрешён набор <code>onlyfans, telegram_v2</code>, а Fansly отфильтрован и в просмотренной сессии. Документация позиционирует ChatSpace как OnlyFans-интерфейс. Поэтому будущий Fansly-адаптер следует строить для <code>fansly.com</code>, не ждать его появления у OnlyMonster. Поддержка Telegram найдена в коде, но в этой сессии не проверена. <a href="https://docs.onlymonster.ai/onlymonster-browser/chatspace">Описание ChatSpace</a>, <a href="https://chat.onlymonster.ai/assets/accounts-gVgPsqTs.js">код выбора аккаунтов</a>.</p>
+</section>
+
+<section id="tradeoffs"><h2>Плюсы и минусы относительно десктопа</h2>
+<p>Основное сравнение — с нашим Electron ChatGoose поверх OFAPI. Если речь о расширении внутри OnlyMonster Browser, оно дополнительно зависит от возможностей и обновлений этого браузера; его механизм установки здесь не исследован.</p>
+<div class="table-wrap"><table><thead><tr><th>Критерий</th><th>Расширение ChatSpace</th><th>Наш Electron-клиент</th></tr></thead><tbody>
+<tr><td>Объём поддержки</td><td>Не нужно поддерживать полный чат, PPV, медиа-галерею, инсталлятор и updater Electron</td><td>Контролируем весь продукт, но обслуживаем больше UI и платформенных сценариев</td></tr>
+<tr><td>Актуальные функции OnlyMonster</td><td>Штатные функции доступны без отдельного переноса</td><td>Нужен свой UI и соответствующая поддержка в OFAPI/Hub</td></tr>
+<tr><td>Надёжность интеграции</td><td>Меняющиеся DOM, editor internals и приватный API</td><td>Наши UI-контракты стабильнее; сохраняется зависимость от внешнего провайдера</td></tr>
+<tr><td>Производительность</td><td>Небольшая добавочная стоимость расширения достижима; базовую скорость ChatSpace мы не контролируем</td><td>Можно оптимизировать весь интерфейс; нужно обслуживать собственную память, кеши и рендер</td></tr>
+<tr><td>Фон и уведомления</td><td>Выгрузка вкладок, сон браузера, lifecycle MV3, открытые аккаунты</td><td>Можно управлять работающим процессом и tray, но сон ОС и остановка процесса остаются</td></tr>
+<tr><td>Черновики / локальные файлы</td><td>Браузерные разрешения, quota, отзыв file handles, отдельная модель хранения</td><td>Больше контроля над файлами и зашифрованным локальным кешем</td></tr>
+<tr><td>Доступ и роли</td><td>Нужно одновременно соблюдать права OM и Hub; роли и смены OM могут ограничить функцию</td><td>Доступ организует наш Hub; серверный провайдер тоже должен иметь рабочую сессию</td></tr>
+<tr><td>Дистрибуция</td><td>Нужны Chrome/Firefox сборки и процесс обновления расширения</td><td>Есть существующий Windows релизный процесс и автообновление</td></tr>
+<tr><td>Стоимость</td><td>Меньше нашего сопровождения UI; подписка OM остаётся, OFAPI тоже остаётся при прежнем backend</td><td>Текущие затраты на OFAPI и поддержку клиента</td></tr>
+<tr><td>Зависимость от поставщика</td><td>OM контролирует и интерфейс, и транспорт; изменения раскатывает без нашего релиза</td><td>Провайдер контролирует API, но не расположение наших кнопок и редактор</td></tr>
+</tbody></table></div>
+<p>У ChatSpace высокая частота релизов: просмотренный changelog содержит множество обновлений за соседние дни, текущая сборка уже v0.167.0. Это усиливает ценность небольшого изолированного адаптера, диагностик несовместимости и предварительного тестирования обновлений. <a href="https://docs.onlymonster.ai/changelog/chatspace-changelog">Changelog</a>.</p>
+<p>Документированный процесс первоначального подключения аккаунта пока использует OnlyMonster Browser. Рабочий веб-чат не доказывает, что браузер поставщика больше никогда не понадобится для 2FA, истечения сессии или повторного подключения. Подписка OM также не исчезает от смены клиента; фактический тариф и отдельную стоимость API в этой организации не проверял. <a href="https://docs.onlymonster.ai/team-and-security-management/connect-account">Подключение аккаунта</a>, <a href="https://docs.onlymonster.ai/billing-and-pricing/plans-and-pricing">Тарифы</a>.</p>
+</section>
+
+<section id="architecture"><h2>Как я предлагаю написать новый клиент</h2>
+<p><span class="tag proposal">Рекомендация</span> Единое браузерное расширение ChatGoose с двумя адаптерами: ChatSpace/OnlyFans первым, Fansly Web вторым. Разделить платформу, сайт и транспорт, чтобы они не превратились в один флаг <code>isFansly</code> во всех модулях.</p>
+<pre><code>platform: onlyfans | fansly
+host: onlymonster-chatspace | fansly-web
+transport: page-session | hub-ofapi | hub-onlymonster-public
+
+apps/extension       — Chrome MV3 / Firefox entry points, permissions, lifecycle
+core                 — типы, контекст чата, состояния, кеш, отмена операций
+features             — Reply, Coach, Recap, Ping, Spenders, Voice, Followers
+adapters/chatspace   — история, события, редактор, capabilities, media
+adapters/fansly      — второй адаптер; добавляется после стабилизации первого
+ui                   — панели, настройки, доступность, стили
+shared contracts     — vendored Hub SDK и общий hotkeys SDK</code></pre>
+<p>Это границы ответственности, не требование заранее создавать десятки пакетов. Ядро не должно знать Vue/Pinia/Tiptap OnlyMonster; feature-модули не должны сами обращаться к DOM, токенам и чужим endpoints. Адаптер сообщает поддерживаемые возможности явно: history, draft insertion, voice attachment, follower discovery и другие.</p>
+<div class="flow" aria-label="Предлагаемые границы расширения"><div class="node"><strong>Маленький MAIN bridge</strong>Пассивные HTTP/WS события<br>Редактор страницы<br>Только разрешённые команды</div><div class="arrow">↔</div><div class="node"><strong>Изолированное расширение</strong>Нормализованные данные<br>Feature-модули и Shadow DOM UI<br>Контекст, отмена и кеш</div><div class="arrow">↔</div><div class="node"><strong>Background → Hub</strong>Hub auth и AI stream<br>Capabilities и статистика<br>Сохранение состояния операций</div></div>
+<p>Страница и content script живут в разных JS-мирах. Доступ к editor internals требует узкого MAIN-моста; панели и токены Hub должны оставаться в мире расширения. Shadow DOM изолирует стили, но сам по себе не является границей безопасности. <a href="https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts">Модель Chrome content scripts</a>.</p>
+<ul>
+<li><strong>Основной источник контекста — структурированные данные.</strong> Пассивно использовать ответы и WS страницы. Дочитывать только нужное окно истории; не сканировать весь DOM и не открывать второй WS ради дублирования событий.</li>
+<li><strong>Привязка к контексту обязательна.</strong> Любая операция несёт account + fan + route generation + draft revision. При переключении чата старый ответ может остаться в своём кеше, но не попасть в чужой редактор.</li>
+<li><strong>Историю объединять по платформенным ID.</strong> HTTP и WS нормализуются раздельно; deletion/edit/own echo не создают новые независимые сообщения. ID хранить строками и не смешивать OM ID, raw OF ID, Hub page label и OFAPI acct.</li>
+<li><strong>Один владелец отправки.</strong> На первом этапе — штатный ChatSpace. AI выдаёт черновик; вставка и отправка требуют действий человека. Наш второй send-loop не нужен.</li>
+<li><strong>Ограниченный кеш.</strong> Активное окно + LRU, лимиты объёма и срока жизни; долгую историю не держать сразу во всех вкладках. Финансы и архив — Hub, не локальная копия всего аккаунта.</li>
+<li><strong>Нормальная деградация.</strong> Несовместимый редактор отключает вставку, обрыв данных делает статус unknown, отозванные права закрывают функцию. Никаких тихих подстановок истории другого фана.</li>
+<li><strong>Без секретов в странице.</strong> Hub device token не передаётся через DOM/postMessage. Публичный OM key хранится только серверно через принятую инфраструктуру секретов. В диагностике — версии/коды/длительности, без переписок и signed URLs.</li>
+</ul>
+<p>MAIN-мост нельзя считать доверенным только потому, что сообщение пришло из этой вкладки: код сайта способен воспроизвести его протокол. Нужны схемы, ограничения размера, проверка tab/frame/origin, список допустимых действий и серверная проверка доступа к модели. Использованный для исследования DevTools не нужен как permission готового расширения.</p>
+<p>Chrome MV3 service worker может завершаться; globals не являются долговечным состоянием. Поток AI, отмену, переподключение UI и оплату повторного запроса нужно проектировать с учётом рестарта. В существующем Fansly manifest — Firefox background scripts, поэтому простая смена host permissions не даст корректную Chrome-сборку. <a href="https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle">Lifecycle Chrome MV3</a>.</p>
+<h3>Что переносить, а что переписать</h3>
+<p>Сохранить серверные feature-контракты, схемы ошибок, AI/accounting, правила Hi/Recap, обработку неизвестного результата отправки, хоткеи и тестовые сценарии регрессий. Клиентский UI, состояние, хранилище и адаптеры можно реализовать заново. Старый Fansly bundle не нужен как фундамент; его текущие правила и опыт эксплуатации нужны как спецификация.</p>
+<p>Не следует обещать «идеальный код» или переписывать уже работающий Hub ради эстетики. Качество здесь проверяется изоляцией адаптеров, отсутствием гонок, явными состояниями, измеренной стоимостью расширения и возможностью обновить один адаптер после релиза OM. Минимальный фреймворк не всегда быстрее или дешевле поддержки, чем небольшой компонентный UI; выбор стоит закрепить после профиля первого вертикального сценария.</p>
+</section>
+
+<section id="hub"><h2>Главное изменение понадобится в контракте Hub</h2>
+<p><span class="tag source">Наш код</span> В <code>hub/apps/runtime/src/modules/ai/features/index.ts:468</code> явно запрещён <code>clientContext</code> для всех платформ, кроме Fansly. Комментарий объясняет причину: OnlyFans-контекст собирается сервером, а свободно присланный клиентом transcript/spend позволил бы подделывать данные. Обработка media client-context тоже содержит Fansly-специфику.</p>
+<p>Поэтому модель OnlyFans нельзя помечать как Fansly ради обхода проверки. Не следует и просто убрать условие. Нужен отдельный договор о происхождении данных: нормализованное окно сообщений, источник и время получения, покрытие истории, доступ оператора к странице, ограничения размеров и конфликтов. Финансовые значения остаются серверными. Клиентские сообщения полезны для AI, но не должны автоматически становиться авторитетным архивом или основанием финансового учёта.</p>
+<div class="table-wrap"><table><thead><tr><th>Путь</th><th>Что получаем</th><th>Что меняется</th></tr></thead><tbody>
+<tr><td>A. Быстрый пилот</td><td>ChatSpace UI + текущий OnlyFans AI-контекст Hub</td><td>Можно начать без нового clientContext. Обязательно проверить актуальность серверного хвоста относительно видимого чата.</td></tr>
+<tr><td>B. Полноценное расширение</td><td>ChatSpace live-контекст + серверные данные Hub</td><td>Новый проверяемый контракт источника контекста, приоритеты и разрешение конфликтов. Рекомендуемый целевой путь.</td></tr>
+<tr><td>C. Замена OFAPI</td><td>OM Public API + webhooks как новый провайдер Hub</td><td>Самостоятельная миграция архивов, данных, очередей, rate limits, сверок и наблюдаемости. Не требуется для запуска расширения.</td></tr>
+</tbody></table></div>
+<p>Текущий Hub уже считает старую интеграцию OnlyMonster выведенной из эксплуатации (<code>services/onlyfans.ts</code>, Stage 18); сейчас работают OFAPI-пути идентичности. При возврате нового OM-провайдера нельзя просто оживить исторический код. <code>transactions-writer-gate.ts</code> назначает единственного писателя транзакций для страницы: параллельное начисление одних доходов двумя провайдерами недопустимо.</p>
+<p>Это вывод по локальным исходникам с зафиксированными commit SHA; конфигурация и состояние production в этом исследовании не запрашивались.</p>
+</section>
+
+<section id="performance"><h2>Как сделать действительно быстро</h2>
+<p>Самое медленное из уже измеренного — получение истории, а не наша будущая отрисовка. Переписывание UI не сократит ответ сервера с 12 секунд до 100 мс. Нужны reuse данных страницы, кеширование, общие незавершённые запросы, отмена ненужной загрузки и быстрый показ уже известного результата.</p>
+<div class="table-wrap"><table><thead><tr><th>Предлагаемый бюджет</th><th>Как проверять</th></tr></thead><tbody>
+<tr><td>Первичная загрузка расширения ≤100 КБ gzip</td><td>Без ленивых Voice/Vault/Followers. Отдельно считать весь загруженный набор модулей; не скрывать перенос веса в следующий чанк.</td></tr>
+<tr><td>Открытие уже подготовленной панели: p95 ≤100 мс</td><td>На реальном Windows-ПК чаттера; холодный и тёплый сценарии отдельно.</td></tr>
+<tr><td>Нет собственных long tasks &gt;50 мс</td><td>Профиль с/без расширения, ввод и переключение чатов; обработчики событий короткие, тяжёлая работа разбита.</td></tr>
+<tr><td>Добавочный heap в обычном сценарии ≤25 МиБ</td><td>Фиксированный набор данных, повторные проходы, cleanup после 100 переключений; абсолютную память Chrome считать отдельно.</td></tr>
+<tr><td>Нет постоянного полного DOM-сканирования и polling истории в idle</td><td>Ограниченный MutationObserver, WS/route-события, bounded reconnect reconciliation.</td></tr>
+<tr><td>Глубокие функции загружаются по запросу</td><td>История, Voice, vault и followers — с собственной очередью, лимитом и отменой; без параллельного шторма страниц.</td></tr>
+</tbody></table></div>
+<p class="muted">Это начальные критерии приёмки, а не достигнутые показатели. Сначала измеряется реальная базовая страница; затем стоимость расширения на том же сценарии. Снижать объём истории ради красивой скорости без явного статуса покрытия нельзя.</p>
+</section>
+
+<section id="acceptance"><h2>Что должно пройти до отказа от десктопа</h2>
+<p>Исследование установило техническую возможность чтения и интеграции. Полный продуктовый паритет потребует следующих сквозных проверок в специально выбранных тестовых разговорах.</p>
+<div class="table-wrap"><table><thead><tr><th>Группа</th><th>Критические сценарии</th></tr></thead><tbody>
+<tr><td>Идентичность и гонки</td><td>Быстрое переключение моделей/фанов во время AI; две вкладки; совпадающие числовые ID разных пространств; поздний ответ; смена сессии.</td></tr>
+<tr><td>Редактор</td><td>Непустой черновик, IME, emoji, переносы, undo/redo, выделение, reply-to, PPV/media; маршрут поменялся перед вставкой; переводчик и шаблоны.</td></tr>
+<tr><td>Отправка</td><td>Простой текст, split, paid/free, double click; HTTP timeout после принятия сервером; WS echo до HTTP-ответа; модерация; авторство в статистике.</td></tr>
+<tr><td>История</td><td>Короткая страница с has_more, повторы/удаления, пустая страница, большие диалоги, 401/403/429/5xx, gap после reconnect; автоматическое авторство unknown.</td></tr>
+<tr><td>Voice / vault</td><td>Завершение multipart, обработка после upload, истечение URL, дубль файла, отмена/возобновление, ошибочный MIME, PPV preview и DRM.</td></tr>
+<tr><td>Права</td><td>Реальная ограниченная роль чаттера, начало/конец смены, запрет загрузок/unsend, отзыв доступа к модели, Mimic takeover.</td></tr>
+<tr><td>Браузер и восстановление</td><td>Chrome на Windows; Firefox при его поддержке; остановка MV3 worker; AI stream оборвался; sleep/wake; tab discard; закрытие аккаунта; обновление OM.</td></tr>
+<tr><td>Независимость от OM Browser</td><td>Холодный старт с полностью закрытым OM Browser, работа существующей сессии, истечение сессии, 2FA и повторное подключение.</td></tr>
+<tr><td>Доступность и ресурсы</td><td>Клавиатура, масштабирование, тёмная тема, маленький экран, конфликт хоткеев; профиль CPU/memory и утечки после длинной смены.</td></tr>
+</tbody></table></div>
+<h3>Порядок реализации</h3>
+<ol>
+<li><strong>Один вертикальный сценарий:</strong> идентификация модели/фана → подтверждённая история → Hub Reply → показ черновика → безопасная вставка. Одновременно измерить Chrome MV3 и проверить подход к контексту Hub. Отправку испытать только в разрешённом тестовом чате.</li>
+<li><strong>Общее ядро функций:</strong> Reply/Fix/Coach/Recap/Review/Ping, настройки, hotkeys, Spenders, отмена и кеш. Принимать по поведению и производительности.</li>
+<li><strong>Сложные адаптеры:</strong> Voice, «Новые», vault; роль чаттера, Mimic и фоновые события. Закрыть матрицу паритета.</li>
+<li><strong>Ограниченный рабочий запуск:</strong> выбранные модели/операторы, диагностика ошибок без содержимого переписок, сохранённый способ вернуться к десктопу.</li>
+<li><strong>Fansly как второй адаптер:</strong> переносить те же feature-модули, с отдельными нормализаторами, редактором и discovery. После доказанного паритета выводить прежнее расширение из эксплуатации.</li>
+<li><strong>При желании — отдельная миграция провайдера Hub:</strong> только после проверки полноты OM Public API, webhook reconciliation, качества архива, атрибуции и цены.</li>
+</ol>
+<details><summary>Вопросы к OnlyMonster перед долгосрочным внедрением</summary>
+<ul><li>Поддерживают ли они сторонние расширения ChatSpace и предоставляют ли стабильный hook/API редактора?</li><li>Что требуется для первого входа, 2FA и reauth без OnlyMonster Browser?</li><li>Какова точная область rate limits, доступность API на нашем тарифе и политика изменений?</li><li>Как маркировать внешнюю AI-вставку и сохранять авторство/показатели чаттера?</li><li>Есть ли серверный replay/retention событий и поддерживаемое восстановление пропусков?</li><li>Каков официальный статус платформ кроме OnlyFans и условия фоновых уведомлений?</li></ul>
+<p class="muted">Эти вопросы не отправлялись поставщику. Они не мешают сделать проверочный прототип, но влияют на эксплуатационные гарантии.</p>
+</details>
+</section>
+
+<section id="sources"><h2>Источники и воспроизводимость</h2>
+<p>Материалы ниже актуальны для снимка 02.10.2026. Публичные URL бандлов привязаны к хешам и могут исчезнуть после новых релизов. <a href="evidence.json">Локальный evidence.json</a> содержит SHA-256 ресурсов, схемы живых ответов, результаты трёх GET-проверок, счётчики событий и список непроверенных сценариев. Полные приватные ответы не сохранялись.</p>
+<div class="sources">
+<ul>
+<li><a href="https://chat.onlymonster.ai/">Живой ChatSpace</a>; <a href="https://chat.onlymonster.ai/assets/composables-19O1xYoe.js">общий runtime, конфигурация HTTP/WS и версии</a>; <a href="https://chat.onlymonster.ai/assets/accounts-gVgPsqTs.js">аккаунты и подписки</a>; <a href="https://chat.onlymonster.ai/assets/messages-2XnThXD9.js">история, редактор, upload и уведомления</a>; <a href="https://chat.onlymonster.ai/assets/notificationEntry-DgP70ptm.js">очередь отправки и события сообщений</a>; <a href="https://chat.onlymonster.ai/notifications-sw.js">service worker</a>.</li>
+<li><a href="https://docs.onlymonster.ai/integrations-and-api/openapi">OpenAPI</a>; <a href="https://docs.onlymonster.ai/integrations-and-api/webhook-integration">webhooks</a>; <a href="https://docs.onlymonster.ai/integrations-and-api/vault-media-upload-via-onlymonster-api">upload/export</a>.</li>
+<li><a href="https://docs.onlymonster.ai/onlymonster-browser/chatspace">ChatSpace: возможности и права</a>; <a href="https://docs.onlymonster.ai/team-and-security-management/connect-account">подключение аккаунта</a>; <a href="https://docs.onlymonster.ai/changelog/chatspace-changelog">changelog</a>; <a href="https://docs.onlymonster.ai/billing-and-pricing/plans-and-pricing">тарифы</a>.</li>
+<li><a href="https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts">Chrome content scripts</a>; <a href="https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle">MV3 lifecycle</a>.</li>
+</ul>
+<p>Локальные исходники: <code>onlyfans-chat</code> @ <code>93e35bb8a3238c2c59b18fb4dfa65bb97c3a7e8d</code>; <code>hub</code> @ <code>b1097eaa00ac96e40ea8f7870588b84311166065</code>; <code>fansly-chat</code> @ <code>a534d7249cc557e78d6e309c0b4e960a88a8de77</code>. На момент чтения рабочие деревья чистые. Главные указатели: CLAUDE.md текущего проекта; Fansly README.md и manifest.json; Hub <code>apps/runtime/src/modules/ai/features/index.ts</code>, <code>services/onlyfans.ts</code>, <code>services/transactions-writer-gate.ts</code>, <code>packages/contracts/src/routes.ts</code>.</p>
+</div>
+</section>
+<p class="foot">Исследование и архитектурная рекомендация; не готовая интеграция. Код репозиториев и production не изменялись. Полный анализ серверной реализации OnlyMonster невозможен по клиентскому бандлу; соответствующие выводы ограничены наблюдаемым протоколом и документацией.</p>
+</main></body></html>

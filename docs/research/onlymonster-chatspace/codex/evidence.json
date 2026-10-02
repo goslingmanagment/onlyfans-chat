@@ -1,0 +1,823 @@
+{
+  "snapshotDate": "2026-10-02",
+  "chatspaceVersion": "0.167.0",
+  "scope": "Authorized read-only browser research; no live send, upload, settings change, token creation or webhook setup. Native browser traffic observed passively. Three explicit history GET reads. Public API inspected from official specification, not called with an org token.",
+  "privacy": "No message content, fan/model identifiers, names, tokens, cookies, signed media URLs or screenshot of private conversations in this artifact.",
+  "liveHistory": {
+    "pages": [
+      {
+        "status": 200,
+        "ms": 5058,
+        "keys": [
+          "items",
+          "platform_fan_id",
+          "has_more",
+          "next_cursor"
+        ],
+        "count": 58,
+        "hasMore": true,
+        "firstShape": {
+          "id": "string",
+          "content": "string",
+          "sent_at": "string",
+          "is_from_fan": "boolean",
+          "platform_metadata": {
+            "responseType": "string",
+            "giphyId": "null",
+            "lockedText": "boolean",
+            "isFree": "boolean",
+            "price": "number",
+            "isMediaReady": "boolean",
+            "mediaCount": "number",
+            "media": {
+              "type": "array",
+              "length": 0,
+              "item": "undefined"
+            },
+            "previews": {
+              "type": "array",
+              "length": 0,
+              "item": "undefined"
+            },
+            "isTip": "boolean",
+            "isReportedByMe": "boolean",
+            "isCouplePeopleMedia": "boolean",
+            "queueId": "number",
+            "isMarkdownDisabled": "boolean",
+            "releaseForms": {
+              "type": "array",
+              "length": 0,
+              "item": "undefined"
+            },
+            "isFromQueue": "boolean",
+            "isOpened": "boolean",
+            "isNew": "boolean",
+            "changedAt": "string",
+            "cancelSeconds": "number",
+            "isLiked": "boolean",
+            "canPurchase": "boolean",
+            "canPurchaseReason": "string",
+            "canReport": "boolean",
+            "canBePinned": "boolean",
+            "isPinned": "boolean",
+            "isAddedToBookmarks": "boolean",
+            "chatUserId": "number"
+          }
+        },
+        "distinctIds": 58,
+        "hasLegacyCursorField": false
+      },
+      {
+        "status": 200,
+        "ms": 11783,
+        "keys": [
+          "items",
+          "platform_fan_id",
+          "has_more",
+          "next_cursor"
+        ],
+        "count": 60,
+        "hasMore": true,
+        "firstShape": {
+          "id": "string",
+          "content": "string",
+          "sent_at": "string",
+          "is_from_fan": "boolean",
+          "platform_metadata": {
+            "responseType": "string",
+            "giphyId": "null",
+            "lockedText": "boolean",
+            "isFree": "boolean",
+            "price": "number",
+            "isMediaReady": "boolean",
+            "mediaCount": "number",
+            "media": {
+              "type": "array",
+              "length": 0,
+              "item": "undefined"
+            },
+            "previews": {
+              "type": "array",
+              "length": 0,
+              "item": "undefined"
+            },
+            "isTip": "boolean",
+            "isReportedByMe": "boolean",
+            "isCouplePeopleMedia": "boolean",
+            "queueId": "number",
+            "isMarkdownDisabled": "boolean",
+            "isFromQueue": "boolean",
+            "isOpened": "boolean",
+            "isNew": "boolean",
+            "changedAt": "string",
+            "cancelSeconds": "number",
+            "isLiked": "boolean",
+            "canPurchase": "boolean",
+            "canPurchaseReason": "string",
+            "canReport": "boolean",
+            "canBePinned": "boolean",
+            "isPinned": "boolean",
+            "isAddedToBookmarks": "boolean",
+            "chatUserId": "number"
+          }
+        },
+        "distinctIds": 60,
+        "hasLegacyCursorField": false
+      }
+    ],
+    "overlap": 0,
+    "modelIdentity": {
+      "omIdDiffersFromPlatformId": true,
+      "platform": "onlyfans",
+      "knownToAccountsStore": true
+    },
+    "editor": {
+      "isEditable": true,
+      "isEmpty": true,
+      "nodeTypes": [
+        "paragraph",
+        "doc",
+        "hardBreak",
+        "text"
+      ],
+      "marks": [
+        "link",
+        "bold",
+        "code",
+        "italic",
+        "strike",
+        "textColorClass",
+        "textSizeClass"
+      ],
+      "hasInsertContentCommand": true,
+      "hasSetContentCommand": true
+    },
+    "nativeBridge": "undefined",
+    "resourcesDirectOnlyFans": 0
+  },
+  "cursorAndBrowserProof": {
+    "httpStatus": 200,
+    "ms": 4310,
+    "page": {
+      "count": 10,
+      "hasMore": true,
+      "nextCursorType": "string",
+      "nextCursorIsLastItemId": true,
+      "hasLegacyCursorField": false
+    },
+    "ui": {
+      "domNodes": 2490,
+      "visibleMessageIds": 0,
+      "iframed": 0,
+      "shadowSupported": true,
+      "editor": {
+        "exists": true,
+        "empty": true,
+        "editable": true
+      }
+    },
+    "accounts": {
+      "total": 3,
+      "platforms": [
+        "onlyfans",
+        "fansly"
+      ],
+      "supportedPlatforms": [
+        "onlyfans"
+      ]
+    },
+    "nativeBridge": "undefined",
+    "localResourceCount": 0,
+    "heapBytes": 51461925
+  },
+  "integrationSurface": {
+    "path": "/accounts/:id/chats/:id",
+    "permissionBits": {
+      "useChatSpace": true,
+      "uploadMedia": true,
+      "ofMessages": true,
+      "ofVault": true,
+      "statistics": true,
+      "viewSender": true,
+      "unsend": true,
+      "mobileBlocked": false
+    },
+    "editorAncestors": [
+      {
+        "tag": "DIV",
+        "class": "tiptap ProseMirror om-rich-text-editor__content",
+        "role": null,
+        "attrs": []
+      },
+      {
+        "tag": "DIV",
+        "class": "",
+        "role": null,
+        "attrs": []
+      },
+      {
+        "tag": "DIV",
+        "class": "om-rich-text-editor flex-1",
+        "role": null,
+        "attrs": [
+          "data-v-5407070e"
+        ]
+      },
+      {
+        "tag": "DIV",
+        "class": "flex flex-1 items-center px-4 py-[15px] max-md:py-2.5 transition-colors",
+        "role": null,
+        "attrs": [
+          "data-v-5407070e"
+        ]
+      },
+      {
+        "tag": "DIV",
+        "class": "flex min-h-16 items-stretch max-md:min-h-12",
+        "role": null,
+        "attrs": [
+          "data-v-5407070e"
+        ]
+      },
+      {
+        "tag": "DIV",
+        "class": "composer-frame flex flex-col overflow-hidden rounded-xl border border-om-neutral-100 bg-om-neutral-0 text-om-neutral-900 shadow-om-soft transition-colors focus-within:border-om-neutral-300 dark:border-om-neutral-850 dark:bg-om-neutral-950 dark:text-om-neutral-100 dark:shadow-[0px_1px_4px_-1px_rgba(0,0,0,0.6)] dark:focus-within:border-om-neutral-600",
+        "role": null,
+        "attrs": [
+          "data-v-5407070e"
+        ]
+      }
+    ],
+    "shadowHosts": 0,
+    "iframes": [],
+    "browser": {
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+      "notificationPermission": "default",
+      "serviceWorkerController": true
+    },
+    "mimicSettings": {
+      "isActive": true
+    }
+  },
+  "observedWebsocketCounts": {
+    "account_fan_typing": 72,
+    "account_notifications_summary": 34,
+    "account_new_message": 5,
+    "account_messages_summary": 5,
+    "authenticated": 1
+  },
+  "observedWebsocketSchemas": {
+    "account_fan_typing": {
+      "event": "string",
+      "account": {
+        "account_id": "string",
+        "platform_account_id": "string",
+        "platform_id": "number"
+      },
+      "typing": {
+        "platform_fan_id": "string"
+      }
+    },
+    "account_notifications_summary": {
+      "event": "string",
+      "account": {
+        "account_id": "string",
+        "platform_id": "number",
+        "platform_account_id": "string"
+      },
+      "organisation_id": "string",
+      "notifications_count": "number"
+    },
+    "account_new_message": {
+      "event": "string",
+      "account": {
+        "account_id": "string",
+        "platform_account_id": "string",
+        "platform_id": "number"
+      },
+      "message": {
+        "id": "string",
+        "content": "string",
+        "sentAt": "string",
+        "chatId": "string",
+        "platform_fan_id": "string",
+        "is_from_fan": "boolean",
+        "platformMetadata": {
+          "responseType": "string",
+          "giphyId": "null",
+          "lockedText": "boolean",
+          "isFree": "boolean",
+          "price": "number",
+          "isMediaReady": "boolean",
+          "mediaCount": "number",
+          "media": {
+            "type": "array",
+            "length": 0,
+            "item": "undefined"
+          },
+          "previews": {
+            "type": "array",
+            "length": 0,
+            "item": "undefined"
+          },
+          "isTip": "boolean",
+          "isReportedByMe": "boolean",
+          "isCouplePeopleMedia": "boolean",
+          "queueId": "number",
+          "isMarkdownDisabled": "boolean",
+          "fromUser": {
+            "view": "string",
+            "avatar": "object",
+            "avatarThumbs": "object",
+            "header": "object",
+            "headerSize": "object",
+            "headerThumbs": "object",
+            "id": "number",
+            "name": "string",
+            "username": "string",
+            "canLookStory": "boolean",
+            "canCommentStory": "boolean",
+            "hasNotViewedStory": "boolean",
+            "isVerified": "boolean",
+            "canPayInternal": "boolean",
+            "hasScheduledStream": "boolean",
+            "hasStream": "boolean",
+            "hasStories": "boolean",
+            "tipsEnabled": "boolean",
+            "tipsTextEnabled": "boolean",
+            "tipsMin": "number",
+            "tipsMinInternal": "number",
+            "tipsMax": "number",
+            "canEarn": "boolean",
+            "canAddSubscriber": "boolean",
+            "subscribePrice": "number",
+            "displayName": "string",
+            "notice": "string",
+            "isActive": "boolean",
+            "isRestricted": "boolean",
+            "canRestrict": "boolean",
+            "subscribedBy": "boolean",
+            "subscribedByExpire": "object",
+            "subscribedByExpireDate": "object",
+            "subscribedByAutoprolong": "object",
+            "subscribedIsExpiredNow": "object",
+            "currentSubscribePrice": "object",
+            "subscribedOn": "boolean",
+            "subscribedOnExpire": "boolean",
+            "subscribedOnExpiredNow": "boolean",
+            "subscribedOnDuration": "string",
+            "listsStates": "object",
+            "showMediaCount": "boolean",
+            "lastSeen": "string",
+            "canReport": "boolean",
+            "isDeleted": "boolean"
+          },
+          "isFromQueue": "boolean",
+          "isOpened": "boolean",
+          "isNew": "boolean",
+          "changedAt": "string",
+          "cancelSeconds": "number",
+          "isLiked": "boolean",
+          "canPurchase": "boolean",
+          "canPurchaseReason": "string",
+          "canReport": "boolean",
+          "canBePinned": "boolean",
+          "isPinned": "boolean",
+          "isAddedToBookmarks": "boolean",
+          "chatUserId": "number"
+        }
+      }
+    },
+    "account_messages_summary": {
+      "event": "string",
+      "account": {
+        "account_id": "string",
+        "platform_id": "number",
+        "platform_account_id": "string"
+      },
+      "organisation_id": "string",
+      "messages_count": "number",
+      "priority_count": "number",
+      "unread_tips_count": "number"
+    },
+    "authenticated": {
+      "event": "string"
+    }
+  },
+  "sourceAssets": [
+    {
+      "file": "EmojiPicker-C-_sxQ9o.js",
+      "bytes": 159804,
+      "sha256": "5110f526806a364fb472a5c3b3969fc26eea97c3b448f04a4bfa748eb1c55650",
+      "url": "https://chat.onlymonster.ai/assets/EmojiPicker-C-_sxQ9o.js"
+    },
+    {
+      "file": "accounts-gVgPsqTs.js",
+      "bytes": 217081,
+      "sha256": "4d7cf045d1e8416fe5b08f54376ed3b9d13e72825496db59d93a926d13d39e3a",
+      "url": "https://chat.onlymonster.ai/assets/accounts-gVgPsqTs.js"
+    },
+    {
+      "file": "chunk-BEqpzyXh.js",
+      "bytes": 817,
+      "sha256": "2c4bd028f943e20fbbed928c46af1b2b9310c60818d9eea70b5859796f63c300",
+      "url": "https://chat.onlymonster.ai/assets/chunk-BEqpzyXh.js"
+    },
+    {
+      "file": "composables-19O1xYoe.js",
+      "bytes": 2131110,
+      "sha256": "179f25dbb65e133a7b097bee338ff2ef96172874060ebb49f205c89ad07f2649",
+      "url": "https://chat.onlymonster.ai/assets/composables-19O1xYoe.js"
+    },
+    {
+      "file": "composables-B_Bz2Xc6.js",
+      "bytes": 18680,
+      "sha256": "1c7378cdb2d1fbce547ec4b3c696c9b978ef971a16939bde010b3d4f5968cae8",
+      "url": "https://chat.onlymonster.ai/assets/composables-B_Bz2Xc6.js"
+    },
+    {
+      "file": "fanCardSettings-UahtlbOH.js",
+      "bytes": 66374,
+      "sha256": "dec0e4b7f9a34c5bf28686717c44aa1b394dddebc54b7bb0690386d0f2f0d5f8",
+      "url": "https://chat.onlymonster.ai/assets/fanCardSettings-UahtlbOH.js"
+    },
+    {
+      "file": "inbox-BVcu4p6i.js",
+      "bytes": 19090,
+      "sha256": "605f846d781da2af8370210e78da5741f36bea3e1d689846625e0377deb705ed",
+      "url": "https://chat.onlymonster.ai/assets/inbox-BVcu4p6i.js"
+    },
+    {
+      "file": "index-UvX_bFdW.js",
+      "bytes": 57584,
+      "sha256": "ba45b06d98efcd03c6fa5611c409aea56bb01eb99ef230c7db5a574b6ce89b97",
+      "url": "https://chat.onlymonster.ai/assets/index-UvX_bFdW.js"
+    },
+    {
+      "file": "index.es236-HslEYGPw.js",
+      "bytes": 883,
+      "sha256": "eceab7162189ec01a098705752439e24614a695abcd8d4428ab069ed7bb9476f",
+      "url": "https://chat.onlymonster.ai/assets/index.es236-HslEYGPw.js"
+    },
+    {
+      "file": "index.es353-CylD6Pjc.js",
+      "bytes": 976,
+      "sha256": "50576aa908bcfa71be678f5fa3963d25c5850e320a2af7bfa26a6f3cb800e787",
+      "url": "https://chat.onlymonster.ai/assets/index.es353-CylD6Pjc.js"
+    },
+    {
+      "file": "omWindowApi-DwjTAZsN.js",
+      "bytes": 33051,
+      "sha256": "2821468101724f878f04a15f3dbdd753b4ba1e34dfb66f508492371b068d9ce8",
+      "url": "https://chat.onlymonster.ai/assets/omWindowApi-DwjTAZsN.js"
+    },
+    {
+      "file": "onlyfans-3gv7h9YB.js",
+      "bytes": 32647,
+      "sha256": "1f61795078659428cb693cef42923a133b5a337dbe61f1196218a3688ab240c1",
+      "url": "https://chat.onlymonster.ai/assets/onlyfans-3gv7h9YB.js"
+    },
+    {
+      "file": "runtime-dom.esm-bundler-B8T0cb7A.js",
+      "bytes": 120733,
+      "sha256": "5ec515013ef4c16636721a9490bf4ae6acbef6efd9215c496b1cab16624900fc",
+      "url": "https://chat.onlymonster.ai/assets/runtime-dom.esm-bundler-B8T0cb7A.js"
+    },
+    {
+      "file": "vue.runtime.esm-bundler-CUgwNlmm.js",
+      "bytes": 62,
+      "sha256": "2efe601f3e48318d342a253df6785575d61c01dc6b3ee240c81f3c42770c24d5",
+      "url": "https://chat.onlymonster.ai/assets/vue.runtime.esm-bundler-CUgwNlmm.js"
+    },
+    {
+      "file": "AccountsOverviewView-BbPaSRuY.js",
+      "bytes": 25969,
+      "sha256": "d07c712c8a15740500575e60f246146de3790e81ebd003d15a764042919aa5f7",
+      "url": "https://chat.onlymonster.ai/assets/AccountsOverviewView-BbPaSRuY.js"
+    },
+    {
+      "file": "ChatView-DgLPXTcj.js",
+      "bytes": 158964,
+      "sha256": "fb9cf0b5f11a533194c3229b4e375f27060d09b386eaefee4e9fb9e32a8e2992",
+      "url": "https://chat.onlymonster.ai/assets/ChatView-DgLPXTcj.js"
+    },
+    {
+      "file": "MainLayout-CFVPH3-K.js",
+      "bytes": 7334,
+      "sha256": "74d149e864b6505dc6dc59f4b179853896c82a47d8297072fc825e2ddbece99e",
+      "url": "https://chat.onlymonster.ai/assets/MainLayout-CFVPH3-K.js"
+    },
+    {
+      "file": "SignInView-BJcv8HBW.js",
+      "bytes": 580,
+      "sha256": "b6d4cdd4a95f6f7ae01a93776ecd284f022e1ceed45440ee79cbf05e2d3151b4",
+      "url": "https://chat.onlymonster.ai/assets/SignInView-BJcv8HBW.js"
+    },
+    {
+      "file": "canReadImagePixels-Cf6ZCfYf.js",
+      "bytes": 461,
+      "sha256": "963b3b08afc553190772fc46f377eefd891c16416810fb07f6bbc633b3067d08",
+      "url": "https://chat.onlymonster.ai/assets/canReadImagePixels-Cf6ZCfYf.js"
+    },
+    {
+      "file": "dist-WWl93D_k.js",
+      "bytes": 290688,
+      "sha256": "0c82453123e45cef7431a191fd81aec0bf8e26b5b54b00fcdba59a7a0eac3e92",
+      "url": "https://chat.onlymonster.ai/assets/dist-WWl93D_k.js"
+    },
+    {
+      "file": "fansOnlineEntry-C0AVLBRL.js",
+      "bytes": 249876,
+      "sha256": "6277c6b4e2a964a8291956770a94bd00c00535f7a99acaeb30379be9f63948b2",
+      "url": "https://chat.onlymonster.ai/assets/fansOnlineEntry-C0AVLBRL.js"
+    },
+    {
+      "file": "index.es179-CN_DruJg.js",
+      "bytes": 1017,
+      "sha256": "75934c45419a806462844b691c577a899627533ca2c22fb705991b5917d8661a",
+      "url": "https://chat.onlymonster.ai/assets/index.es179-CN_DruJg.js"
+    },
+    {
+      "file": "index.es261-C2XWSn7O.js",
+      "bytes": 10540,
+      "sha256": "a785ceac207e835cc54eecdeee85555cf47296187338b98a76a4caeca76bfc64",
+      "url": "https://chat.onlymonster.ai/assets/index.es261-C2XWSn7O.js"
+    },
+    {
+      "file": "index.es388-B7TpwrCb.js",
+      "bytes": 2074,
+      "sha256": "9ecee153d550a80197bb70447b3abc87db0540c67897bcf5093c5ba1ed1cf5c3",
+      "url": "https://chat.onlymonster.ai/assets/index.es388-B7TpwrCb.js"
+    },
+    {
+      "file": "messages-2XnThXD9.js",
+      "bytes": 448723,
+      "sha256": "fc403ca072fcc7c9403ac97195ea11d2756e18654f75f9e2f5198ee22858199c",
+      "url": "https://chat.onlymonster.ai/assets/messages-2XnThXD9.js"
+    },
+    {
+      "file": "notificationEntry-DgP70ptm.js",
+      "bytes": 511445,
+      "sha256": "deaf61af0219c598b522fd66490598a202e4f900840c9cb717b4cac4e3d8a18a",
+      "url": "https://chat.onlymonster.ai/assets/notificationEntry-DgP70ptm.js"
+    },
+    {
+      "file": "useChatGalleryStore-DeCQ3kf3.js",
+      "bytes": 224,
+      "sha256": "0b1910a70716e67ff44a9b642e2acddbe3143bb19e68d0fbfd6682b8e0304034",
+      "url": "https://chat.onlymonster.ai/assets/useChatGalleryStore-DeCQ3kf3.js"
+    },
+    {
+      "file": "vuedraggable.umd-CH4vZd0S.js",
+      "bytes": 176659,
+      "sha256": "30de93e1cef5ebf86a4ef154dc3fa03d25737e0c782e8c110a3db02f7e813676",
+      "url": "https://chat.onlymonster.ai/assets/vuedraggable.umd-CH4vZd0S.js"
+    },
+    {
+      "file": "vuedraggable.umd-IpIRXKy9.js",
+      "bytes": 70,
+      "sha256": "0e6da27c730f3d87f96e0bd4072a079a42d3d48f3ae0f9c47f8ad2bea86e1ee0",
+      "url": "https://chat.onlymonster.ai/assets/vuedraggable.umd-IpIRXKy9.js"
+    },
+    {
+      "file": "ChatGalleryDialog-CPjzzS5P.js",
+      "bytes": 25764,
+      "sha256": "8f0033438091d1f705d00e0ff7676372f357ea74f86044434b4b43f1d495a1df",
+      "url": "https://chat.onlymonster.ai/assets/ChatGalleryDialog-CPjzzS5P.js"
+    },
+    {
+      "file": "OfCollectionsDialog-CM7h25-0.js",
+      "bytes": 44036,
+      "sha256": "bdb8b062d181d87667f6778f176e08ffd0aae5f291bfd621a8ab1e87103aa638",
+      "url": "https://chat.onlymonster.ai/assets/OfCollectionsDialog-CM7h25-0.js"
+    },
+    {
+      "file": "PhotoEditorAnchoredPanel-Dy2MWLik.js",
+      "bytes": 200766,
+      "sha256": "db9d1a56e0dd617ed9b5118e522359a30c84f778a4081632a980291164259306",
+      "url": "https://chat.onlymonster.ai/assets/PhotoEditorAnchoredPanel-Dy2MWLik.js"
+    },
+    {
+      "file": "PhotoEditorModal-CDplUj_A.js",
+      "bytes": 17059,
+      "sha256": "9a7559756ebd879d8ea1b459014e01b23052ebbeaf79ed6de5d62d17b3691535",
+      "url": "https://chat.onlymonster.ai/assets/PhotoEditorModal-CDplUj_A.js"
+    },
+    {
+      "file": "VideoEditorModal-CDADvpss.js",
+      "bytes": 196547,
+      "sha256": "4ec9c6760a325ee767afeaedc3e6aba5b7545f9c819eb64f98eff5dd848e465c",
+      "url": "https://chat.onlymonster.ai/assets/VideoEditorModal-CDADvpss.js"
+    },
+    {
+      "file": "dist-2JO_tV4G.js",
+      "bytes": 21055,
+      "sha256": "66c539bb6cb4e485fcf1616c3cfd350088c3598d32409c477364d51fe96b9d7b",
+      "url": "https://chat.onlymonster.ai/assets/dist-2JO_tV4G.js"
+    },
+    {
+      "file": "dist-C6npEDX5.js",
+      "bytes": 112,
+      "sha256": "14e144a92a30bbbe593d1b354c38c030adb6de8c73a58744fc9096d9b35985eb",
+      "url": "https://chat.onlymonster.ai/assets/dist-C6npEDX5.js"
+    },
+    {
+      "file": "dist-CTgaf6KW.js",
+      "bytes": 56151,
+      "sha256": "33cf38776281dae02f32ab791c1b1c6b73adb8271536af4b0ceef186d620306f",
+      "url": "https://chat.onlymonster.ai/assets/dist-CTgaf6KW.js"
+    },
+    {
+      "file": "dist-DO-cPcy1.js",
+      "bytes": 12554,
+      "sha256": "430a32b31969a2e6f49f5ac0413c0a9bb7b80324850df6fc414c4442d071528e",
+      "url": "https://chat.onlymonster.ai/assets/dist-DO-cPcy1.js"
+    },
+    {
+      "file": "dist-NBwAadfC.js",
+      "bytes": 3661,
+      "sha256": "7f60a5312146e7804d49e05d49395c4581eeee199a6489e9a1bf6991335596f9",
+      "url": "https://chat.onlymonster.ai/assets/dist-NBwAadfC.js"
+    },
+    {
+      "file": "lib-BVk_xvme.js",
+      "bytes": 186,
+      "sha256": "f779140745ad4471a499f00af25e68705293d15fbac4fc12de3916f180f381d5",
+      "url": "https://chat.onlymonster.ai/assets/lib-BVk_xvme.js"
+    },
+    {
+      "file": "lib-BsqSZ9pa.js",
+      "bytes": 34546,
+      "sha256": "b51ac85adaeb1fa18d89b2707cba4ac7a4d89957c257d3177453bb2008997da9",
+      "url": "https://chat.onlymonster.ai/assets/lib-BsqSZ9pa.js"
+    },
+    {
+      "file": "lib-Cwrwg79l.js",
+      "bytes": 51403,
+      "sha256": "3a64f996c0bb928ba33ee2bf232516eb1cea68febf67cb9d5054b1e427cff694",
+      "url": "https://chat.onlymonster.ai/assets/lib-Cwrwg79l.js"
+    },
+    {
+      "file": "notifications-sw.js",
+      "url": "https://chat.onlymonster.ai/notifications-sw.js",
+      "bytes": 896,
+      "sha256": "bd28841ac52e96910cf6317b29bafbf40d02db5a8d035b0f4b2fccfba9236f7a"
+    }
+  ],
+  "sourceAssetNotes": "42 valid application JavaScript assets total 5,407,356 uncompressed bytes; excludes two SPA HTML fallbacks. notifications-sw.js fetched separately. Not the initial route transfer size.",
+  "publicApi": {
+    "version": "0.52.0",
+    "pathCount": 30,
+    "operationCount": 33,
+    "source": "https://docs.onlymonster.ai/integrations-and-api/openapi",
+    "operations": [
+      {
+        "method": "GET",
+        "path": "/api/v0/accounts"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/accounts/{account_id}"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/platforms/{platform}/accounts/{platform_account_id}/subscriptions"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/accounts/{account_id}/fans"
+      },
+      {
+        "method": "GET",
+        "path": "/proxy/v0/platforms/{platform}/accounts/{platform_account_id}/statements/balances"
+      },
+      {
+        "method": "GET",
+        "path": "/proxy/v0/platforms/{platform}/accounts/{platform_account_id}/statements/payout-requests"
+      },
+      {
+        "method": "POST",
+        "path": "/proxy/v0/platforms/{platform}/accounts/{platform_account_id}/statements/payout-requests"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/accounts/{account_id}/chats/{chat_id}/messages"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v0/accounts/{account_id}/chats/{chat_id}/messages"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/v0/accounts/{account_id}/fans/{fan_id}"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v0/accounts/{account_id}/fans/{fan_id}/subscribe"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/platforms/{platform}/accounts/{platform_account_id}/tracking-links"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/platforms/{platform}/accounts/{platform_account_id}/tracking-link-users"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/platforms/{platform}/accounts/{platform_account_id}/trial-links"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/platforms/{platform}/accounts/{platform_account_id}/trial-link-users"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/platforms/{platform}/accounts/{platform_account_id}/chargebacks"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/platforms/{platform}/accounts/{platform_account_id}/transactions"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/users/metrics"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/members"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/accounts/{account_id}/vault/folders"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/accounts/{account_id}/vault/folders/{folder_id}/medias"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/accounts/{account_id}/vault/media/{media_id}/thumbnail"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/accounts/{account_id}/vault/medias/uploads"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v0/accounts/{account_id}/vault/medias/uploads/start"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v0/accounts/{account_id}/vault/medias/uploads/finish"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v0/accounts/{account_id}/vault/medias/uploads/export"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v0/accounts/{account_id}/vault/medias/uploads/{upload_id}/retry"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v0/accounts/{account_id}/vault/medias/uploads/fans/verify"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/accounts/{account_id}/auto-message-campaigns"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v0/accounts/{account_id}/auto-message-campaigns"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v0/accounts/{account_id}/auto-message-campaigns/{campaign_id}"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/v0/accounts/{account_id}/auto-message-campaigns/{campaign_id}/status"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v0/accounts/{account_id}/auto-message-campaigns/{campaign_id}/unsend"
+      }
+    ]
+  },
+  "localRepositorySnapshots": {
+    "onlyfans-chat": "93e35bb8a3238c2c59b18fb4dfa65bb97c3a7e8d",
+    "hub": "b1097eaa00ac96e40ea8f7870588b84311166065",
+    "fansly-chat": "a534d7249cc557e78d6e309c0b4e960a88a8de77"
+  },
+  "notVerified": [
+    "Cold start/reconnect with OnlyMonster Browser closed",
+    "Successful native text or PPV send and attribution",
+    "Native voice/media upload, DRM playback",
+    "Restricted chatter role, shift gating, revocation behavior",
+    "Windows/Firefox extension installation and runtime",
+    "Long-running reconnect/sleep/tab-discard behavior",
+    "Public API authenticated behavior and rate-limit scope",
+    "Extension performance; no extension implemented"
+  ]
+}

@@ -342,6 +342,23 @@ OnlyFans  ⇄  сервер OnlyMonster  ⇄  REST onlymonster.ai/api/v0/…   �
 4. **Fansly вторым адаптером:** перенос проверенных модулей за HostPort, паритет со старым расширением, переключение чаттеров, вывод старого расширения.
 5. **Вывод десктопа**, когда пилот подтвердит.
 
+## Независимая проверка: Codex
+
+То же задание параллельно выполнял Codex (GPT-6-Astra, max), не видя этого документа. Его отчёт и обезличенные доказательства (только формы данных и хеши бандлов) лежат в [`onlymonster-chatspace/codex/`](onlymonster-chatspace/codex/report.html).
+
+**Совпало:** «да» на все три вопроса. Стек Vue + Clerk + TipTap + WebSocket, iframe и защиты нет. ChatSpace показывает только OnlyFans и Telegram, хотя Fansly-аккаунт API уже знает. Отправку оставляем родной кнопке. С нуля пишем оболочку и адаптеры, переиспользуем SDK хаба, хоткеи и проверенные правила, Fansly подключаем вторым адаптером. Пилот обходится без доработок хаба. OFAPI в хабе остаётся: на нём архив и деньги.
+
+**Что добавил Codex:**
+- Уведомления при закрытой вкладке не гарантированы: service worker ChatSpace (`notifications-sw.js`) обрабатывает только клик по уведомлению, Web Push в исходнике помечен TODO.
+- По документации OnlyMonster аккаунт подключается через OM Browser. Как ChatSpace переживает холодный старт и повторный вход в OnlyFans, пока OM Browser закрыт, никто не проверял.
+- Короткая страница истории не означает её конца: запрос на 60 сообщений вернул 58 при `has_more=true`.
+- Живой контекст ChatSpace для OnlyFans (этап 3 плана) нельзя получить простым снятием ограничения `clientContext`. Ограничение защищает от подделки переписки и трат клиентом. Нужен отдельный контракт о происхождении данных: источник, время получения, покрытие истории, лимиты. Деньги остаются серверными.
+- Вебхуки публичного API OnlyMonster теряют события, если доставка надолго приостановлена из-за таймаутов получателя. Если брать их источником для хаба, нужна сверка через API.
+
+**Чего нет у Codex, но есть здесь:** проверенное вживую прочтение при открытии (§3), мост `__omComposerBridge` и прототип вставки, пункт 2.1(d) правил OnlyMonster, конфликты хоткеев, ограничения Chrome на раздачу расширения. Отправку, PPV, голос и загрузки не испытывал ни один из двух.
+
+В доказательствах Codex `mimicSettings.isActive = true` — это переключатель организации. На аккаунте Mimic выключен (сервер отвечает 400 «Mimic is disabled for account»), противоречия с §5 нет.
+
 ## Приложения
 
 Подробные отчёты (ссылки «файл:строка» на код ChatSpace 0.167.0 и наши репозитории):
@@ -352,5 +369,6 @@ OnlyFans  ⇄  сервер OnlyMonster  ⇄  REST onlymonster.ai/api/v0/…   �
 - [product-features.md](onlymonster-chatspace/product-features.md) — все функции ChatSpace, AI, 80 флагов с расшифровкой, права, сравнение с нами;
 - [fansly-extension.md](onlymonster-chatspace/fansly-extension.md) — инвентаризация Fansly-расширения, техдолг, что переиспользовать, интерфейс HostPort;
 - [desktop-app.md](onlymonster-chatspace/desktop-app.md) — инвентаризация десктопа, источники данных, цена Electron, что уйдёт и что станет хуже.
+- [codex/report.html](onlymonster-chatspace/codex/report.html) и [codex/evidence.json](onlymonster-chatspace/codex/evidence.json) — независимое исследование Codex: карта протоколов, перенос функций, изменения хаба, проверки перед переходом.
 
 Источники OnlyMonster: [ChatSpace](https://docs.onlymonster.ai/onlymonster-browser/chatspace.md), [ChatSpace changelog](https://docs.onlymonster.ai/changelog/chatspace-changelog.md), [AI Suggestions](https://docs.onlymonster.ai/ai-magic-assistant/ai-suggestions.md), [AI Gateway](https://docs.onlymonster.ai/ai-magic-assistant/ai-gateway.md), [Custom Replies](https://docs.onlymonster.ai/ai-magic-assistant/custom-replies.md), [публичный API](https://docs.onlymonster.ai/integrations-and-api/openapi), [вебхуки](https://docs.onlymonster.ai/integrations-and-api/webhook-integration), [Terms & Conditions](https://onlymonster.ai/terms_and_conditions). Правила магазина Chrome: [Mature & Sexually Explicit Material](https://developer.chrome.com/docs/webstore/program-policies/explicit-material); установка вне магазина: [ExtensionInstallForcelist](https://chromeenterprise.google/policies/extension-install-forcelist/).
