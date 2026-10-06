@@ -117,16 +117,29 @@ export declare function subscribeSyncEvents(options: KernelClientOptions, input:
     signal?: AbortSignal;
 }): KernelStreamHandle;
 /**
+ * What a client may advertise on the AI feature stream in the
+ * `x-kernel-ai-capabilities` header. Each token is compatibility negotiation,
+ * not authorization: "this client understands the matching frame or field".
+ * The server ignores tokens it does not know (so a hub that does not serve a
+ * token yet behaves exactly as without it), and the SDK writes the header in
+ * this order.
+ */
+export declare const AI_STREAM_CAPABILITIES: readonly ["debug-input-v1", "context-v1", "split-all-v1"];
+export type AiStreamCapability = (typeof AI_STREAM_CAPABILITIES)[number];
+/**
  * Stream one AI generation through the gateway
  * (`POST /api/v1/ai/gateway/stream`, `event: ai` frames).
  */
 /** Stage 31: stream a kernel-assembled feature generation (Stage 30 route).
- * Same SSE framing as the raw gateway stream — one helper per entry path. */
+ * Same SSE framing as the raw gateway stream — one helper per entry path.
+ * `debugPromptEcho` is kept for existing callers: it equals advertising
+ * `debug-input-v1` in `capabilities`. */
 export declare function streamAiFeature(options: KernelClientOptions, input: {
     feature: string;
     body: zod.input<(typeof routeSchemas)["aiFeatureStream"]["body"]>;
     onFrame: (frame: AiFeatureStreamFrame) => void;
     debugPromptEcho?: boolean;
+    capabilities?: readonly AiStreamCapability[];
     signal?: AbortSignal;
 }): KernelStreamHandle;
 export declare function streamAiGateway(options: KernelClientOptions, input: {

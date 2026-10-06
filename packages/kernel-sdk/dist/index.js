@@ -4,12 +4,32 @@ import { kernelOperations } from "./operations";
 export { KernelApiError, SDK_EXCLUDED_OPERATIONS, createKernelClient, } from "./contracts/index";
 // Runtime surface for out-of-workspace consumers (Stage 24: client repos
 // cannot reach @agency_hub_core/contracts the way the dashboard does).
-export { decodeDomainEventCursor, fetchVoiceNoteAudio, 
+export { 
+// The tokens streamAiFeature may advertise (`capabilities` option).
+AI_STREAM_CAPABILITIES, decodeDomainEventCursor, fetchVoiceNoteAudio, 
 // Shared client-side predicate (coach-chat spec §8): apply to a terminal
 // stop reason before committing a coach answer / attaching a recap.
 isOutputExhausted, ofapiRead, routeSchemas, streamAiFeature, streamAiGateway, subscribeDomainEvents, subscribeSyncEvents, } from "./contracts/index";
 export { kernelOperations } from "./operations";
 export { KERNEL_CONTRACT_HASH, KERNEL_SDK_VERSION } from "./meta";
+// The chat extension's known values (routes-client.ts). On the wire these
+// vocabularies are open strings; the client narrows to these constants and
+// reads an unknown member as off / unknown.
+export { CLIENT_COVERAGE_LEVELS, CLIENT_FEATURE_FLAG_NAMES, CLIENT_FEATURE_UNAVAILABLE_REASONS, CLIENT_GENERATION_NOT_ELIGIBLE_REASONS, CLIENT_HUB_CAPABILITY_NAMES, CLIENT_KNOWN_PLATFORMS, CLIENT_KNOWN_ROLES, CLIENT_NUMERIC_ID_PATTERN, CLIENT_RECAP_TRANSCRIPT_COVERAGES, } from "./contracts/index";
+// The AI context frame's known values (routes.ts, `context_v1`): its open
+// tokens narrow to these, and `knownFanMessageIds` takes at most the MAX.
+// AI_LIVE_TEXT_*: the caps of the body's `liveTextContext` (fresh text).
+export { AI_CONTEXT_LIVE_STATUSES, AI_CONTEXT_SOURCES, AI_FAN_LANGUAGE_EVIDENCE, AI_KNOWN_FAN_MESSAGE_IDS_MAX, AI_KNOWN_FAN_MESSAGE_STATES, AI_LIVE_TEXT_MAX_CHARS, AI_LIVE_TEXT_MAX_ITEMS, } from "./contracts/index";
+// The chat extension's health report (routes-client.ts). No route carries it:
+// it rides one ingest batch of its own once the bootstrap lists
+// client-health-perf-v1, and its histograms use these fixed bucket bounds.
+export { CLIENT_HEALTH_CODE_PATTERN, CLIENT_HEALTH_INGEST_KIND, CLIENT_HEALTH_PERF_METRICS, clientHealthPerfHistogramSchema, clientHealthReportV1Schema, } from "./contracts/index";
+// The caller's own AI spend (routes-client.ts, clientAiUsageDaily): its
+// limits and the known values of its open tokens and refusal reasons.
+export { CLIENT_AI_USAGE_COVERAGE, CLIENT_AI_USAGE_COVERAGE_REASONS, CLIENT_AI_USAGE_MAX_AGE_DAYS, CLIENT_AI_USAGE_MAX_DAYS, CLIENT_AI_USAGE_REFUSAL_REASONS, } from "./contracts/index";
+// The narrow token's profiles (client-token-scopes.ts): which operations a
+// token issued with `client` reaches; the hub refuses the rest with 403.
+export { CLIENT_TOKEN_PROFILE_NAMES, CLIENT_TOKEN_PROFILES, } from "./contracts/index";
 export function createClient(options) {
     return createKernelClient(kernelOperations, options);
 }

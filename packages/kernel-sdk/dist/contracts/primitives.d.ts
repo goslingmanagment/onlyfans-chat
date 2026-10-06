@@ -62,6 +62,7 @@ export declare const errorResponseSchema: z.ZodObject<{
     message: z.ZodString;
     statusCode: z.ZodNumber;
     reason: z.ZodOptional<z.ZodString>;
+    statusUrl: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export declare const paginationQuerySchema: z.ZodObject<{
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;

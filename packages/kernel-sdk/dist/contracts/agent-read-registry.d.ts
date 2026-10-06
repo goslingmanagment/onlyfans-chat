@@ -170,6 +170,9 @@ export declare const AGENT_CLAIM_CLASSES: {
             readonly ofapiFinancialMetric: {
                 readonly required: readonly ["ofapi_read_snapshots"];
             };
+            readonly ofapiPayoutRequest: {
+                readonly required: readonly ["ofapi_read_snapshots"];
+            };
             readonly payoutMethod: {
                 readonly required: readonly ["page_payout_methods"];
             };

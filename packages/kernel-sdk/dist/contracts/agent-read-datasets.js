@@ -73,6 +73,16 @@ export const AGENT_DATASETS = {
         fields: { platform: "string", source: "string", operation: "string", metricPath: "string", unit: "string", rawValue: "string", valueMills: "mills", windowFrom: "timestamp", windowTo: "timestamp", granularity: "string", observedAt: "timestamp", coverageState: "string", coverageReason: "string", observationRef: "string" },
         defaultSort: { field: "observedAt", dir: "desc", nullsLast: false }, stableKey: ["metricKey"],
     },
+    // OnlyFans payout requests as OnlyFans lists them (`payouts/payout-requests`),
+    // one row per invoice, latest observation wins. OnlyFans-only and separate
+    // from `payouts`: Fansly's status codes, confidence and payout methods have no
+    // OnlyFans counterpart, so sharing that dataset would advertise fields that
+    // answer null forever.
+    ofapi_payout_requests: {
+        moneyBearing: true, verbatimText: false, disclosesPurchase: false,
+        fields: { platform: "string", payoutRef: "string", amountMills: "mills", currency: "string", state: "string", rejectReason: "string", requestedAt: "timestamp", lastObservedAt: "timestamp", observationRef: "string" },
+        defaultSort: { field: "requestedAt", dir: "desc", nullsLast: true }, stableKey: ["payoutRequestKey"],
+    },
     fan_memberships: {
         // MONEY-BEARING because of `lifetimeSpendMills`. The appendix's prose names
         // only subscriptions/transactions/fan_spend_daily as money-bearing while its

@@ -100,10 +100,20 @@ for (const [id, path] of [
 read("engagement_top", "engagement/messages/top-message", "content_history", "object", "none", camelDates, { granularity: "ranking" });
 read("message_buyers", "engagement/messages/:id/buyers", "content_history", "list", "offset", { ...page, skip_users_dups: "enum:0|1", skip_users: text });
 read("payout_balances", "payouts/balances", "balances", "object", "none", {}, { defaultCollect: true, granularity: "snapshot" });
-read("payout_requests", "payouts/payout-requests", "balances", "list", "offset", page);
+// Scheduled with balances: one newest page per run (offset 0, the planner's
+// limit 50). OnlyFans keeps the full history, so older pages are a bounded
+// one-off job (`payout_requests?offset=50`), never a scheduled walk.
+read("payout_requests", "payouts/payout-requests", "balances", "list", "offset", page, { defaultCollect: true });
 read("payout_earnings", "payouts/earning-statistics", "balances", "list", "none", camelDates, { granularity: "window" });
 read("statistics_overview", "statistics/overview", "balances", "object", "none", { ...dates, type: "enum:fans|visitors|posts|messages" }, { defaultCollect: true, granularity: "window" });
 read("subscriber_statistics", "subscribers/statistics", "balances", "object", "none", { ...dates, type: "enum:total|renew|new" }, { defaultCollect: true, granularity: "window" });
+// The page's automatic welcome template: one 1-credit snapshot per scheduled
+// run (the chat extension's "New" panel reads the newest). Collection-only, so
+// the desktop's gateway read of this path keeps its capture-first
+// `ofapi_gateway_welcome_message` operation and admission. Not the owner action
+// `welcome_message_read`: its cluster-wide action lock would turn a background
+// read into a 409 for the owner's own action.
+read("welcome_message", "settings/welcome-message", "account_settings", "object", "none", {}, { defaultCollect: true, granularity: "snapshot", collectionOnly: true });
 const smartPage = { limit: "int:1:1000", offset: "int:0:1000000" };
 const smartDates = { date_start: "date", date_end: "date" };
 function smartRead(id, path, shape, pagination, query = {}, options = {}) {

@@ -13,6 +13,7 @@ export declare const ofapiCollectionCategorySchema: z.ZodEnum<{
     profile_notifications: "profile_notifications";
     content_history: "content_history";
     media_previews: "media_previews";
+    account_settings: "account_settings";
 }>;
 export declare const ofapiCollectionSettingsSchema: z.ZodObject<{
     pageId: z.ZodNullable<z.ZodNumber>;
@@ -30,6 +31,7 @@ export declare const ofapiCollectionSettingsSchema: z.ZodObject<{
         profile_notifications: "profile_notifications";
         content_history: "content_history";
         media_previews: "media_previews";
+        account_settings: "account_settings";
     }>;
     mode: z.ZodEnum<{
         off: "off";
@@ -59,6 +61,7 @@ export declare const ofapiCollectionChangeSchema: z.ZodObject<{
             profile_notifications: "profile_notifications";
             content_history: "content_history";
             media_previews: "media_previews";
+            account_settings: "account_settings";
         }>;
         mode: z.ZodEnum<{
             off: "off";
@@ -88,6 +91,7 @@ export declare const ofapiCollectionJobSchema: z.ZodObject<{
         profile_notifications: "profile_notifications";
         content_history: "content_history";
         media_previews: "media_previews";
+        account_settings: "account_settings";
     }>;
     expectedRevision: z.ZodNumber;
     maxCredits: z.ZodNumber;
@@ -115,6 +119,7 @@ export declare const ofapiCollectionSnapshotSchema: z.ZodObject<{
             profile_notifications: "profile_notifications";
             content_history: "content_history";
             media_previews: "media_previews";
+            account_settings: "account_settings";
         }>;
         label: z.ZodString;
         modes: z.ZodArray<z.ZodEnum<{
@@ -154,6 +159,7 @@ export declare const ofapiCollectionSnapshotSchema: z.ZodObject<{
             profile_notifications: "profile_notifications";
             content_history: "content_history";
             media_previews: "media_previews";
+            account_settings: "account_settings";
         }>;
         mode: z.ZodEnum<{
             off: "off";
@@ -202,6 +208,7 @@ export declare const ofapiCollectionSnapshotSchema: z.ZodObject<{
             profile_notifications: "profile_notifications";
             content_history: "content_history";
             media_previews: "media_previews";
+            account_settings: "account_settings";
         }>;
         state: z.ZodString;
         maxCredits: z.ZodNumber;
@@ -240,6 +247,7 @@ export declare const ofapiCollectionPreviewSchema: z.ZodObject<{
             profile_notifications: "profile_notifications";
             content_history: "content_history";
             media_previews: "media_previews";
+            account_settings: "account_settings";
         }>;
         mode: z.ZodEnum<{
             off: "off";
@@ -276,24 +284,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 revision: z.ZodNumber;
@@ -313,6 +325,7 @@ export declare const ofapiCollectionRouteSchemas: {
                         profile_notifications: "profile_notifications";
                         content_history: "content_history";
                         media_previews: "media_previews";
+                        account_settings: "account_settings";
                     }>;
                     label: z.ZodString;
                     modes: z.ZodArray<z.ZodEnum<{
@@ -352,6 +365,7 @@ export declare const ofapiCollectionRouteSchemas: {
                         profile_notifications: "profile_notifications";
                         content_history: "content_history";
                         media_previews: "media_previews";
+                        account_settings: "account_settings";
                     }>;
                     mode: z.ZodEnum<{
                         off: "off";
@@ -400,6 +414,7 @@ export declare const ofapiCollectionRouteSchemas: {
                         profile_notifications: "profile_notifications";
                         content_history: "content_history";
                         media_previews: "media_previews";
+                        account_settings: "account_settings";
                     }>;
                     state: z.ZodString;
                     maxCredits: z.ZodNumber;
@@ -446,6 +461,7 @@ export declare const ofapiCollectionRouteSchemas: {
                     profile_notifications: "profile_notifications";
                     content_history: "content_history";
                     media_previews: "media_previews";
+                    account_settings: "account_settings";
                 }>;
                 mode: z.ZodEnum<{
                     off: "off";
@@ -465,24 +481,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 revision: z.ZodNumber;
@@ -502,6 +522,7 @@ export declare const ofapiCollectionRouteSchemas: {
                         profile_notifications: "profile_notifications";
                         content_history: "content_history";
                         media_previews: "media_previews";
+                        account_settings: "account_settings";
                     }>;
                     mode: z.ZodEnum<{
                         off: "off";
@@ -548,6 +569,7 @@ export declare const ofapiCollectionRouteSchemas: {
                     profile_notifications: "profile_notifications";
                     content_history: "content_history";
                     media_previews: "media_previews";
+                    account_settings: "account_settings";
                 }>;
                 mode: z.ZodEnum<{
                     off: "off";
@@ -567,24 +589,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 revision: z.ZodNumber;
@@ -614,6 +640,7 @@ export declare const ofapiCollectionRouteSchemas: {
                 profile_notifications: "profile_notifications";
                 content_history: "content_history";
                 media_previews: "media_previews";
+                account_settings: "account_settings";
             }>;
             expectedRevision: z.ZodNumber;
             maxCredits: z.ZodNumber;
@@ -629,24 +656,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -672,24 +703,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -719,24 +754,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;

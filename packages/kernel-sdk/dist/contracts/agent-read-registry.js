@@ -94,6 +94,9 @@ export const AGENT_CLAIM_CLASSES = {
             revenueMixDay: { required: ["revenue_mix_daily"] },
             payoutRequest: { required: ["page_payout_requests"] },
             ofapiFinancialMetric: { required: ["ofapi_read_snapshots"] },
+            // OnlyFans payout requests live in the same snapshot store; their own
+            // field so a payout conclusion names what it rests on.
+            ofapiPayoutRequest: { required: ["ofapi_read_snapshots"] },
             payoutMethod: { required: ["page_payout_methods"] },
         },
     },
