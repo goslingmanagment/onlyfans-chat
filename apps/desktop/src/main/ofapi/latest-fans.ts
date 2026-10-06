@@ -2,6 +2,12 @@ import { z } from "zod";
 import { OfApiError } from "./errors";
 import { ofapiUserSchema } from "./schemas";
 
+// OFAPI emits pagination links on both hosts; requests still go through Hub.
+const providerOrigins = new Set([
+  "https://app.onlyfansapi.com",
+  "https://api.onlyfansapi.com",
+]);
+
 /** Only locally authored diagnostics, never provider body text or URLs. */
 export class LatestFansPageError extends OfApiError {
   constructor(readonly diagnostic: string) {
@@ -70,7 +76,7 @@ export function parseLatestFansPage(
       return fail("Invalid latest fans continuation URL");
     }
     if (
-      next.origin !== "https://app.onlyfansapi.com" ||
+      !providerOrigins.has(next.origin) ||
       next.pathname !== `/api${path}` ||
       next.username ||
       next.password ||

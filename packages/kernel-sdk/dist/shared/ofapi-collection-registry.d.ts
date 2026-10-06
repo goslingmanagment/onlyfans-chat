@@ -1,5 +1,5 @@
 /** Collection capability is distinct from permission to start collecting. */
-export declare const OFAPI_COLLECTION_CATEGORIES: readonly ["core_messages", "core_payments", "core_audience", "posts_comments", "visitors", "tracking_links", "smart_links", "vault_catalog", "vault_files", "balances", "profile_notifications", "content_history", "media_previews"];
+export declare const OFAPI_COLLECTION_CATEGORIES: readonly ["core_messages", "core_payments", "core_audience", "posts_comments", "visitors", "tracking_links", "smart_links", "vault_catalog", "vault_files", "balances", "profile_notifications", "content_history", "media_previews", "account_settings"];
 export type OfapiCollectionCategory = typeof OFAPI_COLLECTION_CATEGORIES[number];
 /** Closed periodic GET executors; uploads, exports and baseline sync use other lifecycles. */
 export declare const OFAPI_SCHEDULED_READ_COLLECTION_CATEGORIES: readonly OfapiCollectionCategory[];
@@ -39,7 +39,7 @@ export declare function ofapiCollectionRefusalDisposition(reason: string): Ofapi
 /** Existing callers may use their old config only until this category receives a policy. */
 export declare const OFAPI_COLLECTION_LEGACY_OPERATIONS: readonly ["ofapi_chats", "ofapi_chat_messages", "ofapi_transactions", "ofapi_chargebacks", "ofapi_fans_active", "ofapi_gateway_fans_all", "ofapi_gateway_fans_active", "ofapi_tracking_links", "ofapi_trial_links", "ofapi_trial_link_subscribers", "ofapi_capture_chat_messages", "ofapi_capture_posts", "ofapi_export_quote_create", "ofapi_export_quote_status", "ofapi_export_start", "ofapi_gateway_chats", "ofapi_gateway_chat_messages", "ofapi_gateway_chat_search", "ofapi_gateway_chat_message", "ofapi_gateway_chat_media", "ofapi_gateway_users_list", "ofapi_gateway_user", "ofapi_gateway_transactions", "ofapi_gateway_user_lists", "ofapi_gateway_user_list_users", "ofapi_gateway_vault_media", "ofapi_gateway_vault_lists", "ofapi_gateway_vault_media_item"];
 export declare const OFAPI_COLLECTION_REGISTRY: {
-    id: "core_messages" | "core_payments" | "core_audience" | "posts_comments" | "visitors" | "tracking_links" | "smart_links" | "vault_catalog" | "vault_files" | "balances" | "profile_notifications" | "content_history" | "media_previews";
+    id: "core_messages" | "core_payments" | "core_audience" | "posts_comments" | "visitors" | "tracking_links" | "smart_links" | "vault_catalog" | "vault_files" | "balances" | "profile_notifications" | "content_history" | "media_previews" | "account_settings";
     label: string;
     modes: readonly ["off"] | readonly ["off", "on_demand"] | readonly ["off", "on_demand", "scheduled"];
     baseline: boolean;

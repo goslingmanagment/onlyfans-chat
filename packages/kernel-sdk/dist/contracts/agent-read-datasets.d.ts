@@ -129,6 +129,28 @@ export declare const AGENT_DATASETS: {
         };
         readonly stableKey: readonly ["metricKey"];
     };
+    readonly ofapi_payout_requests: {
+        readonly moneyBearing: true;
+        readonly verbatimText: false;
+        readonly disclosesPurchase: false;
+        readonly fields: {
+            readonly platform: "string";
+            readonly payoutRef: "string";
+            readonly amountMills: "mills";
+            readonly currency: "string";
+            readonly state: "string";
+            readonly rejectReason: "string";
+            readonly requestedAt: "timestamp";
+            readonly lastObservedAt: "timestamp";
+            readonly observationRef: "string";
+        };
+        readonly defaultSort: {
+            readonly field: "requestedAt";
+            readonly dir: "desc";
+            readonly nullsLast: true;
+        };
+        readonly stableKey: readonly ["payoutRequestKey"];
+    };
     readonly fan_memberships: {
         readonly moneyBearing: true;
         readonly verbatimText: false;

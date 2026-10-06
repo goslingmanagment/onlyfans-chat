@@ -6,6 +6,12 @@ export * from "./routes";
 export * from "./routes-agent";
 // Slice B: owner administration of the plane's keys (issue / list / revoke).
 export * from "./routes-agent-keys";
+// Fansly Sync Engine owner routes (history requests), spread by routes.ts.
+export * from "./routes-sync";
+// The chat extension's routes (client bootstrap…), spread by routes.ts.
+export * from "./routes-client";
+// Narrow device-token profiles (the chat extension's route allowlist, H-3).
+export * from "./client-token-scopes";
 export * from "./authorization-policy";
 export * from "./domain-event-cursor";
 export * from "./sdk-runtime";

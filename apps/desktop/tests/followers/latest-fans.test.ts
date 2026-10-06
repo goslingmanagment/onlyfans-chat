@@ -32,28 +32,80 @@ function fixture(body: unknown) {
 }
 
 describe("date-bounded follower roster", () => {
-  it("reads users through Hub with the fixed dates/type and only extracts the provider offset", async () => {
-    const { client, requests } = fixture(
-      page(
-        `${providerPath}?offset=20&limit=20&type=new&start_date=2026-09-10&end_date=2026-09-16`,
-      ),
+  it.each([
+    providerPath,
+    "https://api.onlyfansapi.com/api/acct_fixture/fans/latest",
+  ])(
+    "reads users through Hub and only extracts the provider offset from %s",
+    async (continuationPath) => {
+      const { client, requests } = fixture(
+        page(
+          `${continuationPath}?offset=20&limit=20&type=new&start_date=2026-09-10&end_date=2026-09-16`,
+        ),
+      );
+      const result = await client.listFansLatest(params);
+      expect(result).toEqual({
+        fans: [{ id: 1 }],
+        hasMore: true,
+        nextOffset: 20,
+      });
+      const url = new URL(requests[0]!.url);
+      expect(url.origin + url.pathname).toBe(
+        "https://hub.test/api/v1/ofapi/read/acct_fixture/fans/latest",
+      );
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        start_date: params.startDate,
+        end_date: params.endDate,
+        type: "new",
+        limit: "20",
+        offset: "0",
+      });
+      expect(requests).toHaveLength(1);
+    },
+  );
+  it("continues a short page from the api host through Hub until explicit exhaustion", async () => {
+    const users = Array.from({ length: 18 }, (_, index) => ({ id: index + 1 }));
+    const { fetchImpl, requests } = stubFetch([
+      () =>
+        jsonResponse(
+          page(
+            "https://api.onlyfansapi.com/api/acct_fixture/fans/latest?offset=20&limit=20&type=new&start_date=2026-09-10&end_date=2026-09-16",
+            { users },
+          ),
+        ),
+      () => jsonResponse(page(null, { users: [{ id: 21 }] })),
+    ]);
+    const client = createOfApiTransportClient(
+      createOfApiClient({
+        apiKey: "fixture",
+        baseUrl: "https://hub.test/api/v1/ofapi/read",
+        fetchImpl,
+        sleep: instantSleep,
+      }),
     );
-    const result = await client.listFansLatest(params);
-    expect(result).toEqual({
-      fans: [{ id: 1 }],
-      hasMore: true,
-      nextOffset: 20,
+    const first = await client.listFansLatest(params);
+    expect(first).toEqual({ fans: users, hasMore: true, nextOffset: 20 });
+    const second = await client.listFansLatest({
+      ...params,
+      offset: first.nextOffset!,
     });
-    const url = new URL(requests[0]!.url);
-    expect(url.origin + url.pathname).toBe(
+    expect(second).toEqual({
+      fans: [{ id: 21 }],
+      hasMore: false,
+      nextOffset: null,
+    });
+    expect(
+      requests.map(({ url }) => new URL(url).origin + new URL(url).pathname),
+    ).toEqual([
       "https://hub.test/api/v1/ofapi/read/acct_fixture/fans/latest",
-    );
-    expect(Object.fromEntries(url.searchParams)).toEqual({
+      "https://hub.test/api/v1/ofapi/read/acct_fixture/fans/latest",
+    ]);
+    expect(Object.fromEntries(new URL(requests[1]!.url).searchParams)).toEqual({
       start_date: params.startDate,
       end_date: params.endDate,
       type: "new",
       limit: "20",
-      offset: "0",
+      offset: "20",
     });
   });
   it("accepts an empty intermediate page with a safe advancing cursor", async () => {
@@ -86,6 +138,16 @@ describe("date-bounded follower roster", () => {
     "https://secret@app.onlyfansapi.com/api/acct_fixture/fans/latest?offset=20",
     "https://app.onlyfansapi.com/api/acct_other/fans/latest?offset=20",
     "https://app.onlyfansapi.com/api/acct_fixture/fans/all?offset=20",
+    "https://api.onlyfansapi.com.evil.test/api/acct_fixture/fans/latest?offset=20",
+    "https://api.onlyfansapi.com:444/api/acct_fixture/fans/latest?offset=20",
+    "http://api.onlyfansapi.com/api/acct_fixture/fans/latest?offset=20",
+    "https://secret@api.onlyfansapi.com/api/acct_fixture/fans/latest?offset=20",
+    "https://api.onlyfansapi.com/api/acct_other/fans/latest?offset=20",
+    "https://api.onlyfansapi.com/api/acct_fixture/fans/all?offset=20",
+    "https://api.onlyfansapi.com/api/acct_fixture/fans/latest?offset=20#x",
+    "https://api.onlyfansapi.com/api/acct_fixture/fans/latest?offset=0",
+    "https://api.onlyfansapi.com/api/acct_fixture/fans/latest?offset=20&offset=40",
+    "https://api.onlyfansapi.com/api/acct_fixture/fans/latest?offset=20&type=total",
   ])("refuses unsafe or selection-changing continuation %s", async (next) => {
     const { client, requests } = fixture(page(next));
     await expect(client.listFansLatest(params)).rejects.toMatchObject({

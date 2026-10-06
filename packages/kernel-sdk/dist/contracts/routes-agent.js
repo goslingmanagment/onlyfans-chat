@@ -1,5 +1,6 @@
 /**
- * Agent Read Plane — the wire contracts of operations #1..#10.
+ * Agent Read Plane — the wire contracts of operations #1..#13 and the Fansly
+ * Sync Engine's history requests.
  *
  * WHY A SEPARATE MODULE: `routes.ts` is 178 operations of dashboard/client
  * surface; the plane is one coherent contract with its own envelope law, its own
@@ -555,13 +556,45 @@ export const agentPredicateCatalogSchema = z.object({
 // ---------------------------------------------------------------------------
 export const agentTransactionTypeEnum = transactionTypeEnum;
 export const agentTransactionStateEnum = transactionStateEnum;
-/** DERIVED from `page_subscriptions.canonical_status`, never the raw column. */
+/** DERIVED from `page_subscriptions.canonical_status` and `is_current`, never
+ *  the raw column: a retired row whose last status was active is `expired`. */
 export const agentSubscriptionStateEnum = z.enum(["active", "expired", "unknown"]);
 export const agentCoverageStatusEnum = z.enum(["pending_backfill", "partial_window", "complete"]);
 export const agentSenderRoleEnum = z.enum(["fan", "model", "system", "unknown"]);
 export const agentMessageDirectionEnum = z.enum(["inbound", "outbound", "unknown"]);
 export const agentMessageStateEnum = z.enum(["materialized", "deleted", "content_pending"]);
 export const agentMembershipStateEnum = z.enum(["active", "inactive", "unknown"]);
+/**
+ * A chat's proven history (Fansly Sync Engine, design §2.3), as every reader
+ * shows it: `none` — nothing stored; `unverified` — messages stored by the
+ * legacy engine and not proven; `partial` — a contiguous chain down from a
+ * confirmed head; `complete` — that chain reached the first message, proven by
+ * an EMPTY page. Unlike `messageCoverageStatusRaw`, `complete` here IS complete.
+ */
+export const agentThreadHistoryStateEnum = z.enum(["none", "unverified", "partial", "complete"]);
+/** The only proof of completeness (owner decision №3). */
+export const agentThreadHistoryProofEnum = z.enum(["empty_page"]);
+/** One chat's coverage by its proven chain: the same fields on `hub threads`
+ *  items (flat) and on the transcript (`threadCoverage`). */
+export const agentThreadCoverageSchema = z.object({
+    historyState: agentThreadHistoryStateEnum,
+    historyProof: agentThreadHistoryProofEnum.nullable(),
+    /** When the oldest message of the contiguous chain was written. */
+    contiguousOldestAt: agentIsoTimestamp.nullable(),
+    /** Messages in the contiguous chain (from the confirmed head down). */
+    contiguousCount: z.number().int().nonnegative(),
+    /** When the chain's head was last confirmed against Fansly. */
+    headConfirmedAt: agentIsoTimestamp.nullable(),
+}).strict();
+/**
+ * A thread's own capture floor. `proven_chain`: the store holds every message
+ * of this chat from `at` up to its confirmed head, without a hole — a proof,
+ * not the lower bound `oldest_stored_row` is. Plane floors never take this kind.
+ */
+export const agentThreadCaptureFloorSchema = z.object({
+    at: agentIsoTimestamp.nullable(),
+    kind: z.enum(["oldest_stored_row", "unknown", "proven_chain"]),
+}).strict();
 /**
  * `exportPolicy` on the OFAPI cold-archive status response (spec 11 staging).
  *
@@ -1100,12 +1133,16 @@ function agentThreadSummarySchema() {
         lastMessageSyncAt: agentIsoTimestamp.nullable(),
         breakerOpen: z.boolean(),
         quarantineUntil: agentIsoTimestamp.nullable(),
-        captureFloor: agentCaptureFloorSchema,
+        /** `proven_chain` (from `contiguousOldestAt`) once the chat has a proven
+         *  chain; `unknown` otherwise. */
+        captureFloor: agentThreadCaptureFloorSchema,
+        ...agentThreadCoverageSchema.shape,
         /** Computed with the SAME predicate #6 will apply, so an overview never
          *  promises rows the detail call will not return. */
         transcriptWillReturnRows: z.boolean(),
         hydrationRemedy: agentRemedySchema,
-        /** 200 / 1000 on Fansly; null on OnlyFans. */
+        /** LEGACY: the legacy executor's depth cap — 200 / 1000 on Fansly; null on
+         *  OnlyFans. A page on the Sync Engine has no cap; read `historyState`. */
         retentionLimit: z.number().int().positive().nullable(),
         fieldStates: z.partialRecord(agentClaimFieldEnum, agentFieldStateSchema),
         provenance: agentProvenanceSchema,
@@ -1210,6 +1247,9 @@ export const agentThreadMessagesResponseSchema = z.object({
         fanPlatformUserId: z.string().nullable(),
     }).strict(),
     window: z.object({ from: agentIsoTimestamp, to: agentIsoTimestamp }).strict(),
+    /** The chat's proven coverage (`page_dm_threads`); null when this page holds
+     *  no thread under this conversation ref. */
+    threadCoverage: agentThreadCoverageSchema.nullable(),
     items: z.array(agentMessageSchema).max(200),
     predicates: z.array(agentPredicateSchema),
     delivery: agentDeliverySchema,
@@ -1271,6 +1311,10 @@ export const agentSearchLocatorSchema = z.object({
     /** Only when `includeSnippet` is true. A FLAT window of +/-120 characters
      *  around the first match, no `ts_headline`. Still requires `read:messages`. */
     snippet: z.string().max(300).nullable(),
+    /** Set when the platform deleted the message. A Fansly deletion keeps the
+     *  text, so a deleted message still matches and still has a snippet; this
+     *  marks the hit, like `state: "deleted"` on the transcript. */
+    deletedAt: agentIsoTimestamp.nullable(),
     fieldStates: z.partialRecord(agentClaimFieldEnum, agentFieldStateSchema),
     provenance: agentProvenanceSchema,
 }).strict();
@@ -1591,9 +1635,12 @@ export const agentHydrationLaneEnum = z.enum([
  * The eight wire states. `requested` is the only entry; `completed`,
  * `partially_completed`, `rejected`, `expired` and `failed` are terminal.
  *
- * There is deliberately NO transition back from `dispatching`: one approval
- * buys exactly one attempt (outbox discipline), and a crashed run ends `failed`
- * so a re-run needs a fresh owner decision rather than a silent retry.
+ * One approval buys exactly one VENDOR attempt (outbox discipline): a crashed
+ * run, or one that may have reached the vendor, ends `failed`, so a re-run
+ * needs a fresh owner decision rather than a silent retry. The one way back
+ * from `dispatching` is to `approved`, for a run refused at the page's door
+ * before any vendor request (page busy, page lease held) — capped, and
+ * counted in `progress.dispatchCount`.
  */
 export const agentHydrationStateEnum = z.enum([
     "requested",
@@ -1816,6 +1863,481 @@ export const agentHydrationRequestListResponseSchema = z.object({
     conclusion: agentConclusionSchema,
 }).strict().superRefine((value, ctx) => addAgentIssues(agentEvidenceIssues(value, value.items.length), ctx));
 // ---------------------------------------------------------------------------
+// History requests — the Fansly Sync Engine's per-chat history reads (plan §4,
+// design §7.4). An agent (or the owner, through `routes-sync.ts`) names a page,
+// 1..1000 fans and a depth; the engine reads each chat from its newest message
+// back until the depth is met, proving `all` only by an EMPTY page.
+//
+// Open per page: a page answers 409 `history_requests_unavailable_on_page`
+// until it is switched to the engine (every page in step 2). The hydration
+// family above stays the route for every other page.
+//
+// The vocabularies below mirror closed lists of the server
+// (`packages/db/src/repositories/sync/history-requests.ts`,
+// `apps/runtime/src/sync/engine/status.ts`); this module cannot import them,
+// so `tests/sync-history-contracts.test.ts` pins each one equal.
+// ---------------------------------------------------------------------------
+export const agentHistoryRequestStateEnum = z.enum(["open", "done", "cancelled"]);
+/** `refused`: the fan names no chat this engine reads (see `refusal`);
+ *  `blocked`: Fansly keeps refusing the chat, probed again at `probeAt`. */
+export const agentHistoryItemStateEnum = z.enum([
+    "refused",
+    "queued",
+    "loading",
+    "ready",
+    "blocked",
+    "cancelled",
+]);
+export const agentHistoryRefusalEnum = z.enum(["not_found", "excluded", "page_erased", "duplicate"]);
+/** Who filed a request. Shown as a KIND only (design D10): never a key or a user. */
+export const agentHistoryRequesterKindEnum = z.enum([
+    "agent_key",
+    "owner_session",
+    "owner_cli",
+    "legacy_hydration_wrapper",
+    "switch_migration",
+]);
+export const agentHistorySatisfiedByEnum = z.enum([
+    "empty_page",
+    "latest_n",
+    "boundary",
+    "already_satisfied",
+]);
+/** "Почему ждёт" (plan §10): the engine's one closed dictionary. A reason is a
+ *  BODY field, never a blocker — progress is not an epistemic limitation.
+ *  `route_budget` (the route's own pace admits the next request later) and
+ *  `route_hold` (a 429 holds the route) name what `pacer` covered for a route. */
+export const agentSyncWaitingReasonEnum = z.enum([
+    "not_due",
+    "pacer",
+    "class_share",
+    "page_hold",
+    "route_budget",
+    "route_hold",
+    "resource_hold",
+    "subject_breaker",
+    "blocked_by_vendor",
+    "quarantined",
+    "paused",
+    "dependency",
+    "ownership_unconfirmed",
+    "running",
+]);
+/** How a fan is named: a Fansly account id, a chat (group) id, or a chat link
+ *  `https://fansly.com/messages/<id>`. */
+export const agentHistoryFanRefKindEnum = z.enum(["fan", "conversation", "chat_url"]);
+const agentHistoryRefSchema = z.string().min(1).max(300);
+export const agentHistoryFanRefSchema = z.union([
+    z.object({ kind: z.literal("fan"), platformUserId: agentHistoryRefSchema }).strict(),
+    z.object({ kind: z.literal("conversation"), conversationRef: agentHistoryRefSchema }).strict(),
+    z.object({ kind: z.literal("chat_url"), url: agentHistoryRefSchema }).strict(),
+]);
+/** REQUIRED: `all` reads to the first message and proves it; `latest` reads the
+ *  newest N messages of the chat (fan's and model's) counted from the anchor. */
+export const agentHistoryDepthSchema = z.union([
+    z.object({ kind: z.literal("all") }).strict(),
+    z.object({ kind: z.literal("latest"), count: z.number().int().min(1).max(1_000_000) }).strict(),
+]);
+/** The ref of one fan entry, as the server de-duplicates it (kind + trimmed ref). */
+function agentHistoryFanKey(fan) {
+    const ref = fan.kind === "fan" ? fan.platformUserId : fan.kind === "conversation" ? fan.conversationRef : fan.url;
+    return `${fan.kind}\u0000${ref.trim()}`;
+}
+/** The same fan twice is a caller bug, refused like a duplicate resolve input. */
+export function agentHistoryFanIssues(value) {
+    const seen = new Set();
+    const issues = [];
+    value.fans.forEach((fan, index) => {
+        const key = agentHistoryFanKey(fan);
+        if (seen.has(key)) {
+            issues.push({ path: ["fans", index], message: "duplicate fan" });
+        }
+        seen.add(key);
+    });
+    return issues;
+}
+/** The body both create routes share (spread, never `.merge`d: Zod v4 trap). */
+export const agentHistoryRequestBodyShape = {
+    fans: z.array(agentHistoryFanRefSchema).min(1).max(1000),
+    depth: agentHistoryDepthSchema,
+    /** Stored as a digest only. */
+    reason: z.string().min(1).max(1000),
+    /** The same key and body again is the same request (`coalesced`); the same
+     *  key with another body is 409 `idempotency_mismatch`. */
+    idempotencyKey: z.string().uuid(),
+};
+export const agentHistoryPageParamsSchema = z.object({
+    ...pageParamsSchema.shape,
+}).strict();
+export const agentHistoryRequestParamsSchema = z.object({
+    requestRef: z.string().uuid(),
+}).strict();
+export const agentHistoryRequestCreateBodySchema = z.object({
+    ...agentHistoryRequestBodyShape,
+    claim: agentClaimSchema.optional(),
+}).strict().superRefine((value, ctx) => addAgentIssues(agentHistoryFanIssues(value), ctx));
+const agentHistoryCountSchema = z.number().int().nonnegative();
+/** One request: counts, reads (done and still needed), the ETA and why it waits. */
+export const agentHistoryRequestSchema = z.object({
+    ref: z.string().uuid(),
+    pageLabel: z.string().nullable(),
+    state: agentHistoryRequestStateEnum,
+    depth: z.object({
+        kind: z.enum(["all", "latest", "before_boundary"]),
+        count: z.number().int().min(1).optional(),
+        /** `before_boundary` only: the legacy hydration wrapper's boundary. */
+        boundaryAt: agentIsoTimestamp.nullable().optional(),
+        boundaryMessageRef: z.string().nullable().optional(),
+    }).strict(),
+    requesterKind: agentHistoryRequesterKindEnum,
+    createdAt: agentIsoTimestamp,
+    doneAt: agentIsoTimestamp.nullable(),
+    cancelledAt: agentIsoTimestamp.nullable(),
+    counts: z.object({
+        total: agentHistoryCountSchema,
+        ready: agentHistoryCountSchema,
+        queued: agentHistoryCountSchema,
+        loading: agentHistoryCountSchema,
+        blocked: agentHistoryCountSchema,
+        refused: agentHistoryCountSchema,
+        cancelled: agentHistoryCountSchema,
+    }).strict(),
+    reads: z.object({
+        done: agentHistoryCountSchema,
+        /** "Не меньше": what the known volume still needs. */
+        remainingMin: agentHistoryCountSchema,
+        /** "По оценке": null when a chat has too little stored to estimate. */
+        remainingEstimate: agentHistoryCountSchema.nullable(),
+    }).strict(),
+    /** Always two numbers (plan §4.3): a lower bound and an ESTIMATE. A chat's
+     *  length is unknown in advance, so there is no upper bound. The time is
+     *  what the reads take at the rate the page's budgets leave this request;
+     *  a hold in force is shown apart (`hold`), never in the seconds. */
+    eta: z.object({
+        lowerBoundSeconds: agentHistoryCountSchema,
+        estimateSeconds: agentHistoryCountSchema.nullable(),
+        basis: z.literal("estimate"),
+        /** Reads an hour this request gets while it is not held. */
+        ratePerHour: z.number().nonnegative(),
+        /** The requests class's share of the page's slots, in percent. */
+        sharePercent: z.number().int().min(0).max(100),
+        /** The budget that sets the rate: the page's slots (its pause), the
+         *  `/message` route or its family (the chat list, a chat's detail and
+         *  `/message` together). */
+        limitedBy: z.enum(["page", "route", "family"]),
+        /** The route runs slower than its budget on this page since a 429 (it
+         *  rises only by a deliberate step); already in the rate. Null: at its
+         *  budget. */
+        slowdown: z.object({
+            route: z.string(),
+            effectivePerMin: z.number().positive(),
+            currentPerMin: z.number().positive(),
+        }).strict().nullable(),
+        /** A hold in force: nothing is read until it ends — the page's, or the
+         *  `/message` route's own after a 429. `until` null: no known instant
+         *  ends it (new credentials or the operator do). Null: none. */
+        hold: z.object({
+            scope: z.enum(["page", "route"]),
+            until: agentIsoTimestamp.nullable(),
+        }).strict().nullable(),
+    }).strict(),
+    /** 1-based place among the page's open requests (round robin). */
+    queuePosition: z.number().int().positive().nullable(),
+    waitingReason: agentSyncWaitingReasonEnum.nullable(),
+    waitingUntil: agentIsoTimestamp.nullable(),
+}).strict();
+/** One fan of a request: its chat, state, what is loaded and what is left. */
+export const agentHistoryItemSchema = z.object({
+    ordinal: agentHistoryCountSchema,
+    input: z.object({ kind: agentHistoryFanRefKindEnum, ref: z.string() }).strict(),
+    fanPlatformUserId: z.string().nullable(),
+    conversationRef: z.string().nullable(),
+    state: agentHistoryItemStateEnum,
+    refusal: agentHistoryRefusalEnum.nullable(),
+    /** Why the engine never reads this chat (`excluded`). */
+    excludedReason: z.string().max(200).nullable(),
+    /** `blocked`: when Fansly is asked again. */
+    probeAt: agentIsoTimestamp.nullable(),
+    waitingReason: agentSyncWaitingReasonEnum.nullable(),
+    waitingUntil: agentIsoTimestamp.nullable(),
+    loadedMessages: agentHistoryCountSchema,
+    oldestLoadedAt: agentIsoTimestamp.nullable(),
+    readsSpent: agentHistoryCountSchema,
+    historyState: agentThreadHistoryStateEnum,
+    historyProof: agentThreadHistoryProofEnum.nullable(),
+    anchorMessageRef: z.string().nullable(),
+    satisfiedAt: agentIsoTimestamp.nullable(),
+    satisfiedBy: agentHistorySatisfiedByEnum.nullable(),
+    estimate: z.object({
+        readsMin: agentHistoryCountSchema,
+        readsEstimate: agentHistoryCountSchema.nullable(),
+    }).strict(),
+}).strict();
+export const agentHistoryRequestCreateResponseSchema = z.object({
+    disposition: z.enum(["created", "coalesced"]),
+    request: agentHistoryRequestSchema,
+    /** The first fans in ordinal order; `delivery.nextCursor` pages the rest
+     *  through `agentHistoryRequestGet`, unchanged. */
+    items: z.array(agentHistoryItemSchema).max(200),
+    delivery: agentDeliverySchema,
+    capture: agentCaptureSchema,
+    conclusion: agentConclusionSchema,
+}).strict().superRefine((value, ctx) => addAgentIssues(agentEvidenceIssues(value, value.items.length), ctx));
+export const agentHistoryRequestGetQuerySchema = z.object({
+    state: agentHistoryItemStateEnum.optional(),
+    limit: paginationQuerySchema.shape.limit,
+    cursor: agentCursorString.optional(),
+}).strict().superRefine((value, ctx) => addAgentIssues(agentCursorScopeIssues(value, ["state"], { windowRequired: false }), ctx));
+export const agentHistoryRequestGetResponseSchema = z.object({
+    request: agentHistoryRequestSchema,
+    items: z.array(agentHistoryItemSchema).max(200),
+    delivery: agentDeliverySchema,
+    capture: agentCaptureSchema,
+    conclusion: agentConclusionSchema,
+}).strict().superRefine((value, ctx) => addAgentIssues(agentEvidenceIssues(value, value.items.length), ctx));
+/** A body, because every POST on this plane carries one (the method pin). */
+export const agentHistoryRequestCancelBodySchema = z.object({
+    /** Stored as a digest only. */
+    reason: z.string().min(1).max(1000).optional(),
+}).strict();
+export const agentHistoryRequestCancelResponseSchema = z.object({
+    /** Idempotent: a second cancel says `already_cancelled`, a finished request
+     *  `already_done`; loaded messages and chains always stay. */
+    disposition: z.enum(["cancelled", "already_cancelled", "already_done"]),
+    request: agentHistoryRequestSchema,
+    delivery: agentDeliverySchema,
+    capture: agentCaptureSchema,
+    conclusion: agentConclusionSchema,
+}).strict().superRefine((value, ctx) => addAgentIssues(agentEvidenceIssues(value, 1), ctx));
+export const agentHistoryRequestListQuerySchema = z.object({
+    pageLabel: z.string().min(1).optional(),
+    state: agentHistoryRequestStateEnum.optional(),
+    limit: paginationQuerySchema.shape.limit,
+    cursor: agentCursorString.optional(),
+}).strict().superRefine((value, ctx) => addAgentIssues(agentCursorScopeIssues(value, ["pageLabel", "state"], { windowRequired: false }), ctx));
+export const agentHistoryRequestListResponseSchema = z.object({
+    items: z.array(agentHistoryRequestSchema).max(200),
+    delivery: agentDeliverySchema,
+    capture: agentCaptureSchema,
+    conclusion: agentConclusionSchema,
+}).strict().superRefine((value, ctx) => addAgentIssues(agentEvidenceIssues(value, value.items.length), ctx));
+// ---------------------------------------------------------------------------
+// Sync status and "why waiting" — the Fansly Sync Engine's page status and its
+// work rows (plan §10, design §3.9, §7.4). The agent plane reads them through
+// `agentSyncStatus` / `agentSyncWhy`; the owner routes in `routes-sync.ts`
+// serve the same shapes.
+//
+// No actor runs a page that is `off` or `shadow` (shadow mode is gone, step 4
+// S4-23; both stay values a row may hold): nothing is sent for it, and the
+// rows shadow mode left are never served. The `shadow` fields below are
+// wire-only constants since then — the released clients' schemas require the
+// keys, so they stay until a contract change retires them.
+//
+// The vocabularies mirror closed lists of the server
+// (`packages/db/src/repositories/sync/*.ts`, `apps/runtime/src/sync/engine/
+// status.ts`, `apps/runtime/src/sync/fansly/registry.ts`); this module cannot
+// import them, so `tests/sync-status-contracts.test.ts` pins each one equal.
+// ---------------------------------------------------------------------------
+export const agentSyncPageModeEnum = z.enum(["off", "shadow", "handover", "live"]);
+export const agentSyncWorkClassEnum = z.enum(["urgent", "requests", "planned"]);
+export const agentSyncWorkKindEnum = z.enum(["poll", "trigger", "goal", "repair"]);
+export const agentSyncWorkStateEnum = z.enum(["open", "running", "quarantined", "done", "cancelled", "superseded"]);
+export const agentSyncPageHoldKindEnum = z.enum(["auth", "identity_mismatch", "network"]);
+export const agentSyncAttemptOutcomeEnum = z.enum([
+    "admitted",
+    "sent",
+    "response",
+    "transport_error",
+    "timeout",
+    "aborted_before_send",
+    "unknown",
+    "shadow",
+]);
+/** Every registry key of the engine (`<file>.<variant>`), the vocabulary a
+ *  "why" read names its resource in. */
+export const agentSyncResourceKeyEnum = z.enum([
+    "account.poll",
+    "account.verify",
+    "account.identity",
+    "ws.connect",
+    "dm-live.deletions",
+    "dm-conversations.head",
+    "dm-conversations.full",
+    "dm-conversations.find",
+    "dm-conversations.detail",
+    "dm-conversations.ws-down",
+    "dm-messages.head",
+    "dm-messages.catchup",
+    "dm-messages.history",
+    "transactions.head",
+    "transactions.insurance",
+    "transactions.rescan",
+    "transactions.backfill",
+    "top-spenders.window",
+    "top-spenders.bootstrap",
+    "fan-earnings.roster",
+    "purchases.targets",
+    "payouts.daily",
+    "payouts.walk",
+    "subscribers.poll",
+    "subscribers.history",
+    "followers.head",
+    "followers.reconcile",
+    "fan-profiles.lookup",
+    "fan-profiles.probe",
+    "fan-profiles.alias-backfill",
+    "notifications.forward",
+    "notifications.backfill",
+    "posts.refresh",
+    "posts.backfill",
+    "posts.engagement",
+    "post-replies.walk",
+    "post-replies.authors",
+    "catalog.fixed",
+    "catalog.vault",
+    "catalog.hydrate",
+    "media-stats.walk",
+    "stats.daily",
+    "stats.hourly",
+    "stats.backfill",
+    "media-download.fetch",
+    "repair.ws-gap",
+    "probe.manual",
+    "probe.excluded-chat",
+]);
+const agentSyncCountSchema = z.number().int().nonnegative();
+const agentSyncClassQueueSchema = z.object({
+    /** Waits only for its slot (`pacer`) or for other work (`class_share`). */
+    runnable: agentSyncCountSchema,
+    waitingByReason: z.partialRecord(agentSyncWaitingReasonEnum, agentSyncCountSchema),
+}).strict();
+/** One page as the engine sees it (design §3.9): who owns it, the pause rule's
+ *  record, sends by class, the queue by "why waiting", holds and breakers. */
+export const agentSyncPageStatusSchema = z.object({
+    pageLabel: z.string().nullable(),
+    mode: agentSyncPageModeEnum,
+    owner: z.object({
+        /** A bigint as decimal text. */
+        generation: z.string().regex(/^\d+$/),
+        host: z.string().nullable(),
+        acquiredAt: agentIsoTimestamp.nullable(),
+        heartbeatAt: agentIsoTimestamp.nullable(),
+        /** A fresh heartbeat of an unreleased owner in a mode an actor runs in. */
+        running: z.boolean(),
+    }).strict(),
+    pause: z.object({
+        /** The owner's pause setting S, as the engine reads it. */
+        settingMs: z.number().int().positive(),
+        lastSendAt: agentIsoTimestamp.nullable(),
+        minGapLastHourMs: z.number().nonnegative().nullable(),
+        /** Sends closer than their S over the last day (the owner's rule says 0). */
+        violationsLastDay: agentSyncCountSchema,
+    }).strict(),
+    sendsLastHour: z.object({
+        urgent: agentSyncCountSchema,
+        requests: agentSyncCountSchema,
+        planned: agentSyncCountSchema,
+        byResource: z.record(z.string(), agentSyncCountSchema),
+    }).strict(),
+    queue: z.object({
+        urgent: agentSyncClassQueueSchema,
+        requests: agentSyncClassQueueSchema,
+        planned: agentSyncClassQueueSchema,
+    }).strict(),
+    holds: z.object({
+        page: z.object({
+            kind: agentSyncPageHoldKindEnum,
+            /** "infinity": an auth or identity hold only new credentials lift. */
+            until: z.union([agentIsoTimestamp, z.literal("infinity")]),
+            since: agentIsoTimestamp.nullable(),
+        }).strict().nullable(),
+        resources: z.array(z.object({
+            file: z.string(),
+            until: agentIsoTimestamp,
+            step: agentSyncCountSchema,
+            /** The file's breaker (a 429 holds only its route, never a file). */
+            kind: z.enum(["breaker"]),
+        }).strict()),
+    }).strict(),
+    breakers: z.object({ open: agentSyncCountSchema, blockedByVendor: agentSyncCountSchema }).strict(),
+    quarantined: agentSyncCountSchema,
+    /** Open history requests with their progress (live pages only). */
+    requests: z.array(z.object({
+        ref: z.string().uuid(),
+        itemsReady: agentSyncCountSchema,
+        itemsTotal: agentSyncCountSchema,
+        readsDone: agentSyncCountSchema,
+        readsRemainingMin: agentSyncCountSchema,
+        etaEstimateSeconds: z.number().nonnegative().nullable(),
+    }).strict()),
+    ws: z.object({
+        connected: z.boolean(),
+        since: agentIsoTimestamp.nullable(),
+        gapSince: agentIsoTimestamp.nullable(),
+        decodeDebt: agentSyncCountSchema,
+    }).strict().nullable(),
+    /** Always null since step 4 (S4-23): no page has a shadow journal. */
+    shadow: z.object({
+        attemptsLastHour: agentSyncCountSchema,
+        demandVsEstimate: z.number().nonnegative().nullable(),
+    }).strict().nullable(),
+}).strict();
+/** One work row and why it waits ("почему ждёт", plan §10). */
+export const agentSyncWorkSchema = z.object({
+    id: z.number().int().positive(),
+    /** A registry key; a row of a key a later build retired keeps its name. */
+    resource: z.string().min(1),
+    /** '' for page-level work; a chat, fan, media … id otherwise. */
+    subject: z.string(),
+    /** Always false since step 4 (S4-23): a row shadow mode left is never served. */
+    shadow: z.boolean(),
+    kind: agentSyncWorkKindEnum,
+    class: agentSyncWorkClassEnum,
+    state: agentSyncWorkStateEnum,
+    /** Null for closed work: it waits for nothing. */
+    waitingReason: agentSyncWaitingReasonEnum.nullable(),
+    waitingUntil: agentIsoTimestamp.nullable(),
+    dueAt: agentIsoTimestamp,
+    demandRevision: agentSyncCountSchema,
+    appliedRevision: agentSyncCountSchema,
+    failureCount: agentSyncCountSchema,
+    breakerUntil: agentIsoTimestamp.nullable(),
+    blockedByVendorAt: agentIsoTimestamp.nullable(),
+    lastAttempt: z.object({
+        admittedAt: agentIsoTimestamp,
+        sentAt: agentIsoTimestamp.nullable(),
+        outcome: agentSyncAttemptOutcomeEnum,
+        httpStatus: z.number().int().nullable(),
+    }).strict().nullable(),
+    closedAt: agentIsoTimestamp.nullable(),
+    closeReason: z.string().nullable(),
+}).strict();
+/** At most this many work rows in one "why" answer. */
+export const AGENT_SYNC_WHY_MAX_ROWS = 200;
+export const agentSyncStatusQuerySchema = z.object({
+    pageLabel: z.string().min(1).optional(),
+}).strict();
+export const agentSyncStatusResponseSchema = z.object({
+    pages: z.array(agentSyncPageStatusSchema).max(200),
+    delivery: agentDeliverySchema,
+    capture: agentCaptureSchema,
+    conclusion: agentConclusionSchema,
+}).strict().superRefine((value, ctx) => addAgentIssues(agentEvidenceIssues(value, value.pages.length), ctx));
+export const agentSyncWhyParamsSchema = z.object({
+    ...pageParamsSchema.shape,
+}).strict();
+export const agentSyncWhyQuerySchema = z.object({
+    resource: agentSyncResourceKeyEnum,
+    /** Omitted: every open row of the key; '' is the page-level row. */
+    subject: z.string().max(200).optional(),
+}).strict();
+export const agentSyncWhyResponseSchema = z.object({
+    work: z.array(agentSyncWorkSchema).max(AGENT_SYNC_WHY_MAX_ROWS),
+    delivery: agentDeliverySchema,
+    capture: agentCaptureSchema,
+    conclusion: agentConclusionSchema,
+}).strict().superRefine((value, ctx) => addAgentIssues(agentEvidenceIssues(value, value.work.length), ctx));
+// ---------------------------------------------------------------------------
 // The route registry. `routes.ts` spreads this into `routeSchemas`.
 // ---------------------------------------------------------------------------
 /**
@@ -1830,12 +2352,15 @@ export const AGENT_POST_READ_OPERATIONS = [
 ];
 /**
  * The plane's MUTATIONS — POSTs that are not reads and are not covered by the
- * allowlist above (§17.15.4 names exactly these two). Enumerated so the method
- * guard stays a closed statement rather than "anything with a body".
+ * allowlist above (§17.15.4 names the hydration two; the Sync Engine's history
+ * requests add create and cancel). Enumerated so the method guard stays a
+ * closed statement rather than "anything with a body".
  */
 export const AGENT_POST_MUTATION_OPERATIONS = [
     "agentHydrationRequestCreate",
     "agentHydrationRequestDecide",
+    "agentHistoryRequestCreate",
+    "agentHistoryRequestCancel",
 ];
 export const agentRouteSchemas = {
     agentCapabilities: {
@@ -2018,7 +2543,8 @@ export const agentRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
-            // hydration_not_admissible | idempotency_mismatch
+            // hydration_not_admissible | idempotency_mismatch | fansly_page_switching
+            // (the Fansly page is being switched to the Fansly Sync Engine)
             409: errorResponseSchema,
             429: errorResponseSchema,
             503: errorResponseSchema,
@@ -2055,7 +2581,8 @@ export const agentRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
-            // conflict (CAS) | hydration_proposal_stale | idempotency_mismatch
+            // conflict (CAS) | hydration_proposal_stale | idempotency_mismatch |
+            // engine_managed (a live Fansly page's request, served as a history request)
             409: errorResponseSchema,
             429: errorResponseSchema,
             503: errorResponseSchema,
@@ -2071,6 +2598,109 @@ export const agentRouteSchemas = {
             400: errorResponseSchema,
             401: errorResponseSchema,
             403: errorResponseSchema,
+            429: errorResponseSchema,
+            503: errorResponseSchema,
+        },
+    },
+    agentHistoryRequestCreate: {
+        auth: { kind: "agentKey", scope: "page" },
+        tags: ["agent"],
+        summary: "File a history request: 1..1000 fans of one page and a depth (all | latest N). Database only, no vendor"
+            + " call; the Fansly Sync Engine reads the chats. 409 history_requests_unavailable_on_page on a page not"
+            + " switched to the engine: use the hydration route there",
+        params: agentHistoryPageParamsSchema,
+        body: agentHistoryRequestCreateBodySchema,
+        response: {
+            200: agentHistoryRequestCreateResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            // history_requests_unavailable_on_page | idempotency_mismatch
+            409: errorResponseSchema,
+            429: errorResponseSchema,
+            503: errorResponseSchema,
+        },
+    },
+    agentHistoryRequestGet: {
+        // NOT page-scoped (a uuid path): the handler checks the grant, and a request
+        // on a page outside it is the same static 404 as an unknown uuid. Requests of
+        // every requester on a granted page are visible (design D10).
+        auth: { kind: "agentKey" },
+        tags: ["agent"],
+        summary: "One history request: counts, reads, ETA, why it waits, and a page of its fans",
+        params: agentHistoryRequestParamsSchema,
+        querystring: agentHistoryRequestGetQuerySchema,
+        response: {
+            200: agentHistoryRequestGetResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            429: errorResponseSchema,
+            503: errorResponseSchema,
+        },
+    },
+    agentHistoryRequestCancel: {
+        auth: { kind: "agentKey" },
+        tags: ["agent"],
+        summary: "Cancel a history request: its fans stop being read; loaded messages and chains stay. Idempotent",
+        params: agentHistoryRequestParamsSchema,
+        body: agentHistoryRequestCancelBodySchema,
+        response: {
+            200: agentHistoryRequestCancelResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
+            429: errorResponseSchema,
+            503: errorResponseSchema,
+        },
+    },
+    agentHistoryRequestList: {
+        auth: { kind: "agentKey" },
+        tags: ["agent"],
+        summary: "History requests on this key's pages, newest first, from every requester (shown as a kind)",
+        querystring: agentHistoryRequestListQuerySchema,
+        response: {
+            200: agentHistoryRequestListResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            429: errorResponseSchema,
+            503: errorResponseSchema,
+        },
+    },
+    agentSyncStatus: {
+        // Not page-scoped (the label is an optional filter): a label outside the
+        // grant narrows the answer to nothing, like the history list.
+        auth: { kind: "agentKey" },
+        tags: ["agent"],
+        summary: "The Fansly Sync Engine's status of this key's pages: owner, pause record, sends by class, queue by"
+            + " why it waits, holds, breakers, request progress. Off and shadow pages report their shadow journal",
+        querystring: agentSyncStatusQuerySchema,
+        response: {
+            200: agentSyncStatusResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            429: errorResponseSchema,
+            503: errorResponseSchema,
+        },
+    },
+    agentSyncWhy: {
+        auth: { kind: "agentKey", scope: "page" },
+        tags: ["agent"],
+        summary: "Why a page's work of one registry key (and subject) waits: the open rows, or the newest closed one of"
+            + " a named subject. Chat and fan subjects need read:messages as well",
+        params: agentSyncWhyParamsSchema,
+        querystring: agentSyncWhyQuerySchema,
+        response: {
+            200: agentSyncWhyResponseSchema,
+            400: errorResponseSchema,
+            401: errorResponseSchema,
+            403: errorResponseSchema,
+            404: errorResponseSchema,
             429: errorResponseSchema,
             503: errorResponseSchema,
         },
