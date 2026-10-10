@@ -17,7 +17,7 @@ set -euo pipefail
 # versioned DMG → locked monotonic retention + public switch → exact HTTPS hash
 # postcheck.
 
-readonly VPS=root@45.8.230.111
+readonly VPS=root@152.53.191.242
 readonly PUBLIC_DIR=/var/www/ext/desktop
 readonly PUBLIC_URL=https://ext.gosling-agency.ru/desktop
 readonly PUBLIC_OWNER=cgupdates
