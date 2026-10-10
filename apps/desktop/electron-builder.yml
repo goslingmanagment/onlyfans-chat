@@ -56,11 +56,14 @@ mac:
 
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 
-# Auto-update feed (generic = plain static files over HTTPS; nginx site
-# `chatgoose-updates` on the agency VPS, uploaded by the windows-build publish
-# job — ops in docs/RELEASE.md). Baked into the packaged app-update.yml; the
-# random path segment just keeps the feed off scanners — builds are unsigned,
-# so the feed host being ours is the trust anchor (SPEC §4).
+# Auto-update feed (generic = plain static files over HTTPS, uploaded by the
+# windows-build publish job — ops in docs/RELEASE.md). Baked into the packaged
+# app-update.yml, the only place an installed build reads it from: the host
+# must be a name of ours that follows DNS, never an address. Builds up to
+# 0.1.65 poll https://45-8-230-111.sslip.io/u/<same path>/ and can ask nothing
+# else (D45). The random path segment just keeps the feed off scanners —
+# builds are unsigned, so the feed host being ours is the trust anchor
+# (SPEC §4).
 publish:
   provider: generic
-  url: https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3/
+  url: https://ext.gosling-agency.ru/u/bffe2540bd2b7e87bd9b88e3/
