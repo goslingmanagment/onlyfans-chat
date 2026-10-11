@@ -97,6 +97,11 @@ export const AGENT_CLAIM_CLASSES = {
             // OnlyFans payout requests live in the same snapshot store; their own
             // field so a payout conclusion names what it rests on.
             ofapiPayoutRequest: { required: ["ofapi_read_snapshots"] },
+            // Hub's own money per OnlyFans link (traffic plan PR 15): the ledger
+            // split over the link ↔ fan periods, each link from the floor its fan
+            // walks set. All three stores answer for it: a period or a walk unread
+            // is money attributed to nobody.
+            hubLinkMoney: { required: ["transactions", "page_link_fan_periods", "page_link_fan_walks"] },
             payoutMethod: { required: ["page_payout_methods"] },
         },
     },
@@ -205,6 +210,15 @@ export const AGENT_CLAIM_CLASSES = {
             postLike: { required: ["post_likes"] },
             platformNotification: { required: ["platform_notifications"] },
             captureCoverageRow: { required: ["capture_coverage"] },
+            // ── OnlyFans traffic sources (plan 2026-10-08, PR 14) ──────────────────
+            // The link series and who brings each link's traffic. Each store gets
+            // its own field: the runs prove which windows were attempted, the
+            // snapshots what the vendor counted, and the two dated binding tables
+            // answer for different facts (link → channel, channel → contractor).
+            linkStatRun: { required: ["page_link_stat_runs"] },
+            linkStatSnapshot: { required: ["page_link_stat_snapshots"] },
+            trafficLinkBinding: { required: ["traffic_link_bindings"] },
+            trafficChannelContractor: { required: ["traffic_channel_contractors"] },
         },
     },
 };

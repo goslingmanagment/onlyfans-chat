@@ -74,9 +74,11 @@ read("posts", "posts", "posts_comments", "list", "offset", {
     counters: "bool",
     minimumPublishDate: "date",
 }, { defaultCollect: true });
-read("post_labels", "posts/labels", "posts_comments", "list", "offset", page, {
-    defaultCollect: true,
-});
+// Out of the scheduled selection, still an explicit selector. OFAPI documents
+// this read, but OnlyFans answered every request Hub made with its own
+// 404 "Route not found." (three, the first on 2026-09-07), so a scheduled
+// posts_comments run read all posts and then ended on this step.
+read("post_labels", "posts/labels", "posts_comments", "list", "offset", page);
 read("post", "posts/:id", "posts_comments", "object", "none");
 read("post_stats", "posts/:id/stats", "posts_comments", "object", "none", { with_historical_data: "bool" }, { granularity: "snapshot" });
 read("post_comments", "posts/:id/comments", "posts_comments", "list", "offset", { ...page, sort: "enum:asc|desc" });
@@ -119,7 +121,10 @@ const smartDates = { date_start: "date", date_end: "date" };
 function smartRead(id, path, shape, pagination, query = {}, options = {}) {
     read(id, path, "smart_links", shape, pagination, query, { scope: "smart_link", idKind: "ulid", reservedCredits: 0, ...options });
 }
-smartRead("smart_links", "smart-links", "array", "offset", { ...smartPage, account_ids: "text", name: "text", pixel_ids: "text", "filter[tags][]": "text" }, { defaultCollect: true, required: ["account_ids"] });
+// Smart Links are frozen (traffic plan §2.9): no read of them is scheduled, so
+// a scheduled run of `smart_links` would have nothing to read and the
+// scheduler creates none. Every read stays an explicit one-off.
+smartRead("smart_links", "smart-links", "array", "offset", { ...smartPage, account_ids: "text", name: "text", pixel_ids: "text", "filter[tags][]": "text" }, { required: ["account_ids"] });
 smartRead("smart_link", "smart-links/:id", "object", "none");
 smartRead("smart_link_pixels", "smart-links/:id/pixels", "array", "none");
 smartRead("smart_link_tags", "smart-links/:id/tags", "strings", "none");
@@ -129,8 +134,14 @@ smartRead("smart_link_spenders", "smart-links/:id/spenders", "array", "offset", 
 smartRead("smart_link_fans", "smart-links/:id/fans", "object", "offset", { ...smartPage, sort: "enum:revenue_net|-revenue_net|tips_net|-tips_net|messages_sent_by_fan|-messages_sent_by_fan|converted_at|-converted_at", has_messages: "bool", min_messages_sent_by_fan: "int:0:1000000", min_revenue_net: "decimal", min_tips_net: "decimal", previously_subscribed: "bool", subscribed_using_promo: "bool" });
 for (const kind of ["clicks", "conversions"])
     smartRead(`smart_link_${kind}`, `smart-links/:id/${kind}`, "object", "offset", { ...smartPage, ...smartDates, include_bots: "bool", include_duplicates: "bool", ...(kind === "conversions" ? { conversion_type: "enum:new_subscriber|new_transaction|message_received|fan_sent_1_message|fan_sent_3_messages", onlyfans_user_id: "id" } : {}) });
+// The stored link lists are read four times a day by the link series
+// (`page_link_stat_*`, ofapi-link-stats-sync.ts), which the «Ссылки OnlyFans»
+// screen shows; scheduling them here as well only duplicated that poll
+// (traffic plan §2.9). They stay explicit one-off reads. With them the
+// `tracking_links` category has no scheduled read, but its policy must stay
+// scheduled: the paid fan sweep is admitted under it (plan amendment П9.4).
 for (const kind of ["tracking", "trial"])
-    read(`stored_${kind}_links`, `stored/${kind}-links`, "tracking_links", "list", "offset", { ...page, "filter[include_smart_links]": "bool", "filter[search]": "text", "filter[tags][]": "text" }, { defaultCollect: true, reservedCredits: 0 });
+    read(`stored_${kind}_links`, `stored/${kind}-links`, "tracking_links", "list", "offset", { ...page, "filter[include_smart_links]": "bool", "filter[search]": "text", "filter[tags][]": "text" }, { reservedCredits: 0 });
 for (const kind of ["tracking", "trial"]) {
     read(`stored_shared_${kind}_links`, `stored/shared-${kind}-links`, "tracking_links", "list", "offset", { ...smartPage, "filter[search]": "text", "filter[tags][]": "text" }, { reservedCredits: 0 });
     read(`shared_${kind}_links`, `shared-${kind}-links`, "tracking_links", "list", "offset", page);

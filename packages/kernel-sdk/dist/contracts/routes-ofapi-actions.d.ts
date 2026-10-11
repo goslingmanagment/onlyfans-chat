@@ -1152,7 +1152,7 @@ export declare const ofapiActionRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
             }, z.core.$strip>;
         };
     };
@@ -1772,7 +1772,7 @@ export declare const ofapiActionRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
             }, z.core.$strip>;
         };
     };
@@ -2392,7 +2392,7 @@ export declare const ofapiActionRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
             }, z.core.$strip>;
         };
     };
@@ -3011,7 +3011,7 @@ export declare const ofapiActionRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
             }, z.core.$strip>;
         };
     };
@@ -3631,7 +3631,7 @@ export declare const ofapiActionRouteSchemas: {
                         pending: "pending";
                         complete: "complete";
                     }>;
-                    createdAt: z.ZodString;
+                    createdAt: z.ZodISODateTime;
                 }, z.core.$strip>>;
             }, z.core.$strip>;
         };
@@ -4252,7 +4252,7 @@ export declare const ofapiActionRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
             }, z.core.$strip>;
         };
     };

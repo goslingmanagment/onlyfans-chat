@@ -148,7 +148,7 @@ export declare const ofapiMarketingResourceSchema: z.ZodObject<{
     shared: z.ZodBoolean;
     parentId: z.ZodNullable<z.ZodString>;
     name: z.ZodNullable<z.ZodString>;
-    observedAt: z.ZodString;
+    observedAt: z.ZodISODateTime;
     linkType: z.ZodNullable<z.ZodString>;
     platform: z.ZodNullable<z.ZodString>;
     platformPixelId: z.ZodNullable<z.ZodString>;
@@ -227,7 +227,7 @@ export declare const ofapiMarketingIntentSchema: z.ZodObject<{
         pending: "pending";
         complete: "complete";
     }>;
-    createdAt: z.ZodString;
+    createdAt: z.ZodISODateTime;
     responseObservationId: z.ZodNullable<z.ZodNumber>;
     preview: z.ZodObject<{
         pageId: z.ZodNullable<z.ZodNumber>;
@@ -316,7 +316,7 @@ export declare const ofapiMarketingAnalyticsSchema: z.ZodObject<{
     pageId: z.ZodNumber;
     operation: z.ZodString;
     linkId: z.ZodString;
-    observedAt: z.ZodString;
+    observedAt: z.ZodISODateTime;
     window: z.ZodObject<{
         from: z.ZodNullable<z.ZodString>;
         to: z.ZodNullable<z.ZodString>;
@@ -387,7 +387,7 @@ export declare const ofapiMarketingDashboardSchema: z.ZodObject<{
         shared: z.ZodBoolean;
         parentId: z.ZodNullable<z.ZodString>;
         name: z.ZodNullable<z.ZodString>;
-        observedAt: z.ZodString;
+        observedAt: z.ZodISODateTime;
         linkType: z.ZodNullable<z.ZodString>;
         platform: z.ZodNullable<z.ZodString>;
         platformPixelId: z.ZodNullable<z.ZodString>;
@@ -428,7 +428,7 @@ export declare const ofapiMarketingDashboardSchema: z.ZodObject<{
         pageId: z.ZodNumber;
         operation: z.ZodString;
         linkId: z.ZodString;
-        observedAt: z.ZodString;
+        observedAt: z.ZodISODateTime;
         window: z.ZodObject<{
             from: z.ZodNullable<z.ZodString>;
             to: z.ZodNullable<z.ZodString>;
@@ -498,7 +498,7 @@ export declare const ofapiMarketingDashboardSchema: z.ZodObject<{
             pending: "pending";
             complete: "complete";
         }>;
-        createdAt: z.ZodString;
+        createdAt: z.ZodISODateTime;
         responseObservationId: z.ZodNullable<z.ZodNumber>;
         preview: z.ZodObject<{
             pageId: z.ZodNullable<z.ZodNumber>;

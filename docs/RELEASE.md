@@ -210,15 +210,46 @@ demoable without a real feed.
    only, with short retention, so GitHub artifact quota cannot block feed
    publication. Done — apps pick it up within 4 h or on next launch.
 
-**Feed infrastructure:** static nginx site `chatgoose-updates` on the agency
-VPS `45.8.230.111`, serving `/srv/chatgoose-updates` at
-`https://45-8-230-111.sslip.io/u/<token>/` (the URL is baked into builds via
-`electron-builder.yml` → `publish`; sslip.io is wildcard DNS over the IP, the
-cert is a normal Let's Encrypt one auto-renewed by certbot). Files are owned by
-the unprivileged `cgupdates` user; CI uploads over scp with the
+**Feed infrastructure:** builds poll `https://ext.gosling-agency.ru/u/<token>/`.
+The URL is baked in via `electron-builder.yml` → `publish` and frozen into each
+installed build's `resources/app-update.yml`, the only place `electron-updater`
+reads it from: an installed build can never be pointed at another URL. It
+therefore stays on a host name of ours that follows DNS, and `windows-build`
+fails when the packaged file carries anything else (D45).
+
+Builds up to 0.1.65 poll `https://45-8-230-111.sslip.io/u/<token>/` instead.
+sslip.io is wildcard DNS over the IP in the name, so that URL can only ever
+reach the agency VPS `45.8.230.111`. It has to keep answering there, with a
+valid certificate (a normal Let's Encrypt one, renewed by certbot on that VPS),
+until no build polls it: whoever holds the IP afterwards can obtain a
+certificate for the name and serve an update to any build still asking.
+
+Both names show one directory, `/srv/chatgoose-updates` on the agency VPS
+`45.8.230.111`: the static nginx site `chatgoose-updates` serves it under the
+old name and a `location /u/` in the `ext.gosling-agency.ru` site under the new
+one. `windows-build` builds a release only while both URLs return the same
+`latest.yml`, and passes only when both serve the release afterwards. Files are
+owned by the unprivileged `cgupdates` user; CI uploads over scp with the
 `UPDATES_SSH_KEY` repo secret (set 2026-06-13) and a pinned host key. Builds
 are unsigned, so the feed host being ours is the trust anchor — rotate the
 token path (nginx dir + `publish.url`) if it ever leaks somewhere noisy.
+
+**Moving the feed to another server** (D45; the agency's servers are being
+consolidated on `agency-de`). Who polls what fixes the order:
+
+1. The first release with a new feed URL goes out where the older builds look,
+   through the unchanged upload path: they have no other way to receive it.
+   The new URL must already answer from that same directory.
+2. Then, in one step and with no desktop release in between, the feed
+   directory is copied to the new server, the upload target in
+   `windows-build.yml` and `publish-mac.sh` moves there, and
+   `ext.gosling-agency.ru` is switched. A release uploaded to one server while
+   the name shows the other reaches no build that polls the name; the
+   served-feed assertion fails the run when that happens.
+3. The old URL keeps serving that first release from its own directory until
+   its access log shows no more polls. Nothing is published there after step
+   2: a build that lags behind updates to that release first, and from the new
+   URL to the current one next.
 
 **Public download page (D20, built 2026-07-18):** first installs come from
 `https://ext.gosling-agency.ru/desktop/` — a static page in
