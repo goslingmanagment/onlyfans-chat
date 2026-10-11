@@ -217,25 +217,28 @@ reads it from: an installed build can never be pointed at another URL. It
 therefore stays on a host name of ours that follows DNS, and `windows-build`
 fails when the packaged file carries anything else (D45).
 
-Builds up to 0.1.65 poll `https://45-8-230-111.sslip.io/u/<token>/` instead.
-sslip.io is wildcard DNS over the IP in the name, so that URL can only ever
-reach the agency VPS `45.8.230.111`. It has to keep answering there, with a
-valid certificate (a normal Let's Encrypt one, renewed by certbot on that VPS),
-until no build polls it: whoever holds the IP afterwards can obtain a
-certificate for the name and serve an update to any build still asking.
-
-Both names show one directory, `/srv/chatgoose-updates` on the agency VPS
-`45.8.230.111`: the static nginx site `chatgoose-updates` serves it under the
-old name and a `location /u/` in the `ext.gosling-agency.ru` site under the new
-one. `windows-build` builds a release only while both URLs return the same
-`latest.yml`, and passes only when both serve the release afterwards. Files are
+The feed directory is `/srv/chatgoose-updates` on `agency-de`
+(`152.53.191.242`), served by a `location /u/` in the `ext.gosling-agency.ru`
+nginx site. `windows-build` builds a release only while that URL answers with
+the feed, and passes only when it serves the release afterwards. Files are
 owned by the unprivileged `cgupdates` user; CI uploads over scp with the
 `UPDATES_SSH_KEY` repo secret (set 2026-06-13) and a pinned host key. Builds
 are unsigned, so the feed host being ours is the trust anchor — rotate the
 token path (nginx dir + `publish.url`) if it ever leaks somewhere noisy.
 
-**Moving the feed to another server** (D45; the agency's servers are being
-consolidated on `agency-de`). Who polls what fixes the order:
+Builds up to 0.1.65 poll `https://45-8-230-111.sslip.io/u/<token>/` instead.
+sslip.io is wildcard DNS over the IP in the name, so that URL can only ever
+reach the old agency VPS `45.8.230.111`, where the nginx site
+`chatgoose-updates` serves that server's own copy of the directory. The copy
+stays as it was when uploads moved: its `latest.yml` is the last release
+published there, which already carries the new URL, and that is all those
+builds need from it. It has to keep answering, with a valid certificate (a
+normal Let's Encrypt one, renewed by certbot on that VPS), until its access
+log shows no more polls: whoever holds the IP afterwards can obtain a
+certificate for the name and serve an update to any build still asking.
+
+**Moving the feed to another server** (D45; how the feed came to `agency-de`).
+Who polls what fixes the order:
 
 1. The first release with a new feed URL goes out where the older builds look,
    through the unchanged upload path: they have no other way to receive it.
@@ -253,7 +256,7 @@ consolidated on `agency-de`). Who polls what fixes the order:
 
 **Public download page (D20, built 2026-07-18):** first installs come from
 `https://ext.gosling-agency.ru/desktop/` — a static page in
-`/var/www/ext/desktop` on the same VPS (the ext site's nginx vhost already
+`/var/www/ext/desktop` on the feed's server (the ext site's nginx vhost already
 serves the whole dir; no separate config). It offers both platforms:
 
 - **Windows**: `ChatGoose-Setup-latest.exe` is a symlink into the feed's
@@ -285,7 +288,7 @@ serves the whole dir; no separate config). It offers both platforms:
 The two `version-*.json` files are deliberately separate — each writer owns
 its file outright, so no shared JSON is ever parsed or raced on. The page
 source is `docs/download-page/index.html`; redeploy it with
-`scp docs/download-page/index.html root@45.8.230.111:/var/www/ext/desktop/index.html`.
+`scp docs/download-page/index.html root@152.53.191.242:/var/www/ext/desktop/index.html`.
 
 Feed retention can be inspected without deleting anything by streaming
 `publish-feed.sh --maintain <feed-dir> --dry-run` on the feed host. The locked
@@ -307,13 +310,16 @@ an emergency escape hatch.
 In particular, never rebuild or republish 0.1.30/0.1.31 — both are dead-on-launch
 (D8).
 
-**Provisioned & verified 2026-06-13.** The feed is live: a liveness probe sits
-at `https://45-8-230-111.sslip.io/u/<token>/ping.txt` (returns `feed-ok`).
-Verified end-to-end: trusted TLS from a client machine, the `cgupdates` deploy
-key can write to the feed dir, and every non-token path 404s. The server-side
-provisioning (nginx site `chatgoose-updates`, the `cgupdates` user + its
-authorized deploy key, the Let's Encrypt cert) is reproduced by
-`tmp/updates-deploy/setup-feed.sh` (gitignored — it embeds the host specifics).
+**Provisioned & verified 2026-06-13** on the agency VPS `45.8.230.111`: a
+liveness probe at `https://45-8-230-111.sslip.io/u/<token>/ping.txt` (returns
+`feed-ok`), trusted TLS from a client machine, the `cgupdates` deploy key can
+write to the feed dir, and every non-token path 404s. That provisioning (nginx
+site `chatgoose-updates`, the `cgupdates` user + its authorized deploy key, the
+Let's Encrypt cert) is reproduced by `tmp/updates-deploy/setup-feed.sh`
+(gitignored — it embeds the host specifics). **Moved to `agency-de`** (D45):
+the feed directory, the download page and the `cgupdates` user with the same
+deploy key were copied there, and the same probe answers at
+`https://ext.gosling-agency.ru/u/<token>/ping.txt`.
 
 ## Smoke checklist for a new build (any platform)
 
