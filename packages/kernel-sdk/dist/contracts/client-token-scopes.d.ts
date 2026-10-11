@@ -23,7 +23,7 @@ import { type RouteAuthPolicy } from "./routes";
  */
 export declare const CLIENT_TOKEN_PROFILES: {
     readonly "chat-extension": {
-        readonly operations: readonly ["authRevokeCurrentDeviceToken", "me", "clientBootstrap", "aiPersonaCatalog", "aiFeatureStream", "aiRecapStatus", "pageConversationProfile", "pageFanProfile", "spenders", "spenderDetail", "spenderBatch", "pageSpenderAutoLists", "ingestObservations", "clientConversationRecaps", "clientFanProfileFromGeneration", "clientAiUsageDaily"];
+        readonly operations: readonly ["authRevokeCurrentDeviceToken", "me", "clientBootstrap", "aiPersonaCatalog", "aiFeatureStream", "aiRecapStatus", "pageConversationProfile", "pageFanProfile", "spenders", "spenderDetail", "spenderBatch", "pageSpenderAutoLists", "ingestObservations", "clientConversationRecaps", "clientConversationFeed", "clientFanProfileFromGeneration", "clientAiUsageDaily", "clientSpenderStats", "clientSpenderAwaitingReply", "clientFanClaim", "clientFanClaimStatus", "clientAudienceNew"];
         readonly ingestKinds: readonly ["ai_acceptance", "client_health"];
     };
 };

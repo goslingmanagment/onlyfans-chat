@@ -45,8 +45,10 @@ function categoryForStatus(status) {
         return "server";
     return "http";
 }
+// A param is a whole segment (`/:name`); a colon inside a segment is a
+// literal custom method (`/api/v2/spenders:batch`), as the server routes it.
 function buildPath(template, params) {
-    return template.replace(/:([A-Za-z0-9_]+)/g, (_match, name) => {
+    return template.replace(/(?<=\/):([A-Za-z0-9_]+)/g, (_match, name) => {
         const value = params?.[name];
         if (value === undefined || value === null) {
             throw new KernelApiError(`Missing path param "${name}" for ${template}`, "contract", null, "missing_path_param", null);

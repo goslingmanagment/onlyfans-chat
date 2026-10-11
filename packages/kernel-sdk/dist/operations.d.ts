@@ -447,6 +447,10 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/agent/pages/:pageLabel/sync/work";
     };
+    readonly agentThreadAvailability: {
+        readonly method: "GET";
+        readonly path: "/api/v1/agent/pages/:pageLabel/threads/:conversationRef/availability";
+    };
     readonly agentThreadMessages: {
         readonly method: "GET";
         readonly path: "/api/v1/agent/pages/:pageLabel/threads/:conversationRef/messages";
@@ -551,17 +555,49 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/client/pages/:pageLabel/ai-usage";
     };
+    readonly clientAudienceNew: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/audience-new";
+    };
     readonly clientBootstrap: {
         readonly method: "GET";
         readonly path: "/api/v1/client/bootstrap";
+    };
+    readonly clientConversationFeed: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/conversations/:fanRef/feed";
     };
     readonly clientConversationRecaps: {
         readonly method: "GET";
         readonly path: "/api/v1/client/pages/:pageLabel/conversations/:fanRef/recaps";
     };
+    readonly clientFanClaim: {
+        readonly method: "POST";
+        readonly path: "/api/v1/client/pages/:pageLabel/fans/:fanRef/claim";
+    };
+    readonly clientFanClaimStatus: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/fans/:fanRef/claim";
+    };
     readonly clientFanProfileFromGeneration: {
         readonly method: "POST";
         readonly path: "/api/v1/client/pages/:pageLabel/fans/:fanRef/profile/from-generation";
+    };
+    readonly clientSendCustodyList: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client-send-custody";
+    };
+    readonly clientSendCustodyResolve: {
+        readonly method: "POST";
+        readonly path: "/api/v1/pages/:pageLabel/client-send-custody/:attemptId/resolve";
+    };
+    readonly clientSpenderAwaitingReply: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/spenders/awaiting-reply";
+    };
+    readonly clientSpenderStats: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/spenders/stats";
     };
     readonly contentComments: {
         readonly method: "GET";
@@ -702,6 +738,18 @@ export declare const kernelOperations: {
     readonly notificationsTestMessage: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/notifications/test";
+    };
+    readonly ofLinksChannelsGet: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/of-links/channels";
+    };
+    readonly ofLinksGet: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/of-links";
+    };
+    readonly ofLinksHistoryGet: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/of-links/history";
     };
     readonly ofapiActionCancel: {
         readonly method: "POST";

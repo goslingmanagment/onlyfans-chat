@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { OFAPI_TYPED_EXPORT_PROFILES } from "../shared/index";
-import { errorResponseSchema } from "./primitives";
+import { errorResponseSchema, isoDateTime } from "./primitives";
 const profile = z.enum(OFAPI_TYPED_EXPORT_PROFILES);
 const errors = { 400: errorResponseSchema, 401: errorResponseSchema, 403: errorResponseSchema, 404: errorResponseSchema, 409: errorResponseSchema, 503: errorResponseSchema };
 export const ofapiTypedExportCreateSchema = z.object({
-    pageId: z.number().int().positive(), profile, startDate: z.iso.datetime(), endDate: z.iso.datetime(),
+    pageId: z.number().int().positive(), profile, startDate: isoDateTime(), endDate: isoDateTime(),
     maxRows: z.number().int().min(1).max(1000).default(1000), maxCredits: z.number().int().min(2).max(50).default(10),
     maxBytes: z.number().int().min(1024).max(16 * 1024 * 1024).default(4 * 1024 * 1024),
     expectedPolicyRevision: z.number().int().nonnegative(), fanType: z.enum(["all", "active", "expired", "latest"]).default("all"),

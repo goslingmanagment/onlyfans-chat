@@ -43,6 +43,21 @@ export declare const clientPageFanParamsSchema: z.ZodObject<{
     fanRef: z.ZodString;
 }, z.core.$strip>;
 export declare const clientCursorSchema: z.ZodString;
+/**
+ * The `reason` beside 400 `bad_request` on a client read that takes a cursor:
+ * the cursor is not one this hub issued for this request (forged or cut,
+ * issued for something else than the read binds its cursors to, or past the
+ * read's lifetime). The answer never says which. Not retried as is: the client
+ * reads the first page again. What each read binds a cursor to, and for how
+ * long:
+ * - the awaiting-reply queue (`clientSpenderAwaitingReply`): the page and the
+ *   person; a cursor is good for an hour after the page that carried it.
+ * - the archive feed (`clientConversationFeed`): the page, the fan, the person,
+ *   the reader and the archive generation; a walk ends a day after its first
+ *   page.
+ */
+export declare const CLIENT_CURSOR_REFUSAL_REASONS: readonly ["cursor_invalid"];
+export type ClientCursorRefusalReason = (typeof CLIENT_CURSOR_REFUSAL_REASONS)[number];
 /** Known names: documentation and the client's narrowing. On the wire they are open strings. */
 export declare const CLIENT_FEATURE_FLAG_NAMES: readonly ["insertion", "freshText", "newcomers", "spenders", "stats", "preview", "previewSend", "previewSendMarkAiGenerated", "fanPanel", "navigation", "wsTap", "sound", "coach", "recap", "review", "splitAll"];
 export declare const CLIENT_HUB_CAPABILITY_NAMES: readonly ["context-v1", "live-text-v1", "split-all-v1", "shared-recaps-v1", "recap-profile-v1", "archive-feed-v1", "spenders-stats-v1", "awaiting-reply-v1", "audience-new-v1", "preview-send-custody-v1", "client-health-perf-v1", "ai-usage-v1"];
@@ -237,6 +252,99 @@ export declare const clientFanProfileFromGenerationResponseSchema: z.ZodObject<{
         sourceGeneratedAt: z.ZodNullable<z.ZodString>;
     }, z.core.$strip>;
 }, z.core.$strip>;
+/** The most rows one page carries; the bootstrap announces it as `limits.feedMax`. */
+export declare const CLIENT_FEED_MAX_LIMIT = 100;
+export declare const CLIENT_FEED_DEFAULT_LIMIT = 50;
+/** The first page's summary reads this many of the newest messages unless the query says otherwise: the Ping window. */
+export declare const CLIENT_FEED_SUMMARY_WINDOW_DEFAULT = 100;
+export declare const CLIENT_FEED_SUMMARY_WINDOW_MIN = 5;
+/** The transcript readers' own cap. The deeper read (3000) is the full Recap's alone: a feed page never makes it. */
+export declare const CLIENT_FEED_SUMMARY_WINDOW_MAX = 1500;
+/** Known values of the feed's `source`. On the wire an open token. The AI
+ *  context frame names the same readers (`AI_CONTEXT_SOURCES` in routes.ts). */
+export declare const CLIENT_FEED_SOURCES: readonly ["archive", "union"];
+/** Known values of `sender` (a row's and the head's). On the wire an open token. */
+export declare const CLIENT_FEED_SENDERS: readonly ["fan", "model", "system", "unknown"];
+/**
+ * Known values of `summary.pingSegment`. On the wire an open token. This hub
+ * answers the segment a Ping generation would be given for the same messages
+ * (`active`, `segment-a`, `segment-b`); `unknown` is what a client reads any
+ * other value as, and what it shows when `summary` is null.
+ */
+export declare const CLIENT_FEED_PING_SEGMENTS: readonly ["active", "segment-a", "segment-b", "unknown"];
+export type ClientFeedSource = (typeof CLIENT_FEED_SOURCES)[number];
+export type ClientFeedSender = (typeof CLIENT_FEED_SENDERS)[number];
+export type ClientFeedPingSegment = (typeof CLIENT_FEED_PING_SEGMENTS)[number];
+export declare const clientConversationFeedQuerySchema: z.ZodObject<{
+    cursor: z.ZodOptional<z.ZodString>;
+    limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    summaryWindow: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+}, z.core.$strict>;
+export declare const clientFeedItemSchema: z.ZodObject<{
+    messageId: z.ZodString;
+    at: z.ZodNullable<z.ZodString>;
+    sender: z.ZodString;
+    text: z.ZodString;
+    automatic: z.ZodNullable<z.ZodBoolean>;
+    deleted: z.ZodBoolean;
+    tipMills: z.ZodNullable<z.ZodNumber>;
+    priceMills: z.ZodNullable<z.ZodNumber>;
+    attachmentLabels: z.ZodArray<z.ZodString>;
+}, z.core.$strip>;
+/** The newest message a generation would read from this reader: live, never a deleted one. */
+export declare const clientFeedHeadSchema: z.ZodObject<{
+    messageRef: z.ZodString;
+    at: z.ZodNullable<z.ZodString>;
+    sender: z.ZodString;
+}, z.core.$strip>;
+export declare const clientFeedSummarySchema: z.ZodObject<{
+    pingSegment: z.ZodString;
+    fanSilenceDays: z.ZodNullable<z.ZodNumber>;
+    window: z.ZodObject<{
+        requested: z.ZodNumber;
+        served: z.ZodNumber;
+    }, z.core.$strip>;
+    coverage: z.ZodString;
+    asOf: z.ZodString;
+}, z.core.$strip>;
+export declare const clientConversationFeedResponseSchema: z.ZodObject<{
+    target: z.ZodObject<{
+        pageLabel: z.ZodString;
+        fanRef: z.ZodString;
+    }, z.core.$strip>;
+    source: z.ZodString;
+    snapshotRevision: z.ZodString;
+    asOf: z.ZodString;
+    coverage: z.ZodString;
+    head: z.ZodNullable<z.ZodObject<{
+        messageRef: z.ZodString;
+        at: z.ZodNullable<z.ZodString>;
+        sender: z.ZodString;
+    }, z.core.$strip>>;
+    newestKnownAt: z.ZodNullable<z.ZodString>;
+    nextOlderCursor: z.ZodNullable<z.ZodString>;
+    items: z.ZodArray<z.ZodObject<{
+        messageId: z.ZodString;
+        at: z.ZodNullable<z.ZodString>;
+        sender: z.ZodString;
+        text: z.ZodString;
+        automatic: z.ZodNullable<z.ZodBoolean>;
+        deleted: z.ZodBoolean;
+        tipMills: z.ZodNullable<z.ZodNumber>;
+        priceMills: z.ZodNullable<z.ZodNumber>;
+        attachmentLabels: z.ZodArray<z.ZodString>;
+    }, z.core.$strip>>;
+    summary: z.ZodNullable<z.ZodObject<{
+        pingSegment: z.ZodString;
+        fanSilenceDays: z.ZodNullable<z.ZodNumber>;
+        window: z.ZodObject<{
+            requested: z.ZodNumber;
+            served: z.ZodNumber;
+        }, z.core.$strip>;
+        coverage: z.ZodString;
+        asOf: z.ZodString;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
 /** At most this many days in one answer. */
 export declare const CLIENT_AI_USAGE_MAX_DAYS = 7;
 /** `date` may lie this many days before today (today in `timeZone`), no further. */
@@ -370,6 +478,203 @@ export declare const clientAiUsageResponseSchema: z.ZodObject<{
         remainingMicroUsdToday: z.ZodNullable<z.ZodNumber>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
+/** v1 serves one window length; another one is a new value of `windowDays`. */
+export declare const CLIENT_SPENDER_STATS_WINDOW_DAYS = 30;
+/**
+ * Known values of `coverage.reasons`: why the answer is not `complete`. On the
+ * wire open tokens; a client reads one it does not know as "partial".
+ * - `no_revenue_history`: the page has no transaction and no spender
+ *   projection, so nothing is known (`coverage.state` is `unknown`);
+ * - `projection_missing`: the spender projection was never built; tiers,
+ *   silence and the queue read it;
+ * - `projection_behind`: a transaction is newer than the projection, so tier
+ *   membership may lag the window totals;
+ * - `history_starts_in_window`: the page's oldest transaction is inside the
+ *   window; earlier days may be missing, and a new payer's first purchase is
+ *   only the first one observed (`newPayers.firstPurchaseKnown` is false);
+ * - `messages_missing`: the page has payers and no message at all, so every
+ *   payer's silence is `unknown`.
+ */
+export declare const CLIENT_SPENDER_STATS_COVERAGE_REASONS: readonly ["no_revenue_history", "projection_missing", "projection_behind", "history_starts_in_window", "messages_missing"];
+/**
+ * The two `tiers[].key` rows after the hub's spender buckets, both without
+ * bounds: `untiered` is window spend by fans in no tier, `unattributed` is
+ * window spend whose transaction names no fan. With them the tiers' window
+ * gross sums to `totals.d30.grossMills`.
+ */
+export declare const CLIENT_SPENDER_STATS_REMAINDER_TIER_KEYS: readonly ["untiered", "unattributed"];
+/** The `reason` beside this route's 400 `bad_request`. */
+export declare const CLIENT_SPENDER_STATS_REFUSAL_REASONS: readonly ["unknown_time_zone"];
+export type ClientSpenderStatsCoverageReason = (typeof CLIENT_SPENDER_STATS_COVERAGE_REASONS)[number];
+export type ClientSpenderStatsRefusalReason = (typeof CLIENT_SPENDER_STATS_REFUSAL_REASONS)[number];
+export declare const clientSpenderStatsQuerySchema: z.ZodObject<{
+    windowDays: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    timeZone: z.ZodString;
+}, z.core.$strict>;
+/** Money of one calendar window. */
+export declare const clientSpenderStatsMoneyWindowSchema: z.ZodObject<{
+    grossMills: z.ZodNumber;
+    purchasesGrossMills: z.ZodNumber;
+    adjustmentsMills: z.ZodNumber;
+    creatorNetMills: z.ZodNumber;
+    purchaseCount: z.ZodNumber;
+    payerCount: z.ZodNumber;
+}, z.core.$strip>;
+export declare const clientSpenderStatsDaySchema: z.ZodObject<{
+    date: z.ZodString;
+    grossMills: z.ZodNumber;
+    purchasesGrossMills: z.ZodNumber;
+    adjustmentsMills: z.ZodNumber;
+    creatorNetMills: z.ZodNumber;
+    purchaseCount: z.ZodNumber;
+    byState: z.ZodRecord<z.ZodString, z.ZodNumber>;
+}, z.core.$strip>;
+export declare const clientSpenderStatsTierSchema: z.ZodObject<{
+    key: z.ZodString;
+    label: z.ZodString;
+    minMills: z.ZodNullable<z.ZodNumber>;
+    maxMills: z.ZodNullable<z.ZodNumber>;
+    members: z.ZodNumber;
+    windowPayers: z.ZodNumber;
+    windowGrossMills: z.ZodNumber;
+}, z.core.$strip>;
+export declare const clientSpenderStatsResponseSchema: z.ZodObject<{
+    pageLabel: z.ZodString;
+    metricVersion: z.ZodNumber;
+    moneyUnit: z.ZodLiteral<"USD-mills">;
+    basis: z.ZodLiteral<"gross">;
+    timeZone: z.ZodString;
+    from: z.ZodString;
+    to: z.ZodString;
+    asOf: z.ZodString;
+    projectionAsOf: z.ZodNullable<z.ZodString>;
+    includedStates: z.ZodArray<z.ZodString>;
+    coverage: z.ZodObject<{
+        state: z.ZodString;
+        reasons: z.ZodArray<z.ZodString>;
+    }, z.core.$strip>;
+    days: z.ZodArray<z.ZodObject<{
+        date: z.ZodString;
+        grossMills: z.ZodNumber;
+        purchasesGrossMills: z.ZodNumber;
+        adjustmentsMills: z.ZodNumber;
+        creatorNetMills: z.ZodNumber;
+        purchaseCount: z.ZodNumber;
+        byState: z.ZodRecord<z.ZodString, z.ZodNumber>;
+    }, z.core.$strip>>;
+    totals: z.ZodObject<{
+        today: z.ZodObject<{
+            grossMills: z.ZodNumber;
+            purchasesGrossMills: z.ZodNumber;
+            adjustmentsMills: z.ZodNumber;
+            creatorNetMills: z.ZodNumber;
+            purchaseCount: z.ZodNumber;
+            payerCount: z.ZodNumber;
+        }, z.core.$strip>;
+        d7: z.ZodObject<{
+            grossMills: z.ZodNumber;
+            purchasesGrossMills: z.ZodNumber;
+            adjustmentsMills: z.ZodNumber;
+            creatorNetMills: z.ZodNumber;
+            purchaseCount: z.ZodNumber;
+            payerCount: z.ZodNumber;
+        }, z.core.$strip>;
+        prev7: z.ZodObject<{
+            grossMills: z.ZodNumber;
+            purchasesGrossMills: z.ZodNumber;
+            adjustmentsMills: z.ZodNumber;
+            creatorNetMills: z.ZodNumber;
+            purchaseCount: z.ZodNumber;
+            payerCount: z.ZodNumber;
+        }, z.core.$strip>;
+        d30: z.ZodObject<{
+            grossMills: z.ZodNumber;
+            purchasesGrossMills: z.ZodNumber;
+            adjustmentsMills: z.ZodNumber;
+            creatorNetMills: z.ZodNumber;
+            purchaseCount: z.ZodNumber;
+            payerCount: z.ZodNumber;
+        }, z.core.$strip>;
+        d7DeltaPct: z.ZodNullable<z.ZodNumber>;
+    }, z.core.$strip>;
+    avgCheckMills: z.ZodNullable<z.ZodNumber>;
+    tiers: z.ZodArray<z.ZodObject<{
+        key: z.ZodString;
+        label: z.ZodString;
+        minMills: z.ZodNullable<z.ZodNumber>;
+        maxMills: z.ZodNullable<z.ZodNumber>;
+        members: z.ZodNumber;
+        windowPayers: z.ZodNumber;
+        windowGrossMills: z.ZodNumber;
+    }, z.core.$strip>>;
+    silence: z.ZodObject<{
+        d8to21: z.ZodObject<{
+            fans: z.ZodNumber;
+            lifetimeGrossMills: z.ZodNumber;
+        }, z.core.$strip>;
+        over21: z.ZodObject<{
+            fans: z.ZodNumber;
+            lifetimeGrossMills: z.ZodNumber;
+        }, z.core.$strip>;
+        unknown: z.ZodObject<{
+            fans: z.ZodNumber;
+            lifetimeGrossMills: z.ZodNumber;
+        }, z.core.$strip>;
+    }, z.core.$strip>;
+    newPayers: z.ZodObject<{
+        count: z.ZodNumber;
+        firstPurchaseKnown: z.ZodBoolean;
+    }, z.core.$strip>;
+    queueSummary: z.ZodObject<{
+        total: z.ZodNumber;
+        unknown: z.ZodNumber;
+    }, z.core.$strip>;
+}, z.core.$strip>;
+/** The most rows one page carries. */
+export declare const CLIENT_SPENDER_AWAITING_REPLY_MAX_LIMIT = 100;
+export declare const CLIENT_SPENDER_AWAITING_REPLY_DEFAULT_LIMIT = 50;
+/**
+ * Known values of `readState`. On the wire an open token; a client reads one
+ * it does not know as `unknown`.
+ * - `unread`: the chat has unread fan messages (`unreadCount` says how many);
+ * - `read`: nothing is unread and the chat's newest message is the fan's;
+ * - `unknown`: the fan wrote after the page's last message, but the hub cannot
+ *   tell whether it was read. Its own category, never folded into the other
+ *   two; `unreadCount` is null.
+ */
+export declare const CLIENT_SPENDER_AWAITING_REPLY_READ_STATES: readonly ["unread", "read", "unknown"];
+export type ClientSpenderAwaitingReplyReadState = (typeof CLIENT_SPENDER_AWAITING_REPLY_READ_STATES)[number];
+export declare const clientSpenderAwaitingReplyQuerySchema: z.ZodObject<{
+    cursor: z.ZodOptional<z.ZodString>;
+    limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+}, z.core.$strict>;
+export declare const clientSpenderAwaitingReplyItemSchema: z.ZodObject<{
+    fanRef: z.ZodString;
+    username: z.ZodNullable<z.ZodString>;
+    displayName: z.ZodNullable<z.ZodString>;
+    lifetimeGrossMills: z.ZodNumber;
+    lastFanMessageAt: z.ZodString;
+    lastModelMessageAt: z.ZodNullable<z.ZodString>;
+    unreadCount: z.ZodNullable<z.ZodNumber>;
+    readState: z.ZodString;
+}, z.core.$strip>;
+export declare const clientSpenderAwaitingReplyResponseSchema: z.ZodObject<{
+    items: z.ZodArray<z.ZodObject<{
+        fanRef: z.ZodString;
+        username: z.ZodNullable<z.ZodString>;
+        displayName: z.ZodNullable<z.ZodString>;
+        lifetimeGrossMills: z.ZodNumber;
+        lastFanMessageAt: z.ZodString;
+        lastModelMessageAt: z.ZodNullable<z.ZodString>;
+        unreadCount: z.ZodNullable<z.ZodNumber>;
+        readState: z.ZodString;
+    }, z.core.$strip>>;
+    total: z.ZodNumber;
+    loaded: z.ZodNumber;
+    unknown: z.ZodNumber;
+    nextCursor: z.ZodNullable<z.ZodString>;
+    asOf: z.ZodString;
+}, z.core.$strip>;
 /** The longest range one read may span, in days. */
 export declare const ADMIN_CLIENT_HEALTH_MAX_RANGE_DAYS = 366;
 export declare const adminClientHealthQuerySchema: z.ZodObject<{
@@ -470,6 +775,496 @@ export declare const adminClientHealthResponseSchema: z.ZodObject<{
         domNodesP95: z.ZodNullable<z.ZodNumber>;
     }, z.core.$strip>>;
     asOf: z.ZodString;
+}, z.core.$strip>;
+export declare const CLIENT_CLAIM_ACTIONS: readonly ["claim", "renew", "release", "dispatch", "sent", "failed", "registerNativeSend"];
+export declare const CLIENT_GREETING_STATES: readonly ["none", "confirmed"];
+export declare const CLIENT_LEASE_STATES: readonly ["none", "owned", "held", "expired", "released"];
+/** The holder of a lease is never named: only whether it is the caller elsewhere. */
+export declare const CLIENT_LEASE_HOLDERS: readonly ["you-elsewhere", "someone-else"];
+export declare const CLIENT_CUSTODY_STATES: readonly ["dispatching", "sent", "failed", "uncertain-held", "resolved-sent", "resolved-not-sent"];
+/**
+ * Known values of `greeting.source`; on the wire an open token. `desktop-outbox`:
+ * the desktop's new-follower command that OnlyFans confirmed greeted the fan.
+ */
+export declare const CLIENT_GREETING_SOURCES: readonly ["preview-send", "native-register", "resolve", "desktop-outbox"];
+export declare const CLIENT_SEND_PURPOSES: readonly ["greeting", "preview-reply"];
+export declare const CLIENT_SEND_FAILURE_REASONS: readonly ["not_enqueued", "native_rejected"];
+/** A group has at most this many variants (Hi) and parts. */
+export declare const CLIENT_CLAIM_MAX_VARIANTS = 3;
+export declare const CLIENT_CLAIM_MAX_PARTS = 10;
+export type ClientClaimAction = (typeof CLIENT_CLAIM_ACTIONS)[number];
+export type ClientCustodyState = (typeof CLIENT_CUSTODY_STATES)[number];
+export type ClientGreetingSource = (typeof CLIENT_GREETING_SOURCES)[number];
+export type ClientSendPurpose = (typeof CLIENT_SEND_PURPOSES)[number];
+/** The parts of one generation: one group. `variant` is the Hi variant, 0 elsewhere. */
+export declare const clientClaimGroupSchema: z.ZodObject<{
+    generationRef: z.ZodString;
+    variant: z.ZodNumber;
+    partCount: z.ZodNumber;
+}, z.core.$strict>;
+export declare const clientFanClaimBodySchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
+    action: z.ZodLiteral<"claim">;
+    leaseToken: z.ZodString;
+    instanceId: z.ZodString;
+}, z.core.$strict>, z.ZodObject<{
+    action: z.ZodLiteral<"renew">;
+    leaseToken: z.ZodString;
+    instanceId: z.ZodString;
+}, z.core.$strict>, z.ZodObject<{
+    action: z.ZodLiteral<"release">;
+    leaseToken: z.ZodString;
+    instanceId: z.ZodString;
+}, z.core.$strict>, z.ZodObject<{
+    action: z.ZodLiteral<"dispatch">;
+    attemptId: z.ZodString;
+    instanceId: z.ZodString;
+    purpose: z.ZodEnum<{
+        greeting: "greeting";
+        "preview-reply": "preview-reply";
+    }>;
+    group: z.ZodObject<{
+        generationRef: z.ZodString;
+        variant: z.ZodNumber;
+        partCount: z.ZodNumber;
+    }, z.core.$strict>;
+    partIndex: z.ZodNumber;
+    textRevision: z.ZodNumber;
+    leaseToken: z.ZodOptional<z.ZodString>;
+    flagRevision: z.ZodNumber;
+}, z.core.$strict>, z.ZodObject<{
+    action: z.ZodLiteral<"sent">;
+    attemptId: z.ZodString;
+    instanceId: z.ZodString;
+    platformMessageId: z.ZodString;
+    evidence: z.ZodLiteral<"receipt+echo">;
+}, z.core.$strict>, z.ZodObject<{
+    action: z.ZodLiteral<"failed">;
+    attemptId: z.ZodString;
+    instanceId: z.ZodString;
+    reason: z.ZodEnum<{
+        not_enqueued: "not_enqueued";
+        native_rejected: "native_rejected";
+    }>;
+    httpStatus: z.ZodOptional<z.ZodNumber>;
+}, z.core.$strict>, z.ZodObject<{
+    action: z.ZodLiteral<"registerNativeSend">;
+    attemptId: z.ZodString;
+    instanceId: z.ZodString;
+    purpose: z.ZodEnum<{
+        greeting: "greeting";
+        "preview-reply": "preview-reply";
+    }>;
+    group: z.ZodObject<{
+        generationRef: z.ZodString;
+        variant: z.ZodNumber;
+        partCount: z.ZodNumber;
+    }, z.core.$strict>;
+    partIndex: z.ZodNumber;
+    platformMessageId: z.ZodString;
+}, z.core.$strict>], "action">;
+/** The answer of the claim POST and, never with a ticket, of the status GET. */
+export declare const clientFanClaimResponseSchema: z.ZodObject<{
+    greeting: z.ZodObject<{
+        state: z.ZodEnum<{
+            none: "none";
+            confirmed: "confirmed";
+        }>;
+        at: z.ZodNullable<z.ZodString>;
+        messageRef: z.ZodNullable<z.ZodString>;
+        source: z.ZodNullable<z.ZodString>;
+    }, z.core.$strip>;
+    lease: z.ZodObject<{
+        state: z.ZodEnum<{
+            none: "none";
+            expired: "expired";
+            owned: "owned";
+            held: "held";
+            released: "released";
+        }>;
+        leaseToken: z.ZodNullable<z.ZodString>;
+        expiresAt: z.ZodNullable<z.ZodString>;
+        heldBy: z.ZodNullable<z.ZodEnum<{
+            "you-elsewhere": "you-elsewhere";
+            "someone-else": "someone-else";
+        }>>;
+    }, z.core.$strip>;
+    group: z.ZodNullable<z.ZodObject<{
+        generationRef: z.ZodString;
+        variant: z.ZodNumber;
+        partCount: z.ZodNumber;
+        sentParts: z.ZodArray<z.ZodNumber>;
+        heldParts: z.ZodArray<z.ZodNumber>;
+    }, z.core.$strip>>;
+    custody: z.ZodNullable<z.ZodObject<{
+        attemptId: z.ZodString;
+        state: z.ZodEnum<{
+            failed: "failed";
+            dispatching: "dispatching";
+            sent: "sent";
+            "uncertain-held": "uncertain-held";
+            "resolved-sent": "resolved-sent";
+            "resolved-not-sent": "resolved-not-sent";
+        }>;
+        ticket: z.ZodNullable<z.ZodString>;
+        ticketExpiresAt: z.ZodNullable<z.ZodString>;
+    }, z.core.$strip>>;
+    serverNow: z.ZodString;
+    flagRevision: z.ZodNumber;
+}, z.core.$strip>;
+/** 429 `preview_send_rate_limited`: the error body plus when the window frees a slot. */
+export declare const clientPreviewSendRateLimitedResponseSchema: z.ZodObject<{
+    error: z.ZodString;
+    message: z.ZodString;
+    statusCode: z.ZodNumber;
+    reason: z.ZodOptional<z.ZodString>;
+    statusUrl: z.ZodOptional<z.ZodString>;
+    retryAfterMs: z.ZodOptional<z.ZodNumber>;
+}, z.core.$strip>;
+export declare const clientSendCustodyParamsSchema: z.ZodObject<{
+    pageLabel: z.ZodString;
+    attemptId: z.ZodString;
+}, z.core.$strip>;
+export declare const clientSendCustodyResolveBodySchema: z.ZodObject<{
+    outcome: z.ZodEnum<{
+        sent: "sent";
+        not_sent: "not_sent";
+    }>;
+    platformMessageId: z.ZodOptional<z.ZodString>;
+    note: z.ZodString;
+}, z.core.$strict>;
+export declare const clientSendCustodyItemSchema: z.ZodObject<{
+    attemptId: z.ZodString;
+    fanRef: z.ZodString;
+    userId: z.ZodNumber;
+    purpose: z.ZodString;
+    state: z.ZodString;
+    generationRef: z.ZodString;
+    partIndex: z.ZodNumber;
+    partCount: z.ZodNumber;
+    createdAt: z.ZodString;
+    ticketExpiresAt: z.ZodNullable<z.ZodString>;
+}, z.core.$strip>;
+/**
+ * `held`: sends past their ticket that nobody ended (`uncertain-held`), the
+ * longest held first. A send still inside its ticket is in flight and is not
+ * listed. `resolved`: sends the owner or a team lead ended by hand, the last
+ * resolved first, each with who resolved it, when, how and why.
+ */
+export declare const CLIENT_SEND_CUSTODY_LIST_STATES: readonly ["held", "resolved"];
+/** Known values of `resolution.outcome`; on the wire an open token. The resolve body's own. */
+export declare const CLIENT_SEND_CUSTODY_RESOLVE_OUTCOMES: readonly ["sent", "not_sent"];
+export type ClientSendCustodyListState = (typeof CLIENT_SEND_CUSTODY_LIST_STATES)[number];
+export declare const clientSendCustodyListQuerySchema: z.ZodObject<{
+    state: z.ZodDefault<z.ZodEnum<{
+        held: "held";
+        resolved: "resolved";
+    }>>;
+    pageLabel: z.ZodOptional<z.ZodString>;
+    limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+}, z.core.$strict>;
+export declare const clientSendCustodyListItemSchema: z.ZodObject<{
+    attemptId: z.ZodString;
+    fanRef: z.ZodString;
+    userId: z.ZodNumber;
+    purpose: z.ZodString;
+    state: z.ZodString;
+    generationRef: z.ZodString;
+    partIndex: z.ZodNumber;
+    partCount: z.ZodNumber;
+    createdAt: z.ZodString;
+    ticketExpiresAt: z.ZodNullable<z.ZodString>;
+    pageLabel: z.ZodString;
+    variant: z.ZodNumber;
+    username: z.ZodString;
+    instanceId: z.ZodString;
+    updatedAt: z.ZodString;
+    greeting: z.ZodObject<{
+        state: z.ZodString;
+        at: z.ZodNullable<z.ZodString>;
+        source: z.ZodNullable<z.ZodString>;
+        firstPartIsThisAttempt: z.ZodBoolean;
+    }, z.core.$strip>;
+    resolution: z.ZodNullable<z.ZodObject<{
+        outcome: z.ZodString;
+        at: z.ZodString;
+        userId: z.ZodNumber;
+        username: z.ZodString;
+        note: z.ZodString;
+        platformMessageId: z.ZodNullable<z.ZodString>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export declare const clientSendCustodyListResponseSchema: z.ZodObject<{
+    items: z.ZodArray<z.ZodObject<{
+        attemptId: z.ZodString;
+        fanRef: z.ZodString;
+        userId: z.ZodNumber;
+        purpose: z.ZodString;
+        state: z.ZodString;
+        generationRef: z.ZodString;
+        partIndex: z.ZodNumber;
+        partCount: z.ZodNumber;
+        createdAt: z.ZodString;
+        ticketExpiresAt: z.ZodNullable<z.ZodString>;
+        pageLabel: z.ZodString;
+        variant: z.ZodNumber;
+        username: z.ZodString;
+        instanceId: z.ZodString;
+        updatedAt: z.ZodString;
+        greeting: z.ZodObject<{
+            state: z.ZodString;
+            at: z.ZodNullable<z.ZodString>;
+            source: z.ZodNullable<z.ZodString>;
+            firstPartIsThisAttempt: z.ZodBoolean;
+        }, z.core.$strip>;
+        resolution: z.ZodNullable<z.ZodObject<{
+            outcome: z.ZodString;
+            at: z.ZodString;
+            userId: z.ZodNumber;
+            username: z.ZodString;
+            note: z.ZodString;
+            platformMessageId: z.ZodNullable<z.ZodString>;
+        }, z.core.$strip>>;
+    }, z.core.$strip>>;
+    limit: z.ZodNumber;
+    offset: z.ZodNumber;
+    total: z.ZodNumber;
+    serverNow: z.ZodString;
+}, z.core.$strip>;
+export declare const CLIENT_AUDIENCE_NEW_DEFAULT_WINDOW_HOURS = 48;
+/** The widest window; the bootstrap announces it as `limits.audienceWindowHours`. */
+export declare const CLIENT_AUDIENCE_NEW_MAX_WINDOW_HOURS = 720;
+export declare const CLIENT_AUDIENCE_NEW_DEFAULT_LIMIT = 50;
+export declare const CLIENT_AUDIENCE_NEW_MAX_LIMIT = 100;
+/**
+ * Known values of `kind`. On the wire an open token. `new`: a first
+ * subscription (with `trial` when it is a free trial). `returning`: a fan who
+ * was subscribed before and came back: OnlyFans says so, or it names the
+ * subscription new (a free-trial link taken again reads as a new trial) while
+ * the hub holds a subscription of the fan that started earlier. `trial` stays
+ * as OnlyFans said it. There is no "renewed": OnlyFans sends no notification
+ * when a subscription renews by itself.
+ */
+export declare const CLIENT_AUDIENCE_NEW_KINDS: readonly ["new", "returning"];
+/**
+ * Known values of `subscribedAtSource`. On the wire an open token.
+ * `notification`: the time of the subscription notification, which OnlyFans
+ * gives to the minute. `subscribeAt`: the subscription's own start as a
+ * subscriber sweep read it from OnlyFans, used once it names the same
+ * subscription as the notification.
+ */
+export declare const CLIENT_AUDIENCE_NEW_SUBSCRIBED_AT_SOURCES: readonly ["subscribeAt", "notification"];
+/** Known values of `status.subscriptionStatus`. On the wire an open token. */
+export declare const CLIENT_AUDIENCE_NEW_SUBSCRIPTION_STATUSES: readonly ["active", "expired", "unknown"];
+/**
+ * Known values of `status.source`: which collector the subscription's state
+ * rests on. On the wire an open token. `sweep`: the newest subscriber sweep
+ * saw the fan, or a sweep's end retired a subscription it no longer found.
+ * `webhook`: a notification wrote the state and no sweep has confirmed it
+ * since. `none`: the hub holds no subscription of the fan on the page.
+ */
+export declare const CLIENT_AUDIENCE_NEW_STATUS_SOURCES: readonly ["sweep", "webhook", "none"];
+/**
+ * Known values of `coverage.reasons`: why the list may be missing a
+ * subscription or a row's `status` may be out of date. On the wire open
+ * tokens; the list is append-only.
+ * - `delivery_history_off`: the hub does not collect the provider's webhook
+ *   delivery history, so nothing would tell it of a notification that never
+ *   arrived (`unknown`);
+ * - `delivery_history_pending`: the collection is on and has not finished a
+ *   first window (`unknown`);
+ * - `delivery_history_before_window`: the delivery history is checked only up
+ *   to a moment before the window starts (`unknown`);
+ * - `delivery_history_behind`: it is checked up to a moment inside the window
+ *   that lies further back from the window's end than the collector normally
+ *   lags (`partial`);
+ * - `subscription_event_pending`: a subscription notification received since
+ *   the window started is journaled and not turned into an event yet, so its
+ *   row is not in the list (`partial`);
+ * - `subscription_projection_pending`, `subscription_projection_failed`: a
+ *   subscription notification received since the window started is not applied
+ *   to the page's subscriber state yet, or could not be (`partial`);
+ * - `audience_sweep_missing`: no subscriber sweep of the page has completed, so
+ *   nothing but notifications vouches for any `status` (`partial`);
+ * - `audience_sweep_unverified`: the last sweep ended without a result the hub
+ *   trusts (`partial`).
+ */
+export declare const CLIENT_AUDIENCE_NEW_COVERAGE_REASONS: readonly ["delivery_history_off", "delivery_history_pending", "delivery_history_before_window", "delivery_history_behind", "subscription_event_pending", "subscription_projection_pending", "subscription_projection_failed", "audience_sweep_missing", "audience_sweep_unverified"];
+/**
+ * The `reason` beside this route's 400 `bad_request`. `cursor_invalid`: the
+ * cursor is not one this hub issued for this request (forged or cut, issued
+ * for another page or person, or older than an hour); the answer never says
+ * which. `cursor_window_mismatch`: the cursor is the caller's own, of a walk
+ * with another `windowHours`.
+ */
+export declare const CLIENT_AUDIENCE_NEW_REFUSAL_REASONS: readonly ["cursor_invalid", "cursor_window_mismatch"];
+export type ClientAudienceNewKind = (typeof CLIENT_AUDIENCE_NEW_KINDS)[number];
+export type ClientAudienceNewSubscribedAtSource = (typeof CLIENT_AUDIENCE_NEW_SUBSCRIBED_AT_SOURCES)[number];
+export type ClientAudienceNewSubscriptionStatus = (typeof CLIENT_AUDIENCE_NEW_SUBSCRIPTION_STATUSES)[number];
+export type ClientAudienceNewStatusSource = (typeof CLIENT_AUDIENCE_NEW_STATUS_SOURCES)[number];
+export type ClientAudienceNewCoverageReason = (typeof CLIENT_AUDIENCE_NEW_COVERAGE_REASONS)[number];
+export type ClientAudienceNewRefusalReason = (typeof CLIENT_AUDIENCE_NEW_REFUSAL_REASONS)[number];
+export declare const clientAudienceNewQuerySchema: z.ZodObject<{
+    windowHours: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    cursor: z.ZodOptional<z.ZodString>;
+    limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+}, z.core.$strict>;
+/**
+ * The greeting, lease and custody of one fan as a list row carries them: the
+ * states the claim status read (`clientFanClaimStatus`) answers for the same
+ * fan and caller, without the tokens and ids. The read names no client
+ * install, so the caller's own live lease reads `held` by `you-elsewhere`.
+ */
+export declare const clientClaimSummarySchema: z.ZodObject<{
+    greeting: z.ZodEnum<{
+        none: "none";
+        confirmed: "confirmed";
+    }>;
+    lease: z.ZodEnum<{
+        none: "none";
+        expired: "expired";
+        owned: "owned";
+        held: "held";
+        released: "released";
+    }>;
+    heldBy: z.ZodNullable<z.ZodEnum<{
+        "you-elsewhere": "you-elsewhere";
+        "someone-else": "someone-else";
+    }>>;
+    custody: z.ZodNullable<z.ZodEnum<{
+        failed: "failed";
+        dispatching: "dispatching";
+        sent: "sent";
+        "uncertain-held": "uncertain-held";
+        "resolved-sent": "resolved-sent";
+        "resolved-not-sent": "resolved-not-sent";
+    }>>;
+}, z.core.$strip>;
+export declare const clientAudienceNewItemSchema: z.ZodObject<{
+    eventRef: z.ZodString;
+    fanRef: z.ZodString;
+    username: z.ZodNullable<z.ZodString>;
+    displayName: z.ZodNullable<z.ZodString>;
+    kind: z.ZodString;
+    trial: z.ZodBoolean;
+    subscribedAt: z.ZodString;
+    subscribedAtSource: z.ZodString;
+    status: z.ZodObject<{
+        isSubscriber: z.ZodNullable<z.ZodBoolean>;
+        subscriptionStatus: z.ZodString;
+        endsAt: z.ZodNullable<z.ZodString>;
+        asOf: z.ZodNullable<z.ZodString>;
+        source: z.ZodString;
+    }, z.core.$strip>;
+    thread: z.ZodNullable<z.ZodObject<{
+        lastMessageAt: z.ZodNullable<z.ZodString>;
+        lastFanMessageAt: z.ZodNullable<z.ZodString>;
+        lastModelMessageAt: z.ZodNullable<z.ZodString>;
+        storedMessageCount: z.ZodNumber;
+        coverage: z.ZodString;
+        backfillComplete: z.ZodBoolean;
+    }, z.core.$strip>>;
+    claim: z.ZodObject<{
+        greeting: z.ZodEnum<{
+            none: "none";
+            confirmed: "confirmed";
+        }>;
+        lease: z.ZodEnum<{
+            none: "none";
+            expired: "expired";
+            owned: "owned";
+            held: "held";
+            released: "released";
+        }>;
+        heldBy: z.ZodNullable<z.ZodEnum<{
+            "you-elsewhere": "you-elsewhere";
+            "someone-else": "someone-else";
+        }>>;
+        custody: z.ZodNullable<z.ZodEnum<{
+            failed: "failed";
+            dispatching: "dispatching";
+            sent: "sent";
+            "uncertain-held": "uncertain-held";
+            "resolved-sent": "resolved-sent";
+            "resolved-not-sent": "resolved-not-sent";
+        }>>;
+    }, z.core.$strip>;
+}, z.core.$strip>;
+export declare const clientAudienceNewResponseSchema: z.ZodObject<{
+    pageLabel: z.ZodString;
+    window: z.ZodObject<{
+        hours: z.ZodNumber;
+        from: z.ZodString;
+        to: z.ZodString;
+        snapshotAt: z.ZodString;
+    }, z.core.$strip>;
+    serverNow: z.ZodString;
+    coverage: z.ZodObject<{
+        state: z.ZodString;
+        deliveryFrontier: z.ZodNullable<z.ZodString>;
+        lastAudienceSweepAt: z.ZodNullable<z.ZodString>;
+        reasons: z.ZodArray<z.ZodString>;
+    }, z.core.$strip>;
+    unknownCount: z.ZodNumber;
+    welcomeTemplate: z.ZodNullable<z.ZodObject<{
+        ref: z.ZodString;
+        observedAt: z.ZodString;
+        enabled: z.ZodNullable<z.ZodBoolean>;
+        hasText: z.ZodBoolean;
+        hasMedia: z.ZodBoolean;
+        priceMills: z.ZodNullable<z.ZodNumber>;
+    }, z.core.$strip>>;
+    items: z.ZodArray<z.ZodObject<{
+        eventRef: z.ZodString;
+        fanRef: z.ZodString;
+        username: z.ZodNullable<z.ZodString>;
+        displayName: z.ZodNullable<z.ZodString>;
+        kind: z.ZodString;
+        trial: z.ZodBoolean;
+        subscribedAt: z.ZodString;
+        subscribedAtSource: z.ZodString;
+        status: z.ZodObject<{
+            isSubscriber: z.ZodNullable<z.ZodBoolean>;
+            subscriptionStatus: z.ZodString;
+            endsAt: z.ZodNullable<z.ZodString>;
+            asOf: z.ZodNullable<z.ZodString>;
+            source: z.ZodString;
+        }, z.core.$strip>;
+        thread: z.ZodNullable<z.ZodObject<{
+            lastMessageAt: z.ZodNullable<z.ZodString>;
+            lastFanMessageAt: z.ZodNullable<z.ZodString>;
+            lastModelMessageAt: z.ZodNullable<z.ZodString>;
+            storedMessageCount: z.ZodNumber;
+            coverage: z.ZodString;
+            backfillComplete: z.ZodBoolean;
+        }, z.core.$strip>>;
+        claim: z.ZodObject<{
+            greeting: z.ZodEnum<{
+                none: "none";
+                confirmed: "confirmed";
+            }>;
+            lease: z.ZodEnum<{
+                none: "none";
+                expired: "expired";
+                owned: "owned";
+                held: "held";
+                released: "released";
+            }>;
+            heldBy: z.ZodNullable<z.ZodEnum<{
+                "you-elsewhere": "you-elsewhere";
+                "someone-else": "someone-else";
+            }>>;
+            custody: z.ZodNullable<z.ZodEnum<{
+                failed: "failed";
+                dispatching: "dispatching";
+                sent: "sent";
+                "uncertain-held": "uncertain-held";
+                "resolved-sent": "resolved-sent";
+                "resolved-not-sent": "resolved-not-sent";
+            }>>;
+        }, z.core.$strip>;
+    }, z.core.$strip>>;
+    nextCursor: z.ZodNullable<z.ZodString>;
 }, z.core.$strip>;
 export declare const clientRouteSchemas: {
     readonly clientBootstrap: {
@@ -582,6 +1377,99 @@ export declare const clientRouteSchemas: {
                     text: z.ZodString;
                 }, z.core.$strip>>;
                 fullSavedToProfile: z.ZodBoolean;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly clientConversationFeed: {
+        readonly auth: {
+            readonly kind: "apiKey";
+            readonly scope: "page";
+        };
+        readonly tags: readonly ["client"];
+        readonly summary: "One conversation's messages from the hub's own stores, newest first, with a Ping summary on the first page";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            pageLabel: z.ZodString;
+            fanRef: z.ZodString;
+        }, z.core.$strip>;
+        readonly querystring: z.ZodObject<{
+            cursor: z.ZodOptional<z.ZodString>;
+            limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+            summaryWindow: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                target: z.ZodObject<{
+                    pageLabel: z.ZodString;
+                    fanRef: z.ZodString;
+                }, z.core.$strip>;
+                source: z.ZodString;
+                snapshotRevision: z.ZodString;
+                asOf: z.ZodString;
+                coverage: z.ZodString;
+                head: z.ZodNullable<z.ZodObject<{
+                    messageRef: z.ZodString;
+                    at: z.ZodNullable<z.ZodString>;
+                    sender: z.ZodString;
+                }, z.core.$strip>>;
+                newestKnownAt: z.ZodNullable<z.ZodString>;
+                nextOlderCursor: z.ZodNullable<z.ZodString>;
+                items: z.ZodArray<z.ZodObject<{
+                    messageId: z.ZodString;
+                    at: z.ZodNullable<z.ZodString>;
+                    sender: z.ZodString;
+                    text: z.ZodString;
+                    automatic: z.ZodNullable<z.ZodBoolean>;
+                    deleted: z.ZodBoolean;
+                    tipMills: z.ZodNullable<z.ZodNumber>;
+                    priceMills: z.ZodNullable<z.ZodNumber>;
+                    attachmentLabels: z.ZodArray<z.ZodString>;
+                }, z.core.$strip>>;
+                summary: z.ZodNullable<z.ZodObject<{
+                    pingSegment: z.ZodString;
+                    fanSilenceDays: z.ZodNullable<z.ZodNumber>;
+                    window: z.ZodObject<{
+                        requested: z.ZodNumber;
+                        served: z.ZodNumber;
+                    }, z.core.$strip>;
+                    coverage: z.ZodString;
+                    asOf: z.ZodString;
+                }, z.core.$strip>>;
             }, z.core.$strip>;
             readonly 400: z.ZodObject<{
                 error: z.ZodString;
@@ -795,6 +1683,769 @@ export declare const clientRouteSchemas: {
             }, z.core.$strip>;
         };
     };
+    readonly clientSpenderStats: {
+        readonly auth: {
+            readonly kind: "apiKey";
+            readonly scope: "page";
+        };
+        readonly tags: readonly ["client"];
+        readonly summary: "Spenders statistics of one page: 30 local days of money, tiers, silence, new payers, awaiting reply";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            pageLabel: z.ZodString;
+        }, z.core.$strip>;
+        readonly querystring: z.ZodObject<{
+            windowDays: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+            timeZone: z.ZodString;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                pageLabel: z.ZodString;
+                metricVersion: z.ZodNumber;
+                moneyUnit: z.ZodLiteral<"USD-mills">;
+                basis: z.ZodLiteral<"gross">;
+                timeZone: z.ZodString;
+                from: z.ZodString;
+                to: z.ZodString;
+                asOf: z.ZodString;
+                projectionAsOf: z.ZodNullable<z.ZodString>;
+                includedStates: z.ZodArray<z.ZodString>;
+                coverage: z.ZodObject<{
+                    state: z.ZodString;
+                    reasons: z.ZodArray<z.ZodString>;
+                }, z.core.$strip>;
+                days: z.ZodArray<z.ZodObject<{
+                    date: z.ZodString;
+                    grossMills: z.ZodNumber;
+                    purchasesGrossMills: z.ZodNumber;
+                    adjustmentsMills: z.ZodNumber;
+                    creatorNetMills: z.ZodNumber;
+                    purchaseCount: z.ZodNumber;
+                    byState: z.ZodRecord<z.ZodString, z.ZodNumber>;
+                }, z.core.$strip>>;
+                totals: z.ZodObject<{
+                    today: z.ZodObject<{
+                        grossMills: z.ZodNumber;
+                        purchasesGrossMills: z.ZodNumber;
+                        adjustmentsMills: z.ZodNumber;
+                        creatorNetMills: z.ZodNumber;
+                        purchaseCount: z.ZodNumber;
+                        payerCount: z.ZodNumber;
+                    }, z.core.$strip>;
+                    d7: z.ZodObject<{
+                        grossMills: z.ZodNumber;
+                        purchasesGrossMills: z.ZodNumber;
+                        adjustmentsMills: z.ZodNumber;
+                        creatorNetMills: z.ZodNumber;
+                        purchaseCount: z.ZodNumber;
+                        payerCount: z.ZodNumber;
+                    }, z.core.$strip>;
+                    prev7: z.ZodObject<{
+                        grossMills: z.ZodNumber;
+                        purchasesGrossMills: z.ZodNumber;
+                        adjustmentsMills: z.ZodNumber;
+                        creatorNetMills: z.ZodNumber;
+                        purchaseCount: z.ZodNumber;
+                        payerCount: z.ZodNumber;
+                    }, z.core.$strip>;
+                    d30: z.ZodObject<{
+                        grossMills: z.ZodNumber;
+                        purchasesGrossMills: z.ZodNumber;
+                        adjustmentsMills: z.ZodNumber;
+                        creatorNetMills: z.ZodNumber;
+                        purchaseCount: z.ZodNumber;
+                        payerCount: z.ZodNumber;
+                    }, z.core.$strip>;
+                    d7DeltaPct: z.ZodNullable<z.ZodNumber>;
+                }, z.core.$strip>;
+                avgCheckMills: z.ZodNullable<z.ZodNumber>;
+                tiers: z.ZodArray<z.ZodObject<{
+                    key: z.ZodString;
+                    label: z.ZodString;
+                    minMills: z.ZodNullable<z.ZodNumber>;
+                    maxMills: z.ZodNullable<z.ZodNumber>;
+                    members: z.ZodNumber;
+                    windowPayers: z.ZodNumber;
+                    windowGrossMills: z.ZodNumber;
+                }, z.core.$strip>>;
+                silence: z.ZodObject<{
+                    d8to21: z.ZodObject<{
+                        fans: z.ZodNumber;
+                        lifetimeGrossMills: z.ZodNumber;
+                    }, z.core.$strip>;
+                    over21: z.ZodObject<{
+                        fans: z.ZodNumber;
+                        lifetimeGrossMills: z.ZodNumber;
+                    }, z.core.$strip>;
+                    unknown: z.ZodObject<{
+                        fans: z.ZodNumber;
+                        lifetimeGrossMills: z.ZodNumber;
+                    }, z.core.$strip>;
+                }, z.core.$strip>;
+                newPayers: z.ZodObject<{
+                    count: z.ZodNumber;
+                    firstPurchaseKnown: z.ZodBoolean;
+                }, z.core.$strip>;
+                queueSummary: z.ZodObject<{
+                    total: z.ZodNumber;
+                    unknown: z.ZodNumber;
+                }, z.core.$strip>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly clientSpenderAwaitingReply: {
+        readonly auth: {
+            readonly kind: "apiKey";
+            readonly scope: "page";
+        };
+        readonly tags: readonly ["client"];
+        readonly summary: "The payers of one page whose fan waits for a reply, biggest spender first, a page at a time";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            pageLabel: z.ZodString;
+        }, z.core.$strip>;
+        readonly querystring: z.ZodObject<{
+            cursor: z.ZodOptional<z.ZodString>;
+            limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                items: z.ZodArray<z.ZodObject<{
+                    fanRef: z.ZodString;
+                    username: z.ZodNullable<z.ZodString>;
+                    displayName: z.ZodNullable<z.ZodString>;
+                    lifetimeGrossMills: z.ZodNumber;
+                    lastFanMessageAt: z.ZodString;
+                    lastModelMessageAt: z.ZodNullable<z.ZodString>;
+                    unreadCount: z.ZodNullable<z.ZodNumber>;
+                    readState: z.ZodString;
+                }, z.core.$strip>>;
+                total: z.ZodNumber;
+                loaded: z.ZodNumber;
+                unknown: z.ZodNumber;
+                nextCursor: z.ZodNullable<z.ZodString>;
+                asOf: z.ZodString;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly clientFanClaim: {
+        readonly auth: {
+            readonly kind: "apiKey";
+            readonly scope: "page";
+        };
+        readonly tags: readonly ["client"];
+        readonly summary: "The greeting lease and the send custody of one fan: claim, renew, release, dispatch, sent, failed, registerNativeSend";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            pageLabel: z.ZodString;
+            fanRef: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodDiscriminatedUnion<[z.ZodObject<{
+            action: z.ZodLiteral<"claim">;
+            leaseToken: z.ZodString;
+            instanceId: z.ZodString;
+        }, z.core.$strict>, z.ZodObject<{
+            action: z.ZodLiteral<"renew">;
+            leaseToken: z.ZodString;
+            instanceId: z.ZodString;
+        }, z.core.$strict>, z.ZodObject<{
+            action: z.ZodLiteral<"release">;
+            leaseToken: z.ZodString;
+            instanceId: z.ZodString;
+        }, z.core.$strict>, z.ZodObject<{
+            action: z.ZodLiteral<"dispatch">;
+            attemptId: z.ZodString;
+            instanceId: z.ZodString;
+            purpose: z.ZodEnum<{
+                greeting: "greeting";
+                "preview-reply": "preview-reply";
+            }>;
+            group: z.ZodObject<{
+                generationRef: z.ZodString;
+                variant: z.ZodNumber;
+                partCount: z.ZodNumber;
+            }, z.core.$strict>;
+            partIndex: z.ZodNumber;
+            textRevision: z.ZodNumber;
+            leaseToken: z.ZodOptional<z.ZodString>;
+            flagRevision: z.ZodNumber;
+        }, z.core.$strict>, z.ZodObject<{
+            action: z.ZodLiteral<"sent">;
+            attemptId: z.ZodString;
+            instanceId: z.ZodString;
+            platformMessageId: z.ZodString;
+            evidence: z.ZodLiteral<"receipt+echo">;
+        }, z.core.$strict>, z.ZodObject<{
+            action: z.ZodLiteral<"failed">;
+            attemptId: z.ZodString;
+            instanceId: z.ZodString;
+            reason: z.ZodEnum<{
+                not_enqueued: "not_enqueued";
+                native_rejected: "native_rejected";
+            }>;
+            httpStatus: z.ZodOptional<z.ZodNumber>;
+        }, z.core.$strict>, z.ZodObject<{
+            action: z.ZodLiteral<"registerNativeSend">;
+            attemptId: z.ZodString;
+            instanceId: z.ZodString;
+            purpose: z.ZodEnum<{
+                greeting: "greeting";
+                "preview-reply": "preview-reply";
+            }>;
+            group: z.ZodObject<{
+                generationRef: z.ZodString;
+                variant: z.ZodNumber;
+                partCount: z.ZodNumber;
+            }, z.core.$strict>;
+            partIndex: z.ZodNumber;
+            platformMessageId: z.ZodString;
+        }, z.core.$strict>], "action">;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                greeting: z.ZodObject<{
+                    state: z.ZodEnum<{
+                        none: "none";
+                        confirmed: "confirmed";
+                    }>;
+                    at: z.ZodNullable<z.ZodString>;
+                    messageRef: z.ZodNullable<z.ZodString>;
+                    source: z.ZodNullable<z.ZodString>;
+                }, z.core.$strip>;
+                lease: z.ZodObject<{
+                    state: z.ZodEnum<{
+                        none: "none";
+                        expired: "expired";
+                        owned: "owned";
+                        held: "held";
+                        released: "released";
+                    }>;
+                    leaseToken: z.ZodNullable<z.ZodString>;
+                    expiresAt: z.ZodNullable<z.ZodString>;
+                    heldBy: z.ZodNullable<z.ZodEnum<{
+                        "you-elsewhere": "you-elsewhere";
+                        "someone-else": "someone-else";
+                    }>>;
+                }, z.core.$strip>;
+                group: z.ZodNullable<z.ZodObject<{
+                    generationRef: z.ZodString;
+                    variant: z.ZodNumber;
+                    partCount: z.ZodNumber;
+                    sentParts: z.ZodArray<z.ZodNumber>;
+                    heldParts: z.ZodArray<z.ZodNumber>;
+                }, z.core.$strip>>;
+                custody: z.ZodNullable<z.ZodObject<{
+                    attemptId: z.ZodString;
+                    state: z.ZodEnum<{
+                        failed: "failed";
+                        dispatching: "dispatching";
+                        sent: "sent";
+                        "uncertain-held": "uncertain-held";
+                        "resolved-sent": "resolved-sent";
+                        "resolved-not-sent": "resolved-not-sent";
+                    }>;
+                    ticket: z.ZodNullable<z.ZodString>;
+                    ticketExpiresAt: z.ZodNullable<z.ZodString>;
+                }, z.core.$strip>>;
+                serverNow: z.ZodString;
+                flagRevision: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 429: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+                retryAfterMs: z.ZodOptional<z.ZodNumber>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly clientFanClaimStatus: {
+        readonly auth: {
+            readonly kind: "apiKey";
+            readonly scope: "page";
+        };
+        readonly tags: readonly ["client"];
+        readonly summary: "The greeting, lease and custody state of one fan, read only";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            pageLabel: z.ZodString;
+            fanRef: z.ZodString;
+        }, z.core.$strip>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                greeting: z.ZodObject<{
+                    state: z.ZodEnum<{
+                        none: "none";
+                        confirmed: "confirmed";
+                    }>;
+                    at: z.ZodNullable<z.ZodString>;
+                    messageRef: z.ZodNullable<z.ZodString>;
+                    source: z.ZodNullable<z.ZodString>;
+                }, z.core.$strip>;
+                lease: z.ZodObject<{
+                    state: z.ZodEnum<{
+                        none: "none";
+                        expired: "expired";
+                        owned: "owned";
+                        held: "held";
+                        released: "released";
+                    }>;
+                    leaseToken: z.ZodNullable<z.ZodString>;
+                    expiresAt: z.ZodNullable<z.ZodString>;
+                    heldBy: z.ZodNullable<z.ZodEnum<{
+                        "you-elsewhere": "you-elsewhere";
+                        "someone-else": "someone-else";
+                    }>>;
+                }, z.core.$strip>;
+                group: z.ZodNullable<z.ZodObject<{
+                    generationRef: z.ZodString;
+                    variant: z.ZodNumber;
+                    partCount: z.ZodNumber;
+                    sentParts: z.ZodArray<z.ZodNumber>;
+                    heldParts: z.ZodArray<z.ZodNumber>;
+                }, z.core.$strip>>;
+                custody: z.ZodNullable<z.ZodObject<{
+                    attemptId: z.ZodString;
+                    state: z.ZodEnum<{
+                        failed: "failed";
+                        dispatching: "dispatching";
+                        sent: "sent";
+                        "uncertain-held": "uncertain-held";
+                        "resolved-sent": "resolved-sent";
+                        "resolved-not-sent": "resolved-not-sent";
+                    }>;
+                    ticket: z.ZodNullable<z.ZodString>;
+                    ticketExpiresAt: z.ZodNullable<z.ZodString>;
+                }, z.core.$strip>>;
+                serverNow: z.ZodString;
+                flagRevision: z.ZodNumber;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly clientAudienceNew: {
+        readonly auth: {
+            readonly kind: "apiKey";
+            readonly scope: "page";
+        };
+        readonly tags: readonly ["client"];
+        readonly summary: "Who subscribed to an OnlyFans page or came back, inside a window of hours, with each fan's greeting state";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            pageLabel: z.ZodString;
+        }, z.core.$strip>;
+        readonly querystring: z.ZodObject<{
+            windowHours: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+            cursor: z.ZodOptional<z.ZodString>;
+            limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                pageLabel: z.ZodString;
+                window: z.ZodObject<{
+                    hours: z.ZodNumber;
+                    from: z.ZodString;
+                    to: z.ZodString;
+                    snapshotAt: z.ZodString;
+                }, z.core.$strip>;
+                serverNow: z.ZodString;
+                coverage: z.ZodObject<{
+                    state: z.ZodString;
+                    deliveryFrontier: z.ZodNullable<z.ZodString>;
+                    lastAudienceSweepAt: z.ZodNullable<z.ZodString>;
+                    reasons: z.ZodArray<z.ZodString>;
+                }, z.core.$strip>;
+                unknownCount: z.ZodNumber;
+                welcomeTemplate: z.ZodNullable<z.ZodObject<{
+                    ref: z.ZodString;
+                    observedAt: z.ZodString;
+                    enabled: z.ZodNullable<z.ZodBoolean>;
+                    hasText: z.ZodBoolean;
+                    hasMedia: z.ZodBoolean;
+                    priceMills: z.ZodNullable<z.ZodNumber>;
+                }, z.core.$strip>>;
+                items: z.ZodArray<z.ZodObject<{
+                    eventRef: z.ZodString;
+                    fanRef: z.ZodString;
+                    username: z.ZodNullable<z.ZodString>;
+                    displayName: z.ZodNullable<z.ZodString>;
+                    kind: z.ZodString;
+                    trial: z.ZodBoolean;
+                    subscribedAt: z.ZodString;
+                    subscribedAtSource: z.ZodString;
+                    status: z.ZodObject<{
+                        isSubscriber: z.ZodNullable<z.ZodBoolean>;
+                        subscriptionStatus: z.ZodString;
+                        endsAt: z.ZodNullable<z.ZodString>;
+                        asOf: z.ZodNullable<z.ZodString>;
+                        source: z.ZodString;
+                    }, z.core.$strip>;
+                    thread: z.ZodNullable<z.ZodObject<{
+                        lastMessageAt: z.ZodNullable<z.ZodString>;
+                        lastFanMessageAt: z.ZodNullable<z.ZodString>;
+                        lastModelMessageAt: z.ZodNullable<z.ZodString>;
+                        storedMessageCount: z.ZodNumber;
+                        coverage: z.ZodString;
+                        backfillComplete: z.ZodBoolean;
+                    }, z.core.$strip>>;
+                    claim: z.ZodObject<{
+                        greeting: z.ZodEnum<{
+                            none: "none";
+                            confirmed: "confirmed";
+                        }>;
+                        lease: z.ZodEnum<{
+                            none: "none";
+                            expired: "expired";
+                            owned: "owned";
+                            held: "held";
+                            released: "released";
+                        }>;
+                        heldBy: z.ZodNullable<z.ZodEnum<{
+                            "you-elsewhere": "you-elsewhere";
+                            "someone-else": "someone-else";
+                        }>>;
+                        custody: z.ZodNullable<z.ZodEnum<{
+                            failed: "failed";
+                            dispatching: "dispatching";
+                            sent: "sent";
+                            "uncertain-held": "uncertain-held";
+                            "resolved-sent": "resolved-sent";
+                            "resolved-not-sent": "resolved-not-sent";
+                        }>>;
+                    }, z.core.$strip>;
+                }, z.core.$strip>>;
+                nextCursor: z.ZodNullable<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly clientSendCustodyResolve: {
+        readonly auth: {
+            readonly kind: "session";
+            readonly scope: "page";
+        };
+        readonly tags: readonly ["client"];
+        readonly summary: "Resolve a held chat-extension send by hand: sent or not sent, with a note";
+        readonly description: string;
+        readonly params: z.ZodObject<{
+            pageLabel: z.ZodString;
+            attemptId: z.ZodString;
+        }, z.core.$strip>;
+        readonly body: z.ZodObject<{
+            outcome: z.ZodEnum<{
+                sent: "sent";
+                not_sent: "not_sent";
+            }>;
+            platformMessageId: z.ZodOptional<z.ZodString>;
+            note: z.ZodString;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                attemptId: z.ZodString;
+                fanRef: z.ZodString;
+                userId: z.ZodNumber;
+                purpose: z.ZodString;
+                state: z.ZodString;
+                generationRef: z.ZodString;
+                partIndex: z.ZodNumber;
+                partCount: z.ZodNumber;
+                createdAt: z.ZodString;
+                ticketExpiresAt: z.ZodNullable<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 409: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
+    readonly clientSendCustodyList: {
+        readonly auth: {
+            readonly kind: "session";
+        };
+        readonly tags: readonly ["client"];
+        readonly summary: "Held chat-extension sends of the pages the viewer reaches, and the ones resolved by hand";
+        readonly description: string;
+        readonly querystring: z.ZodObject<{
+            state: z.ZodDefault<z.ZodEnum<{
+                held: "held";
+                resolved: "resolved";
+            }>>;
+            pageLabel: z.ZodOptional<z.ZodString>;
+            limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+            offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+        }, z.core.$strict>;
+        readonly response: {
+            readonly 200: z.ZodObject<{
+                items: z.ZodArray<z.ZodObject<{
+                    attemptId: z.ZodString;
+                    fanRef: z.ZodString;
+                    userId: z.ZodNumber;
+                    purpose: z.ZodString;
+                    state: z.ZodString;
+                    generationRef: z.ZodString;
+                    partIndex: z.ZodNumber;
+                    partCount: z.ZodNumber;
+                    createdAt: z.ZodString;
+                    ticketExpiresAt: z.ZodNullable<z.ZodString>;
+                    pageLabel: z.ZodString;
+                    variant: z.ZodNumber;
+                    username: z.ZodString;
+                    instanceId: z.ZodString;
+                    updatedAt: z.ZodString;
+                    greeting: z.ZodObject<{
+                        state: z.ZodString;
+                        at: z.ZodNullable<z.ZodString>;
+                        source: z.ZodNullable<z.ZodString>;
+                        firstPartIsThisAttempt: z.ZodBoolean;
+                    }, z.core.$strip>;
+                    resolution: z.ZodNullable<z.ZodObject<{
+                        outcome: z.ZodString;
+                        at: z.ZodString;
+                        userId: z.ZodNumber;
+                        username: z.ZodString;
+                        note: z.ZodString;
+                        platformMessageId: z.ZodNullable<z.ZodString>;
+                    }, z.core.$strip>>;
+                }, z.core.$strip>>;
+                limit: z.ZodNumber;
+                offset: z.ZodNumber;
+                total: z.ZodNumber;
+                serverNow: z.ZodString;
+            }, z.core.$strip>;
+            readonly 400: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 401: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 403: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+            readonly 404: z.ZodObject<{
+                error: z.ZodString;
+                message: z.ZodString;
+                statusCode: z.ZodNumber;
+                reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>;
+        };
+    };
     readonly adminClientHealth: {
         readonly auth: {
             readonly kind: "owner-session";
@@ -886,10 +2537,33 @@ export type ClientRecapBody = z.infer<typeof clientRecapBodySchema>;
 export type ClientConversationRecapsResponse = z.infer<typeof clientConversationRecapsResponseSchema>;
 export type ClientFanProfileFromGenerationBody = z.infer<typeof clientFanProfileFromGenerationBodySchema>;
 export type ClientFanProfileFromGenerationResponse = z.infer<typeof clientFanProfileFromGenerationResponseSchema>;
+export type ClientConversationFeedQuery = z.infer<typeof clientConversationFeedQuerySchema>;
+export type ClientFeedItem = z.infer<typeof clientFeedItemSchema>;
+export type ClientFeedHead = z.infer<typeof clientFeedHeadSchema>;
+export type ClientFeedSummary = z.infer<typeof clientFeedSummarySchema>;
+export type ClientConversationFeedResponse = z.infer<typeof clientConversationFeedResponseSchema>;
 export type ClientAiUsageQuery = z.infer<typeof clientAiUsageQuerySchema>;
 export type ClientAiUsageTotals = z.infer<typeof clientAiUsageTotalsSchema>;
 export type ClientAiUsageDay = z.infer<typeof clientAiUsageDaySchema>;
 export type ClientAiUsageResponse = z.infer<typeof clientAiUsageResponseSchema>;
+export type ClientSpenderStatsQuery = z.infer<typeof clientSpenderStatsQuerySchema>;
+export type ClientSpenderStatsMoneyWindow = z.infer<typeof clientSpenderStatsMoneyWindowSchema>;
+export type ClientSpenderStatsResponse = z.infer<typeof clientSpenderStatsResponseSchema>;
+export type ClientSpenderAwaitingReplyQuery = z.infer<typeof clientSpenderAwaitingReplyQuerySchema>;
+export type ClientSpenderAwaitingReplyItem = z.infer<typeof clientSpenderAwaitingReplyItemSchema>;
+export type ClientSpenderAwaitingReplyResponse = z.infer<typeof clientSpenderAwaitingReplyResponseSchema>;
+export type ClientClaimGroup = z.infer<typeof clientClaimGroupSchema>;
+export type ClientFanClaimBody = z.infer<typeof clientFanClaimBodySchema>;
+export type ClientFanClaimResponse = z.infer<typeof clientFanClaimResponseSchema>;
+export type ClientSendCustodyResolveBody = z.infer<typeof clientSendCustodyResolveBodySchema>;
+export type ClientSendCustodyItem = z.infer<typeof clientSendCustodyItemSchema>;
+export type ClientSendCustodyListQuery = z.infer<typeof clientSendCustodyListQuerySchema>;
+export type ClientSendCustodyListItem = z.infer<typeof clientSendCustodyListItemSchema>;
+export type ClientSendCustodyListResponse = z.infer<typeof clientSendCustodyListResponseSchema>;
+export type ClientAudienceNewQuery = z.infer<typeof clientAudienceNewQuerySchema>;
+export type ClientClaimSummary = z.infer<typeof clientClaimSummarySchema>;
+export type ClientAudienceNewItem = z.infer<typeof clientAudienceNewItemSchema>;
+export type ClientAudienceNewResponse = z.infer<typeof clientAudienceNewResponseSchema>;
 export type AdminClientHealthQuery = z.infer<typeof adminClientHealthQuerySchema>;
 export type AdminClientHealthResponse = z.infer<typeof adminClientHealthResponseSchema>;
 /** The `ingestObservations` event kind of a health report. */

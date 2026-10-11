@@ -107,6 +107,7 @@ export declare const syncHistoryRequestCreateResponseSchema: z.ZodObject<{
         }, z.core.$strict>;
         queuePosition: z.ZodNullable<z.ZodNumber>;
         waitingReason: z.ZodNullable<z.ZodEnum<{
+            running: "running";
             paused: "paused";
             quarantined: "quarantined";
             not_due: "not_due";
@@ -120,7 +121,6 @@ export declare const syncHistoryRequestCreateResponseSchema: z.ZodObject<{
             blocked_by_vendor: "blocked_by_vendor";
             dependency: "dependency";
             ownership_unconfirmed: "ownership_unconfirmed";
-            running: "running";
         }>>;
         waitingUntil: z.ZodNullable<z.ZodString>;
     }, z.core.$strict>;
@@ -140,8 +140,8 @@ export declare const syncHistoryRequestCreateResponseSchema: z.ZodObject<{
             ready: "ready";
             blocked: "blocked";
             cancelled: "cancelled";
-            refused: "refused";
             queued: "queued";
+            refused: "refused";
             loading: "loading";
         }>;
         refusal: z.ZodNullable<z.ZodEnum<{
@@ -153,6 +153,7 @@ export declare const syncHistoryRequestCreateResponseSchema: z.ZodObject<{
         excludedReason: z.ZodNullable<z.ZodString>;
         probeAt: z.ZodNullable<z.ZodString>;
         waitingReason: z.ZodNullable<z.ZodEnum<{
+            running: "running";
             paused: "paused";
             quarantined: "quarantined";
             not_due: "not_due";
@@ -166,7 +167,6 @@ export declare const syncHistoryRequestCreateResponseSchema: z.ZodObject<{
             blocked_by_vendor: "blocked_by_vendor";
             dependency: "dependency";
             ownership_unconfirmed: "ownership_unconfirmed";
-            running: "running";
         }>>;
         waitingUntil: z.ZodNullable<z.ZodString>;
         loadedMessages: z.ZodNumber;
@@ -203,8 +203,8 @@ export declare const syncHistoryRequestGetQuerySchema: z.ZodObject<{
         ready: "ready";
         blocked: "blocked";
         cancelled: "cancelled";
-        refused: "refused";
         queued: "queued";
+        refused: "refused";
         loading: "loading";
     }>>;
 }, z.core.$strict>;
@@ -277,6 +277,7 @@ export declare const syncHistoryRequestGetResponseSchema: z.ZodObject<{
         }, z.core.$strict>;
         queuePosition: z.ZodNullable<z.ZodNumber>;
         waitingReason: z.ZodNullable<z.ZodEnum<{
+            running: "running";
             paused: "paused";
             quarantined: "quarantined";
             not_due: "not_due";
@@ -290,7 +291,6 @@ export declare const syncHistoryRequestGetResponseSchema: z.ZodObject<{
             blocked_by_vendor: "blocked_by_vendor";
             dependency: "dependency";
             ownership_unconfirmed: "ownership_unconfirmed";
-            running: "running";
         }>>;
         waitingUntil: z.ZodNullable<z.ZodString>;
     }, z.core.$strict>;
@@ -310,8 +310,8 @@ export declare const syncHistoryRequestGetResponseSchema: z.ZodObject<{
             ready: "ready";
             blocked: "blocked";
             cancelled: "cancelled";
-            refused: "refused";
             queued: "queued";
+            refused: "refused";
             loading: "loading";
         }>;
         refusal: z.ZodNullable<z.ZodEnum<{
@@ -323,6 +323,7 @@ export declare const syncHistoryRequestGetResponseSchema: z.ZodObject<{
         excludedReason: z.ZodNullable<z.ZodString>;
         probeAt: z.ZodNullable<z.ZodString>;
         waitingReason: z.ZodNullable<z.ZodEnum<{
+            running: "running";
             paused: "paused";
             quarantined: "quarantined";
             not_due: "not_due";
@@ -336,7 +337,6 @@ export declare const syncHistoryRequestGetResponseSchema: z.ZodObject<{
             blocked_by_vendor: "blocked_by_vendor";
             dependency: "dependency";
             ownership_unconfirmed: "ownership_unconfirmed";
-            running: "running";
         }>>;
         waitingUntil: z.ZodNullable<z.ZodString>;
         loadedMessages: z.ZodNumber;
@@ -443,6 +443,7 @@ export declare const syncHistoryRequestCancelResponseSchema: z.ZodObject<{
         }, z.core.$strict>;
         queuePosition: z.ZodNullable<z.ZodNumber>;
         waitingReason: z.ZodNullable<z.ZodEnum<{
+            running: "running";
             paused: "paused";
             quarantined: "quarantined";
             not_due: "not_due";
@@ -456,7 +457,6 @@ export declare const syncHistoryRequestCancelResponseSchema: z.ZodObject<{
             blocked_by_vendor: "blocked_by_vendor";
             dependency: "dependency";
             ownership_unconfirmed: "ownership_unconfirmed";
-            running: "running";
         }>>;
         waitingUntil: z.ZodNullable<z.ZodString>;
     }, z.core.$strict>;
@@ -540,6 +540,7 @@ export declare const syncHistoryRequestsResponseSchema: z.ZodObject<{
         }, z.core.$strict>;
         queuePosition: z.ZodNullable<z.ZodNumber>;
         waitingReason: z.ZodNullable<z.ZodEnum<{
+            running: "running";
             paused: "paused";
             quarantined: "quarantined";
             not_due: "not_due";
@@ -553,7 +554,6 @@ export declare const syncHistoryRequestsResponseSchema: z.ZodObject<{
             blocked_by_vendor: "blocked_by_vendor";
             dependency: "dependency";
             ownership_unconfirmed: "ownership_unconfirmed";
-            running: "running";
         }>>;
         waitingUntil: z.ZodNullable<z.ZodString>;
     }, z.core.$strict>>;
@@ -616,6 +616,7 @@ export declare const syncPagesResponseSchema: z.ZodObject<{
             urgent: z.ZodObject<{
                 runnable: z.ZodNumber;
                 waitingByReason: z.ZodRecord<z.ZodEnum<{
+                    running: "running";
                     paused: "paused";
                     quarantined: "quarantined";
                     not_due: "not_due";
@@ -629,12 +630,12 @@ export declare const syncPagesResponseSchema: z.ZodObject<{
                     blocked_by_vendor: "blocked_by_vendor";
                     dependency: "dependency";
                     ownership_unconfirmed: "ownership_unconfirmed";
-                    running: "running";
                 }> & z.core.$partial, z.ZodNumber>;
             }, z.core.$strict>;
             requests: z.ZodObject<{
                 runnable: z.ZodNumber;
                 waitingByReason: z.ZodRecord<z.ZodEnum<{
+                    running: "running";
                     paused: "paused";
                     quarantined: "quarantined";
                     not_due: "not_due";
@@ -648,12 +649,12 @@ export declare const syncPagesResponseSchema: z.ZodObject<{
                     blocked_by_vendor: "blocked_by_vendor";
                     dependency: "dependency";
                     ownership_unconfirmed: "ownership_unconfirmed";
-                    running: "running";
                 }> & z.core.$partial, z.ZodNumber>;
             }, z.core.$strict>;
             planned: z.ZodObject<{
                 runnable: z.ZodNumber;
                 waitingByReason: z.ZodRecord<z.ZodEnum<{
+                    running: "running";
                     paused: "paused";
                     quarantined: "quarantined";
                     not_due: "not_due";
@@ -667,7 +668,6 @@ export declare const syncPagesResponseSchema: z.ZodObject<{
                     blocked_by_vendor: "blocked_by_vendor";
                     dependency: "dependency";
                     ownership_unconfirmed: "ownership_unconfirmed";
-                    running: "running";
                 }> & z.core.$partial, z.ZodNumber>;
             }, z.core.$strict>;
         }, z.core.$strict>;
@@ -769,10 +769,10 @@ export declare const syncPageWorkQuerySchema: z.ZodObject<{
     subject: z.ZodOptional<z.ZodString>;
     state: z.ZodOptional<z.ZodEnum<{
         cancelled: "cancelled";
+        running: "running";
         quarantined: "quarantined";
         open: "open";
         done: "done";
-        running: "running";
         superseded: "superseded";
     }>>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -797,13 +797,14 @@ export declare const syncPageWorkResponseSchema: z.ZodObject<{
         }>;
         state: z.ZodEnum<{
             cancelled: "cancelled";
+            running: "running";
             quarantined: "quarantined";
             open: "open";
             done: "done";
-            running: "running";
             superseded: "superseded";
         }>;
         waitingReason: z.ZodNullable<z.ZodEnum<{
+            running: "running";
             paused: "paused";
             quarantined: "quarantined";
             not_due: "not_due";
@@ -817,7 +818,6 @@ export declare const syncPageWorkResponseSchema: z.ZodObject<{
             blocked_by_vendor: "blocked_by_vendor";
             dependency: "dependency";
             ownership_unconfirmed: "ownership_unconfirmed";
-            running: "running";
         }>>;
         waitingUntil: z.ZodNullable<z.ZodString>;
         dueAt: z.ZodString;
@@ -868,13 +868,14 @@ export declare const syncPageWorkGetResponseSchema: z.ZodObject<{
         }>;
         state: z.ZodEnum<{
             cancelled: "cancelled";
+            running: "running";
             quarantined: "quarantined";
             open: "open";
             done: "done";
-            running: "running";
             superseded: "superseded";
         }>;
         waitingReason: z.ZodNullable<z.ZodEnum<{
+            running: "running";
             paused: "paused";
             quarantined: "quarantined";
             not_due: "not_due";
@@ -888,7 +889,6 @@ export declare const syncPageWorkGetResponseSchema: z.ZodObject<{
             blocked_by_vendor: "blocked_by_vendor";
             dependency: "dependency";
             ownership_unconfirmed: "ownership_unconfirmed";
-            running: "running";
         }>>;
         waitingUntil: z.ZodNullable<z.ZodString>;
         dueAt: z.ZodString;
@@ -986,6 +986,7 @@ export declare const syncRouteSchemas: {
                         urgent: z.ZodObject<{
                             runnable: z.ZodNumber;
                             waitingByReason: z.ZodRecord<z.ZodEnum<{
+                                running: "running";
                                 paused: "paused";
                                 quarantined: "quarantined";
                                 not_due: "not_due";
@@ -999,12 +1000,12 @@ export declare const syncRouteSchemas: {
                                 blocked_by_vendor: "blocked_by_vendor";
                                 dependency: "dependency";
                                 ownership_unconfirmed: "ownership_unconfirmed";
-                                running: "running";
                             }> & z.core.$partial, z.ZodNumber>;
                         }, z.core.$strict>;
                         requests: z.ZodObject<{
                             runnable: z.ZodNumber;
                             waitingByReason: z.ZodRecord<z.ZodEnum<{
+                                running: "running";
                                 paused: "paused";
                                 quarantined: "quarantined";
                                 not_due: "not_due";
@@ -1018,12 +1019,12 @@ export declare const syncRouteSchemas: {
                                 blocked_by_vendor: "blocked_by_vendor";
                                 dependency: "dependency";
                                 ownership_unconfirmed: "ownership_unconfirmed";
-                                running: "running";
                             }> & z.core.$partial, z.ZodNumber>;
                         }, z.core.$strict>;
                         planned: z.ZodObject<{
                             runnable: z.ZodNumber;
                             waitingByReason: z.ZodRecord<z.ZodEnum<{
+                                running: "running";
                                 paused: "paused";
                                 quarantined: "quarantined";
                                 not_due: "not_due";
@@ -1037,7 +1038,6 @@ export declare const syncRouteSchemas: {
                                 blocked_by_vendor: "blocked_by_vendor";
                                 dependency: "dependency";
                                 ownership_unconfirmed: "ownership_unconfirmed";
-                                running: "running";
                             }> & z.core.$partial, z.ZodNumber>;
                         }, z.core.$strict>;
                     }, z.core.$strict>;
@@ -1164,10 +1164,10 @@ export declare const syncRouteSchemas: {
             subject: z.ZodOptional<z.ZodString>;
             state: z.ZodOptional<z.ZodEnum<{
                 cancelled: "cancelled";
+                running: "running";
                 quarantined: "quarantined";
                 open: "open";
                 done: "done";
-                running: "running";
                 superseded: "superseded";
             }>>;
             limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -1193,13 +1193,14 @@ export declare const syncRouteSchemas: {
                     }>;
                     state: z.ZodEnum<{
                         cancelled: "cancelled";
+                        running: "running";
                         quarantined: "quarantined";
                         open: "open";
                         done: "done";
-                        running: "running";
                         superseded: "superseded";
                     }>;
                     waitingReason: z.ZodNullable<z.ZodEnum<{
+                        running: "running";
                         paused: "paused";
                         quarantined: "quarantined";
                         not_due: "not_due";
@@ -1213,7 +1214,6 @@ export declare const syncRouteSchemas: {
                         blocked_by_vendor: "blocked_by_vendor";
                         dependency: "dependency";
                         ownership_unconfirmed: "ownership_unconfirmed";
-                        running: "running";
                     }>>;
                     waitingUntil: z.ZodNullable<z.ZodString>;
                     dueAt: z.ZodString;
@@ -1301,13 +1301,14 @@ export declare const syncRouteSchemas: {
                     }>;
                     state: z.ZodEnum<{
                         cancelled: "cancelled";
+                        running: "running";
                         quarantined: "quarantined";
                         open: "open";
                         done: "done";
-                        running: "running";
                         superseded: "superseded";
                     }>;
                     waitingReason: z.ZodNullable<z.ZodEnum<{
+                        running: "running";
                         paused: "paused";
                         quarantined: "quarantined";
                         not_due: "not_due";
@@ -1321,7 +1322,6 @@ export declare const syncRouteSchemas: {
                         blocked_by_vendor: "blocked_by_vendor";
                         dependency: "dependency";
                         ownership_unconfirmed: "ownership_unconfirmed";
-                        running: "running";
                     }>>;
                     waitingUntil: z.ZodNullable<z.ZodString>;
                     dueAt: z.ZodString;
@@ -1542,6 +1542,7 @@ export declare const syncRouteSchemas: {
                     }, z.core.$strict>;
                     queuePosition: z.ZodNullable<z.ZodNumber>;
                     waitingReason: z.ZodNullable<z.ZodEnum<{
+                        running: "running";
                         paused: "paused";
                         quarantined: "quarantined";
                         not_due: "not_due";
@@ -1555,7 +1556,6 @@ export declare const syncRouteSchemas: {
                         blocked_by_vendor: "blocked_by_vendor";
                         dependency: "dependency";
                         ownership_unconfirmed: "ownership_unconfirmed";
-                        running: "running";
                     }>>;
                     waitingUntil: z.ZodNullable<z.ZodString>;
                 }, z.core.$strict>>;
@@ -1693,6 +1693,7 @@ export declare const syncRouteSchemas: {
                     }, z.core.$strict>;
                     queuePosition: z.ZodNullable<z.ZodNumber>;
                     waitingReason: z.ZodNullable<z.ZodEnum<{
+                        running: "running";
                         paused: "paused";
                         quarantined: "quarantined";
                         not_due: "not_due";
@@ -1706,7 +1707,6 @@ export declare const syncRouteSchemas: {
                         blocked_by_vendor: "blocked_by_vendor";
                         dependency: "dependency";
                         ownership_unconfirmed: "ownership_unconfirmed";
-                        running: "running";
                     }>>;
                     waitingUntil: z.ZodNullable<z.ZodString>;
                 }, z.core.$strict>;
@@ -1726,8 +1726,8 @@ export declare const syncRouteSchemas: {
                         ready: "ready";
                         blocked: "blocked";
                         cancelled: "cancelled";
-                        refused: "refused";
                         queued: "queued";
+                        refused: "refused";
                         loading: "loading";
                     }>;
                     refusal: z.ZodNullable<z.ZodEnum<{
@@ -1739,6 +1739,7 @@ export declare const syncRouteSchemas: {
                     excludedReason: z.ZodNullable<z.ZodString>;
                     probeAt: z.ZodNullable<z.ZodString>;
                     waitingReason: z.ZodNullable<z.ZodEnum<{
+                        running: "running";
                         paused: "paused";
                         quarantined: "quarantined";
                         not_due: "not_due";
@@ -1752,7 +1753,6 @@ export declare const syncRouteSchemas: {
                         blocked_by_vendor: "blocked_by_vendor";
                         dependency: "dependency";
                         ownership_unconfirmed: "ownership_unconfirmed";
-                        running: "running";
                     }>>;
                     waitingUntil: z.ZodNullable<z.ZodString>;
                     loadedMessages: z.ZodNumber;
@@ -1835,8 +1835,8 @@ export declare const syncRouteSchemas: {
                 ready: "ready";
                 blocked: "blocked";
                 cancelled: "cancelled";
-                refused: "refused";
                 queued: "queued";
+                refused: "refused";
                 loading: "loading";
             }>>;
         }, z.core.$strict>;
@@ -1910,6 +1910,7 @@ export declare const syncRouteSchemas: {
                     }, z.core.$strict>;
                     queuePosition: z.ZodNullable<z.ZodNumber>;
                     waitingReason: z.ZodNullable<z.ZodEnum<{
+                        running: "running";
                         paused: "paused";
                         quarantined: "quarantined";
                         not_due: "not_due";
@@ -1923,7 +1924,6 @@ export declare const syncRouteSchemas: {
                         blocked_by_vendor: "blocked_by_vendor";
                         dependency: "dependency";
                         ownership_unconfirmed: "ownership_unconfirmed";
-                        running: "running";
                     }>>;
                     waitingUntil: z.ZodNullable<z.ZodString>;
                 }, z.core.$strict>;
@@ -1943,8 +1943,8 @@ export declare const syncRouteSchemas: {
                         ready: "ready";
                         blocked: "blocked";
                         cancelled: "cancelled";
-                        refused: "refused";
                         queued: "queued";
+                        refused: "refused";
                         loading: "loading";
                     }>;
                     refusal: z.ZodNullable<z.ZodEnum<{
@@ -1956,6 +1956,7 @@ export declare const syncRouteSchemas: {
                     excludedReason: z.ZodNullable<z.ZodString>;
                     probeAt: z.ZodNullable<z.ZodString>;
                     waitingReason: z.ZodNullable<z.ZodEnum<{
+                        running: "running";
                         paused: "paused";
                         quarantined: "quarantined";
                         not_due: "not_due";
@@ -1969,7 +1970,6 @@ export declare const syncRouteSchemas: {
                         blocked_by_vendor: "blocked_by_vendor";
                         dependency: "dependency";
                         ownership_unconfirmed: "ownership_unconfirmed";
-                        running: "running";
                     }>>;
                     waitingUntil: z.ZodNullable<z.ZodString>;
                     loadedMessages: z.ZodNumber;
@@ -2116,6 +2116,7 @@ export declare const syncRouteSchemas: {
                     }, z.core.$strict>;
                     queuePosition: z.ZodNullable<z.ZodNumber>;
                     waitingReason: z.ZodNullable<z.ZodEnum<{
+                        running: "running";
                         paused: "paused";
                         quarantined: "quarantined";
                         not_due: "not_due";
@@ -2129,7 +2130,6 @@ export declare const syncRouteSchemas: {
                         blocked_by_vendor: "blocked_by_vendor";
                         dependency: "dependency";
                         ownership_unconfirmed: "ownership_unconfirmed";
-                        running: "running";
                     }>>;
                     waitingUntil: z.ZodNullable<z.ZodString>;
                 }, z.core.$strict>;

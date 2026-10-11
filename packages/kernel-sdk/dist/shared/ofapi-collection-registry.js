@@ -9,6 +9,8 @@ export const OFAPI_SCHEDULED_READ_COLLECTION_CATEGORIES = [
     "posts_comments", "visitors", "tracking_links", "smart_links", "vault_catalog",
     "balances", "profile_notifications", "content_history", "account_settings",
 ];
+/** Filters of the collection screen's job list; `unfinished` = queued, running or paused. */
+export const OFAPI_COLLECTION_JOB_STATE_FILTERS = ["unfinished", "queued", "running", "paused", "completed", "failed"];
 export const OFAPI_COLLECTION_CAP_REASONS = ["daily_limit", "interval_limit"];
 export function ofapiCollectionRefusalDisposition(reason) {
     if (OFAPI_COLLECTION_CAP_REASONS.some(cap => cap === reason))
@@ -43,11 +45,11 @@ export const OFAPI_COLLECTION_REGISTRY = OFAPI_COLLECTION_CATEGORIES.map(id => (
     // interactive desktop resolves (docs/runbooks/ofapi-media.md).
     modes: id === "vault_files" ? ["off"] : id === "media_previews" ? ["off", "on_demand"] : ["off", "on_demand", "scheduled"],
     baseline: ["core_messages", "core_payments", "core_audience"].includes(id),
-    // account_settings: only the owner's stored-read report reads the
-    // welcome-template snapshot so far, and no Agent Read dataset covers it.
-    // "chatters" joins when the chat extension's "New" panel (H-7c) reads it.
+    // account_settings: the owner's stored-read report and the chat extension's
+    // "new subscribers" list (clientAudienceNew, H-7c) read the welcome-template
+    // snapshot; no Agent Read dataset covers it.
     consumers: id === "core_messages" ? ["chatters", "Agent Read"] : id === "media_previews" ? ["chatters"]
-        : id === "account_settings" ? ["dashboard"] : ["dashboard", "Agent Read"],
+        : id === "account_settings" ? ["dashboard", "chatters"] : ["dashboard", "Agent Read"],
     supportsOneOff: !["core_messages", "core_payments", "core_audience", "media_previews"].includes(id),
     priceUnit: id === "vault_files" || id === "media_previews" ? "calls_and_bytes" : "physical_calls",
     prerequisites: id === "vault_files" ? ["owned source and explicit upload approval"] : ["active OFAPI page binding"],

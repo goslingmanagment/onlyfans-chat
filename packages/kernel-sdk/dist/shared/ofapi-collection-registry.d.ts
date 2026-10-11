@@ -4,6 +4,9 @@ export type OfapiCollectionCategory = typeof OFAPI_COLLECTION_CATEGORIES[number]
 /** Closed periodic GET executors; uploads, exports and baseline sync use other lifecycles. */
 export declare const OFAPI_SCHEDULED_READ_COLLECTION_CATEGORIES: readonly OfapiCollectionCategory[];
 export type OfapiCollectionMode = "off" | "on_demand" | "scheduled";
+/** Filters of the collection screen's job list; `unfinished` = queued, running or paused. */
+export declare const OFAPI_COLLECTION_JOB_STATE_FILTERS: readonly ["unfinished", "queued", "running", "paused", "completed", "failed"];
+export type OfapiCollectionJobStateFilter = typeof OFAPI_COLLECTION_JOB_STATE_FILTERS[number];
 export type OfapiCollectionPurpose = "background" | "interactive" | "one_off";
 export interface OfapiCollectionContext {
     category: OfapiCollectionCategory;
