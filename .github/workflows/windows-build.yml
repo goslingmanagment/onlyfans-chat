@@ -43,10 +43,6 @@ jobs:
       # The feed URL this build polls: electron-builder.yml `publish.url`
       # without the trailing slash.
       FEED_URL: https://ext.gosling-agency.ru/u/bffe2540bd2b7e87bd9b88e3
-      # The URL builds up to 0.1.65 poll. The feed host serves both names from
-      # the one directory this workflow uploads to, so a release must appear
-      # under both; the line goes when uploads leave that host (D45).
-      LEGACY_FEED_URL: https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3
     steps:
       - uses: actions/checkout@v6
         with:
@@ -156,41 +152,29 @@ jobs:
           fi
 
       # An installed build can only ask the URL it was packaged with. Refuse a
-      # release while this build's URL does not answer with the feed (it could
-      # never update again) or while a name older builds poll shows another
-      # feed (they would never receive it).
-      - name: Assert every polled feed URL serves the same feed
+      # release while that URL does not answer with the feed: this build could
+      # never update again.
+      - name: Assert the feed URL serves the feed
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
         timeout-minutes: 5
         shell: bash
         run: |
-          reference_manifest=""
-          index=0
-          for feed_url in "$FEED_URL" ${LEGACY_FEED_URL:+"$LEGACY_FEED_URL"}; do
-            index=$((index + 1))
-            polled_manifest="$RUNNER_TEMP/polled-latest-$index.yml"
+          polled_manifest="$RUNNER_TEMP/polled-latest.yml"
+          polled_version=""
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 "$FEED_URL/latest.yml" --output "$polled_manifest" \
+              && polled_version=$(node apps/desktop/scripts/release-feed.mjs served-version "$polled_manifest"); then
+              break
+            fi
             polled_version=""
-            for attempt in 1 2 3 4 5 6; do
-              if curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 "$feed_url/latest.yml" --output "$polled_manifest" \
-                && polled_version=$(node apps/desktop/scripts/release-feed.mjs served-version "$polled_manifest"); then
-                break
-              fi
-              polled_version=""
-              echo "polled feed check attempt $attempt failed for $feed_url; retrying"
-              sleep 10
-            done
-            if [ -z "$polled_version" ]; then
-              echo "::error::$feed_url does not serve the update feed; installed builds polling it would stop updating"
-              exit 1
-            fi
-            echo "$feed_url serves $polled_version"
-            if [ -z "$reference_manifest" ]; then
-              reference_manifest="$polled_manifest"
-            elif [ "$(< "$reference_manifest")" != "$(< "$polled_manifest")" ]; then
-              echo "::error::$feed_url serves a different latest.yml than $FEED_URL; every polled name must show the one feed directory"
-              exit 1
-            fi
+            echo "feed URL check attempt $attempt failed; retrying"
+            sleep 10
           done
+          if [ -z "$polled_version" ]; then
+            echo "::error::$FEED_URL does not serve the update feed; builds polling it would stop updating"
+            exit 1
+          fi
+          echo "$FEED_URL serves $polled_version"
 
       - name: Validate optional Windows signing configuration
         id: signing
@@ -321,7 +305,7 @@ jobs:
             # This is independent of publish-feed.sh: it also runs when the
             # remote bash stream never starts after mkdir/scp succeeded.
             if [ -f "$HOME/.ssh/id_ed25519" ]; then
-              if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 \
+              if ! ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 \
                 "case '$stage_dir' in '$FEED_DIR'/.incoming/*) rm -rf -- '$stage_dir' ;; *) exit 2 ;; esac"; then
                 echo "::warning::Could not confirm cleanup of remote publication stage $stage_dir"
               fi
@@ -339,22 +323,22 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          # Pinned host key of the feed server (45.8.230.111).
-          echo "45.8.230.111 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKVfAxl4anwdXe3m+tK5yajpXDZD7iD1D1uc6A+y6o9Y" > ~/.ssh/known_hosts
+          # Pinned host key of the feed server (152.53.191.242, agency-de).
+          echo "152.53.191.242 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFVfNGPiVJY8E/IHh8QokJNJw9yP5az/fwiQtmT24C9Q" > ~/.ssh/known_hosts
           metadata=$(node apps/desktop/scripts/release-feed.mjs metadata apps/desktop/release/latest.yml)
           printf '%s\n' "$metadata" >> "$GITHUB_OUTPUT"
           version=$(printf '%s\n' "$metadata" | awk -F= '$1 == "version" { print $2 }')
           artifact=$(printf '%s\n' "$metadata" | awk -F= '$1 == "artifact" { print $2 }')
           sha512=$(printf '%s\n' "$metadata" | awk -F= '$1 == "sha512" { print $2 }')
-          ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "command -v flock >/dev/null && command -v openssl >/dev/null && command -v cmp >/dev/null && command -v df >/dev/null"
+          ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 "command -v flock >/dev/null && command -v openssl >/dev/null && command -v cmp >/dev/null && command -v df >/dev/null"
           # Reclaim hard-killed stages and old installers, then enforce the
           # free-space floor before scp. All three actions use the same
           # server-side lock as publication. Blockmaps remain available so
           # clients on retained or older versions can use deltas.
-          ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 \
+          ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 \
             "bash -s -- --maintain '$FEED_DIR'" < apps/desktop/scripts/publish-feed.sh
-          ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "mkdir -p '$stage_dir'"
-          scp "${SSH_OPTIONS[@]}" apps/desktop/release/*.exe apps/desktop/release/*.blockmap apps/desktop/release/latest.yml "cgupdates@45.8.230.111:$stage_dir/"
+          ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 "mkdir -p '$stage_dir'"
+          scp "${SSH_OPTIONS[@]}" apps/desktop/release/*.exe apps/desktop/release/*.blockmap apps/desktop/release/latest.yml "cgupdates@152.53.191.242:$stage_dir/"
           # The initial capability gate is intentionally repeated after the
           # potentially slow maintenance/scp work and immediately before the
           # only command that can atomically replace latest.yml. A Core rollback
@@ -383,7 +367,7 @@ jobs:
           fi
           # Server-side lock + monotonic version check; assets are renamed into
           # place first and latest.yml is one final same-filesystem atomic rename.
-          if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- '$FEED_DIR' '$stage_dir' '$PUBLIC_DL_DIR'" < apps/desktop/scripts/publish-feed.sh; then
+          if ! ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 "bash -s -- '$FEED_DIR' '$stage_dir' '$PUBLIC_DL_DIR'" < apps/desktop/scripts/publish-feed.sh; then
             # The server may have committed the atomic rename before the SSH
             # acknowledgement was lost. Prove THIS run's bytes are live before
             # deciding the publication failed; never rebuild/retry an equal tag.
@@ -411,7 +395,7 @@ jobs:
             # must not survive a lost acknowledgement.
             public_refreshed=false
             for attempt in 1 2 3; do
-              if ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 \
+              if ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 \
                 "bash -s -- --refresh-public '$FEED_DIR' '$PUBLIC_DL_DIR'" < apps/desktop/scripts/publish-feed.sh; then
                 public_refreshed=true
                 break
@@ -431,13 +415,11 @@ jobs:
         run: rm -f ~/.ssh/id_ed25519
 
       # Release hygiene (Stage 35): what the feed SERVES must be this release —
-      # served latest.yml version == apps/desktop/package.json == the v* tag,
-      # under every name installed builds poll.
+      # served latest.yml version == apps/desktop/package.json == the v* tag.
       # Recovery if this fires: the stage-04 artifact-diff ritual (docs/RELEASE.md).
       - name: Assert served feed version == package.json == tag
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
-        # Six attempts of up to 160 s for each polled name.
-        timeout-minutes: 34
+        timeout-minutes: 18
         shell: bash
         env:
           EXPECTED_ARTIFACT: ${{ steps.publish.outputs.artifact }}
@@ -446,25 +428,22 @@ jobs:
           pkg_version=$(node -p "require('./apps/desktop/package.json').version")
           served_manifest="$RUNNER_TEMP/served-latest.yml"
           served_artifact="$RUNNER_TEMP/$EXPECTED_ARTIFACT"
-          for feed_url in "$FEED_URL" ${LEGACY_FEED_URL:+"$LEGACY_FEED_URL"}; do
-            verified=false
-            for attempt in 1 2 3 4 5 6; do
-              if curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 "$feed_url/latest.yml" --output "$served_manifest" \
-                && node apps/desktop/scripts/release-feed.mjs verify-manifest "$served_manifest" "$pkg_version" "$EXPECTED_ARTIFACT" "$EXPECTED_SHA512" \
-                && curl --fail --silent --show-error --location --connect-timeout 10 --max-time 120 "$feed_url/$EXPECTED_ARTIFACT" --output "$served_artifact" \
-                && node apps/desktop/scripts/release-feed.mjs verify-artifact "$served_manifest" "$served_artifact"; then
-                verified=true
-                break
-              fi
-              echo "served feed verification attempt $attempt failed for $feed_url; retrying"
-              sleep 10
-            done
-            if [ "$verified" != true ]; then
-              echo "::error::$feed_url did not converge to this run after six attempts"
-              exit 1
+          verified=false
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 "$FEED_URL/latest.yml" --output "$served_manifest" \
+              && node apps/desktop/scripts/release-feed.mjs verify-manifest "$served_manifest" "$pkg_version" "$EXPECTED_ARTIFACT" "$EXPECTED_SHA512" \
+              && curl --fail --silent --show-error --location --connect-timeout 10 --max-time 120 "$FEED_URL/$EXPECTED_ARTIFACT" --output "$served_artifact" \
+              && node apps/desktop/scripts/release-feed.mjs verify-artifact "$served_manifest" "$served_artifact"; then
+              verified=true
+              break
             fi
-            echo "$feed_url serves this run"
+            echo "served feed verification attempt $attempt failed; retrying"
+            sleep 10
           done
+          if [ "$verified" != true ]; then
+            echo "::error::Served feed did not converge to this run after six attempts"
+            exit 1
+          fi
           echo "package.json=$pkg_version served artifact=$EXPECTED_ARTIFACT sha512=$EXPECTED_SHA512 ref=$GITHUB_REF"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             tag_version="${GITHUB_REF#refs/tags/v}"

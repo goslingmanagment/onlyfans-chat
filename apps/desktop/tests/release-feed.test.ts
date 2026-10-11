@@ -216,7 +216,7 @@ describe('Windows release feed policy', () => {
     const stageIndex = script.indexOf('scp "${SSH_OPTIONS[@]}"');
     const recheckIndex = script.indexOf('core_verified=false', stageIndex);
     const publishIndex = script.indexOf(
-      'if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- \'$FEED_DIR\' \'$stage_dir\' \'$PUBLIC_DL_DIR\'"',
+      'if ! ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 "bash -s -- \'$FEED_DIR\' \'$stage_dir\' \'$PUBLIC_DL_DIR\'"',
       recheckIndex,
     );
     expect(stageIndex).toBeGreaterThan(-1);
@@ -247,16 +247,16 @@ describe('Windows release feed policy', () => {
     const workflow = readNormalized(resolve(repoRoot, '.github/workflows/windows-build.yml'));
     const publishUrl = builder.match(/^publish:\n {2}provider: generic\n {2}url: (\S+)\n/m)?.[1] ?? '';
     const feedUrls = [...workflow.matchAll(/^ +FEED_URL: (\S+)$/gm)].map((match) => match[1]);
-    const legacyUrls = [...workflow.matchAll(/^ +LEGACY_FEED_URL: (\S+)$/gm)].map((match) => match[1]);
 
     expect(new URL(publishUrl).origin).toBe('https://ext.gosling-agency.ru');
     expect(publishUrl).toMatch(/\/u\/[0-9a-f]{24}\/$/);
     // Defined once for the job, so no step can verify a different feed.
     expect(feedUrls).toEqual([publishUrl.slice(0, -1)]);
-    // Builds up to 0.1.65 poll the IP-bound name; it shows the same path.
-    expect(legacyUrls).toEqual([`https://45-8-230-111.sslip.io${new URL(publishUrl).pathname.slice(0, -1)}`]);
+    // The IP-bound name builds up to 0.1.65 poll is served by the old server
+    // alone: nothing here uploads to it or waits for it.
+    expect(workflow).not.toMatch(/sslip\.io|45[.-]8[.-]230[.-]111/);
 
-    const gate = workflow.indexOf('- name: Assert every polled feed URL serves the same feed');
+    const gate = workflow.indexOf('- name: Assert the feed URL serves the feed');
     const build = workflow.indexOf('- name: Build Windows installer');
     const packaged = workflow.indexOf('- name: Assert the packaged feed URL');
     const upload = workflow.indexOf('- name: Upload to the update feed');
@@ -298,58 +298,24 @@ describe('Windows release feed policy', () => {
   });
 
   // Each failing case runs the step's six attempts; Git Bash on Windows CI is slow.
-  it('refuses a release while a polled feed URL is down or shows another feed', () => {
-    const step = 'Assert every polled feed URL serves the same feed';
-    const current = manifestText('1.2.3', 'current');
-    const urls = {
-      FEED_URL: 'https://new.example/u/abc',
-      LEGACY_FEED_URL: 'https://old.example/u/abc',
-    };
+  it('refuses a release while the feed URL does not serve the feed', () => {
+    const step = 'Assert the feed URL serves the feed';
+    const env = { FEED_URL: 'https://feed.example/u/abc' };
 
-    const same = runFeedStep(
-      step,
-      { 'new.example': { 'latest.yml': current }, 'old.example': { 'latest.yml': current } },
-      urls,
-    );
-    expect(same.status, `${same.stdout}\n${same.stderr}`).toBe(0);
-    expect(same.stdout).toContain('https://new.example/u/abc serves 1.2.3');
-    expect(same.stdout).toContain('https://old.example/u/abc serves 1.2.3');
+    const served = runFeedStep(step, { 'feed.example': { 'latest.yml': manifestText('1.2.3', 'current') } }, env);
+    expect(served.status, `${served.stdout}\n${served.stderr}`).toBe(0);
+    expect(served.stdout).toContain('https://feed.example/u/abc serves 1.2.3');
 
-    const newNameDown = runFeedStep(step, { 'old.example': { 'latest.yml': current } }, urls);
-    expect(newNameDown.status).not.toBe(0);
-    expect(newNameDown.stdout).toContain('::error::https://new.example/u/abc does not serve the update feed');
+    const down = runFeedStep(step, {}, env);
+    expect(down.status).not.toBe(0);
+    expect(down.stdout).toContain('::error::https://feed.example/u/abc does not serve the update feed');
 
-    const notAManifest = runFeedStep(
-      step,
-      { 'new.example': { 'latest.yml': '<html>404</html>' }, 'old.example': { 'latest.yml': current } },
-      urls,
-    );
+    const notAManifest = runFeedStep(step, { 'feed.example': { 'latest.yml': '<html>404</html>' } }, env);
     expect(notAManifest.status).not.toBe(0);
-    expect(notAManifest.stdout).toContain('::error::https://new.example/u/abc does not serve the update feed');
-
-    const otherFeed = runFeedStep(
-      step,
-      {
-        'new.example': { 'latest.yml': current },
-        'old.example': { 'latest.yml': manifestText('1.2.2', 'previous') },
-      },
-      urls,
-    );
-    expect(otherFeed.status).not.toBe(0);
-    expect(otherFeed.stdout).toContain(
-      '::error::https://old.example/u/abc serves a different latest.yml than https://new.example/u/abc',
-    );
-
-    // Without a legacy name only the packaged URL is polled.
-    const single = runFeedStep(step, { 'new.example': { 'latest.yml': current } }, {
-      ...urls,
-      LEGACY_FEED_URL: '',
-    });
-    expect(single.status, `${single.stdout}\n${single.stderr}`).toBe(0);
-    expect(single.stdout).not.toContain('old.example');
+    expect(notAManifest.stdout).toContain('::error::https://feed.example/u/abc does not serve the update feed');
   }, 60_000);
 
-  it('fails the run unless every polled feed URL serves the published release', () => {
+  it('fails the run unless the feed URL serves the published release', () => {
     const step = 'Assert served feed version == package.json == tag';
     const version = (JSON.parse(readFileSync(resolve(repoRoot, 'apps/desktop/package.json'), 'utf8')) as {
       version: string;
@@ -357,40 +323,44 @@ describe('Windows release feed policy', () => {
     const artifact = `ChatGoose-Setup-${version}.exe`;
     const published = { 'latest.yml': manifestText(version, 'published'), [artifact]: 'published' };
     const env = {
-      FEED_URL: 'https://new.example/u/abc',
-      LEGACY_FEED_URL: 'https://old.example/u/abc',
+      FEED_URL: 'https://feed.example/u/abc',
       EXPECTED_ARTIFACT: artifact,
       EXPECTED_SHA512: createHash('sha512').update('published').digest('base64'),
       GITHUB_REF: 'refs/heads/main',
     };
 
-    const both = runFeedStep(step, { 'new.example': published, 'old.example': published }, env);
-    expect(both.status, `${both.stdout}\n${both.stderr}`).toBe(0);
-    expect(both.stdout).toContain('https://new.example/u/abc serves this run');
-    expect(both.stdout).toContain('https://old.example/u/abc serves this run');
+    const live = runFeedStep(step, { 'feed.example': published }, env);
+    expect(live.status, `${live.stdout}\n${live.stderr}`).toBe(0);
+    expect(live.stdout).toContain(`package.json=${version} served artifact=${artifact}`);
 
-    // The release is live under the packaged URL, but builds on the legacy
-    // name still see the previous manifest: they would never receive it.
-    const legacyBehind = runFeedStep(
+    // Uploaded to one server while the name shows another: the name still
+    // serves the previous manifest, so no build polling it gets the release.
+    const behind = runFeedStep(
       step,
-      {
-        'new.example': published,
-        'old.example': { 'latest.yml': manifestText('0.0.1', 'previous'), 'ChatGoose-Setup-0.0.1.exe': 'previous' },
-      },
+      { 'feed.example': { 'latest.yml': manifestText('0.0.1', 'previous'), 'ChatGoose-Setup-0.0.1.exe': 'previous' } },
       env,
     );
-    expect(legacyBehind.status).not.toBe(0);
-    expect(legacyBehind.stdout).toContain('https://new.example/u/abc serves this run');
-    expect(legacyBehind.stdout).toContain('::error::https://old.example/u/abc did not converge to this run');
+    expect(behind.status).not.toBe(0);
+    expect(behind.stdout).toContain('::error::Served feed did not converge to this run');
 
-    const tampered = runFeedStep(
-      step,
-      { 'new.example': { ...published, [artifact]: 'other bytes' }, 'old.example': published },
-      env,
-    );
+    const tampered = runFeedStep(step, { 'feed.example': { ...published, [artifact]: 'other bytes' } }, env);
     expect(tampered.status).not.toBe(0);
-    expect(tampered.stdout).toContain('::error::https://new.example/u/abc did not converge to this run');
+    expect(tampered.stdout).toContain('::error::Served feed did not converge to this run');
   }, 60_000);
+
+  it('uploads to one feed host, pinned by its host key, from CI and from the mac publisher', () => {
+    const upload = workflowRunScript('Upload to the update feed');
+    const targets = new Set([...upload.matchAll(/\b(\w+)@(\d+\.\d+\.\d+\.\d+)\b/g)].map((match) => match[0]));
+    expect([...targets]).toEqual(['cgupdates@152.53.191.242']);
+    // The only known_hosts line is this host's key, written before any ssh.
+    const pins = [...upload.matchAll(/^echo "(\S+) (ssh-ed25519 \S+)" > ~\/\.ssh\/known_hosts$/gm)];
+    expect(pins.map((match) => match[1])).toEqual(['152.53.191.242']);
+    expect(pins[0]?.[2]).toBe('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFVfNGPiVJY8E/IHh8QokJNJw9yP5az/fwiQtmT24C9Q');
+    expect(upload.indexOf('> ~/.ssh/known_hosts')).toBeLessThan(upload.indexOf('"command -v flock'));
+    expect(upload).not.toMatch(/StrictHostKeyChecking|UserKnownHostsFile/);
+
+    expect(readNormalized(macPublisher)).toMatch(/^readonly VPS=root@152\.53\.191\.242$/m);
+  });
 
   // Five Git Bash publisher processes can exceed Vitest's 5 s default on Windows CI.
   it('publishes under a crash-safe lock, retries identical success, and rejects conflicts', () => {
