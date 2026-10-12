@@ -12,7 +12,7 @@
  * works on the Russian layout without switching it. The letter choices and
  * the platform constraints behind them live in README.md. */
 /** Bumped whenever an assignment changes; both clients must ship the same value. */
-export const HOTKEY_SCHEME_VERSION = 1;
+export const HOTKEY_SCHEME_VERSION = 2;
 const BOTH = ["extension", "desktop"];
 export const HOTKEYS = [
     { action: "reply", level: "text", code: "KeyE", key: "E", ruKey: "У", clients: BOTH, name: { ru: "Ответ", en: "Reply" }, guarded: true },
@@ -27,6 +27,7 @@ export const HOTKEYS = [
     { action: "split", level: "panel", code: "KeyL", key: "L", ruKey: "Д", clients: BOTH, name: { ru: "Split — ответ частями", en: "Split" }, guarded: false },
     { action: "spenders", level: "panel", code: "KeyM", key: "M", ruKey: "Ь", clients: BOTH, name: { ru: "Спендеры", en: "Spenders" }, guarded: false },
     { action: "coach", level: "panel", code: "KeyC", key: "C", ruKey: "С", clients: ["extension"], name: { ru: "Coach", en: "Coach" }, guarded: false },
+    { action: "notes", level: "panel", code: "KeyK", key: "K", ruKey: "Л", clients: ["fansly"], name: { ru: "Заметки о фане", en: "Notes" }, guarded: false },
 ];
 /** macOS only: the extension's pre-v1 Cmd+Shift habits (both clients honour
  * them, since the desktop users also work in the extension).
@@ -84,8 +85,13 @@ export function hotkeyDef(action) {
         throw new Error(`unknown hotkey action: ${action}`);
     return def;
 }
+/** Whether a row is live in a client. The Fansly extension is also an
+ * "extension": it runs those rows too. Elsewhere a row's key is reserved. */
+export function servesClient(def, client) {
+    return def.clients.includes(client) || (client === "fansly" && def.clients.includes("extension"));
+}
 export function hotkeysForClient(client) {
-    return HOTKEYS.filter((def) => def.clients.includes(client));
+    return HOTKEYS.filter((def) => servesClient(def, client));
 }
 /** The feature name shown in the given client. */
 export function hotkeyName(def, client, locale = "ru") {
