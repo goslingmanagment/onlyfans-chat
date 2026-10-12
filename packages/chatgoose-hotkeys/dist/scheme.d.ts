@@ -12,9 +12,12 @@
  * works on the Russian layout without switching it. The letter choices and
  * the platform constraints behind them live in README.md. */
 export type HotkeyPlatform = "mac" | "win";
-export type HotkeyClient = "extension" | "desktop";
+/** "extension" rows run in both extensions (Fansly and ChatSpace); "fansly"
+ * is the Fansly extension, which runs every "extension" row plus the rows
+ * only it has (see `servesClient`). */
+export type HotkeyClient = "extension" | "desktop" | "fansly";
 export type HotkeyLevel = "text" | "panel";
-export type HotkeyAction = "reply" | "fix" | "hi" | "ping" | "cancel" | "help" | "recap" | "tone" | "review" | "split" | "spenders" | "coach";
+export type HotkeyAction = "reply" | "fix" | "hi" | "ping" | "cancel" | "help" | "recap" | "tone" | "review" | "split" | "spenders" | "coach" | "notes";
 export interface HotkeyDef {
     readonly action: HotkeyAction;
     readonly level: HotkeyLevel;
@@ -36,7 +39,7 @@ export interface HotkeyDef {
     readonly guarded: boolean;
 }
 /** Bumped whenever an assignment changes; both clients must ship the same value. */
-export declare const HOTKEY_SCHEME_VERSION = 1;
+export declare const HOTKEY_SCHEME_VERSION = 2;
 export declare const HOTKEYS: readonly HotkeyDef[];
 /** macOS only: the extension's pre-v1 Cmd+Shift habits (both clients honour
  * them, since the desktop users also work in the extension).
@@ -52,6 +55,9 @@ export declare const MAC_SHIFT_SWALLOWED: readonly string[];
 /** Codes no assignment may take, with the reason. Pinned by the hub test. */
 export declare const FORBIDDEN_CODES: Readonly<Record<HotkeyLevel, Readonly<Record<string, string>>>>;
 export declare function hotkeyDef(action: HotkeyAction): HotkeyDef;
+/** Whether a row is live in a client. The Fansly extension is also an
+ * "extension": it runs those rows too. Elsewhere a row's key is reserved. */
+export declare function servesClient(def: HotkeyDef, client: HotkeyClient): boolean;
 export declare function hotkeysForClient(client: HotkeyClient): readonly HotkeyDef[];
 /** The feature name shown in the given client. */
 export declare function hotkeyName(def: HotkeyDef, client: HotkeyClient, locale?: "ru" | "en"): string;

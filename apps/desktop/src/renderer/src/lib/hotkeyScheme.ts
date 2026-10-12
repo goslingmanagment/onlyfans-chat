@@ -37,8 +37,9 @@ export function schemePlatform(platform: LabelPlatform = appPlatform()): HotkeyP
   return detectHotkeyPlatform(platform);
 }
 
-/** Package action → the desktop's dispatch id. Coach has no desktop feature:
- * its letter is reserved (the engine swallows it), so it maps to null. */
+/** Package action → the desktop's dispatch id. Coach and Notes have no
+ * desktop feature: their letters are reserved (the engine swallows them), so
+ * they map to null. */
 export const SCHEME_KEY_ACTION: Readonly<Record<HotkeyAction, SchemeKeyAction | null>> = {
   reply: 'ai-reply',
   fix: 'ai-improve',
@@ -52,6 +53,7 @@ export const SCHEME_KEY_ACTION: Readonly<Record<HotkeyAction, SchemeKeyAction | 
   split: 'ai-split',
   spenders: 'spenders',
   coach: null,
+  notes: null,
 };
 
 /** "⌘E" / "Ctrl+E", "⌘⇧H" / "Ctrl+Alt+H" — every printed AI/panel combo goes
