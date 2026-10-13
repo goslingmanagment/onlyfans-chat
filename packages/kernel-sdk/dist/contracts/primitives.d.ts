@@ -19,6 +19,20 @@ export declare const intId: z.ZodNumber;
 /** Money on the wire is always an INTEGER count of mills (1 mill = $0.001). */
 export declare const mills: z.ZodNumber;
 export declare const isoTimestamp: z.ZodString;
+/**
+ * An ISO 8601 date-time ending in `Z` (with `offset`, also `±hh:mm`), seconds
+ * optional: what every date-time field of this API has accepted. zod 4.5 made
+ * `z.iso.datetime()` require seconds (RFC 3339), so `2026-10-10T12:00Z`, valid
+ * here until then, would have become a 400. The pattern is zod 4.3's, so the
+ * published OpenAPI pattern is unchanged as well.
+ *
+ * zod's public params omit `pattern`, but its ISO date-time takes a given one
+ * (`def.pattern ??= …`); tests/contracts-iso-date-time.test.ts pins both the
+ * acceptance and the emitted pattern, so an upgrade that drops this fails there.
+ */
+export declare function isoDateTime(options?: {
+    offset?: boolean;
+}): z.ZodISODateTime;
 export declare const businessDate: z.ZodString;
 export declare const platformEnum: z.ZodEnum<{
     fansly: "fansly";
@@ -55,13 +69,14 @@ export declare const fanSearchMatchKindEnum: z.ZodEnum<{
  * `"false"` text through, so the coercion happens here rather than at each use;
  * anything else is left alone and fails the boolean check with a real message.
  */
-export declare const queryBooleanSchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodBoolean>;
+export declare const queryBooleanSchema: z.ZodPreprocess<z.ZodBoolean, unknown>;
 /** The error body is EXACTLY these three fields; there are no structural extensions. */
 export declare const errorResponseSchema: z.ZodObject<{
     error: z.ZodString;
     message: z.ZodString;
     statusCode: z.ZodNumber;
     reason: z.ZodOptional<z.ZodString>;
+    statusUrl: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export declare const paginationQuerySchema: z.ZodObject<{
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;

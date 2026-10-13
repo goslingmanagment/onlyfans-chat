@@ -13,6 +13,7 @@ export declare const ofapiCollectionCategorySchema: z.ZodEnum<{
     profile_notifications: "profile_notifications";
     content_history: "content_history";
     media_previews: "media_previews";
+    account_settings: "account_settings";
 }>;
 export declare const ofapiCollectionSettingsSchema: z.ZodObject<{
     pageId: z.ZodNullable<z.ZodNumber>;
@@ -30,6 +31,7 @@ export declare const ofapiCollectionSettingsSchema: z.ZodObject<{
         profile_notifications: "profile_notifications";
         content_history: "content_history";
         media_previews: "media_previews";
+        account_settings: "account_settings";
     }>;
     mode: z.ZodEnum<{
         off: "off";
@@ -59,6 +61,7 @@ export declare const ofapiCollectionChangeSchema: z.ZodObject<{
             profile_notifications: "profile_notifications";
             content_history: "content_history";
             media_previews: "media_previews";
+            account_settings: "account_settings";
         }>;
         mode: z.ZodEnum<{
             off: "off";
@@ -88,6 +91,7 @@ export declare const ofapiCollectionJobSchema: z.ZodObject<{
         profile_notifications: "profile_notifications";
         content_history: "content_history";
         media_previews: "media_previews";
+        account_settings: "account_settings";
     }>;
     expectedRevision: z.ZodNumber;
     maxCredits: z.ZodNumber;
@@ -97,6 +101,73 @@ export declare const ofapiCollectionJobSchema: z.ZodObject<{
     to: z.ZodNullable<z.ZodISODateTime>;
     selection: z.ZodArray<z.ZodString>;
 }, z.core.$strict>;
+/** Which of a run's own ceilings ended it (admission says only `job_limit`). */
+export declare const ofapiCollectionExhaustedCapSchema: z.ZodEnum<{
+    bytes: "bytes";
+    credits: "credits";
+    calls: "calls";
+}>;
+/** One scheduled (background) run of a page and category. */
+export declare const ofapiCollectionRunSummarySchema: z.ZodObject<{
+    id: z.ZodString;
+    state: z.ZodString;
+    reason: z.ZodNullable<z.ZodString>;
+    exhaustedLimit: z.ZodNullable<z.ZodString>;
+    exhaustedCap: z.ZodNullable<z.ZodEnum<{
+        bytes: "bytes";
+        credits: "credits";
+        calls: "calls";
+    }>>;
+    usedCalls: z.ZodNumber;
+    maxCalls: z.ZodNumber;
+    usedCredits: z.ZodNumber;
+    maxCredits: z.ZodNumber;
+    usedBytes: z.ZodNumber;
+    maxBytes: z.ZodNumber;
+    stepsDone: z.ZodNullable<z.ZodNumber>;
+    stepsTotal: z.ZodNullable<z.ZodNumber>;
+    createdAt: z.ZodString;
+    updatedAt: z.ZodString;
+}, z.core.$strip>;
+/** Traffic plan §2.8 п. 3: a scheduled category is stale when none of its runs
+ * completed for more than two intervals (counted from the later of its last
+ * completed run and the policy's last change). */
+export declare const ofapiCollectionScheduleHealthSchema: z.ZodObject<{
+    expected: z.ZodBoolean;
+    stale: z.ZodBoolean;
+    staleAt: z.ZodNullable<z.ZodString>;
+    lastCompletedAt: z.ZodNullable<z.ZodString>;
+    lastRun: z.ZodNullable<z.ZodObject<{
+        id: z.ZodString;
+        state: z.ZodString;
+        reason: z.ZodNullable<z.ZodString>;
+        exhaustedLimit: z.ZodNullable<z.ZodString>;
+        exhaustedCap: z.ZodNullable<z.ZodEnum<{
+            bytes: "bytes";
+            credits: "credits";
+            calls: "calls";
+        }>>;
+        usedCalls: z.ZodNumber;
+        maxCalls: z.ZodNumber;
+        usedCredits: z.ZodNumber;
+        maxCredits: z.ZodNumber;
+        usedBytes: z.ZodNumber;
+        maxBytes: z.ZodNumber;
+        stepsDone: z.ZodNullable<z.ZodNumber>;
+        stepsTotal: z.ZodNullable<z.ZodNumber>;
+        createdAt: z.ZodString;
+        updatedAt: z.ZodString;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+/** Job list filter: `unfinished` = queued, running or paused. */
+export declare const ofapiCollectionJobStateFilterSchema: z.ZodEnum<{
+    failed: "failed";
+    unfinished: "unfinished";
+    queued: "queued";
+    running: "running";
+    paused: "paused";
+    completed: "completed";
+}>;
 export declare const ofapiCollectionSnapshotSchema: z.ZodObject<{
     revision: z.ZodNumber;
     backgroundPaused: z.ZodBoolean;
@@ -115,6 +186,7 @@ export declare const ofapiCollectionSnapshotSchema: z.ZodObject<{
             profile_notifications: "profile_notifications";
             content_history: "content_history";
             media_previews: "media_previews";
+            account_settings: "account_settings";
         }>;
         label: z.ZodString;
         modes: z.ZodArray<z.ZodEnum<{
@@ -132,6 +204,7 @@ export declare const ofapiCollectionSnapshotSchema: z.ZodObject<{
         prerequisites: z.ZodArray<z.ZodString>;
         scope: z.ZodLiteral<"page">;
         legacyOperations: z.ZodArray<z.ZodString>;
+        noScheduledReads: z.ZodBoolean;
     }, z.core.$strip>>;
     pages: z.ZodArray<z.ZodObject<{
         id: z.ZodNumber;
@@ -154,6 +227,7 @@ export declare const ofapiCollectionSnapshotSchema: z.ZodObject<{
             profile_notifications: "profile_notifications";
             content_history: "content_history";
             media_previews: "media_previews";
+            account_settings: "account_settings";
         }>;
         mode: z.ZodEnum<{
             off: "off";
@@ -184,6 +258,33 @@ export declare const ofapiCollectionSnapshotSchema: z.ZodObject<{
         }, z.core.$strip>;
         lastCapturedAt: z.ZodNullable<z.ZodString>;
         inFlight: z.ZodNumber;
+        scheduleHealth: z.ZodObject<{
+            expected: z.ZodBoolean;
+            stale: z.ZodBoolean;
+            staleAt: z.ZodNullable<z.ZodString>;
+            lastCompletedAt: z.ZodNullable<z.ZodString>;
+            lastRun: z.ZodNullable<z.ZodObject<{
+                id: z.ZodString;
+                state: z.ZodString;
+                reason: z.ZodNullable<z.ZodString>;
+                exhaustedLimit: z.ZodNullable<z.ZodString>;
+                exhaustedCap: z.ZodNullable<z.ZodEnum<{
+                    bytes: "bytes";
+                    credits: "credits";
+                    calls: "calls";
+                }>>;
+                usedCalls: z.ZodNumber;
+                maxCalls: z.ZodNumber;
+                usedCredits: z.ZodNumber;
+                maxCredits: z.ZodNumber;
+                usedBytes: z.ZodNumber;
+                maxBytes: z.ZodNumber;
+                stepsDone: z.ZodNullable<z.ZodNumber>;
+                stepsTotal: z.ZodNullable<z.ZodNumber>;
+                createdAt: z.ZodString;
+                updatedAt: z.ZodString;
+            }, z.core.$strip>>;
+        }, z.core.$strip>;
     }, z.core.$strict>>;
     jobs: z.ZodArray<z.ZodObject<{
         id: z.ZodString;
@@ -202,6 +303,7 @@ export declare const ofapiCollectionSnapshotSchema: z.ZodObject<{
             profile_notifications: "profile_notifications";
             content_history: "content_history";
             media_previews: "media_previews";
+            account_settings: "account_settings";
         }>;
         state: z.ZodString;
         maxCredits: z.ZodNumber;
@@ -213,7 +315,15 @@ export declare const ofapiCollectionSnapshotSchema: z.ZodObject<{
         createdAt: z.ZodString;
         reason: z.ZodNullable<z.ZodString>;
         canFinishIncomplete: z.ZodBoolean;
+        exhaustedCap: z.ZodNullable<z.ZodEnum<{
+            bytes: "bytes";
+            credits: "credits";
+            calls: "calls";
+        }>>;
+        stepsDone: z.ZodNullable<z.ZodNumber>;
+        stepsTotal: z.ZodNullable<z.ZodNumber>;
     }, z.core.$strip>>;
+    jobsTotal: z.ZodNumber;
     audit: z.ZodArray<z.ZodObject<{
         revision: z.ZodNumber;
         actorUserId: z.ZodNumber;
@@ -240,6 +350,7 @@ export declare const ofapiCollectionPreviewSchema: z.ZodObject<{
             profile_notifications: "profile_notifications";
             content_history: "content_history";
             media_previews: "media_previews";
+            account_settings: "account_settings";
         }>;
         mode: z.ZodEnum<{
             off: "off";
@@ -267,8 +378,17 @@ export declare const ofapiCollectionRouteSchemas: {
         };
         readonly tags: readonly ["ops"];
         readonly summary: "Read effective OFAPI collection policy and retained usage";
+        readonly description: "Jobs list paused runs first, then newest, at most 100; `jobState` narrows the list (`unfinished` = queued, running or paused) and an unfinished-state filter returns every match. `jobsTotal` counts all matches.";
         readonly querystring: z.ZodObject<{
             pageId: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+            jobState: z.ZodOptional<z.ZodEnum<{
+                failed: "failed";
+                unfinished: "unfinished";
+                queued: "queued";
+                running: "running";
+                paused: "paused";
+                completed: "completed";
+            }>>;
         }, z.core.$strip>;
         readonly response: {
             readonly 400: z.ZodObject<{
@@ -276,24 +396,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 revision: z.ZodNumber;
@@ -313,6 +437,7 @@ export declare const ofapiCollectionRouteSchemas: {
                         profile_notifications: "profile_notifications";
                         content_history: "content_history";
                         media_previews: "media_previews";
+                        account_settings: "account_settings";
                     }>;
                     label: z.ZodString;
                     modes: z.ZodArray<z.ZodEnum<{
@@ -330,6 +455,7 @@ export declare const ofapiCollectionRouteSchemas: {
                     prerequisites: z.ZodArray<z.ZodString>;
                     scope: z.ZodLiteral<"page">;
                     legacyOperations: z.ZodArray<z.ZodString>;
+                    noScheduledReads: z.ZodBoolean;
                 }, z.core.$strip>>;
                 pages: z.ZodArray<z.ZodObject<{
                     id: z.ZodNumber;
@@ -352,6 +478,7 @@ export declare const ofapiCollectionRouteSchemas: {
                         profile_notifications: "profile_notifications";
                         content_history: "content_history";
                         media_previews: "media_previews";
+                        account_settings: "account_settings";
                     }>;
                     mode: z.ZodEnum<{
                         off: "off";
@@ -382,6 +509,33 @@ export declare const ofapiCollectionRouteSchemas: {
                     }, z.core.$strip>;
                     lastCapturedAt: z.ZodNullable<z.ZodString>;
                     inFlight: z.ZodNumber;
+                    scheduleHealth: z.ZodObject<{
+                        expected: z.ZodBoolean;
+                        stale: z.ZodBoolean;
+                        staleAt: z.ZodNullable<z.ZodString>;
+                        lastCompletedAt: z.ZodNullable<z.ZodString>;
+                        lastRun: z.ZodNullable<z.ZodObject<{
+                            id: z.ZodString;
+                            state: z.ZodString;
+                            reason: z.ZodNullable<z.ZodString>;
+                            exhaustedLimit: z.ZodNullable<z.ZodString>;
+                            exhaustedCap: z.ZodNullable<z.ZodEnum<{
+                                bytes: "bytes";
+                                credits: "credits";
+                                calls: "calls";
+                            }>>;
+                            usedCalls: z.ZodNumber;
+                            maxCalls: z.ZodNumber;
+                            usedCredits: z.ZodNumber;
+                            maxCredits: z.ZodNumber;
+                            usedBytes: z.ZodNumber;
+                            maxBytes: z.ZodNumber;
+                            stepsDone: z.ZodNullable<z.ZodNumber>;
+                            stepsTotal: z.ZodNullable<z.ZodNumber>;
+                            createdAt: z.ZodString;
+                            updatedAt: z.ZodString;
+                        }, z.core.$strip>>;
+                    }, z.core.$strip>;
                 }, z.core.$strict>>;
                 jobs: z.ZodArray<z.ZodObject<{
                     id: z.ZodString;
@@ -400,6 +554,7 @@ export declare const ofapiCollectionRouteSchemas: {
                         profile_notifications: "profile_notifications";
                         content_history: "content_history";
                         media_previews: "media_previews";
+                        account_settings: "account_settings";
                     }>;
                     state: z.ZodString;
                     maxCredits: z.ZodNumber;
@@ -411,7 +566,15 @@ export declare const ofapiCollectionRouteSchemas: {
                     createdAt: z.ZodString;
                     reason: z.ZodNullable<z.ZodString>;
                     canFinishIncomplete: z.ZodBoolean;
+                    exhaustedCap: z.ZodNullable<z.ZodEnum<{
+                        bytes: "bytes";
+                        credits: "credits";
+                        calls: "calls";
+                    }>>;
+                    stepsDone: z.ZodNullable<z.ZodNumber>;
+                    stepsTotal: z.ZodNullable<z.ZodNumber>;
                 }, z.core.$strip>>;
+                jobsTotal: z.ZodNumber;
                 audit: z.ZodArray<z.ZodObject<{
                     revision: z.ZodNumber;
                     actorUserId: z.ZodNumber;
@@ -446,6 +609,7 @@ export declare const ofapiCollectionRouteSchemas: {
                     profile_notifications: "profile_notifications";
                     content_history: "content_history";
                     media_previews: "media_previews";
+                    account_settings: "account_settings";
                 }>;
                 mode: z.ZodEnum<{
                     off: "off";
@@ -465,24 +629,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 revision: z.ZodNumber;
@@ -502,6 +670,7 @@ export declare const ofapiCollectionRouteSchemas: {
                         profile_notifications: "profile_notifications";
                         content_history: "content_history";
                         media_previews: "media_previews";
+                        account_settings: "account_settings";
                     }>;
                     mode: z.ZodEnum<{
                         off: "off";
@@ -548,6 +717,7 @@ export declare const ofapiCollectionRouteSchemas: {
                     profile_notifications: "profile_notifications";
                     content_history: "content_history";
                     media_previews: "media_previews";
+                    account_settings: "account_settings";
                 }>;
                 mode: z.ZodEnum<{
                     off: "off";
@@ -567,24 +737,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 revision: z.ZodNumber;
@@ -614,6 +788,7 @@ export declare const ofapiCollectionRouteSchemas: {
                 profile_notifications: "profile_notifications";
                 content_history: "content_history";
                 media_previews: "media_previews";
+                account_settings: "account_settings";
             }>;
             expectedRevision: z.ZodNumber;
             maxCredits: z.ZodNumber;
@@ -629,24 +804,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -672,24 +851,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -719,24 +902,28 @@ export declare const ofapiCollectionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;

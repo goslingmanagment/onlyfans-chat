@@ -9,19 +9,25 @@ import { ofapiVendorRouteSchemas } from "./routes-ofapi-vendor";
 import { ofapiReadCollectionsRouteSchemas } from "./routes-ofapi-read-collections";
 import { ofapiExportRouteSchemas } from "./routes-ofapi-exports";
 import { ofapiCollectionRouteSchemas } from "./routes-ofapi-collection";
+import { ofLinksRouteSchemas } from "./routes-of-links";
 import { PERIOD_OPTIONS, SPENDER_PERIOD_OPTIONS, SPENDER_RETENTION_STATUSES, SPENDER_SERIES_GRANULARITIES, FANSLY_CLIENT_CHECK_ROUTES, aiUsageFeatures, fanFlagTypes, ofapiCaptureJobStates, transactionReportingBuckets, userRoles, } from "../shared/index";
 import { z } from "zod";
 // Agent Read Plane operations #1-#10. Declared in their own module (one coherent
 // contract with its own envelope law and principal) and spread into routeSchemas
 // below, so registration, the auth-declaration gate and the OpenAPI generator
 // keep seeing ONE flat registry.
-import { agentExportPolicyEnum, agentRouteSchemas } from "./routes-agent";
+import { agentExportPolicyEnum, agentRouteSchemas, agentSyncWaitingReasonEnum } from "./routes-agent";
 // Owner administration of the plane's KEYS. A sibling module rather than part of
 // the read plane: issuing a credential carries no evidence envelope, and folding
 // it into agentRouteSchemas would have meant loosening that module's pins.
 import { agentKeyAdminRouteSchemas } from "./routes-agent-keys";
+// The Fansly Sync Engine's owner routes (history requests). Owner-session, no
+// agent envelope, so a sibling module for the same reason as the keys above.
+import { syncRouteSchemas } from "./routes-sync";
+// The chat extension's routes (client bootstrap and what follows); same spread.
+import { clientNumericIdSchema, clientOpenToken, clientRouteSchemas } from "./routes-client";
 // House primitives shared with the sibling route modules (see primitives.ts).
-import { businessDate, errorResponseSchema, fanLookupParamsSchema, fanSearchMatchKindEnum, intId, isoTimestamp, mills, pageParamsSchema, paginationQuerySchema, platformEnum, queryBooleanSchema, sortDirEnum, transactionStateEnum, transactionTypeEnum, } from "./primitives";
+import { businessDate, errorResponseSchema, fanLookupParamsSchema, fanSearchMatchKindEnum, intId, isoDateTime, isoTimestamp, mills, pageParamsSchema, paginationQuerySchema, platformEnum, queryBooleanSchema, sortDirEnum, transactionStateEnum, transactionTypeEnum, } from "./primitives";
 const periodEnum = z.enum(PERIOD_OPTIONS);
 const spenderPeriodEnum = z.enum(SPENDER_PERIOD_OPTIONS);
 const spenderSeriesGranularityEnum = z.enum(SPENDER_SERIES_GRANULARITIES);
@@ -241,9 +247,23 @@ export const authIssueDeviceTokenWithPasswordBodySchema = z.object({
     // pending → a 10-minute reservation, activated through authActivateDeviceToken
     //           after the client has durably staged custody (the desktop).
     mode: deviceTokenIssueModeEnum,
+    // chat-extension H-3: a narrow token bound to this client's route allowlist
+    // (client-token-scopes.ts), stored immutably on the token. Active only. A hub
+    // without H-3 drops the key and issues a full token, so the client requires
+    // the echo below (and the bootstrap's identity.tokenClient) before using it.
+    client: z.enum(["chat-extension"]).optional(),
+}).superRefine((value, ctx) => {
+    if (value.client !== undefined && value.mode !== "active") {
+        ctx.addIssue({ code: "custom", path: ["client"], message: "client requires mode active" });
+    }
 });
 export const authIssueDeviceTokenWithPasswordResponseSchema = z.discriminatedUnion("mode", [
-    issuedDeviceTokenResponseSchema.extend({ mode: z.literal("active") }),
+    issuedDeviceTokenResponseSchema.extend({
+        mode: z.literal("active"),
+        // The profile the token was issued with: null for a full token. Open on
+        // the wire, absent from a hub without H-3.
+        client: z.string().min(1).max(64).nullable().optional(),
+    }),
     reservedDeviceTokenResponseSchema.extend({ mode: z.literal("pending") }),
 ]);
 export const ownDeviceItemSchema = z.object({
@@ -307,12 +327,33 @@ export const healthResponseSchema = z.object({
     timestamp: isoTimestamp,
     contractHash: z.string().regex(/^[a-f0-9]{64}$/),
     capabilities: z.array(z.literal("desktop-lifecycle-v2")),
+    /** Client SDK contract hashes this hub serves: its own first, then every frozen SDK
+     *  in its registry, no repeats. A client release gate checks its vendored hash here. */
+    compatibleClientSdks: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(64).optional(),
     checks: z.object({
         api: z.object({
             status: z.literal("ok"),
         }),
         database: systemCheckSchema,
     }),
+});
+/** `/health/sync`'s block of a page the Fansly Sync Engine owns: the page is
+ *  unhealthy on a stale owner (> 90 s), a refused credential (an
+ *  `auth`/`identity_mismatch` hold) or a handover older than 10 minutes. A
+ *  Fansly page without the block is one the engine does not own: nothing
+ *  reads it, and it is unhealthy with the issue `engine:not_live`. */
+export const syncHealthEngineSchema = z.object({
+    mode: z.enum(["handover", "live"]),
+    ownerHeartbeatAgeSeconds: z.number().int().nonnegative().nullable(),
+    /** `until` is an ISO instant or "infinity" (a hold only new credentials lift). */
+    hold: z.object({ kind: z.string(), until: z.string() }).nullable(),
+    urgentOldestAgeSeconds: z.number().int().nonnegative().nullable(),
+    wsConnected: z.boolean(),
+    /** 0 while connected; null when the page never had a socket. */
+    wsDownSeconds: z.number().int().nonnegative().nullable(),
+    quarantined: z.number().int().nonnegative(),
+    /** The page's open engine alert latches (`page_stopped`, `live_degraded`, …). */
+    openAlerts: z.array(z.string()),
 });
 export const syncHealthPageSchema = z.object({
     pageId: intId,
@@ -331,13 +372,15 @@ export const syncHealthPageSchema = z.object({
     pendingStreams: z.number().int(),
     lastErrorSummary: z.string().nullable(),
     issues: z.array(z.string()),
+    engine: syncHealthEngineSchema.optional(),
 });
 export const syncHealthResponseSchema = z.object({
     status: serviceHealthStatusEnum,
     timestamp: isoTimestamp,
+    /** The legacy stream checks' threshold; they judge the pages of the legacy
+     *  page-sync executor (OnlyFans). */
     thresholds: z.object({
         lightMaxAgeMinutes: z.number().int().positive(),
-        followerMaxAgeMinutes: z.number().int().positive(),
     }),
     overall: z.object({
         pageCount: z.number().int(),
@@ -375,7 +418,7 @@ export const pageConversationProfileParamsSchema = pageParamsSchema.extend({
 });
 // Request instants must include a timezone; the legacy isoTimestamp response
 // primitive is intentionally permissive and must not validate query bounds.
-export const revenueInstantSchema = z.iso.datetime({ offset: true })
+export const revenueInstantSchema = isoDateTime({ offset: true })
     .refine((value) => Number.isFinite(Date.parse(value)), "Invalid timestamp");
 const standardRevenueQuerySchema = z.object({
     period: nonCustomPeriodEnum,
@@ -938,6 +981,13 @@ const spenderPeriodMetadataSchema = z.object({
     timeZone: z.string(),
     fromBusinessDate: businessDate.nullable(),
     toBusinessDateInclusive: businessDate.nullable(),
+    // Money data complete as of: the latest instant up to which the hub had
+    // heard from the platform for every page in scope and had every money event
+    // received by then in these numbers (the minimum over the scope's pages).
+    // For an OnlyFans page fed by OFAPI webhooks it follows the page's webhook
+    // stream even when no money moves; for other pages it is the last spender
+    // rebuild. Not "when the numbers last changed". Null when a page in scope
+    // was never rebuilt. (getSpenderMoneyAsOf in packages/db.)
     asOf: isoTimestamp.nullable(),
 });
 const spenderWindowMetricsSchema = z.object({
@@ -1007,6 +1057,14 @@ const spenderLastTransactionSchema = z.object({
     creatorNetAmountMills: mills,
     occurredAt: isoTimestamp,
 }).nullable();
+// The page's own "can't see this fan" mark: when the latest Fansly account
+// answer through THIS page — an account lookup or the DM partner probe — did
+// not return the fan (page_fans.account_probe_resolved = false), the time of
+// that answer. The fan probably blocked the page or deleted the account; other
+// pages keep their own answer, so the fan shows normally there. Null when the
+// latest answer returned the fan, the page never asked, or the list spans more
+// than one page. Optional: a server before it omits the key.
+const accountLookupMissAtSchema = isoTimestamp.nullable().optional();
 const spenderListItemSchema = z.object({
     fan: spenderFanSchema,
     metrics: spenderMetricsSchema,
@@ -1015,6 +1073,7 @@ const spenderListItemSchema = z.object({
     conversation: spenderConversationSchema,
     lastTransaction: spenderLastTransactionSchema,
     retentionStatus: spenderRetentionStatusEnum.exclude(["all"]),
+    accountLookupMissAt: accountLookupMissAtSchema,
 });
 export const spenderListResponseSchema = z.object({
     scope: spenderScopeResponseSchema,
@@ -1037,6 +1096,7 @@ export const pageSpenderAutoListsResponseSchema = z.object({
     currency: z.literal("USD"),
     metric: z.enum(["grossAmountMills", "lifetimeGrossAmountMills"]),
     period: spenderPeriodMetadataSchema,
+    // Same value as period.asOf: money data complete as of.
     asOf: isoTimestamp.nullable(),
     totalEntries: z.number().int().nonnegative(),
     lists: z.array(pageSpenderAutoListItemSchema),
@@ -1053,6 +1113,7 @@ const pageSpenderAutoListFanSchema = z.object({
     lifetimeGrossAmountMills: mills,
     lifetimeCreatorNetAmountMills: mills,
     lastTransactionAt: isoTimestamp.nullable(),
+    accountLookupMissAt: accountLookupMissAtSchema,
 });
 export const pageSpenderAutoListDetailResponseSchema = z.object({
     page: pageRefSchema,
@@ -1162,6 +1223,27 @@ const pageConversationFanSchema = z.object({
     username: z.string().nullable(),
     displayName: z.string().nullable(),
 });
+/** Why Fansly stopped serving a chat to its page, as far as Hub can tell
+ * (arena "vanished chat", plan §8 (а)): the partner's latest session-less
+ * public account check (Hub's public reader). `unchecked`: no check yet — it
+ * was deleted or the fan blocked the page. `probably_blocked`: the account is
+ * found without a session. `probably_deleted`: it is not. */
+const conversationChatAccessCauseSchema = z.enum(["unchecked", "probably_blocked", "probably_deleted"]);
+/** The chat's open unavailability episode (plan §2): Fansly refuses the
+ * chat's history to this page since `openedAt`. `refusing`: the refusals
+ * so far (transient); `established`: at the episode's 5th refusal — the
+ * engine stopped reading the chat, and its socket messages stay unconfirmed
+ * until a read is served again. */
+const conversationChatAccessSchema = z.object({
+    state: z.enum(["refusing", "established"]),
+    openedAt: isoTimestamp,
+    establishedAt: isoTimestamp.nullable(),
+    lastRefusalAt: isoTimestamp,
+    refusals: z.number().int(),
+    /** The owner's own observation (`sync chats note`), verbatim. */
+    ownerNote: z.string().nullable(),
+    cause: conversationChatAccessCauseSchema,
+});
 const pageConversationStateSchema = z.object({
     platformConversationId: z.string(),
     storedMessageCount: z.number().int(),
@@ -1172,7 +1254,21 @@ const pageConversationStateSchema = z.object({
     lastMessageSyncAt: isoTimestamp.nullable(),
     unreadCount: z.number().int(),
     lastMessageAt: isoTimestamp.nullable(),
+    /** Additive: present only while the chat has an open unavailability
+     * episode (Fansly pages); absent otherwise and from older kernels. */
+    chatAccess: conversationChatAccessSchema.optional(),
 });
+/** Provenance of a conversation message (Fansly live overlay, plan §7.11).
+ * Additive: present only on pages that read the live overlay
+ * (`fanslyLiveOverlayReadPages`), absent everywhere else and from older
+ * kernels; an absent value means a REST copy. `rest`: Hub's REST-synced copy.
+ * `live`: the message came from the page's Fansly socket and Hub's REST copy
+ * has not arrived yet: text, sender and time are provisional, and tips and
+ * PPV appear only once the REST copy replaces it. */
+const conversationMessageSourceSchema = z.enum(["rest", "live"]);
+/** Only on `live` rows: true when the chat is excluded from REST message sync,
+ * so no REST copy will ever confirm the message («API недоступен»). */
+const conversationMessageApiUnavailableSchema = z.boolean();
 const pageConversationPreviewMessageSchema = z.object({
     platformMessageId: z.string(),
     senderPlatformUserId: z.string().nullable(),
@@ -1180,6 +1276,8 @@ const pageConversationPreviewMessageSchema = z.object({
     createdAt: isoTimestamp,
     content: z.string(),
     totalTipAmountCents: z.number().int(),
+    source: conversationMessageSourceSchema.optional(),
+    apiUnavailable: conversationMessageApiUnavailableSchema.optional(),
 });
 export const pageConversationPreviewResponseSchema = z.object({
     page: assignedPageSchema,
@@ -1194,6 +1292,8 @@ export const pageConversationMessageItemSchema = z.object({
     content: z.string(),
     createdAt: isoTimestamp,
     tipAmountCents: z.number().int(),
+    source: conversationMessageSourceSchema.optional(),
+    apiUnavailable: conversationMessageApiUnavailableSchema.optional(),
 });
 export const pageConversationMessagesResponseSchema = z.object({
     page: assignedPageSchema,
@@ -1625,12 +1725,70 @@ export const aiGatewayStreamFrameSchema = z.discriminatedUnion("type", [
         stopReason: z.string().nullable(),
     }).strict(),
 ]);
+// chat-extension H-4b. The newest message of a transcript reader, as the
+// context frame names it.
+const aiContextHeadSchema = z.object({
+    messageRef: z.string(),
+    occurredAt: isoTimestamp.nullable(),
+    isFromFan: z.boolean(),
+});
+/** How many ids `knownFanMessageIds` may name, and so how many answers the
+ *  context frame carries. */
+export const AI_KNOWN_FAN_MESSAGE_IDS_MAX = 10;
+// Known values of the frame's open tokens. On the wire they are open strings
+// (the shape law in routes-client.ts): a client narrows to these and reads an
+// unknown value as "unknown", so a later value never breaks an installed
+// client. `coverage` narrows to CLIENT_COVERAGE_LEVELS (routes-client.ts),
+// which the client reads share.
+export const AI_CONTEXT_SOURCES = ["archive", "union", "live_union"];
+export const AI_KNOWN_FAN_MESSAGE_STATES = ["included", "absent", "deleted", "unknown"];
+export const AI_CONTEXT_LIVE_STATUSES = ["not_sent", "disabled", "shadow", "served", "rejected"];
+export const AI_FAN_LANGUAGE_EVIDENCE = ["latin", "cyrillic", "mixed", "unknown"];
+// Feature-lane-only: the transcript snapshot that ACTUALLY served this
+// generation. Emitted right after `meta` (and `debug_input_v1`), before the
+// first `content_delta`, and only to a caller that advertised `context-v1`.
+// Deliberately NOT strict, unlike every other frame: a later key must not fail
+// the stream of a client already in the field.
+export const aiFeatureContextFrameSchema = z.object({
+    type: z.literal("context_v1"),
+    /** Equals `meta.requestId`. */
+    generationRef: z.string().uuid(),
+    /** The hub reader that served the transcript: AI_CONTEXT_SOURCES. */
+    source: clientOpenToken,
+    /** Newest message of the served window, after normalization and the window
+     *  cap; null when the window is empty. */
+    servedHead: aiContextHeadSchema.nullable(),
+    /** Diagnostics only: the plain archive reader's head. With `source: "union"`
+     *  the model may have read past it. */
+    archiveHead: aiContextHeadSchema.nullable().optional(),
+    window: z.object({
+        requested: z.number().int().nonnegative(),
+        served: z.number().int().nonnegative(),
+    }),
+    /** How much of the conversation's history the hub can vouch for:
+     *  CLIENT_COVERAGE_LEVELS. */
+    coverage: clientOpenToken,
+    /** One answer per id of the body's `knownFanMessageIds`, in the same order;
+     *  absent when the body named none. `state`: AI_KNOWN_FAN_MESSAGE_STATES. */
+    knownFanMessages: z.array(z.object({ id: z.string(), state: clientOpenToken }))
+        .max(AI_KNOWN_FAN_MESSAGE_IDS_MAX)
+        .optional(),
+    /** What the hub did with the client's fresh text: AI_CONTEXT_LIVE_STATUSES. */
+    live: z.object({
+        status: clientOpenToken,
+        accepted: z.number().int().nonnegative(),
+        rejected: z.number().int().nonnegative(),
+    }),
+    /** AI_FAN_LANGUAGE_EVIDENCE. */
+    fanLanguageEvidence: clientOpenToken.optional(),
+});
 // Unknown frames remain fatal for the raw gateway. Only streamAiFeature uses
-// this additive union, and the server emits debug_input_v1 only when the
-// caller advertised the matching capability header.
+// this additive union, and the server emits debug_input_v1 and context_v1 only
+// when the caller advertised the matching capability header.
 export const aiFeatureStreamFrameSchema = z.union([
     aiGatewayStreamFrameSchema,
     aiFeatureDebugInputFrameSchema,
+    aiFeatureContextFrameSchema,
 ]);
 // Stage 29 restricted capture class (DP 6-A): owner-only reads.
 // Personas are global single-tenant owner content. Legacy full-text client
@@ -1652,8 +1810,8 @@ export const aiPersonaUpsertParamsSchema = z.object({
 export const aiPersonaUpsertBodySchema = z.object({
     displayName: z.string().min(1).max(120),
     systemBlock: z.string().min(1).max(50_000),
-    // Omitted keeps shipped clients on their transitional last-write-wins lane.
-    // null is create-only; a number is an optimistic active-revision update.
+    // Historical shape of the retired legacy write (aiPersonaUpsert answers 409
+    // whatever the body says). Owner writes use adminAiPersonaUpdateBodySchema.
     expectedVersion: z.number().int().positive().nullable().optional(),
 }).strict();
 export const aiPersonaArchiveQuerySchema = z.object({
@@ -1773,11 +1931,54 @@ export const FAN_SILENCE_DAYS_MAX = 20_000;
 // ~= 10.1MB (a printable 3-byte-UTF-8 char like the CJK "no" is only the 3-byte
 // ceiling -> ~5.06MB, well under this). The former 4 MiB and 8 MiB limits both
 // 413'd this six-byte worst case before validation; 12 MiB (12,582,912) clears
-// ~10.1MB with headroom while genuine transport abuse still 413s. Kept in the
-// contract next to the schema so the limit and the field caps that drive it
-// cannot drift apart; asserted against the measured worst case in
+// it with headroom while genuine transport abuse still 413s.
+//
+// chat-extension H-4c adds `liveTextContext`: 60 items x 5k = 300k more code
+// units, 1.8MB at six bytes each. The service refuses it on Coach and beside
+// `clientContext`, but that is decided AFTER this limit and the schema, and the
+// schema cannot refuse it (the feature is a path parameter). So the worst
+// schema-valid body carries both: ~1.99M code units, measured 12.13MB with the
+// media list and JSON framing, which 12 MiB (12.58MB) still clears by about
+// 0.45MB. No request the service accepts comes near it. A field added after
+// this one has to be counted in the test before it ships.
+//
+// Kept in the contract next to the schema so the limit and the field caps that
+// drive it cannot drift apart; asserted against the measured worst case in
 // tests/contracts-coach-body.test.ts.
 export const AI_FEATURE_STREAM_BODY_LIMIT_BYTES = 12 * 1024 * 1024;
+// chat-extension H-4c — the fresh text of the open OnlyFans chat: the last
+// confirmed messages the client reads off the page it is showing, for the
+// features that draft a message to the fan (Reply, Fix, Hi, Ping). The hub's
+// archive lags the page by seconds to minutes; these fill that gap for ONE
+// generation and are stored nowhere else (docs/ai-gateway-contract.md).
+export const AI_LIVE_TEXT_MAX_ITEMS = 60;
+/** Per item, in UTF-16 code units. */
+export const AI_LIVE_TEXT_MAX_CHARS = 5_000;
+// An instant as the client writes it: ISO 8601 with seconds and an explicit
+// offset, at most nine fractional digits. The house `isoTimestamp` is a bare
+// string; these order the transcript, so their form is checked, which also
+// bounds their length (they count toward the body limit above).
+//
+// The pattern is the client's frozen one (chat-extension IsoTimestampSchema)
+// and the whole check: this schema accepts exactly what the client's does. A
+// string of the right form that names no instant (a leap second, a thirteenth
+// month) is therefore NOT refused here, where it would fail the whole request:
+// the merge rejects that one item as `unusable` (context/live-text.ts).
+const aiLiveTextInstantSchema = z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/);
+export const aiLiveTextContextSchema = z.object({
+    /** When the client read the messages off the page. */
+    capturedAt: aiLiveTextInstantSchema,
+    items: z.array(z.object({
+        /** The platform's own message id. Only messages the platform confirmed:
+         *  never a queued (mass, welcome) or an unsent one. */
+        platformMessageId: clientNumericIdSchema,
+        direction: z.enum(["fan", "model"]),
+        occurredAt: aiLiveTextInstantSchema,
+        /** Text only: a message that is media alone is not sent. */
+        text: z.string().min(1).max(AI_LIVE_TEXT_MAX_CHARS),
+    }).strict()).min(1).max(AI_LIVE_TEXT_MAX_ITEMS),
+}).strict();
 export const aiFeatureStreamBodySchema = z.object({
     clientRequestId: z.string().uuid(),
     pageLabel: z.string().min(1).max(120),
@@ -1815,6 +2016,25 @@ export const aiFeatureStreamBodySchema = z.object({
     // freshness gate skipped. New clients send variantCount instead. Do not
     // remove while a supported client still sends it.
     greetingMode: z.literal("new-follower").optional(),
+    // chat-extension H-4b: ids only, never text. Fan messages the client saw in
+    // the open chat before it asked for this generation, newest first. The hub
+    // answers each one in the `context_v1` frame (`knownFanMessages`) from the
+    // transcript that actually served the generation, scoped to this page and
+    // this conversation. Accepted on every feature; without the `context-v1`
+    // capability there is no frame to answer in, so the ids are ignored.
+    knownFanMessageIds: z.array(clientNumericIdSchema)
+        .min(1)
+        .max(AI_KNOWN_FAN_MESSAGE_IDS_MAX)
+        .refine((ids) => new Set(ids).size === ids.length, { message: "knownFanMessageIds repeat" })
+        .optional(),
+    // chat-extension H-4c: the fresh text of the open OnlyFans chat (above).
+    // Accepted only on fast-reply, improve-draft, hi-greeting and ping, only for
+    // an OnlyFans page, never beside clientContext, and only from a caller that
+    // advertised `context-v1`: anything else is a 400 with a machine reason.
+    // Whether it is USED is the owner's switch (`aiLiveTextContextMode` and the
+    // page's `freshText` flag); switched off, it is ignored and the `context_v1`
+    // frame says `live.status: "disabled"`.
+    liveTextContext: aiLiveTextContextSchema.optional(),
     // Stage 32: client-loaded context for platforms whose kernel archive is
     // pull-cadenced (Fansly: dm_conversations 30 min / dm_messages 24 h — no
     // webhook lane), where the client reads the conversation live at
@@ -2101,20 +2321,6 @@ export const syncMonitorActiveRunSchema = z.object({
     startedAt: isoTimestamp,
     lastActivityAt: isoTimestamp,
 });
-export const syncMonitorDeepBackfillSchema = z.object({
-    pendingConversations: z.number().int(),
-    pendingPagesEstimate: z.number().int(),
-    spenderPendingConversations: z.number().int(),
-    spenderPendingPagesEstimate: z.number().int(),
-    regularPendingConversations: z.number().int(),
-    regularPendingPagesEstimate: z.number().int(),
-    recentRequests: z.number().int(),
-    lastCompletedAt: isoTimestamp.nullable(),
-    liveRequestsSinceDeepBackfill: z.number().int(),
-    active: z.boolean(),
-    stalled: z.boolean(),
-    stallReason: z.string().nullable(),
-});
 const extendedSyncStreamEnum = z.enum([
     "light",
     "fan_identities",
@@ -2149,7 +2355,6 @@ export const syncMonitorStreamItemSchema = z.object({
     pending: z.boolean(),
     retryAt: isoTimestamp.nullable(),
     progress: syncMonitorProgressSchema.nullable(),
-    deepBackfill: syncMonitorDeepBackfillSchema.nullable().optional(),
     recentRuns: syncMonitorRecentRunsSchema,
     recentErrors: syncMonitorRecentErrorsSchema,
     rateHealth: syncMonitorRateHealthSchema,
@@ -2279,7 +2484,12 @@ const syncBlockStateEnum = z.enum([
     "failed",
     "paused",
     "not_available",
+    // The page is the Fansly Sync Engine's (`handover`/`live`): the block
+    // describes the engine's live work.
+    "engine",
 ]);
+/** The engine mode of a page the Fansly Sync Engine owns. */
+const syncEngineOwnedModeEnum = z.enum(["handover", "live"]);
 const simpleConnectionStatusEnum = z.enum(["connected", "not_connected", "error"]);
 export const syncBlockProgressSchema = z.object({
     label: z.string(),
@@ -2302,6 +2512,35 @@ export const syncStatusReasonSchema = z.object({
     waitingFor: z.array(z.string()).nullable(),
 });
 const syncStreamRoleEnum = z.enum(["primary", "supporting"]);
+/** One thing that stops registry keys of a page the Fansly Sync Engine owns
+ *  from sending now. `paused` is the owner's; the rest is what the engine's
+ *  hold evaluator says of a request of the key: the page's own hold, the
+ *  breaker of its resource file, a 429's hold of its routes — of every route
+ *  it reads, or of one of them once that hold has put the key's work off. (A
+ *  route's own pace stops nothing: work it puts off is queued.) A key stopped
+ *  by several is named under each: ending one leaves the others. */
+export const syncEngineStopSchema = z.object({
+    reason: z.enum(["paused", "page_hold", "resource_hold", "route_hold"]),
+    /** What stops them. `paused`: `page` (the whole page), `requests` (the
+     *  history requests class) or `keys` (the keys themselves). `page_hold`: the
+     *  hold's kind (`auth`, `identity_mismatch`, `network`, or `unreadable`: rows
+     *  of the hold set the build cannot read). `resource_hold`: the resource
+     *  file on its breaker. `route_hold`: the routes a 429 holds. */
+    by: z.array(z.string()),
+    /** The registry keys it stops. */
+    resources: z.array(z.string()),
+    /** When it ends (work a route's hold put off: when it is due again, or the
+     *  hold ends if that is sooner); null: no instant ends it (a pause, refused
+     *  credentials, unreadable rows). */
+    until: isoTimestamp.nullable(),
+});
+/** How many of a set of keys can send nothing now. */
+const syncEngineStoppedEnum = z.enum(["none", "some", "all"]);
+/** Quarantined or vendor-refused work: how many rows, of which keys. */
+const syncEngineWorkCountSchema = z.object({
+    count: z.number().int().nonnegative(),
+    resources: z.array(z.string()),
+});
 export const syncBlockIntervalSchema = z.object({
     stream: extendedSyncStreamEnum,
     cadenceSeconds: z.number().int(),
@@ -2318,10 +2557,54 @@ export const syncBlockSubstreamSchema = z.object({
     needsAttention: z.boolean(),
     statusReason: syncStatusReasonSchema.nullable(),
     error: syncBlockErrorSchema.nullable(),
+    /** Present exactly when `state` is `engine`: how many of the stream's keys
+     *  can send nothing now, and what stops them. */
+    engine: z.object({
+        stopped: syncEngineStoppedEnum,
+        stops: z.array(syncEngineStopSchema),
+        /** The owner's pause stops every one of its keys, whatever else does. */
+        paused: z.boolean(),
+        /** The live work of its keys that is open, running or quarantined. */
+        activeWork: z.number().int().nonnegative(),
+    }).optional(),
 });
 export const syncBlockStatusSchema = z.object({
     block: syncBlockKeyEnum,
     state: syncBlockStateEnum,
+    /** Present exactly when `state` is `engine`. */
+    engineMode: syncEngineOwnedModeEnum.optional(),
+    /** Present exactly when `state` is `engine`: who runs the page, the keys the
+     *  block's buttons move, what stops them and what needs the owner. */
+    engine: z.object({
+        mode: syncEngineOwnedModeEnum,
+        /** A sync host runs the page (a fresh owner heartbeat). false: nothing of
+         *  the block is read, whatever its work says. */
+        ownerRunning: z.boolean(),
+        /** The registry keys the block's buttons move. No key is another block's. */
+        keys: z.array(z.string()),
+        /** Those of them that are polls: what "sync now" makes due. */
+        pollKeys: z.array(z.string()),
+        /** Those of them the owner paused one by one. */
+        pausedKeys: z.array(z.string()),
+        /** The owner paused the whole page. */
+        pausedAll: z.boolean(),
+        /** How many of the keys can send nothing now, and what stops them. */
+        stopped: syncEngineStoppedEnum,
+        stops: z.array(syncEngineStopSchema),
+        /** The owner's pause stops every one of the keys, whatever else does. */
+        paused: z.boolean(),
+        /** The keys' live work that is open, running or quarantined. */
+        activeWork: z.number().int().nonnegative(),
+        /** The keys' quarantined rows: what the block's reset requeues. */
+        quarantined: syncEngineWorkCountSchema,
+        /** The keys' rows Fansly refuses; the rows of a chat Fansly does not serve
+         *  to the page are not among them (`chatsUnavailable`). */
+        blockedByVendor: syncEngineWorkCountSchema,
+        /** The block that reads the chats' messages (`messages_history`) only:
+         *  how many chats Fansly does not serve to the page (established
+         *  unavailability episodes). Informational: never needs attention. */
+        chatsUnavailable: z.number().int().nonnegative().optional(),
+    }).optional(),
     succeededAt: isoTimestamp.nullable(),
     progress: syncBlockProgressSchema.nullable(),
     progressStream: z.string().nullable(),
@@ -2410,6 +2693,15 @@ export const adminSyncBlockResponseSchema = z.object({
     pageLabel: z.string(),
     block: syncBlockKeyEnum,
     requests: z.array(adminSyncBlockRequestSchema).optional(),
+    /** A page the Fansly Sync Engine owns: what the engine lever did — the
+     *  resource files whose polls became due (trigger), the registry keys
+     *  paused or resumed, or whose quarantined work was requeued (reset), and
+     *  how many polls, keys or rows moved. */
+    engine: z.object({
+        mode: syncEngineOwnedModeEnum,
+        resources: z.array(z.string()),
+        affected: z.number().int().nonnegative(),
+    }).optional(),
 });
 export const adminFollowersReconcileResetBodySchema = z.object({
     pageLabel: z.string().min(1),
@@ -2603,6 +2895,8 @@ const notificationIncidentKindEnum = z.enum([
     "ai_provider_failed",
     "capture_payload_parity",
     "ofapi_binding_conflict",
+    "sync_silent",
+    "fansly_sync_engine",
 ]);
 const notificationIncidentStatusEnum = z.enum(["open", "resolved"]);
 const notificationDeliveryOutboxStateEnum = z.enum([
@@ -2812,9 +3106,10 @@ export const verifyPageResponseSchema = z.object({
     verified: z.boolean(),
     username: z.string().nullable(),
     platform: platformEnum,
-    // W3.3 (D4-N1): false = the credentials verified but the auth block could
-    // not be cleared — streams stay blocked and the incidents stay open; the
-    // dashboard renders a warning instead of an all-clear.
+    // W3.3 (D4-N1): false meant the credentials verified but the legacy auth
+    // block could not be cleared. Always true since step 4 (S4-19): a Fansly
+    // page is verified by the Sync Engine, which clears its own hold by its own
+    // proof, and no legacy block is left to clear. Kept for the clients.
     syncUnblocked: z.boolean(),
 });
 export const adminCreatePageResponseSchema = z.object({
@@ -4244,7 +4539,7 @@ export const configItemSchema = z.object({
     key: z.string(),
     envName: z.string(),
     configField: z.string().nullable(),
-    kind: z.enum(["boolean", "number", "string", "url", "secret", "derived", "alias", "complex"]),
+    kind: z.enum(["boolean", "number", "string", "url", "secret", "derived", "complex"]),
     subsystem: z.string(),
     label: z.string(),
     default: z.string(),
@@ -4640,47 +4935,46 @@ export const statsTagsResponseSchema = z.object({
     coverage: z.array(insightsCoverageRowSchema),
     nextCursor: z.string().nullable(),
 });
-/** One lane's live operating state, read straight off `page_sync_states`. Every
- *  field is nullable because every field is written by ONE lane's progress
- *  block and no lane writes them all. */
-const insightsLaneProgressSchema = z.object({
-    journaled: z.number().int().nullable(),
-    callsToday: z.number().int().nullable(),
-    calledToday: z.number().int().nullable(),
-    dailyCap: z.number().int().nullable(),
-    deferred: z.string().nullable(),
-    // WP-F4's queue + honesty block.
-    mediaKnown: z.number().int().nullable(),
-    queueSize: z.number().int().nullable(),
-    dueToday: z.number().int().nullable(),
-    deferredToday: z.number().int().nullable(),
-    neverVisited: z.number().int().nullable(),
-    backfillComplete: z.number().int().nullable(),
-    backfillStopped: z.number().int().nullable(),
-    /** A16 item 3: the LIVE long-tail cycle, computed by the lane from the live
-     *  class census and the live cap. Never a documentation constant. */
-    estimatedCycleDays: z.number().nullable(),
-    requestsPerDayWanted: z.number().nullable(),
-    saturating: z.boolean().nullable(),
-    longTailCycleDays: z.number().nullable(),
-    // WP-F3's M block.
-    uniqueMediaCount: z.number().int().nullable(),
-    vaultMemberUniqueCount: z.number().int().nullable(),
-    /** Σ `item_count`. NON-UNIQUE by construction — the system albums are views
-     *  over the same media, so this double-counts. Labelled, never used as M. */
-    albumMembershipSum: z.number().int().nullable(),
-    vaultWalkStatus: z.string().nullable(),
-    // WP-F5's walk + truncation block.
-    rootsKnown: z.number().int().nullable(),
-    rootsWalked: z.number().int().nullable(),
-    rootsDirty: z.number().int().nullable(),
-    postsKnown: z.number().int().nullable(),
-    commentsSeen: z.number().int().nullable(),
-    commentsMissing: z.number().int().nullable(),
-    possiblyTruncated: z.number().int().nullable(),
-    paginationMode: z.string().nullable(),
-    phase: z.string().nullable(),
-    seedComplete: z.boolean().nullable(),
+/** One legacy stream of a page the Fansly Sync Engine owns, as the live work
+ *  of the registry keys that took it over says (the Settings sync blocks read
+ *  the same model). */
+const insightsEngineStreamSchema = z.object({
+    stream: z.string(),
+    /** The engine's registry keys that read this stream's data. */
+    resources: z.array(z.string()),
+    /** When one of them was last applied live — a key that works per subject (a
+     *  chat, a fan) over all its subjects; null = not yet. */
+    succeededAt: isoTimestamp.nullable(),
+    /** When the next read of a key nothing stops is due; null = none is open,
+     *  or every key with open work is stopped (`stops`). */
+    nextDueAt: isoTimestamp.nullable(),
+    /** Their work that is open, running or quarantined. 0 with no last read:
+     *  nothing has been asked of the stream. */
+    activeWork: z.number().int(),
+    /** The owner's pause stops every one of these keys (the whole page, or
+     *  each key), whatever else does. */
+    paused: z.boolean(),
+    /** How many of these keys can send nothing now — by the owner's pauses and
+     *  the engine's hold evaluator (the page's hold, a resource breaker, a 429's
+     *  hold of a key's routes) — and what stops them. A stream is being
+     *  read only when a host runs the page and this is `none`. */
+    stopped: syncEngineStoppedEnum,
+    stops: z.array(syncEngineStopSchema),
+    /** Some of their work is quarantined or blocked by Fansly. */
+    needsAttention: z.boolean(),
+    /** What needs attention and the command that lists it, or why the earliest
+     *  of them waits: one line for a reader of the API (the engine's codes, UTC). */
+    reason: z.string().nullable(),
+    /** Why the earliest-due page-level work of the stream waits, as data, for a
+     *  surface that words it itself. null: the stream needs attention, or none
+     *  of its page-level work is open. */
+    waiting: z.object({
+        resource: z.string(),
+        reason: agentSyncWaitingReasonEnum,
+        until: isoTimestamp.nullable(),
+    }).nullable(),
+    /** The largest failure count among their active work. */
+    consecutiveFailures: z.number().int(),
 });
 export const statsCoverageResponseSchema = z.object({
     page: insightsPageSchema,
@@ -4688,26 +4982,17 @@ export const statsCoverageResponseSchema = z.object({
     /** Every `capture_coverage` row this page holds: the floors, in the
      *  `(status, acquisition_mode, proof)` vocabulary. */
     planes: z.array(insightsCoverageRowSchema),
-    /** Per lane: is its gate open, is this page on its allowlist, and what did it
-     *  last report. A lane whose flag is off holds no data for a reason, and a
-     *  panel that cannot tell that apart from "no activity" is the panel this one
-     *  replaces. */
-    streams: z.array(z.object({
-        stream: z.string(),
-        status: z.string(),
-        phase: z.string().nullable(),
-        succeededAt: isoTimestamp.nullable(),
-        failedAt: isoTimestamp.nullable(),
-        consecutiveFailures: z.number().int(),
-        blockerKind: z.string().nullable(),
-        blockerCode: z.string().nullable(),
-        /** null when this lane has no ramp flag of its own. */
-        flagEnabled: z.boolean().nullable(),
-        /** null when this lane has no page allowlist of its own. FAIL-CLOSED on
-         *  every lane this initiative shipped: empty allowlist = NO pages. */
-        allowlisted: z.boolean().nullable(),
-        progress: insightsLaneProgressSchema,
-    })),
+    /** Who reads this page's data and how far it got: the Fansly Sync Engine's
+     *  live work per legacy stream. A stream nobody reads holds no data for a
+     *  reason, and a panel that cannot tell that apart from "no activity" is the
+     *  panel this one replaces. null when the engine does not own the page. */
+    engine: z.object({
+        mode: z.enum(["handover", "live"]),
+        /** A sync host runs the page (a fresh owner heartbeat). false: nothing of
+         *  it is read, whatever the streams' work says. */
+        ownerRunning: z.boolean(),
+        streams: z.array(insightsEngineStreamSchema),
+    }).nullable(),
     /** What we actually hold, per projection: row count and the range it spans.
      *  A zero count next to an open floor is a real answer; a zero count with no
      *  coverage row is "never started" and reads that way. */
@@ -4947,8 +5232,7 @@ const baseRouteSchemas = {
     ...ofapiMediaRouteSchemas,
     ...ofapiMediaImageRouteSchemas,
     ...ofapiCollectionRouteSchemas,
-    ...agentRouteSchemas,
-    ...agentKeyAdminRouteSchemas,
+    ...ofLinksRouteSchemas,
     health: {
         auth: { kind: "public" },
         tags: ["system"],
@@ -5038,12 +5322,16 @@ const baseRouteSchemas = {
         },
     },
     aiGatewayStream: {
-        auth: { kind: "apiKey" },
+        // A raw prompt sent on the agency's provider keys is owner content: no
+        // device token of any role reaches this route. Clients stream through
+        // aiFeatureStream, where the hub assembles the prompt itself.
+        auth: { kind: "owner-session" },
         tags: ["usage"],
-        summary: "Stream a chatter AI generation through the core gateway",
-        description: "Default-off ChatMuse gateway for desktop AI generations. The runtime route "
-            + "uses chatter device-token auth, validates the prompt-stream request contract, and must not "
-            + "reach provider network while the gateway flag is disabled.",
+        summary: "Stream a raw-prompt AI generation through the core gateway (owner session only)",
+        description: "Owner cookie session only. Client AI goes through "
+            + "`POST /api/v1/ai/features/:feature`, which builds the prompt in the hub; a device token "
+            + "of any role is refused here. The route validates the prompt-stream request contract and "
+            + "must not reach provider network while the gateway flag is disabled.",
         body: aiGatewayStreamBodySchema,
         response: {
             200: z.unknown(),
@@ -5908,12 +6196,17 @@ const baseRouteSchemas = {
                 fanCount: z.number().int().nonnegative(),
                 /** W8.1 (A12/A20): why the projection is (or is not) being fed — a
                  * `builtAt: null` response is no longer ambiguous between "no
-                 * spenders" and "stream not ramped for this page". Additive. */
+                 * spenders" and "nobody reads this page's fan earnings". Additive. */
                 source: z.object({
+                    /** `ramped`: the Fansly Sync Engine reads the page's fan earnings;
+                     *  `flag_off`: it does not (the owner paused it, or the engine does
+                     *  not own the page). `not_allowlisted` was the legacy executor's
+                     *  page allowlist and is no longer served. */
                     streamState: z.enum(["ramped", "flag_off", "not_allowlisted", "unsupported_platform"]),
-                    /** fan_earnings stream's last successful sync for this page. */
+                    /** When the engine last applied a fan-earnings read for this page. */
                     lastSyncedAt: z.string().nullable(),
-                    /** null = the page has no fan_earnings sync state row yet. */
+                    /** The largest failure count among its active fan-earnings work;
+                     *  null = the engine does not own the page. */
                     consecutiveFailures: z.number().int().nullable(),
                 }),
                 entries: z.array(z.object({
@@ -6374,13 +6667,18 @@ const baseRouteSchemas = {
             403: errorResponseSchema,
         },
     },
+    // Legacy full-text persona routes. Persona prompts are owner content: all
+    // three are owner-session only, and the two writes are retired in favour of
+    // the versioned, audited admin lane (adminAiPersona*). Clients read
+    // aiPersonaCatalog, which never carries prompt text.
     aiPersonasList: {
-        auth: { kind: "apiKey" },
+        auth: { kind: "owner-session" },
         tags: ["usage"],
-        summary: "List kernel AI personas (the desktop picker's source)",
+        summary: "List active AI personas with full prompt text (legacy; owner session only)",
         response: {
             200: aiPersonasResponseSchema,
             401: errorResponseSchema,
+            403: errorResponseSchema,
         },
     },
     aiPersonaCatalog: {
@@ -6407,27 +6705,29 @@ const baseRouteSchemas = {
         },
     },
     aiPersonaUpsert: {
-        auth: { kind: "apiKey" },
+        auth: { kind: "owner-session" },
         tags: ["usage"],
-        summary: "Create or update a kernel AI persona",
+        summary: "Retired legacy persona write (owner session only; answers 409, use the admin persona routes)",
         params: aiPersonaUpsertParamsSchema,
         body: aiPersonaUpsertBodySchema,
         response: {
             200: aiPersonaSchema,
             400: errorResponseSchema,
             401: errorResponseSchema,
+            403: errorResponseSchema,
             409: errorResponseSchema,
         },
     },
     aiPersonaArchive: {
-        auth: { kind: "apiKey" },
+        auth: { kind: "owner-session" },
         tags: ["usage"],
-        summary: "Archive a kernel AI persona (soft retire)",
+        summary: "Retired legacy persona archive (owner session only; answers 409, use the admin persona routes)",
         params: aiPersonaUpsertParamsSchema,
         querystring: aiPersonaArchiveQuerySchema,
         response: {
             200: z.object({ archived: z.boolean(), version: z.number().int().positive() }),
             401: errorResponseSchema,
+            403: errorResponseSchema,
             404: errorResponseSchema,
             409: errorResponseSchema,
         },
@@ -7009,6 +7309,9 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+            // fansly_page_switching: the page is being switched to the Fansly Sync Engine;
+            // legacy_sync_retired: a Fansly page the engine does not own (step 4 S4-10)
+            409: errorResponseSchema,
         },
     },
     adminSyncBlockTrigger: {
@@ -7022,6 +7325,9 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+            // fansly_page_switching: the page is being switched to the Fansly Sync Engine;
+            // legacy_sync_retired: a Fansly page the engine does not own (step 4 S4-10)
+            409: errorResponseSchema,
             503: errorResponseSchema,
         },
     },
@@ -7036,6 +7342,8 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+            // legacy_sync_retired: a Fansly page the engine does not own (step 4 S4-10)
+            409: errorResponseSchema,
         },
     },
     adminSyncBlockResume: {
@@ -7049,6 +7357,8 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+            // legacy_sync_retired: a Fansly page the engine does not own (step 4 S4-10)
+            409: errorResponseSchema,
         },
     },
     adminSyncBlockReset: {
@@ -7062,6 +7372,9 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+            // fansly_page_switching: the page is being switched to the Fansly Sync Engine;
+            // legacy_sync_retired: a Fansly page the engine does not own (step 4 S4-10)
+            409: errorResponseSchema,
             503: errorResponseSchema,
         },
     },
@@ -7076,7 +7389,9 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
-            503: errorResponseSchema,
+            // fansly_page_switching: the page is being switched to the Fansly Sync Engine;
+            // legacy_sync_retired: a Fansly page the engine does not own (step 4 S4-10)
+            409: errorResponseSchema,
         },
     },
     adminFollowersReconcileOverridePreview: {
@@ -7090,6 +7405,7 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+            // legacy_sync_retired: a Fansly page the engine does not own (step 4 S4-17)
             409: errorResponseSchema,
         },
     },
@@ -7104,6 +7420,7 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+            // legacy_sync_retired: a Fansly page the engine does not own (step 4 S4-17)
             409: errorResponseSchema,
         },
     },
@@ -7254,6 +7571,11 @@ const baseRouteSchemas = {
         auth: { kind: "owner-session" },
         tags: ["admin"],
         summary: "Verify stored credentials for a page",
+        description: "A Fansly page is verified by the Fansly Sync Engine's `account.verify` on the page it runs (`live`), answered "
+            + "within 30 s; 409 `fansly_sync_work_queued` (with `statusUrl`) when it is still queued, 409 "
+            + "`fansly_page_switching` while the page is being switched, 409 `legacy_sync_retired` for a Fansly page "
+            + "the engine does not run (nothing was sent: no legacy check is left). An OnlyFans page has no pasted "
+            + "credentials to verify (400).",
         params: pageParamsSchema,
         response: {
             200: verifyPageResponseSchema,
@@ -7261,12 +7583,20 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+            409: errorResponseSchema,
         },
     },
     adminUpdateCredentials: {
         auth: { kind: "owner-session" },
         tags: ["admin"],
         summary: "Update credentials for an existing page",
+        description: "The candidate session/proxy of a Fansly page is checked by the Fansly Sync Engine's `account.identity` "
+            + "on the page it runs (`live`, ≤ 30 s) before anything is stored, then stored and trusted as the exact pair "
+            + "the check proved; 409 `fansly_sync_work_queued` (with `statusUrl`) when the check is still queued, 409 "
+            + "`fansly_page_switching` while the page is being switched, 409 `legacy_sync_retired` for a Fansly page the "
+            + "engine does not run (nothing was sent and nothing was stored: no legacy check is left), 409 "
+            + "`fansly_credentials_changed` when the stored credentials changed during the check (nothing was stored). "
+            + "An engine auth hold ends once the engine's verify of the stored new credentials passes.",
         params: pageParamsSchema,
         body: updateCredentialsBodySchema,
         response: {
@@ -7275,6 +7605,7 @@ const baseRouteSchemas = {
             401: errorResponseSchema,
             403: errorResponseSchema,
             404: errorResponseSchema,
+            409: errorResponseSchema,
         },
     },
     adminLogs: {
@@ -7588,4 +7919,11 @@ const baseRouteSchemas = {
         },
     },
 };
-export const routeSchemas = { ...baseRouteSchemas, ...ofapiActionRouteSchemas };
+export const routeSchemas = {
+    ...baseRouteSchemas,
+    ...ofapiActionRouteSchemas,
+    ...agentRouteSchemas,
+    ...agentKeyAdminRouteSchemas,
+    ...syncRouteSchemas,
+    ...clientRouteSchemas,
+};

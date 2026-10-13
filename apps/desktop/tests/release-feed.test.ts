@@ -123,6 +123,75 @@ function readNormalized(path: string): string {
   return readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 }
 
+// Runs one workflow step the way Actions does (`bash -eo pipefail`) against
+// feed hosts faked on disk: `curl https://<host>/<any path>/<file>` copies
+// sites/<host>/<file>, and exits 22 like `curl --fail` when it is absent.
+function runFeedStep(
+  stepName: string,
+  sites: Record<string, Record<string, string>>,
+  env: Record<string, string>,
+): SpawnSyncReturns<string> {
+  const root = mkdtempSync(join(tmpdir(), 'chatgoose-feed-step-'));
+  const mockBin = join(root, 'mock-bin');
+  const runnerTemp = join(root, 'runner-temp');
+  mkdirSync(mockBin);
+  mkdirSync(runnerTemp);
+  for (const [host, files] of Object.entries(sites)) {
+    mkdirSync(join(root, 'sites', host), { recursive: true });
+    for (const [name, body] of Object.entries(files)) {
+      writeFileSync(join(root, 'sites', host, name), body);
+    }
+  }
+  writeExecutable(
+    join(mockBin, 'curl'),
+    `#!/usr/bin/env bash
+set -eu
+url=""
+output=""
+while (( $# > 0 )); do
+  case "$1" in
+    --output) output="$2"; shift 2 ;;
+    --connect-timeout|--max-time) shift 2 ;;
+    https://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+host="\${url#https://}"
+host="\${host%%/*}"
+served="$MOCK_SITES/$host/\${url##*/}"
+[[ -f "$served" ]] || exit 22
+cp "$served" "$output"
+`,
+  );
+  writeExecutable(join(mockBin, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
+  return spawnSync(
+    'bash',
+    [
+      '-eo',
+      'pipefail',
+      '-c',
+      `export PATH="$1:$PATH"\n${workflowRunScript(stepName)}`,
+      'chatgoose-release-harness',
+      toBashPath(mockBin),
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        RUNNER_TEMP: toBashPath(runnerTemp),
+        MOCK_SITES: toBashPath(join(root, 'sites')),
+        ...env,
+      },
+    },
+  );
+}
+
+function manifestText(version: string, body: string): string {
+  const sha = createHash('sha512').update(body).digest('base64');
+  return `version: ${version}\npath: ChatGoose-Setup-${version}.exe\nsha512: ${sha}\n`;
+}
+
 describe('Windows release feed policy', () => {
   it('blocks publication until production Core advertises the required lifecycle', () => {
     const missing = spawnSync(process.execPath, [kernelGate, 'desktop-lifecycle-v2'], {
@@ -147,7 +216,7 @@ describe('Windows release feed policy', () => {
     const stageIndex = script.indexOf('scp "${SSH_OPTIONS[@]}"');
     const recheckIndex = script.indexOf('core_verified=false', stageIndex);
     const publishIndex = script.indexOf(
-      'if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- \'$FEED_DIR\' \'$stage_dir\' \'$PUBLIC_DL_DIR\'"',
+      'if ! ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 "bash -s -- \'$FEED_DIR\' \'$stage_dir\' \'$PUBLIC_DL_DIR\'"',
       recheckIndex,
     );
     expect(stageIndex).toBeGreaterThan(-1);
@@ -168,6 +237,129 @@ describe('Windows release feed policy', () => {
     writeFileSync(built.artifact, 'tampered');
     expect(spawnSync(process.execPath, [cli, 'verify-artifact', built.manifest, built.artifact]).status)
       .not.toBe(0);
+  });
+
+  // An installed build reads its feed URL only from the packaged
+  // app-update.yml, so the URL in electron-builder.yml is permanent for every
+  // machine that installs that build (D45).
+  it('packages one feed URL on our own host name and verifies that same URL', () => {
+    const builder = readNormalized(resolve(repoRoot, 'apps/desktop/electron-builder.yml'));
+    const workflow = readNormalized(resolve(repoRoot, '.github/workflows/windows-build.yml'));
+    const publishUrl = builder.match(/^publish:\n {2}provider: generic\n {2}url: (\S+)\n/m)?.[1] ?? '';
+    const feedUrls = [...workflow.matchAll(/^ +FEED_URL: (\S+)$/gm)].map((match) => match[1]);
+
+    expect(new URL(publishUrl).origin).toBe('https://ext.gosling-agency.ru');
+    expect(publishUrl).toMatch(/\/u\/[0-9a-f]{24}\/$/);
+    // Defined once for the job, so no step can verify a different feed.
+    expect(feedUrls).toEqual([publishUrl.slice(0, -1)]);
+    // The IP-bound name builds up to 0.1.65 poll is served by the old server
+    // alone: nothing here uploads to it or waits for it.
+    expect(workflow).not.toMatch(/sslip\.io|45[.-]8[.-]230[.-]111/);
+
+    const gate = workflow.indexOf('- name: Assert the feed URL serves the feed');
+    const build = workflow.indexOf('- name: Build Windows installer');
+    const packaged = workflow.indexOf('- name: Assert the packaged feed URL');
+    const upload = workflow.indexOf('- name: Upload to the update feed');
+    expect(gate).toBeGreaterThan(-1);
+    expect(build).toBeGreaterThan(gate);
+    expect(packaged).toBeGreaterThan(build);
+    expect(upload).toBeGreaterThan(packaged);
+    // The packaged check has no `if:`: a validation dispatch runs it too.
+    expect(workflow.slice(packaged, upload)).toMatch(
+      /^- name: Assert the packaged feed URL\n {8}shell: bash\n {8}run: node apps\/desktop\/scripts\/release-feed\.mjs verify-app-update apps\/desktop\/release\/win-unpacked\/resources\/app-update\.yml "\$FEED_URL"\n/,
+    );
+  });
+
+  it('rejects a packaged app-update.yml that does not carry the expected feed URL', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'chatgoose-app-update-'));
+    const appUpdate = join(dir, 'app-update.yml');
+    const verify = (body: string, expected: string): SpawnSyncReturns<string> => {
+      writeFileSync(appUpdate, body);
+      return spawnSync(process.execPath, [cli, 'verify-app-update', appUpdate, expected], { encoding: 'utf8' });
+    };
+    const packaged = "provider: generic\nurl: https://feed.example/u/abc/\nupdaterCacheDirName: '@app-updater'\n";
+
+    const exact = verify(packaged, 'https://feed.example/u/abc');
+    expect(exact.status, exact.stderr).toBe(0);
+    expect(exact.stdout).toContain('packaged feed URL verified: https://feed.example/u/abc/');
+    expect(verify("provider: generic\r\nurl: 'https://feed.example/u/abc'\r\n", 'https://feed.example/u/abc/').status)
+      .toBe(0);
+
+    const otherHost = verify(packaged, 'https://other.example/u/abc');
+    expect(otherHost.status).not.toBe(0);
+    expect(otherHost.stderr).toContain('packaged feed URL https://feed.example/u/abc/ is not https://other.example/u/abc');
+    expect(verify(packaged, 'https://feed.example/u/abcd').status).not.toBe(0);
+    expect(verify(packaged.replace('https:', 'http:'), 'http://feed.example/u/abc').stderr)
+      .toContain('must be a plain https URL');
+    expect(verify(packaged.replace('generic', 'github'), 'https://feed.example/u/abc').stderr)
+      .toContain('packaged update provider is github');
+    expect(verify('provider: generic\n', 'https://feed.example/u/abc').stderr)
+      .toContain('app-update.yml is missing url');
+  });
+
+  // Each failing case runs the step's six attempts; Git Bash on Windows CI is slow.
+  it('refuses a release while the feed URL does not serve the feed', () => {
+    const step = 'Assert the feed URL serves the feed';
+    const env = { FEED_URL: 'https://feed.example/u/abc' };
+
+    const served = runFeedStep(step, { 'feed.example': { 'latest.yml': manifestText('1.2.3', 'current') } }, env);
+    expect(served.status, `${served.stdout}\n${served.stderr}`).toBe(0);
+    expect(served.stdout).toContain('https://feed.example/u/abc serves 1.2.3');
+
+    const down = runFeedStep(step, {}, env);
+    expect(down.status).not.toBe(0);
+    expect(down.stdout).toContain('::error::https://feed.example/u/abc does not serve the update feed');
+
+    const notAManifest = runFeedStep(step, { 'feed.example': { 'latest.yml': '<html>404</html>' } }, env);
+    expect(notAManifest.status).not.toBe(0);
+    expect(notAManifest.stdout).toContain('::error::https://feed.example/u/abc does not serve the update feed');
+  }, 60_000);
+
+  it('fails the run unless the feed URL serves the published release', () => {
+    const step = 'Assert served feed version == package.json == tag';
+    const version = (JSON.parse(readFileSync(resolve(repoRoot, 'apps/desktop/package.json'), 'utf8')) as {
+      version: string;
+    }).version;
+    const artifact = `ChatGoose-Setup-${version}.exe`;
+    const published = { 'latest.yml': manifestText(version, 'published'), [artifact]: 'published' };
+    const env = {
+      FEED_URL: 'https://feed.example/u/abc',
+      EXPECTED_ARTIFACT: artifact,
+      EXPECTED_SHA512: createHash('sha512').update('published').digest('base64'),
+      GITHUB_REF: 'refs/heads/main',
+    };
+
+    const live = runFeedStep(step, { 'feed.example': published }, env);
+    expect(live.status, `${live.stdout}\n${live.stderr}`).toBe(0);
+    expect(live.stdout).toContain(`package.json=${version} served artifact=${artifact}`);
+
+    // Uploaded to one server while the name shows another: the name still
+    // serves the previous manifest, so no build polling it gets the release.
+    const behind = runFeedStep(
+      step,
+      { 'feed.example': { 'latest.yml': manifestText('0.0.1', 'previous'), 'ChatGoose-Setup-0.0.1.exe': 'previous' } },
+      env,
+    );
+    expect(behind.status).not.toBe(0);
+    expect(behind.stdout).toContain('::error::Served feed did not converge to this run');
+
+    const tampered = runFeedStep(step, { 'feed.example': { ...published, [artifact]: 'other bytes' } }, env);
+    expect(tampered.status).not.toBe(0);
+    expect(tampered.stdout).toContain('::error::Served feed did not converge to this run');
+  }, 60_000);
+
+  it('uploads to one feed host, pinned by its host key, from CI and from the mac publisher', () => {
+    const upload = workflowRunScript('Upload to the update feed');
+    const targets = new Set([...upload.matchAll(/\b(\w+)@(\d+\.\d+\.\d+\.\d+)\b/g)].map((match) => match[0]));
+    expect([...targets]).toEqual(['cgupdates@152.53.191.242']);
+    // The only known_hosts line is this host's key, written before any ssh.
+    const pins = [...upload.matchAll(/^echo "(\S+) (ssh-ed25519 \S+)" > ~\/\.ssh\/known_hosts$/gm)];
+    expect(pins.map((match) => match[1])).toEqual(['152.53.191.242']);
+    expect(pins[0]?.[2]).toBe('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFVfNGPiVJY8E/IHh8QokJNJw9yP5az/fwiQtmT24C9Q');
+    expect(upload.indexOf('> ~/.ssh/known_hosts')).toBeLessThan(upload.indexOf('"command -v flock'));
+    expect(upload).not.toMatch(/StrictHostKeyChecking|UserKnownHostsFile/);
+
+    expect(readNormalized(macPublisher)).toMatch(/^readonly VPS=root@152\.53\.191\.242$/m);
   });
 
   // Five Git Bash publisher processes can exceed Vitest's 5 s default on Windows CI.
@@ -767,6 +959,14 @@ fi
     expect(workflow).toContain('--max-time 120');
     expect(workflow).toContain('assert-ci-success.mjs');
     expect(workflow).not.toMatch(/curl[^\n]*\s-k/);
+    // pwsh `exit $null` exits 0: the smoke gate fails when the launch reports
+    // no exit code, before it exits with that code.
+    const smoke = workflowRunScript('Smoke-launch the packaged app');
+    expect(smoke).toContain("Start-Process -FilePath $exe -ArgumentList '--smoke' -Wait -PassThru");
+    expect(smoke).toMatch(
+      /if \(\$null -eq \$p -or -not \$p\.HasExited -or \$null -eq \$p\.ExitCode\) \{\n[^\n]*\n\s+exit 1\n\s*\}\n/,
+    );
+    expect(smoke.indexOf('$null -eq $p.ExitCode')).toBeLessThan(smoke.indexOf('exit $p.ExitCode'));
     // PR runs of ci.yml skip the Windows job, so only a main push run may
     // prove the exact release SHA passed cross-platform CI.
     expect(workflowRunScript('Assert exact commit passed cross-platform CI')).toContain(

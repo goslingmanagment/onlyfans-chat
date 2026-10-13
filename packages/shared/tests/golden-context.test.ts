@@ -2,7 +2,8 @@
 // golden transcript fixtures are byte-stable and follow the legacy text shapes.
 // The expected files (context-blocks.txt) are committed, human-reviewed
 // artifacts — any change to them must be a conscious, reviewed decision
-// (invariant SPEC §15.6). Regenerate with UPDATE_GOLDEN=1.
+// (invariant SPEC §15.6). Regenerate with UPDATE_GOLDEN=1 (never on CI); a
+// missing artifact fails the test instead of being written and self-compared.
 import { describe, expect, it } from 'vitest';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -70,8 +71,12 @@ describe('golden context blocks (byte-stable, legacy shapes)', () => {
     it(`${name}: generated blocks byte-match the reviewed artifact`, () => {
       const blocks = buildBlocks(name);
       const expectedPath = join(goldenRoot, name, 'context-blocks.txt');
-      if (!existsSync(expectedPath) || process.env['UPDATE_GOLDEN']) {
+      if (process.env['UPDATE_GOLDEN']) {
+        if (process.env['CI']) throw new Error('UPDATE_GOLDEN would rewrite the reviewed artifact on CI');
         writeFileSync(expectedPath, blocks);
+      }
+      if (!existsSync(expectedPath)) {
+        throw new Error(`missing golden ${expectedPath}: generate it with UPDATE_GOLDEN=1 and review it`);
       }
       expect(blocks).toBe(readFileSync(expectedPath, 'utf8'));
     });

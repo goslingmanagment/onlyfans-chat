@@ -1,7 +1,7 @@
 > **MIXED HISTORICAL PRODUCT BASELINE.** Product goals and safety/UX intent remain
 > useful, but Direct OFAPI, local provider-key, model, prompt, and phase-status
 > statements predate the kernel cutover. For current architecture use source,
-> `CLAUDE.md`, and `docs/decisions.md`; do not implement a Direct fallback from
+> `AGENTS.md`, and `docs/decisions.md`; do not implement a Direct fallback from
 > this document.
 
 # ChatGoose Desktop — Product Requirements Document

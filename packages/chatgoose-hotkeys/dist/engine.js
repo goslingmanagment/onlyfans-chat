@@ -1,4 +1,4 @@
-import { HOTKEYS, MAC_SHIFT_ALIASES, MAC_SHIFT_SWALLOWED, isMacKeys } from "./scheme";
+import { HOTKEYS, MAC_SHIFT_ALIASES, MAC_SHIFT_SWALLOWED, isMacKeys, servesClient } from "./scheme";
 const META_CODES = new Set(["MetaLeft", "MetaRight", "OSLeft", "OSRight"]);
 const CONTROL_CODES = new Set(["ControlLeft", "ControlRight"]);
 const SHIFT_CODES = new Set(["ShiftLeft", "ShiftRight"]);
@@ -96,7 +96,7 @@ export function createHotkeyEngine(options) {
     for (const def of HOTKEYS)
         byCode.set(`${def.level}:${def.code}`, def);
     function decide(def, event, fresh) {
-        if (!def.clients.includes(client))
+        if (!servesClient(def, client))
             return { kind: "swallow", reason: "reserved" };
         if (event.repeat)
             return { kind: "action", action: def.action, repeat: true };

@@ -45,8 +45,10 @@ function categoryForStatus(status) {
         return "server";
     return "http";
 }
+// A param is a whole segment (`/:name`); a colon inside a segment is a
+// literal custom method (`/api/v2/spenders:batch`), as the server routes it.
 function buildPath(template, params) {
-    return template.replace(/:([A-Za-z0-9_]+)/g, (_match, name) => {
+    return template.replace(/(?<=\/):([A-Za-z0-9_]+)/g, (_match, name) => {
         const value = params?.[name];
         if (value === undefined || value === null) {
             throw new KernelApiError(`Missing path param "${name}" for ${template}`, "contract", null, "missing_path_param", null);
@@ -310,21 +312,44 @@ export function subscribeSyncEvents(options, input) {
     return { done, close: () => abort.abort() };
 }
 /**
+ * What a client may advertise on the AI feature stream in the
+ * `x-kernel-ai-capabilities` header. Each token is compatibility negotiation,
+ * not authorization: "this client understands the matching frame or field".
+ * The server ignores tokens it does not know (so a hub that does not serve a
+ * token yet behaves exactly as without it), and the SDK writes the header in
+ * this order.
+ */
+export const AI_STREAM_CAPABILITIES = ["debug-input-v1", "context-v1", "split-all-v1"];
+/** The header value for `streamAiFeature`: the union of `capabilities` and
+ * (`debugPromptEcho` → `debug-input-v1`), deduplicated, in the order of
+ * AI_STREAM_CAPABILITIES, joined by ", ". Nothing to advertise → no header. */
+function aiStreamCapabilitiesHeader(input) {
+    const wanted = new Set(input.capabilities ?? []);
+    if (input.debugPromptEcho) {
+        wanted.add("debug-input-v1");
+    }
+    const tokens = AI_STREAM_CAPABILITIES.filter((capability) => wanted.has(capability));
+    return tokens.length > 0 ? tokens.join(", ") : undefined;
+}
+/**
  * Stream one AI generation through the gateway
  * (`POST /api/v1/ai/gateway/stream`, `event: ai` frames).
  */
 /** Stage 31: stream a kernel-assembled feature generation (Stage 30 route).
- * Same SSE framing as the raw gateway stream — one helper per entry path. */
+ * Same SSE framing as the raw gateway stream — one helper per entry path.
+ * `debugPromptEcho` is kept for existing callers: it equals advertising
+ * `debug-input-v1` in `capabilities`. */
 export function streamAiFeature(options, input) {
     const abort = new AbortController();
     input.signal?.addEventListener("abort", () => abort.abort(), { once: true });
+    const capabilitiesHeader = aiStreamCapabilitiesHeader(input);
     const done = (async () => {
         const response = await openSseResponse({
             options,
             method: "POST",
             path: `/api/v1/ai/features/${encodeURIComponent(input.feature)}`,
-            headers: input.debugPromptEcho
-                ? { "x-kernel-ai-capabilities": "debug-input-v1" }
+            headers: capabilitiesHeader !== undefined
+                ? { "x-kernel-ai-capabilities": capabilitiesHeader }
                 : undefined,
             body: input.body,
             signal: abort.signal,

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isoDateTime } from "./primitives";
 const id = z.string().regex(/^[1-9]\d{0,19}$/, "Use a positive provider ID");
 const mediaId = z.string().regex(/^(?:[1-9]\d{0,19}|ofapi_media_[A-Za-z0-9_-]{1,128})$/);
 const listId = z.union([id, z.enum(["fans", "recent", "following", "rebill_off", "tagged"])]);
@@ -8,7 +9,7 @@ const media = unique(mediaId, 50);
 const base = { pageId: z.number().int().positive() };
 const text = z.string().max(16000);
 const name = z.string().trim().min(1).max(200);
-const utcDateTime = z.iso.datetime();
+const utcDateTime = isoDateTime();
 const screen = z.enum(["strict_ban", "risky", "replace_soften"]);
 const position = z.number().min(0).max(100);
 const color = z.string().regex(/^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/);

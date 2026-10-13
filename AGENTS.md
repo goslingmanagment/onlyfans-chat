@@ -1,4 +1,4 @@
-# ChatGoose Desktop
+# AGENTS.md — ChatGoose Desktop
 
 Electron desktop chat client for OnlyFans agency chatters with built-in AI
 (replies, coaching, fan summaries, pings, supporters board). OnlyFans can't
@@ -54,7 +54,10 @@ from one clean hub commit, the manifest sha256 must match).
   merging. On the PC runners the Linux job runs the same parts through
   `scripts/ci-parallel-check.mjs`: typecheck, lint and test side by side
   (so tests write only to temp dirs), then build; a new part runs alone
-  until the script lists it as read-only.
+  until the script lists it as read-only. The script pins what those parts
+  run (root and workspace package script bodies, no pre/post hooks): after
+  any change there the job runs plain `pnpm check` and the script's test
+  fails until the pin is updated.
 - Running the app for real: skill `run-desktop`
   (`.claude/skills/run-desktop`), isolated keyless profile.
 - Hub-side changes may be made in the same session: keep the contract in

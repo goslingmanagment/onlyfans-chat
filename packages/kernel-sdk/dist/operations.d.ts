@@ -23,6 +23,10 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/admin/usage/chatters";
     };
+    readonly adminClientHealth: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/client-health";
+    };
     readonly adminConfig: {
         readonly method: "GET";
         readonly path: "/api/v1/admin/config";
@@ -367,6 +371,22 @@ export declare const kernelOperations: {
         readonly method: "POST";
         readonly path: "/api/v1/agent/pages/:pageLabel/datasets/:dataset/query";
     };
+    readonly agentHistoryRequestCancel: {
+        readonly method: "POST";
+        readonly path: "/api/v1/agent/history-requests/:requestRef/cancel";
+    };
+    readonly agentHistoryRequestCreate: {
+        readonly method: "POST";
+        readonly path: "/api/v1/agent/pages/:pageLabel/history-requests";
+    };
+    readonly agentHistoryRequestGet: {
+        readonly method: "GET";
+        readonly path: "/api/v1/agent/history-requests/:requestRef";
+    };
+    readonly agentHistoryRequestList: {
+        readonly method: "GET";
+        readonly path: "/api/v1/agent/history-requests";
+    };
     readonly agentHydrationRequestCreate: {
         readonly method: "POST";
         readonly path: "/api/v1/agent/pages/:pageLabel/threads/:conversationRef/hydration-requests";
@@ -418,6 +438,18 @@ export declare const kernelOperations: {
     readonly agentSearchMessages: {
         readonly method: "POST";
         readonly path: "/api/v1/agent/search/messages";
+    };
+    readonly agentSyncStatus: {
+        readonly method: "GET";
+        readonly path: "/api/v1/agent/sync/pages";
+    };
+    readonly agentSyncWhy: {
+        readonly method: "GET";
+        readonly path: "/api/v1/agent/pages/:pageLabel/sync/work";
+    };
+    readonly agentThreadAvailability: {
+        readonly method: "GET";
+        readonly path: "/api/v1/agent/pages/:pageLabel/threads/:conversationRef/availability";
     };
     readonly agentThreadMessages: {
         readonly method: "GET";
@@ -518,6 +550,54 @@ export declare const kernelOperations: {
     readonly cancelOfapiCommand: {
         readonly method: "POST";
         readonly path: "/api/v1/ofapi/commands/:commandId/cancel";
+    };
+    readonly clientAiUsageDaily: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/ai-usage";
+    };
+    readonly clientAudienceNew: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/audience-new";
+    };
+    readonly clientBootstrap: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/bootstrap";
+    };
+    readonly clientConversationFeed: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/conversations/:fanRef/feed";
+    };
+    readonly clientConversationRecaps: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/conversations/:fanRef/recaps";
+    };
+    readonly clientFanClaim: {
+        readonly method: "POST";
+        readonly path: "/api/v1/client/pages/:pageLabel/fans/:fanRef/claim";
+    };
+    readonly clientFanClaimStatus: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/fans/:fanRef/claim";
+    };
+    readonly clientFanProfileFromGeneration: {
+        readonly method: "POST";
+        readonly path: "/api/v1/client/pages/:pageLabel/fans/:fanRef/profile/from-generation";
+    };
+    readonly clientSendCustodyList: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client-send-custody";
+    };
+    readonly clientSendCustodyResolve: {
+        readonly method: "POST";
+        readonly path: "/api/v1/pages/:pageLabel/client-send-custody/:attemptId/resolve";
+    };
+    readonly clientSpenderAwaitingReply: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/spenders/awaiting-reply";
+    };
+    readonly clientSpenderStats: {
+        readonly method: "GET";
+        readonly path: "/api/v1/client/pages/:pageLabel/spenders/stats";
     };
     readonly contentComments: {
         readonly method: "GET";
@@ -658,6 +738,18 @@ export declare const kernelOperations: {
     readonly notificationsTestMessage: {
         readonly method: "POST";
         readonly path: "/api/v1/admin/notifications/test";
+    };
+    readonly ofLinksChannelsGet: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/of-links/channels";
+    };
+    readonly ofLinksGet: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/of-links";
+    };
+    readonly ofLinksHistoryGet: {
+        readonly method: "GET";
+        readonly path: "/api/v1/admin/of-links/history";
     };
     readonly ofapiActionCancel: {
         readonly method: "POST";
@@ -999,9 +1091,41 @@ export declare const kernelOperations: {
         readonly method: "GET";
         readonly path: "/api/v1/pages/:pageLabel/stats/traffic";
     };
+    readonly syncHistoryRequestCancel: {
+        readonly method: "POST";
+        readonly path: "/api/v1/sync/history-requests/:requestRef/cancel";
+    };
+    readonly syncHistoryRequestCreate: {
+        readonly method: "POST";
+        readonly path: "/api/v1/sync/pages/:pageLabel/history-requests";
+    };
+    readonly syncHistoryRequestGet: {
+        readonly method: "GET";
+        readonly path: "/api/v1/sync/history-requests/:requestRef";
+    };
+    readonly syncHistoryRequests: {
+        readonly method: "GET";
+        readonly path: "/api/v1/sync/history-requests";
+    };
     readonly syncOverview: {
         readonly method: "GET";
         readonly path: "/api/v1/sync/overview";
+    };
+    readonly syncPageRefresh: {
+        readonly method: "POST";
+        readonly path: "/api/v1/sync/pages/:pageLabel/refresh";
+    };
+    readonly syncPageWork: {
+        readonly method: "GET";
+        readonly path: "/api/v1/sync/pages/:pageLabel/work";
+    };
+    readonly syncPageWorkGet: {
+        readonly method: "GET";
+        readonly path: "/api/v1/sync/pages/:pageLabel/work/:workId";
+    };
+    readonly syncPages: {
+        readonly method: "GET";
+        readonly path: "/api/v1/sync/pages";
     };
     readonly syncRequests: {
         readonly method: "GET";

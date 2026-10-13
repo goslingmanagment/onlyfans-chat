@@ -1,3 +1,4 @@
+import { CLIENT_TOKEN_PROFILES, clientTokenAllowlistApplies, clientTokenProfileAllows } from "./client-token-scopes";
 const KIND_DESCRIPTIONS = {
     "public": "no principal required",
     "hmac": "HMAC signature over the raw body (in-handler)",
@@ -11,6 +12,14 @@ const KIND_DESCRIPTIONS = {
     "agentKey": "Agent Read Plane key only; no human principal is admitted",
     "any": "any authenticated principal except an agent key",
 };
+/** The narrow-token column: "yes" on the profile's list, "no" (403) off it,
+ *  "—" where the route takes no principal at all. */
+function clientTokenCell(row) {
+    if (!row.auth || !clientTokenAllowlistApplies(row.auth)) {
+        return "—";
+    }
+    return clientTokenProfileAllows("chat-extension", row.routeKey) ? "yes" : "no";
+}
 export function renderAuthorizationPolicyMarkdown(rows) {
     const sorted = [...rows].sort((left, right) => left.url === right.url ? left.method.localeCompare(right.method) : left.url.localeCompare(right.url));
     const lines = [
@@ -28,10 +37,15 @@ export function renderAuthorizationPolicyMarkdown(rows) {
         "| --- | --- |",
         ...Object.entries(KIND_DESCRIPTIONS).map(([kind, meaning]) => `| \`${kind}\` | ${meaning} |`),
         "",
+        "The `chat-extension token` column is the narrow device token a client asks",
+        "for at password sign-in (`client: \"chat-extension\"`): it reaches only the",
+        `${CLIENT_TOKEN_PROFILES["chat-extension"].operations.length} routes marked "yes", and every route marked "no" refuses it with 403 in`,
+        "both enforcement modes. A full device token is not affected.",
+        "",
         `## Routes (${sorted.length})`,
         "",
-        "| Method | Path | Route key | Kind | Roles | Page scope |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Method | Path | Route key | Kind | Roles | Page scope | chat-extension token |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ];
     for (const row of sorted) {
         const auth = row.auth;
@@ -43,6 +57,7 @@ export function renderAuthorizationPolicyMarkdown(rows) {
             auth ? `\`${auth.kind}\`` : "**UNDECLARED**",
             auth?.roles?.length ? auth.roles.join(", ") : "—",
             auth?.scope === "page" ? "page" : "—",
+            clientTokenCell(row),
             "",
         ].join(" | ").trim());
     }

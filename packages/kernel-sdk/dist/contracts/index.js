@@ -6,6 +6,12 @@ export * from "./routes";
 export * from "./routes-agent";
 // Slice B: owner administration of the plane's keys (issue / list / revoke).
 export * from "./routes-agent-keys";
+// Fansly Sync Engine owner routes (history requests), spread by routes.ts.
+export * from "./routes-sync";
+// The chat extension's routes (client bootstrap…), spread by routes.ts.
+export * from "./routes-client";
+// Narrow device-token profiles (the chat extension's route allowlist, H-3).
+export * from "./client-token-scopes";
 export * from "./authorization-policy";
 export * from "./domain-event-cursor";
 export * from "./sdk-runtime";
@@ -26,6 +32,8 @@ export { isOutputExhausted } from "../shared/index";
 export * from "./ofapi-vendor-usage";
 export * from "./routes-ofapi-vendor";
 export * from "./routes-ofapi-collection";
+export * from "./of-links";
+export * from "./routes-of-links";
 export * from "./ofapi-extended-commands";
 export * from "./routes-ofapi-banned-words";
 export * from "./routes-ofapi-read-collections";

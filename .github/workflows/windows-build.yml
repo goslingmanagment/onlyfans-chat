@@ -39,6 +39,10 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 130
+    env:
+      # The feed URL this build polls: electron-builder.yml `publish.url`
+      # without the trailing slash.
+      FEED_URL: https://ext.gosling-agency.ru/u/bffe2540bd2b7e87bd9b88e3
     steps:
       - uses: actions/checkout@v6
         with:
@@ -147,6 +151,31 @@ jobs:
             exit 1
           fi
 
+      # An installed build can only ask the URL it was packaged with. Refuse a
+      # release while that URL does not answer with the feed: this build could
+      # never update again.
+      - name: Assert the feed URL serves the feed
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          polled_manifest="$RUNNER_TEMP/polled-latest.yml"
+          polled_version=""
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 "$FEED_URL/latest.yml" --output "$polled_manifest" \
+              && polled_version=$(node apps/desktop/scripts/release-feed.mjs served-version "$polled_manifest"); then
+              break
+            fi
+            polled_version=""
+            echo "feed URL check attempt $attempt failed; retrying"
+            sleep 10
+          done
+          if [ -z "$polled_version" ]; then
+            echo "::error::$FEED_URL does not serve the update feed; builds polling it would stop updating"
+            exit 1
+          fi
+          echo "$FEED_URL serves $polled_version"
+
       - name: Validate optional Windows signing configuration
         id: signing
         shell: bash
@@ -184,6 +213,13 @@ jobs:
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: pnpm dist:win
+
+      # electron-updater reads the feed URL from the packaged app-update.yml
+      # and nowhere else, so a wrong value strands every machine that installs
+      # this build. It must be the URL the publication steps verify.
+      - name: Assert the packaged feed URL
+        shell: bash
+        run: node apps/desktop/scripts/release-feed.mjs verify-app-update apps/desktop/release/win-unpacked/resources/app-update.yml "$FEED_URL"
 
       - name: Verify Authenticode when signing is configured or required
         shell: pwsh
@@ -232,6 +268,11 @@ jobs:
           $exe = "apps/desktop/release/win-unpacked/ChatGoose.exe"
           if (-not (Test-Path $exe)) { Write-Error "win-unpacked binary not found at $exe"; exit 1 }
           $p = Start-Process -FilePath $exe -ArgumentList '--smoke' -Wait -PassThru
+          # `exit $null` exits 0, so a launch without an exit code fails here.
+          if ($null -eq $p -or -not $p.HasExited -or $null -eq $p.ExitCode) {
+            Write-Error "smoke launch reported no exit code"
+            exit 1
+          }
           Write-Host "smoke exit code: $($p.ExitCode)"
           exit $p.ExitCode
 
@@ -244,7 +285,6 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.UPDATES_SSH_KEY }}
           FEED_DIR: /srv/chatgoose-updates/u/bffe2540bd2b7e87bd9b88e3
-          FEED_URL: https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3
           # Public download page (ext site /desktop/): publish-feed.sh repoints
           # its ChatGoose-Setup-latest.exe symlink + version-win.json here after
           # every successful publication. Owned by cgupdates.
@@ -265,7 +305,7 @@ jobs:
             # This is independent of publish-feed.sh: it also runs when the
             # remote bash stream never starts after mkdir/scp succeeded.
             if [ -f "$HOME/.ssh/id_ed25519" ]; then
-              if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 \
+              if ! ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 \
                 "case '$stage_dir' in '$FEED_DIR'/.incoming/*) rm -rf -- '$stage_dir' ;; *) exit 2 ;; esac"; then
                 echo "::warning::Could not confirm cleanup of remote publication stage $stage_dir"
               fi
@@ -283,22 +323,22 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          # Pinned host key of the feed server (45.8.230.111).
-          echo "45.8.230.111 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKVfAxl4anwdXe3m+tK5yajpXDZD7iD1D1uc6A+y6o9Y" > ~/.ssh/known_hosts
+          # Pinned host key of the feed server (152.53.191.242, agency-de).
+          echo "152.53.191.242 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFVfNGPiVJY8E/IHh8QokJNJw9yP5az/fwiQtmT24C9Q" > ~/.ssh/known_hosts
           metadata=$(node apps/desktop/scripts/release-feed.mjs metadata apps/desktop/release/latest.yml)
           printf '%s\n' "$metadata" >> "$GITHUB_OUTPUT"
           version=$(printf '%s\n' "$metadata" | awk -F= '$1 == "version" { print $2 }')
           artifact=$(printf '%s\n' "$metadata" | awk -F= '$1 == "artifact" { print $2 }')
           sha512=$(printf '%s\n' "$metadata" | awk -F= '$1 == "sha512" { print $2 }')
-          ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "command -v flock >/dev/null && command -v openssl >/dev/null && command -v cmp >/dev/null && command -v df >/dev/null"
+          ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 "command -v flock >/dev/null && command -v openssl >/dev/null && command -v cmp >/dev/null && command -v df >/dev/null"
           # Reclaim hard-killed stages and old installers, then enforce the
           # free-space floor before scp. All three actions use the same
           # server-side lock as publication. Blockmaps remain available so
           # clients on retained or older versions can use deltas.
-          ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 \
+          ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 \
             "bash -s -- --maintain '$FEED_DIR'" < apps/desktop/scripts/publish-feed.sh
-          ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "mkdir -p '$stage_dir'"
-          scp "${SSH_OPTIONS[@]}" apps/desktop/release/*.exe apps/desktop/release/*.blockmap apps/desktop/release/latest.yml "cgupdates@45.8.230.111:$stage_dir/"
+          ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 "mkdir -p '$stage_dir'"
+          scp "${SSH_OPTIONS[@]}" apps/desktop/release/*.exe apps/desktop/release/*.blockmap apps/desktop/release/latest.yml "cgupdates@152.53.191.242:$stage_dir/"
           # The initial capability gate is intentionally repeated after the
           # potentially slow maintenance/scp work and immediately before the
           # only command that can atomically replace latest.yml. A Core rollback
@@ -327,7 +367,7 @@ jobs:
           fi
           # Server-side lock + monotonic version check; assets are renamed into
           # place first and latest.yml is one final same-filesystem atomic rename.
-          if ! ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 "bash -s -- '$FEED_DIR' '$stage_dir' '$PUBLIC_DL_DIR'" < apps/desktop/scripts/publish-feed.sh; then
+          if ! ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 "bash -s -- '$FEED_DIR' '$stage_dir' '$PUBLIC_DL_DIR'" < apps/desktop/scripts/publish-feed.sh; then
             # The server may have committed the atomic rename before the SSH
             # acknowledgement was lost. Prove THIS run's bytes are live before
             # deciding the publication failed; never rebuild/retry an equal tag.
@@ -355,7 +395,7 @@ jobs:
             # must not survive a lost acknowledgement.
             public_refreshed=false
             for attempt in 1 2 3; do
-              if ssh "${SSH_OPTIONS[@]}" cgupdates@45.8.230.111 \
+              if ssh "${SSH_OPTIONS[@]}" cgupdates@152.53.191.242 \
                 "bash -s -- --refresh-public '$FEED_DIR' '$PUBLIC_DL_DIR'" < apps/desktop/scripts/publish-feed.sh; then
                 public_refreshed=true
                 break
@@ -382,7 +422,6 @@ jobs:
         timeout-minutes: 18
         shell: bash
         env:
-          FEED_URL: https://45-8-230-111.sslip.io/u/bffe2540bd2b7e87bd9b88e3
           EXPECTED_ARTIFACT: ${{ steps.publish.outputs.artifact }}
           EXPECTED_SHA512: ${{ steps.publish.outputs.sha512 }}
         run: |

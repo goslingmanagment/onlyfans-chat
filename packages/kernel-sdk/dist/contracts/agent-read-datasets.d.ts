@@ -129,6 +129,196 @@ export declare const AGENT_DATASETS: {
         };
         readonly stableKey: readonly ["metricKey"];
     };
+    readonly ofapi_payout_requests: {
+        readonly moneyBearing: true;
+        readonly verbatimText: false;
+        readonly disclosesPurchase: false;
+        readonly fields: {
+            readonly platform: "string";
+            readonly payoutRef: "string";
+            readonly amountMills: "mills";
+            readonly currency: "string";
+            readonly state: "string";
+            readonly rejectReason: "string";
+            readonly requestedAt: "timestamp";
+            readonly lastObservedAt: "timestamp";
+            readonly observationRef: "string";
+        };
+        readonly defaultSort: {
+            readonly field: "requestedAt";
+            readonly dir: "desc";
+            readonly nullsLast: true;
+        };
+        readonly stableKey: readonly ["payoutRequestKey"];
+    };
+    readonly campaign_snapshots: {
+        readonly moneyBearing: true;
+        readonly verbatimText: false;
+        readonly disclosesPurchase: false;
+        readonly fields: {
+            readonly linkKind: "string";
+            readonly linkRef: "string";
+            readonly name: "string";
+            readonly observedAt: "timestamp";
+            /** The Europe/Moscow day of `observedAt` (the business day). */
+            readonly businessDate: "date";
+            readonly windowAt: "timestamp";
+            readonly runRef: "string";
+            readonly runStatus: "string";
+            /** The first non-empty run under a new OFAPI account; null on rows an
+             *  image that did not record the flag wrote (everything before 0255). */
+            readonly bindingChanged: "bool";
+            readonly clicks: "int";
+            /** Trial links only; null on tracking links. */
+            readonly claims: "int";
+            readonly subscribers: "int";
+            /** Null while the vendor has not computed it — never a fake zero. */
+            readonly spenders: "int";
+            /** Creator NET after the OnlyFans fee, refunds and chargebacks; null =
+             *  unknown. Never take the fee off again. */
+            readonly vendorRevenueNetMills: "mills";
+            /** Already excluded from `vendorRevenueNetMills`; informational. */
+            readonly vendorChargebacksMills: "mills";
+            readonly vendorRevenueCalculatedAt: "timestamp";
+            readonly isFinished: "bool";
+            readonly linkEndsAt: "timestamp";
+        };
+        readonly defaultSort: {
+            readonly field: "observedAt";
+            readonly dir: "asc";
+            readonly nullsLast: false;
+        };
+        readonly stableKey: readonly ["runId", "platformLinkId"];
+    };
+    readonly campaign_runs: {
+        readonly moneyBearing: false;
+        readonly verbatimText: false;
+        readonly disclosesPurchase: false;
+        readonly fields: {
+            readonly linkKind: "string";
+            readonly windowAt: "timestamp";
+            readonly observedAt: "timestamp";
+            readonly businessDate: "date";
+            readonly runRef: "string";
+            readonly status: "string";
+            /** Caveats of a `partial`, what stopped a `truncated`, the (redacted)
+             *  error of a `failed`, why a `skipped` was not attempted. */
+            readonly reason: "string";
+            readonly attempt: "int";
+            readonly apiPages: "int";
+            readonly rawItems: "int";
+            readonly writtenRows: "int";
+            readonly bindingChanged: "bool";
+            readonly usableResult: "bool";
+        };
+        readonly defaultSort: {
+            readonly field: "observedAt";
+            readonly dir: "asc";
+            readonly nullsLast: false;
+        };
+        readonly stableKey: readonly ["runId"];
+    };
+    readonly campaign_bindings: {
+        readonly moneyBearing: false;
+        readonly verbatimText: false;
+        readonly disclosesPurchase: false;
+        readonly fields: {
+            readonly linkKind: "string";
+            readonly linkRef: "string";
+            readonly channelKey: "string";
+            readonly channelTitle: "string";
+            readonly contractorKey: "string";
+            readonly contractorTitle: "string";
+            /** This stretch: [validFrom, validTo), validTo null = still in force. */
+            readonly validFrom: "timestamp";
+            readonly validTo: "timestamp";
+            /** How the link → channel binding's start is known: `confirmed` or
+             *  `assumed_link_created` (the link's creation date stands in). */
+            readonly validFromBasis: "string";
+            readonly bindingValidFrom: "timestamp";
+            readonly bindingValidTo: "timestamp";
+            readonly contractorValidFrom: "timestamp";
+            readonly contractorValidTo: "timestamp";
+            readonly contractorValidFromBasis: "string";
+        };
+        readonly defaultSort: {
+            readonly field: "validFrom";
+            readonly dir: "asc";
+            readonly nullsLast: false;
+        };
+        readonly stableKey: readonly ["bindingId", "stretchFrom"];
+    };
+    readonly campaigns: {
+        readonly moneyBearing: true;
+        readonly verbatimText: false;
+        readonly disclosesPurchase: false;
+        readonly fields: {
+            readonly linkKind: "string";
+            readonly linkRef: "string";
+            readonly name: "string";
+            readonly url: "string";
+            readonly linkCreatedAt: "timestamp";
+            readonly linkEndsAt: "timestamp";
+            readonly isFinished: "bool";
+            /** Vendor subscribeDays of a trial link; null on tracking links. */
+            readonly trialDays: "int";
+            readonly tags: "string_array";
+            /** The channel and contractor bound now; null = none. */
+            readonly channelKey: "string";
+            readonly contractorKey: "string";
+            readonly lastObservedAt: "timestamp";
+            readonly clicks: "int";
+            /** Claims on a trial link, subscribers on a tracking link (`fansMetric`). */
+            readonly fans: "int";
+            readonly fansMetric: "string";
+            readonly subscribers: "int";
+            readonly spenders: "int";
+            /** OFAPI: creator NET after the OnlyFans fee, refunds and chargebacks;
+             *  null = unknown. Never take the fee off again. */
+            readonly vendorRevenueNetMills: "mills";
+            readonly vendorRevenueCalculatedAt: "timestamp";
+            /** Hub: posted transactions since `hubMoneyFloorAt`, net after the fee;
+             *  null when the link has no finished fan walk (no floor). */
+            readonly hubRevenueNetMills: "mills";
+            /** Hub: pending transactions since the floor — never in the figure. */
+            readonly hubPendingMills: "mills";
+            readonly hubMoneyFloorAt: "timestamp";
+            readonly attributionRule: "string";
+            /** `creator_net_after_platform_fee` for both money figures. */
+            readonly revenueBasis: "string";
+        };
+        readonly defaultSort: {
+            readonly field: "lastObservedAt";
+            readonly dir: "desc";
+            readonly nullsLast: true;
+        };
+        readonly stableKey: readonly ["pageId", "linkKind", "linkRef"];
+    };
+    readonly campaign_money_daily: {
+        readonly moneyBearing: true;
+        readonly verbatimText: false;
+        readonly disclosesPurchase: false;
+        readonly fields: {
+            readonly businessDate: "date";
+            /** 00:00 Moscow of the day, as a UTC instant (the window's column). */
+            readonly dayStartAt: "timestamp";
+            readonly linkKind: "string";
+            readonly linkRef: "string";
+            readonly hubRevenueNetMills: "mills";
+            readonly hubPendingMills: "mills";
+            /** Posted transactions with a share of this link that day. */
+            readonly transactionCount: "int";
+            readonly fanCount: "int";
+            readonly attributionRule: "string";
+            readonly floorAt: "timestamp";
+        };
+        readonly defaultSort: {
+            readonly field: "dayStartAt";
+            readonly dir: "asc";
+            readonly nullsLast: false;
+        };
+        readonly stableKey: readonly ["pageId", "linkKind", "linkRef", "businessDate"];
+    };
     readonly fan_memberships: {
         readonly moneyBearing: true;
         readonly verbatimText: false;
@@ -306,8 +496,17 @@ export declare const AGENT_DATASETS: {
         readonly disclosesPurchase: false;
         readonly fields: {
             readonly platform: "string";
+            /** The UTC day the follows fell on (the rollup buckets `followed_at`
+             *  by UTC date) — not a Europe/Moscow business day. */
             readonly businessDate: "date";
+            /** The page's total follower count Hub knew for that day; null = not
+             *  known (only today's value comes from the live sync). */
             readonly followersCount: "int";
+            /** Follow relationships whose `followed_at` falls on that day, counted
+             *  over what Hub stores (a later unfollow still counts). Derived: the
+             *  rollup is rebuilt from `page_follows`, so a past day can still move.
+             *  A day with no row has no stored follow. */
+            readonly newFollowers: "int";
         };
         readonly defaultSort: {
             readonly field: "businessDate";
@@ -966,7 +1165,6 @@ export declare const AGENT_PLANNED_DATASETS: {
     readonly stories: {};
     readonly fan_lists: {};
     readonly livestreams: {};
-    readonly campaigns: {};
     readonly polls: {};
     readonly chargebacks: {};
     readonly blocks: {};

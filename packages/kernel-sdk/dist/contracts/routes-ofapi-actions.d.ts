@@ -552,36 +552,42 @@ export declare const ofapiActionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -1146,7 +1152,7 @@ export declare const ofapiActionRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
             }, z.core.$strip>;
         };
     };
@@ -1166,36 +1172,42 @@ export declare const ofapiActionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -1760,7 +1772,7 @@ export declare const ofapiActionRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
             }, z.core.$strip>;
         };
     };
@@ -1780,36 +1792,42 @@ export declare const ofapiActionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -2374,7 +2392,7 @@ export declare const ofapiActionRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
             }, z.core.$strip>;
         };
     };
@@ -2393,36 +2411,42 @@ export declare const ofapiActionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -2987,7 +3011,7 @@ export declare const ofapiActionRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
             }, z.core.$strip>;
         };
     };
@@ -3006,36 +3030,42 @@ export declare const ofapiActionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 intents: z.ZodArray<z.ZodObject<{
@@ -3601,7 +3631,7 @@ export declare const ofapiActionRouteSchemas: {
                         pending: "pending";
                         complete: "complete";
                     }>;
-                    createdAt: z.ZodString;
+                    createdAt: z.ZodISODateTime;
                 }, z.core.$strip>>;
             }, z.core.$strip>;
         };
@@ -3622,36 +3652,42 @@ export declare const ofapiActionRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -4216,7 +4252,7 @@ export declare const ofapiActionRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
             }, z.core.$strip>;
         };
     };

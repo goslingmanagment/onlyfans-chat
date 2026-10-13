@@ -2,7 +2,7 @@
 > transport/AI diagrams and local provider-key, model, and prompt sections are
 > superseded by the kernel-only implementation. Preserve §15 safety invariants,
 > but verify every transport or ownership claim against current source,
-> `CLAUDE.md`, `docs/decisions.md`, and the vendored kernel SDK.
+> `AGENTS.md`, `docs/decisions.md`, and the vendored kernel SDK.
 
 # ChatGoose Desktop — Technical Specification
 

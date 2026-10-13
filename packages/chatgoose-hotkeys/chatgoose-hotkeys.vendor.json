@@ -1,16 +1,16 @@
 {
-  "schemeVersion": 1,
-  "sha256": "953c62364868902a508faff619515bb8b419b146e6b9b2f1a8565fc301ccb0d9",
-  "sourceCommit": "a667c62b1ce17fc1fc4bc230575c44bb1a0f1e6f",
+  "schemeVersion": 2,
+  "sha256": "7850406c1e272025adf6149ee3330d1a5c5a7362c2455608a4ad24f35f2aedd8",
+  "sourceCommit": "0a96105d691f74473b372249fa29d998590702b5",
   "source": "core scripts/vendor-hotkeys.mjs",
   "files": {
     "dist/engine.d.ts": "a6add9c124bafb6112b34d3c5174c0391979b3896f196f767e11a58ca9fb05b4",
-    "dist/engine.js": "8926f0c871b19624391162ac7cd5f2fcd36a1379ffa0303088cb464adc4d6e22",
+    "dist/engine.js": "c8629f006d5cc56c791512eae4ed9bcf2c6cb098edda862959a99f037c35a721",
     "dist/index.d.ts": "ca922b5e7e02dcda49c2516475e4465f1dc225009112991c2696e855fd43321f",
     "dist/index.js": "ca922b5e7e02dcda49c2516475e4465f1dc225009112991c2696e855fd43321f",
     "dist/labels.d.ts": "8741d46aa7811fc38fdc002a0a006d368d3ac5d480355d43bccfd3c71b7a304a",
     "dist/labels.js": "bba146dbff3238e46b8ec89965ddb1a49610ff1740c19cd1bed2d86b4c421e24",
-    "dist/scheme.d.ts": "66b74cea1e21a5613ff1e825b37a97c15b91df82d45020ba7104079d066f55d1",
-    "dist/scheme.js": "fc84de3a4b5af75e6cd8372afa98fcf735eb990cf19c5dd0a3fcda6e2816cf09"
+    "dist/scheme.d.ts": "040c14f211dc343e18a6c9a8c3d107227c053caaecd1d6e762c98096164d3699",
+    "dist/scheme.js": "5fe0871f1a5a35c720636df268285832b07e7d17ed54fd114aa86e1fd68c2536"
   }
 }

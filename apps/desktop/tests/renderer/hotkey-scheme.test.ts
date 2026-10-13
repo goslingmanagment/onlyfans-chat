@@ -47,11 +47,12 @@ function press(platform: 'darwin' | 'win32', e: Ev) {
 }
 
 describe('scheme → desktop dispatch ids', () => {
-  it('maps every scheme action the desktop has; Coach is reserved', () => {
+  it('maps every scheme action the desktop has; Coach and Notes are reserved', () => {
     for (const def of HOTKEYS) {
       if (def.clients.includes('desktop')) expect(SCHEME_KEY_ACTION[def.action], def.action).not.toBeNull();
     }
     expect(SCHEME_KEY_ACTION.coach).toBeNull();
+    expect(SCHEME_KEY_ACTION.notes).toBeNull();
     expect(SCHEME_KEY_ACTION.fix).toBe('ai-improve');
     expect(SCHEME_KEY_ACTION.recap).toBe('ai-scan');
   });
@@ -102,8 +103,11 @@ describe('keydown resolution', () => {
     expect(resolveDesktopKey(engine.keydown(e), navKeymap, asNav(e))).toEqual({ kind: 'swallow' });
   });
 
-  it('reserved Coach and the macOS legacy ⌘⇧D / ⌘⇧F are swallowed', () => {
+  it('reserved Coach and Notes and the macOS legacy ⌘⇧D / ⌘⇧F are swallowed', () => {
     expect(press('darwin', ev('KeyC', 'c', { metaKey: true, shiftKey: true }))).toEqual({ kind: 'swallow' });
+    // ⌘⇧K is the Fansly extension's Notes; ⌘K (palette) stays navigation.
+    expect(press('darwin', ev('KeyK', 'k', { metaKey: true, shiftKey: true }))).toEqual({ kind: 'swallow' });
+    expect(press('win32', ev('KeyK', 'k', { ctrlKey: true, altKey: true }))).toEqual({ kind: 'swallow' });
     expect(press('darwin', ev('KeyD', 'd', { metaKey: true, shiftKey: true }))).toEqual({ kind: 'swallow' });
     expect(press('darwin', ev('KeyF', 'f', { metaKey: true, shiftKey: true }))).toEqual({ kind: 'swallow' });
   });

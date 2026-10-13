@@ -1101,6 +1101,6 @@ export declare const ofapiActionIntentSchema: z.ZodObject<{
         pending: "pending";
         complete: "complete";
     }>;
-    createdAt: z.ZodString;
+    createdAt: z.ZodISODateTime;
 }, z.core.$strip>;
 export type OfapiActionIntent = z.infer<typeof ofapiActionIntentSchema>;

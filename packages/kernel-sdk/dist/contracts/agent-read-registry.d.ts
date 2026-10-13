@@ -170,6 +170,12 @@ export declare const AGENT_CLAIM_CLASSES: {
             readonly ofapiFinancialMetric: {
                 readonly required: readonly ["ofapi_read_snapshots"];
             };
+            readonly ofapiPayoutRequest: {
+                readonly required: readonly ["ofapi_read_snapshots"];
+            };
+            readonly hubLinkMoney: {
+                readonly required: readonly ["transactions", "page_link_fan_periods", "page_link_fan_walks"];
+            };
             readonly payoutMethod: {
                 readonly required: readonly ["page_payout_methods"];
             };
@@ -368,6 +374,18 @@ export declare const AGENT_CLAIM_CLASSES: {
             };
             readonly captureCoverageRow: {
                 readonly required: readonly ["capture_coverage"];
+            };
+            readonly linkStatRun: {
+                readonly required: readonly ["page_link_stat_runs"];
+            };
+            readonly linkStatSnapshot: {
+                readonly required: readonly ["page_link_stat_snapshots"];
+            };
+            readonly trafficLinkBinding: {
+                readonly required: readonly ["traffic_link_bindings"];
+            };
+            readonly trafficChannelContractor: {
+                readonly required: readonly ["traffic_channel_contractors"];
             };
         };
     };

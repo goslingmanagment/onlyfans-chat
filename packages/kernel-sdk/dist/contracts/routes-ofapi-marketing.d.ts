@@ -13,36 +13,42 @@ export declare const ofapiMarketingRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 resources: z.ZodArray<z.ZodObject<{
@@ -59,7 +65,7 @@ export declare const ofapiMarketingRouteSchemas: {
                     shared: z.ZodBoolean;
                     parentId: z.ZodNullable<z.ZodString>;
                     name: z.ZodNullable<z.ZodString>;
-                    observedAt: z.ZodString;
+                    observedAt: z.ZodISODateTime;
                     linkType: z.ZodNullable<z.ZodString>;
                     platform: z.ZodNullable<z.ZodString>;
                     platformPixelId: z.ZodNullable<z.ZodString>;
@@ -100,7 +106,7 @@ export declare const ofapiMarketingRouteSchemas: {
                     pageId: z.ZodNumber;
                     operation: z.ZodString;
                     linkId: z.ZodString;
-                    observedAt: z.ZodString;
+                    observedAt: z.ZodISODateTime;
                     window: z.ZodObject<{
                         from: z.ZodNullable<z.ZodString>;
                         to: z.ZodNullable<z.ZodString>;
@@ -170,7 +176,7 @@ export declare const ofapiMarketingRouteSchemas: {
                         pending: "pending";
                         complete: "complete";
                     }>;
-                    createdAt: z.ZodString;
+                    createdAt: z.ZodISODateTime;
                     responseObservationId: z.ZodNullable<z.ZodNumber>;
                     preview: z.ZodObject<{
                         pageId: z.ZodNullable<z.ZodNumber>;
@@ -233,36 +239,42 @@ export declare const ofapiMarketingRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 resources: z.ZodArray<z.ZodObject<{
@@ -279,7 +291,7 @@ export declare const ofapiMarketingRouteSchemas: {
                     shared: z.ZodBoolean;
                     parentId: z.ZodNullable<z.ZodString>;
                     name: z.ZodNullable<z.ZodString>;
-                    observedAt: z.ZodString;
+                    observedAt: z.ZodISODateTime;
                     linkType: z.ZodNullable<z.ZodString>;
                     platform: z.ZodNullable<z.ZodString>;
                     platformPixelId: z.ZodNullable<z.ZodString>;
@@ -320,7 +332,7 @@ export declare const ofapiMarketingRouteSchemas: {
                     pageId: z.ZodNumber;
                     operation: z.ZodString;
                     linkId: z.ZodString;
-                    observedAt: z.ZodString;
+                    observedAt: z.ZodISODateTime;
                     window: z.ZodObject<{
                         from: z.ZodNullable<z.ZodString>;
                         to: z.ZodNullable<z.ZodString>;
@@ -390,7 +402,7 @@ export declare const ofapiMarketingRouteSchemas: {
                         pending: "pending";
                         complete: "complete";
                     }>;
-                    createdAt: z.ZodString;
+                    createdAt: z.ZodISODateTime;
                     responseObservationId: z.ZodNullable<z.ZodNumber>;
                     preview: z.ZodObject<{
                         pageId: z.ZodNullable<z.ZodNumber>;
@@ -590,36 +602,42 @@ export declare const ofapiMarketingRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -635,7 +653,7 @@ export declare const ofapiMarketingRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
                 responseObservationId: z.ZodNullable<z.ZodNumber>;
                 preview: z.ZodObject<{
                     pageId: z.ZodNullable<z.ZodNumber>;
@@ -702,36 +720,42 @@ export declare const ofapiMarketingRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 id: z.ZodString;
@@ -747,7 +771,7 @@ export declare const ofapiMarketingRouteSchemas: {
                     pending: "pending";
                     complete: "complete";
                 }>;
-                createdAt: z.ZodString;
+                createdAt: z.ZodISODateTime;
                 responseObservationId: z.ZodNullable<z.ZodNumber>;
                 preview: z.ZodObject<{
                     pageId: z.ZodNullable<z.ZodNumber>;
@@ -810,36 +834,42 @@ export declare const ofapiMarketingRouteSchemas: {
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 401: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 403: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 404: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 409: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 503: z.ZodObject<{
                 error: z.ZodString;
                 message: z.ZodString;
                 statusCode: z.ZodNumber;
                 reason: z.ZodOptional<z.ZodString>;
+                statusUrl: z.ZodOptional<z.ZodString>;
             }, z.core.$strip>;
             readonly 200: z.ZodObject<{
                 resources: z.ZodArray<z.ZodObject<{
@@ -856,7 +886,7 @@ export declare const ofapiMarketingRouteSchemas: {
                     shared: z.ZodBoolean;
                     parentId: z.ZodNullable<z.ZodString>;
                     name: z.ZodNullable<z.ZodString>;
-                    observedAt: z.ZodString;
+                    observedAt: z.ZodISODateTime;
                     linkType: z.ZodNullable<z.ZodString>;
                     platform: z.ZodNullable<z.ZodString>;
                     platformPixelId: z.ZodNullable<z.ZodString>;
@@ -897,7 +927,7 @@ export declare const ofapiMarketingRouteSchemas: {
                     pageId: z.ZodNumber;
                     operation: z.ZodString;
                     linkId: z.ZodString;
-                    observedAt: z.ZodString;
+                    observedAt: z.ZodISODateTime;
                     window: z.ZodObject<{
                         from: z.ZodNullable<z.ZodString>;
                         to: z.ZodNullable<z.ZodString>;
@@ -967,7 +997,7 @@ export declare const ofapiMarketingRouteSchemas: {
                         pending: "pending";
                         complete: "complete";
                     }>;
-                    createdAt: z.ZodString;
+                    createdAt: z.ZodISODateTime;
                     responseObservationId: z.ZodNullable<z.ZodNumber>;
                     preview: z.ZodObject<{
                         pageId: z.ZodNullable<z.ZodNumber>;

@@ -8,10 +8,44 @@ import { fileURLToPath } from 'node:url';
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
 const SHA512_RE = /^[A-Za-z0-9+/]{86}==$/;
 
-function field(text, name) {
+function field(text, name, file = 'latest.yml') {
   const match = text.match(new RegExp(`^${name}:[ \\t]*(\\S+)[ \\t]*$`, 'm'));
-  if (match === null) throw new Error(`latest.yml is missing ${name}`);
+  if (match === null) throw new Error(`${file} is missing ${name}`);
   return match[1].replace(/\r$/, '');
+}
+
+// electron-updater resolves latest.yml and every installer against the feed
+// URL as a directory, so a trailing slash is not a difference.
+function feedDirectoryUrl(value, label) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`${label} is not a URL: ${value}`);
+  }
+  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') {
+    throw new Error(`${label} must be a plain https URL: ${value}`);
+  }
+  return url.href.endsWith('/') ? url.href : `${url.href}/`;
+}
+
+// The packaged resources/app-update.yml is the only place an installed build
+// reads its feed from; electron-builder writes it from `publish`.
+export function parseAppUpdate(text) {
+  const normalized = text.replace(/\r\n/g, '\n');
+  const unquoted = (name) => field(normalized, name, 'app-update.yml').replace(/^(['"])(.*)\1$/, '$2');
+  return { provider: unquoted('provider'), url: unquoted('url') };
+}
+
+export function assertPackagedFeedUrl(text, expectedFeedUrl) {
+  const config = parseAppUpdate(text);
+  if (config.provider !== 'generic') {
+    throw new Error(`packaged update provider is ${config.provider}, expected generic`);
+  }
+  if (feedDirectoryUrl(config.url, 'packaged feed URL') !== feedDirectoryUrl(expectedFeedUrl, 'expected feed URL')) {
+    throw new Error(`packaged feed URL ${config.url} is not ${expectedFeedUrl}`);
+  }
+  return config.url;
 }
 
 export function parseManifest(text) {
@@ -76,6 +110,21 @@ async function main() {
       throw new Error('usage: release-feed.mjs verify-artifact <latest.yml> <artifact>');
     }
     await verifyArtifact(manifestPath, artifactPath);
+    return;
+  }
+  if (command === 'served-version') {
+    const [manifestPath] = args;
+    if (manifestPath === undefined) throw new Error('usage: release-feed.mjs served-version <latest.yml>');
+    process.stdout.write(`${(await manifestAt(manifestPath)).version}\n`);
+    return;
+  }
+  if (command === 'verify-app-update') {
+    const [appUpdatePath, expectedFeedUrl] = args;
+    if (appUpdatePath === undefined || expectedFeedUrl === undefined) {
+      throw new Error('usage: release-feed.mjs verify-app-update <app-update.yml> <feed-url>');
+    }
+    const packaged = assertPackagedFeedUrl(await readFile(appUpdatePath, 'utf8'), expectedFeedUrl);
+    process.stdout.write(`packaged feed URL verified: ${packaged}\n`);
     return;
   }
   throw new Error(`unknown command: ${command ?? ''}`);

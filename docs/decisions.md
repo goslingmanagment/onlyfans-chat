@@ -64,6 +64,7 @@ core's `docs/decisions.md` and are REFERENCED here, never copied.
 | D42 | 2026-09-27 | Split on Improve Draft: the ⫶ toggle appears in the Improve dock too and the one sticky Split flag (and ⌘⇧L / Ctrl+Alt+L) now covers Reply and Improve; the hub splits the rewrite into 2–3 [NEXT] parts only when asked (0.1.61) |
 | D43 | 2026-09-27 | Media images: message, gallery and vault files are id tokens that Core resolves (free webhook/OFAPI-cache URL or a budgeted paid download, 100 credits/UTC day for automatic loads, clicks always pass); bytes only on this machine, encrypted; tiles replace the count badge, full photos on click, video/GIF preview frame only; SDK vendored from the deployed core commit 89134bb2 (core #267) |
 | D44 | 2026-09-28 | Notification sounds: eight synthesized tones shared with the Fansly extension (defaults differ: here the classic blip / arpeggio, there chime / double), one volume, and a new-subscriber sound — `subscription.started` becomes `subscriberStarted`, still a list nudge, ringing only on main's explicit yes (live v2 frame, after replay, inside the age gate, once); its own switch and tone; a subscriber never takes a message's ring; shipped as 0.1.64 with the SDK re-vendored from deployed Core `e033e3ec` (the 0.1.63 tag failed the contract gate) |
+| D45 | 2026-10-11 | Update feed URL moves to a host name of ours, `https://ext.gosling-agency.ru/u/<token>/`; the first release with it is published where builds up to 0.1.65 look (the IP-bound sslip.io name), and that name stays served until they are gone; `windows-build` asserts the packaged URL, and the old name too while uploads still go to its server; shipped as 0.1.66 with the SDK re-vendored from deployed Core `2260ef73` |
 
 ## Entries
 
@@ -1404,4 +1405,53 @@ on both clients mislead a chatter working both.
 Verified: `pnpm check`; the Behavior block on the standalone mock renderer in
 light and dark. Not verified: a live `subscription.started` ringing in the
 packaged app (it needs a real subscriber), and the packaged app on Windows.
+
+**D45 (2026-10-11).** The agency's servers are being consolidated from
+`45.8.230.111` onto `agency-de` (owner decision, 2026-10-10). The Windows
+update feed could not follow: its URL, `https://45-8-230-111.sslip.io/u/<token>/`,
+has the old address in the host name, and `electron-updater` reads the URL
+only from the `app-update.yml` packaged into each installed build (there is no
+`setFeedURL`). An installed build therefore asks that one server for as long
+as it lives.
+
+- **New URL.** Builds poll `https://ext.gosling-agency.ru/u/<token>/` — same
+  path, a name of ours that follows DNS. A feed URL is never an address or a
+  name bound to one again.
+- **Bridge release.** The first release with the new URL is the only way off
+  the old one, so it is published where builds up to 0.1.65 look, through the
+  upload path they have always used. The upload target moves to the new server
+  only afterwards, together with the copy of the feed directory and the switch
+  of `ext.gosling-agency.ru` (`docs/RELEASE.md`, «Moving the feed to another
+  server»).
+- **The old name outlives the move.** It keeps serving the bridge release,
+  with a valid certificate, until its access log shows no more polls. Builds
+  are unsigned and the feed host is the trust anchor: once the address belongs
+  to someone else, they can obtain a certificate for the sslip.io name and
+  update any build still asking. A machine that is still on an older build
+  when the old server closes is reinstalled by hand from the download page.
+- **Gates.** `windows-build` asserts that the packaged `app-update.yml` carries
+  the URL it verifies, and builds a release only while that URL answers with
+  the feed. While uploads still go to the old server it holds the old name to
+  the same: both URLs return one `latest.yml` before the build and both serve
+  the release after publication. That second check leaves with the upload
+  move. One `FEED_URL` for the job replaces the two per-step copies.
+
+macOS is not affected: those builds poll `version-mac.json` on the download
+page, which was on `ext.gosling-agency.ru` already (D21).
+
+The bridge release is 0.1.66, and it carries nothing else of this client's
+own. Production Core had moved on since 0.1.65 (`4a470029` → `2260ef73`,
+contract hash `27ef8a3d…` → `b9d4dd07…`), so the SDK is re-vendored from the
+deployed commit for the release gate. Typecheck and the full suite are green
+on the re-vendor alone: no operation was removed, the new ones (client lists,
+OnlyFans links, more agent-read datasets) are not called here, and the one
+runtime change reads a colon inside a path segment as literal (core #517).
+
+Verified: `pnpm check`; the polled-URL gate and the served-feed assertion run
+against fake feed hosts in `tests/release-feed.test.ts`; a local
+`electron-builder --mac zip` of this change writes the new URL into
+`app-update.yml`, and the packaged-URL check accepts that file and rejects it
+against the old URL. Not verified: the Windows package itself (the
+`windows-build` validation dispatch does that before merge) and a real
+0.1.65 → bridge → next update on a Windows machine.
 
