@@ -144,4 +144,4 @@ The owner-**approved** mockup (sign-off 2026-06-10 after 4 iterations: light→b
 
 - P1: build the design system + the three-zone shell with the **frontend-design skill**, against this brief and the §5 mockup; show 1–2 chatters real data early and iterate on the triage loop before polishing anything else.
 - The hotkey map and §3 checklist are acceptance items of the P1/P2 gates.
-- Changes to this brief are doc-updates in the same PR that implements them (CLAUDE.md discipline).
+- Changes to this brief are doc-updates in the same PR that implements them (AGENTS.md discipline).
