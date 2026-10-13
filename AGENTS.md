@@ -47,8 +47,10 @@ re-vendor with the hub's `scripts/vendor-hotkeys.mjs` into BOTH clients
 from one clean hub commit, the manifest sha256 must match).
 
 - `pnpm check` = typecheck + lint + test + build, green before a commit. CI
-  (`ci.yml`): PRs run it on Linux only; pushes to `main` run Linux + Windows;
-  a `v*` tag re-checks and builds on Windows (`windows-build.yml`). For a PR
+  (`ci.yml`): ready PRs run it on Linux only; Drafts skip it, Ready starts it,
+  and converting back to Draft cancels the earlier PR run. Pushes to `main`
+  run Linux + Windows; a `v*` tag re-checks and builds on Windows
+  (`windows-build.yml`). For a PR
   touching native modules, paths, the installer or the updater, run
   `windows-build` manually (workflow_dispatch, `publishFeed=false`) before
   merging. On the PC runners the Linux job runs the same parts through

@@ -3,7 +3,7 @@
 # (node-env) + electron-vite build — all linux-safe, no display or Windows
 # toolchain needed (installers are windows-build.yml's job).
 #
-# Cost policy: PRs run the Linux gate only; pushes to main run Linux + Windows
+# Cost policy: ready PRs run the Linux gate only; Drafts skip it. Pushes to main run Linux + Windows
 # (windows-build.yml's release guard requires a successful main push run of
 # this workflow for the exact tag SHA). The Linux job runs on the owner's PC
 # pool when the repository variable CI_POOL is 'pc' (first attempt only —
@@ -13,6 +13,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   push:
     branches:
       - main
@@ -29,6 +30,9 @@ jobs:
     name: pnpm check
     runs-on: ${{ vars.CI_POOL == 'pc' && github.run_attempt == '1' && fromJSON('["self-hosted","ci-pc"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
+    # Ready starts the required check; converting back to Draft cancels the
+    # old PR run through the same concurrency group without starting a runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
 
     steps:
       - name: Checkout
