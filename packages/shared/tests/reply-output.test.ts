@@ -79,6 +79,116 @@ describe('reply output normalization', () => {
     ]);
   });
 
+  // The cases below are the hub's (hub#621, tests/ai-prompts-reply-output.test.ts):
+  // the client copy must behave the same.
+
+  // Production leak, 2026-10-09 (fast reply, Opus 5.5): `<think\b` did not match
+  // `<thinking>`, so the reasoning reached part 1 of the draft.
+  it('strips <thinking> and <reasoning> blocks, not only <think>', () => {
+    expect(
+      normalizeReplyParts(
+        '<thinking>He already told her… No dashes.</thinking>good boy 😏 save it for me[NEXT]wait did your mom really call lmao 😭',
+      ),
+    ).toEqual(['good boy 😏 save it for me', 'wait did your mom really call lmao 😭']);
+    expect(normalizeSingleReplyPart('<reasoning>keep it short</reasoning>\n"sup"')).toEqual(['sup']);
+    expect(normalizeReplyParts('<THINKING mode="plan">a [NEXT] b</Thinking >hey you')).toEqual([
+      'hey you',
+    ]);
+    expect(normalizeReplyParts('<thinking>quote </think> here</thinking>hey you')).toEqual([
+      'hey you',
+    ]);
+  });
+
+  it('strips reasoning blocks before splitting greeting variants', () => {
+    expect(
+      normalizeVariantReplyParts(
+        '<thinking>three openers? a [VARIANT] b [NEXT] c</thinking>hey you[VARIANT]sup stranger',
+      ),
+    ).toEqual(['hey you', 'sup stranger']);
+  });
+
+  it('drops everything from a bare tag that never closes and opens the text or a line', () => {
+    expect(normalizeReplyParts('<thinking>plan without close')).toEqual([]);
+    expect(normalizeReplyParts('hey\n<thinking>plan')).toEqual(['hey']);
+    expect(normalizeReplyParts('<thinking>he said no dashes so [NEXT] maybe')).toEqual([]);
+    // The part the tag opens is dropped when each part is sanitized.
+    expect(normalizeReplyParts('hey you[NEXT]<reasoning>now the follow-up')).toEqual(['hey you']);
+    // A close tag of another name does not end the block: nothing after it is a reply.
+    expect(normalizeReplyParts('<think>plan</thinking>hey you')).toEqual([]);
+    // An opener on its own line inside a fenced block goes with the block.
+    expect(normalizeReplyParts('```thinking\nopen with\n<think>\n```\nhey you')).toEqual([
+      'hey you',
+    ]);
+  });
+
+  it('keeps replies that only mention thinking or quote a reasoning tag', () => {
+    expect(normalizeReplyParts("can't stop thinking about you <3")).toEqual([
+      "can't stop thinking about you <3",
+    ]);
+    expect(normalizeReplyParts('i think so[NEXT]<thinkpad> lol')).toEqual(['i think so', '<thinkpad> lol']);
+    expect(normalizeReplyParts('omg <thinking of you> all day[NEXT]come here')).toEqual([
+      'omg <thinking of you> all day',
+      'come here',
+    ]);
+    expect(normalizeReplyParts('what does `<think>` mean lol')).toEqual(['what does `<think>` mean lol']);
+    expect(normalizeReplyParts('<think-tank> lol')).toEqual(['<think-tank> lol']);
+  });
+
+  // Production leaks, 2026-10-10..11 (fast reply, Opus 5.5 at low effort).
+  it('strips <thinking_mode> and <mental_model> blocks', () => {
+    expect(
+      normalizeReplyParts(
+        "<thinking_mode>\nThe fan joked about being a gentleman. Keep it short, no em dashes.\n</thinking_mode>\n\nhaha such a gentleman 😏 i'm holding you to that",
+      ),
+    ).toEqual(["haha such a gentleman 😏 i'm holding you to that"]);
+    expect(
+      normalizeReplyParts(
+        '<mental_model>\nHe asks what would excite her. A trip fits.\n</mental_model>\n\nhonestly a random trip to japan 😌[NEXT]what about you?',
+      ),
+    ).toEqual(['honestly a random trip to japan 😌', 'what about you?']);
+    expect(normalizeReplyParts('<Reasoning_Trace step="1">a [NEXT] b</reasoning_trace>hey you')).toEqual(['hey you']);
+    expect(normalizeReplyParts('<thinking_mode>never closed\nso no reply')).toEqual([]);
+  });
+
+  // Production leaks, 2026-10-09..14 (Opus 5.5 at low effort): reasoning as plain text.
+  it('drops a plain-text plan note and everything before it in its part', () => {
+    expect(
+      normalizeReplyParts("Fan writes in Russian, so reply in Russian. He asked what she's doing.\n\nахах да, лежу с котом 🙈[NEXT]а ты где?)"),
+    ).toEqual(['ахах да, лежу с котом 🙈', 'а ты где?)']);
+    expect(
+      normalizeVariantReplyParts(
+        'Cold opener. The display name is Jay, so a name hook works. No long dashes.\n\nok jay... are you a dj 👀[VARIANT]hey jay',
+      ),
+    ).toEqual(['ok jay... are you a dj 👀', 'hey jay']);
+    // A draft, the model's check of it, then the draft it settled on.
+    expect(
+      normalizeSingleReplyPart(
+        'so what caught your eye? 😏\n\nWait, the rules say no full stop at end, question mark fine.\n\nso what caught your eye then? 😏',
+      ),
+    ).toEqual(['so what caught your eye then? 😏']);
+    expect(
+      normalizeReplyParts('long night huh 😭\n\n(rule check) no period at end, no dash. Fine.\n\nlong night huh 😭 any break?'),
+    ).toEqual(['long night huh 😭 any break?']);
+    // With nothing after it, the note goes alone; it never cuts another part.
+    expect(normalizeReplyParts('hey you\nCheck: no em dash, lowercase.')).toEqual(['hey you']);
+    expect(normalizeReplyParts('first part[NEXT]Cold opener, no fan lines.\n\nsecond part')).toEqual([
+      'first part',
+      'second part',
+    ]);
+    expect(normalizeReplyParts('No long dashes.')).toEqual([]);
+  });
+
+  it('keeps replies that mention dashes, display names, fans or thinking in passing', () => {
+    for (const reply of [
+      'no dash cam?? lol\n\nok tell me everything',
+      'your display name is giving superhero lol\n\nso what are you up to',
+      'haha ur in the fan club for everything 😂\n\na fan wrote me a poem once',
+      'thinking of me while busy is the bare minimum 😂\n\nwhen are you back',
+    ]) {
+      expect(normalizeReplyParts(reply)).toEqual([reply]);
+    }
+  });
+
   it('filters every bracket-garbage token', () => {
     for (const garbage of ['[', ']', '["', '"]', "['", "']"]) {
       expect(isInsertableReplyPart(garbage)).toBe(false);

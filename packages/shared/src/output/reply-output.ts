@@ -29,10 +29,66 @@ const META_LEAK_PATTERNS: readonly RegExp[] = [
   /\bgenerated\s+(?:reply|message|response)\b/i,
 ];
 
+// The rules below are the hub's (prompts/output/reply-output.ts, hub#621); keep
+// the copies the same.
+// Reasoning a model writes into the visible text: <think>, <thinking>,
+// <reasoning> or <mental_model>, also with a suffix after an underscore
+// (<thinking_mode>), closed by the same tag in any case. The tag name is a
+// group so the close tag must repeat it; a plain `<think\b` misses
+// `<thinking>`, which is how Opus 5.5 leaked its reasoning into fast replies
+// on 2026-10-09..14 (<thinking>, <reasoning>, <thinking_mode>, <mental_model>).
+const REASONING_BLOCK = /<((?:think|thinking|reasoning|mental_model)(?:_\w+)?)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+// A block that never closes (the model forgot the close tag or ran out of
+// tokens): everything from its opener on is reasoning. Only a bare tag that
+// opens the text or its own line counts, so a reply that quotes one ("what
+// does `<think>` mean") or plays with one ("<thinking of you>") stays whole.
+// It runs after the fenced blocks are gone, so an opener quoted inside one
+// cuts nothing.
+const OPEN_REASONING_BLOCK = /(?:^|\n)\s*<(?:think|thinking|reasoning|mental_model)(?:_\w+)?>[\s\S]*$/i;
+
 function stripThinkBlocks(text: string): string {
   return text
-    .replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '')
-    .replace(/```(?:think|thinking|reasoning|chain-of-thought)[^\n]*\n[\s\S]*?```/gi, '');
+    .replace(REASONING_BLOCK, '')
+    .replace(/```(?:think|thinking|reasoning|chain-of-thought)[^\n]*\n[\s\S]*?```/gi, '')
+    .replace(OPEN_REASONING_BLOCK, '');
+}
+
+// Reasoning written as plain text, with no tag: a line that checks the house
+// style rules ("No long dashes.", "no em dash, no full stop at end"), names
+// the task as the prompt does ("Cold opener.") or opens by reporting what the
+// fan wrote ("Fan writes in Russian, so reply in Russian."). A message to a
+// fan never says these: none of 39,214 production generations did outside
+// such reasoning (checked 2026-10-16). "no dash" needs an end of phrase after
+// it, so "no dash cam" stays.
+const PLAN_NOTE_PATTERNS: readonly RegExp[] = [
+  /\b(?:em|en|long)\s+dash(?:es)?\b/i,
+  /\bno\s+dash(?:es\b|\s*[.,;)]|\s*$)/i,
+  /\bno\s+(?:final\s+)?full\s+stop\b/i,
+  /\bfull\s+stop\s+at\s+(?:the\s+)?end\b/i,
+  /\bcold\s+opener\b/i,
+  /^\s*(?:the\s+)?fan\s+(?:just\s+)?(?:writes|wrote|asks|asked|says|said|joked|replied|mentioned)\b/i,
+];
+
+function isPlanNoteLine(line: string): boolean {
+  return PLAN_NOTE_PATTERNS.some((pattern) => pattern.test(line));
+}
+
+// Within one part, the text after the last plan-note line is the reply; what
+// comes before it is the plan or a draft the model went on to correct (both
+// seen from Opus 5.5 at low effort). With nothing after it, the plan-note
+// lines alone are dropped. It runs on each part, never across [NEXT] or
+// [VARIANT], so a note cannot cut another part.
+function stripPlanNotes(text: string): string {
+  const lines = text.split('\n');
+  let last = -1;
+  lines.forEach((line, index) => {
+    if (isPlanNoteLine(line)) last = index;
+  });
+  if (last < 0) {
+    return text;
+  }
+  const after = lines.slice(last + 1).join('\n');
+  return after.trim() ? after : lines.filter((line) => !isPlanNoteLine(line)).join('\n');
 }
 
 function isMetaLeakLine(line: string): boolean {
@@ -89,7 +145,9 @@ function stripWrappingQuotes(text: string): string {
 }
 
 export function sanitizeReplyPart(part: string): string {
-  return normalizeDashes(stripWrappingQuotes(stripReplyPrefix(removeMetaLeakLines(stripThinkBlocks(part)))));
+  return normalizeDashes(
+    stripWrappingQuotes(stripReplyPrefix(removeMetaLeakLines(stripPlanNotes(stripThinkBlocks(part))))),
+  );
 }
 
 export function isInsertableReplyPart(part: string): boolean {
