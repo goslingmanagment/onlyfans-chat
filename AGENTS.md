@@ -46,7 +46,8 @@ hand-edit; the spec is the hub's `packages/chatgoose-hotkeys/README.md`;
 re-vendor with the hub's `scripts/vendor-hotkeys.mjs` into BOTH clients
 from one clean hub commit, the manifest sha256 must match).
 
-- `pnpm check` = typecheck + lint + test + build, green before a commit. CI
+- `pnpm check` = typecheck + lint + test + build (~30 s). Locally run what
+  your change touches; the full run is CI's job. CI
   (`ci.yml`): ready PRs run it on Linux only; Drafts skip it, Ready starts it,
   and converting back to Draft cancels the earlier PR run. Pushes to `main`
   run Linux + Windows; a `v*` tag re-checks and builds on Windows
