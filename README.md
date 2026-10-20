@@ -28,7 +28,8 @@ from prose.
 ## Documentation
 
 - [AGENTS.md](AGENTS.md) — binding engineering and safety rules;
-- [docs/decisions.md](docs/decisions.md) — append-only decisions and tombstones;
+- [docs/decisions.md](docs/decisions.md) — decision log D1–D45, frozen on
+  2026-10-20; new decisions live in PR descriptions;
 - [docs/RELEASE.md](docs/RELEASE.md) — current Windows build/release procedure;
 - [docs/WINDOWS-VERIFICATION.md](docs/WINDOWS-VERIFICATION.md) — helper checklist
   using Agency Hub device sign-in;

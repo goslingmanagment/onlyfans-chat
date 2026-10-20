@@ -1,18 +1,6 @@
+> Заморожен 2026-10-20: новое сюда не пишется; решения — в описании PR.
+
 # Decision log — ChatGoose Desktop
-
-Append-only. Numbered entries, newest last. Cross-repo decisions live in
-core's `docs/decisions.md` and are REFERENCED here, never copied.
-
-## Family law (recorded per kernel Stage 35; binding in this repo)
-
-- **Anti-deletion rule:** removing or superseding any hand-curated document
-  requires a tombstone entry in this log; deprecated specs get a banner,
-  never deletion. Generated docs (`docs/generated/`) are exempt — they are
-  regenerated, not curated.
-- **Updated-in-change:** hand-curated docs are updated in the same change
-  that invalidates them.
-- **Cross-repo decisions** are recorded in core's log; this log points at
-  them by number.
 
 ## Quick reference
 

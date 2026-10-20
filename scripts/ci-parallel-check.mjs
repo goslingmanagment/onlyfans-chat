@@ -24,8 +24,7 @@ import { join } from 'node:path';
 // write nothing another part reads: `tsc --noEmit` and vitest in each
 // package, and `eslint .`; the tests write to temp dirs only. Not `build`:
 // electron-vite writes apps/desktop/out/. When any of this drifts, the whole
-// check runs as `pnpm check` until the change is reviewed and pinned here
-// (tests/ci-parallel-check.test.ts fails on the real tree until then).
+// check runs as plain `pnpm check` (slower, still correct) until pinned here.
 const SIDE_BY_SIDE = {
   typecheck: {
     script: 'pnpm -r --no-bail typecheck',
