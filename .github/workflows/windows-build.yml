@@ -95,9 +95,8 @@ jobs:
             exit 1
           fi
 
-      # Only a main *push* run proves cross-platform CI: PR runs skip the
-      # Windows job (ci.yml), so a PR run for the same SHA must not satisfy it.
-      - name: Assert exact commit passed cross-platform CI
+      # The exact commit must have a successful main push run of ci.yml.
+      - name: Assert exact commit passed CI
         if: startsWith(github.ref, 'refs/tags/v') || inputs.publishFeed == true
         timeout-minutes: 5
         shell: bash
@@ -116,7 +115,7 @@ jobs:
               ci_verified=true
               break
             fi
-            echo "exact-SHA cross-platform CI verification attempt $attempt failed; retrying"
+            echo "exact-SHA CI verification attempt $attempt failed; retrying"
             sleep 10
           done
           if [ "$ci_verified" != true ]; then

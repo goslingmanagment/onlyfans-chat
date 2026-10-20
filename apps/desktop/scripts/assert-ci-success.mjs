@@ -3,7 +3,7 @@
 // Repository-enforced pre-publication gate. A release tag may be pushed while
 // main CI is still pending (this private repository cannot require checks via
 // branch protection), so the publishing workflow independently proves that
-// the exact release SHA already has a successful cross-platform CI run.
+// the exact release SHA already has a successful CI run.
 
 const expectedSha = process.argv[2];
 if (!/^[0-9a-f]{40}$/i.test(expectedSha ?? '')) {

@@ -3,11 +3,12 @@
 # (node-env) + electron-vite build — all linux-safe, no display or Windows
 # toolchain needed (installers are windows-build.yml's job).
 #
-# Cost policy: ready PRs run the Linux gate only; Drafts skip it. Pushes to main run Linux + Windows
-# (windows-build.yml's release guard requires a successful main push run of
-# this workflow for the exact tag SHA). The Linux job runs on the owner's PC
-# pool when the repository variable CI_POOL is 'pc' (first attempt only —
-# re-runs always go to GitHub-hosted in case the PC died mid-run).
+# Ready PRs and pushes to main run this one Linux job; Drafts skip it.
+# windows-build.yml's release guard requires a successful main push run of
+# this workflow for the exact tag SHA, then reruns `pnpm check` on Windows
+# itself before building. The job runs on the owner's PC pool when the
+# repository variable CI_POOL is 'pc' (first attempt only — re-runs always go
+# to GitHub-hosted in case the PC died mid-run).
 
 name: CI
 
@@ -98,34 +99,3 @@ jobs:
       - name: Check (parts in parallel)
         if: runner.environment == 'self-hosted'
         run: exec node scripts/ci-parallel-check.mjs
-
-  windows-check:
-    name: pnpm check (Windows)
-    # Push-only (main). A job skipped by `if` reports Success to required
-    # checks, so PR merges are not blocked. PRs touching native modules, paths,
-    # the installer or the updater: dispatch windows-build (publishFeed=false)
-    # before merging.
-    if: github.event_name == 'push'
-    runs-on: windows-latest
-    timeout-minutes: 35
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install dependencies
-        timeout-minutes: 15
-        run: pnpm install --frozen-lockfile
-
-      - name: Check (typecheck + lint + test + build)
-        timeout-minutes: 20
-        run: pnpm check

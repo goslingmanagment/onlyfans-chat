@@ -15,13 +15,15 @@ device token. Sibling for Fansly: `~/code/1-platform/fansly-chat`.
   `packages/shared` (pure TS, most of the tests), `packages/kernel-sdk` and
   `packages/chatgoose-hotkeys` (vendored, see below).
 - Locally: typecheck, lint and the tests of the package/file you touched.
-  The full `pnpm check` (typecheck + lint + test + build) is CI's job: ready
-  PRs on Linux, pushes to `main` on Linux + Windows. On the PC runners the
-  Linux job goes through `scripts/ci-parallel-check.mjs`; tests write only to
-  temp dirs.
-- A PR touching native modules, paths, the installer or the updater: run
-  `windows-build` manually (workflow_dispatch, `publishFeed=false`) before
-  merging.
+  The full `pnpm check` (typecheck + lint + test + build) is CI's job on Linux
+  for ready PRs and pushes to `main`; on the PC runners it goes through
+  `scripts/ci-parallel-check.mjs`; tests write only to temp dirs. Windows runs
+  it only inside `windows-build` (every release). To try a native-module,
+  path, installer or updater change on Windows earlier, dispatch
+  `windows-build` with `publishFeed=false`.
+- Tests cover only what can hurt: what is sent to which fan, money, auth and
+  tokens, data sent to the hub, the update path, DB migrations. No tests for
+  UI, copy or wiring.
 
 ## How to look at it
 
