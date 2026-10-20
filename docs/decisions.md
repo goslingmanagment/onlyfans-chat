@@ -1,4 +1,4 @@
-> Заморожен 2026-10-20: новое сюда не пишется; решения — в описании PR.
+> Frozen on 2026-10-20: nothing new is added here; decisions go in the PR description.
 
 # Decision log — ChatGoose Desktop
 
