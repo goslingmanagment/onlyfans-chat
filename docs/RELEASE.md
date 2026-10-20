@@ -145,11 +145,10 @@ demoable without a real feed.
 
 1. Bump `version` in `apps/desktop/package.json`, run `pnpm check`, and commit on
    `main`.
-2. Push `main` and wait for **both** release-prerequisite CI jobs to pass on that exact
-   commit: the existing Linux `pnpm check` and `pnpm check (Windows)`. Do not
-   create the release tag while either job is pending or failing; this catches
-   Windows path, line-ending, and native-toolchain regressions before a version
-   is consumed. The tag/publish workflow also rejects the vendored SDK unless
+2. Push `main` and wait for the `pnpm check` CI job to pass on that exact
+   commit. Windows path, line-ending and native-toolchain regressions surface
+   in step 4, where `windows-build` reruns `pnpm check` on Windows before it
+   builds anything. The tag/publish workflow also rejects the vendored SDK unless
    `kernel-sdk.vendor.json.sourceCommit` is exactly a clean 40-character
    lowercase commit SHA; a `-dirty` SDK snapshot may be tested locally but must
    never enter an installer. GitHub plan restrictions prevent protected required checks on

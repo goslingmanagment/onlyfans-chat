@@ -190,6 +190,9 @@ describe('ai_acceptance_ops', () => {
     expect(data.aiAcceptance.get('00000000-0000-4000-8000-000000000001')?.parts).toEqual([]);
   });
 
+  // Two opens of an encrypted file database (SQLCipher key derivation plus
+  // migrations each time) took 5-6 s on windows-latest and hit the 5 s default
+  // there (runs 35535813678, 35535098084).
   it('scrubs all full text from the previous app session but keeps correlation metadata', () => {
     const temp = tempDbFile();
     const first = createDataLayer({
@@ -232,5 +235,5 @@ describe('ai_acceptance_ops', () => {
     });
     reopened.close();
     temp.cleanup();
-  });
+  }, 30_000);
 });
