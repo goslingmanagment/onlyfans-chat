@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `pnpm check` in CI (ci.yml, on the PC and GitHub-hosted runners): the same parts,
+// `pnpm check` in CI (ci.yml, GitHub-hosted runners): the same parts,
 // read from package.json's "check" at run time and run with the same argv,
 // but the parts that only read the tree run side by side. Every other part
 // runs alone at its place in the chain, and a stage starts only after every

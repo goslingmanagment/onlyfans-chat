@@ -6,12 +6,10 @@
 # Ready PRs and pushes to main run this one Linux job; Drafts skip it.
 # windows-build.yml's release guard requires a successful main push run of
 # this workflow for the exact tag SHA, then reruns `pnpm check` on Windows
-# itself before building. GitHub-hosted (4 vCPUs, free on a public
-# repository) is the target pool; the job runs on the owner's PC pool when the
-# repository variable CI_POOL is 'pc' (first attempt only — re-runs always go
-# to GitHub-hosted in case the PC died mid-run). A PR from a fork never runs
-# on the PC — a fork can still edit this file in its PR, so the real fence is
-# no self-hosted runner registered to a public repository.
+# itself before building. Runners: GitHub-hosted only (owner, 2026-10-21) —
+# the repository is public, so they are free, and a public repository must
+# never reach the owner's PC: no job names a self-hosted label, and none is
+# registered to the repo.
 
 name: CI
 
@@ -32,7 +30,7 @@ concurrency:
 jobs:
   check:
     name: pnpm check
-    runs-on: ${{ vars.CI_POOL == 'pc' && github.run_attempt == '1' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","ci-pc"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Ready starts the required check; converting back to Draft cancels the
     # old PR run through the same concurrency group without starting a runner.
@@ -74,10 +72,10 @@ jobs:
           [ "$run" = true ] || echo 'prose only (root *.md, docs/**/*.md, .agentic, .claude): nothing to check'
           echo "run=$run" >> "$GITHUB_OUTPUT"
 
-      # Hosted runners: pnpm version from package.json "packageManager". The
-      # action wipes its install folder first, so it stays in runner temp.
+      # pnpm version from package.json "packageManager". The action wipes its
+      # install folder first, so it stays in runner temp.
       - name: Setup pnpm
-        if: steps.scope.outputs.run != 'false' && runner.environment != 'self-hosted'
+        if: steps.scope.outputs.run != 'false'
         uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
@@ -87,49 +85,23 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          # The Actions cache only pays off on GitHub-hosted runners; the PC
-          # uses its persistent pnpm store (see Install dependencies).
-          cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
-
-      # PC runners: pnpm from the corepack bundled with Node 22, at the exact
-      # version package.json pins. Corepack downloads and verifies a version
-      # once into a cache shared by the runners, so a job neither downloads
-      # pnpm nor waits on the npm registry's signature check (which timed out
-      # from the home network). The shims go in this job's runner temp.
-      - name: Setup pnpm (corepack)
-        if: steps.scope.outputs.run != 'false' && runner.environment == 'self-hosted'
-        env:
-          # Never rewrite corepack's shared lastKnownGood.json after a download.
-          COREPACK_DEFAULT_TO_LATEST: "0"
-        run: |
-          bin="$RUNNER_TEMP/corepack-bin"
-          mkdir -p "$bin"
-          corepack enable pnpm --install-directory "$bin"
-          pinned="$(node -p 'require("./package.json").packageManager')"
-          running="$("$bin/pnpm" --version)"
-          echo "corepack $(corepack --version) runs pnpm $running; package.json pins $pinned"
-          [ "pnpm@$running" = "${pinned%%+*}" ] || { echo "::error::corepack runs pnpm $running but package.json pins $pinned"; exit 1; }
-          echo "$bin" >> "$GITHUB_PATH"
+          cache: pnpm
 
       - name: Install dependencies
         if: steps.scope.outputs.run != 'false'
-        # On the PC point pnpm at a persistent store shared by all runners
-        # (safe for concurrent installs, same filesystem as the work dirs).
         env:
-          PNPM_PC_STORE: ${{ runner.environment == 'self-hosted' && '1' || '' }}
           # pnpm check runs Node tests and electron-vite build; the Electron
           # binary (~130 s on a cold install) is only needed by windows-build.
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: |
-          if [ -n "$PNPM_PC_STORE" ]; then export npm_config_store_dir="$HOME/.local/share/pnpm/store"; fi
           pnpm install --frozen-lockfile
 
       # The parts of `pnpm check`, read from package.json at run time, with the
       # read-only ones side by side and the rest alone in chain order
-      # (scripts/ci-parallel-check.mjs) — on the PC and on a 4-vCPU hosted
-      # runner alike. exec: on cancel or timeout the runner signals only the
-      # step's own process, so node must be that process to stop the parts and
-      # print the logs they wrote.
+      # (scripts/ci-parallel-check.mjs), using the runner's four vCPUs. exec:
+      # on cancel or timeout the runner signals only the step's own process, so
+      # node must be that process to stop the parts and print the logs they
+      # wrote.
       - name: Check (typecheck + lint + test + build, parts in parallel)
         if: steps.scope.outputs.run != 'false'
         run: exec node scripts/ci-parallel-check.mjs
