@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// `pnpm check` on the PC runners (ci.yml, self-hosted only): the same parts,
+// `pnpm check` in CI (ci.yml, on the PC and GitHub-hosted runners): the same parts,
 // read from package.json's "check" at run time and run with the same argv,
 // but the parts that only read the tree run side by side. Every other part
 // runs alone at its place in the chain, and a stage starts only after every
 // earlier part passed, as with `&&`. Each part logs to its own file; the logs
 // print in chain order when their stage ends. A "check" that is not a plain
 // `pnpm … && pnpm …` chain, or a side-by-side part that no longer runs exactly
-// what SIDE_BY_SIDE pins, runs as `pnpm check` itself. GitHub-hosted runners
-// and local runs keep `pnpm check`.
+// what SIDE_BY_SIDE pins, runs as `pnpm check` itself. Local runs keep
+// `pnpm check`.
 //
 //   node scripts/ci-parallel-check.mjs          run the check
 //   node scripts/ci-parallel-check.mjs --plan   print the stages as JSON, run nothing

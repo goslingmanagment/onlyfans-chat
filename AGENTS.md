@@ -16,8 +16,9 @@ device token. Sibling for Fansly: `~/code/1-platform/fansly-chat`.
   `packages/chatgoose-hotkeys` (vendored, see below).
 - Locally: typecheck, lint and the tests of the package/file you touched.
   The full `pnpm check` (typecheck + lint + test + build) is CI's job on Linux
-  for ready PRs and pushes to `main`; on the PC runners it goes through
-  `scripts/ci-parallel-check.mjs`; tests write only to temp dirs. Windows runs
+  for ready PRs and pushes to `main`, through `scripts/ci-parallel-check.mjs`
+  (tests write only to temp dirs); a PR that changes only prose (root `*.md`,
+  `docs/**/*.md`) is green in seconds. Windows runs
   it only inside `windows-build` (every release). To try a native-module,
   path, installer or updater change on Windows earlier, dispatch
   `windows-build` with `publishFeed=false`.

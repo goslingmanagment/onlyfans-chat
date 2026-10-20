@@ -6,9 +6,12 @@
 # Ready PRs and pushes to main run this one Linux job; Drafts skip it.
 # windows-build.yml's release guard requires a successful main push run of
 # this workflow for the exact tag SHA, then reruns `pnpm check` on Windows
-# itself before building. The job runs on the owner's PC pool when the
+# itself before building. GitHub-hosted (4 vCPUs, free on a public
+# repository) is the target pool; the job runs on the owner's PC pool when the
 # repository variable CI_POOL is 'pc' (first attempt only — re-runs always go
-# to GitHub-hosted in case the PC died mid-run).
+# to GitHub-hosted in case the PC died mid-run). A PR from a fork never runs
+# on the PC — a fork can still edit this file in its PR, so the real fence is
+# no self-hosted runner registered to a public repository.
 
 name: CI
 
@@ -29,25 +32,58 @@ concurrency:
 jobs:
   check:
     name: pnpm check
-    runs-on: ${{ vars.CI_POOL == 'pc' && github.run_attempt == '1' && fromJSON('["self-hosted","ci-pc"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.CI_POOL == 'pc' && github.run_attempt == '1' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","ci-pc"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
     # Ready starts the required check; converting back to Draft cancels the
     # old PR run through the same concurrency group without starting a runner.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
 
     steps:
+      # Two commits deep: on a PR, GitHub's merge commit and its first parent,
+      # the base branch's tip — the next step compares the two.
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      # A PR that changes only prose — Markdown in the root, docs/**/*.md,
+      # .agentic/**, .claude/** — runs nothing: every step below is skipped
+      # and the job ends green, so the required check still reports success.
+      # (Why not paths-ignore: a workflow that does not start reports nothing,
+      # and the PR would wait for its required check forever.) Markdown
+      # anywhere else may be a build input or a test fixture and counts as
+      # code. Pushes to main always run in full; any doubt is run=true, and
+      # the steps test for "not false".
+      - name: Does this change need the check?
+        id: scope
+        if: github.event_name == 'pull_request'
+        run: |
+          run=true
+          if git rev-parse -q --verify 'HEAD^2' > /dev/null && changed=$(git diff --name-only --no-renames 'HEAD^1' HEAD) && [ -n "$changed" ]; then
+            run=false
+            while IFS= read -r file; do
+              case "$file" in
+                docs/*.md | .agentic/* | .claude/*) ;;
+                */*) run=true ;;
+                *.md) ;;
+                *) run=true ;;
+              esac
+              if [ "$run" = true ]; then echo "needs the check: $file"; break; fi
+            done <<< "$changed"
+          fi
+          [ "$run" = true ] || echo 'prose only (root *.md, docs/**/*.md, .agentic, .claude): nothing to check'
+          echo "run=$run" >> "$GITHUB_OUTPUT"
 
       # Hosted runners: pnpm version from package.json "packageManager". The
       # action wipes its install folder first, so it stays in runner temp.
       - name: Setup pnpm
-        if: runner.environment != 'self-hosted'
+        if: steps.scope.outputs.run != 'false' && runner.environment != 'self-hosted'
         uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
 
       - name: Setup Node.js
+        if: steps.scope.outputs.run != 'false'
         uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -61,7 +97,7 @@ jobs:
       # pnpm nor waits on the npm registry's signature check (which timed out
       # from the home network). The shims go in this job's runner temp.
       - name: Setup pnpm (corepack)
-        if: runner.environment == 'self-hosted'
+        if: steps.scope.outputs.run != 'false' && runner.environment == 'self-hosted'
         env:
           # Never rewrite corepack's shared lastKnownGood.json after a download.
           COREPACK_DEFAULT_TO_LATEST: "0"
@@ -76,6 +112,7 @@ jobs:
           echo "$bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
+        if: steps.scope.outputs.run != 'false'
         # On the PC point pnpm at a persistent store shared by all runners
         # (safe for concurrent installs, same filesystem as the work dirs).
         env:
@@ -87,15 +124,12 @@ jobs:
           if [ -n "$PNPM_PC_STORE" ]; then export npm_config_store_dir="$HOME/.local/share/pnpm/store"; fi
           pnpm install --frozen-lockfile
 
-      - name: Check (typecheck + lint + test + build)
-        if: runner.environment != 'self-hosted'
-        run: pnpm check
-
-      # PC runners: the same parts of `pnpm check`, read from package.json at
-      # run time, with the read-only ones side by side and the rest alone in
-      # chain order (scripts/ci-parallel-check.mjs). exec: on cancel or timeout
-      # the runner signals the step's process, which must be the script so it
-      # stops its parts instead of leaving them running.
-      - name: Check (parts in parallel)
-        if: runner.environment == 'self-hosted'
+      # The parts of `pnpm check`, read from package.json at run time, with the
+      # read-only ones side by side and the rest alone in chain order
+      # (scripts/ci-parallel-check.mjs) — on the PC and on a 4-vCPU hosted
+      # runner alike. exec: on cancel or timeout the runner signals only the
+      # step's own process, so node must be that process to stop the parts and
+      # print the logs they wrote.
+      - name: Check (typecheck + lint + test + build, parts in parallel)
+        if: steps.scope.outputs.run != 'false'
         run: exec node scripts/ci-parallel-check.mjs
